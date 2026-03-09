@@ -1,0 +1,25 @@
+packages/proxy/package.json
+  28992366ac95c961 15
+packages/proxy/src/index.ts
+  28992366ac95c961 5,9,11,38-44,51-56,59-143,244
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e8b1782ab1f5071e9b58edf239bfcb110240a30d",
+  "prompts": {
+    "28992366ac95c961": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32e775fb1ffeKJ6DDYKBOHJdvR",
+        "model": "github-copilot/claude-opus-4.6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 109,
+      "total_deletions": 105,
+      "accepted_lines": 109,
+      "overriden_lines": 0
+    }
+  }
+}
