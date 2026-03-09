@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/big-pickle",
+  "mcp": {
+    "thor-proxy": {
+      "type": "remote",
+      "url": "http://proxy:3001/mcp",
+      "enabled": true
+    }
+  }
+}
