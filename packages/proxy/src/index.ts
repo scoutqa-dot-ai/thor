@@ -2,14 +2,14 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
+  ListToolsRequestSchema,
   type CallToolResult,
-  type CallToolRequest,
+  type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
 import { loadConfig, type ProxyConfig } from "./config.js";
 import { logError, logInfo, logToolCall } from "./logger.js";
 import { evaluatePolicy, validatePolicy, type UpstreamToolSet } from "./policy.js";
@@ -35,36 +35,112 @@ interface ToolMapping {
 }
 const toolMap = new Map<string, ToolMapping>();
 
-/**
- * Create the MCP server that faces the agent.
- * It exposes all upstream tools (prefixed with upstream name) and applies policy.
- */
-function createProxyMcpServer(): McpServer {
-  const server = new McpServer(
-    { name: "thor-proxy", version: "0.0.1" },
-    { capabilities: { logging: {} } },
-  );
+// Build the prefixed tool list with original JSON schemas from upstreams.
+// Called once at startup after all upstreams are connected.
+let proxyTools: Tool[] = [];
 
-  // Register all upstream tools on this server
+function buildToolIndex(): void {
+  toolMap.clear();
+  proxyTools = [];
+
   for (const [upstreamName, conn] of upstreams) {
     for (const tool of conn.tools) {
       const proxyToolName = `${upstreamName}__${tool.name}`;
       toolMap.set(proxyToolName, { upstream: upstreamName, originalName: tool.name });
 
-      // Build zod schema from the tool's input schema
-      // For PoC, we pass-through as a generic JSON object
-      server.tool(
-        proxyToolName,
-        tool.description || "",
-        { args: z.string().optional() },
-        async () => {
-          // This handler is registered but won't be used —
-          // we intercept at the transport level. This is just for tools/list.
-          return { content: [{ type: "text", text: "proxy placeholder" }] };
-        },
-      );
+      // Pass through the original tool definition with its real JSON Schema
+      proxyTools.push({
+        name: proxyToolName,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      });
     }
   }
+}
+
+/**
+ * Create a low-level MCP Server that faces the agent.
+ * Uses Server directly (not McpServer) so we can return the original
+ * JSON Schema inputSchema from upstream tools — no Zod conversion needed.
+ */
+function createProxyServer(): Server {
+  const server = new Server(
+    { name: "thor-proxy", version: "0.0.1" },
+    { capabilities: { tools: {} } },
+  );
+
+  // tools/list — return upstream tools with their real JSON schemas
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: proxyTools,
+  }));
+
+  // tools/call — evaluate policy, then forward to upstream
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const toolName = request.params.name;
+    const args = request.params.arguments || {};
+
+    const mapping = toolMap.get(toolName);
+    if (!mapping) {
+      return {
+        content: [{ type: "text" as const, text: `Unknown tool: ${toolName}` }],
+        isError: true,
+      } satisfies CallToolResult;
+    }
+
+    // Evaluate policy
+    const decision = evaluatePolicy(config.policy, mapping.upstream, mapping.originalName);
+
+    if (decision === "block") {
+      logToolCall(mapping.upstream, mapping.originalName, "blocked");
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Tool "${mapping.originalName}" on upstream "${mapping.upstream}" is blocked by policy.`,
+          },
+        ],
+        isError: true,
+      } satisfies CallToolResult;
+    }
+
+    // Forward to upstream
+    const conn = upstreams.get(mapping.upstream);
+    if (!conn) {
+      return {
+        content: [{ type: "text" as const, text: `Upstream "${mapping.upstream}" not connected.` }],
+        isError: true,
+      } satisfies CallToolResult;
+    }
+
+    const start = Date.now();
+    try {
+      const result = await conn.client.callTool({
+        name: mapping.originalName,
+        arguments: args,
+      });
+      const duration = Date.now() - start;
+      logToolCall(mapping.upstream, mapping.originalName, "allowed", duration);
+      return result as CallToolResult;
+    } catch (err) {
+      const duration = Date.now() - start;
+      logToolCall(
+        mapping.upstream,
+        mapping.originalName,
+        "allowed",
+        duration,
+        err instanceof Error ? err.message : String(err),
+      );
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error calling "${mapping.originalName}": ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      } satisfies CallToolResult;
+    }
+  });
 
   return server;
 }
@@ -104,9 +180,7 @@ app.post("/mcp", async (req, res) => {
     if (body?.method === "initialize") {
       const newSessionId = randomUUID();
 
-      // For the PoC, create a new MCP server per session
-      // In production, you'd want session pooling
-      const mcpServer = createProxyMcpServer();
+      const server = createProxyServer();
 
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => newSessionId,
@@ -121,81 +195,7 @@ app.post("/mcp", async (req, res) => {
         logInfo("session_closed", { sessionId: newSessionId });
       };
 
-      // Intercept tool calls before they reach the McpServer handlers
-      // by hooking into the server's request handling
-      const originalServer = mcpServer.server;
-
-      // Register a raw request handler for tools/call to intercept and forward
-      originalServer.setRequestHandler(CallToolRequestSchema, async (request) => {
-        const toolName = request.params.name;
-        const args = request.params.arguments || {};
-
-        const mapping = toolMap.get(toolName);
-        if (!mapping) {
-          return {
-            content: [{ type: "text" as const, text: `Unknown tool: ${toolName}` }],
-            isError: true,
-          } satisfies CallToolResult;
-        }
-
-        // Evaluate policy
-        const decision = evaluatePolicy(config.policy, mapping.upstream, mapping.originalName);
-
-        if (decision === "block") {
-          logToolCall(mapping.upstream, mapping.originalName, "blocked");
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Tool "${mapping.originalName}" on upstream "${mapping.upstream}" is blocked by policy.`,
-              },
-            ],
-            isError: true,
-          } satisfies CallToolResult;
-        }
-
-        // Forward to upstream
-        const conn = upstreams.get(mapping.upstream);
-        if (!conn) {
-          return {
-            content: [
-              { type: "text" as const, text: `Upstream "${mapping.upstream}" not connected.` },
-            ],
-            isError: true,
-          } satisfies CallToolResult;
-        }
-
-        const start = Date.now();
-        try {
-          const result = await conn.client.callTool({
-            name: mapping.originalName,
-            arguments: args,
-          });
-          const duration = Date.now() - start;
-          logToolCall(mapping.upstream, mapping.originalName, "allowed", duration);
-          return result as CallToolResult;
-        } catch (err) {
-          const duration = Date.now() - start;
-          logToolCall(
-            mapping.upstream,
-            mapping.originalName,
-            "allowed",
-            duration,
-            err instanceof Error ? err.message : String(err),
-          );
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Error calling "${mapping.originalName}": ${err instanceof Error ? err.message : String(err)}`,
-              },
-            ],
-            isError: true,
-          } satisfies CallToolResult;
-        }
-      });
-
-      await mcpServer.connect(transport);
+      await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
       return;
     }
@@ -238,6 +238,9 @@ async function start(): Promise<void> {
 
   // Connect to all upstreams
   upstreams = await connectAllUpstreams(config.upstreams);
+
+  // Build the prefixed tool index with original JSON schemas
+  buildToolIndex();
 
   // Validate policy against discovered tools — fail fast on drift
   const toolSets: UpstreamToolSet[] = [...upstreams.entries()].map(([name, conn]) => ({
