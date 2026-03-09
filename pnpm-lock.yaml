@@ -45,6 +45,9 @@ importers:
 
   packages/runner:
     dependencies:
+      '@opencode-ai/sdk':
+        specifier: ^1.2.22
+        version: 1.2.22
       express:
         specifier: ^5.1.0
         version: 5.2.1
@@ -235,6 +238,9 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
+
+  '@opencode-ai/sdk@1.2.22':
+    resolution: {integrity: sha512-EXI1+Rc9dkzKo9uDj0EA4pLUCQJS2Qi8/xKwsT6RNZPBpSau05HVPWlZ+t8WyLW4fWymiho8jsXSErfKOpyCsw==}
 
   '@types/body-parser@1.19.6':
     resolution: {integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==}
@@ -898,6 +904,8 @@ snapshots:
       zod-to-json-schema: 3.25.1(zod@4.3.6)
     transitivePeerDependencies:
       - supports-color
+
+  '@opencode-ai/sdk@1.2.22': {}
 
   '@types/body-parser@1.19.6':
     dependencies:
