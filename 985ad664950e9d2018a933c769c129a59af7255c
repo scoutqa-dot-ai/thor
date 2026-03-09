@@ -1,0 +1,53 @@
+docker-compose.yml
+  28992366ac95c961 19-20,40
+packages/proxy/src/index.ts
+  28992366ac95c961 16-18,27,96-103,135-140,144,146,148-149,153-156,230
+packages/runner/src/index.ts
+  28992366ac95c961 5-6,8-12,14-23,29,55,67-69,73-74,78,90,128-235,261,271-277,285,287-289,294,296-386,389,391-396,398-406,412-413,424-500
+packages/runner/tsconfig.json
+  28992366ac95c961 7-8
+packages/common/src/index.ts
+  28992366ac95c961 1-14
+packages/runner/Dockerfile
+  28992366ac95c961 14,18,24-28,30-31,37-38,44,50
+packages/common/package.json
+  28992366ac95c961 1-19,23-24
+packages/proxy/tsconfig.json
+  28992366ac95c961 7-8
+packages/proxy/src/upstream.ts
+  28992366ac95c961 10-12,40,44,66,81,83
+packages/common/src/logger.ts
+  28992366ac95c961 1-33
+packages/common/tsconfig.json
+  28992366ac95c961 1-9
+packages/common/src/worklog.ts
+  28992366ac95c961 1-258
+packages/proxy/Dockerfile
+  28992366ac95c961 9,13,19-23,25-27,29,34
+packages/proxy/package.json
+  28992366ac95c961 15
+packages/runner/package.json
+  28992366ac95c961 15
+.gitignore
+  28992366ac95c961 15-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "985ad664950e9d2018a933c769c129a59af7255c",
+  "prompts": {
+    "28992366ac95c961": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32e775fb1ffeKJ6DDYKBOHJdvR",
+        "model": "github-copilot/claude-opus-4.6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1133,
+      "total_deletions": 297,
+      "accepted_lines": 946,
+      "overriden_lines": 0
+    }
+  }
+}
