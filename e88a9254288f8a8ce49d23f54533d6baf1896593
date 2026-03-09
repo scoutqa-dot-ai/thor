@@ -1,0 +1,51 @@
+.prettierrc
+  c7c4ebfd3bab2fec 1-7
+packages/runner/src/index.ts
+  c7c4ebfd3bab2fec 1-14
+packages/proxy/src/index.ts
+  c7c4ebfd3bab2fec 1-14
+pnpm-workspace.yaml
+  c7c4ebfd3bab2fec 1-2
+packages/runner/package.json
+  c7c4ebfd3bab2fec 1-22
+packages/proxy/tsconfig.json
+  c7c4ebfd3bab2fec 1-8
+package.json
+  c7c4ebfd3bab2fec 1-15,21-22
+AGENTS.md
+  c7c4ebfd3bab2fec 1-51,53-57
+packages/runner/tsconfig.json
+  c7c4ebfd3bab2fec 1-8
+.gitignore
+  c7c4ebfd3bab2fec 1-18
+.prettierignore
+  c7c4ebfd3bab2fec 1-3
+packages/proxy/package.json
+  c7c4ebfd3bab2fec 1-22
+docs/plan/2026030901_poc.md
+  c7c4ebfd3bab2fec 1-7,9-43,45-61,63-80,82-99,101-126,128-137,139
+tsconfig.base.json
+  c7c4ebfd3bab2fec 1-18
+.husky/pre-commit
+  c7c4ebfd3bab2fec 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e88a9254288f8a8ce49d23f54533d6baf1896593",
+  "prompts": {
+    "c7c4ebfd3bab2fec": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32f4b17d3ffeceCTrOqAt7u492",
+        "model": "github-copilot/claude-opus-4.6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 349,
+      "total_deletions": 4,
+      "accepted_lines": 343,
+      "overriden_lines": 3
+    }
+  }
+}
