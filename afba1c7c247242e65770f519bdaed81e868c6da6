@@ -1,0 +1,37 @@
+packages/proxy/Dockerfile
+  c7c4ebfd3bab2fec 1-28
+docs/plan/2026030901_poc.md
+  c7c4ebfd3bab2fec 111-122
+packages/runner/opencode.docker.json
+  c7c4ebfd3bab2fec 1-11
+packages/runner/Dockerfile
+  c7c4ebfd3bab2fec 1-44
+scripts/test-e2e.sh
+  c7c4ebfd3bab2fec 1-95
+.dockerignore
+  c7c4ebfd3bab2fec 1-14
+docker-compose.yml
+  c7c4ebfd3bab2fec 1-41
+package.json
+  c7c4ebfd3bab2fec 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "afba1c7c247242e65770f519bdaed81e868c6da6",
+  "prompts": {
+    "c7c4ebfd3bab2fec": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32f4b17d3ffeceCTrOqAt7u492",
+        "model": "github-copilot/claude-opus-4.6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 275,
+      "total_deletions": 29,
+      "accepted_lines": 246,
+      "overriden_lines": 0
+    }
+  }
+}
