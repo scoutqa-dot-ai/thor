@@ -1,6 +1,6 @@
-# Thor PoC — Docker Compose
+# Thor — Docker Compose
 #
-# Start:   LINEAR_API_KEY=xxx docker compose up --build -d
+# Start:   LINEAR_API_KEY=xxx POSTHOG_API_KEY=xxx docker compose up --build -d
 # Test:    ./scripts/test-e2e.sh
 # Logs:    docker compose logs -f
 # Stop:    docker compose down
@@ -14,6 +14,7 @@ services:
       - "3001:3001"
     environment:
       - LINEAR_API_KEY=${LINEAR_API_KEY}
+      - POSTHOG_API_KEY=${POSTHOG_API_KEY}
       - PORT=3001
     healthcheck:
       test:

@@ -17,8 +17,14 @@ export type PolicyDecision = "allow" | "block";
  */
 function matchPattern(pattern: string, toolName: string): boolean {
   if (pattern === "*") return true;
+  if (pattern.startsWith("*") && pattern.endsWith("*")) {
+    return toolName.includes(pattern.slice(1, -1));
+  }
   if (pattern.endsWith("*")) {
     return toolName.startsWith(pattern.slice(0, -1));
+  }
+  if (pattern.startsWith("*")) {
+    return toolName.endsWith(pattern.slice(1));
   }
   return pattern === toolName;
 }
