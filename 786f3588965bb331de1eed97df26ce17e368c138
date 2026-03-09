@@ -1,0 +1,39 @@
+packages/proxy/src/logger.ts
+  c7c4ebfd3bab2fec 1-58
+packages/proxy/src/config.ts
+  c7c4ebfd3bab2fec 1-62
+packages/proxy/proxy.config.json
+  c7c4ebfd3bab2fec 1-17
+packages/proxy/src/policy.ts
+  c7c4ebfd3bab2fec 1-134
+.gitignore
+  c7c4ebfd3bab2fec 12-13
+packages/proxy/src/index.ts
+  c7c4ebfd3bab2fec 2-16,19-62,66-73,75,81-131,133-139,141-142,144-155,157-166,168-269,272-274
+packages/proxy/src/upstream.ts
+  c7c4ebfd3bab2fec 1-74,76-84
+scripts/test-proxy.ts
+  c7c4ebfd3bab2fec 1-252
+package.json
+  c7c4ebfd3bab2fec 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "786f3588965bb331de1eed97df26ce17e368c138",
+  "prompts": {
+    "c7c4ebfd3bab2fec": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32f4b17d3ffeceCTrOqAt7u492",
+        "model": "github-copilot/claude-opus-4.6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 961,
+      "total_deletions": 91,
+      "accepted_lines": 864,
+      "overriden_lines": 2
+    }
+  }
+}
