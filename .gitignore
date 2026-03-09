@@ -9,6 +9,8 @@ dist/
 # Environment
 .env
 .env.*
+!.env.example
+test.sh
 
 # OS
 .DS_Store

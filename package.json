@@ -9,6 +9,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r typecheck",
+    "test:proxy": "npx tsx scripts/test-proxy.ts",
     "prepare": "husky"
   },
   "lint-staged": {
