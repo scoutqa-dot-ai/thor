@@ -1,0 +1,29 @@
+packages/proxy/src/policy.ts
+  59df72a8bbc4b414 20-22,26-27
+packages/proxy/proxy.config.json
+  59df72a8bbc4b414 8-13,20-34
+.env.example
+  59df72a8bbc4b414 7-10
+docker-compose.yml
+  59df72a8bbc4b414 3,17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5217dbd542a50c44c5da563a6dc85537a064f4dc",
+  "prompts": {
+    "59df72a8bbc4b414": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32e62d811ffeVt7X1CPrK2eRvg",
+        "model": "github-copilot/claude-opus-4.6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 329,
+      "total_deletions": 207,
+      "accepted_lines": 123,
+      "overriden_lines": 0
+    }
+  }
+}
