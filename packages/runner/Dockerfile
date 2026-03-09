@@ -11,34 +11,40 @@ FROM base AS build
 WORKDIR /app
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
+COPY packages/common/ packages/common/
 COPY packages/runner/ packages/runner/
 
 RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @thor/common build
 RUN pnpm --filter @thor/runner build
 
 # --- Production stage ---
 FROM base AS production
-WORKDIR /app
 
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY packages/runner/package.json packages/runner/
-RUN pnpm install --frozen-lockfile --prod --ignore-scripts
+# App code lives in /app; /workspace is the runtime cwd (bind-mounted from host).
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml /app/
+COPY packages/common/package.json /app/packages/common/
+COPY packages/runner/package.json /app/packages/runner/
+RUN cd /app && pnpm install --frozen-lockfile --prod --ignore-scripts
 
-COPY --from=build /app/packages/runner/dist/ packages/runner/dist/
+COPY --from=build /app/packages/common/dist/ /app/packages/common/dist/
+COPY --from=build /app/packages/runner/dist/ /app/packages/runner/dist/
 
 # Global-level opencode config — no project-level config needed.
 # Uses opencode/big-pickle (free, no auth required).
 COPY packages/runner/opencode.docker.json /root/.config/opencode/opencode.json
 
-# Initialize git repo so opencode doesn't complain
-RUN git init
+# Initialize git repo in /workspace so opencode doesn't complain
+RUN mkdir -p /workspace && git init /workspace
 
 # Named volume for opencode data (sessions, db, logs).
 # Config is baked in at /root/.config/opencode/ above.
 VOLUME ["/root/.local/share/opencode"]
 
+WORKDIR /workspace
+
 ENV PORT=3000
 ENV OPENCODE_PORT=4096
 EXPOSE 3000
 
-CMD ["node", "packages/runner/dist/index.js"]
+CMD ["node", "/app/packages/runner/dist/index.js"]

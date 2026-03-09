@@ -11,9 +11,11 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { loadConfig, type ProxyConfig } from "./config.js";
-import { logError, logInfo, logToolCall } from "./logger.js";
 import { evaluatePolicy, validatePolicy, type UpstreamToolSet } from "./policy.js";
 import { connectAllUpstreams, disconnectAll, type UpstreamConnection } from "./upstream.js";
+import { writeToolCallLog, createLogger, logInfo, logError } from "@thor/common";
+
+const log = createLogger("proxy");
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const CONFIG_PATH =
@@ -22,7 +24,7 @@ const CONFIG_PATH =
 // --- Load config ---
 const rawConfig: ProxyConfig = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
 const config = loadConfig(rawConfig);
-logInfo("config_loaded", { upstreams: Object.keys(config.upstreams) });
+logInfo(log, "config_loaded", { upstreams: Object.keys(config.upstreams) });
 
 // --- State ---
 let upstreams: Map<string, UpstreamConnection> = new Map();
@@ -91,7 +93,18 @@ function createProxyServer(): Server {
     const decision = evaluatePolicy(config.policy, mapping.upstream, mapping.originalName);
 
     if (decision === "block") {
-      logToolCall(mapping.upstream, mapping.originalName, "blocked");
+      logInfo(log, "tool_call", {
+        upstream: mapping.upstream,
+        tool: mapping.originalName,
+        decision: "blocked",
+      });
+      writeToolCallLog({
+        upstream: mapping.upstream,
+        tool: mapping.originalName,
+        proxyToolName: toolName,
+        decision: "blocked",
+        args,
+      });
       return {
         content: [
           {
@@ -119,17 +132,39 @@ function createProxyServer(): Server {
         arguments: args,
       });
       const duration = Date.now() - start;
-      logToolCall(mapping.upstream, mapping.originalName, "allowed", duration);
+      logInfo(log, "tool_call", {
+        upstream: mapping.upstream,
+        tool: mapping.originalName,
+        decision: "allowed",
+        durationMs: duration,
+      });
+      writeToolCallLog({
+        upstream: mapping.upstream,
+        tool: mapping.originalName,
+        proxyToolName: toolName,
+        decision: "allowed",
+        args,
+        result,
+        durationMs: duration,
+      });
       return result as CallToolResult;
     } catch (err) {
       const duration = Date.now() - start;
-      logToolCall(
-        mapping.upstream,
-        mapping.originalName,
-        "allowed",
-        duration,
-        err instanceof Error ? err.message : String(err),
-      );
+      logError(log, "tool_call", err instanceof Error ? err.message : String(err), {
+        upstream: mapping.upstream,
+        tool: mapping.originalName,
+        decision: "allowed",
+        durationMs: duration,
+      });
+      writeToolCallLog({
+        upstream: mapping.upstream,
+        tool: mapping.originalName,
+        proxyToolName: toolName,
+        decision: "allowed",
+        args,
+        durationMs: duration,
+        error: err instanceof Error ? err.message : String(err),
+      });
       return {
         content: [
           {
@@ -186,13 +221,13 @@ app.post("/mcp", async (req, res) => {
         sessionIdGenerator: () => newSessionId,
         onsessioninitialized: (sid) => {
           transports.set(sid, transport);
-          logInfo("session_created", { sessionId: sid });
+          logInfo(log, "session_created", { sessionId: sid });
         },
       });
 
       transport.onclose = () => {
         transports.delete(newSessionId);
-        logInfo("session_closed", { sessionId: newSessionId });
+        logInfo(log, "session_closed", { sessionId: newSessionId });
       };
 
       await server.connect(transport);
@@ -203,7 +238,7 @@ app.post("/mcp", async (req, res) => {
     // Not an initialize request and no valid session
     res.status(400).json({ error: "No valid session. Send an initialize request first." });
   } catch (err) {
-    logError("mcp_request_error", err);
+    logError(log, "mcp_request_error", err);
     if (!res.headersSent) {
       res.status(500).json({ error: "Internal server error" });
     }
@@ -234,7 +269,7 @@ app.delete("/mcp", async (req, res) => {
 
 // --- Startup ---
 async function start(): Promise<void> {
-  logInfo("proxy_starting", { port: PORT });
+  logInfo(log, "proxy_starting", { port: PORT });
 
   // Connect to all upstreams
   upstreams = await connectAllUpstreams(config.upstreams);
@@ -248,31 +283,31 @@ async function start(): Promise<void> {
     tools: conn.tools.map((t) => t.name),
   }));
   validatePolicy(config.policy, toolSets);
-  logInfo("policy_validated", {
+  logInfo(log, "policy_validated", {
     upstreams: toolSets.map((ts) => ts.upstream),
     totalTools: toolSets.reduce((sum, ts) => sum + ts.tools.length, 0),
     totalRules: config.policy.rules.length,
   });
 
   app.listen(PORT, () => {
-    logInfo("proxy_listening", { port: PORT });
+    logInfo(log, "proxy_listening", { port: PORT });
   });
 }
 
 // --- Graceful shutdown ---
 process.on("SIGTERM", async () => {
-  logInfo("proxy_shutting_down");
+  logInfo(log, "proxy_shutting_down");
   await disconnectAll(upstreams);
   process.exit(0);
 });
 
 process.on("SIGINT", async () => {
-  logInfo("proxy_shutting_down");
+  logInfo(log, "proxy_shutting_down");
   await disconnectAll(upstreams);
   process.exit(0);
 });
 
 start().catch((err) => {
-  logError("proxy_start_failed", err);
+  logError(log, "proxy_start_failed", err);
   process.exit(1);
 });

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.2.22",
+    "@thor/common": "workspace:*",
     "express": "^5.1.0"
   },
   "devDependencies": {

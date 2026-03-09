@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@thor/common": "workspace:*",
     "express": "^5.1.0"
   },
   "devDependencies": {

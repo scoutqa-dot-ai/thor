@@ -12,6 +12,9 @@ dist/
 !.env.example
 test.sh
 
+# TypeScript incremental build
+*.tsbuildinfo
+
 # OS
 .DS_Store
 

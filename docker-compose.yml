@@ -16,6 +16,8 @@ services:
       - LINEAR_API_KEY=${LINEAR_API_KEY}
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
       - PORT=3001
+    volumes:
+      - ./workspace:/workspace
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>{if(!r.ok)throw 1})"]
@@ -35,6 +37,7 @@ services:
       - OPENCODE_HOST=127.0.0.1
     volumes:
       - opencode-data:/root/.local/share/opencode
+      - ./workspace:/workspace
     depends_on:
       proxy:
         condition: service_healthy

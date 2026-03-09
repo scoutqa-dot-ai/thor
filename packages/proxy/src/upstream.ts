@@ -7,7 +7,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { UpstreamConfig } from "./config.js";
-import { logError, logInfo } from "./logger.js";
+import { createLogger, logInfo, logError } from "@thor/common";
+
+const log = createLogger("proxy");
 
 export interface UpstreamConnection {
   name: string;
@@ -35,11 +37,11 @@ export async function connectUpstream(
   });
 
   await client.connect(transport);
-  logInfo("upstream_connected", { upstream: name, url: config.url });
+  logInfo(log, "upstream_connected", { upstream: name, url: config.url });
 
   // Fetch available tools
   const { tools } = await client.listTools();
-  logInfo("upstream_tools_listed", {
+  logInfo(log, "upstream_tools_listed", {
     upstream: name,
     toolCount: tools.length,
     tools: tools.map((t) => t.name),
@@ -61,7 +63,7 @@ export async function connectAllUpstreams(
       const conn = await connectUpstream(name, config);
       connections.set(name, conn);
     } catch (err) {
-      logError("upstream_connect_failed", err, { upstream: name });
+      logError(log, "upstream_connect_failed", err, { upstream: name });
       throw err;
     }
   }
@@ -76,9 +78,9 @@ export async function disconnectAll(connections: Map<string, UpstreamConnection>
   for (const [name, conn] of connections) {
     try {
       await conn.client.close();
-      logInfo("upstream_disconnected", { upstream: name });
+      logInfo(log, "upstream_disconnected", { upstream: name });
     } catch (err) {
-      logError("upstream_disconnect_failed", err, { upstream: name });
+      logError(log, "upstream_disconnect_failed", err, { upstream: name });
     }
   }
 }
