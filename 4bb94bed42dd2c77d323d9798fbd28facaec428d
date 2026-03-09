@@ -1,0 +1,25 @@
+opencode.json
+  c7c4ebfd3bab2fec 1-10
+packages/runner/src/index.ts
+  c7c4ebfd3bab2fec 2-4,7-51,53-55,57-84,87-101,103-196,198,201,206-218
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4bb94bed42dd2c77d323d9798fbd28facaec428d",
+  "prompts": {
+    "c7c4ebfd3bab2fec": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32f4b17d3ffeceCTrOqAt7u492",
+        "model": "github-copilot/claude-opus-4.6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 231,
+      "total_deletions": 17,
+      "accepted_lines": 216,
+      "overriden_lines": 0
+    }
+  }
+}
