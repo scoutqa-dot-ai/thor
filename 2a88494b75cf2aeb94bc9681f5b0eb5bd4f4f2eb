@@ -1,0 +1,23 @@
+docs/plan/2026031003_slack-mcp.md
+  49d5d8f397df7d0c 23,176-177,183,185,188-189,192-195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2a88494b75cf2aeb94bc9681f5b0eb5bd4f4f2eb",
+  "prompts": {
+    "49d5d8f397df7d0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d667b05a-19e7-47c4-958b-568d45ae3359",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 28,
+      "total_deletions": 12,
+      "accepted_lines": 26,
+      "overriden_lines": 0
+    }
+  }
+}
