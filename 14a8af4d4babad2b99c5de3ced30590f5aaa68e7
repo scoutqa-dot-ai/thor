@@ -1,0 +1,45 @@
+packages/common/src/notes.test.ts
+  f9134954739608f9 1-239
+packages/runner/src/index.ts
+  f9134954739608f9 18-20,22,129-130,236,251-253,255-256,258-296,300-308,415-426,441,452
+docker-compose.yml
+  f9134954739608f9 38
+packages/common/src/index.ts
+  f9134954739608f9 1-2,5
+package.json
+  f9134954739608f9 12-13
+packages/common/src/notes.ts
+  f9134954739608f9 1-181
+packages/runner/src/session-map.ts
+  f9134954739608f9 1-112
+packages/runner/src/session-map.test.ts
+  f9134954739608f9 1-111
+docs/plan/2026031001_memory-tiers.md
+  f9134954739608f9 1-166
+packages/common/tsconfig.json
+  f9134954739608f9 8-9
+scripts/test-e2e.sh
+  f9134954739608f9 13,58-71,94-188
+packages/runner/tsconfig.json
+  f9134954739608f9 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "14a8af4d4babad2b99c5de3ced30590f5aaa68e7",
+  "prompts": {
+    "f9134954739608f9": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32c74efffffehMQG0xNNfULWMe",
+        "model": "opencode/minimax-m2.5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1382,
+      "total_deletions": 431,
+      "accepted_lines": 1237,
+      "overriden_lines": 0
+    }
+  }
+}
