@@ -1,0 +1,37 @@
+packages/runner/src/index.ts
+  49d5d8f397df7d0c 3,107-109,111,113-116,236-238,242,301,307
+docs/plan/2026031002_slack-app.md
+  49d5d8f397df7d0c 18,21-23,33-41,45,55,61-62,66,69-75,77,79-81,90,92-93,116,122-127,131-133,135-137,139,143-147,151-153
+packages/gateway/src/service.ts
+  49d5d8f397df7d0c 1,18-31,37,40,42,59-60
+packages/gateway/src/app.test.ts
+  49d5d8f397df7d0c 2-4,7,15,17-18,23-25,37,39,43,161,189,249,278-279,282,313,342,346,392-581
+packages/gateway/src/app.ts
+  49d5d8f397df7d0c 2,4-5,8-9,14,19,22-23,37-39,42,60-83,85-95,97-105,175,179-182,202,207-209
+packages/gateway/src/queue.test.ts
+  49d5d8f397df7d0c 1-232
+packages/gateway/src/slack.ts
+  49d5d8f397df7d0c 134-137
+packages/gateway/src/queue.ts
+  49d5d8f397df7d0c 1-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "21a0959f35492a46b110e51d4a320597ce6e1179",
+  "prompts": {
+    "49d5d8f397df7d0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d667b05a-19e7-47c4-958b-568d45ae3359",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1194,
+      "total_deletions": 484,
+      "accepted_lines": 911,
+      "overriden_lines": 1
+    }
+  }
+}
