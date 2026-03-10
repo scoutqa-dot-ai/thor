@@ -1,10 +1,5 @@
 FROM node:22-slim AS base
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
-RUN apt-get update && apt-get install -y --no-install-recommends curl git ca-certificates && rm -rf /var/lib/apt/lists/*
-
-# --- Install OpenCode binary ---
-RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
-ENV PATH="/root/.opencode/bin:$PATH"
 
 # --- Build stage ---
 FROM base AS build
@@ -30,21 +25,9 @@ RUN cd /app && pnpm install --frozen-lockfile --prod --ignore-scripts
 COPY --from=build /app/packages/common/dist/ /app/packages/common/dist/
 COPY --from=build /app/packages/runner/dist/ /app/packages/runner/dist/
 
-# Global-level opencode config — no project-level config needed.
-# Uses opencode/big-pickle (free, no auth required).
-COPY packages/runner/opencode.docker.json /root/.config/opencode/opencode.json
-
-# Initialize git repo in /workspace so opencode doesn't complain
-RUN mkdir -p /workspace && git init /workspace
-
-# Named volume for opencode data (sessions, db, logs).
-# Config is baked in at /root/.config/opencode/ above.
-VOLUME ["/root/.local/share/opencode"]
-
 WORKDIR /workspace
 
 ENV PORT=3000
-ENV OPENCODE_PORT=4096
 EXPOSE 3000
 
 CMD ["node", "/app/packages/runner/dist/index.js"]

@@ -2,20 +2,28 @@
 #
 # End-to-end test for Thor PoC (Phase 4).
 #
-# Tests the full chain: curl -> runner -> OpenCode -> proxy -> Linear MCP
+# Tests the full chain: curl -> runner -> OpenCode service -> proxy -> Linear MCP
 #
 # Prerequisites:
 #   - Both services running (either `pnpm dev` with LINEAR_API_KEY, or `docker compose up`)
 #   - OpenCode configured with an LLM provider in the runner environment
 #
 # Usage:
-#   ./scripts/test-e2e.sh                    # default: http://localhost:3000
-#   RUNNER_URL=http://localhost:3000 OPENCODE_URL=http://localhost:4096 ./scripts/test-e2e.sh
+#   OPENCODE_SERVER_PASSWORD=... ./scripts/test-e2e.sh
+#   RUNNER_URL=http://localhost:3000 OPENCODE_URL=http://localhost:4096 OPENCODE_SERVER_PASSWORD=... ./scripts/test-e2e.sh
 #
 set -euo pipefail
 
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 PROXY_URL="${PROXY_URL:-http://localhost:3001}"
+OPENCODE_URL="${OPENCODE_URL:-http://localhost:4096}"
+OPENCODE_SERVER_USERNAME="${OPENCODE_SERVER_USERNAME:-opencode}"
+OPENCODE_SERVER_PASSWORD="${OPENCODE_SERVER_PASSWORD:-}"
+
+if [[ -z "$OPENCODE_SERVER_PASSWORD" ]]; then
+  echo "OPENCODE_SERVER_PASSWORD is required"
+  exit 1
+fi
 
 passed=0
 failed=0
@@ -47,7 +55,7 @@ assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy"
 
 echo ""
 echo "=== Trigger: List Tools ==="
-echo "  (this may take a moment on first run — OpenCode server starts up)"
+echo "  (this may take a moment while the agent session runs)"
 
 list_response=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
@@ -137,8 +145,10 @@ if [[ -f "$NOTES_FILE" ]]; then
 fi
 
 # 4c. Verify session exists in OpenCode via its native API
-OPENCODE_URL="${OPENCODE_URL:-http://localhost:4096}"
-oc_session=$(curl -sf "$OPENCODE_URL/session/$session1" 2>/dev/null || echo '{}')
+oc_session=$(
+  curl -sf -u "$OPENCODE_SERVER_USERNAME:$OPENCODE_SERVER_PASSWORD" \
+    "$OPENCODE_URL/session/$session1" 2>/dev/null || echo '{}'
+)
 oc_session_id=$(echo "$oc_session" | node -e "
   const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
   console.log(d.id || '');

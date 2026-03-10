@@ -1,6 +1,5 @@
 import express from "express";
 import { createOpencodeClient } from "@opencode-ai/sdk";
-import { spawn, type ChildProcess } from "node:child_process";
 import type {
   Event,
   Part,
@@ -24,80 +23,56 @@ import { getSession, setSession, touchSession, removeSession } from "./session-m
 const log = createLogger("runner");
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
-const OPENCODE_PORT = parseInt(process.env.OPENCODE_PORT || "4096", 10);
-const OPENCODE_HOST = process.env.OPENCODE_HOST || "127.0.0.1";
+const LEGACY_OPENCODE_PORT = process.env.OPENCODE_PORT || "4096";
+const LEGACY_OPENCODE_HOST = process.env.OPENCODE_HOST || "127.0.0.1";
+const OPENCODE_URL = (
+  process.env.OPENCODE_URL || `http://${LEGACY_OPENCODE_HOST}:${LEGACY_OPENCODE_PORT}`
+).replace(/\/$/, "");
+const OPENCODE_USERNAME = process.env.OPENCODE_USERNAME || "opencode";
+const OPENCODE_PASSWORD = process.env.OPENCODE_PASSWORD || "";
+const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
 
 /** Timeout for waiting for agent to finish processing a prompt (ms). */
 const PROMPT_TIMEOUT = parseInt(process.env.PROMPT_TIMEOUT || "120000", 10);
 
-// --- OpenCode server management ---
+function getOpencodeHeaders(): Record<string, string> | undefined {
+  if (!OPENCODE_PASSWORD) return undefined;
 
-let opencodeProcess: ChildProcess | null = null;
-let opencodeReady = false;
+  const credentials = Buffer.from(`${OPENCODE_USERNAME}:${OPENCODE_PASSWORD}`).toString("base64");
+  return {
+    Authorization: `Basic ${credentials}`,
+  };
+}
 
-/**
- * Start the OpenCode headless server if not already running.
- */
-async function ensureOpencode(): Promise<void> {
-  if (opencodeReady) {
-    try {
-      const res = await fetch(`http://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health`);
-      if (res.ok) return;
-    } catch {
-      opencodeReady = false;
-    }
+async function fetchOpencode(path: string): Promise<Response> {
+  return fetch(`${OPENCODE_URL}${path}`, {
+    headers: getOpencodeHeaders(),
+  });
+}
+
+async function isOpencodeReachable(): Promise<boolean> {
+  try {
+    const response = await fetchOpencode("/global/health");
+    return response.ok;
+  } catch {
+    return false;
   }
+}
 
-  if (opencodeProcess) {
-    opencodeProcess.kill("SIGTERM");
-    opencodeProcess = null;
-  }
+async function ensureOpencodeAvailable(): Promise<void> {
+  const deadline = Date.now() + OPENCODE_CONNECT_TIMEOUT;
 
-  logInfo(log, "opencode_starting", { port: OPENCODE_PORT });
-
-  opencodeProcess = spawn(
-    "opencode",
-    ["serve", "--port", String(OPENCODE_PORT), "--hostname", OPENCODE_HOST],
-    {
-      stdio: "pipe",
-      env: { ...process.env },
-    },
-  );
-
-  opencodeProcess.stdout?.on("data", (data: Buffer) => {
-    // Forward opencode stdout as structured log
-    const text = data.toString().trim();
-    if (text) logInfo(log, "opencode_stdout", { message: text });
-  });
-
-  opencodeProcess.stderr?.on("data", (data: Buffer) => {
-    const text = data.toString().trim();
-    if (text) logError(log, "opencode_stderr", text);
-  });
-
-  opencodeProcess.on("exit", (code) => {
-    logInfo(log, "opencode_exit", { code });
-    opencodeReady = false;
-    opencodeProcess = null;
-  });
-
-  // Wait for server to be ready
-  const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`http://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health`);
-      if (res.ok) {
-        opencodeReady = true;
-        logInfo(log, "opencode_ready", { port: OPENCODE_PORT });
-        return;
-      }
-    } catch {
-      // Not ready yet
+    if (await isOpencodeReachable()) {
+      return;
     }
-    await new Promise((r) => setTimeout(r, 500));
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
-  throw new Error("OpenCode server failed to start within 15s");
+  throw new Error(
+    `OpenCode server at ${OPENCODE_URL} was not reachable within ${OPENCODE_CONNECT_TIMEOUT}ms`,
+  );
 }
 
 // --- Express app ---
@@ -106,18 +81,14 @@ const app = express();
 app.use(express.json());
 
 app.get("/health", async (_req, res) => {
-  let opencodeHealthy = false;
-  try {
-    const r = await fetch(`http://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health`);
-    opencodeHealthy = r.ok;
-  } catch {
-    // not running
-  }
+  const opencodeHealthy = await isOpencodeReachable();
 
   res.json({
     status: "ok",
     service: "runner",
     opencode: opencodeHealthy ? "connected" : "disconnected",
+    opencodeUrl: OPENCODE_URL,
+    opencodeAuth: OPENCODE_PASSWORD ? "basic" : "none",
   });
 });
 
@@ -241,10 +212,11 @@ app.post("/trigger", async (req, res) => {
   }
 
   try {
-    await ensureOpencode();
+    await ensureOpencodeAvailable();
 
     const client = createOpencodeClient({
-      baseUrl: `http://${OPENCODE_HOST}:${OPENCODE_PORT}`,
+      baseUrl: OPENCODE_URL,
+      headers: getOpencodeHeaders(),
     });
 
     // --- Session resolution: resume existing or create new ---
@@ -485,18 +457,9 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
 // --- Startup ---
 
 app.listen(PORT, () => {
-  logInfo(log, "runner_started", { port: PORT });
+  logInfo(log, "runner_started", {
+    port: PORT,
+    opencodeUrl: OPENCODE_URL,
+    opencodeAuth: OPENCODE_PASSWORD ? "basic" : "none",
+  });
 });
-
-// --- Graceful shutdown ---
-
-function shutdown(): void {
-  logInfo(log, "runner_shutdown");
-  if (opencodeProcess) {
-    opencodeProcess.kill("SIGTERM");
-  }
-  process.exit(0);
-}
-
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
