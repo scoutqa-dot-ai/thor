@@ -1,0 +1,27 @@
+packages/gateway/src/app.ts
+  49d5d8f397df7d0c 89-90,93
+packages/gateway/src/app.test.ts
+  49d5d8f397df7d0c 148,151,190,193-198,210,212-213,255-258,355,392,395-398,420,477,488,491
+packages/gateway/src/service.ts
+  49d5d8f397df7d0c 27-37,43-45,48-50,52-54,57,63,68-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d9cf555cea4c1cea3a4e0a35a4c22c6a9cd492c2",
+  "prompts": {
+    "49d5d8f397df7d0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d667b05a-19e7-47c4-958b-568d45ae3359",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 104,
+      "total_deletions": 214,
+      "accepted_lines": 57,
+      "overriden_lines": 2
+    }
+  }
+}
