@@ -1,0 +1,140 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { z } from "zod/v4";
+
+const SLACK_SIGNATURE_VERSION = "v0";
+
+const SlackAppMentionEventSchema = z.object({
+  type: z.literal("app_mention"),
+  user: z.string(),
+  text: z.string(),
+  ts: z.string(),
+  channel: z.string(),
+  thread_ts: z.string().optional(),
+  bot_id: z.string().optional(),
+});
+
+const SlackMessageEventSchema = z.object({
+  type: z.literal("message"),
+  user: z.string().optional(),
+  text: z.string().optional(),
+  ts: z.string(),
+  channel: z.string(),
+  thread_ts: z.string().optional(),
+  channel_type: z.enum(["channel", "im", "group", "mpim"]).optional(),
+  bot_id: z.string().optional(),
+  subtype: z.string().optional(),
+});
+
+const SlackReactionEventSchema = z.object({
+  type: z.enum(["reaction_added", "reaction_removed"]),
+  user: z.string(),
+  reaction: z.string(),
+  item: z.object({
+    type: z.string(),
+    channel: z.string().optional(),
+    ts: z.string().optional(),
+  }),
+  event_ts: z.string(),
+  item_user: z.string().optional(),
+});
+
+const SlackBotEventSchema = z.union([
+  SlackAppMentionEventSchema,
+  SlackMessageEventSchema,
+  SlackReactionEventSchema,
+]);
+
+export const SlackEventEnvelopeSchema = z.object({
+  type: z.literal("event_callback"),
+  event_id: z.string(),
+  team_id: z.string(),
+  event: SlackBotEventSchema,
+});
+
+export const SlackUrlVerificationSchema = z.object({
+  type: z.literal("url_verification"),
+  challenge: z.string(),
+});
+
+export const SlackInteractivityPayloadSchema = z.object({
+  type: z.string().optional(),
+});
+
+export type SlackAppMentionEvent = z.infer<typeof SlackAppMentionEventSchema>;
+export type SlackMessageEvent = z.infer<typeof SlackMessageEventSchema>;
+export type SlackReactionEvent = z.infer<typeof SlackReactionEventSchema>;
+export type SlackBotEvent = z.infer<typeof SlackBotEventSchema>;
+export type SlackEventEnvelope = z.infer<typeof SlackEventEnvelopeSchema>;
+export type SlackUrlVerification = z.infer<typeof SlackUrlVerificationSchema>;
+
+export function verifySlackSignature(input: {
+  signingSecret: string;
+  rawBody: string;
+  signature: string | undefined;
+  timestamp: string | undefined;
+  nowSeconds?: number;
+  toleranceSeconds?: number;
+}): boolean {
+  const { signingSecret, rawBody, signature, timestamp } = input;
+  const nowSeconds = input.nowSeconds ?? Math.floor(Date.now() / 1000);
+  const toleranceSeconds = input.toleranceSeconds ?? 60 * 5;
+
+  if (!signingSecret || !signature || !timestamp) {
+    return false;
+  }
+
+  const requestTimestamp = Number(timestamp);
+  if (!Number.isFinite(requestTimestamp)) {
+    return false;
+  }
+
+  if (Math.abs(nowSeconds - requestTimestamp) > toleranceSeconds) {
+    return false;
+  }
+
+  const basestring = `${SLACK_SIGNATURE_VERSION}:${timestamp}:${rawBody}`;
+  const expected = `${SLACK_SIGNATURE_VERSION}=${createHmac("sha256", signingSecret).update(basestring).digest("hex")}`;
+
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  const actualBuffer = Buffer.from(signature, "utf8");
+  if (expectedBuffer.length !== actualBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(expectedBuffer, actualBuffer);
+}
+
+export type SlackThreadEvent = SlackAppMentionEvent | SlackMessageEvent;
+
+export function normalizeSlackPrompt(text: string): string {
+  return text.replace(/^<@[^>]+>\s*/, "").trim();
+}
+
+export function getSlackThreadTs(event: SlackThreadEvent): string {
+  return event.thread_ts || event.ts;
+}
+
+export function getSlackCorrelationKey(event: SlackThreadEvent): string {
+  return `slack:thread:${getSlackThreadTs(event)}`;
+}
+
+export function formatSlackReply(text: string, maxLength = 3000): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return "Run completed, but no text response was returned.";
+  }
+
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, maxLength - 3)}...`;
+}
+
+export function parseSlackTs(ts: string): number {
+  return Math.floor(parseFloat(ts) * 1000);
+}
+
+export function isSupportedSlackBotEvent(event: unknown): event is SlackBotEvent {
+  return SlackBotEventSchema.safeParse(event).success;
+}

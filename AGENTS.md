@@ -31,6 +31,7 @@ thor/
 │   └── plan/                  # Implementation plans
 ├── packages/
 │   ├── proxy/                 # MCP policy proxy
+│   ├── gateway/               # Inbound webhook gateway (Slack, etc.)
 │   └── runner/                # Agent runner + trigger endpoint
 ├── scripts/                   # Test and utility scripts
 ├── docker-compose.yml

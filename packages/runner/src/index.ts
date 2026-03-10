@@ -1,5 +1,6 @@
 import express from "express";
 import { createOpencodeClient } from "@opencode-ai/sdk";
+import { z } from "zod/v4";
 import type {
   Event,
   Part,
@@ -18,7 +19,13 @@ import {
   appendTrigger,
   appendSummary,
 } from "@thor/common";
-import { getSession, setSession, touchSession, removeSession } from "./session-map.js";
+import {
+  getSession,
+  setSession,
+  touchSession,
+  removeSession,
+  listSessions,
+} from "./session-map.js";
 
 const log = createLogger("runner");
 
@@ -34,6 +41,9 @@ const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT |
 
 /** Timeout for waiting for agent to finish processing a prompt (ms). */
 const PROMPT_TIMEOUT = parseInt(process.env.PROMPT_TIMEOUT || "120000", 10);
+
+/** Timeout for waiting for a busy session to become idle after abort (ms). */
+const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
 
 function getOpencodeHeaders(): Record<string, string> | undefined {
   if (!OPENCODE_PASSWORD) return undefined;
@@ -94,14 +104,16 @@ app.get("/health", async (_req, res) => {
 
 // --- Trigger endpoint ---
 
-interface TriggerRequest {
-  prompt: string;
-  model?: string;
+const TriggerRequestSchema = z.object({
+  prompt: z.string(),
+  model: z.string().optional(),
   /** Correlation key for session continuity. Same key = same OpenCode session. */
-  correlationKey?: string;
+  correlationKey: z.string().optional(),
   /** Direct session ID to resume (bypasses correlation key lookup). */
-  sessionId?: string;
-}
+  sessionId: z.string().optional(),
+});
+
+type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
 
 // ---------------------------------------------------------------------------
 // Event filtering — what gets a JSON file, what gets a stdout log, what's ignored
@@ -190,6 +202,28 @@ function logPartToStdout(sessionId: string, part: Part): void {
 }
 
 /**
+ * Session lookup — returns the session entry for a correlation key, or 404.
+ *
+ * GET /sessions?correlationKey=slack:thread:123
+ * GET /sessions (no filter) — returns all entries.
+ */
+app.get("/sessions", (req, res) => {
+  const correlationKey = req.query.correlationKey;
+
+  if (typeof correlationKey === "string") {
+    const entry = getSession(correlationKey);
+    if (!entry) {
+      res.status(404).json({ error: "No session for this correlation key" });
+      return;
+    }
+    res.json({ correlationKey, ...entry });
+    return;
+  }
+
+  res.json(listSessions());
+});
+
+/**
  * Stream-based prompt handler.
  *
  * 1. Creates a session and fires promptAsync (fire-and-forget, returns 204).
@@ -199,17 +233,13 @@ function logPartToStdout(sessionId: string, part: Part): void {
  * 5. Returns the aggregated response to the HTTP caller.
  */
 app.post("/trigger", async (req, res) => {
-  const {
-    prompt,
-    model,
-    correlationKey,
-    sessionId: requestedSessionId,
-  } = req.body as TriggerRequest;
-
-  if (!prompt || typeof prompt !== "string") {
-    res.status(400).json({ error: "Missing or invalid 'prompt' field" });
+  const parsed = TriggerRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid request body", details: parsed.error.issues });
     return;
   }
+
+  let { prompt, model, correlationKey, sessionId: requestedSessionId } = parsed.data;
 
   try {
     await ensureOpencodeAvailable();
@@ -266,6 +296,37 @@ app.post("/trigger", async (req, res) => {
       sessionId = session.data.id;
       if (correlationKey) setSession(correlationKey, sessionId);
       logInfo(log, "session_created", { sessionId, correlationKey });
+    }
+
+    // --- If resuming a busy session, abort and wait for idle ---
+    if (resumed) {
+      const statusResult = await client.session.status({});
+      const sessionStatus = statusResult.data?.[sessionId];
+
+      if (sessionStatus?.type === "busy") {
+        logInfo(log, "session_busy_aborting", { sessionId, correlationKey });
+        await client.session.abort({ path: { id: sessionId } });
+
+        const { stream: abortStream } = await client.event.subscribe();
+        const abortDeadline = Date.now() + ABORT_TIMEOUT;
+        let aborted = false;
+
+        for await (const event of abortStream) {
+          if (Date.now() > abortDeadline) break;
+          if (event.type === "session.idle" && event.properties.sessionID === sessionId) {
+            aborted = true;
+            break;
+          }
+        }
+
+        if (!aborted) {
+          logError(log, "session_abort_timeout", `Session did not idle within ${ABORT_TIMEOUT}ms`, {
+            sessionId,
+          });
+        } else {
+          logInfo(log, "session_abort_complete", { sessionId });
+        }
+      }
     }
 
     // --- Notes: create or append, seed prompt with prior context ---

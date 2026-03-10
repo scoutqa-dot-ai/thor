@@ -1,6 +1,7 @@
 # Thor — Docker Compose
 #
 # Start:   LINEAR_API_KEY=xxx POSTHOG_API_KEY=xxx OPENCODE_SERVER_PASSWORD=xxx docker compose up --build -d
+# Slack:   add SLACK_SIGNING_SECRET and SLACK_BOT_TOKEN to enable the gateway service
 # Test:    ./scripts/test-e2e.sh
 # Logs:    docker compose logs -f
 # Stop:    docker compose down
@@ -66,6 +67,30 @@ services:
         condition: service_healthy
       opencode:
         condition: service_healthy
+
+  gateway:
+    build:
+      context: .
+      dockerfile: packages/gateway/Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - RUNNER_URL=${RUNNER_URL_FOR_GATEWAY:-http://runner:3000}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      - SLACK_TIMESTAMP_TOLERANCE_SECONDS=${SLACK_TIMESTAMP_TOLERANCE_SECONDS:-300}
+    volumes:
+      - ./workspace:/workspace
+    depends_on:
+      runner:
+        condition: service_started
+    healthcheck:
+      test:
+        ["CMD", "node", "-e", "fetch('http://localhost:3002/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   opencode-data:
