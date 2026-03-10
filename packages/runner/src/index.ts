@@ -12,13 +12,14 @@ import type {
   ToolStateError,
 } from "@opencode-ai/sdk";
 import {
-  writePartLog,
-  writeSessionSummaryLog,
-  writeTriggerLog,
   createLogger,
   logInfo,
   logError,
+  createNotes,
+  appendTrigger,
+  appendSummary,
 } from "@thor/common";
+import { getSession, setSession, touchSession, removeSession } from "./session-map.js";
 
 const log = createLogger("runner");
 
@@ -120,9 +121,15 @@ app.get("/health", async (_req, res) => {
   });
 });
 
+// --- Trigger endpoint ---
+
 interface TriggerRequest {
   prompt: string;
   model?: string;
+  /** Correlation key for session continuity. Same key = same OpenCode session. */
+  correlationKey?: string;
+  /** Direct session ID to resume (bypasses correlation key lookup). */
+  sessionId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,20 +148,7 @@ interface TriggerRequest {
 // | reasoning       | No         | No                      | Internal CoT, fires many times         |
 // | snapshot/patch  | No         | No                      | Infrastructure noise                   |
 // | compaction      | No         | No                      | Infrastructure noise                   |
-// | retry           | No         | Yes (attempt + error)   | Worth noting but no file needed        |
-// | subtask         | No         | Yes (brief)             | Worth noting a subtask was spawned     |
-// | agent           | No         | No                      | Infrastructure noise                   |
-
-/** Returns true if this part should get a JSON worklog file. */
-function shouldWriteJson(part: Part): boolean {
-  if (part.type === "tool") {
-    const status = (part as ToolPart).state.status;
-    return status === "completed" || status === "error";
-  }
-  return part.type === "step-finish" || part.type === "text";
-}
-
-/** Log a part to stdout if it's interesting. Returns true if logged. */
+/** Log a part to stdout if it's interesting. */
 function logPartToStdout(sessionId: string, part: Part): void {
   const sid = sessionId.slice(0, 12);
 
@@ -234,7 +228,12 @@ function logPartToStdout(sessionId: string, part: Part): void {
  * 5. Returns the aggregated response to the HTTP caller.
  */
 app.post("/trigger", async (req, res) => {
-  const { prompt, model } = req.body as TriggerRequest;
+  const {
+    prompt,
+    model,
+    correlationKey,
+    sessionId: requestedSessionId,
+  } = req.body as TriggerRequest;
 
   if (!prompt || typeof prompt !== "string") {
     res.status(400).json({ error: "Missing or invalid 'prompt' field" });
@@ -248,17 +247,65 @@ app.post("/trigger", async (req, res) => {
       baseUrl: `http://${OPENCODE_HOST}:${OPENCODE_PORT}`,
     });
 
-    const session = await client.session.create({
-      body: { title: `trigger: ${prompt.slice(0, 50)}` },
-    });
+    // --- Session resolution: resume existing or create new ---
+    let sessionId: string;
+    let resumed = false;
 
-    if (!session.data) {
-      res.status(500).json({ error: "Failed to create session" });
-      return;
+    const candidateSessionId =
+      requestedSessionId || (correlationKey ? getSession(correlationKey)?.sessionId : undefined);
+
+    if (candidateSessionId) {
+      // Verify the session still exists in OpenCode
+      try {
+        const existing = await client.session.get({ path: { id: candidateSessionId } });
+        if (existing.data) {
+          sessionId = candidateSessionId;
+          resumed = true;
+          if (correlationKey) touchSession(correlationKey);
+          logInfo(log, "session_resumed", { sessionId, correlationKey });
+        } else {
+          throw new Error("Session not found");
+        }
+      } catch {
+        // Session is gone — remove stale mapping and create a new one
+        if (correlationKey) removeSession(correlationKey);
+        logInfo(log, "session_stale", { sessionId: candidateSessionId, correlationKey });
+
+        const session = await client.session.create({
+          body: { title: `trigger: ${prompt.slice(0, 50)}` },
+        });
+        if (!session.data) {
+          res.status(500).json({ error: "Failed to create session" });
+          return;
+        }
+        sessionId = session.data.id;
+        if (correlationKey) setSession(correlationKey, sessionId);
+        logInfo(log, "session_created", { sessionId, correlationKey });
+      }
+    } else {
+      // No session to resume — create a new one
+      const session = await client.session.create({
+        body: { title: `trigger: ${prompt.slice(0, 50)}` },
+      });
+      if (!session.data) {
+        res.status(500).json({ error: "Failed to create session" });
+        return;
+      }
+      sessionId = session.data.id;
+      if (correlationKey) setSession(correlationKey, sessionId);
+      logInfo(log, "session_created", { sessionId, correlationKey });
     }
 
-    const sessionId = session.data.id;
-    logInfo(log, "session_created", { sessionId });
+    // --- Notes: create or append, seed prompt with prior context ---
+    if (correlationKey) {
+      if (resumed) {
+        // Session already has full conversation history — no need to inject notes.
+        // Just append this trigger to the notes file for the durable record.
+        appendTrigger({ correlationKey, prompt, model });
+      } else {
+        createNotes({ correlationKey, prompt, model, sessionId });
+      }
+    }
 
     const parts: TextPartInput[] = [{ type: "text", text: prompt }];
     const modelConfig = model
@@ -267,8 +314,6 @@ app.post("/trigger", async (req, res) => {
           modelID: model.split("/").slice(1).join("/"),
         }
       : undefined;
-
-    writeTriggerLog({ sessionId, prompt, model });
 
     // Subscribe to event stream BEFORE sending the prompt
     const { stream } = await client.event.subscribe();
@@ -324,11 +369,6 @@ app.post("/trigger", async (req, res) => {
           // Stdout logging (selective)
           logPartToStdout(sessionId, part);
 
-          // JSON worklog file (selective)
-          if (shouldWriteJson(part)) {
-            writePartLog(buildPartLogEntry(sessionId, part, seq));
-          }
-
           // Accumulate data for response regardless of filtering
           if (part.type === "text") {
             const textPart = part as TextPart;
@@ -371,20 +411,19 @@ app.post("/trigger", async (req, res) => {
 
     const durationMs = Date.now() - promptStart;
 
-    writeSessionSummaryLog({
-      sessionId,
-      status: sessionError ? "error" : finished ? "completed" : "timeout",
-      prompt,
-      responseText: collectedTextParts.length > 0 ? collectedTextParts.join("\n\n") : undefined,
-      totalToolCalls: collectedToolCalls.length,
-      totalParts: seq,
-      durationMs,
-      error: sessionError,
-      totals:
-        totalCost > 0 || totalTokens.input > 0
-          ? { cost: totalCost, tokens: totalTokens }
-          : undefined,
-    });
+    // Append summary to the markdown notes file
+    if (correlationKey) {
+      const responseText =
+        collectedTextParts.length > 0 ? collectedTextParts.join("\n\n") : undefined;
+      appendSummary({
+        correlationKey,
+        status: sessionError ? "error" : finished ? "completed" : "timeout",
+        durationMs,
+        toolCalls: collectedToolCalls,
+        responsePreview: responseText,
+        error: sessionError,
+      });
+    }
 
     logInfo(log, "session_done", {
       sessionId,
@@ -398,6 +437,8 @@ app.post("/trigger", async (req, res) => {
     if (sessionError) {
       res.status(500).json({
         sessionId,
+        correlationKey,
+        resumed,
         error: sessionError,
         toolCalls: collectedToolCalls,
         durationMs,
@@ -407,6 +448,8 @@ app.post("/trigger", async (req, res) => {
 
     res.json({
       sessionId,
+      correlationKey,
+      resumed,
       response: collectedTextParts.join("\n\n"),
       toolCalls: collectedToolCalls,
       messageId: lastMessageId,
@@ -437,65 +480,6 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
     return event.properties.sessionID === sessionId;
   }
   return false;
-}
-
-/**
- * Build a PartLogEntry from a Part for the worklog.
- * Only called for parts that pass the shouldWriteJson filter.
- */
-function buildPartLogEntry(
-  sessionId: string,
-  part: Part,
-  seq: number,
-): import("@thor/common").PartLogEntry {
-  const base = {
-    sessionId,
-    messageId: part.messageID,
-    partId: part.id,
-    partType: part.type,
-    seq,
-  };
-
-  if (part.type === "text") {
-    const textPart = part as TextPart;
-    return { ...base, text: textPart.text };
-  }
-
-  if (part.type === "tool") {
-    const toolPart = part as ToolPart;
-    const toolInfo: import("@thor/common").PartLogEntry["tool"] = {
-      callId: toolPart.callID,
-      name: toolPart.tool,
-      status: toolPart.state.status,
-      input: toolPart.state.input,
-    };
-
-    if (toolPart.state.status === "completed") {
-      const completed = toolPart.state as ToolStateCompleted;
-      toolInfo.output = completed.output;
-      toolInfo.durationMs = completed.time.end - completed.time.start;
-    } else if (toolPart.state.status === "error") {
-      const errState = toolPart.state as ToolStateError;
-      toolInfo.error = errState.error;
-      toolInfo.durationMs = errState.time.end - errState.time.start;
-    }
-
-    return { ...base, tool: toolInfo };
-  }
-
-  if (part.type === "step-finish") {
-    const stepFinish = part as StepFinishPart;
-    return {
-      ...base,
-      stepFinish: {
-        reason: stepFinish.reason,
-        cost: stepFinish.cost,
-        tokens: stepFinish.tokens,
-      },
-    };
-  }
-
-  return base;
 }
 
 // --- Startup ---

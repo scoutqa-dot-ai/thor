@@ -21,3 +21,6 @@ test.sh
 # IDE
 .idea/
 .vscode/
+
+# Thor
+/workspace/

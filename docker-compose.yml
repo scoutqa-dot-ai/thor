@@ -31,10 +31,11 @@ services:
       dockerfile: packages/runner/Dockerfile
     ports:
       - "3000:3000"
+      - "4096:4096"
     environment:
       - PORT=3000
       - OPENCODE_PORT=4096
-      - OPENCODE_HOST=127.0.0.1
+      - OPENCODE_HOST=0.0.0.0
     volumes:
       - opencode-data:/root/.local/share/opencode
       - ./workspace:/workspace
