@@ -20,7 +20,7 @@ afterEach(() => {
 
 let eventSeq = 0;
 
-function makeEvent(key: string, text: string): QueuedEvent {
+function makeEvent(key: string, text: string, delayMs = 0): QueuedEvent {
   return {
     id: `test-${++eventSeq}`,
     source: "slack",
@@ -28,7 +28,8 @@ function makeEvent(key: string, text: string): QueuedEvent {
     payload: { text },
     receivedAt: new Date().toISOString(),
     sourceTs: Date.now(),
-    readyAt: 0,
+    readyAt: delayMs > 0 ? Date.now() + delayMs : 0,
+    delayMs,
   };
 }
 
@@ -174,6 +175,7 @@ describe("EventQueue", () => {
       receivedAt: new Date().toISOString(),
       sourceTs: Date.now(),
       readyAt: 0,
+      delayMs: 0,
     };
 
     // Enqueue the same event id twice (simulates a Slack retry)
@@ -200,6 +202,7 @@ describe("EventQueue", () => {
       receivedAt: new Date().toISOString(),
       sourceTs: Date.now(),
       readyAt: Date.now() + 60_000,
+      delayMs: 60_000,
     });
 
     await queue.flush();
@@ -210,6 +213,34 @@ describe("EventQueue", () => {
     // File should still be in the queue directory
     const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
     expect(remaining).toHaveLength(1);
+  });
+
+  it("expedites batch when a shorter-delay event joins a longer-delay event", async () => {
+    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    // Unaddressed message with 60s delay
+    queue.enqueue({
+      id: "slow-1",
+      source: "slack",
+      correlationKey: "key-1",
+      payload: { text: "unaddressed" },
+      receivedAt: new Date().toISOString(),
+      sourceTs: Date.now(),
+      readyAt: Date.now() + 60_000,
+      delayMs: 60_000,
+    });
+
+    // Mention with 0ms delay (ready now) — different delayMs expedites the batch
+    queue.enqueue(makeEvent("key-1", "mention"));
+
+    await queue.flush();
+
+    // Both events should be processed together — the mention expedited the batch
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0]).toHaveLength(2);
+    expect((handler.mock.calls[0][0][0].payload as { text: string }).text).toBe("unaddressed");
+    expect((handler.mock.calls[0][0][1].payload as { text: string }).text).toBe("mention");
   });
 
   it("handler errors do not prevent subsequent events from processing", async () => {

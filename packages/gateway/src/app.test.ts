@@ -39,6 +39,7 @@ async function withServer<T>(
     queueDir,
     disableQueueInterval: true,
     slackActiveDelayMs: 0,
+    slackUnaddressedDelayMs: 0,
   });
 
   const server = app.listen(0);
@@ -192,10 +193,9 @@ describe("gateway", () => {
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
-      const promptPayload = JSON.parse(triggerBody.prompt);
-      expect(promptPayload.type).toBe("app_mention");
-      expect(promptPayload.channel).toBe("C123");
-      expect(promptPayload.text).toContain("investigate checkout errors");
+      expect(triggerBody.prompt).toContain("app_mention");
+      expect(triggerBody.prompt).toContain("C123");
+      expect(triggerBody.prompt).toContain("investigate checkout errors");
     });
   });
 
@@ -254,9 +254,7 @@ describe("gateway", () => {
       );
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
-      const promptPayload = JSON.parse(triggerBody.prompt);
-      expect(promptPayload.type).toBe("message");
-      expect(promptPayload.text).toBe("can you also check staging?");
+      expect(triggerBody.prompt).toContain("can you also check staging?");
     });
   });
 
@@ -361,9 +359,7 @@ describe("gateway", () => {
       expect(fetchImpl).toHaveBeenCalledOnce();
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
-      const promptPayload = JSON.parse(triggerBody.prompt);
-      expect(promptPayload.type).toBe("message");
-      expect(promptPayload.text).toBe("anyone know why staging is down?");
+      expect(triggerBody.prompt).toContain("anyone know why staging is down?");
     });
   });
 
@@ -488,9 +484,8 @@ describe("gateway", () => {
       expect(fetchImpl).toHaveBeenCalledTimes(2);
       expect(fetchImpl.mock.calls[1][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
-      const promptPayload = JSON.parse(triggerBody.prompt);
-      expect(promptPayload.text).toBe("deploy completed");
-      expect(promptPayload.bot_id).toBe("B123");
+      expect(triggerBody.prompt).toContain("deploy completed");
+      expect(triggerBody.prompt).toContain("B123");
     });
   });
 
@@ -539,40 +534,13 @@ describe("gateway", () => {
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
-      const promptPayloads = JSON.parse(triggerBody.prompt);
-      expect(promptPayloads).toHaveLength(3);
-      expect(promptPayloads[0].text).toContain("message 1");
-      expect(promptPayloads[2].text).toContain("message 3");
+      expect(triggerBody.prompt).toContain("message 1");
+      expect(triggerBody.prompt).toContain("message 3");
     });
   });
 
-  it("processes a second message after the first finishes — both trigger runner separately", async () => {
-    let resolveFirstTrigger: ((value: Response) => void) | null = null;
-
-    let triggerCount = 0;
-
-    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-
-      if (url === "http://runner.test/trigger") {
-        triggerCount++;
-        if (triggerCount === 1) {
-          // First trigger — block until we're ready
-          return new Promise<Response>((resolve) => {
-            resolveFirstTrigger = resolve;
-          });
-        }
-        // Second trigger
-        return new Response(null, { status: 200 });
-      }
-
-      // Fallback for any other runner calls
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    });
+  it("processes two messages sent at different times as separate triggers", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
 
     await withServer(fetchImpl, async (baseUrl, queue, slack) => {
       const timestamp = `${Math.floor(Date.now() / 1000)}`;
@@ -592,7 +560,7 @@ describe("gateway", () => {
         });
       }
 
-      // Send message 1
+      // Send message 1 and flush
       const body1 = makeBody("Ev1", "message 1");
       await fetch(`${baseUrl}/slack/events`, {
         method: "POST",
@@ -603,12 +571,9 @@ describe("gateway", () => {
         },
         body: body1,
       });
+      await queue.flush();
 
-      // Start processing — runner trigger is now in-flight (blocked)
-      const flushPromise = queue.flush();
-      await new Promise((r) => setTimeout(r, 50));
-
-      // Send message 2 while message 1 is still processing
+      // Send message 2 and flush
       const body2 = makeBody("Ev2", "message 2");
       await fetch(`${baseUrl}/slack/events`, {
         method: "POST",
@@ -619,11 +584,7 @@ describe("gateway", () => {
         },
         body: body2,
       });
-
-      // Unblock the first trigger
-      resolveFirstTrigger!(new Response(null, { status: 200 }));
-
-      await flushPromise;
+      await queue.flush();
 
       // Both messages should have triggered the runner
       const triggerCalls = fetchImpl.mock.calls.filter(

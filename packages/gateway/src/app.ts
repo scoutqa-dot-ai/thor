@@ -53,6 +53,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   disableQueueInterval?: boolean;
   /** Delay for mentions and active-session events in ms. Default: 3000. */
   slackActiveDelayMs?: number;
+  /** Delay for unaddressed messages in ms. Default: 60000. */
+  slackUnaddressedDelayMs?: number;
 }
 
 const InteractivityBodySchema = z.object({
@@ -74,6 +76,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   // --- Event queue with handler ---
 
   const batchDelay = config.slackActiveDelayMs ?? SLACK_ACTIVE_DELAY_MS;
+  const unaddressedDelay = config.slackUnaddressedDelayMs ?? SLACK_UNADDRESSED_DELAY_MS;
 
   const runnerDeps: RunnerDeps = {
     runnerUrl: config.runnerUrl,
@@ -88,21 +91,22 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       const slackEvents = events.filter(isSlackEvent);
       if (slackEvents.length === 0) return;
 
-      const lastEvent = slackEvents[slackEvents.length - 1];
+      const correlationKey = slackEvents[0].correlationKey;
 
       triggerRunner(
         slackEvents.map((e) => e.payload),
+        correlationKey,
         runnerDeps,
       )
         .then(() =>
           logInfo(log, "slack_trigger_fired", {
-            correlationKey: lastEvent.correlationKey,
+            correlationKey,
             batchSize: slackEvents.length,
           }),
         )
         .catch((error) =>
           logError(log, "slack_trigger_failed", error, {
-            correlationKey: lastEvent.correlationKey,
+            correlationKey,
           }),
         );
     },
@@ -183,19 +187,25 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
         logError(log, "reaction_failed", err, { eventId }),
       );
+      const correlationKey = getSlackCorrelationKey(event);
       logInfo(log, "event_accepted", {
         eventId,
         teamId: envelope.data.team_id,
         eventType: event.type,
+        channel: event.channel,
+        ts: event.ts,
+        threadTs: event.thread_ts,
+        correlationKey,
       });
       queue.enqueue({
         id: eventId,
         source: "slack",
-        correlationKey: getSlackCorrelationKey(event),
+        correlationKey,
         payload: event,
         receivedAt: new Date().toISOString(),
         sourceTs: parseSlackTs(event.ts),
         readyAt: Date.now() + batchDelay,
+        delayMs: batchDelay,
       });
       return;
     }
@@ -218,13 +228,16 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         const hasSession = event.thread_ts
           ? await hasRunnerSession(correlationKey, runnerDeps)
           : false;
-        const delay = hasSession ? batchDelay : SLACK_UNADDRESSED_DELAY_MS;
+        const delay = hasSession ? batchDelay : unaddressedDelay;
 
         logInfo(log, "event_accepted", {
           eventId,
           teamId: envelope.data.team_id,
           eventType: event.type,
+          channel: event.channel,
+          ts: event.ts,
           threadTs: event.thread_ts,
+          correlationKey,
           delay,
         });
         queue.enqueue({
@@ -235,6 +248,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           receivedAt: new Date().toISOString(),
           sourceTs: parseSlackTs(event.ts),
           readyAt: Date.now() + delay,
+          delayMs: delay,
         });
       })();
       return;

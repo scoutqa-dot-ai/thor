@@ -43,6 +43,8 @@ export interface QueuedEvent<T = unknown> {
   sourceTs: number;
   /** Epoch ms after which this event's batch is eligible for processing. */
   readyAt: number;
+  /** Original delay in ms used to compute readyAt. */
+  delayMs?: number;
 }
 
 const QueuedEventSchema = z.object({
@@ -53,6 +55,7 @@ const QueuedEventSchema = z.object({
   receivedAt: z.string(),
   sourceTs: z.number(),
   readyAt: z.number(),
+  delayMs: z.number().optional(),
 });
 
 export type EventHandler = (events: QueuedEvent[]) => Promise<void>;
@@ -172,9 +175,16 @@ export class EventQueue {
     for (const [key, entries] of byKey) {
       if (this.processing.has(key)) continue;
 
-      // Check if the batch is ready: max(readyAt) must be <= now.
-      const maxReadyAt = Math.max(...entries.map((e) => e.event.readyAt));
-      if (maxReadyAt > now) continue;
+      // Batch readiness: latestArrival + shortestDelay.
+      // This batches rapid-fire same-delay events (wait for the last one) and
+      // expedites mixed-delay batches (e.g. 60s unaddressed + 3s mention → 3s
+      // window from the latest arrival).
+      const latestArrival = Math.max(
+        ...entries.map((e) => e.event.readyAt - (e.event.delayMs ?? 0)),
+      );
+      const shortestDelay = Math.min(...entries.map((e) => e.event.delayMs ?? 0));
+      const batchReadyAt = latestArrival + shortestDelay;
+      if (batchReadyAt > now) continue;
 
       this.processing.add(key);
 

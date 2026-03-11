@@ -1,6 +1,6 @@
 import type { WebClient } from "@slack/web-api";
 import { z } from "zod/v4";
-import { getSlackCorrelationKey, type SlackThreadEvent } from "./slack.js";
+import type { SlackThreadEvent } from "./slack.js";
 
 // --- Runner deps (internal HTTP, testable via fetchImpl) ---
 
@@ -24,10 +24,13 @@ function getFetch(fetchImpl?: typeof fetch): typeof fetch {
  * Sends the raw Slack event payloads as the prompt — the agent's system
  * instructions (build.md) handle interpretation and reply decisions.
  */
-export async function triggerRunner(events: SlackThreadEvent[], deps: RunnerDeps): Promise<void> {
+export async function triggerRunner(
+  events: SlackThreadEvent[],
+  correlationKey: string,
+  deps: RunnerDeps,
+): Promise<void> {
   if (events.length === 0) return;
 
-  const last = events[events.length - 1];
   const prompt =
     events.length === 1
       ? `Slack event:\n\n${JSON.stringify(events[0])}`
@@ -37,7 +40,7 @@ export async function triggerRunner(events: SlackThreadEvent[], deps: RunnerDeps
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       prompt,
-      correlationKey: getSlackCorrelationKey(last),
+      correlationKey,
     }),
   });
 
