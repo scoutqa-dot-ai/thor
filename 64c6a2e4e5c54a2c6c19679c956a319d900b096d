@@ -1,0 +1,41 @@
+scripts/test-proxy.ts
+  49d5d8f397df7d0c 136-138,151-153,159,194,199
+docker/opencode/opencode.json
+  49d5d8f397df7d0c 5,7-17
+Dockerfile
+  49d5d8f397df7d0c 37
+packages/proxy/proxy.posthog.json
+  49d5d8f397df7d0c 1-28
+packages/proxy/src/index.ts
+  49d5d8f397df7d0c 48-49,52
+scripts/test-e2e.sh
+  49d5d8f397df7d0c 5,18,48-49,62,70,88
+docker-compose.yml
+  49d5d8f397df7d0c 26,32-45,47,49-61,87-91
+packages/proxy/proxy.linear.json
+  49d5d8f397df7d0c 1-17
+packages/proxy/proxy.slack.json
+  49d5d8f397df7d0c 1-15
+docs/plan/2026031003_slack-mcp.md
+  49d5d8f397df7d0c 23-24,195,213,220,233
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "64c6a2e4e5c54a2c6c19679c956a319d900b096d",
+  "prompts": {
+    "49d5d8f397df7d0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d667b05a-19e7-47c4-958b-568d45ae3359",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 133,
+      "total_deletions": 39,
+      "accepted_lines": 133,
+      "overriden_lines": 0
+    }
+  }
+}
