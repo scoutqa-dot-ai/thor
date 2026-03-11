@@ -1,0 +1,25 @@
+docs/plan/2026031101_data-proxy.md
+  8fae3ab259f328c4 70
+docker/opencode/agents/build.md
+  8fae3ab259f328c4 145-151,155,157,159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5331f624ae6a5f52aed168c40c13e8468b54267f",
+  "prompts": {
+    "8fae3ab259f328c4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a55bada3-5780-4f28-9073-48ba1ef49511",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 16,
+      "total_deletions": 1,
+      "accepted_lines": 11,
+      "overriden_lines": 5
+    }
+  }
+}
