@@ -1,0 +1,41 @@
+packages/git-mcp/tsconfig.json
+  5d041cc5e634ee77 1-8
+docker/opencode/opencode.json
+  5d041cc5e634ee77 24-28
+packages/git-mcp/src/index.ts
+  5d041cc5e634ee77 1-203
+packages/git-mcp/src/git.ts
+  5d041cc5e634ee77 1-69
+Dockerfile
+  5d041cc5e634ee77 21,41,54-60
+packages/git-mcp/package.json
+  5d041cc5e634ee77 1-24
+docs/plan/2026031102_github-mcp.md
+  5d041cc5e634ee77 4,8,14,16,18-20,22,24-29,31,42-43,45
+docker-compose.yml
+  5d041cc5e634ee77 25-41,49,56,64,120
+packages/proxy/proxy.git.json
+  5d041cc5e634ee77 1-6
+packages/runner/src/index.ts
+  5d041cc5e634ee77 41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5699bd93d51d1d6b9e44ea3e81b793c4357d4563",
+  "prompts": {
+    "5d041cc5e634ee77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cb2eb200-3a2d-41b8-b516-2b4c2844aaea",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 371,
+      "total_deletions": 18,
+      "accepted_lines": 367,
+      "overriden_lines": 0
+    }
+  }
+}
