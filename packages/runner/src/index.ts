@@ -227,6 +227,7 @@ app.post("/trigger", async (req, res) => {
 
     const client = createOpencodeClient({
       baseUrl: OPENCODE_URL,
+      directory: SESSION_DIRECTORY,
     });
 
     // --- Session resolution: resume existing or create new ---
@@ -255,7 +256,6 @@ app.post("/trigger", async (req, res) => {
 
         const session = await client.session.create({
           body: { title: `trigger: ${prompt.slice(0, 50)}` },
-          query: { directory: SESSION_DIRECTORY },
         });
         if (!session.data) {
           res.status(500).json({ error: "Failed to create session" });
