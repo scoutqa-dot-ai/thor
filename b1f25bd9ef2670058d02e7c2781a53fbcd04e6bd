@@ -1,0 +1,31 @@
+docker-compose.yml
+  31340c39ab9d7607 3,130-146,158
+docker/vouch/entrypoint.sh
+  31340c39ab9d7607 1-4
+docker/vouch/Dockerfile
+  31340c39ab9d7607 1-10
+docker/vouch/config.yml
+  31340c39ab9d7607 1-20
+docker/ingress/nginx.conf
+  31340c39ab9d7607 4-28,38,40-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b1f25bd9ef2670058d02e7c2781a53fbcd04e6bd",
+  "prompts": {
+    "31340c39ab9d7607": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8c5afa8-6fbd-47b0-92c9-5aa8ce1fb437",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 206,
+      "total_deletions": 97,
+      "accepted_lines": 122,
+      "overriden_lines": 0
+    }
+  }
+}
