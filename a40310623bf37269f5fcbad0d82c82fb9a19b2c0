@@ -1,0 +1,31 @@
+docs/plan/2026031103_slack-ephemeral-message.md
+  de90f4ebc22f09b5 17,19,22-31,34,36-39,41-48,53-54,61-66,73-74,77
+packages/gateway/src/service.ts
+  de90f4ebc22f09b5 2,4,6,20-21,25-26,46-125
+packages/runner/src/index.ts
+  de90f4ebc22f09b5 373-382,417,470-472,476-477,483,486,488-494
+packages/gateway/src/app.ts
+  de90f4ebc22f09b5 96
+packages/gateway/src/slack-notifier.ts
+  de90f4ebc22f09b5 1-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a40310623bf37269f5fcbad0d82c82fb9a19b2c0",
+  "prompts": {
+    "de90f4ebc22f09b5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0384d960-00da-4c15-ae8d-95fb93757396",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 292,
+      "total_deletions": 263,
+      "accepted_lines": 287,
+      "overriden_lines": 0
+    }
+  }
+}
