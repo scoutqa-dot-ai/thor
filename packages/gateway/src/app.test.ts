@@ -38,7 +38,7 @@ async function withServer<T>(
     fetchImpl,
     queueDir,
     disableQueueInterval: true,
-    slackBatchDelayMs: 0,
+    slackActiveDelayMs: 0,
   });
 
   const server = app.listen(0);
@@ -260,7 +260,7 @@ describe("gateway", () => {
     });
   });
 
-  it("ignores thread replies when no runner session exists", async () => {
+  it("enqueues thread replies with long delay when no runner session exists", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       // GET /sessions?correlationKey=... → 404 (no session)
@@ -269,9 +269,11 @@ describe("gateway", () => {
           status: 404,
           headers: { "Content-Type": "application/json" },
         }),
-      );
+      )
+      // POST /trigger → 200
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue, slack) => {
+    await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
         type: "event_callback",
         event_id: "Ev789",
@@ -300,32 +302,161 @@ describe("gateway", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
 
-      // Wait for async session check
+      // Wait for async session check + enqueue
       for (let attempt = 0; attempt < 20 && fetchImpl.mock.calls.length < 1; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       await queue.flush();
 
-      // Only the session lookup call — no trigger, no Slack reply
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      // Session lookup happened, and trigger was fired (enqueued with delay, but test uses slackActiveDelayMs=0)
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
       expect(fetchImpl.mock.calls[0][0]).toBe(
         "http://runner.test/sessions?correlationKey=slack%3Athread%3A1710000000.004",
       );
+      expect(fetchImpl.mock.calls[1][0]).toBe("http://runner.test/trigger");
     });
   });
 
-  it("ignores thread messages from bots", async () => {
+  it("enqueues new channel messages (not in a thread) with long delay", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      // POST /trigger → 200
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = JSON.stringify({
+        type: "event_callback",
+        event_id: "EvNew",
+        team_id: "T123",
+        event: {
+          type: "message",
+          user: "U123",
+          text: "anyone know why staging is down?",
+          ts: "1710000000.010",
+          channel: "C123",
+        },
+      });
+      const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+      const response = await fetch(`${baseUrl}/slack/events`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Slack-Request-Timestamp": timestamp,
+          "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+        },
+        body,
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+
+      // Wait for async enqueue
+      for (let attempt = 0; attempt < 20 && fetchImpl.mock.calls.length < 1; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await queue.flush();
+
+      // No session lookup (not a thread reply), trigger fired
+      expect(fetchImpl).toHaveBeenCalledOnce();
+      expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
+      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+      const promptPayload = JSON.parse(triggerBody.prompt);
+      expect(promptPayload.type).toBe("message");
+      expect(promptPayload.text).toBe("anyone know why staging is down?");
+    });
+  });
+
+  it("ignores messages sent by our own bot user", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
     await withServer(fetchImpl, async (baseUrl) => {
       const body = JSON.stringify({
         type: "event_callback",
-        event_id: "Ev101",
+        event_id: "EvSelf",
+        team_id: "T123",
+        event: {
+          type: "message",
+          user: "U0BOTEXAMPLE",
+          text: "I am the bot",
+          ts: "1710000000.020",
+          channel: "C123",
+        },
+      });
+      const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+      const response = await fetch(`${baseUrl}/slack/events`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Slack-Request-Timestamp": timestamp,
+          "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+        },
+        body,
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("ignores app_mention from our own bot user", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (baseUrl) => {
+      const body = JSON.stringify({
+        type: "event_callback",
+        event_id: "EvSelfMention",
+        team_id: "T123",
+        event: {
+          type: "app_mention",
+          user: "U0BOTEXAMPLE",
+          text: "<@U0BOTEXAMPLE> hello myself",
+          ts: "1710000000.030",
+          channel: "C123",
+        },
+      });
+      const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+      const response = await fetch(`${baseUrl}/slack/events`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Slack-Request-Timestamp": timestamp,
+          "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+        },
+        body,
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("handles other bot messages like normal messages", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      // GET /sessions → 200 (session exists for the thread)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ sessionId: "session-456" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      // POST /trigger → 200
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = JSON.stringify({
+        type: "event_callback",
+        event_id: "EvBot",
         team_id: "T123",
         event: {
           type: "message",
           user: "U999",
-          text: "bot reply",
+          text: "deploy completed",
           ts: "1710000000.003",
           thread_ts: "1710000000.001",
           channel: "C123",
@@ -345,8 +476,21 @@ describe("gateway", () => {
       });
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true, ignored: true, eventType: "message" });
-      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(await response.json()).toEqual({ ok: true });
+
+      // Wait for async session check + enqueue
+      for (let attempt = 0; attempt < 20 && fetchImpl.mock.calls.length < 1; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await queue.flush();
+
+      // Session lookup + trigger
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(fetchImpl.mock.calls[1][0]).toBe("http://runner.test/trigger");
+      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
+      const promptPayload = JSON.parse(triggerBody.prompt);
+      expect(promptPayload.text).toBe("deploy completed");
+      expect(promptPayload.bot_id).toBe("B123");
     });
   });
 

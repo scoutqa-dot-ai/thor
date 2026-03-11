@@ -35,7 +35,13 @@ interface RawBodyRequest extends Request {
 }
 
 /** Default batch delay for Slack events (ms). */
-const SLACK_BATCH_DELAY_MS = 3000;
+const SLACK_ACTIVE_DELAY_MS = 3000;
+
+/** Delay for unaddressed messages — hope someone else handles it first (ms). */
+const SLACK_UNADDRESSED_DELAY_MS = 60_000;
+
+/** Our bot's Slack user ID — used to ignore our own messages. */
+const SELF_USER_ID = "U0BOTEXAMPLE";
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
@@ -45,8 +51,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   queueDir?: string;
   /** Disable the queue polling interval (for tests). Default: false. */
   disableQueueInterval?: boolean;
-  /** Batch delay for Slack events in ms. Default: 3000. */
-  slackBatchDelayMs?: number;
+  /** Delay for mentions and active-session events in ms. Default: 3000. */
+  slackActiveDelayMs?: number;
 }
 
 const InteractivityBodySchema = z.object({
@@ -67,7 +73,7 @@ export interface GatewayApp {
 export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   // --- Event queue with handler ---
 
-  const batchDelay = config.slackBatchDelayMs ?? SLACK_BATCH_DELAY_MS;
+  const batchDelay = config.slackActiveDelayMs ?? SLACK_ACTIVE_DELAY_MS;
 
   const runnerDeps: RunnerDeps = {
     runnerUrl: config.runnerUrl,
@@ -164,6 +170,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const event = envelope.data.event;
     const eventId = envelope.data.event_id;
 
+    // Ignore our own messages
+    if (event.user === SELF_USER_ID) {
+      logInfo(log, "event_ignored_self", { eventId });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
     // app_mention — always forward
     if (event.type === "app_mention") {
       res.status(200).json({ ok: true });
@@ -187,21 +200,25 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    // Thread reply (not from a bot, no subtype) — forward only if session exists
-    if (event.type === "message" && event.thread_ts && !event.bot_id && !event.subtype) {
+    // Message (no subtype — excludes system events like channel_join)
+    if (event.type === "message" && !event.subtype) {
       res.status(200).json({ ok: true });
+      const correlationKey = getSlackCorrelationKey(event);
+
       void (async () => {
-        const correlationKey = getSlackCorrelationKey(event);
-        const exists = await hasRunnerSession(correlationKey, runnerDeps);
-        if (!exists) {
-          logInfo(log, "thread_reply_ignored_no_session", { eventId, correlationKey });
-          return;
-        }
+        // Thread reply with existing session → short batch delay
+        // New message or thread without session → long delay, hope someone else handles it
+        const hasSession = event.thread_ts
+          ? await hasRunnerSession(correlationKey, runnerDeps)
+          : false;
+        const delay = hasSession ? batchDelay : SLACK_UNADDRESSED_DELAY_MS;
+
         logInfo(log, "event_accepted", {
           eventId,
           teamId: envelope.data.team_id,
           eventType: event.type,
           threadTs: event.thread_ts,
+          delay,
         });
         queue.enqueue({
           id: eventId,
@@ -210,7 +227,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           payload: event,
           receivedAt: new Date().toISOString(),
           sourceTs: parseSlackTs(event.ts),
-          readyAt: Date.now() + batchDelay,
+          readyAt: Date.now() + delay,
         });
       })();
       return;
