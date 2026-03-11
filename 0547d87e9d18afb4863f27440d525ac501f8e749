@@ -1,0 +1,109 @@
+packages/slack-mcp/src/slack.ts
+  49d5d8f397df7d0c 4,77,79-81,85-97,99-104,114-115,118-120,127-128,130-132
+packages/gateway/src/app.ts
+  de90f4ebc22f09b5 96
+  49d5d8f397df7d0c 2,4,10-11,14,16-18,31,38,40-44,46,48,54-55,58-59,62-65,76,78-83,93-94,99-104,135,137,159-161,165-166,171,173-184,187,189-190,204-211,213-224,226-230,238,240-242,244,246-247,249,270-271,273,275-278
+packages/gateway/src/service.ts
+  49d5d8f397df7d0c 1,5,7,9,18,22,26,32,43-44,46-47,52,59-61,71-75,83,85,87
+  de90f4ebc22f09b5 2-3,23-24,30,53-55
+docs/plan/2026031103_slack-ephemeral-message.md
+  de90f4ebc22f09b5 1-34,36-40,42-46,48-160
+packages/gateway/src/app.test.ts
+  49d5d8f397df7d0c 5,7,14-23,26,29,41,68,149,152,191,194-203,207-211,215-219,221-248,251-252,254,257-280,282-284,286-317,319-407,411,415-458,461-490,492-502,506,540-541,543,546-555,591,604,613,616,621-654
+packages/gateway/src/slack-notifier.ts
+  de90f4ebc22f09b5 1,13-18,21,30,40,46,103-106,108-109,119-122
+packages/slack-mcp/src/index.ts
+  49d5d8f397df7d0c 12,26
+packages/runner/src/index.ts
+  c7c4ebfd3bab2fec 1-2,30,32-33,38,44,46,57,60-61,64,67-68,72-79,81-85,87-88,92-95,109,227,231-233,236,238-239,242-243,291-292,334-342,348-354,361-363,365,369,451,472,474,481-482,487-489,509,511,516
+  f9134954739608f9 18-20,100,245-247,249-250,252-290,325-333,436-440,442-447,476
+  28992366ac95c961 5-6,8-12,14-17,21,31,110-125,127-195,218-220,222,225-226,343-347,355,357-359,364,371-381,405,417,430-434,452,455-459,461-471,479-480,491-508
+  49d5d8f397df7d0c 22-23,196-212,221,223-224,294-298,300-323,382-383,441,454
+  5d041cc5e634ee77 36
+  de90f4ebc22f09b5 366,368,370,404,473,485-486
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "0547d87e9d18afb4863f27440d525ac501f8e749",
+  "prompts": {
+    "28992366ac95c961": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32e775fb1ffeKJ6DDYKBOHJdvR",
+        "model": "github-copilot/claude-opus-4.6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1133,
+      "total_deletions": 297,
+      "accepted_lines": 169,
+      "overriden_lines": 0
+    },
+    "49d5d8f397df7d0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d667b05a-19e7-47c4-958b-568d45ae3359",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 6,
+      "accepted_lines": 574,
+      "overriden_lines": 0
+    },
+    "5d041cc5e634ee77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cb2eb200-3a2d-41b8-b516-2b4c2844aaea",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 27,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "c7c4ebfd3bab2fec": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32f4b17d3ffeceCTrOqAt7u492",
+        "model": "github-copilot/claude-opus-4.6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 275,
+      "total_deletions": 29,
+      "accepted_lines": 77,
+      "overriden_lines": 0
+    },
+    "de90f4ebc22f09b5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0384d960-00da-4c15-ae8d-95fb93757396",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 292,
+      "total_deletions": 263,
+      "accepted_lines": 194,
+      "overriden_lines": 0
+    },
+    "f9134954739608f9": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32c74efffffehMQG0xNNfULWMe",
+        "model": "opencode/minimax-m2.5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1382,
+      "total_deletions": 431,
+      "accepted_lines": 69,
+      "overriden_lines": 0
+    }
+  }
+}
