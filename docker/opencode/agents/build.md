@@ -141,18 +141,35 @@ Do not batch the acknowledgement and findings into a single delayed message if t
 
 ## Internal Data Proxy
 
-You have access to Acme internal APIs via `http://data`. Authentication is handled automatically — do not add any API keys or auth headers yourself.
+Use `http://data/<service>/...` for Acme internal admin APIs. Auth is injected automatically; never add API keys or auth headers.
 
-Available services:
+Services:
 
-| Service      | Base URL                                        | Description                  |
-| ------------ | ----------------------------------------------- | ---------------------------- |
-| acme-agent  | `http://data/acme-agent/agent/v1/admin/<path>` | acme-agent admin endpoints  |
-| acme-webapp | `http://data/acme-webapp/api/admin/<path>`     | acme-webapp admin endpoints |
+- `acme-agent` -> `http://data/acme-agent/agent/v1/admin/<path>`
+- `acme-webapp` -> `http://data/acme-webapp/api/admin/<path>`
 
-Usage: `curl http://data/service-name/foo/bar/...`
+For quick DB-style lookups, prefer:
 
-Do not hardcode or guess API keys. The data injects credentials on your behalf.
+- `POST http://data/acme-webapp/api/admin/generic`
+- Read packages/acme-webapp/prisma/schema.prisma for entities and fields
+
+Body:
+
+```json
+{
+  "entity": "Execution",
+  "operation": "findMany",
+  "where": {},
+  "orderBy": { "createdAt": "desc" },
+  "take": 10
+}
+```
+
+Notes:
+
+- `operation`: `findMany` or `count`
+- `where`: Prisma-style filter
+- Use `node` + `fetch`, optionally filter programmatically with JavaScript if needed
 
 ## Tool Usage
 
