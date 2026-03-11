@@ -53,7 +53,7 @@ EXPOSE 3003
 CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
 
 FROM build AS git-mcp
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace/repos
 ENV PORT=3004
 EXPOSE 3004
