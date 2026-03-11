@@ -1,0 +1,45 @@
+packages/proxy/src/config.ts
+  58e5ea1f81feda0b 2,7-12,26-27
+packages/proxy/multi-proxy.sh
+  58e5ea1f81feda0b 1-46
+docker-compose.yml
+  58e5ea1f81feda0b 32,40,42
+packages/proxy/src/upstream.ts
+  58e5ea1f81feda0b 2,8-9,18-19,23,26,31,39
+docker/opencode/opencode.json
+  58e5ea1f81feda0b 7,12,17
+packages/proxy/proxy.linear.json
+  58e5ea1f81feda0b 2,5,8
+Dockerfile
+  58e5ea1f81feda0b 38,40-41
+packages/proxy/proxy.posthog.json
+  58e5ea1f81feda0b 2,5,8-13
+packages/proxy/src/policy.ts
+  58e5ea1f81feda0b 2-3,11-12,16-18,22-23,25-27,29-31,33-34,36-37
+packages/proxy/src/index.ts
+  58e5ea1f81feda0b 13-14,23-25,27,36,43,50-52,54,61,63-64,68-69,173
+packages/proxy/proxy.slack.json
+  58e5ea1f81feda0b 2-3,5
+packages/common/src/worklog.ts
+  58e5ea1f81feda0b 82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "608456ac86463353a77b7239737a5f39d799535e",
+  "prompts": {
+    "58e5ea1f81feda0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34cdd99b-564d-4c31-8a5f-434fdf73e7a5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 144,
+      "total_deletions": 470,
+      "accepted_lines": 139,
+      "overriden_lines": 0
+    }
+  }
+}
