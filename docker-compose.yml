@@ -43,8 +43,6 @@ services:
     build:
       context: .
       target: proxy
-    volumes:
-      - ./docker-volumes/worklog:/worklog
     environment:
       - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.github.json,3014:proxy.git.json
       - LINEAR_API_KEY=${LINEAR_API_KEY}
@@ -114,7 +112,6 @@ services:
       - OPENCODE_URL=${OPENCODE_URL:-http://opencode:4096}
       - GIT_MCP_DEFAULT_CWD=${GIT_MCP_DEFAULT_CWD:-/workspace/repos/acme-project}
     volumes:
-      - ./docker-volumes/worklog:/worklog
       - ./docker-volumes/workspace:/workspace
     depends_on:
       opencode:
@@ -131,7 +128,6 @@ services:
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - SLACK_TIMESTAMP_TOLERANCE_SECONDS=${SLACK_TIMESTAMP_TOLERANCE_SECONDS:-300}
     volumes:
-      - ./docker-volumes/worklog:/worklog
       - ./docker-volumes/workspace:/workspace
     depends_on:
       runner:

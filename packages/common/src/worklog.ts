@@ -14,7 +14,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const WORKLOG_DIR = process.env.WORKLOG_DIR || "/worklog";
+const WORKLOG_DIR = process.env.WORKLOG_DIR || "/workspace/worklog";
 const WORKLOG_ENABLED = process.env.WORKLOG_ENABLED !== "false";
 
 /** Max bytes for JSON-serialized args/result payloads. */
