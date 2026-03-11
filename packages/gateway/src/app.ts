@@ -200,6 +200,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
+    // Skip if it's a duplicate of an app_mention (Slack sends both events)
+    if (event.type === "message" && !event.subtype && event.text?.includes(`<@${SELF_USER_ID}>`)) {
+      logInfo(log, "event_ignored_mention_duplicate", { eventId });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
     // Message (no subtype — excludes system events like channel_join)
     if (event.type === "message" && !event.subtype) {
       res.status(200).json({ ok: true });

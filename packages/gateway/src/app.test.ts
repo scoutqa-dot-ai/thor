@@ -640,6 +640,40 @@ describe("gateway", () => {
     });
   });
 
+  it("ignores message events that duplicate an app_mention (contains bot mention)", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (baseUrl) => {
+      const body = JSON.stringify({
+        type: "event_callback",
+        event_id: "EvDup",
+        team_id: "T123",
+        event: {
+          type: "message",
+          user: "U123",
+          text: "<@U0BOTEXAMPLE> check staging",
+          ts: "1710000000.040",
+          channel: "C123",
+        },
+      });
+      const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+      const response = await fetch(`${baseUrl}/slack/events`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Slack-Request-Timestamp": timestamp,
+          "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+        },
+        body,
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
   it("accepts signed Slack interactivity payloads on the configured endpoint", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
