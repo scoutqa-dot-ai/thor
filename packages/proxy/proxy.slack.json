@@ -2,5 +2,5 @@
   "upstream": {
     "url": "http://slack-mcp:3003/mcp"
   },
-  "allow": ["post_message", "read_thread", "get_channel_history"]
+  "allow": ["post_message", "read_thread", "get_channel_history", "get_slack_file"]
 }

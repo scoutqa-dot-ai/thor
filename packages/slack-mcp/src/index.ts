@@ -6,11 +6,19 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   type CallToolResult,
+  type ImageContent,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { WebClient } from "@slack/web-api";
 import { createLogger, logInfo, logError } from "@thor/common";
-import { postMessage, readThread, getChannelHistory, type SlackDeps } from "./slack.js";
+import {
+  postMessage,
+  readThread,
+  getChannelHistory,
+  readSlackFile,
+  type SlackDeps,
+  type SlackFileReadResult,
+} from "./slack.js";
 
 const log = createLogger("slack-mcp");
 
@@ -22,7 +30,11 @@ if (!SLACK_BOT_TOKEN) {
   process.exit(1);
 }
 
-const slackDeps: SlackDeps = { client: new WebClient(SLACK_BOT_TOKEN) };
+const slackDeps: SlackDeps = {
+  client: new WebClient(SLACK_BOT_TOKEN),
+  token: SLACK_BOT_TOKEN,
+  fetchFn: fetch,
+};
 
 // --- Tool definitions ---
 
@@ -74,6 +86,22 @@ const tools: Tool[] = [
       required: ["channel"],
     },
   },
+  {
+    name: "get_slack_file",
+    description:
+      "Fetch a Slack file by file_id. Returns text content for text-like files or image content for photos.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        file_id: { type: "string", description: "Slack file ID (e.g. F0123456789)" },
+        max_bytes: {
+          type: "number",
+          description: "Maximum file size to download in bytes (default 5000000, max 20000000)",
+        },
+      },
+      required: ["file_id"],
+    },
+  },
 ];
 
 // --- Tool handler ---
@@ -117,12 +145,46 @@ async function handleToolCall(
       };
     }
 
+    case "get_slack_file": {
+      const fileId = String(args.file_id);
+      const maxBytes = Math.min(Number(args.max_bytes) || 5_000_000, 20_000_000);
+      const file = await readSlackFile(fileId, maxBytes, slackDeps);
+      return {
+        content: toSlackFileToolContent(file),
+      };
+    }
+
     default:
       return {
         content: [{ type: "text" as const, text: `Unknown tool: ${name}` }],
         isError: true,
       };
   }
+}
+
+function toSlackFileToolContent(file: SlackFileReadResult): CallToolResult["content"] {
+  const metadata = {
+    file: file.file,
+    kind: file.kind,
+    ...(file.kind === "text"
+      ? { truncated: file.truncated, source: file.source }
+      : { mimeType: file.mimeType }),
+  };
+
+  if (file.kind === "image") {
+    const image: ImageContent = {
+      type: "image",
+      data: file.data,
+      mimeType: file.mimeType,
+    };
+
+    return [{ type: "text" as const, text: JSON.stringify(metadata) }, image];
+  }
+
+  return [
+    { type: "text" as const, text: JSON.stringify(metadata) },
+    { type: "text" as const, text: file.text },
+  ];
 }
 
 // --- MCP Server ---
