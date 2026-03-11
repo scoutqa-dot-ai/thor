@@ -1,0 +1,35 @@
+packages/slack-mcp/src/slack.ts
+  de90f4ebc22f09b5 85-98
+packages/gateway/src/app.test.ts
+  de90f4ebc22f09b5 195-198,261-264,550-553
+packages/slack-mcp/src/index.ts
+  de90f4ebc22f09b5 16,91-103,144-158,264-297
+packages/gateway/src/service.ts
+  de90f4ebc22f09b5 3,41-44
+docs/plan/2026031103_slack-ephemeral-message.md
+  de90f4ebc22f09b5 1-160
+packages/runner/src/index.ts
+  de90f4ebc22f09b5 29,48-50,110-114,122-123,252,385-389,423,435,468-470
+packages/runner/src/slack-notifier.ts
+  de90f4ebc22f09b5 1-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "143b22d3cec9a8c112ae4b2ce18f9f6f70832e25",
+  "prompts": {
+    "de90f4ebc22f09b5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0384d960-00da-4c15-ae8d-95fb93757396",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 461,
+      "total_deletions": 6,
+      "accepted_lines": 458,
+      "overriden_lines": 0
+    }
+  }
+}
