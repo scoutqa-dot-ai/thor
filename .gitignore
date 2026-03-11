@@ -23,4 +23,4 @@ test.sh
 .vscode/
 
 # Thor
-/workspace/
+/docker-volumes/

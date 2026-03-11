@@ -27,6 +27,7 @@ function makeEvent(key: string, text: string): QueuedEvent {
     correlationKey: key,
     payload: { text },
     receivedAt: new Date().toISOString(),
+    sourceTs: Date.now(),
     readyAt: 0,
   };
 }
@@ -171,6 +172,7 @@ describe("EventQueue", () => {
       correlationKey: "key-1",
       payload: { text: "original" },
       receivedAt: new Date().toISOString(),
+      sourceTs: Date.now(),
       readyAt: 0,
     };
 
@@ -196,6 +198,7 @@ describe("EventQueue", () => {
       correlationKey: "key-1",
       payload: { text: "not yet" },
       receivedAt: new Date().toISOString(),
+      sourceTs: Date.now(),
       readyAt: Date.now() + 60_000,
     });
 

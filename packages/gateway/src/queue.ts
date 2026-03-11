@@ -39,8 +39,8 @@ export interface QueuedEvent<T = unknown> {
   correlationKey: string;
   payload: T;
   receivedAt: string;
-  /** Source-authoritative timestamp in epoch ms (e.g. parsed from Slack ts). Falls back to Date.now(). */
-  sourceTs?: number;
+  /** Source-authoritative timestamp in epoch ms (e.g. parsed from Slack ts). */
+  sourceTs: number;
   /** Epoch ms after which this event's batch is eligible for processing. */
   readyAt: number;
 }
@@ -51,7 +51,7 @@ const QueuedEventSchema = z.object({
   correlationKey: z.string(),
   payload: z.unknown(),
   receivedAt: z.string(),
-  sourceTs: z.number().optional(),
+  sourceTs: z.number(),
   readyAt: z.number(),
 });
 
@@ -92,7 +92,7 @@ export class EventQueue {
 
   /** Write an event to the queue directory (synchronous, atomic). */
   enqueue(event: QueuedEvent): void {
-    const ts = (event.sourceTs ?? Date.now()).toString().padStart(15, "0");
+    const ts = event.sourceTs.toString().padStart(15, "0");
     const filename = `${ts}_${event.id}.json`;
     const tmpPath = join(this.dir, `.${filename}.tmp`);
     const finalPath = join(this.dir, filename);

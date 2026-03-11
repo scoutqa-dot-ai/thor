@@ -106,29 +106,12 @@ export function verifySlackSignature(input: {
 
 export type SlackThreadEvent = SlackAppMentionEvent | SlackMessageEvent;
 
-export function normalizeSlackPrompt(text: string): string {
-  return text.replace(/^<@[^>]+>\s*/, "").trim();
-}
-
 export function getSlackThreadTs(event: SlackThreadEvent): string {
   return event.thread_ts || event.ts;
 }
 
 export function getSlackCorrelationKey(event: SlackThreadEvent): string {
   return `slack:thread:${getSlackThreadTs(event)}`;
-}
-
-export function formatSlackReply(text: string, maxLength = 3000): string {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return "Run completed, but no text response was returned.";
-  }
-
-  if (trimmed.length <= maxLength) {
-    return trimmed;
-  }
-
-  return `${trimmed.slice(0, maxLength - 3)}...`;
 }
 
 export function parseSlackTs(ts: string): number {

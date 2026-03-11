@@ -1,5 +1,5 @@
 {
-  "name": "@thor/gateway",
+  "name": "@thor/slack-mcp",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -11,10 +11,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@slack/web-api": "^7.9.1",
     "@thor/common": "workspace:*",
-    "express": "^5.1.0",
-    "zod": "^4.3.6"
+    "express": "^5.1.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.2",

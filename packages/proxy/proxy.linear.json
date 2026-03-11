@@ -1,0 +1,17 @@
+{
+  "upstreams": {
+    "linear": {
+      "url": "https://mcp.linear.app/mcp",
+      "headers": {
+        "Authorization": "Bearer ${LINEAR_API_KEY}"
+      }
+    }
+  },
+  "policy": {
+    "rules": [
+      { "upstream": "linear", "toolPattern": "get_*", "action": "allow" },
+      { "upstream": "linear", "toolPattern": "list_*", "action": "allow" },
+      { "upstream": "*", "toolPattern": "*", "action": "block" }
+    ]
+  }
+}

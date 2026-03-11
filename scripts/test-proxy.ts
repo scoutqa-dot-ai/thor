@@ -133,8 +133,9 @@ async function testToolsList(): Promise<string[]> {
 
   assert(tools.length > 0, `Received ${tools.length} tools from proxy`);
 
-  const allPrefixed = tools.every((t) => t.name.startsWith("linear__"));
-  assert(allPrefixed, "All tool names are prefixed with 'linear__'");
+  // With single-upstream proxy, tools are NOT prefixed
+  const noPrefixed = tools.every((t) => !t.name.includes("__"));
+  assert(noPrefixed, "Tool names have no upstream prefix (single-upstream mode)");
 
   // Log first few tool names
   console.log(
@@ -147,18 +148,15 @@ async function testToolsList(): Promise<string[]> {
   return tools.map((t) => t.name);
 }
 
-// Matches the proxy.config.json policy: get_* and list_* are allowed
-function isAllowedByPolicy(originalName: string): boolean {
-  return originalName.startsWith("get_") || originalName.startsWith("list_");
+// Matches the proxy.linear.json policy: get_* and list_* are allowed
+function isAllowedByPolicy(name: string): boolean {
+  return name.startsWith("get_") || name.startsWith("list_");
 }
 
 async function testAllowedToolCall(tools: string[]): Promise<void> {
   console.log("\n── Test: tools/call (allowed) ──");
 
-  const allowedTool = tools.find((t) => {
-    const originalName = t.replace(/^[^_]+__/, "");
-    return isAllowedByPolicy(originalName);
-  });
+  const allowedTool = tools.find((t) => isAllowedByPolicy(t));
 
   if (!allowedTool) {
     console.error("  ✗ No allowed tool found to test");
@@ -193,15 +191,12 @@ async function testBlockedToolCall(tools: string[]): Promise<void> {
   console.log("\n── Test: tools/call (blocked) ──");
 
   // Find a tool that is NOT get_* or list_* (write/mutate tools are blocked)
-  const blockedTool = tools.find((t) => {
-    const originalName = t.replace(/^[^_]+__/, "");
-    return !isAllowedByPolicy(originalName);
-  });
+  const blockedTool = tools.find((t) => !isAllowedByPolicy(t));
 
   if (!blockedTool) {
     console.log("  No blocked tool found in tool list; testing with a fabricated tool name...");
     const result = (await rpc("tools/call", {
-      name: "linear__fake_write_tool",
+      name: "fake_write_tool",
       arguments: {},
     })) as {
       result?: { content?: Array<{ type: string; text: string }>; isError?: boolean };

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/big-pickle",
+  "mcp": {
+    "linear": {
+      "type": "remote",
+      "url": "http://proxy-linear:3001/mcp",
+      "enabled": true
+    },
+    "posthog": {
+      "type": "remote",
+      "url": "http://proxy-posthog:3001/mcp",
+      "enabled": true
+    },
+    "slack": {
+      "type": "remote",
+      "url": "http://proxy-slack:3001/mcp",
+      "enabled": true
+    }
+  }
+}

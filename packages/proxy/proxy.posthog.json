@@ -1,11 +1,5 @@
 {
   "upstreams": {
-    "linear": {
-      "url": "https://mcp.linear.app/mcp",
-      "headers": {
-        "Authorization": "Bearer ${LINEAR_API_KEY}"
-      }
-    },
     "posthog": {
       "url": "https://mcp.posthog.com/mcp",
       "headers": {
@@ -15,9 +9,6 @@
   },
   "policy": {
     "rules": [
-      { "upstream": "linear", "toolPattern": "get_*", "action": "allow" },
-      { "upstream": "linear", "toolPattern": "list_*", "action": "allow" },
-
       { "upstream": "posthog", "toolPattern": "*-get", "action": "allow" },
       { "upstream": "posthog", "toolPattern": "*-get-all", "action": "allow" },
       { "upstream": "posthog", "toolPattern": "*-get-definition", "action": "allow" },
@@ -31,7 +22,6 @@
       { "upstream": "posthog", "toolPattern": "list-errors", "action": "allow" },
       { "upstream": "posthog", "toolPattern": "logs-*", "action": "allow" },
       { "upstream": "posthog", "toolPattern": "query-*", "action": "allow" },
-
       { "upstream": "*", "toolPattern": "*", "action": "block" }
     ]
   }

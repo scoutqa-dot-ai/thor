@@ -2,7 +2,7 @@
 #
 # End-to-end test for Thor PoC (Phase 4).
 #
-# Tests the full chain: curl -> runner -> OpenCode service -> proxy -> Linear MCP
+# Tests the full chain: curl -> runner -> OpenCode service -> per-upstream proxies -> MCP servers
 #
 # Prerequisites:
 #   - Both services running (either `pnpm dev` with LINEAR_API_KEY, or `docker compose up`)
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
-PROXY_URL="${PROXY_URL:-http://localhost:3001}"
+PROXY_LINEAR_URL="${PROXY_LINEAR_URL:-http://localhost:3001}"
 OPENCODE_URL="${OPENCODE_URL:-http://localhost:4096}"
 OPENCODE_SERVER_USERNAME="${OPENCODE_SERVER_USERNAME:-opencode}"
 OPENCODE_SERVER_PASSWORD="${OPENCODE_SERVER_PASSWORD:-}"
@@ -45,8 +45,8 @@ assert() {
 echo ""
 echo "=== Health Checks ==="
 
-proxy_health=$(curl -sf "$PROXY_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy is healthy"
+proxy_health=$(curl -sf "$PROXY_LINEAR_URL/health" 2>/dev/null || echo '{}')
+assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy (linear) is healthy"
 
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
 assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy"
@@ -59,7 +59,7 @@ echo "  (this may take a moment while the agent session runs)"
 
 list_response=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"List the tools available to you. Only list tool names that start with thor-proxy, one per line. Nothing else."}' \
+  -d '{"prompt":"List the tools available to you. Only list tool names from linear or posthog, one per line. Nothing else."}' \
   --max-time 180 2>/dev/null || echo '{"error":"request failed"}')
 
 assert '[[ "$list_response" == *"sessionId"* ]]' "Got a session ID"
@@ -67,7 +67,7 @@ assert '[[ "$list_response" == *"sessionId"* ]]' "Got a session ID"
 list_has_linear=$(echo "$list_response" | node -e "
   const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
   const text = (d.response || '') + JSON.stringify(d.toolCalls || []);
-  console.log(text.includes('thor-proxy_linear__') || text.includes('thor-proxy_posthog__') ? 'yes' : 'no');
+  console.log(text.includes('get_issue') || text.includes('list_issues') || text.includes('insight-query') ? 'yes' : 'no');
 " 2>/dev/null || echo "no")
 assert '[[ "$list_has_linear" == "yes" ]]' "Response mentions proxied tools (linear or posthog)"
 
@@ -85,7 +85,7 @@ echo "=== Trigger: Tool Call (list issues) ==="
 
 issues_response=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"Use the thor-proxy tool to list the 2 most recent Linear issues. Show their identifier, title, and status in a table."}' \
+  -d '{"prompt":"Use the linear tools to list the 2 most recent Linear issues. Show their identifier, title, and status in a table."}' \
   --max-time 180 2>/dev/null || echo '{"error":"request failed"}')
 
 assert '[[ "$issues_response" == *"sessionId"* ]]' "Got a session ID"

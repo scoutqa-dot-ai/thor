@@ -45,9 +45,11 @@ function buildToolIndex(): void {
   toolMap.clear();
   proxyTools = [];
 
+  const skipPrefix = upstreams.size === 1;
+
   for (const [upstreamName, conn] of upstreams) {
     for (const tool of conn.tools) {
-      const proxyToolName = `${upstreamName}__${tool.name}`;
+      const proxyToolName = skipPrefix ? tool.name : `${upstreamName}__${tool.name}`;
       toolMap.set(proxyToolName, { upstream: upstreamName, originalName: tool.name });
 
       // Pass through the original tool definition with its real JSON Schema

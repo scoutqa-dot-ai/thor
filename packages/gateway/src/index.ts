@@ -1,3 +1,4 @@
+import { WebClient } from "@slack/web-api";
 import { createLogger, logInfo } from "@thor/common";
 import { createGatewayApp } from "./app.js";
 
@@ -16,7 +17,7 @@ const QUEUE_DIR = process.env.QUEUE_DIR || "data/queue";
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
   signingSecret: SLACK_SIGNING_SECRET,
-  slackBotToken: SLACK_BOT_TOKEN,
+  slack: new WebClient(SLACK_BOT_TOKEN),
   timestampToleranceSeconds: SLACK_TIMESTAMP_TOLERANCE_SECONDS,
   queueDir: QUEUE_DIR,
 });

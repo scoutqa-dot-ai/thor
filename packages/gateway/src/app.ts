@@ -1,17 +1,17 @@
 import express, { type Express, type Request, type Response } from "express";
+import type { WebClient } from "@slack/web-api";
 import { createLogger, logError, logInfo } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
 import {
   addSlackReaction,
   hasRunnerSession,
-  postSlackReply,
   triggerRunner,
-  type SlackAppServiceDeps,
+  type RunnerDeps,
+  type SlackDeps,
 } from "./service.js";
 import {
   getSlackCorrelationKey,
-  normalizeSlackPrompt,
   parseSlackTs,
   SlackEventEnvelopeSchema,
   SlackInteractivityPayloadSchema,
@@ -37,8 +37,9 @@ interface RawBodyRequest extends Request {
 /** Default batch delay for Slack events (ms). */
 const SLACK_BATCH_DELAY_MS = 3000;
 
-export interface GatewayAppConfig extends SlackAppServiceDeps {
+export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
+  slack: WebClient;
   timestampToleranceSeconds?: number;
   /** Directory for the event queue. Default: "data/queue". */
   queueDir?: string;
@@ -68,6 +69,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   const batchDelay = config.slackBatchDelayMs ?? SLACK_BATCH_DELAY_MS;
 
+  const runnerDeps: RunnerDeps = {
+    runnerUrl: config.runnerUrl,
+    fetchImpl: config.fetchImpl,
+  };
+  const slackDeps: SlackDeps = { slack: config.slack };
+
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
     disableInterval: config.disableQueueInterval === true,
@@ -75,28 +82,16 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       const slackEvents = events.filter(isSlackEvent);
       if (slackEvents.length === 0) return;
 
-      // Normalize prompts from all events, combine into a single trigger.
-      const prompts = slackEvents
-        .map((e) => normalizeSlackPrompt(e.payload.text ?? ""))
-        .filter(Boolean);
-
-      if (prompts.length === 0) return;
-
-      const combinedPrompt = prompts.join("\n");
       const lastEvent = slackEvents[slackEvents.length - 1];
 
       try {
-        const result = await triggerRunner(lastEvent.payload, config, combinedPrompt);
-        const reply = result.response || result.error;
+        await triggerRunner(
+          slackEvents.map((e) => e.payload),
+          runnerDeps,
+        );
 
-        if (reply) {
-          await postSlackReply(lastEvent.payload, reply, config);
-        }
-
-        logInfo(log, "slack_trigger_completed", {
+        logInfo(log, "slack_trigger_fired", {
           correlationKey: lastEvent.correlationKey,
-          sessionId: result.sessionId,
-          resumed: result.resumed ?? false,
           batchSize: slackEvents.length,
         });
       } catch (error) {
@@ -132,7 +127,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       status: "ok",
       service: "gateway",
       runnerUrl: config.runnerUrl,
-      configured: Boolean(config.signingSecret && config.slackBotToken),
+      configured: Boolean(config.signingSecret && config.slack),
     });
   });
 
@@ -172,7 +167,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // app_mention — always forward
     if (event.type === "app_mention") {
       res.status(200).json({ ok: true });
-      void addSlackReaction(event.channel, event.ts, "eyes", config).catch((err) =>
+      void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
         logError(log, "reaction_failed", err, { eventId }),
       );
       logInfo(log, "event_accepted", {
@@ -197,7 +192,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       res.status(200).json({ ok: true });
       void (async () => {
         const correlationKey = getSlackCorrelationKey(event);
-        const exists = await hasRunnerSession(correlationKey, config);
+        const exists = await hasRunnerSession(correlationKey, runnerDeps);
         if (!exists) {
           logInfo(log, "thread_reply_ignored_no_session", { eventId, correlationKey });
           return;
