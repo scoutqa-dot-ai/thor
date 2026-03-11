@@ -9,21 +9,14 @@
 #   - OpenCode configured with an LLM provider in the runner environment
 #
 # Usage:
-#   OPENCODE_SERVER_PASSWORD=... ./scripts/test-e2e.sh
-#   RUNNER_URL=http://localhost:3000 OPENCODE_URL=http://localhost:4096 OPENCODE_SERVER_PASSWORD=... ./scripts/test-e2e.sh
+#   ./scripts/test-e2e.sh
+#   RUNNER_URL=http://localhost:3000 OPENCODE_URL=http://localhost:4096 ./scripts/test-e2e.sh
 #
 set -euo pipefail
 
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 PROXY_LINEAR_URL="${PROXY_LINEAR_URL:-http://localhost:3010}"
 OPENCODE_URL="${OPENCODE_URL:-http://localhost:4096}"
-OPENCODE_SERVER_USERNAME="${OPENCODE_SERVER_USERNAME:-opencode}"
-OPENCODE_SERVER_PASSWORD="${OPENCODE_SERVER_PASSWORD:-}"
-
-if [[ -z "$OPENCODE_SERVER_PASSWORD" ]]; then
-  echo "OPENCODE_SERVER_PASSWORD is required"
-  exit 1
-fi
 
 passed=0
 failed=0
@@ -146,8 +139,7 @@ fi
 
 # 4c. Verify session exists in OpenCode via its native API
 oc_session=$(
-  curl -sf -u "$OPENCODE_SERVER_USERNAME:$OPENCODE_SERVER_PASSWORD" \
-    "$OPENCODE_URL/session/$session1" 2>/dev/null || echo '{}'
+  curl -sf "$OPENCODE_URL/session/$session1" 2>/dev/null || echo '{}'
 )
 oc_session_id=$(echo "$oc_session" | node -e "
   const d = JSON.parse(require('fs').readFileSync(0,'utf8'));

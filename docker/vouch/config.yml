@@ -1,0 +1,20 @@
+vouch:
+  port: 9090
+  document_root: /vouch
+  allowAllUsers: true
+  cookie:
+    domain: ${SSO_COOKIE_DOMAIN}
+    secure: false
+    name: VouchCookie
+  jwt:
+    secret: ${SSO_JWT_SECRET}
+
+oauth:
+  provider: google
+  client_id: ${OAUTH_CLIENT_ID}
+  client_secret: ${OAUTH_CLIENT_SECRET}
+  callback_url: ${SSO_CALLBACK_URL}
+  scopes:
+    - openid
+    - email
+    - profile

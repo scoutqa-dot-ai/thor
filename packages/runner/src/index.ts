@@ -30,31 +30,14 @@ import {
 const log = createLogger("runner");
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
-const LEGACY_OPENCODE_PORT = process.env.OPENCODE_PORT || "4096";
-const LEGACY_OPENCODE_HOST = process.env.OPENCODE_HOST || "127.0.0.1";
-const OPENCODE_URL = (
-  process.env.OPENCODE_URL || `http://${LEGACY_OPENCODE_HOST}:${LEGACY_OPENCODE_PORT}`
-).replace(/\/$/, "");
-const OPENCODE_USERNAME = process.env.OPENCODE_USERNAME || "opencode";
-const OPENCODE_PASSWORD = process.env.OPENCODE_PASSWORD || "";
+const OPENCODE_URL = (process.env.OPENCODE_URL || "http://127.0.0.1:4096").replace(/\/$/, "");
 const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
 
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
 
-function getOpencodeHeaders(): Record<string, string> | undefined {
-  if (!OPENCODE_PASSWORD) return undefined;
-
-  const credentials = Buffer.from(`${OPENCODE_USERNAME}:${OPENCODE_PASSWORD}`).toString("base64");
-  return {
-    Authorization: `Basic ${credentials}`,
-  };
-}
-
 async function fetchOpencode(path: string): Promise<Response> {
-  return fetch(`${OPENCODE_URL}${path}`, {
-    headers: getOpencodeHeaders(),
-  });
+  return fetch(`${OPENCODE_URL}${path}`);
 }
 
 async function isOpencodeReachable(): Promise<boolean> {
@@ -95,7 +78,6 @@ app.get("/health", async (_req, res) => {
     service: "runner",
     opencode: opencodeHealthy ? "connected" : "disconnected",
     opencodeUrl: OPENCODE_URL,
-    opencodeAuth: OPENCODE_PASSWORD ? "basic" : "none",
   });
 });
 
@@ -243,7 +225,6 @@ app.post("/trigger", async (req, res) => {
 
     const client = createOpencodeClient({
       baseUrl: OPENCODE_URL,
-      headers: getOpencodeHeaders(),
     });
 
     // --- Session resolution: resume existing or create new ---
@@ -507,6 +488,5 @@ app.listen(PORT, () => {
   logInfo(log, "runner_started", {
     port: PORT,
     opencodeUrl: OPENCODE_URL,
-    opencodeAuth: OPENCODE_PASSWORD ? "basic" : "none",
   });
 });

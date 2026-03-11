@@ -1,6 +1,6 @@
 # Thor — Docker Compose
 #
-# Start:   LINEAR_API_KEY=xxx POSTHOG_API_KEY=xxx OPENCODE_SERVER_PASSWORD=xxx docker compose up --build -d
+# Start:   LINEAR_API_KEY=xxx POSTHOG_API_KEY=xxx OAUTH_CLIENT_ID=xxx OAUTH_CLIENT_SECRET=xxx SSO_JWT_SECRET=xxx docker compose up --build -d
 # Ingress: port 8080 routes /slack/* → gateway, everything else → opencode
 # Slack:   add SLACK_SIGNING_SECRET and SLACK_BOT_TOKEN to enable the gateway service
 # Test:    ./scripts/test-e2e.sh
@@ -12,8 +12,6 @@ services:
     build:
       context: .
       target: slack-mcp
-    ports:
-      - "3003:3003"
     environment:
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - PORT=3003
@@ -28,10 +26,6 @@ services:
     build:
       context: .
       target: proxy
-    ports:
-      - "3010:3010"
-      - "3011:3011"
-      - "3012:3012"
     volumes:
       - ./docker-volumes/worklog:/worklog
     environment:
@@ -71,11 +65,6 @@ services:
       context: ./docker/opencode
     working_dir: /workspace
     command: ["serve", "--port", "4096", "--hostname", "0.0.0.0"]
-    ports:
-      - "4096:4096"
-    environment:
-      - OPENCODE_SERVER_USERNAME=${OPENCODE_SERVER_USERNAME:-opencode}
-      - OPENCODE_SERVER_PASSWORD=${OPENCODE_SERVER_PASSWORD:?set OPENCODE_SERVER_PASSWORD}
     volumes:
       - ./docker-volumes/opencode:/root/.local/share/opencode
       - ./docker-volumes/workspace:/workspace
@@ -90,7 +79,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "const a=Buffer.from(process.env.OPENCODE_SERVER_USERNAME+':'+process.env.OPENCODE_SERVER_PASSWORD).toString('base64');fetch('http://127.0.0.1:4096/global/health',{headers:{Authorization:'Basic '+a}}).then(r=>{if(!r.ok)throw 1})",
+          "fetch('http://127.0.0.1:4096/global/health').then(r=>{if(!r.ok)throw 1})",
         ]
       interval: 5s
       timeout: 3s
@@ -100,13 +89,9 @@ services:
     build:
       context: .
       target: runner
-    ports:
-      - "3000:3000"
     environment:
       - PORT=3000
       - OPENCODE_URL=${OPENCODE_URL:-http://opencode:4096}
-      - OPENCODE_USERNAME=${OPENCODE_USERNAME:-${OPENCODE_SERVER_USERNAME:-opencode}}
-      - OPENCODE_PASSWORD=${OPENCODE_PASSWORD:-${OPENCODE_SERVER_PASSWORD}}
     volumes:
       - ./docker-volumes/worklog:/worklog
       - ./docker-volumes/workspace:/workspace
@@ -118,8 +103,6 @@ services:
     build:
       context: .
       target: gateway
-    ports:
-      - "3002:3002"
     environment:
       - PORT=3002
       - RUNNER_URL=${RUNNER_URL_FOR_GATEWAY:-http://runner:3000}
@@ -139,6 +122,23 @@ services:
       timeout: 3s
       retries: 10
 
+  vouch:
+    build:
+      context: ./docker/vouch
+    volumes:
+      - ./docker/vouch/config.yml:/template/config.yml:ro
+    environment:
+      - OAUTH_CLIENT_ID=${OAUTH_CLIENT_ID:?set OAUTH_CLIENT_ID}
+      - OAUTH_CLIENT_SECRET=${OAUTH_CLIENT_SECRET:?set OAUTH_CLIENT_SECRET}
+      - SSO_JWT_SECRET=${SSO_JWT_SECRET:?set SSO_JWT_SECRET}
+      - SSO_COOKIE_DOMAIN=${SSO_COOKIE_DOMAIN:-localhost}
+      - SSO_CALLBACK_URL=${SSO_CALLBACK_URL:-http://localhost:8080/vouch/auth}
+    healthcheck:
+      test: ["CMD", "/vouch-proxy", "-healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   ingress:
     image: nginx:alpine
     ports:
@@ -149,4 +149,6 @@ services:
       gateway:
         condition: service_healthy
       opencode:
+        condition: service_healthy
+      vouch:
         condition: service_healthy
