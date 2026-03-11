@@ -65,9 +65,7 @@ function fileTimestamp(): string {
 // ---------------------------------------------------------------------------
 
 export interface ToolCallLogEntry {
-  upstream: string;
   tool: string;
-  proxyToolName: string;
   decision: "allowed" | "blocked";
   args?: Record<string, unknown>;
   result?: unknown;
@@ -81,15 +79,13 @@ export interface ToolCallLogEntry {
  */
 export function writeToolCallLog(entry: ToolCallLogEntry): void {
   const ts = fileTimestamp();
-  const slug = sanitize(entry.proxyToolName);
+  const slug = sanitize(entry.tool);
   const filename = `${ts}_tool-call_${slug}.json`;
 
   writeEntry(filename, {
     timestamp: new Date().toISOString(),
     type: "tool_call",
-    upstream: entry.upstream,
     tool: entry.tool,
-    proxyToolName: entry.proxyToolName,
     decision: entry.decision,
     args: entry.args ? truncatePayload(entry.args) : undefined,
     result: entry.result ? truncatePayload(entry.result) : undefined,

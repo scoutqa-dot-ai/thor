@@ -35,10 +35,10 @@ CMD ["node", "/app/packages/gateway/dist/index.js"]
 
 FROM build AS proxy
 COPY packages/proxy/proxy.*.json /app/packages/proxy/
+COPY packages/proxy/multi-proxy.sh /app/packages/proxy/
 WORKDIR /workspace
-ENV PORT=3001
-EXPOSE 3001
-CMD ["node", "/app/packages/proxy/dist/index.js"]
+EXPOSE 3010 3011 3012
+CMD ["sh", "/app/packages/proxy/multi-proxy.sh"]
 
 FROM build AS runner
 WORKDIR /workspace

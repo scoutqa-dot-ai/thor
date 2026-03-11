@@ -1,15 +1,6 @@
 {
-  "upstreams": {
-    "slack": {
-      "url": "http://slack-mcp:3003/mcp"
-    }
+  "upstream": {
+    "url": "http://slack-mcp:3003/mcp"
   },
-  "policy": {
-    "rules": [
-      { "upstream": "slack", "toolPattern": "post_message", "action": "allow" },
-      { "upstream": "slack", "toolPattern": "read_thread", "action": "allow" },
-      { "upstream": "slack", "toolPattern": "get_channel_history", "action": "allow" },
-      { "upstream": "*", "toolPattern": "*", "action": "block" }
-    ]
-  }
+  "allow": ["post_message", "read_thread", "get_channel_history"]
 }

@@ -1,28 +1,23 @@
 {
-  "upstreams": {
-    "posthog": {
-      "url": "https://mcp.posthog.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${POSTHOG_API_KEY}"
-      }
+  "upstream": {
+    "url": "https://mcp.posthog.com/mcp",
+    "headers": {
+      "Authorization": "Bearer ${POSTHOG_API_KEY}"
     }
   },
-  "policy": {
-    "rules": [
-      { "upstream": "posthog", "toolPattern": "*-get", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "*-get-all", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "*-get-definition", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "*-list", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "*-retrieve", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "*-search", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "*-stats", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "error-details", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "get-*", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "insight-query", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "list-errors", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "logs-*", "action": "allow" },
-      { "upstream": "posthog", "toolPattern": "query-*", "action": "allow" },
-      { "upstream": "*", "toolPattern": "*", "action": "block" }
-    ]
-  }
+  "allow": [
+    "*-get",
+    "*-get-all",
+    "*-get-definition",
+    "*-list",
+    "*-retrieve",
+    "*-search",
+    "*-stats",
+    "error-details",
+    "get-*",
+    "insight-query",
+    "list-errors",
+    "logs-*",
+    "query-*"
+  ]
 }

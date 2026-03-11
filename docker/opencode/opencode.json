@@ -4,17 +4,17 @@
   "mcp": {
     "linear": {
       "type": "remote",
-      "url": "http://proxy-linear:3001/mcp",
+      "url": "http://proxy:3010/mcp",
       "enabled": true
     },
     "posthog": {
       "type": "remote",
-      "url": "http://proxy-posthog:3001/mcp",
+      "url": "http://proxy:3011/mcp",
       "enabled": true
     },
     "slack": {
       "type": "remote",
-      "url": "http://proxy-slack:3001/mcp",
+      "url": "http://proxy:3012/mcp",
       "enabled": true
     }
   }

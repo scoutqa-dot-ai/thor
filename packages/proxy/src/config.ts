@@ -1,32 +1,17 @@
 /**
- * Proxy configuration types.
- *
+ * Proxy configuration — one upstream per instance.
  * Config file supports ${ENV_VAR} interpolation in string values.
  */
 
-export interface UpstreamConfig {
-  url: string;
-  headers?: Record<string, string>;
-}
-
-export interface PolicyRule {
-  upstream: string;
-  toolPattern: string; // glob-like: "*" matches all, "list_*" matches prefix
-  action: "allow" | "block";
-}
-
-export interface PolicyConfig {
-  rules: PolicyRule[];
-}
-
 export interface ProxyConfig {
-  upstreams: Record<string, UpstreamConfig>;
-  policy: PolicyConfig;
+  upstream: {
+    url: string;
+    headers?: Record<string, string>;
+  };
+  /** Glob patterns for allowed tools. Everything else is blocked. */
+  allow: string[];
 }
 
-/**
- * Interpolate ${ENV_VAR} in a string value.
- */
 function interpolate(value: string): string {
   return value.replace(/\$\{(\w+)\}/g, (_match, name: string) => {
     const envVal = process.env[name];
@@ -37,16 +22,9 @@ function interpolate(value: string): string {
   });
 }
 
-/**
- * Deep-interpolate all string values in an object.
- */
 function interpolateDeep<T>(obj: T): T {
-  if (typeof obj === "string") {
-    return interpolate(obj) as T;
-  }
-  if (Array.isArray(obj)) {
-    return obj.map(interpolateDeep) as T;
-  }
+  if (typeof obj === "string") return interpolate(obj) as T;
+  if (Array.isArray(obj)) return obj.map(interpolateDeep) as T;
   if (obj !== null && typeof obj === "object") {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {

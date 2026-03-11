@@ -24,51 +24,27 @@ services:
       timeout: 3s
       retries: 10
 
-  proxy-linear:
+  proxy:
     build:
       context: .
       target: proxy
     environment:
+      - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json
       - LINEAR_API_KEY=${LINEAR_API_KEY}
-      - PROXY_CONFIG=/app/packages/proxy/proxy.linear.json
-      - PORT=3001
-    healthcheck:
-      test:
-        ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>{if(!r.ok)throw 1})"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  proxy-posthog:
-    build:
-      context: .
-      target: proxy
-    environment:
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
-      - PROXY_CONFIG=/app/packages/proxy/proxy.posthog.json
-      - PORT=3001
-    healthcheck:
-      test:
-        ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>{if(!r.ok)throw 1})"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  proxy-slack:
-    build:
-      context: .
-      target: proxy
-    environment:
-      - PROXY_CONFIG=/app/packages/proxy/proxy.slack.json
-      - PORT=3001
     depends_on:
       slack-mcp:
         condition: service_healthy
     healthcheck:
       test:
-        ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>{if(!r.ok)throw 1})"]
+        [
+          "CMD",
+          "node",
+          "-e",
+          "Promise.all([3010,3011,3012].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
+        ]
       interval: 5s
-      timeout: 3s
+      timeout: 5s
       retries: 10
 
   opencode:
@@ -85,11 +61,7 @@ services:
       - ./docker-volumes/opencode:/root/.local/share/opencode
       - ./docker-volumes/workspace:/workspace
     depends_on:
-      proxy-linear:
-        condition: service_healthy
-      proxy-posthog:
-        condition: service_healthy
-      proxy-slack:
+      proxy:
         condition: service_healthy
     healthcheck:
       test:
