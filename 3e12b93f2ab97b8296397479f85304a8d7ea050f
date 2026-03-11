@@ -1,0 +1,25 @@
+docker-compose.yml
+  49d5d8f397df7d0c 4,126,144-155
+docker/ingress/nginx.conf
+  49d5d8f397df7d0c 1-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3e12b93f2ab97b8296397479f85304a8d7ea050f",
+  "prompts": {
+    "49d5d8f397df7d0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d667b05a-19e7-47c4-958b-568d45ae3359",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 125,
+      "total_deletions": 13,
+      "accepted_lines": 114,
+      "overriden_lines": 0
+    }
+  }
+}
