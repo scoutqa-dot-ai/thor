@@ -1,0 +1,31 @@
+packages/runner/src/session-map.ts
+  58e5ea1f81feda0b 17
+packages/common/src/worklog.ts
+  58e5ea1f81feda0b 17
+docker-compose.yml
+  58e5ea1f81feda0b 35-36,111,130
+scripts/test-e2e.sh
+  58e5ea1f81feda0b 108
+packages/common/src/notes.ts
+  58e5ea1f81feda0b 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e6aa36c14a79d12605d893cffb59a150be8f18bf",
+  "prompts": {
+    "58e5ea1f81feda0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34cdd99b-564d-4c31-8a5f-434fdf73e7a5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 4,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
