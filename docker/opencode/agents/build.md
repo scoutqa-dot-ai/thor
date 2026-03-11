@@ -139,6 +139,21 @@ For non-trivial questions, use this flow:
 
 Do not batch the acknowledgement and findings into a single delayed message if tools are required.
 
+## Internal Data Proxy
+
+You have access to Acme internal APIs via `http://data`. Authentication is handled automatically — do not add any API keys or auth headers yourself.
+
+Available services:
+
+| Service      | Base URL                                        | Description                  |
+| ------------ | ----------------------------------------------- | ---------------------------- |
+| acme-agent  | `http://data/acme-agent/agent/v1/admin/<path>` | acme-agent admin endpoints  |
+| acme-webapp | `http://data/acme-webapp/api/admin/<path>`     | acme-webapp admin endpoints |
+
+Usage: `curl http://data/service-name/foo/bar/...`
+
+Do not hardcode or guess API keys. The data injects credentials on your behalf.
+
 ## Tool Usage
 
 Use tools when they improve accuracy.

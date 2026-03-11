@@ -51,6 +51,19 @@ services:
       timeout: 5s
       retries: 10
 
+  data:
+    image: nginx:alpine
+    environment:
+      - ACME_WEBAPP_ADMIN_API_KEY=${ACME_WEBAPP_ADMIN_API_KEY:-}
+      - ACME_AGENT_ADMIN_API_KEY=${ACME_AGENT_ADMIN_API_KEY:-}
+    volumes:
+      - ./docker/data/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   opencode:
     build:
       context: ./docker/opencode
@@ -66,6 +79,8 @@ services:
       - ./docker-volumes/workspace:/workspace
     depends_on:
       proxy:
+        condition: service_healthy
+      data:
         condition: service_healthy
     healthcheck:
       test:
