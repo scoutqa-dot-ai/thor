@@ -18,6 +18,7 @@ COPY packages/gateway/package.json packages/gateway/
 COPY packages/proxy/package.json packages/proxy/
 COPY packages/runner/package.json packages/runner/
 COPY packages/slack-mcp/package.json packages/slack-mcp/
+COPY packages/git-mcp/package.json packages/git-mcp/
 RUN pnpm install --frozen-lockfile
 
 # --- Build all packages ---
@@ -37,7 +38,7 @@ FROM build AS proxy
 COPY packages/proxy/proxy.*.json /app/packages/proxy/
 COPY packages/proxy/multi-proxy.sh /app/packages/proxy/
 WORKDIR /workspace
-EXPOSE 3010 3011 3012
+EXPOSE 3010 3011 3012 3013
 CMD ["sh", "/app/packages/proxy/multi-proxy.sh"]
 
 FROM build AS runner
@@ -50,3 +51,10 @@ FROM build AS slack-mcp
 ENV PORT=3003
 EXPOSE 3003
 CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
+
+FROM build AS git-mcp
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace/repos
+ENV PORT=3004
+EXPOSE 3004
+CMD ["node", "/app/packages/git-mcp/dist/index.js"]

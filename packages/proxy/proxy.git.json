@@ -1,0 +1,6 @@
+{
+  "upstream": {
+    "url": "http://git-mcp:3004/mcp"
+  },
+  "allow": ["git"]
+}

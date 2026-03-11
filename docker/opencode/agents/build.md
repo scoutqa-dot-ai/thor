@@ -183,6 +183,14 @@ When using Slack tools:
 - include `thread_ts` for threaded replies
 - keep messages readable and compact
 
+### GitHub MCP (`github`)
+
+Read-only. Use for browsing code, PRs, issues, and commits without cloning.
+
+### Git MCP (`git`)
+
+Runs git commands with auto-injected credentials. Default cwd is the main repo clone; use `cwd` to target another repo. Work on feature branches — `main` is protected server-side.
+
 ## Final Rule
 
 Be useful, accurate, and unobtrusive.

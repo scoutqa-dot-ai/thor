@@ -22,6 +22,23 @@ services:
       timeout: 3s
       retries: 10
 
+  git-mcp:
+    build:
+      context: .
+      target: git-mcp
+    environment:
+      - GITHUB_PAT=${GITHUB_PAT}
+      - GIT_MCP_DEFAULT_CWD=${GIT_MCP_DEFAULT_CWD:-/workspace/repos/acme-project}
+      - PORT=3004
+    volumes:
+      - ./docker-volumes/workspace:/workspace
+    healthcheck:
+      test:
+        ["CMD", "node", "-e", "fetch('http://localhost:3004/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   proxy:
     build:
       context: .
@@ -29,11 +46,14 @@ services:
     volumes:
       - ./docker-volumes/worklog:/worklog
     environment:
-      - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json
+      - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.github.json,3014:proxy.git.json
       - LINEAR_API_KEY=${LINEAR_API_KEY}
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
+      - GITHUB_PAT=${GITHUB_PAT}
     depends_on:
       slack-mcp:
+        condition: service_healthy
+      git-mcp:
         condition: service_healthy
     healthcheck:
       test:
@@ -41,7 +61,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "Promise.all([3010,3011,3012].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
+          "Promise.all([3010,3011,3012,3013,3014].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
         ]
       interval: 5s
       timeout: 5s
@@ -92,6 +112,7 @@ services:
     environment:
       - PORT=3000
       - OPENCODE_URL=${OPENCODE_URL:-http://opencode:4096}
+      - GIT_MCP_DEFAULT_CWD=${GIT_MCP_DEFAULT_CWD:-/workspace/repos/acme-project}
     volumes:
       - ./docker-volumes/worklog:/worklog
       - ./docker-volumes/workspace:/workspace
