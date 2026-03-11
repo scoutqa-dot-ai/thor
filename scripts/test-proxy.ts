@@ -1,20 +1,20 @@
 /**
- * Test script for the MCP Policy Proxy (Phase 2).
+ * Test script for the MCP Policy Proxy.
  *
- * Tests the three exit criteria:
- * 1. tools/list — returns upstream tools with prefixed names
+ * Tests three exit criteria:
+ * 1. tools/list — returns only the curated (allowed) tools
  * 2. tools/call (allowed) — forwards to upstream and returns result
- * 3. tools/call (blocked) — rejected by policy with error message
+ * 3. tools/call (hidden) — non-exposed tool is rejected as unknown
  *
  * Prerequisites:
  *   - LINEAR_API_KEY set in environment (or .env)
- *   - Proxy running on http://localhost:3001  (pnpm dev --filter @thor/proxy)
+ *   - Proxy running on http://localhost:3010  (or PROXY_URL override)
  *
  * Usage:
  *   npx tsx scripts/test-proxy.ts
  */
 
-const PROXY_URL = process.env.PROXY_URL || "http://localhost:3001/mcp";
+const PROXY_URL = process.env.PROXY_URL || "http://localhost:3010/mcp";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -148,25 +148,20 @@ async function testToolsList(): Promise<string[]> {
   return tools.map((t) => t.name);
 }
 
-// Matches the proxy.linear.json policy: get_* and list_* are allowed
-function isAllowedByPolicy(name: string): boolean {
-  return name.startsWith("get_") || name.startsWith("list_");
-}
-
 async function testAllowedToolCall(tools: string[]): Promise<void> {
   console.log("\n── Test: tools/call (allowed) ──");
 
-  const allowedTool = tools.find((t) => isAllowedByPolicy(t));
+  const allowedTool = tools[0];
 
   if (!allowedTool) {
-    console.error("  ✗ No allowed tool found to test");
+    console.error("  ✗ No tool found to test");
     failed++;
     return;
   }
 
   console.log(`  Calling: ${allowedTool}`);
 
-  // Try calling with empty/minimal args — we expect it to succeed (or fail at Linear level, not at policy level)
+  // Try calling with empty/minimal args — we expect it to succeed (or fail at upstream level, not at proxy level)
   const result = (await rpc("tools/call", {
     name: allowedTool,
     arguments: {},
@@ -174,54 +169,30 @@ async function testAllowedToolCall(tools: string[]): Promise<void> {
     result?: { content?: Array<{ type: string; text: string }>; isError?: boolean };
   };
 
-  // The call should have been forwarded (not blocked by policy)
-  // Even if Linear returns an error about missing args, the fact that it was forwarded is the test
-  assert(result?.result !== undefined, "Received a result (tool call was forwarded, not blocked)");
+  assert(result?.result !== undefined, "Received a result (tool call was forwarded)");
 
   const content = result?.result?.content;
   if (content && content.length > 0) {
     const text = content[0].text || "";
-    const isBlockedByPolicy = text.includes("blocked by policy");
-    assert(!isBlockedByPolicy, "Response is NOT a policy block message");
+    assert(!text.includes("Unknown tool"), "Response is NOT an unknown-tool error");
     console.log(`  Response preview: ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}`);
   }
 }
 
-async function testBlockedToolCall(tools: string[]): Promise<void> {
-  console.log("\n── Test: tools/call (blocked) ──");
+async function testHiddenToolCall(): Promise<void> {
+  console.log("\n── Test: tools/call (hidden) ──");
 
-  // Find a tool that is NOT get_* or list_* (write/mutate tools are blocked)
-  const blockedTool = tools.find((t) => !isAllowedByPolicy(t));
-
-  if (!blockedTool) {
-    console.log("  No blocked tool found in tool list; testing with a fabricated tool name...");
-    const result = (await rpc("tools/call", {
-      name: "fake_write_tool",
-      arguments: {},
-    })) as {
-      result?: { content?: Array<{ type: string; text: string }>; isError?: boolean };
-    };
-
-    // This should be an unknown tool error (since it doesn't exist in toolMap)
-    assert(result?.result?.isError === true, "Call returned an error");
-    const text = result?.result?.content?.[0]?.text || "";
-    assert(text.includes("Unknown tool"), `Error message: "${text}"`);
-    return;
-  }
-
-  console.log(`  Calling blocked tool: ${blockedTool}`);
-
+  // Call a tool name that is not in the curated allow list
   const result = (await rpc("tools/call", {
-    name: blockedTool,
+    name: "fake_write_tool",
     arguments: {},
   })) as {
     result?: { content?: Array<{ type: string; text: string }>; isError?: boolean };
   };
 
-  assert(result?.result?.isError === true, "Blocked call returned isError=true");
-
+  assert(result?.result?.isError === true, "Call returned an error");
   const text = result?.result?.content?.[0]?.text || "";
-  assert(text.includes("blocked by policy"), `Policy block message: "${text}"`);
+  assert(text.includes("Unknown tool"), `Error message: "${text}"`);
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -234,7 +205,7 @@ async function main(): Promise<void> {
     await testInitialize();
     const tools = await testToolsList();
     await testAllowedToolCall(tools);
-    await testBlockedToolCall(tools);
+    await testHiddenToolCall();
   } catch (err) {
     console.error("\nFatal error:", err);
     failed++;

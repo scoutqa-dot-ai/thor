@@ -8,15 +8,17 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   type CallToolResult,
+  type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { loadConfig, type ProxyConfig } from "./config.js";
-import { isAllowed, validatePolicy } from "./policy.js";
+import { isAllowed, validatePolicy, PolicyDriftError } from "./policy.js";
 import { connectUpstream, type UpstreamConnection } from "./upstream.js";
-import { writeToolCallLog, createLogger, logInfo, logError } from "@thor/common";
+import { writeToolCallLog, createLogger, logInfo, logWarn, logError } from "@thor/common";
 
 const log = createLogger("proxy");
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const CONFIG_PATH =
   process.env.PROXY_CONFIG || resolve(import.meta.dirname, "../proxy.config.json");
 
@@ -26,6 +28,9 @@ const config: ProxyConfig = loadConfig(
 
 let upstream: UpstreamConnection;
 
+// Only the curated subset of upstream tools — built at startup.
+let exposedTools: Tool[] = [];
+
 function createProxyServer(): Server {
   const server = new Server(
     { name: "thor-proxy", version: "0.0.1" },
@@ -33,25 +38,16 @@ function createProxyServer(): Server {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: upstream.tools,
+    tools: exposedTools,
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const toolName = request.params.name;
     const args = request.params.arguments || {};
 
-    if (!upstream.tools.some((t) => t.name === toolName)) {
+    if (!exposedTools.some((t) => t.name === toolName)) {
       return {
         content: [{ type: "text" as const, text: `Unknown tool: ${toolName}` }],
-        isError: true,
-      } satisfies CallToolResult;
-    }
-
-    if (!isAllowed(config.allow, toolName)) {
-      logInfo(log, "tool_blocked", { tool: toolName });
-      writeToolCallLog({ tool: toolName, decision: "blocked", args });
-      return {
-        content: [{ type: "text" as const, text: `Tool "${toolName}" is blocked by policy.` }],
         isError: true,
       } satisfies CallToolResult;
     }
@@ -92,7 +88,8 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
     service: "proxy",
-    tools: upstream?.tools.length ?? 0,
+    exposedTools: exposedTools.length,
+    upstreamTools: upstream?.tools.length ?? 0,
   });
 });
 
@@ -159,9 +156,29 @@ async function start(): Promise<void> {
 
   upstream = await connectUpstream(config);
 
-  const toolNames = upstream.tools.map((t) => t.name);
-  validatePolicy(config.allow, toolNames);
-  logInfo(log, "policy_validated", { tools: toolNames.length, patterns: config.allow.length });
+  const allToolNames = upstream.tools.map((t) => t.name);
+
+  // Validate allow list against upstream — detect drift
+  try {
+    validatePolicy(config.allow, allToolNames);
+  } catch (err) {
+    if (!(err instanceof PolicyDriftError)) throw err;
+
+    if (IS_PRODUCTION) {
+      logWarn(log, "policy_drift", { orphans: err.orphans });
+    } else {
+      throw err;
+    }
+  }
+
+  // Curate: only expose allowed tools
+  exposedTools = upstream.tools.filter((t) => isAllowed(config.allow, t.name));
+
+  logInfo(log, "proxy_ready", {
+    upstreamTools: allToolNames.length,
+    exposedTools: exposedTools.length,
+    hiddenTools: allToolNames.length - exposedTools.length,
+  });
 
   app.listen(PORT, () => {
     logInfo(log, "proxy_listening", { port: PORT });

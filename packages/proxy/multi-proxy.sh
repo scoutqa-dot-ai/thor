@@ -28,7 +28,7 @@ cleanup() {
   wait
   exit 0
 }
-trap cleanup SIGTERM SIGINT
+trap cleanup TERM INT
 
 # Start one node process per instance
 IFS=','
@@ -41,6 +41,5 @@ for instance in $PROXY_INSTANCES; do
   PIDS="$PIDS $!"
 done
 
-# Wait for any child to exit — if one crashes, bring them all down
-wait -n 2>/dev/null || wait
-cleanup
+# Wait for all children — if the script receives TERM/INT, cleanup runs
+wait

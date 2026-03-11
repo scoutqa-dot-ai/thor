@@ -20,6 +20,10 @@ export function logInfo(logger: Logger, event: string, data?: Record<string, unk
   logger.info({ event, ...data }, event);
 }
 
+export function logWarn(logger: Logger, event: string, data?: Record<string, unknown>): void {
+  logger.warn({ event, ...data }, event);
+}
+
 export function logError(
   logger: Logger,
   event: string,

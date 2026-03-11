@@ -1,39 +1,33 @@
 /**
- * Policy engine — pattern-match tool names against an allow-list.
- * Everything not explicitly allowed is blocked.
+ * Policy engine — exact-match allow-list.
+ * Only tools whose names appear in the allow list are exposed.
  */
 
-function matchPattern(pattern: string, toolName: string): boolean {
-  if (pattern === "*") return true;
-  if (pattern.startsWith("*") && pattern.endsWith("*")) {
-    return toolName.includes(pattern.slice(1, -1));
-  }
-  if (pattern.endsWith("*")) return toolName.startsWith(pattern.slice(0, -1));
-  if (pattern.startsWith("*")) return toolName.endsWith(pattern.slice(1));
-  return pattern === toolName;
-}
-
-/** Returns true if the tool is allowed by at least one pattern. */
+/** Returns true if the tool name is in the allow list. */
 export function isAllowed(allow: string[], toolName: string): boolean {
-  return allow.some((pattern) => matchPattern(pattern, toolName));
+  return allow.includes(toolName);
 }
 
 /**
- * Validate that every discovered tool is covered by at least one allow pattern,
- * and every pattern matches at least one tool. Throws on drift.
+ * Validate that every entry in the allow list matches a real upstream tool.
+ * Catches typos and upstream tool-set drift (renamed/removed tools).
+ *
+ * Tools NOT in the allow list are intentionally hidden — that is not an error.
  */
 export function validatePolicy(allow: string[], tools: string[]): void {
-  const uncovered = tools.filter((t) => !allow.some((p) => matchPattern(p, t)));
-  const orphans = allow.filter((p) => !tools.some((t) => matchPattern(p, t)));
+  const toolSet = new Set(tools);
+  const orphans = allow.filter((name) => !toolSet.has(name));
 
-  const parts: string[] = [];
-  if (uncovered.length > 0) {
-    parts.push(`Tools without policy coverage:\n${uncovered.map((t) => `  - ${t}`).join("\n")}`);
-  }
   if (orphans.length > 0) {
-    parts.push(`Allow patterns matching no tools:\n${orphans.map((p) => `  - ${p}`).join("\n")}`);
+    throw new PolicyDriftError(orphans);
   }
-  if (parts.length > 0) {
-    throw new Error(`Policy validation failed.\n${parts.join("\n")}`);
+}
+
+export class PolicyDriftError extends Error {
+  constructor(public readonly orphans: string[]) {
+    super(
+      `Policy drift: allow-list entries not found in upstream:\n${orphans.map((o) => `  - ${o}`).join("\n")}`,
+    );
+    this.name = "PolicyDriftError";
   }
 }

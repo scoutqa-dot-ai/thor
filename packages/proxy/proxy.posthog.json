@@ -6,18 +6,19 @@
     }
   },
   "allow": [
-    "*-get",
-    "*-get-all",
-    "*-get-definition",
-    "*-list",
-    "*-retrieve",
-    "*-search",
-    "*-stats",
+    "docs-search",
     "error-details",
-    "get-*",
-    "insight-query",
     "list-errors",
-    "logs-*",
-    "query-*"
+    "feature-flag-get-all",
+    "feature-flag-get-definition",
+    "insight-query",
+    "query-run",
+    "query-generate-hogql-from-question",
+    "projects-get",
+    "event-definitions-list",
+    "properties-list",
+    "logs-query",
+    "logs-list-attributes",
+    "logs-list-attribute-values"
   ]
 }

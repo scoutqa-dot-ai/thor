@@ -5,5 +5,17 @@
       "Authorization": "Bearer ${LINEAR_API_KEY}"
     }
   },
-  "allow": ["get_*", "list_*"]
+  "allow": [
+    "list_comments",
+    "get_issue",
+    "list_issues",
+    "list_issue_statuses",
+    "get_issue_status",
+    "list_projects",
+    "get_project",
+    "list_teams",
+    "get_team",
+    "list_users",
+    "get_user"
+  ]
 }

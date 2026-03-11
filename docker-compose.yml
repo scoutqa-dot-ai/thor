@@ -28,6 +28,10 @@ services:
     build:
       context: .
       target: proxy
+    ports:
+      - "3010:3010"
+      - "3011:3011"
+      - "3012:3012"
     environment:
       - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json
       - LINEAR_API_KEY=${LINEAR_API_KEY}
