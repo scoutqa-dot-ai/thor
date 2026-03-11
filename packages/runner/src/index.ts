@@ -39,9 +39,6 @@ const OPENCODE_USERNAME = process.env.OPENCODE_USERNAME || "opencode";
 const OPENCODE_PASSWORD = process.env.OPENCODE_PASSWORD || "";
 const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
 
-/** Timeout for waiting for agent to finish processing a prompt (ms). */
-const PROMPT_TIMEOUT = parseInt(process.env.PROMPT_TIMEOUT || "120000", 10);
-
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
 
@@ -226,10 +223,10 @@ app.get("/sessions", (req, res) => {
 /**
  * Stream-based prompt handler.
  *
- * 1. Creates a session and fires promptAsync (fire-and-forget, returns 204).
+ * 1. Resolves or creates an OpenCode session (correlation key → session ID).
  * 2. Subscribes to the SSE event stream.
- * 3. Filters events by sessionID; writes worklog + stdout only for meaningful events.
- * 4. Waits for `session.idle` to know the prompt is done.
+ * 3. Sends the prompt via promptAsync.
+ * 4. Streams until `session.idle` or `session.error` (no timeout).
  * 5. Returns the aggregated response to the HTTP caller.
  */
 app.post("/trigger", async (req, res) => {
@@ -382,64 +379,53 @@ app.post("/trigger", async (req, res) => {
     let sessionError: string | undefined;
     let finished = false;
 
-    const timeoutId = setTimeout(() => {
-      if (!finished) {
-        finished = true;
-        logError(log, "session_timeout", `Timed out after ${PROMPT_TIMEOUT}ms`, { sessionId });
-      }
-    }, PROMPT_TIMEOUT);
+    for await (const event of stream) {
+      if (finished) break;
 
-    try {
-      for await (const event of stream) {
-        if (finished) break;
+      if (!isSessionEvent(event, sessionId)) continue;
 
-        if (!isSessionEvent(event, sessionId)) continue;
+      if (event.type === "message.part.updated") {
+        const part = event.properties.part;
+        seq++;
 
-        if (event.type === "message.part.updated") {
-          const part = event.properties.part;
-          seq++;
+        // Stdout logging (selective)
+        logPartToStdout(sessionId, part);
 
-          // Stdout logging (selective)
-          logPartToStdout(sessionId, part);
-
-          // Accumulate data for response regardless of filtering
-          if (part.type === "text") {
-            const textPart = part as TextPart;
-            collectedTextParts.push(textPart.text);
-            lastMessageId = textPart.messageID;
-          } else if (part.type === "tool") {
-            const toolPart = part as ToolPart;
-            const status = toolPart.state.status;
-            if (status === "completed" || status === "error") {
-              collectedToolCalls.push({ tool: toolPart.tool, state: status });
-            }
-            lastMessageId = toolPart.messageID;
-          } else if (part.type === "step-finish") {
-            const stepFinish = part as StepFinishPart;
-            totalCost += stepFinish.cost;
-            totalTokens.input += stepFinish.tokens.input;
-            totalTokens.output += stepFinish.tokens.output;
-            totalTokens.reasoning += stepFinish.tokens.reasoning;
-            totalTokens.cache.read += stepFinish.tokens.cache.read;
-            totalTokens.cache.write += stepFinish.tokens.cache.write;
-            lastMessageId = stepFinish.messageID;
+        // Accumulate data for response regardless of filtering
+        if (part.type === "text") {
+          const textPart = part as TextPart;
+          collectedTextParts.push(textPart.text);
+          lastMessageId = textPart.messageID;
+        } else if (part.type === "tool") {
+          const toolPart = part as ToolPart;
+          const status = toolPart.state.status;
+          if (status === "completed" || status === "error") {
+            collectedToolCalls.push({ tool: toolPart.tool, state: status });
           }
-        } else if (event.type === "session.error") {
-          const errorProps = event.properties;
-          sessionError =
-            errorProps.error && "data" in errorProps.error
-              ? (errorProps.error.data as { message?: string }).message || errorProps.error.name
-              : "Unknown error";
-          logError(log, "session_error", sessionError, { sessionId });
-          finished = true;
-          break;
-        } else if (event.type === "session.idle") {
-          finished = true;
-          break;
+          lastMessageId = toolPart.messageID;
+        } else if (part.type === "step-finish") {
+          const stepFinish = part as StepFinishPart;
+          totalCost += stepFinish.cost;
+          totalTokens.input += stepFinish.tokens.input;
+          totalTokens.output += stepFinish.tokens.output;
+          totalTokens.reasoning += stepFinish.tokens.reasoning;
+          totalTokens.cache.read += stepFinish.tokens.cache.read;
+          totalTokens.cache.write += stepFinish.tokens.cache.write;
+          lastMessageId = stepFinish.messageID;
         }
+      } else if (event.type === "session.error") {
+        const errorProps = event.properties;
+        sessionError =
+          errorProps.error && "data" in errorProps.error
+            ? (errorProps.error.data as { message?: string }).message || errorProps.error.name
+            : "Unknown error";
+        logError(log, "session_error", sessionError, { sessionId });
+        finished = true;
+        break;
+      } else if (event.type === "session.idle") {
+        finished = true;
+        break;
       }
-    } finally {
-      clearTimeout(timeoutId);
     }
 
     const durationMs = Date.now() - promptStart;
@@ -450,7 +436,7 @@ app.post("/trigger", async (req, res) => {
         collectedTextParts.length > 0 ? collectedTextParts.join("\n\n") : undefined;
       appendSummary({
         correlationKey,
-        status: sessionError ? "error" : finished ? "completed" : "timeout",
+        status: sessionError ? "error" : "completed",
         durationMs,
         toolCalls: collectedToolCalls,
         responsePreview: responseText,
@@ -460,7 +446,7 @@ app.post("/trigger", async (req, res) => {
 
     logInfo(log, "session_done", {
       sessionId,
-      status: sessionError ? "error" : finished ? "completed" : "timeout",
+      status: sessionError ? "error" : "completed",
       textParts: collectedTextParts.length,
       toolCalls: collectedToolCalls.length,
       totalParts: seq,

@@ -84,21 +84,21 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
       const lastEvent = slackEvents[slackEvents.length - 1];
 
-      try {
-        await triggerRunner(
-          slackEvents.map((e) => e.payload),
-          runnerDeps,
+      triggerRunner(
+        slackEvents.map((e) => e.payload),
+        runnerDeps,
+      )
+        .then(() =>
+          logInfo(log, "slack_trigger_fired", {
+            correlationKey: lastEvent.correlationKey,
+            batchSize: slackEvents.length,
+          }),
+        )
+        .catch((error) =>
+          logError(log, "slack_trigger_failed", error, {
+            correlationKey: lastEvent.correlationKey,
+          }),
         );
-
-        logInfo(log, "slack_trigger_fired", {
-          correlationKey: lastEvent.correlationKey,
-          batchSize: slackEvents.length,
-        });
-      } catch (error) {
-        logError(log, "slack_trigger_failed", error, {
-          correlationKey: lastEvent.correlationKey,
-        });
-      }
     },
   });
 
