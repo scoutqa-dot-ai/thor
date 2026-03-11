@@ -1,6 +1,7 @@
 # Thor — Docker Compose
 #
 # Start:   LINEAR_API_KEY=xxx POSTHOG_API_KEY=xxx OPENCODE_SERVER_PASSWORD=xxx docker compose up --build -d
+# Ingress: port 8080 routes /slack/* → gateway, everything else → opencode
 # Slack:   add SLACK_SIGNING_SECRET and SLACK_BOT_TOKEN to enable the gateway service
 # Test:    ./scripts/test-e2e.sh
 # Logs:    docker compose logs -f
@@ -122,7 +123,7 @@ services:
       context: .
       target: gateway
     ports:
-      - "${GATEWAY_PORT:-3002}:3002"
+      - "3002:3002"
     environment:
       - PORT=3002
       - RUNNER_URL=${RUNNER_URL_FOR_GATEWAY:-http://runner:3000}
@@ -140,3 +141,15 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  ingress:
+    image: nginx:alpine
+    ports:
+      - "${INGRESS_PORT:-8080}:8080"
+    volumes:
+      - ./docker/ingress/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      gateway:
+        condition: service_healthy
+      opencode:
+        condition: service_healthy
