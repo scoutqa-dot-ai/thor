@@ -1,0 +1,29 @@
+packages/runner/src/index.ts
+  31340c39ab9d7607 33
+scripts/test-e2e.sh
+  31340c39ab9d7607 142
+.env.example
+  31340c39ab9d7607 16-20
+docker-compose.yml
+  31340c39ab9d7607 82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "16902b9f5b0c7519e26e76d171bcdfbe79699ad4",
+  "prompts": {
+    "31340c39ab9d7607": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8c5afa8-6fbd-47b0-92c9-5aa8ce1fb437",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 47,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
