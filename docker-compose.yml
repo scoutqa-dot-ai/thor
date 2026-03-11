@@ -94,8 +94,10 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          'AUTH=$$(printf "%s" "$${OPENCODE_SERVER_USERNAME}:$${OPENCODE_SERVER_PASSWORD}" | base64) && wget -qO- --header "Authorization: Basic $$AUTH" http://127.0.0.1:4096/global/health >/dev/null',
+          "CMD",
+          "node",
+          "-e",
+          "const a=Buffer.from(process.env.OPENCODE_SERVER_USERNAME+':'+process.env.OPENCODE_SERVER_PASSWORD).toString('base64');fetch('http://127.0.0.1:4096/global/health',{headers:{Authorization:'Basic '+a}}).then(r=>{if(!r.ok)throw 1})",
         ]
       interval: 5s
       timeout: 3s
