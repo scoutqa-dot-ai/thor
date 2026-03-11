@@ -15,7 +15,8 @@ const log = createLogger("git-mcp");
 
 const PORT = parseInt(process.env.PORT || "3004", 10);
 const GITHUB_PAT = process.env.GITHUB_PAT;
-const REPOS_DIR = process.env.GIT_MCP_DEFAULT_CWD || "/workspace/repos/acme-project";
+const GIT_MCP_DEFAULT_CWD =
+  process.env.GIT_MCP_DEFAULT_CWD || "/workspace/repos/acme-project";
 
 if (!GITHUB_PAT) {
   logError(log, "missing_env", "GITHUB_PAT is required");
@@ -41,7 +42,7 @@ const tools: Tool[] = [
         },
         cwd: {
           type: "string",
-          description: `Working directory for the command. Defaults to ${REPOS_DIR}.`,
+          description: `Working directory for the command. Defaults to ${GIT_MCP_DEFAULT_CWD}.`,
         },
       },
       required: ["args"],
@@ -70,7 +71,7 @@ async function handleToolCall(
     };
   }
 
-  const cwd = typeof args.cwd === "string" ? args.cwd : REPOS_DIR;
+  const cwd = typeof args.cwd === "string" ? args.cwd : GIT_MCP_DEFAULT_CWD;
 
   const result = await execGit(gitArgs, cwd, GITHUB_PAT);
 
@@ -201,5 +202,5 @@ app.delete("/mcp", async (req, res) => {
 // --- Startup ---
 
 app.listen(PORT, () => {
-  logInfo(log, "git_mcp_listening", { port: PORT, reposDir: REPOS_DIR });
+  logInfo(log, "git_mcp_listening", { port: PORT, defaultCwd: GIT_MCP_DEFAULT_CWD });
 });
