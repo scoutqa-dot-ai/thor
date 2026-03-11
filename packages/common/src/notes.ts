@@ -18,7 +18,7 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-const WORKLOG_DIR = process.env.WORKLOG_DIR || "./worklog";
+const WORKLOG_DIR = process.env.WORKLOG_DIR || "/worklog";
 
 /** Sanitize a correlation key for use as a filename. */
 function sanitizeKey(key: string): string {

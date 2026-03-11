@@ -105,7 +105,7 @@ echo ""
 echo "=== Memory Continuity: Session Resume + Notes ==="
 
 CORR_KEY="e2e-test-$(date +%s)"
-WORKLOG_DIR="${WORKLOG_DIR:-./workspace/worklog}"
+WORKLOG_DIR="${WORKLOG_DIR:-./docker-volumes/worklog}"
 TODAY=$(date +%Y-%m-%d)
 NOTES_FILE="$WORKLOG_DIR/$TODAY/notes/$(echo "$CORR_KEY" | sed 's/[^a-zA-Z0-9_-]/-/g; s/-\+/-/g').md"
 

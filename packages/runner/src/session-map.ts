@@ -14,7 +14,7 @@ import { createLogger, logInfo, logError } from "@thor/common";
 
 const log = createLogger("session-map");
 
-const WORKLOG_DIR = process.env.WORKLOG_DIR || "./worklog";
+const WORKLOG_DIR = process.env.WORKLOG_DIR || "/worklog";
 const MAP_FILE = join(WORKLOG_DIR, "session-map.json");
 
 export interface SessionMapEntry {

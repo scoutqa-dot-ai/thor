@@ -32,6 +32,8 @@ services:
       - "3010:3010"
       - "3011:3011"
       - "3012:3012"
+    volumes:
+      - ./docker-volumes/worklog:/worklog
     environment:
       - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json
       - LINEAR_API_KEY=${LINEAR_API_KEY}
@@ -106,6 +108,7 @@ services:
       - OPENCODE_USERNAME=${OPENCODE_USERNAME:-${OPENCODE_SERVER_USERNAME:-opencode}}
       - OPENCODE_PASSWORD=${OPENCODE_PASSWORD:-${OPENCODE_SERVER_PASSWORD}}
     volumes:
+      - ./docker-volumes/worklog:/worklog
       - ./docker-volumes/workspace:/workspace
     depends_on:
       opencode:
@@ -124,6 +127,7 @@ services:
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - SLACK_TIMESTAMP_TOLERANCE_SECONDS=${SLACK_TIMESTAMP_TOLERANCE_SECONDS:-300}
     volumes:
+      - ./docker-volumes/worklog:/worklog
       - ./docker-volumes/workspace:/workspace
     depends_on:
       runner:
