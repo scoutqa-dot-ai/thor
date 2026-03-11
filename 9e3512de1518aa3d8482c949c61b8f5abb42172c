@@ -1,0 +1,33 @@
+packages/gateway/src/app.ts
+  6b00d178cca016f0 10,29-32,37-38,99,101,113-114,116-131,134,307-337
+packages/gateway/src/github.test.ts
+  6b00d178cca016f0 1-229,231-351
+docker/ingress/nginx.conf
+  6b00d178cca016f0 13-21
+packages/gateway/src/service.ts
+  6b00d178cca016f0 3,53-74
+docs/plan/2026031102_github-webhooks.md
+  6b00d178cca016f0 4,8,16,22-33,35-38,44-46,55-56,60,64-66,81
+packages/gateway/src/github.ts
+  6b00d178cca016f0 1-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "9e3512de1518aa3d8482c949c61b8f5abb42172c",
+  "prompts": {
+    "6b00d178cca016f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc106baa-93c4-40eb-980e-e892780fb569",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 619,
+      "total_deletions": 60,
+      "accepted_lines": 582,
+      "overriden_lines": 2
+    }
+  }
+}
