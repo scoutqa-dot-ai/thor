@@ -1,0 +1,43 @@
+packages/common/src/logger.ts
+  58e5ea1f81feda0b 23-26
+packages/common/src/index.ts
+  58e5ea1f81feda0b 3
+scripts/test-proxy.ts
+  58e5ea1f81feda0b 5,7,11,17,154,157,164,172,177,182-183,185,187,193,195,208
+scripts/test-e2e.sh
+  58e5ea1f81feda0b 18
+docker-compose.yml
+  58e5ea1f81feda0b 31-34
+docs/plan/2026031003_slack-mcp.md
+  58e5ea1f81feda0b 24
+packages/proxy/proxy.linear.json
+  58e5ea1f81feda0b 9-19
+packages/proxy/src/policy.ts
+  58e5ea1f81feda0b 2-3,6,8,12-15,18-19,22,24-31
+packages/proxy/src/index.ts
+  58e5ea1f81feda0b 11,14,16,21,31-33,41,48,91-92,159,161-180
+packages/proxy/multi-proxy.sh
+  58e5ea1f81feda0b 31,44-45
+packages/proxy/proxy.posthog.json
+  58e5ea1f81feda0b 9,12-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "c1967ecae237e5b003fc5301ecdc40779d240a75",
+  "prompts": {
+    "58e5ea1f81feda0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34cdd99b-564d-4c31-8a5f-434fdf73e7a5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 115,
+      "total_deletions": 109,
+      "accepted_lines": 105,
+      "overriden_lines": 0
+    }
+  }
+}
