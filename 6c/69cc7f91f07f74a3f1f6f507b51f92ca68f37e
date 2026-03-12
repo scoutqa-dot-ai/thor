@@ -1,0 +1,41 @@
+packages/proxy/proxy.linear.json
+  1d572245d2d60784 16-25
+packages/proxy/proxy.slack.json
+  1d572245d2d60784 5-6
+packages/proxy/proxy.git.json
+  1d572245d2d60784 5-6
+packages/proxy/src/policy.ts
+  1d572245d2d60784 2,4-7,10-18,26-28,30,35,46-47,53,61,64-66
+packages/common/src/worklog.ts
+  1d572245d2d60784 69
+packages/proxy/src/index.ts
+  1d572245d2d60784 36,63-72,182,185,187,189,191-192,202-209,214
+packages/proxy/src/config.ts
+  1d572245d2d60784 11,13-14
+packages/proxy/proxy.posthog.json
+  1d572245d2d60784 15-16,23-48
+packages/proxy/proxy.github.json
+  1d572245d2d60784 19,23-28,32-37
+packages/proxy/src/policy.test.ts
+  1d572245d2d60784 1-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "6c69cc7f91f07f74a3f1f6f507b51f92ca68f37e",
+  "prompts": {
+    "1d572245d2d60784": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1dd35a45-3e73-4510-912e-395b155d37e9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 267,
+      "total_deletions": 35,
+      "accepted_lines": 256,
+      "overriden_lines": 0
+    }
+  }
+}
