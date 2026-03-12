@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -7,8 +7,14 @@ import { tmpdir } from "node:os";
 const testDir = mkdtempSync(join(tmpdir(), "thor-notes-"));
 process.env.WORKLOG_DIR = testDir;
 
-const { readNotes, createNotes, appendTrigger, appendSummary, findNotesFile } =
-  await import("./notes.js");
+const {
+  readNotes,
+  createNotes,
+  appendTrigger,
+  appendSummary,
+  findNotesFile,
+  getSessionIdFromNotes,
+} = await import("./notes.js");
 
 describe("notes", () => {
   // Use a unique key per test to avoid collisions
@@ -216,6 +222,49 @@ describe("notes", () => {
     // Both tool names present
     expect(content).toContain("posthog__list-errors");
     expect(content).toContain("linear__list_issues");
+  });
+
+  it("getSessionIdFromNotes returns session ID from notes file", () => {
+    const key = uniqueKey();
+    createNotes({
+      correlationKey: key,
+      prompt: "test",
+      sessionId: "session-lookup-123",
+    });
+
+    expect(getSessionIdFromNotes(key)).toBe("session-lookup-123");
+  });
+
+  it("getSessionIdFromNotes returns undefined for unknown key", () => {
+    expect(getSessionIdFromNotes("nonexistent-key-xyz")).toBeUndefined();
+  });
+
+  it("getSessionIdFromNotes returns undefined when notes file has no Session ID line", () => {
+    const key = uniqueKey();
+    // Create notes file, then overwrite it with content missing the Session ID header
+    createNotes({ correlationKey: key, prompt: "test", sessionId: "will-be-removed" });
+    const path = findNotesFile(key)!;
+    writeFileSync(path, "# Session: test\nNo session ID here\n");
+
+    expect(getSessionIdFromNotes(key)).toBeUndefined();
+  });
+
+  it("getSessionIdFromNotes returns latest session ID after overwrite", () => {
+    const key = uniqueKey();
+    createNotes({
+      correlationKey: key,
+      prompt: "first",
+      sessionId: "session-old",
+    });
+
+    // Overwrite with new notes (same day, same key → overwrites)
+    createNotes({
+      correlationKey: key,
+      prompt: "second",
+      sessionId: "session-new",
+    });
+
+    expect(getSessionIdFromNotes(key)).toBe("session-new");
   });
 
   it("sanitizes correlation keys with special characters", () => {

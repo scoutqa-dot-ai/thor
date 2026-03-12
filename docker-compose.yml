@@ -12,6 +12,8 @@ services:
     build:
       context: .
       target: slack-mcp
+    ports:
+      - "127.0.0.1:3003:3003"
     environment:
       - NODE_ENV=production
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
@@ -27,6 +29,8 @@ services:
     build:
       context: .
       target: git-mcp
+    ports:
+      - "127.0.0.1:3004:3004"
     environment:
       - NODE_ENV=production
       - GITHUB_PAT=${GITHUB_PAT}
@@ -45,6 +49,12 @@ services:
     build:
       context: .
       target: proxy
+    ports:
+      - "127.0.0.1:3010:3010"
+      - "127.0.0.1:3011:3011"
+      - "127.0.0.1:3012:3012"
+      - "127.0.0.1:3013:3013"
+      - "127.0.0.1:3014:3014"
     environment:
       - NODE_ENV=production
       - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.github.json,3014:proxy.git.json
@@ -70,6 +80,8 @@ services:
 
   data:
     image: nginx:alpine
+    ports:
+      - "127.0.0.1:3080:80"
     environment:
       - ACME_WEBAPP_ADMIN_API_KEY=${ACME_WEBAPP_ADMIN_API_KEY:-}
       - ACME_AGENT_ADMIN_API_KEY=${ACME_AGENT_ADMIN_API_KEY:-}
@@ -84,6 +96,8 @@ services:
   opencode:
     build:
       context: ./docker/opencode
+    ports:
+      - "127.0.0.1:4096:4096"
     working_dir: /workspace
     command: ["serve", "--port", "4096", "--hostname", "0.0.0.0"]
     volumes:
@@ -112,6 +126,8 @@ services:
     build:
       context: .
       target: runner
+    ports:
+      - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -127,6 +143,8 @@ services:
     build:
       context: .
       target: gateway
+    ports:
+      - "127.0.0.1:3002:3002"
     environment:
       - NODE_ENV=production
       - PORT=3002
@@ -149,6 +167,8 @@ services:
   vouch:
     build:
       context: ./docker/vouch
+    ports:
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./docker/vouch/config.yml:/template/config.yml:ro
     environment:

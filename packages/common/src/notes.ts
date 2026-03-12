@@ -132,6 +132,23 @@ export function appendTrigger(opts: {
 }
 
 /**
+ * Extract the session ID from a notes file for a given correlation key.
+ * Reads the `Session ID: <id>` line from the header.
+ * Returns undefined if no notes file exists or no session ID is found.
+ */
+export function getSessionIdFromNotes(correlationKey: string): string | undefined {
+  const path = findNotesFile(correlationKey);
+  if (!path) return undefined;
+  try {
+    const content = readFileSync(path, "utf-8");
+    const match = content.match(/^Session ID:\s*(.+)$/m);
+    return match?.[1]?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Append a session summary block to the notes file.
  */
 export function appendSummary(opts: {

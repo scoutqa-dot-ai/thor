@@ -18,14 +18,8 @@ import {
   createNotes,
   appendTrigger,
   appendSummary,
+  getSessionIdFromNotes,
 } from "@thor/common";
-import {
-  getSession,
-  setSession,
-  touchSession,
-  removeSession,
-  listSessions,
-} from "./session-map.js";
 
 const log = createLogger("runner");
 
@@ -192,16 +186,17 @@ app.get("/sessions", (req, res) => {
   const correlationKey = req.query.correlationKey;
 
   if (typeof correlationKey === "string") {
-    const entry = getSession(correlationKey);
-    if (!entry) {
+    const sessionId = getSessionIdFromNotes(correlationKey);
+    if (!sessionId) {
       res.status(404).json({ error: "No session for this correlation key" });
       return;
     }
-    res.json({ correlationKey, ...entry });
+    res.json({ correlationKey, sessionId });
     return;
   }
 
-  res.json(listSessions());
+  // No filter — not supported without the map file. Use OpenCode UI instead.
+  res.json({ message: "Use ?correlationKey=<key> to look up a specific session" });
 });
 
 /**
@@ -235,7 +230,7 @@ app.post("/trigger", async (req, res) => {
     let resumed = false;
 
     const candidateSessionId =
-      requestedSessionId || (correlationKey ? getSession(correlationKey)?.sessionId : undefined);
+      requestedSessionId || (correlationKey ? getSessionIdFromNotes(correlationKey) : undefined);
 
     if (candidateSessionId) {
       // Verify the session still exists in OpenCode
@@ -244,14 +239,12 @@ app.post("/trigger", async (req, res) => {
         if (existing.data) {
           sessionId = candidateSessionId;
           resumed = true;
-          if (correlationKey) touchSession(correlationKey);
           logInfo(log, "session_resumed", { sessionId, correlationKey });
         } else {
           throw new Error("Session not found");
         }
       } catch {
-        // Session is gone — remove stale mapping and create a new one
-        if (correlationKey) removeSession(correlationKey);
+        // Session is gone — create a new one and update the notes file
         logInfo(log, "session_stale", { sessionId: candidateSessionId, correlationKey });
 
         const session = await client.session.create({
@@ -262,7 +255,6 @@ app.post("/trigger", async (req, res) => {
           return;
         }
         sessionId = session.data.id;
-        if (correlationKey) setSession(correlationKey, sessionId);
         logInfo(log, "session_created", { sessionId, correlationKey });
       }
     } else {
@@ -275,7 +267,6 @@ app.post("/trigger", async (req, res) => {
         return;
       }
       sessionId = session.data.id;
-      if (correlationKey) setSession(correlationKey, sessionId);
       logInfo(log, "session_created", { sessionId, correlationKey });
     }
 
