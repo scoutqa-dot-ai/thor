@@ -1,0 +1,87 @@
+packages/runner/src/index.ts
+  28992366ac95c961 43,49,369,375,487
+  de90f4ebc22f09b5 366-368,370-374,409,462-464,475,478,480,486,488-489
+  49d5d8f397df7d0c 243,468-469
+  f9134954739608f9 481-485
+  c7c4ebfd3bab2fec 44-48,51-53,365
+docs/plan/2026031103_slack-ephemeral-message.md
+  de90f4ebc22f09b5 17,19,22-31,34,36-39,41-48,53-54,61-66,73-74,77
+packages/gateway/src/service.ts
+  49d5d8f397df7d0c 30,40
+  de90f4ebc22f09b5 2,4,6,20-21,26,46-125
+packages/gateway/src/app.ts
+  49d5d8f397df7d0c 103
+  de90f4ebc22f09b5 99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "90782f944a3c725e3aa481829f32c26f7394c103",
+  "prompts": {
+    "28992366ac95c961": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32e775fb1ffeKJ6DDYKBOHJdvR",
+        "model": "github-copilot/claude-opus-4.6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    },
+    "49d5d8f397df7d0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d667b05a-19e7-47c4-958b-568d45ae3359",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    },
+    "c7c4ebfd3bab2fec": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32f4b17d3ffeceCTrOqAt7u492",
+        "model": "github-copilot/claude-opus-4.6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    },
+    "de90f4ebc22f09b5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0384d960-00da-4c15-ae8d-95fb93757396",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 141,
+      "overriden_lines": 0
+    },
+    "f9134954739608f9": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_32c74efffffehMQG0xNNfULWMe",
+        "model": "opencode/minimax-m2.5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
