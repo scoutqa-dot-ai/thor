@@ -1,0 +1,31 @@
+packages/runner/src/index.ts
+  c476d18a86d7a6e8 19,22,306,310-314
+packages/common/src/notes.test.ts
+  c476d18a86d7a6e8 2,13,285-429
+packages/common/src/index.ts
+  c476d18a86d7a6e8 8
+packages/common/src/notes.ts
+  c476d18a86d7a6e8 4-6,10-13,15-18,28,31,120-161,168-170,172,174,184,205-207,217-219,221,223,252
+docs/plan/2026031202_cross-day-continuation.md
+  c476d18a86d7a6e8 1-27,29-35,41-58,60-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "27dd38c2247593f5e35683cc37df20d2106e83a1",
+  "prompts": {
+    "c476d18a86d7a6e8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "864d23cf-7fe4-4c7b-9909-a46673ce46fa",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 295,
+      "total_deletions": 32,
+      "accepted_lines": 288,
+      "overriden_lines": 5
+    }
+  }
+}
