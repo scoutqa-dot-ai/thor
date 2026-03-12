@@ -1,0 +1,25 @@
+packages/gateway/src/github.ts
+  6b00d178cca016f0 3-12,16,18,20-23,29
+packages/gateway/src/github.test.ts
+  6b00d178cca016f0 69,112,158,185-225,232,243,280,300,307-311,350
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8042e8d65d14f6bc5d44e19c850ca26ab4c1ff8a",
+  "prompts": {
+    "6b00d178cca016f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc106baa-93c4-40eb-980e-e892780fb569",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 81,
+      "total_deletions": 53,
+      "accepted_lines": 79,
+      "overriden_lines": 0
+    }
+  }
+}
