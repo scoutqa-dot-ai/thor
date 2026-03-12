@@ -19,6 +19,14 @@ function mockSlackClient() {
   } as unknown as WebClient;
 }
 
+/** Flush the queue and drain microtasks so fire-and-forget promises settle. */
+async function flushAndDrain(queue: EventQueue): Promise<void> {
+  await queue.flush();
+  for (let i = 0; i < 10; i++) {
+    await new Promise((r) => setTimeout(r, 0));
+  }
+}
+
 async function withServer<T>(
   fetchImpl: typeof fetch,
   run: (baseUrl: string, queue: EventQueue) => Promise<T>,
@@ -32,6 +40,7 @@ async function withServer<T>(
     queueDir,
     disableQueueInterval: true,
     slackActiveDelayMs: 0,
+    githubDelayMs: 0,
   });
 
   const server = app.listen(0);
@@ -91,7 +100,7 @@ describe("github events", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
 
-      await queue.flush();
+      await flushAndDrain(queue);
 
       expect(fetchImpl).toHaveBeenCalledOnce();
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
@@ -139,7 +148,7 @@ describe("github events", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
 
-      await queue.flush();
+      await flushAndDrain(queue);
 
       expect(fetchImpl).toHaveBeenCalledOnce();
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
@@ -187,7 +196,7 @@ describe("github events", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
 
-      await queue.flush();
+      await flushAndDrain(queue);
 
       expect(fetchImpl).toHaveBeenCalledOnce();
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
@@ -225,7 +234,7 @@ describe("github events", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
 
-      await queue.flush();
+      await flushAndDrain(queue);
 
       expect(fetchImpl).toHaveBeenCalledOnce();
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
@@ -265,7 +274,7 @@ describe("github events", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
 
-      await queue.flush();
+      await flushAndDrain(queue);
 
       expect(fetchImpl).toHaveBeenCalledOnce();
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
@@ -312,7 +321,7 @@ describe("github events", () => {
         body: pushBody,
       });
 
-      await queue.flush();
+      await flushAndDrain(queue);
 
       const triggerCalls = fetchImpl.mock.calls.filter(
         (c) => c[0] === "http://runner.test/trigger",
@@ -426,7 +435,7 @@ describe("github events", () => {
       });
 
       expect(response.status).toBe(200);
-      await queue.flush();
+      await flushAndDrain(queue);
 
       expect(fetchImpl).toHaveBeenCalledOnce();
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));

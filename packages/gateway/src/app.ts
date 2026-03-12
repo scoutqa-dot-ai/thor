@@ -68,6 +68,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   slackActiveDelayMs?: number;
   /** Delay for unaddressed messages in ms. Default: 60000. */
   slackUnaddressedDelayMs?: number;
+  /** Delay for GitHub events in ms. Default: 60000. */
+  githubDelayMs?: number;
 }
 
 const InteractivityBodySchema = z.object({
@@ -90,6 +92,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   const batchDelay = config.slackActiveDelayMs ?? SLACK_ACTIVE_DELAY_MS;
   const unaddressedDelay = config.slackUnaddressedDelayMs ?? SLACK_UNADDRESSED_DELAY_MS;
+  const githubDelay = config.githubDelayMs ?? GITHUB_DELAY_MS;
 
   const runnerDeps: RunnerDeps = {
     runnerUrl: config.runnerUrl,
@@ -351,8 +354,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       payload: event,
       receivedAt: new Date().toISOString(),
       sourceTs: Date.now(),
-      readyAt: Date.now() + GITHUB_DELAY_MS,
-      delayMs: GITHUB_DELAY_MS,
+      readyAt: Date.now() + githubDelay,
+      delayMs: githubDelay,
     });
 
     res.status(200).json({ ok: true });
