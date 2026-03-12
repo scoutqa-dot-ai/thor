@@ -1,0 +1,40 @@
+packages/gateway/src/github.test.ts
+  6b00d178cca016f0 61,103,110,112-116,118-122,125,142-144,148,182,187,189,191,196-203,209-212,217-227,238,240
+packages/gateway/src/github.ts
+  6b00d178cca016f0 8,35-36,44,51-52,56-58
+docs/plan/2026031102_github-webhooks.md
+  6b00d178cca016f0 52,55,58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "6e6fb951516fb01350a45e9a0fb088f7faad71a4",
+  "prompts": {
+    "49d5d8f397df7d0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d667b05a-19e7-47c4-958b-568d45ae3359",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 6,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "6b00d178cca016f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc106baa-93c4-40eb-980e-e892780fb569",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 70,
+      "total_deletions": 0,
+      "accepted_lines": 59,
+      "overriden_lines": 0
+    }
+  }
+}
