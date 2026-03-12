@@ -13,6 +13,7 @@ services:
       context: .
       target: slack-mcp
     environment:
+      - NODE_ENV=production
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - PORT=3003
     healthcheck:
@@ -27,6 +28,7 @@ services:
       context: .
       target: git-mcp
     environment:
+      - NODE_ENV=production
       - GITHUB_PAT=${GITHUB_PAT}
       - GIT_MCP_DEFAULT_CWD=${GIT_MCP_DEFAULT_CWD:-/workspace/repos/acme-project}
       - PORT=3004
@@ -44,6 +46,7 @@ services:
       context: .
       target: proxy
     environment:
+      - NODE_ENV=production
       - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.github.json,3014:proxy.git.json
       - LINEAR_API_KEY=${LINEAR_API_KEY}
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
@@ -110,6 +113,7 @@ services:
       context: .
       target: runner
     environment:
+      - NODE_ENV=production
       - PORT=3000
       - OPENCODE_URL=${OPENCODE_URL:-http://opencode:4096}
       - GIT_MCP_DEFAULT_CWD=${GIT_MCP_DEFAULT_CWD:-/workspace/repos/acme-project}
@@ -124,6 +128,7 @@ services:
       context: .
       target: gateway
     environment:
+      - NODE_ENV=production
       - PORT=3002
       - RUNNER_URL=${RUNNER_URL_FOR_GATEWAY:-http://runner:3000}
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}

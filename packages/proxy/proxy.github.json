@@ -23,9 +23,6 @@
     "add_issue_comment",
     "add_reply_to_pull_request_comment",
     "pull_request_review_write",
-    "add_comment_to_pending_review",
-    "actions_get",
-    "actions_list",
-    "get_job_logs"
+    "add_comment_to_pending_review"
   ]
 }
