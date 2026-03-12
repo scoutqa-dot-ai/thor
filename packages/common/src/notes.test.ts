@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -10,6 +10,7 @@ process.env.WORKLOG_DIR = testDir;
 const {
   readNotes,
   createNotes,
+  continueNotes,
   appendTrigger,
   appendSummary,
   findNotesFile,
@@ -280,6 +281,151 @@ describe("notes", () => {
     // Filename should not contain colons or dots
     expect(path!).not.toMatch(/:[^/\\]/);
     expect(readNotes(key)).toContain("# Session: slack:thread:123.456");
+  });
+
+  describe("cross-day continuation", () => {
+    // Helper to create a notes file in a specific date directory (simulating a previous day)
+    function createNotesOnDay(day: string, key: string, sessionId: string): string {
+      const sanitized = key.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
+      const dir = join(testDir, day, "notes");
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, `${sanitized}.md`);
+      writeFileSync(
+        path,
+        `# Session: ${key}\nCreated: ${day}T00:00:00Z\nSession ID: ${sessionId}\n\n## Trigger\n**Prompt**: original\n`,
+      );
+      return path;
+    }
+
+    it("continueNotes creates today's file with back-reference", () => {
+      const key = "cross-day-continue-1";
+      const prevPath = createNotesOnDay("2026-01-01", key, "session-old");
+
+      continueNotes({
+        correlationKey: key,
+        sessionId: "session-old",
+        prompt: "Follow up next day",
+        previousNotesPath: prevPath,
+      });
+
+      // findNotesFile should return today's file (most recent)
+      const todayPath = findNotesFile(key)!;
+      expect(todayPath).toBeDefined();
+      expect(todayPath).not.toBe(prevPath);
+
+      const content = readFileSync(todayPath, "utf-8");
+      expect(content).toContain("(continued)");
+      expect(content).toContain("Session ID: session-old");
+      expect(content).toContain("Previous:");
+      expect(content).toContain("Follow up next day");
+    });
+
+    it("continueNotes is a no-op if today's file already exists", () => {
+      const key = "cross-day-noop";
+      const prevPath = createNotesOnDay("2026-01-02", key, "session-first");
+
+      continueNotes({
+        correlationKey: key,
+        sessionId: "session-first",
+        prompt: "first continue",
+        previousNotesPath: prevPath,
+      });
+
+      const todayPath = findNotesFile(key)!;
+      const contentBefore = readFileSync(todayPath, "utf-8");
+
+      // Second call should be a no-op
+      continueNotes({
+        correlationKey: key,
+        sessionId: "session-first",
+        prompt: "duplicate continue",
+        previousNotesPath: prevPath,
+      });
+
+      const contentAfter = readFileSync(todayPath, "utf-8");
+      expect(contentAfter).toBe(contentBefore);
+    });
+
+    it("old notes file is not modified after continueNotes", () => {
+      const key = "cross-day-frozen";
+      const prevPath = createNotesOnDay("2026-01-03", key, "session-frozen");
+      const originalContent = readFileSync(prevPath, "utf-8");
+
+      continueNotes({
+        correlationKey: key,
+        sessionId: "session-frozen",
+        prompt: "continue next day",
+        previousNotesPath: prevPath,
+      });
+
+      // Old file should be unchanged
+      expect(readFileSync(prevPath, "utf-8")).toBe(originalContent);
+    });
+
+    it("appendTrigger writes to today's file, not previous day's", () => {
+      const key = "cross-day-append";
+      const prevPath = createNotesOnDay("2026-01-04", key, "session-append");
+      const originalContent = readFileSync(prevPath, "utf-8");
+
+      continueNotes({
+        correlationKey: key,
+        sessionId: "session-append",
+        prompt: "continued",
+        previousNotesPath: prevPath,
+      });
+
+      appendTrigger({ correlationKey: key, prompt: "another follow-up" });
+
+      // Old file untouched
+      expect(readFileSync(prevPath, "utf-8")).toBe(originalContent);
+
+      // Today's file has the follow-up
+      const todayContent = readFileSync(findNotesFile(key)!, "utf-8");
+      expect(todayContent).toContain("another follow-up");
+    });
+
+    it("appendSummary writes to today's file, not previous day's", () => {
+      const key = "cross-day-summary";
+      const prevPath = createNotesOnDay("2026-01-05", key, "session-summary");
+      const originalContent = readFileSync(prevPath, "utf-8");
+
+      continueNotes({
+        correlationKey: key,
+        sessionId: "session-summary",
+        prompt: "continued",
+        previousNotesPath: prevPath,
+      });
+
+      appendSummary({
+        correlationKey: key,
+        status: "completed",
+        durationMs: 1234,
+        toolCalls: [{ tool: "test-tool", state: "completed" }],
+      });
+
+      // Old file untouched
+      expect(readFileSync(prevPath, "utf-8")).toBe(originalContent);
+
+      // Today's file has the summary
+      const todayContent = readFileSync(findNotesFile(key)!, "utf-8");
+      expect(todayContent).toContain("## Result");
+      expect(todayContent).toContain("test-tool");
+    });
+
+    it("getSessionIdFromNotes finds session from continued file", () => {
+      const key = "cross-day-lookup";
+      const prevPath = createNotesOnDay("2026-01-06", key, "session-original");
+
+      continueNotes({
+        correlationKey: key,
+        sessionId: "session-original",
+        prompt: "continued",
+        previousNotesPath: prevPath,
+      });
+
+      // Should find today's (most recent) session ID
+      expect(getSessionIdFromNotes(key)).toBe("session-original");
+    });
   });
 });
 

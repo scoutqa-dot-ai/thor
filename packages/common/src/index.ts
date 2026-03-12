@@ -5,6 +5,7 @@ export type { Logger } from "./logger.js";
 export {
   readNotes,
   createNotes,
+  continueNotes,
   appendTrigger,
   appendSummary,
   findNotesFile,

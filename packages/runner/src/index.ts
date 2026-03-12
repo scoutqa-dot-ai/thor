@@ -16,8 +16,10 @@ import {
   logInfo,
   logError,
   createNotes,
+  continueNotes,
   appendTrigger,
   appendSummary,
+  findNotesFile,
   getSessionIdFromNotes,
 } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -302,12 +304,15 @@ app.post("/trigger", async (req, res) => {
       }
     }
 
-    // --- Notes: create or append, seed prompt with prior context ---
+    // --- Notes: create or continue into today's file ---
     if (correlationKey) {
       if (resumed) {
         // Session already has full conversation history — no need to inject notes.
-        // Just append this trigger to the notes file for the durable record.
-        appendTrigger({ correlationKey, prompt, model });
+        // Roll forward into today's file (back-references the previous day's file).
+        const previousNotesPath = findNotesFile(correlationKey);
+        if (previousNotesPath) {
+          continueNotes({ correlationKey, sessionId, prompt, model, previousNotesPath });
+        }
       } else {
         createNotes({ correlationKey, prompt, model, sessionId });
       }

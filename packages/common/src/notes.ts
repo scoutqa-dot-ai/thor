@@ -1,22 +1,34 @@
 /**
  * Markdown notes — human-readable session memory.
  *
- * Each session (identified by correlation key) gets a markdown file that
- * accumulates trigger context and summaries across runs. The runner reads
- * this file on session resume to seed the agent with prior context.
+ * Each session (identified by correlation key) gets a markdown file per day.
+ * On cross-day resume, a new file is created for today with a back-reference
+ * to the previous day's file — the old file is never modified.
  *
  * Directory structure:
  *   worklog/
- *   └─ 2026-03-10/
- *      ├─ json/         ← existing audit logs (unchanged)
+ *   ├─ 2026-03-10/
+ *   │  └─ notes/
+ *   │     └─ my-session-key.md   ← frozen after that day
+ *   └─ 2026-03-11/
  *      └─ notes/
- *         └─ my-session-key.md
+ *         └─ my-session-key.md   ← continuation with back-reference
+ *
+ * Write operations (appendTrigger, appendSummary) always target today's file
+ * without scanning previous days — fast and side-effect-free on old files.
  *
  * Notes files survive container restarts via bind mount.
  */
 
-import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import {
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  appendFileSync,
+  existsSync,
+} from "node:fs";
+import { join, relative } from "node:path";
 
 const WORKLOG_DIR = process.env.WORKLOG_DIR || "/workspace/worklog";
 
@@ -105,15 +117,61 @@ Session ID: ${opts.sessionId}
 }
 
 /**
- * Append a follow-up trigger entry to an existing notes file.
+ * Roll a session forward into today's notes file.
+ *
+ * Called when a cross-day resume is detected: creates a new notes file for
+ * today with a back-reference to the previous day's file. The old file is
+ * never modified. Subsequent appendTrigger/appendSummary calls will target
+ * today's file automatically.
+ *
+ * If today's file already exists (e.g., duplicate trigger), this is a no-op.
+ */
+export function continueNotes(opts: {
+  correlationKey: string;
+  sessionId: string;
+  prompt: string;
+  model?: string;
+  previousNotesPath: string;
+}): void {
+  const target = todayNotesPath(opts.correlationKey);
+  if (existsSync(target)) return;
+
+  const dir = todayNotesDir();
+  mkdirSync(dir, { recursive: true });
+
+  const backRef = relative(dir, opts.previousNotesPath);
+  const now = new Date().toISOString();
+
+  const content = `# Session: ${opts.correlationKey} (continued)
+Created: ${now}
+Session ID: ${opts.sessionId}
+Previous: ${backRef}
+
+## Follow-up — ${now}
+**Prompt**: ${opts.prompt}
+**Model**: ${opts.model || "(default)"}
+`;
+
+  writeFileSync(target, content);
+}
+
+/**
+ * Append a follow-up trigger entry to today's notes file.
+ * Always writes to today's path — never touches previous days' files.
+ * No-op if today's notes file does not exist (call createNotes or continueNotes first).
  */
 export function appendTrigger(opts: {
   correlationKey: string;
   prompt: string;
   model?: string;
 }): void {
-  const path = findNotesFile(opts.correlationKey);
-  if (!path) return;
+  const path = todayNotesPath(opts.correlationKey);
+  if (!existsSync(path)) {
+    console.warn(
+      `[notes] appendTrigger: no notes file for today, skipping (key=${opts.correlationKey})`,
+    );
+    return;
+  }
 
   const now = new Date().toISOString();
   const entry = `
@@ -123,12 +181,7 @@ export function appendTrigger(opts: {
 **Model**: ${opts.model || "(default)"}
 `;
 
-  try {
-    const existing = readFileSync(path, "utf-8");
-    writeFileSync(path, existing + entry);
-  } catch {
-    // File disappeared between find and write — skip
-  }
+  appendFileSync(path, entry);
 }
 
 /**
@@ -149,7 +202,9 @@ export function getSessionIdFromNotes(correlationKey: string): string | undefine
 }
 
 /**
- * Append a session summary block to the notes file.
+ * Append a session summary block to today's notes file.
+ * Always writes to today's path — never touches previous days' files.
+ * No-op if today's notes file does not exist.
  */
 export function appendSummary(opts: {
   correlationKey: string;
@@ -159,8 +214,13 @@ export function appendSummary(opts: {
   responsePreview?: string;
   error?: string;
 }): void {
-  const path = findNotesFile(opts.correlationKey);
-  if (!path) return;
+  const path = todayNotesPath(opts.correlationKey);
+  if (!existsSync(path)) {
+    console.warn(
+      `[notes] appendSummary: no notes file for today, skipping (key=${opts.correlationKey})`,
+    );
+    return;
+  }
 
   const now = new Date().toISOString();
 
@@ -189,10 +249,5 @@ export function appendSummary(opts: {
     entry += `**Key findings**: ${preview}\n`;
   }
 
-  try {
-    const existing = readFileSync(path, "utf-8");
-    writeFileSync(path, existing + entry);
-  } catch {
-    // skip
-  }
+  appendFileSync(path, entry);
 }
