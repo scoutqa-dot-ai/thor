@@ -1,0 +1,25 @@
+docker/opencode/agents/build.md
+  b24371e18114a4aa 294-295,304,309
+packages/git-mcp/src/index.ts
+  b24371e18114a4aa 74-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "78f6ae9fd148827e300062b61e44ff84b81550ac",
+  "prompts": {
+    "b24371e18114a4aa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "066b70b3-fd40-47bc-9e0e-f54ffe1bff79",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 2,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
