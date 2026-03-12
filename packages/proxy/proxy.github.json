@@ -1,6 +1,6 @@
 {
   "upstream": {
-    "url": "https://api.githubcopilot.com/mcp/readonly",
+    "url": "https://api.githubcopilot.com/mcp/",
     "headers": {
       "Authorization": "Bearer ${GITHUB_PAT}"
     }
@@ -17,6 +17,15 @@
     "pull_request_read",
     "search_code",
     "search_issues",
-    "search_pull_requests"
+    "search_pull_requests",
+    "create_pull_request",
+    "update_pull_request",
+    "add_issue_comment",
+    "add_reply_to_pull_request_comment",
+    "pull_request_review_write",
+    "add_comment_to_pending_review",
+    "actions_get",
+    "actions_list",
+    "get_job_logs"
   ]
 }

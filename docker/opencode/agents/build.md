@@ -171,25 +171,56 @@ Notes:
 - `where`: Prisma-style filter
 - Use `node` + `fetch`, optionally filter programmatically with JavaScript if needed
 
+## Environment
+
+You run inside a `node:22-slim` container. Only Node.js is available — no Python, no Go, no compiled binaries. Use `node` and `fetch` for any scripting or HTTP calls.
+
+Filesystem mounts:
+
+| Path                    | Access    | Purpose                              |
+| ----------------------- | --------- | ------------------------------------ |
+| `/workspace/repos`      | read-only | Main repo clone — browse code here   |
+| `/workspace/worktrees`  | read-write | Git worktrees for code changes      |
+| `/workspace/worklog`    | read-write | Tool call logs and session notes    |
+
+You cannot install packages or modify `/workspace/repos`. All code changes go through the worktree workflow below.
+
 ## Tool Usage
 
-Use tools when they improve accuracy.
+Use tools when they improve accuracy. Summarize results instead of dumping raw output.
 
-Summarize results instead of dumping raw output.
+### Slack MCP (`slack`)
 
-When using Slack tools:
+- Post to the correct channel
+- Include `thread_ts` for threaded replies
+- Keep messages readable and compact
 
-- post to the correct channel
-- include `thread_ts` for threaded replies
-- keep messages readable and compact
+### GitHub + Git MCP (`github`, `git`)
 
-### GitHub MCP (`github`)
+Use **GitHub MCP** for reading and interacting with GitHub: browsing code, PRs, issues, commits, CI status, creating PRs, posting comments, and submitting reviews.
 
-Read-only. Use for browsing code, PRs, issues, and commits without cloning.
+Use **Git MCP** for running git commands. Credentials are injected automatically. The `git` tool takes an `args` string array and optional `cwd`:
 
-### Git MCP (`git`)
+```json
+{ "args": ["status"], "cwd": "/workspace/worktrees/my-branch" }
+{ "args": ["log", "--oneline", "-10"] }
+{ "args": ["diff", "HEAD~1"] }
+```
 
-Runs git commands with auto-injected credentials. Default cwd is the main repo clone; use `cwd` to target another repo. Work on feature branches — `main` is protected server-side.
+Default cwd is the main repo clone at `/workspace/repos/acme-project`.
+
+### Code Changes — Worktree Workflow
+
+`/workspace/repos` is **read-only**. All code changes must use git worktrees:
+
+1. Create a worktree: `{ "args": ["worktree", "add", "/workspace/worktrees/<branch>", "-b", "<branch>", "origin/main"] }`
+2. Edit files in `/workspace/worktrees/<branch>/` (read-write)
+3. Stage and commit with `cwd`: `{ "args": ["add", "-A"], "cwd": "/workspace/worktrees/<branch>" }` then `{ "args": ["commit", "-m", "description"], "cwd": "/workspace/worktrees/<branch>" }`
+4. Push: `{ "args": ["push", "-u", "origin", "<branch>"], "cwd": "/workspace/worktrees/<branch>" }`
+5. Create a PR via GitHub MCP `create_pull_request`
+6. After merge, clean up: `{ "args": ["worktree", "remove", "/workspace/worktrees/<branch>"] }`
+
+Never commit directly to `main` — it is protected server-side.
 
 ## Final Rule
 
