@@ -1,0 +1,25 @@
+docs/plan/2026031103_slack-ephemeral-message.md
+  a332cc1618b25b24 1,5,17,19,26,29-31,34,36-39,55-57,62-65,73,77
+docs/plan/2026031203_slack-progress-to-slack-mcp.md
+  a332cc1618b25b24 1-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1eb7656fe1624348609c455df210b0657dd20834",
+  "prompts": {
+    "a332cc1618b25b24": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "af2197ef-94e3-4b6c-b597-9b23977f8ccd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 98,
+      "total_deletions": 26,
+      "accepted_lines": 95,
+      "overriden_lines": 0
+    }
+  }
+}
