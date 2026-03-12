@@ -1,0 +1,23 @@
+docs/plan/2026031205_approval-flow.md
+  1d572245d2d60784 87,89-96,132,136,139,174,176-178,184,208-212,221-464
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d7179a9fe6224ee409a8e223670b5b0fabbdf30d",
+  "prompts": {
+    "1d572245d2d60784": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1dd35a45-3e73-4510-912e-395b155d37e9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 511,
+      "total_deletions": 47,
+      "accepted_lines": 485,
+      "overriden_lines": 0
+    }
+  }
+}
