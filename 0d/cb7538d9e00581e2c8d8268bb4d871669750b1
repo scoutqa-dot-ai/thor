@@ -1,0 +1,29 @@
+packages/gateway/src/slack-notifier.test.ts
+  a332cc1618b25b24 1-279
+docs/plan/2026031103_slack-ephemeral-message.md
+  a332cc1618b25b24 54,75-76
+packages/gateway/src/slack-notifier.ts
+  a332cc1618b25b24 9,51
+packages/gateway/src/service.ts
+  a332cc1618b25b24 50,72-73,79,82-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "0dcb7538d9e00581e2c8d8268bb4d871669750b1",
+  "prompts": {
+    "a332cc1618b25b24": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "af2197ef-94e3-4b6c-b597-9b23977f8ccd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 311,
+      "total_deletions": 44,
+      "accepted_lines": 304,
+      "overriden_lines": 0
+    }
+  }
+}
