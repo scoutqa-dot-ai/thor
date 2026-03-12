@@ -1,0 +1,41 @@
+packages/gateway/src/app.ts
+  f0eef202609bdd11 10,24,34-37,46-47,82-83,166-182,400-435
+docker-compose.yml
+  f0eef202609bdd11 109,153,168-180
+packages/gateway/src/service.ts
+  f0eef202609bdd11 5,161-202
+packages/gateway/src/cron.test.ts
+  f0eef202609bdd11 1-201
+packages/gateway/src/cron.ts
+  f0eef202609bdd11 1-25
+docker/cron/Dockerfile
+  f0eef202609bdd11 1-11
+docker/cron/hey-thor
+  f0eef202609bdd11 1-34
+docker/cron/entrypoint.sh
+  f0eef202609bdd11 1-14
+packages/gateway/src/index.ts
+  f0eef202609bdd11 15,23
+docs/plan/2026031204_cron-triggers.md
+  f0eef202609bdd11 1-197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b467f6b4d4c2f0bb2089bf91ad085c6ecf9d5691",
+  "prompts": {
+    "f0eef202609bdd11": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db84288b-7e4b-4bef-8276-6aa9f7c74d65",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 945,
+      "total_deletions": 278,
+      "accepted_lines": 667,
+      "overriden_lines": 0
+    }
+  }
+}
