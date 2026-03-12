@@ -1,7 +1,7 @@
 import type { WebClient } from "@slack/web-api";
 import { createLogger, logInfo, logError, ProgressEventSchema } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
-import { getGitHubCorrelationKey, type GitHubEvent } from "./github.js";
+import { type GitHubEvent } from "./github.js";
 import { getSlackCorrelationKey, getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import { SlackNotifier } from "./slack-notifier.js";
 
@@ -22,7 +22,7 @@ function getFetch(fetchImpl?: typeof fetch): typeof fetch {
  * Trigger the runner and consume its NDJSON progress stream.
  * Posts/updates a Slack progress message in the originating thread.
  */
-export async function triggerRunner(
+export async function triggerRunnerSlack(
   events: SlackThreadEvent[],
   correlationKey: string,
   deps: RunnerDeps,
@@ -115,12 +115,20 @@ async function handleProgressEvent(event: ProgressEvent, notifier: SlackNotifier
 }
 
 /**
- * Fire-and-forget trigger to the runner for a GitHub event.
- * Sends the full event (type + raw payload) as the prompt.
+ * Trigger the runner with a batch of GitHub events.
+ * Combines multiple events into a single prompt, like the Slack handler.
  */
-export async function triggerRunnerGitHub(event: GitHubEvent, deps: RunnerDeps): Promise<void> {
-  const prompt = `GitHub ${event.event} event:\n\n${JSON.stringify(event.payload)}`;
-  const correlationKey = getGitHubCorrelationKey(event);
+export async function triggerRunnerGitHub(
+  events: GitHubEvent[],
+  correlationKey: string,
+  deps: RunnerDeps,
+): Promise<void> {
+  if (events.length === 0) return;
+
+  const prompt =
+    events.length === 1
+      ? `GitHub ${events[0].event} event:\n\n${JSON.stringify(events[0].payload)}`
+      : `GitHub events:\n\n${JSON.stringify(events.map((e) => ({ event: e.event, payload: e.payload })))}`;
 
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",

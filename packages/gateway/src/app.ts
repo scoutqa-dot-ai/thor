@@ -6,7 +6,7 @@ import { EventQueue, type QueuedEvent } from "./queue.js";
 import {
   addSlackReaction,
   hasRunnerSession,
-  triggerRunner,
+  triggerRunnerSlack,
   triggerRunnerGitHub,
   type RunnerDeps,
   type SlackDeps,
@@ -49,6 +49,9 @@ const SLACK_ACTIVE_DELAY_MS = 3000;
 
 /** Delay for unaddressed messages — hope someone else handles it first (ms). */
 const SLACK_UNADDRESSED_DELAY_MS = 60_000;
+
+/** Batch delay for GitHub events (ms). */
+const GITHUB_DELAY_MS = 60_000;
 
 /** Our bot's Slack user ID — used to ignore our own messages. */
 const SELF_USER_ID = "U0BOTEXAMPLE";
@@ -104,7 +107,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       if (slackEvents.length > 0) {
         const lastEvent = slackEvents[slackEvents.length - 1];
 
-        triggerRunner(
+        triggerRunnerSlack(
           slackEvents.map((e) => e.payload),
           lastEvent.correlationKey,
           runnerDeps,
@@ -123,17 +126,23 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           );
       }
 
-      for (const e of githubEvents) {
-        triggerRunnerGitHub(e.payload, runnerDeps)
+      if (githubEvents.length > 0) {
+        const lastEvent = githubEvents[githubEvents.length - 1];
+
+        triggerRunnerGitHub(
+          githubEvents.map((e) => e.payload),
+          lastEvent.correlationKey,
+          runnerDeps,
+        )
           .then(() =>
             logInfo(log, "github_trigger_fired", {
-              correlationKey: e.correlationKey,
-              event: e.payload.event,
+              correlationKey: lastEvent.correlationKey,
+              batchSize: githubEvents.length,
             }),
           )
           .catch((error) =>
             logError(log, "github_trigger_failed", error, {
-              correlationKey: e.correlationKey,
+              correlationKey: lastEvent.correlationKey,
             }),
           );
       }
@@ -342,7 +351,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       payload: event,
       receivedAt: new Date().toISOString(),
       sourceTs: Date.now(),
-      readyAt: Date.now(),
+      readyAt: Date.now() + GITHUB_DELAY_MS,
+      delayMs: GITHUB_DELAY_MS,
     });
 
     res.status(200).json({ ok: true });
