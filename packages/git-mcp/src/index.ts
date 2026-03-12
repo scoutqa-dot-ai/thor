@@ -71,6 +71,20 @@ async function handleToolCall(
     };
   }
 
+  const BLOCKED_SUBCOMMANDS = ["clone", "init"];
+  const subcommand = gitArgs[0].toLowerCase();
+  if (BLOCKED_SUBCOMMANDS.includes(subcommand)) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `"git ${subcommand}" is not allowed. Use existing repos in /workspace/repos and create worktrees for changes.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
   const cwd = typeof args.cwd === "string" ? args.cwd : GIT_MCP_DEFAULT_CWD;
 
   const result = await execGit(gitArgs, cwd, GITHUB_PAT);

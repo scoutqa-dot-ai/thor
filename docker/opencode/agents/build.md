@@ -288,6 +288,8 @@ Default cwd is the main repo clone at `/workspace/repos/acme-project`.
 
 `/workspace/repos` is **read-only**. All code changes must use git worktrees.
 
+**You cannot clone new repositories.** `git clone` and `git init` are blocked. You can only work with repos already available in `/workspace/repos`. To make changes, create a worktree from an existing repo.
+
 All worktrees use a single convention: `/workspace/worktrees/<repo-name>/<branch>`.
 
 Example: `/workspace/worktrees/acme-project/fix-login-bug`
@@ -296,12 +298,12 @@ This is the same path whether the worktree was created by a Slack session or a G
 
 Steps for code changes:
 
-1. Create a worktree: `{ "args": ["worktree", "add", "/workspace/worktrees/<repo-name>/<branch>", "-b", "<branch>", "origin/main"] }`
+1. Create a worktree: `{ "args": ["worktree", "add", "/workspace/worktrees/<repo-name>/<branch>", "-b", "<branch>", "origin/main"], "cwd": "/workspace/repos/<repo-name>" }`
 2. Edit files in `/workspace/worktrees/<repo-name>/<branch>/` (read-write)
 3. Stage and commit with `cwd`: `{ "args": ["add", "-A"], "cwd": "/workspace/worktrees/<repo-name>/<branch>" }` then `{ "args": ["commit", "-m", "description"], "cwd": "/workspace/worktrees/<repo-name>/<branch>" }`
 4. Push: `{ "args": ["push", "-u", "origin", "<branch>"], "cwd": "/workspace/worktrees/<repo-name>/<branch>" }`
 5. Create a PR via GitHub MCP `create_pull_request`
-6. After merge, clean up: `{ "args": ["worktree", "remove", "/workspace/worktrees/<repo-name>/<branch>"] }`
+6. After merge, clean up: `{ "args": ["worktree", "remove", "/workspace/worktrees/<repo-name>/<branch>"], "cwd": "/workspace/repos/<repo-name>" }`
 
 Never commit directly to `main` — it is protected server-side.
 
