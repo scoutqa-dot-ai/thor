@@ -1,0 +1,69 @@
+# Example GitHub Actions workflow to notify Thor of PR-related events.
+#
+# Setup:
+#   1. Copy this file to .github/workflows/notify-thor.yml in the source repo
+#   2. Add THOR_GATEWAY_URL as a repository secret (e.g. https://thor.internal:8080)
+#
+# Supported events (must match Thor gateway's supported list):
+#   - pull_request
+#   - pull_request_review
+#   - pull_request_review_comment (inline diff comments)
+#   - push (to main)
+#   - issue_comment (PR comments only — resolved via gh pr view)
+#
+# When Thor adds support for new events, update the `on:` triggers and the
+# notify job below to include them.
+
+name: Notify Thor
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, closed]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+  push:
+    branches: [main]
+  issue_comment:
+    types: [created]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    # Skip issue_comment events that are not on PRs
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    steps:
+      - name: Resolve branch
+        id: branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request)
+              echo "name=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
+              ;;
+            pull_request_review|pull_request_review_comment)
+              echo "name=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
+              ;;
+            push)
+              echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+              ;;
+            issue_comment)
+              BRANCH=$(gh pr view ${{ github.event.issue.number }} \
+                --repo ${{ github.repository }} \
+                --json headRefName -q .headRefName)
+              echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Send to Thor
+        run: |
+          curl -sf -X POST "${{ secrets.THOR_GATEWAY_URL }}/github/events" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg event "${{ github.event_name }}" \
+              --arg branch "${{ steps.branch.outputs.name }}" \
+              --arg repository "${{ github.repository }}" \
+              --argjson payload '${{ toJSON(github.event) }}' \
+              '{event: $event, branch: $branch, repository: $repository, payload: $payload}')"

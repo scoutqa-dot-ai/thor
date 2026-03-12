@@ -1,6 +1,7 @@
 import type { WebClient } from "@slack/web-api";
 import { createLogger, logInfo, logError, ProgressEventSchema } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
+import { getGitHubCorrelationKey, type GitHubEvent } from "./github.js";
 import { getSlackCorrelationKey, getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import { SlackNotifier } from "./slack-notifier.js";
 
@@ -110,6 +111,26 @@ async function handleProgressEvent(event: ProgressEvent, notifier: SlackNotifier
     case "error":
       await notifier.finish("error", event.error);
       break;
+  }
+}
+
+/**
+ * Fire-and-forget trigger to the runner for a GitHub event.
+ * Sends the full event (type + raw payload) as the prompt.
+ */
+export async function triggerRunnerGitHub(event: GitHubEvent, deps: RunnerDeps): Promise<void> {
+  const prompt = `GitHub ${event.event} event:\n\n${JSON.stringify(event.payload)}`;
+  const correlationKey = getGitHubCorrelationKey(event);
+
+  const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, correlationKey }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Runner returned ${response.status}: ${text}`);
   }
 }
 

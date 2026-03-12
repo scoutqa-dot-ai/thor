@@ -104,7 +104,7 @@ services:
       - ./docker-volumes/opencode:/root/.local/share/opencode
       - ./docker-volumes/workspace/repos:/workspace/repos:ro
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
-      - ./docker-volumes/workspace/worklog:/workspace/worklog
+      - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
     depends_on:
       proxy:
         condition: service_healthy

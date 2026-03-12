@@ -7,9 +7,11 @@ import {
   addSlackReaction,
   hasRunnerSession,
   triggerRunner,
+  triggerRunnerGitHub,
   type RunnerDeps,
   type SlackDeps,
 } from "./service.js";
+import { getGitHubCorrelationKey, parseGitHubEvent, type GitHubEvent } from "./github.js";
 import {
   getSlackCorrelationKey,
   parseSlackTs,
@@ -24,8 +26,16 @@ interface SlackQueuedEvent extends QueuedEvent<SlackThreadEvent> {
   source: "slack";
 }
 
+interface GitHubQueuedEvent extends QueuedEvent<GitHubEvent> {
+  source: "github";
+}
+
 function isSlackEvent(e: QueuedEvent): e is SlackQueuedEvent {
   return e.source === "slack";
+}
+
+function isGitHubEvent(e: QueuedEvent): e is GitHubQueuedEvent {
+  return e.source === "github";
 }
 
 const log = createLogger("gateway");
@@ -89,27 +99,44 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     disableInterval: config.disableQueueInterval === true,
     handler: async (events: QueuedEvent[]) => {
       const slackEvents = events.filter(isSlackEvent);
-      if (slackEvents.length === 0) return;
+      const githubEvents = events.filter(isGitHubEvent);
 
-      const correlationKey = slackEvents[0].correlationKey;
+      if (slackEvents.length > 0) {
+        const lastEvent = slackEvents[slackEvents.length - 1];
 
-      triggerRunner(
-        slackEvents.map((e) => e.payload),
-        correlationKey,
-        runnerDeps,
-        slackDeps,
-      )
-        .then(() =>
-          logInfo(log, "slack_trigger_fired", {
-            correlationKey,
-            batchSize: slackEvents.length,
-          }),
+        triggerRunner(
+          slackEvents.map((e) => e.payload),
+          lastEvent.correlationKey,
+          runnerDeps,
+          slackDeps,
         )
-        .catch((error) =>
-          logError(log, "slack_trigger_failed", error, {
-            correlationKey,
-          }),
-        );
+          .then(() =>
+            logInfo(log, "slack_trigger_fired", {
+              correlationKey: lastEvent.correlationKey,
+              batchSize: slackEvents.length,
+            }),
+          )
+          .catch((error) =>
+            logError(log, "slack_trigger_failed", error, {
+              correlationKey: lastEvent.correlationKey,
+            }),
+          );
+      }
+
+      for (const e of githubEvents) {
+        triggerRunnerGitHub(e.payload, runnerDeps)
+          .then(() =>
+            logInfo(log, "github_trigger_fired", {
+              correlationKey: e.correlationKey,
+              event: e.payload.event,
+            }),
+          )
+          .catch((error) =>
+            logError(log, "github_trigger_failed", error, {
+              correlationKey: e.correlationKey,
+            }),
+          );
+      }
     },
   });
 
@@ -291,6 +318,37 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     logInfo(log, "interactivity_received", { interactionType });
     res.status(200).json({ ok: true, ignored: true, interactionType });
   });
+
+  // --- GitHub events ---
+
+  app.post("/github/events", (req: Request, res: Response) => {
+    const event = parseGitHubEvent(req.body);
+    if (!event) {
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const correlationKey = getGitHubCorrelationKey(event);
+
+    logInfo(log, "github_event_accepted", {
+      event: event.event,
+      correlationKey,
+    });
+
+    queue.enqueue({
+      id: crypto.randomUUID(),
+      source: "github",
+      correlationKey,
+      payload: event,
+      receivedAt: new Date().toISOString(),
+      sourceTs: Date.now(),
+      readyAt: Date.now(),
+    });
+
+    res.status(200).json({ ok: true });
+  });
+
+  // --- Slack OAuth redirect ---
 
   app.get("/slack/redirect", (req: Request, res: Response) => {
     res.status(501).json({
