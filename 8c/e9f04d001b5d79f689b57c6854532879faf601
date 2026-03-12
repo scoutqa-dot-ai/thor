@@ -1,0 +1,23 @@
+README.md
+  b310df406a28472f 31-32,50-51,156,160,192,195-236,238-260
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8ce9f04d001b5d79f689b57c6854532879faf601",
+  "prompts": {
+    "b310df406a28472f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "407efff3-c663-4552-a1c3-d9c95cad6231",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 74,
+      "total_deletions": 7,
+      "accepted_lines": 72,
+      "overriden_lines": 1
+    }
+  }
+}
