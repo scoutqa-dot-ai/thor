@@ -12,6 +12,7 @@ services:
     build:
       context: .
       target: slack-mcp
+    restart: unless-stopped
     ports:
       - "127.0.0.1:3003:3003"
     environment:
@@ -29,6 +30,7 @@ services:
     build:
       context: .
       target: git-mcp
+    restart: unless-stopped
     ports:
       - "127.0.0.1:3004:3004"
     environment:
@@ -49,6 +51,7 @@ services:
     build:
       context: .
       target: proxy
+    restart: unless-stopped
     ports:
       - "127.0.0.1:3010:3010"
       - "127.0.0.1:3011:3011"
@@ -79,14 +82,14 @@ services:
       retries: 10
 
   data:
-    image: nginx:alpine
+    build:
+      context: ./docker/data
+    restart: unless-stopped
     ports:
       - "127.0.0.1:3080:80"
     environment:
       - ACME_WEBAPP_ADMIN_API_KEY=${ACME_WEBAPP_ADMIN_API_KEY:-}
       - ACME_AGENT_ADMIN_API_KEY=${ACME_AGENT_ADMIN_API_KEY:-}
-    volumes:
-      - ./docker/data/default.conf.template:/etc/nginx/templates/default.conf.template:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost/health"]
       interval: 5s
@@ -96,6 +99,7 @@ services:
   opencode:
     build:
       context: ./docker/opencode
+    restart: unless-stopped
     ports:
       - "127.0.0.1:4096:4096"
     working_dir: /workspace
@@ -126,6 +130,7 @@ services:
     build:
       context: .
       target: runner
+    restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
     environment:
@@ -143,6 +148,7 @@ services:
     build:
       context: .
       target: gateway
+    restart: unless-stopped
     ports:
       - "127.0.0.1:3002:3002"
     environment:
@@ -167,6 +173,7 @@ services:
   vouch:
     build:
       context: ./docker/vouch
+    restart: unless-stopped
     ports:
       - "127.0.0.1:9090:9090"
     volumes:
@@ -184,11 +191,11 @@ services:
       retries: 10
 
   ingress:
-    image: nginx:alpine
+    build:
+      context: ./docker/ingress
+    restart: unless-stopped
     ports:
       - "${INGRESS_PORT:-8080}:8080"
-    volumes:
-      - ./docker/ingress/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       gateway:
         condition: service_healthy

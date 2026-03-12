@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Starts multiple proxy instances in a single container.
 # Each instance gets its own PORT and PROXY_CONFIG.
 #
@@ -10,7 +10,6 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NODE_ENTRY="/app/packages/proxy/dist/index.js"
 
 if [ -z "$PROXY_INSTANCES" ]; then
@@ -26,7 +25,6 @@ cleanup() {
     kill "$pid" 2>/dev/null || true
   done
   wait
-  exit 0
 }
 trap cleanup TERM INT
 
@@ -41,5 +39,10 @@ for instance in $PROXY_INSTANCES; do
   PIDS="$PIDS $!"
 done
 
-# Wait for all children — if the script receives TERM/INT, cleanup runs
-wait
+# Wait for any child to exit — if one crashes, bring down the whole container
+# so Docker restart policy can recover all instances together.
+wait -n
+EXIT_CODE=$?
+echo "A proxy process exited with code $EXIT_CODE — shutting down all instances"
+cleanup
+exit "$EXIT_CODE"

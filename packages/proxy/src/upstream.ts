@@ -6,7 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { ProxyConfig } from "./config.js";
-import { createLogger, logInfo } from "@thor/common";
+import { createLogger, logInfo, logError } from "@thor/common";
 
 const log = createLogger("proxy");
 
@@ -29,6 +29,14 @@ export async function connectUpstream(config: ProxyConfig): Promise<UpstreamConn
 
   await client.connect(transport);
   logInfo(log, "upstream_connected", { url: config.upstream.url });
+
+  // Crash on upstream disconnect — Docker restart policy will recover.
+  client.onclose = () => {
+    logError(log, "upstream_disconnected", "upstream closed unexpectedly", {
+      url: config.upstream.url,
+    });
+    process.exit(1);
+  };
 
   const { tools } = await client.listTools();
   logInfo(log, "upstream_tools_listed", {
