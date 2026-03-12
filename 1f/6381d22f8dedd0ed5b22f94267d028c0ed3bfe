@@ -1,0 +1,29 @@
+docs/plan/2026031204_cron-triggers.md
+  f0eef202609bdd11 25,47,81,90,133-134,176,185,189,192,195,198,203
+packages/gateway/src/service.ts
+  f0eef202609bdd11 163-164,189
+docker/cron/hey-thor
+  f0eef202609bdd11 5
+packages/gateway/src/app.ts
+  f0eef202609bdd11 171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1f6381d22f8dedd0ed5b22f94267d028c0ed3bfe",
+  "prompts": {
+    "f0eef202609bdd11": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db84288b-7e4b-4bef-8276-6aa9f7c74d65",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 28,
+      "total_deletions": 69,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
