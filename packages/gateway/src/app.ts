@@ -1,5 +1,5 @@
 import express, { type Express, type Request, type Response } from "express";
-import { createLogger, logError, logInfo } from "@thor/common";
+import { createChannelFilter, createLogger, logError, logInfo } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
 import {
@@ -69,6 +69,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   slackUnaddressedDelayMs?: number;
   /** Delay for GitHub events in ms. Default: 60000. */
   githubDelayMs?: number;
+  /** Slack channel IDs the bot is allowed to respond in. Empty = allow all. */
+  allowedChannelIds?: string[];
 }
 
 const InteractivityBodySchema = z.object({
@@ -92,6 +94,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const batchDelay = config.slackActiveDelayMs ?? SLACK_ACTIVE_DELAY_MS;
   const unaddressedDelay = config.slackUnaddressedDelayMs ?? SLACK_UNADDRESSED_DELAY_MS;
   const githubDelay = config.githubDelayMs ?? GITHUB_DELAY_MS;
+  const isChannelAllowed = createChannelFilter(new Set(config.allowedChannelIds ?? []));
 
   const runnerDeps: RunnerDeps = {
     runnerUrl: config.runnerUrl,
@@ -219,6 +222,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // Ignore our own messages
     if (event.user === SELF_USER_ID) {
       logInfo(log, "event_ignored_self", { eventId });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    // Block DMs and non-allowlisted channels
+    if (
+      "channel" in event &&
+      typeof event.channel === "string" &&
+      !isChannelAllowed(event.channel)
+    ) {
+      logInfo(log, "event_ignored_channel_not_allowed", { eventId, channel: event.channel });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }

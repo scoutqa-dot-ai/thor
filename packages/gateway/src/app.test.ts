@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createGatewayApp } from "./app.js";
+import { createGatewayApp, type GatewayAppConfig } from "./app.js";
 import type { EventQueue } from "./queue.js";
 
 function sign(body: string, secret: string, timestamp: string): string {
@@ -13,6 +13,7 @@ function sign(body: string, secret: string, timestamp: string): string {
 async function withServer<T>(
   fetchImpl: typeof fetch,
   run: (baseUrl: string, queue: EventQueue) => Promise<T>,
+  extraConfig?: Partial<GatewayAppConfig>,
 ): Promise<T> {
   const queueDir = mkdtempSync(join(tmpdir(), "gateway-test-"));
   const { app, queue } = createGatewayApp({
@@ -24,6 +25,7 @@ async function withServer<T>(
     disableQueueInterval: true,
     slackActiveDelayMs: 0,
     slackUnaddressedDelayMs: 0,
+    ...extraConfig,
   });
 
   const server = app.listen(0);
@@ -625,6 +627,195 @@ describe("gateway", () => {
           text: "<@U0BOTEXAMPLE> check staging",
           ts: "1710000000.040",
           channel: "C123",
+        },
+      });
+      const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+      const response = await fetch(`${baseUrl}/slack/events`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Slack-Request-Timestamp": timestamp,
+          "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+        },
+        body,
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("ignores events from channels not in the allowlist", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl) => {
+        const body = JSON.stringify({
+          type: "event_callback",
+          event_id: "EvBlocked",
+          team_id: "T123",
+          event: {
+            type: "app_mention",
+            user: "U123",
+            text: "<@U999> hello",
+            ts: "1710000000.050",
+            channel: "C_NOT_ALLOWED",
+          },
+        });
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, ignored: true });
+        expect(fetchImpl).not.toHaveBeenCalled();
+      },
+      { allowedChannelIds: ["C_ALLOWED"] },
+    );
+  });
+
+  it("accepts events from channels in the allowlist", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const body = JSON.stringify({
+          type: "event_callback",
+          event_id: "EvAllowed",
+          team_id: "T123",
+          event: {
+            type: "app_mention",
+            user: "U123",
+            text: "<@U999> hello",
+            ts: "1710000000.060",
+            channel: "C_ALLOWED",
+          },
+        });
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await queue.flush();
+
+        const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
+        expect(triggerCall).toBeDefined();
+      },
+      { allowedChannelIds: ["C_ALLOWED"] },
+    );
+  });
+
+  it("ignores messages from channels not in the allowlist", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl) => {
+        const body = JSON.stringify({
+          type: "event_callback",
+          event_id: "EvMsgBlocked",
+          team_id: "T123",
+          event: {
+            type: "message",
+            user: "U123",
+            text: "hello from blocked channel",
+            ts: "1710000000.070",
+            channel: "C_BLOCKED",
+          },
+        });
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, ignored: true });
+        expect(fetchImpl).not.toHaveBeenCalled();
+      },
+      { allowedChannelIds: ["C_ALLOWED"] },
+    );
+  });
+
+  it("ignores direct messages (DM channels starting with D)", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (baseUrl) => {
+      const body = JSON.stringify({
+        type: "event_callback",
+        event_id: "EvDM",
+        team_id: "T123",
+        event: {
+          type: "message",
+          user: "U123",
+          text: "hey bot",
+          ts: "1710000000.080",
+          channel: "D0ABC123",
+        },
+      });
+      const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+      const response = await fetch(`${baseUrl}/slack/events`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Slack-Request-Timestamp": timestamp,
+          "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+        },
+        body,
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("ignores app_mention in DM channels", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (baseUrl) => {
+      const body = JSON.stringify({
+        type: "event_callback",
+        event_id: "EvDMMention",
+        team_id: "T123",
+        event: {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> help me",
+          ts: "1710000000.090",
+          channel: "D0XYZ789",
         },
       });
       const timestamp = `${Math.floor(Date.now() / 1000)}`;

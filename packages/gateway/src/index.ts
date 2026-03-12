@@ -1,4 +1,4 @@
-import { createLogger, logInfo } from "@thor/common";
+import { createLogger, logInfo, parseAllowedChannelIds } from "@thor/common";
 import { createGatewayApp } from "./app.js";
 
 const log = createLogger("gateway");
@@ -12,6 +12,9 @@ const SLACK_TIMESTAMP_TOLERANCE_SECONDS = parseInt(
   10,
 );
 const QUEUE_DIR = process.env.QUEUE_DIR || "data/queue";
+const SLACK_ALLOWED_CHANNEL_IDS = [
+  ...parseAllowedChannelIds(process.env.SLACK_ALLOWED_CHANNEL_IDS),
+];
 
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
@@ -19,6 +22,7 @@ const { app } = createGatewayApp({
   slackMcpUrl: SLACK_MCP_URL,
   timestampToleranceSeconds: SLACK_TIMESTAMP_TOLERANCE_SECONDS,
   queueDir: QUEUE_DIR,
+  allowedChannelIds: SLACK_ALLOWED_CHANNEL_IDS,
 });
 
 app.listen(PORT, () => {
@@ -28,5 +32,6 @@ app.listen(PORT, () => {
     slackMcpUrl: SLACK_MCP_URL,
     queueDir: QUEUE_DIR,
     configured: Boolean(SLACK_SIGNING_SECRET),
+    allowedChannels: SLACK_ALLOWED_CHANNEL_IDS.length > 0 ? SLACK_ALLOWED_CHANNEL_IDS : "all",
   });
 });

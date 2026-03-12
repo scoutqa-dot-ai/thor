@@ -1,3 +1,4 @@
+export { parseAllowedChannelIds, createChannelFilter } from "./channel-filter.js";
 export { writeToolCallLog } from "./worklog.js";
 export type { ToolCallLogEntry } from "./worklog.js";
 export { createLogger, logInfo, logWarn, logError } from "./logger.js";
