@@ -10,3 +10,17 @@ export {
   findNotesFile,
   getSessionIdFromNotes,
 } from "./notes.js";
+export {
+  ProgressStartSchema,
+  ProgressToolSchema,
+  ProgressDoneSchema,
+  ProgressErrorSchema,
+  ProgressEventSchema,
+} from "./progress-events.js";
+export type {
+  ProgressStart,
+  ProgressTool,
+  ProgressDone,
+  ProgressError,
+  ProgressEvent,
+} from "./progress-events.js";

@@ -1,6 +1,10 @@
 import type { WebClient } from "@slack/web-api";
-import { z } from "zod/v4";
-import type { SlackThreadEvent } from "./slack.js";
+import { createLogger, logInfo, logError, ProgressEventSchema } from "@thor/common";
+import type { ProgressEvent } from "@thor/common";
+import { getSlackCorrelationKey, getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
+import { SlackNotifier } from "./slack-notifier.js";
+
+const log = createLogger("gateway-service");
 
 // --- Runner deps (internal HTTP, testable via fetchImpl) ---
 
@@ -9,25 +13,19 @@ export interface RunnerDeps {
   fetchImpl?: typeof fetch;
 }
 
-const RunnerTriggerResponseSchema = z.object({
-  sessionId: z.string().optional(),
-  correlationKey: z.string().optional(),
-  error: z.string().optional(),
-});
-
 function getFetch(fetchImpl?: typeof fetch): typeof fetch {
   return fetchImpl ?? fetch;
 }
 
 /**
- * Fire-and-forget trigger to the runner.
- * Sends the raw Slack event payloads as the prompt — the agent's system
- * instructions (build.md) handle interpretation and reply decisions.
+ * Trigger the runner and consume its NDJSON progress stream.
+ * Posts/updates a Slack progress message in the originating thread.
  */
 export async function triggerRunner(
   events: SlackThreadEvent[],
   correlationKey: string,
   deps: RunnerDeps,
+  slackDeps: SlackDeps,
 ): Promise<void> {
   if (events.length === 0) return;
 
@@ -46,9 +44,72 @@ export async function triggerRunner(
 
   if (!response.ok) {
     const text = await response.text();
-    const parsed = text ? RunnerTriggerResponseSchema.safeParse(JSON.parse(text)) : undefined;
-    const errorMsg = parsed?.success ? parsed.data.error : undefined;
-    throw new Error(errorMsg || `Runner returned ${response.status}`);
+    throw new Error(`Runner returned ${response.status}: ${text}`);
+  }
+
+  // Consume NDJSON stream and drive Slack progress updates
+  const last = events[events.length - 1];
+  const notifier = new SlackNotifier({
+    slack: slackDeps.slack,
+    channel: last.channel,
+    threadTs: getSlackThreadTs(last),
+  });
+
+  try {
+    await consumeNdjsonStream(response, notifier);
+  } catch (err) {
+    logError(log, "stream_consume_error", err instanceof Error ? err.message : String(err));
+    await notifier.finish("error", err instanceof Error ? err.message : "stream error");
+  }
+}
+
+/**
+ * Reads an NDJSON response body line by line and drives the notifier.
+ */
+async function consumeNdjsonStream(response: Response, notifier: SlackNotifier): Promise<void> {
+  const body = response.body;
+  if (!body) return;
+
+  const lines = body.pipeThrough(new TextDecoderStream()).pipeThrough(newlineStream());
+  for await (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = ProgressEventSchema.safeParse(JSON.parse(line));
+      if (!parsed.success) continue;
+      await handleProgressEvent(parsed.data, notifier);
+    } catch {
+      // Skip lines that aren't valid JSON
+    }
+  }
+}
+
+/** TransformStream that splits chunks on newlines. */
+function newlineStream(): TransformStream<string, string> {
+  let buffer = "";
+  return new TransformStream({
+    transform(chunk, controller) {
+      buffer += chunk;
+      const parts = buffer.split("\n");
+      buffer = parts.pop() ?? "";
+      for (const part of parts) controller.enqueue(part);
+    },
+    flush(controller) {
+      if (buffer) controller.enqueue(buffer);
+    },
+  });
+}
+
+async function handleProgressEvent(event: ProgressEvent, notifier: SlackNotifier): Promise<void> {
+  switch (event.type) {
+    case "tool":
+      await notifier.onToolCall(event.tool);
+      break;
+    case "done":
+      await notifier.finish(event.status === "completed" ? "completed" : "error", event.error);
+      break;
+    case "error":
+      await notifier.finish("error", event.error);
+      break;
   }
 }
 

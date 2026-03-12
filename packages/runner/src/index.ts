@@ -20,6 +20,7 @@ import {
   appendSummary,
   getSessionIdFromNotes,
 } from "@thor/common";
+import type { ProgressEvent } from "@thor/common";
 
 const log = createLogger("runner");
 
@@ -343,6 +344,17 @@ app.post("/trigger", async (req, res) => {
 
     logInfo(log, "prompt_sent", { sessionId });
 
+    // --- NDJSON streaming response ---
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Transfer-Encoding", "chunked");
+    res.status(200);
+
+    function emit(event: ProgressEvent): void {
+      res.write(JSON.stringify(event) + "\n");
+    }
+
+    emit({ type: "start", sessionId, correlationKey, resumed });
+
     // --- Stream processing ---
 
     let seq = 0;
@@ -376,6 +388,7 @@ app.post("/trigger", async (req, res) => {
           const status = toolPart.state.status;
           if (status === "completed" || status === "error") {
             collectedToolCalls.push({ tool: toolPart.tool, state: status });
+            emit({ type: "tool", tool: toolPart.tool, status });
           }
           lastMessageId = toolPart.messageID;
         } else if (part.type === "step-finish") {
@@ -428,32 +441,34 @@ app.post("/trigger", async (req, res) => {
       durationMs,
     });
 
-    if (sessionError) {
-      res.status(500).json({
-        sessionId,
-        correlationKey,
-        resumed,
-        error: sessionError,
-        toolCalls: collectedToolCalls,
-        durationMs,
-      });
-      return;
-    }
-
-    res.json({
+    // Final NDJSON event
+    emit({
+      type: "done",
       sessionId,
       correlationKey,
       resumed,
+      status: sessionError ? "error" : "completed",
+      ...(sessionError ? { error: sessionError } : {}),
       response: collectedTextParts.join("\n\n"),
       toolCalls: collectedToolCalls,
       messageId: lastMessageId,
       durationMs,
     });
+    res.end();
   } catch (err) {
     logError(log, "trigger_error", err);
-    res.status(500).json({
-      error: err instanceof Error ? err.message : String(err),
-    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } else {
+      // Stream already started — emit error event and close
+      res.write(
+        JSON.stringify({ type: "error", error: err instanceof Error ? err.message : String(err) }) +
+          "\n",
+      );
+      res.end();
+    }
   }
 });
 

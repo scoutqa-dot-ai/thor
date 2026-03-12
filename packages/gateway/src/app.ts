@@ -97,6 +97,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         slackEvents.map((e) => e.payload),
         correlationKey,
         runnerDeps,
+        slackDeps,
       )
         .then(() =>
           logInfo(log, "slack_trigger_fired", {

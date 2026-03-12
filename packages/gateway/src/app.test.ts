@@ -193,9 +193,10 @@ describe("gateway", () => {
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
-      expect(triggerBody.prompt).toContain("app_mention");
-      expect(triggerBody.prompt).toContain("C123");
-      expect(triggerBody.prompt).toContain("investigate checkout errors");
+      const promptPayload = JSON.parse(triggerBody.prompt);
+      expect(promptPayload.type).toBe("app_mention");
+      expect(promptPayload.channel).toBe("C123");
+      expect(promptPayload.text).toContain("investigate checkout errors");
     });
   });
 
@@ -254,7 +255,9 @@ describe("gateway", () => {
       );
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
-      expect(triggerBody.prompt).toContain("can you also check staging?");
+      const promptPayload = JSON.parse(triggerBody.prompt);
+      expect(promptPayload.type).toBe("message");
+      expect(promptPayload.text).toBe("can you also check staging?");
     });
   });
 
@@ -534,8 +537,10 @@ describe("gateway", () => {
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
-      expect(triggerBody.prompt).toContain("message 1");
-      expect(triggerBody.prompt).toContain("message 3");
+      const promptPayloads = JSON.parse(triggerBody.prompt);
+      expect(promptPayloads).toHaveLength(3);
+      expect(promptPayloads[0].text).toContain("message 1");
+      expect(promptPayloads[2].text).toContain("message 3");
     });
   });
 
