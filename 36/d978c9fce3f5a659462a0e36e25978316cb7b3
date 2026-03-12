@@ -1,0 +1,33 @@
+docker-compose.yml
+  8f9f820cf982dc2c 90
+docs/notify-thor.example.yml
+  8f9f820cf982dc2c 10,24-25,46
+packages/gateway/src/github.ts
+  8f9f820cf982dc2c 10-11,18,20
+packages/gateway/src/github.test.ts
+  8f9f820cf982dc2c 152-199
+docs/plan/2026031201_github-event-handling.md
+  8f9f820cf982dc2c 1-7,9-20,22-29,31-65,67-73,75-103,105-110
+docker/opencode/agents/build.md
+  8f9f820cf982dc2c 6,53-59,61-81,83-86,88-93,95-99,101-127,262,292-300,302-305,307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "36d978c9fce3f5a659462a0e36e25978316cb7b3",
+  "prompts": {
+    "8f9f820cf982dc2c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0730e853-997a-47fb-9a1e-5c135dd8378f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 289,
+      "total_deletions": 45,
+      "accepted_lines": 247,
+      "overriden_lines": 4
+    }
+  }
+}
