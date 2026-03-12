@@ -6,8 +6,10 @@ vouch:
     domain: ${SSO_COOKIE_DOMAIN}
     secure: false
     name: VouchCookie
+    maxAge: 4320
   jwt:
     secret: ${SSO_JWT_SECRET}
+    maxAge: 4320
 
 oauth:
   provider: google
