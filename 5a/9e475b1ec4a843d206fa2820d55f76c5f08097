@@ -1,0 +1,25 @@
+packages/gateway/src/github.test.ts
+  a332cc1618b25b24 20
+docker-compose.yml
+  a332cc1618b25b24 130,151-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5a9e475b1ec4a843d206fa2820d55f76c5f08097",
+  "prompts": {
+    "a332cc1618b25b24": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "af2197ef-94e3-4b6c-b597-9b23977f8ccd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 23,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
