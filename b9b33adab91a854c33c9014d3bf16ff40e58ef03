@@ -1,0 +1,38 @@
+docs/notify-thor.example.yml
+  6b00d178cca016f0 1-66
+docs/plan/2026031102_github-webhooks.md
+  6b00d178cca016f0 4,8,16,22-33,35-38,44-46,52-58,62,66-68,83,115-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b9b33adab91a854c33c9014d3bf16ff40e58ef03",
+  "prompts": {
+    "49d5d8f397df7d0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d667b05a-19e7-47c4-958b-568d45ae3359",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 6,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "6b00d178cca016f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc106baa-93c4-40eb-980e-e892780fb569",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 70,
+      "total_deletions": 0,
+      "accepted_lines": 104,
+      "overriden_lines": 0
+    }
+  }
+}
