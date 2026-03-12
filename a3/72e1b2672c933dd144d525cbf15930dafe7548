@@ -1,0 +1,47 @@
+packages/gateway/src/index.ts
+  a332cc1618b25b24 9,19,28,30
+packages/slack-mcp/src/slack.ts
+  a332cc1618b25b24 85-106
+packages/slack-mcp/src/index.ts
+  a332cc1618b25b24 14-19,25,29,127-130,246-281
+docs/plan/2026031103_slack-ephemeral-message.md
+  a332cc1618b25b24 5,17,19,34,36,39,62,64-65,73,77
+packages/gateway/src/service.ts
+  a332cc1618b25b24 15-21,28,34,56,58-59,62,65,70,75,116-123,175,177-180
+packages/slack-mcp/src/progress-manager.test.ts
+  a332cc1618b25b24 1-205
+docs/plan/2026031203_slack-progress-to-slack-mcp.md
+  a332cc1618b25b24 1-73
+packages/common/src/progress-events.ts
+  a332cc1618b25b24 45-61
+packages/gateway/src/app.test.ts
+  a332cc1618b25b24 15,20,38,136-138,141,171-177,180,184-186,494-496,533-535,540-542
+packages/gateway/src/app.ts
+  a332cc1618b25b24 11,60,97-99,116,179,226
+packages/slack-mcp/package.json
+  a332cc1618b25b24 17-18
+packages/common/src/index.ts
+  a332cc1618b25b24 20-21,29-30
+packages/slack-mcp/src/progress-manager.ts
+  a332cc1618b25b24 1-238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a372e1b2672c933dd144d525cbf15930dafe7548",
+  "prompts": {
+    "a332cc1618b25b24": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "af2197ef-94e3-4b6c-b597-9b23977f8ccd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 13,
+      "accepted_lines": 688,
+      "overriden_lines": 0
+    }
+  }
+}
