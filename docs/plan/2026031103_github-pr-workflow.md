@@ -5,7 +5,7 @@
 
 ## Context
 
-Today, agents can read GitHub data via the hosted GitHub MCP (`/readonly` endpoint, proxy on port 3013) and run git commands via git-mcp (proxy on port 3014). However:
+Today, agents can read GitHub data via the hosted GitHub MCP (`/x/all` endpoint, proxy on port 3013) and run git commands via git-mcp (proxy on port 3014). However:
 
 1. Creating a pull request requires the GitHub REST API — it cannot be done with raw `git` commands alone.
 2. The agent has rw access to the repo clone, meaning it can modify the main working tree directly instead of working on branches.
@@ -19,7 +19,7 @@ Two concerns to address:
 
 ### Phase 1 — Switch upstream to writable endpoint + allowlist PR tools ✅
 
-- Change `proxy.github.json` upstream URL from `https://api.githubcopilot.com/mcp/readonly` to `https://api.githubcopilot.com/mcp/`
+- Change `proxy.github.json` upstream URL from `https://api.githubcopilot.com/mcp/readonly` to `https://api.githubcopilot.com/mcp/x/all`
 - Add these write tools to the `allow` array:
   - `create_pull_request` — open new PRs
   - `update_pull_request` — edit title, body, labels, draft status
@@ -82,7 +82,7 @@ Update `build.md` agent instructions to describe the worktree workflow:
 | #   | Decision                                                  | Rationale                                                                                                          |
 | --- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | 1   | Use writable hosted MCP instead of custom tool in git-mcp | Zero code to maintain; tool already exists upstream; proxy allowlist provides the safety boundary                   |
-| 2   | Drop `/readonly` URL suffix                               | Required to access write tools; the allowlist is now the sole safety mechanism (which is already the design intent) |
+| 2   | Use `/x/all` endpoint instead of `/readonly`              | Exposes all upstream toolsets; proxy allowlist is the sole safety boundary. Avoids policy drift when tools move between toolsets. |
 | 3   | Keep the allowlist conservative                           | Add PR lifecycle tools (create, update, comment, review); other write tools added later as needed                  |
 | 4   | Allow `pull_request_review_write`                         | GitHub branch protection rules block self-approval server-side; safe to expose                                     |
 | 5   | Enforce worktrees via read-only mount, not agent instructions | Filesystem-level enforcement is stronger than relying on agent discipline; git-mcp keeps rw for worktree ops   |
@@ -92,7 +92,7 @@ Update `build.md` agent instructions to describe the worktree workflow:
 
 | Risk                                     | Mitigation                                                                                        |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Removing `/readonly` exposes write tools | Proxy allowlist enforces which tools are callable; only PR lifecycle + Actions read tools added    |
+| `/x/all` exposes all upstream tools      | Proxy allowlist enforces which tools are callable; only PR lifecycle + Actions read tools added    |
 | Allowlist drift lets unwanted tools leak | Proxy `validatePolicy()` detects drift at startup; production mode errors on unknown allowlist     |
 | Agent creates unwanted PRs               | GitHub branch protection rules + repo rulesets provide server-side guardrails; PR review is manual |
 | Agent modifies main clone directly       | `repos/` mounted read-only in opencode; writes are physically impossible                          |

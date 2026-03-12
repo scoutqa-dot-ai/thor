@@ -1,6 +1,6 @@
 {
   "upstream": {
-    "url": "https://api.githubcopilot.com/mcp/",
+    "url": "https://api.githubcopilot.com/mcp/x/all",
     "headers": {
       "Authorization": "Bearer ${GITHUB_PAT}"
     }
@@ -23,6 +23,9 @@
     "add_issue_comment",
     "add_reply_to_pull_request_comment",
     "pull_request_review_write",
-    "add_comment_to_pending_review"
+    "add_comment_to_pending_review",
+    "actions_get",
+    "actions_list",
+    "get_job_logs"
   ]
 }
