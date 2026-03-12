@@ -17,6 +17,8 @@ export {
   ProgressDoneSchema,
   ProgressErrorSchema,
   ProgressEventSchema,
+  SlackProgressRequestSchema,
+  SlackReactionRequestSchema,
 } from "./progress-events.js";
 export type {
   ProgressStart,
@@ -24,4 +26,6 @@ export type {
   ProgressDone,
   ProgressError,
   ProgressEvent,
+  SlackProgressRequest,
+  SlackReactionRequest,
 } from "./progress-events.js";

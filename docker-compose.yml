@@ -2,7 +2,7 @@
 #
 # Start:   LINEAR_API_KEY=xxx POSTHOG_API_KEY=xxx OAUTH_CLIENT_ID=xxx OAUTH_CLIENT_SECRET=xxx SSO_JWT_SECRET=xxx docker compose up --build -d
 # Ingress: port 8080 routes /slack/* → gateway, everything else → opencode
-# Slack:   add SLACK_SIGNING_SECRET and SLACK_BOT_TOKEN to enable the gateway service
+# Slack:   add SLACK_SIGNING_SECRET to enable the gateway service
 # Test:    ./scripts/test-e2e.sh
 # Logs:    docker compose logs -f
 # Stop:    docker compose down
@@ -18,7 +18,6 @@ services:
     environment:
       - NODE_ENV=production
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
-      - PORT=3003
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3003/health').then(r=>{if(!r.ok)throw 1})"]
@@ -36,8 +35,6 @@ services:
     environment:
       - NODE_ENV=production
       - GITHUB_PAT=${GITHUB_PAT}
-      - GIT_MCP_DEFAULT_CWD=${GIT_MCP_DEFAULT_CWD:-/workspace/repos/acme-project}
-      - PORT=3004
     volumes:
       - ./docker-volumes/workspace:/workspace
     healthcheck:
@@ -135,9 +132,7 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
-      - PORT=3000
-      - OPENCODE_URL=${OPENCODE_URL:-http://opencode:4096}
-      - GIT_MCP_DEFAULT_CWD=${GIT_MCP_DEFAULT_CWD:-/workspace/repos/acme-project}
+      - OPENCODE_URL=http://opencode:4096
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:
@@ -153,16 +148,14 @@ services:
       - "127.0.0.1:3002:3002"
     environment:
       - NODE_ENV=production
-      - PORT=3002
-      - RUNNER_URL=${RUNNER_URL_FOR_GATEWAY:-http://runner:3000}
-      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
-      - SLACK_TIMESTAMP_TOLERANCE_SECONDS=${SLACK_TIMESTAMP_TOLERANCE_SECONDS:-300}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:
       runner:
         condition: service_started
+      slack-mcp:
+        condition: service_healthy
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3002/health').then(r=>{if(!r.ok)throw 1})"]

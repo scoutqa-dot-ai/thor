@@ -42,6 +42,23 @@ export const ProgressEventSchema = z.discriminatedUnion("type", [
   ProgressErrorSchema,
 ]);
 
+// --- REST endpoint request schemas ---
+
+export const SlackProgressRequestSchema = z.object({
+  channel: z.string(),
+  threadTs: z.string(),
+  event: ProgressEventSchema,
+});
+
+export const SlackReactionRequestSchema = z.object({
+  channel: z.string(),
+  timestamp: z.string(),
+  reaction: z.string(),
+});
+
+export type SlackProgressRequest = z.infer<typeof SlackProgressRequestSchema>;
+export type SlackReactionRequest = z.infer<typeof SlackReactionRequestSchema>;
+
 // --- Inferred types ---
 
 export type ProgressStart = z.infer<typeof ProgressStartSchema>;

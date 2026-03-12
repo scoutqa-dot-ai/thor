@@ -1,9 +1,7 @@
-import type { WebClient } from "@slack/web-api";
 import { createLogger, logInfo, logError, ProgressEventSchema } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { type GitHubEvent } from "./github.js";
 import { getSlackCorrelationKey, getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
-import { SlackNotifier } from "./slack-notifier.js";
 
 const log = createLogger("gateway-service");
 
@@ -14,19 +12,26 @@ export interface RunnerDeps {
   fetchImpl?: typeof fetch;
 }
 
+// --- Slack MCP deps (HTTP calls to slack-mcp service) ---
+
+export interface SlackMcpDeps {
+  slackMcpUrl: string;
+  fetchImpl?: typeof fetch;
+}
+
 function getFetch(fetchImpl?: typeof fetch): typeof fetch {
   return fetchImpl ?? fetch;
 }
 
 /**
  * Trigger the runner and consume its NDJSON progress stream.
- * Posts/updates a Slack progress message in the originating thread.
+ * Forwards progress events to slack-mcp for Slack updates.
  */
 export async function triggerRunnerSlack(
   events: SlackThreadEvent[],
   correlationKey: string,
   deps: RunnerDeps,
-  slackDeps: SlackDeps,
+  slackMcpDeps: SlackMcpDeps,
 ): Promise<void> {
   if (events.length === 0) return;
 
@@ -48,26 +53,33 @@ export async function triggerRunnerSlack(
     throw new Error(`Runner returned ${response.status}: ${text}`);
   }
 
-  // Consume NDJSON stream and drive Slack progress updates
+  // Consume NDJSON stream and forward progress events to slack-mcp
   const last = events[events.length - 1];
-  const notifier = new SlackNotifier({
-    slack: slackDeps.slack,
-    channel: last.channel,
-    threadTs: getSlackThreadTs(last),
-  });
+  const channel = last.channel;
+  const threadTs = getSlackThreadTs(last);
 
   try {
-    await consumeNdjsonStream(response, notifier);
+    await consumeNdjsonStream(response, channel, threadTs, slackMcpDeps);
   } catch (err) {
     logError(log, "stream_consume_error", err instanceof Error ? err.message : String(err));
-    await notifier.finish("error", err instanceof Error ? err.message : "stream error");
+    await forwardProgressEvent(
+      channel,
+      threadTs,
+      { type: "error", error: err instanceof Error ? err.message : "stream error" },
+      slackMcpDeps,
+    );
   }
 }
 
 /**
- * Reads an NDJSON response body line by line and drives the notifier.
+ * Reads an NDJSON response body line by line and forwards events to slack-mcp.
  */
-async function consumeNdjsonStream(response: Response, notifier: SlackNotifier): Promise<void> {
+async function consumeNdjsonStream(
+  response: Response,
+  channel: string,
+  threadTs: string,
+  slackMcpDeps: SlackMcpDeps,
+): Promise<void> {
   const body = response.body;
   if (!body) return;
 
@@ -77,7 +89,7 @@ async function consumeNdjsonStream(response: Response, notifier: SlackNotifier):
     try {
       const parsed = ProgressEventSchema.safeParse(JSON.parse(line));
       if (!parsed.success) continue;
-      await handleProgressEvent(parsed.data, notifier);
+      await forwardProgressEvent(channel, threadTs, parsed.data, slackMcpDeps);
     } catch {
       // Skip lines that aren't valid JSON
     }
@@ -100,17 +112,20 @@ function newlineStream(): TransformStream<string, string> {
   });
 }
 
-async function handleProgressEvent(event: ProgressEvent, notifier: SlackNotifier): Promise<void> {
-  switch (event.type) {
-    case "tool":
-      await notifier.onToolCall(event.tool);
-      break;
-    case "done":
-      await notifier.finish(event.status === "completed" ? "completed" : "error", event.error);
-      break;
-    case "error":
-      await notifier.finish("error", event.error);
-      break;
+async function forwardProgressEvent(
+  channel: string,
+  threadTs: string,
+  event: ProgressEvent,
+  deps: SlackMcpDeps,
+): Promise<void> {
+  try {
+    await getFetch(deps.fetchImpl)(`${deps.slackMcpUrl}/progress`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, threadTs, event }),
+    });
+  } catch (err) {
+    logError(log, "progress_forward_error", err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -153,21 +168,19 @@ export async function hasRunnerSession(correlationKey: string, deps: RunnerDeps)
   }
 }
 
-// --- Slack deps (uses @slack/web-api WebClient) ---
-
-export interface SlackDeps {
-  slack: WebClient;
-}
-
 export async function addSlackReaction(
   channel: string,
   timestamp: string,
   reaction: string,
-  deps: SlackDeps,
+  deps: SlackMcpDeps,
 ): Promise<void> {
-  await deps.slack.reactions.add({
-    channel,
-    timestamp,
-    name: reaction,
-  });
+  try {
+    await getFetch(deps.fetchImpl)(`${deps.slackMcpUrl}/reaction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, timestamp, reaction }),
+    });
+  } catch (err) {
+    logError(log, "reaction_forward_error", err instanceof Error ? err.message : String(err));
+  }
 }

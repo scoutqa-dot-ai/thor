@@ -2,21 +2,12 @@ import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { WebClient } from "@slack/web-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGatewayApp } from "./app.js";
 import type { EventQueue } from "./queue.js";
 
 function sign(body: string, secret: string, timestamp: string): string {
   return `v0=${createHmac("sha256", secret).update(`v0:${timestamp}:${body}`).digest("hex")}`;
-}
-
-function mockSlackClient() {
-  return {
-    reactions: {
-      add: vi.fn().mockResolvedValue({ ok: true }),
-    },
-  } as unknown as WebClient;
 }
 
 /** Flush the queue and drain microtasks so fire-and-forget promises settle. */
@@ -34,7 +25,7 @@ async function withServer<T>(
   const queueDir = mkdtempSync(join(tmpdir(), "gateway-github-test-"));
   const { app, queue } = createGatewayApp({
     signingSecret: "signing-secret",
-    slack: mockSlackClient(),
+    slackMcpUrl: "http://slack-mcp.test",
     runnerUrl: "http://runner.test",
     fetchImpl,
     queueDir,

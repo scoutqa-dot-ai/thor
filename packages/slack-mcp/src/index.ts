@@ -10,15 +10,23 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { WebClient } from "@slack/web-api";
-import { createLogger, logInfo, logError } from "@thor/common";
+import {
+  createLogger,
+  logInfo,
+  logError,
+  SlackProgressRequestSchema,
+  SlackReactionRequestSchema,
+} from "@thor/common";
 import {
   postMessage,
   readThread,
   getChannelHistory,
   readSlackFile,
+  addReaction,
   type SlackDeps,
   type SlackFileReadResult,
 } from "./slack.js";
+import { handleProgressEvent, pendingCleanups } from "./progress-manager.js";
 
 const log = createLogger("slack-mcp");
 
@@ -116,6 +124,10 @@ async function handleToolCall(
       const text = String(args.text);
       const threadTs = args.thread_ts ? String(args.thread_ts) : undefined;
       const result = await postMessage(channel, text, threadTs, slackDeps);
+      // Auto-delete progress message if bot replies to a thread with active progress
+      if (threadTs) {
+        void pendingCleanups.onBotReply(channel, threadTs);
+      }
       return {
         content: [
           {
@@ -230,6 +242,42 @@ app.use(express.json());
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "slack-mcp", tools: tools.length });
 });
+
+// --- REST endpoints for gateway ---
+
+app.post("/progress", async (req, res) => {
+  const parsed = SlackProgressRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid request" });
+    return;
+  }
+  try {
+    const { channel, threadTs, event } = parsed.data;
+    await handleProgressEvent(channel, threadTs, event, slackDeps);
+    res.json({ ok: true });
+  } catch (err) {
+    logError(log, "progress_endpoint_error", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+app.post("/reaction", async (req, res) => {
+  const parsed = SlackReactionRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid request" });
+    return;
+  }
+  try {
+    const { channel, timestamp, reaction } = parsed.data;
+    await addReaction(channel, timestamp, reaction, slackDeps);
+    res.json({ ok: true });
+  } catch (err) {
+    logError(log, "reaction_endpoint_error", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// --- MCP transport ---
 
 const transports = new Map<string, StreamableHTTPServerTransport>();
 

@@ -82,6 +82,28 @@ export async function postMessage(
   return { ts: result.ts ?? "", channel: result.channel ?? channel };
 }
 
+export async function updateMessage(
+  channel: string,
+  ts: string,
+  text: string,
+  deps: SlackDeps,
+): Promise<void> {
+  await deps.client.chat.update({ channel, ts, text });
+}
+
+export async function deleteMessage(channel: string, ts: string, deps: SlackDeps): Promise<void> {
+  await deps.client.chat.delete({ channel, ts });
+}
+
+export async function addReaction(
+  channel: string,
+  timestamp: string,
+  name: string,
+  deps: SlackDeps,
+): Promise<void> {
+  await deps.client.reactions.add({ channel, timestamp, name });
+}
+
 export interface SlackMessage {
   ts: string;
   text?: string;

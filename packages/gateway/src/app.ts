@@ -1,5 +1,4 @@
 import express, { type Express, type Request, type Response } from "express";
-import type { WebClient } from "@slack/web-api";
 import { createLogger, logError, logInfo } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
@@ -9,7 +8,7 @@ import {
   triggerRunnerSlack,
   triggerRunnerGitHub,
   type RunnerDeps,
-  type SlackDeps,
+  type SlackMcpDeps,
 } from "./service.js";
 import { getGitHubCorrelationKey, parseGitHubEvent, type GitHubEvent } from "./github.js";
 import {
@@ -58,7 +57,7 @@ const SELF_USER_ID = "U0BOTEXAMPLE";
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
-  slack: WebClient;
+  slackMcpUrl: string;
   timestampToleranceSeconds?: number;
   /** Directory for the event queue. Default: "data/queue". */
   queueDir?: string;
@@ -98,7 +97,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     runnerUrl: config.runnerUrl,
     fetchImpl: config.fetchImpl,
   };
-  const slackDeps: SlackDeps = { slack: config.slack };
+  const slackMcpDeps: SlackMcpDeps = {
+    slackMcpUrl: config.slackMcpUrl,
+    fetchImpl: config.fetchImpl,
+  };
 
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
@@ -114,7 +116,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           slackEvents.map((e) => e.payload),
           lastEvent.correlationKey,
           runnerDeps,
-          slackDeps,
+          slackMcpDeps,
         )
           .then(() =>
             logInfo(log, "slack_trigger_fired", {
@@ -177,7 +179,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       status: "ok",
       service: "gateway",
       runnerUrl: config.runnerUrl,
-      configured: Boolean(config.signingSecret && config.slack),
+      configured: Boolean(config.signingSecret),
     });
   });
 
@@ -224,7 +226,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // app_mention — always forward
     if (event.type === "app_mention") {
       res.status(200).json({ ok: true });
-      void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
+      void addSlackReaction(event.channel, event.ts, "eyes", slackMcpDeps).catch((err) =>
         logError(log, "reaction_failed", err, { eventId }),
       );
       const correlationKey = getSlackCorrelationKey(event);

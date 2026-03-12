@@ -2,7 +2,7 @@
 
 **Date**: 2026-03-11
 **Branch**: `feat/slack-ephemeral-message`
-**Status**: Implementation complete — awaiting commit
+**Status**: Superseded by `2026031203_slack-progress-to-slack-mcp.md`
 
 ## Problem
 
@@ -14,9 +14,9 @@ Stream progress updates from the runner back to the originating Slack thread as 
 
 ## Design
 
-### Approach: Runner streams NDJSON, Gateway owns Slack
+### ~~Approach: Runner streams NDJSON, Gateway owns Slack~~
 
-The runner streams OpenCode events as NDJSON over the `/trigger` HTTP response. The gateway consumes the stream and drives a `SlackNotifier` that posts/updates a progress message using its existing `WebClient`.
+~~The runner streams OpenCode events as NDJSON over the `/trigger` HTTP response. The gateway consumes the stream and drives a `SlackNotifier` that posts/updates a progress message using its existing `WebClient`.~~
 
 ```
 Gateway ──(trigger)──▶ Runner
@@ -31,12 +31,12 @@ Gateway ──(trigger)──▶ Runner
    └── on finish ──▶ Slack: chat.update (final status)
 ```
 
-**Why gateway owns Slack** (not runner):
+~~**Why gateway owns Slack** (not runner):~~
 
-- Gateway is the Slack-aware component — it already has `WebClient` for reactions
+- ~~Gateway is the Slack-aware component — it already has `WebClient` for reactions~~
 - Runner stays focused on OpenCode orchestration, no Slack coupling
 - No need to pass Slack context through the trigger request
-- No need for REST API endpoints on slack-mcp
+- ~~No need for REST API endpoints on slack-mcp~~
 
 ### NDJSON Event Types
 
@@ -58,23 +58,23 @@ Gateway ──(trigger)──▶ Runner
 
 ### What Changes
 
-| Package     | Change                                                                              |
-| ----------- | ----------------------------------------------------------------------------------- |
-| `runner`    | Stream NDJSON progress events in `/trigger` response; remove all Slack awareness    |
-| `gateway`   | Consume NDJSON stream; `SlackNotifier` class uses `WebClient` for progress messages |
-| `slack-mcp` | Revert to original (no `update_message` tool, no REST endpoints)                    |
-| `proxy`     | No change                                                                           |
+| Package     | Change                                                                                  |
+| ----------- | --------------------------------------------------------------------------------------- |
+| `runner`    | Stream NDJSON progress events in `/trigger` response; remove all Slack awareness        |
+| `gateway`   | ~~Consume NDJSON stream; `SlackNotifier` class uses `WebClient` for progress messages~~ |
+| `slack-mcp` | ~~Revert to original (no `update_message` tool, no REST endpoints)~~                    |
+| `proxy`     | No change                                                                               |
 
 ## Decision Log
 
 | #   | Decision                                             | Rationale                                                                                                                 |
 | --- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Single updating message, not multiple thread replies | Reduces noise. One message edited in-place is less disruptive than 10 progress replies.                                   |
-| 2   | Gateway owns Slack progress, not runner              | Gateway is the Slack-aware component. Runner stays focused on OpenCode. Clean separation of concerns.                     |
+| 2   | ~~Gateway owns Slack progress, not runner~~          | ~~Gateway is the Slack-aware component. Runner stays focused on OpenCode. Clean separation of concerns.~~                 |
 | 3   | NDJSON streaming from runner                         | Lightweight, no new dependencies. Gateway reads line by line. Works with existing HTTP transport.                         |
 | 4   | Threshold before posting (3+ tools)                  | Avoid posting a progress message for quick tasks that complete in a few tool calls.                                       |
 | 5   | Update interval ~10 seconds                          | Slack rate limits `chat.update` to ~50/min per channel. 10s is well within limits and frequent enough to feel responsive. |
-| 6   | Gateway uses WebClient directly                      | Already has the client for reactions. No need for MCP tool or REST API intermediary.                                      |
+| 6   | ~~Gateway uses WebClient directly~~                  | ~~Already has the client for reactions. No need for MCP tool or REST API intermediary.~~                                  |
 
 ## Out of Scope
 

@@ -2,7 +2,6 @@ import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { WebClient } from "@slack/web-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGatewayApp } from "./app.js";
 import type { EventQueue } from "./queue.js";
@@ -11,29 +10,14 @@ function sign(body: string, secret: string, timestamp: string): string {
   return `v0=${createHmac("sha256", secret).update(`v0:${timestamp}:${body}`).digest("hex")}`;
 }
 
-function mockSlackClient() {
-  return {
-    reactions: {
-      add: vi.fn().mockResolvedValue({ ok: true }),
-    },
-  } as unknown as WebClient & {
-    reactions: { add: ReturnType<typeof vi.fn> };
-  };
-}
-
 async function withServer<T>(
   fetchImpl: typeof fetch,
-  run: (
-    baseUrl: string,
-    queue: EventQueue,
-    slack: ReturnType<typeof mockSlackClient>,
-  ) => Promise<T>,
+  run: (baseUrl: string, queue: EventQueue) => Promise<T>,
 ): Promise<T> {
   const queueDir = mkdtempSync(join(tmpdir(), "gateway-test-"));
-  const slack = mockSlackClient();
   const { app, queue } = createGatewayApp({
     signingSecret: "signing-secret",
-    slack,
+    slackMcpUrl: "http://slack-mcp.test",
     runnerUrl: "http://runner.test",
     fetchImpl,
     queueDir,
@@ -51,7 +35,7 @@ async function withServer<T>(
   }
 
   try {
-    return await run(`http://127.0.0.1:${address.port}`, queue, slack);
+    return await run(`http://127.0.0.1:${address.port}`, queue);
   } finally {
     queue.close();
     await new Promise<void>((resolve, reject) =>
@@ -149,9 +133,12 @@ describe("gateway", () => {
   it("accepts a signed app mention and fires a trigger to the runner (fire-and-forget)", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
+      // 1st call: POST /reaction to slack-mcp
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      // 2nd call: POST /trigger to runner
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue, slack) => {
+    await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
         type: "event_callback",
         event_id: "Ev123",
@@ -181,17 +168,22 @@ describe("gateway", () => {
 
       await queue.flush();
 
-      // Reaction added via WebClient
-      expect(slack.reactions.add).toHaveBeenCalledWith({
+      // Reaction via slack-mcp
+      const reactionCall = fetchImpl.mock.calls.find(
+        (c) => c[0] === "http://slack-mcp.test/reaction",
+      );
+      expect(reactionCall).toBeDefined();
+      const reactionBody = JSON.parse(String(reactionCall![1]?.body));
+      expect(reactionBody).toEqual({
         channel: "C123",
         timestamp: "1710000000.001",
-        name: "eyes",
+        reaction: "eyes",
       });
 
-      // Runner trigger via fetchImpl — prompt enriched with Slack context
-      expect(fetchImpl).toHaveBeenCalledOnce();
-      expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
-      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+      // Runner trigger via fetchImpl
+      const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
+      expect(triggerCall).toBeDefined();
+      const triggerBody = JSON.parse(String(triggerCall![1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
       const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
       const promptPayload = JSON.parse(promptJson);
@@ -214,7 +206,7 @@ describe("gateway", () => {
       // 2nd call: POST /trigger → 200 (fire-and-forget)
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue, slack) => {
+    await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
         type: "event_callback",
         event_id: "Ev456",
@@ -311,7 +303,7 @@ describe("gateway", () => {
       }
       await queue.flush();
 
-      // Session lookup happened, and trigger was fired (enqueued with delay, but test uses slackActiveDelayMs=0)
+      // Session lookup happened, and trigger was fired
       expect(fetchImpl).toHaveBeenCalledTimes(2);
       expect(fetchImpl.mock.calls[0][0]).toBe(
         "http://runner.test/sessions?correlationKey=slack%3Athread%3A1710000000.004",
@@ -497,9 +489,14 @@ describe("gateway", () => {
   it("batches 3 rapid app_mention events into a single runner trigger with combined prompt", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
+      // Reaction calls to slack-mcp (3x)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      // POST /trigger → 200
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue, slack) => {
+    await withServer(fetchImpl, async (baseUrl, queue) => {
       const timestamp = `${Math.floor(Date.now() / 1000)}`;
 
       // Fire 3 mentions in quick succession (same thread)
@@ -531,13 +528,18 @@ describe("gateway", () => {
 
       await queue.flush();
 
-      // 3 reactions via WebClient
-      expect(slack.reactions.add).toHaveBeenCalledTimes(3);
+      // 3 reaction calls to slack-mcp
+      const reactionCalls = fetchImpl.mock.calls.filter(
+        (c) => c[0] === "http://slack-mcp.test/reaction",
+      );
+      expect(reactionCalls).toHaveLength(3);
 
       // 1 runner trigger via fetchImpl — combined prompt with Slack context
-      expect(fetchImpl).toHaveBeenCalledOnce();
-      expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
-      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+      const triggerCalls = fetchImpl.mock.calls.filter(
+        (c) => c[0] === "http://runner.test/trigger",
+      );
+      expect(triggerCalls).toHaveLength(1);
+      const triggerBody = JSON.parse(String(triggerCalls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
       const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
       const promptPayloads = JSON.parse(promptJson);
@@ -550,7 +552,7 @@ describe("gateway", () => {
   it("processes two messages sent at different times as separate triggers", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue, slack) => {
+    await withServer(fetchImpl, async (baseUrl, queue) => {
       const timestamp = `${Math.floor(Date.now() / 1000)}`;
 
       function makeBody(eventId: string, text: string) {
