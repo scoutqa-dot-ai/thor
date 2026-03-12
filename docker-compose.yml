@@ -62,6 +62,8 @@ services:
       - LINEAR_API_KEY=${LINEAR_API_KEY}
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
       - GITHUB_PAT=${GITHUB_PAT}
+    volumes:
+      - ./docker-volumes/workspace:/workspace
     depends_on:
       slack-mcp:
         condition: service_healthy
