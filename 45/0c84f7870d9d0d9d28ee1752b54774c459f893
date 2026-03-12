@@ -1,0 +1,23 @@
+packages/common/src/notes.test.ts
+  30fd09ea97ef7110 2,10,227-263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "450c84f7870d9d0d9d28ee1752b54774c459f893",
+  "prompts": {
+    "30fd09ea97ef7110": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aeeda6d8-1fd6-42e7-b612-184da558d7e4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 46,
+      "total_deletions": 3,
+      "accepted_lines": 45,
+      "overriden_lines": 0
+    }
+  }
+}
