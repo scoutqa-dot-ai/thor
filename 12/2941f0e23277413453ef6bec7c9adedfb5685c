@@ -1,0 +1,29 @@
+packages/common/src/index.ts
+  30fd09ea97ef7110 10
+packages/common/src/notes.ts
+  30fd09ea97ef7110 135-150
+packages/runner/src/index.ts
+  30fd09ea97ef7110 21,189-190,194,198-199,233,247
+docs/plan/2026031201_session-mapping-refactor.md
+  30fd09ea97ef7110 1-13,15-54,56-90,92-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "122941f0e23277413453ef6bec7c9adedfb5685c",
+  "prompts": {
+    "30fd09ea97ef7110": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aeeda6d8-1fd6-42e7-b612-184da558d7e4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 158,
+      "total_deletions": 57,
+      "accepted_lines": 116,
+      "overriden_lines": 4
+    }
+  }
+}
