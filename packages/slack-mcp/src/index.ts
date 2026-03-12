@@ -26,7 +26,7 @@ import {
   type SlackDeps,
   type SlackFileReadResult,
 } from "./slack.js";
-import { handleProgressEvent, pendingCleanups } from "./progress-manager.js";
+import { handleProgressEvent, onBotReply } from "./progress-manager.js";
 
 const log = createLogger("slack-mcp");
 
@@ -126,7 +126,7 @@ async function handleToolCall(
       const result = await postMessage(channel, text, threadTs, slackDeps);
       // Auto-delete progress message if bot replies to a thread with active progress
       if (threadTs) {
-        void pendingCleanups.onBotReply(channel, threadTs);
+        void onBotReply(channel, threadTs);
       }
       return {
         content: [

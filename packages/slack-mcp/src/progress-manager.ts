@@ -8,8 +8,6 @@ const log = createLogger("slack-progress");
 const TOOL_CALL_THRESHOLD = 3;
 /** Minimum interval between Slack message updates (ms). */
 const UPDATE_INTERVAL_MS = 10_000;
-/** How long to wait for the bot's own reply before keeping the progress message (ms). */
-const CLEANUP_TIMEOUT_MS = 60_000;
 
 function threadKey(channel: string, threadTs: string): string {
   return `${channel}:${threadTs}`;
@@ -24,7 +22,98 @@ function formatDuration(ms: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Progress session — one per thread, equivalent to old SlackNotifier
+// Progress message registry — tracks all progress messages by thread
+// ---------------------------------------------------------------------------
+
+type ProgressStatus = "in_progress" | "completed" | "error";
+
+interface ProgressEntry {
+  status: ProgressStatus;
+  deps: SlackDeps;
+}
+
+/** Map<threadKey, Map<messageTs, ProgressEntry>> */
+const progressMessages = new Map<string, Map<string, ProgressEntry>>();
+
+function registerProgress(
+  channel: string,
+  threadTs: string,
+  messageTs: string,
+  status: ProgressStatus,
+  deps: SlackDeps,
+): void {
+  const key = threadKey(channel, threadTs);
+  let thread = progressMessages.get(key);
+  if (!thread) {
+    thread = new Map();
+    progressMessages.set(key, thread);
+  }
+  thread.set(messageTs, { status, deps });
+}
+
+function updateProgressStatus(
+  channel: string,
+  threadTs: string,
+  messageTs: string,
+  status: ProgressStatus,
+): void {
+  const key = threadKey(channel, threadTs);
+  const thread = progressMessages.get(key);
+  const entry = thread?.get(messageTs);
+  if (entry) {
+    entry.status = status;
+  }
+}
+
+/**
+ * Delete all non-error progress messages for a thread.
+ * Called when the bot posts its final reply.
+ */
+export async function onBotReply(channel: string, threadTs: string): Promise<void> {
+  const key = threadKey(channel, threadTs);
+  const thread = progressMessages.get(key);
+  if (!thread) return;
+
+  const deletions: Promise<void>[] = [];
+
+  for (const [messageTs, entry] of thread) {
+    if (entry.status === "error") continue;
+
+    thread.delete(messageTs);
+    deletions.push(
+      deleteMessage(channel, messageTs, entry.deps)
+        .then(() => logInfo(log, "progress_deleted", { channel, ts: messageTs, threadTs }))
+        .catch((err) =>
+          logError(log, "delete_error", err instanceof Error ? err.message : String(err)),
+        ),
+    );
+  }
+
+  await Promise.all(deletions);
+
+  // Clean up thread entry if empty
+  if (thread.size === 0) {
+    progressMessages.delete(key);
+  }
+}
+
+/** Visible for testing. */
+export function getRegistrySize(): number {
+  let count = 0;
+  for (const thread of progressMessages.values()) {
+    count += thread.size;
+  }
+  return count;
+}
+
+/** Visible for testing. */
+export function clearRegistry(): void {
+  progressMessages.clear();
+  activeSessions.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Progress session — one per thread
 // ---------------------------------------------------------------------------
 
 class ProgressSession {
@@ -78,11 +167,12 @@ class ProgressSession {
       const text = `✅ Done — ${this.toolCallCount} tool calls in ${elapsed}`;
       if (this.messageTs) {
         await this.update(text);
+        updateProgressStatus(this.channel, this.threadTs, this.messageTs, "completed");
       } else {
         await this.post(text);
-      }
-      if (this.messageTs) {
-        pendingCleanups.register(this.channel, this.threadTs, this.messageTs, this.deps);
+        if (this.messageTs) {
+          updateProgressStatus(this.channel, this.threadTs, this.messageTs, "completed");
+        }
       }
       return;
     }
@@ -90,8 +180,12 @@ class ProgressSession {
     const text = `❌ Failed — ${errorMsg || "session error"} after ${this.toolCallCount} tool calls`;
     if (this.messageTs) {
       await this.update(text);
+      updateProgressStatus(this.channel, this.threadTs, this.messageTs, "error");
     } else {
       await this.post(text);
+      if (this.messageTs) {
+        updateProgressStatus(this.channel, this.threadTs, this.messageTs, "error");
+      }
     }
   }
 
@@ -113,6 +207,8 @@ class ProgressSession {
     try {
       const result = await postMessage(this.channel, text, this.threadTs, this.deps);
       this.messageTs = result.ts;
+      // Register immediately — this is the key to avoiding the race condition
+      registerProgress(this.channel, this.threadTs, this.messageTs, "in_progress", this.deps);
       logInfo(log, "progress_posted", { channel: this.channel, ts: this.messageTs });
     } catch (err) {
       logError(log, "post_error", err instanceof Error ? err.message : String(err));
@@ -174,65 +270,3 @@ export async function handleProgressEvent(
       break;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Pending cleanup registry — tracks done messages waiting for bot reply
-// ---------------------------------------------------------------------------
-
-interface PendingEntry {
-  channel: string;
-  threadTs: string;
-  messageTs: string;
-  deps: SlackDeps;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-const registry = new Map<string, PendingEntry>();
-
-export const pendingCleanups = {
-  register(channel: string, threadTs: string, messageTs: string, deps: SlackDeps): void {
-    const key = threadKey(channel, threadTs);
-
-    const existing = registry.get(key);
-    if (existing) clearTimeout(existing.timer);
-
-    const timer = setTimeout(() => {
-      registry.delete(key);
-      logInfo(log, "cleanup_expired", { channel, threadTs, messageTs });
-    }, CLEANUP_TIMEOUT_MS);
-
-    registry.set(key, { channel, threadTs, messageTs, deps, timer });
-  },
-
-  async onBotReply(channel: string, threadTs: string): Promise<void> {
-    const key = threadKey(channel, threadTs);
-    const entry = registry.get(key);
-    if (!entry) return;
-
-    clearTimeout(entry.timer);
-    registry.delete(key);
-
-    try {
-      await deleteMessage(entry.channel, entry.messageTs, entry.deps);
-      logInfo(log, "progress_deleted", {
-        channel: entry.channel,
-        ts: entry.messageTs,
-        threadTs: entry.threadTs,
-      });
-    } catch (err) {
-      logError(log, "delete_error", err instanceof Error ? err.message : String(err));
-    }
-  },
-
-  get size(): number {
-    return registry.size;
-  },
-
-  clear(): void {
-    for (const entry of registry.values()) {
-      clearTimeout(entry.timer);
-    }
-    registry.clear();
-    activeSessions.clear();
-  },
-};

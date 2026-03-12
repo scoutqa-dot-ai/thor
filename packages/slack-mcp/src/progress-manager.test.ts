@@ -1,7 +1,12 @@
 import type { WebClient } from "@slack/web-api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProgressEvent } from "@thor/common";
-import { handleProgressEvent, pendingCleanups } from "./progress-manager.js";
+import {
+  handleProgressEvent,
+  onBotReply,
+  getRegistrySize,
+  clearRegistry,
+} from "./progress-manager.js";
 import type { SlackDeps } from "./slack.js";
 
 function mockSlackDeps() {
@@ -53,7 +58,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  pendingCleanups.clear();
+  clearRegistry();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -135,7 +140,7 @@ describe("ProgressManager", () => {
       }),
     );
     expect(chat(deps).delete).not.toHaveBeenCalled();
-    expect(pendingCleanups.size).toBe(1);
+    expect(getRegistrySize()).toBe(1);
   });
 
   it("finish with error status includes error message", async () => {
@@ -181,45 +186,120 @@ describe("ProgressManager", () => {
   });
 });
 
-describe("pendingCleanups", () => {
-  it("onBotReply deletes the progress message", async () => {
+describe("onBotReply", () => {
+  it("deletes completed progress messages", async () => {
     const deps = mockSlackDeps();
-    pendingCleanups.register("C123", "1710000000.001", "msg.001", deps);
-    expect(pendingCleanups.size).toBe(1);
+    await sendTools(deps, 3);
 
-    await pendingCleanups.onBotReply("C123", "1710000000.001");
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 5000,
+    };
+    await handleProgressEvent("C123", "1710000000.001", doneEvent, deps);
+    expect(getRegistrySize()).toBe(1);
+
+    await onBotReply("C123", "1710000000.001");
 
     expect(chat(deps).delete).toHaveBeenCalledWith({
       channel: "C123",
       ts: "msg.001",
     });
-    expect(pendingCleanups.size).toBe(0);
+    expect(getRegistrySize()).toBe(0);
   });
 
-  it("onBotReply is a no-op for unknown threads", async () => {
+  it("deletes in-progress messages (race condition: bot replies before finish)", async () => {
     const deps = mockSlackDeps();
-    pendingCleanups.register("C123", "1710000000.001", "msg.001", deps);
+    await sendTools(deps, 3);
+    // Message is registered as in_progress immediately on post — no finish() yet
+    expect(getRegistrySize()).toBe(1);
 
-    await pendingCleanups.onBotReply("C123", "9999999999.999");
+    await onBotReply("C123", "1710000000.001");
+
+    expect(chat(deps).delete).toHaveBeenCalledWith({
+      channel: "C123",
+      ts: "msg.001",
+    });
+    expect(getRegistrySize()).toBe(0);
+  });
+
+  it("preserves error progress messages", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+
+    const errorEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "error",
+      error: "something broke",
+      response: "",
+      toolCalls: [],
+      durationMs: 5000,
+    };
+    await handleProgressEvent("C123", "1710000000.001", errorEvent, deps);
+
+    await onBotReply("C123", "1710000000.001");
 
     expect(chat(deps).delete).not.toHaveBeenCalled();
-    expect(pendingCleanups.size).toBe(1);
+    expect(getRegistrySize()).toBe(1);
   });
 
-  it("expires after 60s and keeps the progress message", () => {
+  it("is a no-op for unknown threads", async () => {
     const deps = mockSlackDeps();
-    pendingCleanups.register("C123", "1710000000.001", "msg.001", deps);
+    await sendTools(deps, 3);
 
-    vi.advanceTimersByTime(60_000);
+    await onBotReply("C123", "9999999999.999");
 
     expect(chat(deps).delete).not.toHaveBeenCalled();
-    expect(pendingCleanups.size).toBe(0);
   });
 
-  it("register replaces existing entry for same thread", () => {
+  it("deletes multiple progress messages for the same thread", async () => {
     const deps = mockSlackDeps();
-    pendingCleanups.register("C123", "1710000000.001", "msg.001", deps);
-    pendingCleanups.register("C123", "1710000000.001", "msg.002", deps);
-    expect(pendingCleanups.size).toBe(1);
+
+    // First session
+    chat(deps).postMessage.mockResolvedValueOnce({ ok: true, ts: "msg.001", channel: "C123" });
+    await sendTools(deps, 3);
+    const done1: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 5000,
+    };
+    await handleProgressEvent("C123", "1710000000.001", done1, deps);
+
+    // Second session in same thread
+    chat(deps).postMessage.mockResolvedValueOnce({ ok: true, ts: "msg.002", channel: "C123" });
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "start", sessionId: "s2", resumed: false },
+      deps,
+    );
+    await sendTools(deps, 3);
+    const done2: ProgressEvent = {
+      type: "done",
+      sessionId: "s2",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 3000,
+    };
+    await handleProgressEvent("C123", "1710000000.001", done2, deps);
+
+    expect(getRegistrySize()).toBe(2);
+
+    await onBotReply("C123", "1710000000.001");
+
+    expect(chat(deps).delete).toHaveBeenCalledTimes(2);
+    expect(getRegistrySize()).toBe(0);
   });
 });
