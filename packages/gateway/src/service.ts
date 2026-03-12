@@ -2,6 +2,7 @@ import { createLogger, logInfo, logError, ProgressEventSchema } from "@thor/comm
 import type { ProgressEvent } from "@thor/common";
 import { type GitHubEvent } from "./github.js";
 import { getSlackCorrelationKey, getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
+import type { CronPayload } from "./cron.js";
 
 const log = createLogger("gateway-service");
 
@@ -154,6 +155,39 @@ export async function triggerRunnerGitHub(
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Runner returned ${response.status}: ${text}`);
+  }
+}
+
+/**
+ * Trigger the runner with a cron job payload.
+ * Consumes the response stream silently — the prompt itself should
+ * instruct the agent where to post results (Slack, Linear, etc.).
+ */
+export async function triggerRunnerCron(
+  payload: CronPayload,
+  correlationKey: string,
+  deps: RunnerDeps,
+): Promise<void> {
+  const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: payload.prompt,
+      correlationKey,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Runner returned ${response.status}: ${text}`);
+  }
+
+  // Consume stream silently to avoid backpressure
+  const body = response.body;
+  if (body) {
+    for await (const _ of body) {
+      // discard
+    }
   }
 }
 

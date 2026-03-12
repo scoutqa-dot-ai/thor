@@ -15,6 +15,7 @@ const QUEUE_DIR = process.env.QUEUE_DIR || "data/queue";
 const SLACK_ALLOWED_CHANNEL_IDS = [
   ...parseAllowedChannelIds(process.env.SLACK_ALLOWED_CHANNEL_IDS),
 ];
+const CRON_SECRET = process.env.CRON_SECRET || "";
 
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
@@ -23,6 +24,7 @@ const { app } = createGatewayApp({
   timestampToleranceSeconds: SLACK_TIMESTAMP_TOLERANCE_SECONDS,
   queueDir: QUEUE_DIR,
   allowedChannelIds: SLACK_ALLOWED_CHANNEL_IDS,
+  cronSecret: CRON_SECRET || undefined,
 });
 
 app.listen(PORT, () => {

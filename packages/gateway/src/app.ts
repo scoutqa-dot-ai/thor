@@ -7,6 +7,7 @@ import {
   hasRunnerSession,
   triggerRunnerSlack,
   triggerRunnerGitHub,
+  triggerRunnerCron,
   type RunnerDeps,
   type SlackMcpDeps,
 } from "./service.js";
@@ -20,6 +21,7 @@ import {
   verifySlackSignature,
   type SlackThreadEvent,
 } from "./slack.js";
+import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.js";
 
 interface SlackQueuedEvent extends QueuedEvent<SlackThreadEvent> {
   source: "slack";
@@ -29,12 +31,20 @@ interface GitHubQueuedEvent extends QueuedEvent<GitHubEvent> {
   source: "github";
 }
 
+interface CronQueuedEvent extends QueuedEvent<CronPayload> {
+  source: "cron";
+}
+
 function isSlackEvent(e: QueuedEvent): e is SlackQueuedEvent {
   return e.source === "slack";
 }
 
 function isGitHubEvent(e: QueuedEvent): e is GitHubQueuedEvent {
   return e.source === "github";
+}
+
+function isCronEvent(e: QueuedEvent): e is CronQueuedEvent {
+  return e.source === "cron";
 }
 
 const log = createLogger("gateway");
@@ -71,6 +81,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   githubDelayMs?: number;
   /** Slack channel IDs the bot is allowed to respond in. Empty = allow all. */
   allowedChannelIds?: string[];
+  /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
+  cronSecret?: string;
 }
 
 const InteractivityBodySchema = z.object({
@@ -150,6 +162,23 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           )
           .catch((error) =>
             logError(log, "github_trigger_failed", error, {
+              correlationKey: lastEvent.correlationKey,
+            }),
+          );
+      }
+
+      const cronEvents = events.filter(isCronEvent);
+      if (cronEvents.length > 0) {
+        const lastEvent = cronEvents[cronEvents.length - 1];
+
+        triggerRunnerCron(lastEvent.payload, lastEvent.correlationKey, runnerDeps)
+          .then(() =>
+            logInfo(log, "cron_trigger_fired", {
+              correlationKey: lastEvent.correlationKey,
+            }),
+          )
+          .catch((error) =>
+            logError(log, "cron_trigger_failed", error, {
               correlationKey: lastEvent.correlationKey,
             }),
           );
@@ -375,6 +404,47 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     });
 
     res.status(200).json({ ok: true });
+  });
+
+  // --- Cron trigger ---
+
+  app.post("/cron", (req: Request, res: Response) => {
+    // Auth required — CRON_SECRET must be configured
+    if (!config.cronSecret) {
+      res.status(401).json({ error: "CRON_SECRET not configured" });
+      return;
+    }
+
+    const auth = req.header("authorization");
+    if (auth !== `Bearer ${config.cronSecret}`) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const parsed = CronRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid request", details: parsed.error.issues });
+      return;
+    }
+
+    const { prompt } = parsed.data;
+    const correlationKey = deriveCronCorrelationKey(prompt);
+
+    const payload: CronPayload = { prompt };
+
+    queue.enqueue({
+      id: `cron-${Date.now()}`,
+      source: "cron",
+      correlationKey,
+      payload,
+      receivedAt: new Date().toISOString(),
+      sourceTs: Date.now(),
+      readyAt: Date.now(),
+      delayMs: 0,
+    });
+
+    logInfo(log, "cron_event_accepted", { correlationKey });
+    res.status(200).json({ ok: true, correlationKey });
   });
 
   // --- Slack OAuth redirect ---

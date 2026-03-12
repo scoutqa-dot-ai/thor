@@ -109,6 +109,7 @@ services:
       - ./docker-volumes/workspace/repos:/workspace/repos:ro
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
       - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
+      - ./docker-volumes/workspace/cron:/workspace/cron
     depends_on:
       proxy:
         condition: service_healthy
@@ -153,6 +154,7 @@ services:
       - NODE_ENV=production
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
       - SLACK_ALLOWED_CHANNEL_IDS=${SLACK_ALLOWED_CHANNEL_IDS:-}
+      - CRON_SECRET=${CRON_SECRET:-}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:
@@ -166,6 +168,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  cron:
+    build:
+      context: ./docker/cron
+    restart: unless-stopped
+    environment:
+      - GATEWAY_URL=http://gateway:3002
+      - CRON_SECRET=${CRON_SECRET:-}
+    volumes:
+      - ./docker-volumes/workspace/cron:/workspace/cron:ro
+    depends_on:
+      gateway:
+        condition: service_healthy
 
   vouch:
     build:
