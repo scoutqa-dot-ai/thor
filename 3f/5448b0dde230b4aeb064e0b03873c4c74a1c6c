@@ -1,0 +1,27 @@
+docs/plan/2026031102_github-mcp.md
+  2b3ba532d81a96a0 40
+packages/proxy/proxy.github.json
+  2b3ba532d81a96a0 3,26-29
+docs/plan/2026031103_github-pr-workflow.md
+  2b3ba532d81a96a0 8,22,85,95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3f5448b0dde230b4aeb064e0b03873c4c74a1c6c",
+  "prompts": {
+    "2b3ba532d81a96a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6b2943e0-8e9f-42e3-b99b-c170361d0983",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 10,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
