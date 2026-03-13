@@ -17,16 +17,20 @@ export {
   ProgressToolSchema,
   ProgressDoneSchema,
   ProgressErrorSchema,
+  ProgressApprovalRequiredSchema,
   ProgressEventSchema,
   SlackProgressRequestSchema,
   SlackReactionRequestSchema,
+  SlackApprovalRequestSchema,
 } from "./progress-events.js";
 export type {
   ProgressStart,
   ProgressTool,
   ProgressDone,
   ProgressError,
+  ProgressApprovalRequired,
   ProgressEvent,
   SlackProgressRequest,
   SlackReactionRequest,
+  SlackApprovalRequest,
 } from "./progress-events.js";

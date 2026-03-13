@@ -8,8 +8,10 @@ export interface ProxyConfig {
     url: string;
     headers?: Record<string, string>;
   };
-  /** Glob patterns for allowed tools. Everything else is blocked. */
+  /** Tool names that are forwarded immediately. */
   allow: string[];
+  /** Tool names that require human approval before execution. */
+  approve?: string[];
 }
 
 function interpolate(value: string): string {

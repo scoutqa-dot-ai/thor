@@ -8,6 +8,8 @@ import {
   triggerRunnerSlack,
   triggerRunnerGitHub,
   triggerRunnerCron,
+  resolveApproval,
+  updateSlackMessage,
   type RunnerDeps,
   type SlackMcpDeps,
 } from "./service.js";
@@ -68,6 +70,8 @@ const SELF_USER_ID = "U0BOTEXAMPLE";
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
   slackMcpUrl: string;
+  /** Proxy hostname for approval resolution. Default: "proxy". */
+  proxyHost?: string;
   timestampToleranceSeconds?: number;
   /** Directory for the event queue. Default: "data/queue". */
   queueDir?: string;
@@ -116,6 +120,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     slackMcpUrl: config.slackMcpUrl,
     fetchImpl: config.fetchImpl,
   };
+  const proxyHost = config.proxyHost ?? "proxy";
 
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
@@ -373,6 +378,70 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const interactionType = result.success ? (result.data.type ?? "unknown") : "unknown";
     logInfo(log, "interactivity_received", { interactionType });
+
+    // Handle approval button clicks
+    if (result.success && result.data.type === "block_actions" && result.data.actions) {
+      const payload = result.data;
+      for (const action of payload.actions!) {
+        if (
+          (action.action_id === "approval_approve" || action.action_id === "approval_reject") &&
+          action.value
+        ) {
+          const decision = action.action_id === "approval_approve" ? "approved" : "rejected";
+          const reviewer = payload.user?.id ?? "unknown";
+          const channel = payload.channel?.id;
+          const messageTs = payload.message?.ts;
+
+          // Button value format: "v1:{actionId}:{proxyPort}" (versioned)
+          // Legacy (no version prefix) is rejected.
+          const parts = action.value.split(":");
+          if (parts[0] !== "v1" || parts.length < 3) {
+            logError(log, "approval_resolve_failed", "Unrecognized button value format", {
+              value: action.value,
+            });
+            res.status(200).json({ ok: true });
+            return;
+          }
+          const actionId = parts[1];
+          const proxyPort = parseInt(parts[2], 10);
+
+          logInfo(log, "approval_action", { actionId, decision, reviewer, proxyPort });
+
+          if (!proxyPort) {
+            logError(log, "approval_resolve_failed", "No proxy port in button value", {
+              actionId,
+            });
+            res.status(200).json({ ok: true });
+            return;
+          }
+
+          // Respond immediately to Slack (must reply within 3s)
+          res.status(200).json({ ok: true });
+
+          // Resolve asynchronously
+          const proxyUrl = `http://${proxyHost}:${proxyPort}`;
+          void (async () => {
+            const resolved = await resolveApproval(
+              actionId,
+              decision,
+              reviewer,
+              proxyUrl,
+              config.fetchImpl,
+            );
+            if (channel && messageTs) {
+              const statusEmoji = decision === "approved" ? "✅" : "❌";
+              const text = `${statusEmoji} *${decision.charAt(0).toUpperCase() + decision.slice(1)}* by <@${reviewer}>`;
+              await updateSlackMessage(channel, messageTs, text, slackMcpDeps);
+            }
+            if (!resolved) {
+              logError(log, "approval_resolve_failed", "Proxy returned error", { actionId });
+            }
+          })();
+          return;
+        }
+      }
+    }
+
     res.status(200).json({ ok: true, ignored: true, interactionType });
   });
 

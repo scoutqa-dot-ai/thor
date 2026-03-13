@@ -33,6 +33,14 @@ export const ProgressErrorSchema = z.object({
   error: z.string(),
 });
 
+export const ProgressApprovalRequiredSchema = z.object({
+  type: z.literal("approval_required"),
+  actionId: z.string(),
+  tool: z.string(),
+  args: z.record(z.string(), z.unknown()),
+  proxyPort: z.number().optional(),
+});
+
 // --- Discriminated union ---
 
 export const ProgressEventSchema = z.discriminatedUnion("type", [
@@ -40,6 +48,7 @@ export const ProgressEventSchema = z.discriminatedUnion("type", [
   ProgressToolSchema,
   ProgressDoneSchema,
   ProgressErrorSchema,
+  ProgressApprovalRequiredSchema,
 ]);
 
 // --- REST endpoint request schemas ---
@@ -56,8 +65,18 @@ export const SlackReactionRequestSchema = z.object({
   reaction: z.string(),
 });
 
+export const SlackApprovalRequestSchema = z.object({
+  channel: z.string(),
+  threadTs: z.string(),
+  actionId: z.string(),
+  tool: z.string(),
+  args: z.record(z.string(), z.unknown()),
+  proxyPort: z.number().optional(),
+});
+
 export type SlackProgressRequest = z.infer<typeof SlackProgressRequestSchema>;
 export type SlackReactionRequest = z.infer<typeof SlackReactionRequestSchema>;
+export type SlackApprovalRequest = z.infer<typeof SlackApprovalRequestSchema>;
 
 // --- Inferred types ---
 
@@ -65,4 +84,5 @@ export type ProgressStart = z.infer<typeof ProgressStartSchema>;
 export type ProgressTool = z.infer<typeof ProgressToolSchema>;
 export type ProgressDone = z.infer<typeof ProgressDoneSchema>;
 export type ProgressError = z.infer<typeof ProgressErrorSchema>;
+export type ProgressApprovalRequired = z.infer<typeof ProgressApprovalRequiredSchema>;
 export type ProgressEvent = z.infer<typeof ProgressEventSchema>;

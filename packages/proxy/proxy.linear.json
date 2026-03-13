@@ -13,9 +13,14 @@
     "get_issue_status",
     "list_projects",
     "get_project",
-    "list_teams",
-    "get_team",
-    "list_users",
-    "get_user"
-  ]
+    "get_status_updates",
+    "list_issue_labels",
+    "list_project_labels",
+    "extract_images",
+    "get_attachment",
+    "save_comment",
+    "save_issue",
+    "save_status_update"
+  ],
+  "approve": ["save_project"]
 }

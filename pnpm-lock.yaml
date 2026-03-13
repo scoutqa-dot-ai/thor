@@ -98,6 +98,9 @@ importers:
       express:
         specifier: ^5.1.0
         version: 5.2.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@types/express':
         specifier: ^5.0.2

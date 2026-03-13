@@ -58,6 +58,30 @@ export const SlackUrlVerificationSchema = z.object({
 
 export const SlackInteractivityPayloadSchema = z.object({
   type: z.string().optional(),
+  user: z
+    .object({
+      id: z.string(),
+      username: z.string().optional(),
+    })
+    .optional(),
+  actions: z
+    .array(
+      z.object({
+        action_id: z.string(),
+        value: z.string().optional(),
+      }),
+    )
+    .optional(),
+  channel: z
+    .object({
+      id: z.string(),
+    })
+    .optional(),
+  message: z
+    .object({
+      ts: z.string(),
+    })
+    .optional(),
 });
 
 export type SlackAppMentionEvent = z.infer<typeof SlackAppMentionEventSchema>;

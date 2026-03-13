@@ -66,7 +66,7 @@ function fileTimestamp(): string {
 
 export interface ToolCallLogEntry {
   tool: string;
-  decision: "allowed" | "blocked";
+  decision: "allowed" | "blocked" | "pending" | "approved" | "rejected";
   args?: Record<string, unknown>;
   result?: unknown;
   durationMs?: number;

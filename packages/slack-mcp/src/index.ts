@@ -18,9 +18,11 @@ import {
   parseAllowedChannelIds,
   SlackProgressRequestSchema,
   SlackReactionRequestSchema,
+  SlackApprovalRequestSchema,
 } from "@thor/common";
 import {
   postMessage,
+  updateMessage,
   readThread,
   getChannelHistory,
   readSlackFile,
@@ -299,6 +301,69 @@ app.post("/reaction", async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     logError(log, "reaction_endpoint_error", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+app.post("/approval", async (req, res) => {
+  const parsed = SlackApprovalRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid request" });
+    return;
+  }
+  try {
+    const { channel, threadTs, actionId, tool, args, proxyPort } = parsed.data;
+    const argsPreview = JSON.stringify(args, null, 2).slice(0, 200);
+    // Versioned button value: "v1:{actionId}:{proxyPort}" so gateway can evolve the format.
+    const buttonValue = proxyPort ? `v1:${actionId}:${proxyPort}` : actionId;
+    const result = await slackDeps.client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: `Approval required for \`${tool}\``,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `*Approval required* for \`${tool}\`\n\`\`\`${argsPreview}\`\`\``,
+          },
+        },
+        {
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: { type: "plain_text", text: "Approve" },
+              style: "primary",
+              action_id: "approval_approve",
+              value: buttonValue,
+            },
+            {
+              type: "button",
+              text: { type: "plain_text", text: "Reject" },
+              style: "danger",
+              action_id: "approval_reject",
+              value: buttonValue,
+            },
+          ],
+        },
+      ],
+    });
+    logInfo(log, "approval_posted", { actionId, tool, channel, ts: result.ts });
+    res.json({ ok: true, ts: result.ts });
+  } catch (err) {
+    logError(log, "approval_endpoint_error", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+app.post("/update-message", async (req, res) => {
+  try {
+    const { channel, ts, text } = req.body as { channel: string; ts: string; text: string };
+    await updateMessage(channel, ts, text, slackDeps);
+    res.json({ ok: true });
+  } catch (err) {
+    logError(log, "update_message_error", err instanceof Error ? err.message : String(err));
     res.status(500).json({ error: "Internal error" });
   }
 });

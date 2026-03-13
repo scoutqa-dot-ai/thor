@@ -16,11 +16,13 @@ const SLACK_ALLOWED_CHANNEL_IDS = [
   ...parseAllowedChannelIds(process.env.SLACK_ALLOWED_CHANNEL_IDS),
 ];
 const CRON_SECRET = process.env.CRON_SECRET || "";
+const PROXY_HOST = process.env.PROXY_HOST || "proxy";
 
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
   signingSecret: SLACK_SIGNING_SECRET,
   slackMcpUrl: SLACK_MCP_URL,
+  proxyHost: PROXY_HOST,
   timestampToleranceSeconds: SLACK_TIMESTAMP_TOLERANCE_SECONDS,
   queueDir: QUEUE_DIR,
   allowedChannelIds: SLACK_ALLOWED_CHANNEL_IDS,
@@ -32,6 +34,7 @@ app.listen(PORT, () => {
     port: PORT,
     runnerUrl: RUNNER_URL,
     slackMcpUrl: SLACK_MCP_URL,
+    proxyHost: PROXY_HOST,
     queueDir: QUEUE_DIR,
     configured: Boolean(SLACK_SIGNING_SECRET),
     allowedChannels: SLACK_ALLOWED_CHANNEL_IDS.length > 0 ? SLACK_ALLOWED_CHANNEL_IDS : "all",

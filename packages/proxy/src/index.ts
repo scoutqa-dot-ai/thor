@@ -11,8 +11,9 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { loadConfig, type ProxyConfig } from "./config.js";
-import { isAllowed, validatePolicy, PolicyDriftError } from "./policy.js";
+import { classifyTool, validatePolicy, PolicyDriftError, PolicyOverlapError } from "./policy.js";
 import { connectUpstream, type UpstreamConnection } from "./upstream.js";
+import { ApprovalStore } from "./approval-store.js";
 import { writeToolCallLog, createLogger, logInfo, logWarn, logError } from "@thor/common";
 
 const log = createLogger("proxy");
@@ -28,8 +29,31 @@ const config: ProxyConfig = loadConfig(
 
 let upstream: UpstreamConnection;
 
-// Only the curated subset of upstream tools — built at startup.
+// Exposed tools = allow + approve (agent sees both, but approve tools are gated).
 let exposedTools: Tool[] = [];
+
+// Tools that require human approval before execution.
+const approveSet = new Set<string>();
+
+const APPROVALS_DIR = process.env.APPROVALS_DIR || "data/approvals";
+const approvalStore = new ApprovalStore(APPROVALS_DIR);
+
+/** Synthetic tool injected when approve list is non-empty. */
+const CHECK_APPROVAL_TOOL: Tool = {
+  name: "check_approval_status",
+  description:
+    "Check the status of a pending approval request. Returns the current status and, if approved, the tool call result.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {
+      action_id: {
+        type: "string",
+        description: "The action ID returned when the tool call was held for approval.",
+      },
+    },
+    required: ["action_id"],
+  },
+};
 
 function createProxyServer(): Server {
   const server = new Server(
@@ -38,17 +62,91 @@ function createProxyServer(): Server {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: exposedTools,
+    tools: approveSet.size > 0 ? [...exposedTools, CHECK_APPROVAL_TOOL] : exposedTools,
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const toolName = request.params.name;
     const args = request.params.arguments || {};
 
+    // Handle check_approval_status synthetic tool.
+    if (toolName === "check_approval_status") {
+      const actionId = (args as { action_id?: string }).action_id;
+      if (!actionId) {
+        return {
+          content: [{ type: "text" as const, text: "Missing required parameter: action_id" }],
+          isError: true,
+        } satisfies CallToolResult;
+      }
+      const action = approvalStore.get(actionId);
+      if (!action) {
+        return {
+          content: [
+            { type: "text" as const, text: `No approval action found with ID: ${actionId}` },
+          ],
+          isError: true,
+        } satisfies CallToolResult;
+      }
+      if (action.status === "pending") {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `⏳ Status: pending. Awaiting human approval for \`${action.tool}\`.`,
+            },
+          ],
+          isError: false,
+        } satisfies CallToolResult;
+      }
+      if (action.status === "rejected") {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `❌ Status: rejected.${action.reason ? ` Reason: ${action.reason}` : ""} Reviewer: ${action.reviewer ?? "unknown"}.`,
+            },
+          ],
+          isError: false,
+        } satisfies CallToolResult;
+      }
+      // approved
+      if (action.error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `✅ Status: approved (but execution failed). Error: ${action.error}`,
+            },
+          ],
+          isError: true,
+        } satisfies CallToolResult;
+      }
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(action.result) }],
+        isError: false,
+      } satisfies CallToolResult;
+    }
+
     if (!exposedTools.some((t) => t.name === toolName)) {
       return {
         content: [{ type: "text" as const, text: `Unknown tool: ${toolName}` }],
         isError: true,
+      } satisfies CallToolResult;
+    }
+
+    // Approval-required tools: store request and return pending action ID.
+    if (approveSet.has(toolName)) {
+      const action = approvalStore.create(toolName, args);
+      logInfo(log, "tool_call_pending_approval", { tool: toolName, actionId: action.id });
+      writeToolCallLog({ tool: toolName, decision: "pending", args });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `⏳ Approval required for \`${toolName}\`. Action ID: ${action.id}. Proxy-Port: ${PORT}. Use \`check_approval_status\` with this ID to check the outcome.`,
+          },
+        ],
+        isError: false,
       } satisfies CallToolResult;
     }
 
@@ -91,6 +189,85 @@ app.get("/health", (_req, res) => {
     exposedTools: exposedTools.length,
     upstreamTools: upstream?.tools.length ?? 0,
   });
+});
+
+// --- Approval resolution endpoints ---
+
+app.get("/approval/:id", (req, res) => {
+  const action = approvalStore.get(req.params.id);
+  if (!action) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  res.json(action);
+});
+
+app.post("/approval/:id/resolve", async (req, res) => {
+  const { decision, reviewer, reason } = req.body as {
+    decision?: string;
+    reviewer?: string;
+    reason?: string;
+  };
+
+  if (decision !== "approved" && decision !== "rejected") {
+    res.status(400).json({ error: 'decision must be "approved" or "rejected"' });
+    return;
+  }
+
+  const action = approvalStore.resolve(req.params.id, decision, reviewer, reason);
+  if (!action) {
+    res.status(404).json({ error: "Not found or already resolved" });
+    return;
+  }
+
+  if (decision === "approved") {
+    // Execute the stored tool call against upstream.
+    const start = Date.now();
+    try {
+      const result = await upstream.client.callTool({
+        name: action.tool,
+        arguments: action.args,
+      });
+      const duration = Date.now() - start;
+      action.result = result;
+      approvalStore.update(action);
+      logInfo(log, "tool_call_approved", {
+        tool: action.tool,
+        actionId: action.id,
+        durationMs: duration,
+      });
+      writeToolCallLog({
+        tool: action.tool,
+        decision: "approved",
+        args: action.args,
+        result,
+        durationMs: duration,
+      });
+      res.json(action);
+    } catch (err) {
+      const duration = Date.now() - start;
+      const message = err instanceof Error ? err.message : String(err);
+      action.error = message;
+      approvalStore.update(action);
+      logError(log, "tool_call_approved_failed", message, {
+        tool: action.tool,
+        actionId: action.id,
+        durationMs: duration,
+      });
+      writeToolCallLog({
+        tool: action.tool,
+        decision: "approved",
+        args: action.args,
+        durationMs: duration,
+        error: message,
+      });
+      res.json(action);
+    }
+  } else {
+    logInfo(log, "tool_call_rejected", { tool: action.tool, actionId: action.id, reviewer });
+    writeToolCallLog({ tool: action.tool, decision: "rejected", args: action.args });
+    res.json(action);
+  }
 });
 
 const transports = new Map<string, StreamableHTTPServerTransport>();
@@ -156,27 +333,45 @@ async function start(): Promise<void> {
 
   upstream = await connectUpstream(config);
 
+  const approve = config.approve ?? [];
   const allToolNames = upstream.tools.map((t) => t.name);
 
-  // Validate allow list against upstream — detect drift
+  // Validate allow + approve lists against upstream — detect drift and overlap
   try {
-    validatePolicy(config.allow, allToolNames);
+    validatePolicy(config.allow, approve, allToolNames);
   } catch (err) {
-    if (!(err instanceof PolicyDriftError)) throw err;
-
-    if (IS_PRODUCTION) {
-      logWarn(log, "policy_drift", { orphans: err.orphans });
+    if (err instanceof PolicyDriftError) {
+      if (IS_PRODUCTION) {
+        logWarn(log, "policy_drift", { orphans: err.orphans });
+      } else {
+        throw err;
+      }
+    } else if (err instanceof PolicyOverlapError) {
+      // Overlap is always fatal — ambiguous policy
+      throw err;
     } else {
       throw err;
     }
   }
 
-  // Curate: only expose allowed tools
-  exposedTools = upstream.tools.filter((t) => isAllowed(config.allow, t.name));
+  // Build approval set
+  for (const name of approve) {
+    approveSet.add(name);
+  }
+
+  // Expose both allow and approve tools (approve tools are gated at call time)
+  exposedTools = upstream.tools.filter(
+    (t) => classifyTool(config.allow, approve, t.name) !== "hidden",
+  );
+
+  const allowCount = config.allow.length;
+  const approveCount = approve.length;
 
   logInfo(log, "proxy_ready", {
     upstreamTools: allToolNames.length,
     exposedTools: exposedTools.length,
+    allowTools: allowCount,
+    approveTools: approveCount,
     hiddenTools: allToolNames.length - exposedTools.length,
   });
 

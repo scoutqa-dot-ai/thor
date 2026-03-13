@@ -90,7 +90,12 @@ async function consumeNdjsonStream(
     try {
       const parsed = ProgressEventSchema.safeParse(JSON.parse(line));
       if (!parsed.success) continue;
-      await forwardProgressEvent(channel, threadTs, parsed.data, slackMcpDeps);
+
+      if (parsed.data.type === "approval_required") {
+        await forwardApprovalNotification(channel, threadTs, parsed.data, slackMcpDeps);
+      } else {
+        await forwardProgressEvent(channel, threadTs, parsed.data, slackMcpDeps);
+      }
     } catch {
       // Skip lines that aren't valid JSON
     }
@@ -188,6 +193,83 @@ export async function triggerRunnerCron(
     for await (const _ of body) {
       // discard
     }
+  }
+}
+
+async function forwardApprovalNotification(
+  channel: string,
+  threadTs: string,
+  event: { actionId: string; tool: string; args: Record<string, unknown>; proxyPort?: number },
+  deps: SlackMcpDeps,
+): Promise<void> {
+  try {
+    await getFetch(deps.fetchImpl)(`${deps.slackMcpUrl}/approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        channel,
+        threadTs,
+        actionId: event.actionId,
+        tool: event.tool,
+        args: event.args,
+        proxyPort: event.proxyPort,
+      }),
+    });
+  } catch (err) {
+    logError(log, "approval_forward_error", err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Resolve an approval action on a specific proxy instance.
+ */
+export async function resolveApproval(
+  actionId: string,
+  decision: "approved" | "rejected",
+  reviewer: string,
+  proxyUrl: string,
+  fetchImpl?: typeof fetch,
+  reason?: string,
+): Promise<Record<string, unknown> | undefined> {
+  const fetchFn = getFetch(fetchImpl);
+  const body = JSON.stringify({ decision, reviewer, ...(reason ? { reason } : {}) });
+
+  try {
+    const response = await fetchFn(`${proxyUrl}/approval/${actionId}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      logError(log, "approval_resolve_error", `Proxy returned ${response.status}: ${text}`, {
+        proxyUrl,
+      });
+      return undefined;
+    }
+    return (await response.json()) as Record<string, unknown>;
+  } catch (err) {
+    logError(log, "approval_resolve_error", err instanceof Error ? err.message : String(err), {
+      proxyUrl,
+    });
+    return undefined;
+  }
+}
+
+export async function updateSlackMessage(
+  channel: string,
+  ts: string,
+  text: string,
+  deps: SlackMcpDeps,
+): Promise<void> {
+  try {
+    await getFetch(deps.fetchImpl)(`${deps.slackMcpUrl}/update-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, ts, text }),
+    });
+  } catch (err) {
+    logError(log, "message_update_error", err instanceof Error ? err.message : String(err));
   }
 }
 
