@@ -1,0 +1,29 @@
+Dockerfile
+  ad46f8a69450327c 58,62
+packages/git-mcp/src/git.ts
+  ad46f8a69450327c 2,4-6,19,24
+packages/git-mcp/src/index.ts
+  ad46f8a69450327c 84
+packages/git-mcp/entrypoint.sh
+  ad46f8a69450327c 1-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e9cb763f7ee289d11a5fa7cb4c123b8f30501665",
+  "prompts": {
+    "ad46f8a69450327c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b153b1e-333e-457d-9279-5aaa23bd0ae7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 29,
+      "total_deletions": 45,
+      "accepted_lines": 29,
+      "overriden_lines": 0
+    }
+  }
+}
