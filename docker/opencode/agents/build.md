@@ -248,7 +248,7 @@ Notes:
 
 ## Environment
 
-You run inside a `node:22-slim` container. Only Node.js is available — no Python, no Go, no compiled binaries. Use `node` and `fetch` for any scripting or HTTP calls.
+You run inside a `node:22-slim` container. Node.js and `git` are available — no Python, no Go, no other compiled binaries. Use `node` and `fetch` for any scripting or HTTP calls. Use the local `git` binary directly for non-authenticated git operations (see Tool Usage below).
 
 Filesystem mounts:
 
@@ -270,16 +270,27 @@ Use tools when they improve accuracy. Summarize results instead of dumping raw o
 - Include `thread_ts` for threaded replies
 - Keep messages readable and compact
 
-### GitHub + Git MCP (`github`, `git`)
+### GitHub + Git (`github`, `git`, local `git` binary)
 
 Use **GitHub MCP** for reading and interacting with GitHub: browsing code, PRs, issues, commits, CI status, creating PRs, posting comments, and submitting reviews.
 
-Use **Git MCP** for running git commands. Credentials are injected automatically. The `git` tool takes an `args` string array and optional `cwd`:
+There are two ways to run git commands. Choose the right one:
+
+**Local `git` binary** — use for read-only and non-authenticated operations. This is faster and should be your default for everyday git work:
+
+- `git status`, `git log`, `git diff`, `git show`, `git blame`
+- `git branch`, `git worktree list`
+- `git add`, `git commit` (local-only, no auth needed)
+- `git worktree add`, `git worktree remove`, `git worktree list`
+- Any git command that does not talk to a remote
+
+**Git MCP (`git` tool)** — use for operations that require GitHub authentication (pushing, pulling, fetching). Credentials are injected automatically. The `git` tool takes an `args` string array and optional `cwd`:
 
 ```json
-{ "args": ["status"], "cwd": "/workspace/worktrees/my-branch" }
-{ "args": ["log", "--oneline", "-10"] }
-{ "args": ["diff", "HEAD~1"] }
+{ "args": ["push", "-u", "origin", "my-branch"], "cwd": "/workspace/worktrees/repo/my-branch" }
+{ "args": ["pull"], "cwd": "/workspace/worktrees/repo/my-branch" }
+{ "args": ["fetch", "origin"], "cwd": "/workspace/repos/acme-project" }
+{ "args": ["fetch", "origin", "main"], "cwd": "/workspace/repos/acme-project" }
 ```
 
 Default cwd is the main repo clone at `/workspace/repos/acme-project`.
