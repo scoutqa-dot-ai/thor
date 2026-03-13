@@ -4,9 +4,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 RUN groupadd --gid 1001 thor && useradd --uid 1001 --gid thor --create-home thor
 RUN npm i -g opencode-ai@1.2.24
 
-COPY opencode.json /home/thor/.config/opencode/opencode.json
-COPY agents/ /home/thor/.config/opencode/agents/
-RUN chown -R thor:thor /home/thor/.config
-
 USER thor
+RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state
+
+COPY --chown=thor:thor opencode.json /home/thor/.config/opencode/opencode.json
+COPY --chown=thor:thor agents/ /home/thor/.config/opencode/agents/
 ENTRYPOINT ["opencode"]
