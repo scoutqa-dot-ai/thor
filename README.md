@@ -225,6 +225,10 @@ The proxy sits between OpenCode and every upstream MCP server. Each proxy instan
 - **Nginx ingress** — `auth_request` directive validates sessions via Vouch; unauthenticated users are redirected to login
 - **Unprotected paths** — Only `/slack/*` and `/github/*` (webhook endpoints with their own auth) and static assets bypass SSO
 
+### Non-Root Containers
+
+All custom-built containers run as a dedicated `thor` user (uid/gid 1001) instead of root. This limits the blast radius if a container is compromised — the process cannot modify system files, install packages, or escalate privileges. The only exception is the cron container, which requires root for `crond`.
+
 ### Network Isolation
 
 All internal services bind to `127.0.0.1` in Docker Compose. Only the ingress proxy (port 8080) is exposed to the network. Inter-service communication happens over Docker's internal network.

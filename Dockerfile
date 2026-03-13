@@ -8,6 +8,8 @@
 
 FROM node:22-slim AS base
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN groupadd --gid 1001 thor && useradd --uid 1001 --gid thor --create-home thor
+RUN mkdir -p /workspace && chown thor:thor /workspace
 
 # --- Install deps (cached until lockfile or package.json changes) ---
 FROM base AS deps
@@ -29,6 +31,7 @@ RUN pnpm -r build
 # === Per-service targets ===
 
 FROM build AS gateway
+USER thor
 WORKDIR /workspace
 ENV PORT=3002
 EXPOSE 3002
@@ -37,25 +40,30 @@ CMD ["node", "/app/packages/gateway/dist/index.js"]
 FROM build AS proxy
 COPY packages/proxy/proxy.*.json /app/packages/proxy/
 COPY packages/proxy/multi-proxy.sh /app/packages/proxy/
+USER thor
 WORKDIR /workspace
 EXPOSE 3010 3011 3012 3013
 CMD ["bash", "/app/packages/proxy/multi-proxy.sh"]
 
 FROM build AS runner
+USER thor
 WORKDIR /workspace
 ENV PORT=3000
 EXPOSE 3000
 CMD ["node", "/app/packages/runner/dist/index.js"]
 
 FROM build AS slack-mcp
+USER thor
 ENV PORT=3003
 EXPOSE 3003
 CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
 
 FROM build AS git-mcp
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN git config --global user.name "Thor" && git config --global user.email "thor@acme.example"
 COPY packages/git-mcp/entrypoint.sh /entrypoint.sh
+USER thor
+RUN mkdir -p /workspace/repos
+RUN git config --global user.name "Thor" && git config --global user.email "thor@acme.example"
 WORKDIR /workspace/repos
 ENV PORT=3004
 EXPOSE 3004
