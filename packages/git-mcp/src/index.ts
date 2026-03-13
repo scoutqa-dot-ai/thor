@@ -14,14 +14,8 @@ import { execGit } from "./git.js";
 const log = createLogger("git-mcp");
 
 const PORT = parseInt(process.env.PORT || "3004", 10);
-const GITHUB_PAT = process.env.GITHUB_PAT;
 const GIT_MCP_DEFAULT_CWD =
   process.env.GIT_MCP_DEFAULT_CWD || "/workspace/repos/acme-project";
-
-if (!GITHUB_PAT) {
-  logError(log, "missing_env", "GITHUB_PAT is required");
-  process.exit(1);
-}
 
 // --- Tool definitions ---
 
@@ -87,7 +81,7 @@ async function handleToolCall(
 
   const cwd = typeof args.cwd === "string" ? args.cwd : GIT_MCP_DEFAULT_CWD;
 
-  const result = await execGit(gitArgs, cwd, GITHUB_PAT);
+  const result = await execGit(gitArgs, cwd);
 
   const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
 
