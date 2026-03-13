@@ -21,7 +21,11 @@ import {
   appendSummary,
   findNotesFile,
   getSessionIdFromNotes,
+  isAliasableTool,
+  extractAliases,
+  registerAlias,
 } from "@thor/common";
+import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 
 const log = createLogger("runner");
@@ -365,6 +369,7 @@ app.post("/trigger", async (req, res) => {
     let seq = 0;
     const collectedTextParts: string[] = [];
     const collectedToolCalls: Array<{ tool: string; state: string }> = [];
+    const collectedArtifacts: ToolArtifact[] = [];
     let lastMessageId: string | undefined;
     let totalCost = 0;
     const totalTokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
@@ -404,6 +409,16 @@ app.post("/trigger", async (req, res) => {
               if (approval) {
                 emit(approval);
               }
+            }
+
+            // Collect input/output for aliasable tools
+            if (status === "completed" && isAliasableTool(toolPart.tool)) {
+              const completed = toolPart.state as ToolStateCompleted;
+              collectedArtifacts.push({
+                tool: toolPart.tool,
+                input: completed.input as Record<string, unknown>,
+                output: typeof completed.output === "string" ? completed.output : "",
+              });
             }
           }
           lastMessageId = toolPart.messageID;
@@ -446,6 +461,26 @@ app.post("/trigger", async (req, res) => {
         responsePreview: responseText,
         error: sessionError,
       });
+
+      // Register cross-channel aliases (best-effort)
+      if (collectedArtifacts.length > 0) {
+        try {
+          const aliases = extractAliases(collectedArtifacts);
+          for (const { alias, context } of aliases) {
+            registerAlias({ correlationKey, alias, context });
+            logInfo(log, "alias_registered", { correlationKey, alias });
+          }
+        } catch (err) {
+          logError(
+            log,
+            "alias_registration_error",
+            err instanceof Error ? err.message : String(err),
+            {
+              correlationKey,
+            },
+          );
+        }
+      }
     }
 
     logInfo(log, "session_done", {

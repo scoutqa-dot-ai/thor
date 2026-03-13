@@ -11,7 +11,12 @@ export {
   appendSummary,
   findNotesFile,
   getSessionIdFromNotes,
+  registerAlias,
+  resolveCorrelationKey,
+  isAliasableTool,
+  extractAliases,
 } from "./notes.js";
+export type { ToolArtifact, ExtractedAlias } from "./notes.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,

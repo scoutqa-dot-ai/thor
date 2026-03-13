@@ -15,6 +15,10 @@ const {
   appendSummary,
   findNotesFile,
   getSessionIdFromNotes,
+  registerAlias,
+  resolveCorrelationKey,
+  isAliasableTool,
+  extractAliases,
 } = await import("./notes.js");
 
 describe("notes", () => {
@@ -283,6 +287,115 @@ describe("notes", () => {
     expect(readNotes(key)).toContain("# Session: slack:thread:123.456");
   });
 
+  describe("correlation key aliasing", () => {
+    it("registerAlias appends h3 alias block to notes file", () => {
+      const key = uniqueKey();
+      createNotes({ correlationKey: key, prompt: "test", sessionId: "session-alias-1" });
+
+      registerAlias({
+        correlationKey: key,
+        alias: "slack:thread:999.000",
+        context: "Bot posted to #general",
+      });
+
+      const content = readNotes(key)!;
+      expect(content).toContain("### Session: slack:thread:999.000");
+      expect(content).toContain("Bot posted to #general");
+    });
+
+    it("registerAlias uses default context when none provided", () => {
+      const key = uniqueKey();
+      createNotes({ correlationKey: key, prompt: "test", sessionId: "session-alias-2" });
+
+      registerAlias({ correlationKey: key, alias: "git:branch:org/repo:feat-x" });
+
+      const content = readNotes(key)!;
+      expect(content).toContain("### Session: git:branch:org/repo:feat-x");
+      expect(content).toContain(`Alias for ${key}`);
+    });
+
+    it("registerAlias skips self-alias (key === alias)", () => {
+      const key = uniqueKey();
+      createNotes({ correlationKey: key, prompt: "test", sessionId: "session-self" });
+
+      registerAlias({ correlationKey: key, alias: key, context: "should not appear" });
+
+      const content = readNotes(key)!;
+      expect(content).not.toContain("### Session:");
+    });
+
+    it("registerAlias is a no-op when notes file does not exist", () => {
+      registerAlias({
+        correlationKey: "ghost-alias-key",
+        alias: "slack:thread:000.000",
+      });
+      expect(readNotes("ghost-alias-key")).toBeUndefined();
+    });
+
+    it("multiple aliases can be registered on the same notes file", () => {
+      const key = uniqueKey();
+      createNotes({ correlationKey: key, prompt: "test", sessionId: "session-multi" });
+
+      registerAlias({ correlationKey: key, alias: "slack:thread:111.000" });
+      registerAlias({ correlationKey: key, alias: "git:branch:org/repo:fix-bug" });
+      registerAlias({ correlationKey: key, alias: "github:pr:org/repo:42" });
+
+      const content = readNotes(key)!;
+      expect(content).toContain("### Session: slack:thread:111.000");
+      expect(content).toContain("### Session: git:branch:org/repo:fix-bug");
+      expect(content).toContain("### Session: github:pr:org/repo:42");
+    });
+
+    it("resolveCorrelationKey returns canonical key for an aliased key", () => {
+      const canonical = "cron:daily-check:2026-03-13T06";
+      createNotes({ correlationKey: canonical, prompt: "test", sessionId: "session-resolve-1" });
+      registerAlias({ correlationKey: canonical, alias: "slack:thread:222.000" });
+
+      expect(resolveCorrelationKey("slack:thread:222.000")).toBe(canonical);
+    });
+
+    it("resolveCorrelationKey returns canonical key when queried with canonical key", () => {
+      const canonical = uniqueKey();
+      createNotes({ correlationKey: canonical, prompt: "test", sessionId: "session-resolve-2" });
+
+      expect(resolveCorrelationKey(canonical)).toBe(canonical);
+    });
+
+    it("resolveCorrelationKey returns raw key unchanged when no match found", () => {
+      expect(resolveCorrelationKey("unknown:key:xyz")).toBe("unknown:key:xyz");
+    });
+
+    it("resolveCorrelationKey returns canonical key for continued files", () => {
+      const canonical = "resolve-continued";
+      // Create old day file with alias
+      const sanitized = canonical.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
+      const dir = join(testDir, "2026-02-01", "notes");
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, `${sanitized}.md`);
+      writeFileSync(
+        path,
+        `# Session: ${canonical}\nSession ID: sess-old\n\n---\n### Session: slack:thread:333.000\nAliased from old day\n`,
+      );
+
+      // Alias from old day should still resolve
+      expect(resolveCorrelationKey("slack:thread:333.000")).toBe(canonical);
+    });
+
+    it("resolveCorrelationKey finds alias even when canonical file also exists for the raw key", () => {
+      // Scenario: git push → session A, then Slack review → session B aliases the branch key
+      const oldCanonical = "git:branch:org/repo:feat-y";
+      const newCanonical = "slack:thread:444.000";
+
+      createNotes({ correlationKey: oldCanonical, prompt: "old", sessionId: "session-old" });
+      createNotes({ correlationKey: newCanonical, prompt: "new", sessionId: "session-new" });
+      registerAlias({ correlationKey: newCanonical, alias: oldCanonical });
+
+      // Should resolve to the NEWER session that claimed this key via alias
+      const resolved = resolveCorrelationKey(oldCanonical);
+      expect(resolved).toBe(newCanonical);
+    });
+  });
+
   describe("cross-day continuation", () => {
     // Helper to create a notes file in a specific date directory (simulating a previous day)
     function createNotesOnDay(day: string, key: string, sessionId: string): string {
@@ -425,6 +538,241 @@ describe("notes", () => {
 
       // Should find today's (most recent) session ID
       expect(getSessionIdFromNotes(key)).toBe("session-original");
+    });
+
+    it("alias registered on previous day resolves after continueNotes", () => {
+      const canonical = "cross-day-alias-resolve";
+      const aliasKey = "slack:thread:cross-day-555.000";
+
+      // Day N: create notes + register alias
+      const sanitized = canonical.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
+      const oldDir = join(testDir, "2026-01-10", "notes");
+      mkdirSync(oldDir, { recursive: true });
+      const oldPath = join(oldDir, `${sanitized}.md`);
+      writeFileSync(
+        oldPath,
+        `# Session: ${canonical}\nSession ID: sess-cross\n\n---\n### Session: ${aliasKey}\nAliased on day N\n`,
+      );
+
+      // Day N+1 (today): continueNotes creates today's file
+      continueNotes({
+        correlationKey: canonical,
+        sessionId: "sess-cross",
+        prompt: "follow up next day",
+        previousNotesPath: oldPath,
+      });
+
+      // Alias from old day should still resolve to canonical key
+      expect(resolveCorrelationKey(aliasKey)).toBe(canonical);
+
+      // Old file should be untouched
+      expect(readFileSync(oldPath, "utf-8")).toContain(`### Session: ${aliasKey}`);
+    });
+  });
+});
+
+describe("alias extraction", () => {
+  describe("isAliasableTool", () => {
+    it("returns true for aliasable tools", () => {
+      expect(isAliasableTool("post_message")).toBe(true);
+      expect(isAliasableTool("git")).toBe(true);
+    });
+
+    it("returns false for non-aliasable tools", () => {
+      expect(isAliasableTool("create_pull_request")).toBe(false);
+      expect(isAliasableTool("read_channel")).toBe(false);
+      expect(isAliasableTool("list_issues")).toBe(false);
+    });
+  });
+
+  describe("extractAliases", () => {
+    it("extracts slack thread alias from post_message (new thread)", () => {
+      const aliases = extractAliases([
+        {
+          tool: "post_message",
+          input: { channel: "C123ABC", text: "Hello" },
+          output: JSON.stringify({ ok: true, ts: "1710000000.123", channel: "C123ABC" }),
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        { alias: "slack:thread:1710000000.123", context: "New thread posted to C123ABC" },
+      ]);
+    });
+
+    it("aliases thread_ts for post_message replies", () => {
+      const aliases = extractAliases([
+        {
+          tool: "post_message",
+          input: { channel: "C123ABC", text: "Reply", thread_ts: "1710000000.100" },
+          output: JSON.stringify({ ok: true, ts: "1710000000.200", channel: "C123ABC" }),
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        { alias: "slack:thread:1710000000.100", context: "Replied in thread in C123ABC" },
+      ]);
+    });
+
+    it("extracts git branch alias from git push", () => {
+      const aliases = extractAliases([
+        {
+          tool: "git",
+          input: {
+            args: ["push", "origin", "feat/login-fix"],
+            cwd: "/workspace/repos/acme-project",
+          },
+          output: "(no output)",
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:acme/project:feat/login-fix",
+          context: "git push in /workspace/repos/acme-project",
+        },
+      ]);
+    });
+
+    it("extracts git branch alias from checkout", () => {
+      const aliases = extractAliases([
+        {
+          tool: "git",
+          input: {
+            args: ["checkout", "feat/review"],
+            cwd: "/workspace/repos/acme-project",
+          },
+          output: "Switched to branch 'feat/review'",
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:acme/project:feat/review",
+          context: "git checkout in /workspace/repos/acme-project",
+        },
+      ]);
+    });
+
+    it("extracts git branch alias from checkout -b", () => {
+      const aliases = extractAliases([
+        {
+          tool: "git",
+          input: { args: ["checkout", "-b", "feat/new"], cwd: "/workspace/repos/org-repo" },
+          output: "Switched to new branch 'feat/new'",
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:org/repo:feat/new",
+          context: "git checkout in /workspace/repos/org-repo",
+        },
+      ]);
+    });
+
+    it("extracts git branch alias from switch", () => {
+      const aliases = extractAliases([
+        {
+          tool: "git",
+          input: { args: ["switch", "feat/login"], cwd: "/workspace/repos/acme-project" },
+          output: "Switched to branch 'feat/login'",
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:acme/project:feat/login",
+          context: "git switch in /workspace/repos/acme-project",
+        },
+      ]);
+    });
+
+    it("strips origin/ prefix from checkout of remote branch", () => {
+      const aliases = extractAliases([
+        {
+          tool: "git",
+          input: { args: ["checkout", "origin/feat/review"], cwd: "/workspace/repos/org-repo" },
+          output: "HEAD is now at abc123",
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:org/repo:feat/review",
+          context: "git checkout in /workspace/repos/org-repo",
+        },
+      ]);
+    });
+
+    it("skips git commands that don't involve branches", () => {
+      const aliases = extractAliases([
+        {
+          tool: "git",
+          input: { args: ["log", "--oneline", "-5"], cwd: "/workspace/repos/org-repo" },
+          output: "abc123 some commit",
+        },
+      ]);
+
+      expect(aliases).toEqual([]);
+    });
+
+    it("handles multiple artifacts in a single call", () => {
+      const aliases = extractAliases([
+        {
+          tool: "post_message",
+          input: { channel: "C001", text: "Starting" },
+          output: JSON.stringify({ ok: true, ts: "111.000", channel: "C001" }),
+        },
+        {
+          tool: "git",
+          input: { args: ["push", "origin", "fix/bug"], cwd: "/workspace/repos/org-repo" },
+          output: "(no output)",
+        },
+      ]);
+
+      expect(aliases).toHaveLength(2);
+      expect(aliases[0].alias).toBe("slack:thread:111.000");
+      expect(aliases[1].alias).toBe("git:branch:org/repo:fix/bug");
+    });
+
+    it("skips malformed output gracefully", () => {
+      const aliases = extractAliases([
+        {
+          tool: "post_message",
+          input: { channel: "C001", text: "Hello" },
+          output: "not json at all",
+        },
+        {
+          tool: "git",
+          input: { args: ["push", "origin", "main"] },
+          output: "error: something went wrong",
+        },
+      ]);
+
+      // post_message: JSON.parse fails → skipped
+      // git: no cwd → no repo → skipped
+      expect(aliases).toEqual([]);
+    });
+
+    it("handles git push with HEAD:branch syntax", () => {
+      const aliases = extractAliases([
+        {
+          tool: "git",
+          input: {
+            args: ["push", "origin", "HEAD:refs/heads/feat/new"],
+            cwd: "/workspace/repos/acme-app",
+          },
+          output: "(no output)",
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:acme/app:feat/new",
+          context: "git push in /workspace/repos/acme-app",
+        },
+      ]);
     });
   });
 });

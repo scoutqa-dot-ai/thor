@@ -1,5 +1,11 @@
 import express, { type Express, type Request, type Response } from "express";
-import { createChannelFilter, createLogger, logError, logInfo } from "@thor/common";
+import {
+  createChannelFilter,
+  createLogger,
+  logError,
+  logInfo,
+  resolveCorrelationKey,
+} from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
 import {
@@ -277,7 +283,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       void addSlackReaction(event.channel, event.ts, "eyes", slackMcpDeps).catch((err) =>
         logError(log, "reaction_failed", err, { eventId }),
       );
-      const correlationKey = getSlackCorrelationKey(event);
+      const rawKey = getSlackCorrelationKey(event);
+      const correlationKey = resolveCorrelationKey(rawKey);
+      if (correlationKey !== rawKey) {
+        logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
+      }
       logInfo(log, "event_accepted", {
         eventId,
         teamId: envelope.data.team_id,
@@ -310,7 +320,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // Message (no subtype — excludes system events like channel_join)
     if (event.type === "message" && !event.subtype) {
       res.status(200).json({ ok: true });
-      const correlationKey = getSlackCorrelationKey(event);
+      const rawKey = getSlackCorrelationKey(event);
+      const correlationKey = resolveCorrelationKey(rawKey);
+      if (correlationKey !== rawKey) {
+        logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
+      }
 
       void (async () => {
         // Thread reply with existing session → short batch delay
@@ -454,7 +468,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const correlationKey = getGitHubCorrelationKey(event);
+    const rawKey = getGitHubCorrelationKey(event);
+    const correlationKey = resolveCorrelationKey(rawKey);
+    if (correlationKey !== rawKey) {
+      logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
+    }
 
     logInfo(log, "github_event_accepted", {
       event: event.event,
