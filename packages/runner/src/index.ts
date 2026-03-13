@@ -402,9 +402,11 @@ app.post("/trigger", async (req, res) => {
 
             // Detect approval-required tool results and emit approval event.
             if (status === "completed") {
+              const completed = toolPart.state as ToolStateCompleted;
               const approval = parseApprovalResult(
-                (toolPart.state as ToolStateCompleted).output,
+                completed.output,
                 toolPart.tool,
+                (completed.input as Record<string, unknown>) ?? {},
               );
               if (approval) {
                 emit(approval);
@@ -548,8 +550,11 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
  */
 const ACTION_ID_PATTERN = /Action ID:\s*([0-9a-f-]{36})/;
 const PROXY_PORT_PATTERN = /Proxy-Port:\s*(\d+)/;
-
-function parseApprovalResult(output: string, tool: string): ProgressEvent | undefined {
+function parseApprovalResult(
+  output: string,
+  tool: string,
+  args: Record<string, unknown>,
+): ProgressEvent | undefined {
   if (!output.includes("Approval required")) return undefined;
   const match = output.match(ACTION_ID_PATTERN);
   if (!match) return undefined;
@@ -558,7 +563,7 @@ function parseApprovalResult(output: string, tool: string): ProgressEvent | unde
     type: "approval_required",
     actionId: match[1],
     tool,
-    args: {},
+    args,
     ...(portMatch ? { proxyPort: parseInt(portMatch[1], 10) } : {}),
   };
 }
