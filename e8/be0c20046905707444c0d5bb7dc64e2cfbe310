@@ -1,0 +1,27 @@
+docker/opencode/Dockerfile
+  f257274c14e64f2f 3,6-8,10
+docker-compose.yml
+  f257274c14e64f2f 108
+Dockerfile
+  f257274c14e64f2f 11-12,34,43,49,56,64-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e8be0c20046905707444c0d5bb7dc64e2cfbe310",
+  "prompts": {
+    "f257274c14e64f2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1663c531-e1f5-45e0-98fc-b85108d74c63",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 10,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
