@@ -1,0 +1,37 @@
+packages/runner/src/index.ts
+  1d572245d2d60784 515,521,527
+packages/gateway/src/index.ts
+  1d572245d2d60784 15,21,31
+docs/plan/2026031205_approval-flow.md
+  1d572245d2d60784 112,132-156
+packages/gateway/src/app.ts
+  1d572245d2d60784 63-64,108,352-363,365-373,379,381,385-387
+packages/slack-mcp/src/index.ts
+  1d572245d2d60784 289,291-292,313,320
+packages/common/src/progress-events.ts
+  1d572245d2d60784 41,74
+docker-compose.yml
+  1d572245d2d60784 159
+packages/gateway/src/service.ts
+  1d572245d2d60784 168,181,189-191,196-197,200-202,204,211-213,218-220
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b81b0387cbbb6960fbaa5abefb8815e2451f5866",
+  "prompts": {
+    "1d572245d2d60784": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1dd35a45-3e73-4510-912e-395b155d37e9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 265,
+      "total_deletions": 204,
+      "accepted_lines": 101,
+      "overriden_lines": 0
+    }
+  }
+}
