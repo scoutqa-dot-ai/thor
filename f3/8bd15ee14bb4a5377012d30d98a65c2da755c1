@@ -1,0 +1,29 @@
+packages/runner/src/index.ts
+  e30747a4499c9dd6 14,40-52,346-354
+docker/opencode/agents/build.md
+  e30747a4499c9dd6 334-343
+docs/plan/2026031401_memory.md
+  e30747a4499c9dd6 93-112
+scripts/test-e2e.sh
+  e30747a4499c9dd6 3,20-22,39-72,74-90,92-93,111,114-115,117-118,120-122,129,132-133,135-136,155,157,160-161,163-165,176,187,189,192-193,195-197,216-242,244-263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f38bd15ee14bb4a5377012d30d98a65c2da755c1",
+  "prompts": {
+    "e30747a4499c9dd6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06bfda7e-b324-451b-acdc-bd27db98a347",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 190,
+      "total_deletions": 64,
+      "accepted_lines": 190,
+      "overriden_lines": 0
+    }
+  }
+}
