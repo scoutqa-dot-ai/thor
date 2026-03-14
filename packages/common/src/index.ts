@@ -15,6 +15,7 @@ export {
   resolveCorrelationKey,
   isAliasableTool,
   extractAliases,
+  getNotesLineCount,
 } from "./notes.js";
 export type { ToolArtifact, ExtractedAlias } from "./notes.js";
 export {

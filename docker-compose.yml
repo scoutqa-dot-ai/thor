@@ -106,10 +106,11 @@ services:
     command: ["serve", "--port", "4096", "--hostname", "0.0.0.0"]
     volumes:
       - ./docker-volumes/opencode:/home/thor/.local/share/opencode
+      - ./docker-volumes/workspace/memory:/workspace/memory
       - ./docker-volumes/workspace/repos:/workspace/repos:ro
-      - ./docker-volumes/workspace/worktrees:/workspace/worktrees
       - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
       - ./docker-volumes/workspace/cron:/workspace/cron
+      - ./docker-volumes/workspace/worktrees:/workspace/worktrees
     depends_on:
       proxy:
         condition: service_healthy

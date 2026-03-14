@@ -7,6 +7,7 @@ export const ProgressStartSchema = z.object({
   sessionId: z.string(),
   correlationKey: z.string().optional(),
   resumed: z.boolean(),
+  previousNotesPath: z.string().optional(),
 });
 
 export const ProgressToolSchema = z.object({

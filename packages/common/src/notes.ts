@@ -487,6 +487,19 @@ function escapeRegExp(s: string): string {
 }
 
 /**
+ * Count the number of lines in a notes file.
+ * Returns 0 if the file doesn't exist or can't be read.
+ */
+export function getNotesLineCount(filePath: string): number {
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    return content.split("\n").length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Append a session summary block to today's notes file.
  * Always writes to today's path — never touches previous days' files.
  * No-op if today's notes file does not exist.

@@ -11,6 +11,7 @@ import type {
   ToolStateCompleted,
   ToolStateError,
 } from "@opencode-ai/sdk";
+import { readFileSync } from "node:fs";
 import {
   createLogger,
   logInfo,
@@ -24,6 +25,7 @@ import {
   isAliasableTool,
   extractAliases,
   registerAlias,
+  getNotesLineCount,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -38,6 +40,19 @@ const SESSION_DIRECTORY =
 
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
+
+/** Pinned memory file — injected into every new or stale session prompt. */
+const PINNED_MEMORY_PATH = process.env.PINNED_MEMORY_PATH || "/workspace/memory/ALWAYS.md";
+
+/** Read pinned memory file, returns content or undefined. */
+function readPinnedMemory(): string | undefined {
+  try {
+    const content = readFileSync(PINNED_MEMORY_PATH, "utf-8").trim();
+    return content || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 async function fetchOpencode(path: string): Promise<Response> {
   return fetch(`${OPENCODE_URL}${path}`);
@@ -235,6 +250,7 @@ app.post("/trigger", async (req, res) => {
     // --- Session resolution: resume existing or create new ---
     let sessionId: string;
     let resumed = false;
+    let previousNotesPath: string | undefined;
 
     const candidateSessionId =
       requestedSessionId || (correlationKey ? getSessionIdFromNotes(correlationKey) : undefined);
@@ -251,8 +267,17 @@ app.post("/trigger", async (req, res) => {
           throw new Error("Session not found");
         }
       } catch {
-        // Session is gone — create a new one and update the notes file
+        // Session is gone — create a new one and prepend a resumption hint
         logInfo(log, "session_stale", { sessionId: candidateSessionId, correlationKey });
+
+        if (correlationKey) {
+          previousNotesPath = findNotesFile(correlationKey);
+          if (previousNotesPath) {
+            const lineCount = getNotesLineCount(previousNotesPath);
+            prompt = `[Previous session was lost. Your notes from the prior session are at: ${previousNotesPath} (${lineCount} lines) — read it if you need context.]\n\n${prompt}`;
+            logInfo(log, "resumption_hint", { previousNotesPath, lineCount, correlationKey });
+          }
+        }
 
         const session = await client.session.create({
           body: { title: `trigger: ${prompt.slice(0, 50)}` },
@@ -322,6 +347,15 @@ app.post("/trigger", async (req, res) => {
       }
     }
 
+    // --- Pinned memory: inject into new or stale sessions ---
+    if (!resumed) {
+      const pinnedMemory = readPinnedMemory();
+      if (pinnedMemory) {
+        prompt = `[Pinned memory — important context from prior sessions]\n${pinnedMemory}\n\n${prompt}`;
+        logInfo(log, "pinned_memory_injected", { path: PINNED_MEMORY_PATH });
+      }
+    }
+
     const parts: TextPartInput[] = [{ type: "text", text: prompt }];
     const modelConfig = model
       ? {
@@ -362,7 +396,13 @@ app.post("/trigger", async (req, res) => {
       res.write(JSON.stringify(event) + "\n");
     }
 
-    emit({ type: "start", sessionId, correlationKey, resumed });
+    emit({
+      type: "start",
+      sessionId,
+      correlationKey,
+      resumed,
+      ...(previousNotesPath ? { previousNotesPath } : {}),
+    });
 
     // --- Stream processing ---
 

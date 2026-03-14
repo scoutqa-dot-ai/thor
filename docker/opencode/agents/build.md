@@ -254,9 +254,10 @@ Filesystem mounts:
 
 | Path                   | Access     | Purpose                            |
 | ---------------------- | ---------- | ---------------------------------- |
+| `/workspace/memory`    | read-write | Persistent agent memory            |
 | `/workspace/repos`     | read-only  | Main repo clone — browse code here |
-| `/workspace/worktrees` | read-write | Git worktrees for code changes     |
 | `/workspace/worklog`   | read-only  | Tool call logs and session notes   |
+| `/workspace/worktrees` | read-write | Git worktrees for code changes     |
 
 You cannot install packages or modify `/workspace/repos`. All code changes go through the worktree workflow below.
 
@@ -317,6 +318,46 @@ Steps for code changes:
 6. After merge, clean up: `{ "args": ["worktree", "remove", "/workspace/worktrees/<repo-name>/<branch>"], "cwd": "/workspace/repos/<repo-name>" }`
 
 Never commit directly to `main` — it is protected server-side.
+
+## Memory
+
+You have a persistent memory directory at `/workspace/memory/`. Use it to store facts, context, and learnings that would be useful across sessions.
+
+### When to write memory
+
+Write a memory file when you discover a durable fact during a session — something a future session would benefit from knowing. Examples:
+
+- An issue's root cause, status, or blockers
+- A PR's purpose and key decisions
+- A recurring pattern or gotcha in the codebase
+- Who owns what, or team conventions you learn from conversations
+
+### When to read memory
+
+At the start of a non-trivial session, check if relevant memory exists. Use file listing and search to find related files:
+
+- List files: look in `/workspace/memory/` for relevant file names
+- Search content: grep across memory files for keywords from the current request
+
+### Pinned memory — `ALWAYS.md`
+
+`/workspace/memory/ALWAYS.md` is special. Its contents are automatically injected into the first prompt of every new session. Use it for context that is important enough to always be top-of-mind:
+
+- Critical ongoing incidents or blockers
+- Team decisions that affect how you should behave
+- Corrections or preferences from team members
+
+Keep it short — everything in this file costs tokens on every session start.
+
+### Format
+
+Plain markdown. You decide the file names, structure, and organization. Keep files focused — one topic per file. Update existing files rather than creating duplicates.
+
+### What NOT to store
+
+- Ephemeral task state (use the session for that)
+- Raw tool output (that's in the worklog)
+- Anything already in the codebase or docs
 
 ## Final Rule
 

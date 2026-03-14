@@ -19,6 +19,7 @@ const {
   resolveCorrelationKey,
   isAliasableTool,
   extractAliases,
+  getNotesLineCount,
 } = await import("./notes.js");
 
 describe("notes", () => {
@@ -393,6 +394,29 @@ describe("notes", () => {
       // Should resolve to the NEWER session that claimed this key via alias
       const resolved = resolveCorrelationKey(oldCanonical);
       expect(resolved).toBe(newCanonical);
+    });
+  });
+
+  describe("getNotesLineCount", () => {
+    it("returns line count for existing notes file", () => {
+      const key = uniqueKey();
+      createNotes({
+        correlationKey: key,
+        prompt: "test",
+        sessionId: "session-lines",
+      });
+
+      const path = findNotesFile(key)!;
+      const count = getNotesLineCount(path);
+      expect(count).toBeGreaterThan(0);
+
+      // Verify it matches actual line count
+      const content = readFileSync(path, "utf-8");
+      expect(count).toBe(content.split("\n").length);
+    });
+
+    it("returns 0 for non-existent file", () => {
+      expect(getNotesLineCount("/nonexistent/path.md")).toBe(0);
     });
   });
 
