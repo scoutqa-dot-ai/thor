@@ -1,0 +1,25 @@
+packages/runner/src/index.ts
+  e30747a4499c9dd6 336-345
+packages/common/src/notes.ts
+  e30747a4499c9dd6 135,137,156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "6b830189c17d9ac998b8e5c1e22d98b5468bf6af",
+  "prompts": {
+    "e30747a4499c9dd6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06bfda7e-b324-451b-acdc-bd27db98a347",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 21,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    }
+  }
+}
