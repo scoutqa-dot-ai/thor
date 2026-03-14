@@ -1,0 +1,25 @@
+packages/runner/src/index.ts
+  e30747a4499c9dd6 340-342
+scripts/test-e2e.sh
+  e30747a4499c9dd6 30,36-38,104,107,121-124,128,141-145,151,176-180,183,195,209-212,215-216,245-246,249,251,270-272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "98b7924707350595cc0761ea28ded469c772b5dd",
+  "prompts": {
+    "e30747a4499c9dd6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06bfda7e-b324-451b-acdc-bd27db98a347",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 46,
+      "total_deletions": 30,
+      "accepted_lines": 40,
+      "overriden_lines": 0
+    }
+  }
+}
