@@ -134,9 +134,9 @@ export function continueNotes(opts: {
   prompt: string;
   model?: string;
   previousNotesPath: string;
-}): void {
+}): boolean {
   const target = todayNotesPath(opts.correlationKey);
-  if (existsSync(target)) return;
+  if (existsSync(target)) return false;
 
   const dir = todayNotesDir();
   mkdirSync(dir, { recursive: true });
@@ -155,6 +155,7 @@ Previous: ${backRef}
 `;
 
   writeFileSync(target, content);
+  return true;
 }
 
 /**

@@ -337,10 +337,21 @@ app.post("/trigger", async (req, res) => {
     if (correlationKey) {
       if (resumed) {
         // Session already has full conversation history — no need to inject notes.
-        // Roll forward into today's file (back-references the previous day's file).
-        const previousNotesPath = findNotesFile(correlationKey);
-        if (previousNotesPath) {
-          continueNotes({ correlationKey, sessionId, prompt, model, previousNotesPath });
+        const existingNotes = findNotesFile(correlationKey);
+        if (existingNotes) {
+          // continueNotes creates a new today-file with Follow-up header when
+          // rolling forward from a previous day; no-op if today's file exists.
+          const created = continueNotes({
+            correlationKey,
+            sessionId,
+            prompt,
+            model,
+            previousNotesPath: existingNotes,
+          });
+          if (!created) {
+            // Same-day resume — today's file already existed, append follow-up.
+            appendTrigger({ correlationKey, prompt, model });
+          }
         }
       } else {
         createNotes({ correlationKey, prompt, model, sessionId });

@@ -27,11 +27,15 @@ failed=0
 assert() {
   local condition="$1"
   local message="$2"
+  local debug="${3:-}"
   if eval "$condition"; then
     echo "  ✓ $message"
     passed=$((passed + 1))
   else
     echo "  ✗ $message"
+    if [[ -n "$debug" ]]; then
+      echo "    → $debug"
+    fi
     failed=$((failed + 1))
   fi
 }
@@ -56,7 +60,7 @@ json_field() {
   local field="$2"
   echo "$json" | node -e "
     const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-    const v = d[$field];
+    const v = d[\"$field\"];
     console.log(v === undefined ? '' : typeof v === 'boolean' ? String(v) : String(v));
   " 2>/dev/null || echo ""
 }
@@ -72,35 +76,16 @@ response_contains() {
   " 2>/dev/null || echo "no"
 }
 
-# ── 0. Cleanup ─────────────────────────────────────────────────────────────
-
-echo ""
-echo "=== Cleanup ==="
-
-# Remove ALWAYS.md to ensure clean state
-if [[ -f "$MEMORY_DIR/ALWAYS.md" ]]; then
-  rm "$MEMORY_DIR/ALWAYS.md"
-  echo "  Removed existing ALWAYS.md"
-fi
-
-# Remove today's e2e test notes (any file matching e2e-test-*)
-if [[ -d "$WORKLOG_DIR/$TODAY/notes" ]]; then
-  find "$WORKLOG_DIR/$TODAY/notes" -name 'e2e-test-*' -delete 2>/dev/null || true
-  echo "  Cleaned up today's e2e test notes"
-fi
-
-echo "  Done"
-
 # ── 1. Health checks ────────────────────────────────────────────────────────
 
 echo ""
 echo "=== Health Checks ==="
 
 proxy_health=$(curl -sf "$PROXY_LINEAR_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy (linear) is healthy"
+assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy (linear) is healthy" "got: $proxy_health"
 
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy"
+assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy" "got: $runner_health"
 
 # ── 2. Trigger: list tools ──────────────────────────────────────────────────
 
@@ -114,12 +99,14 @@ list_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 list_response=$(echo "$list_raw" | parse_done)
 
-assert '[[ "$(json_field "$list_response" "sessionId")" != "" ]]' "Got a session ID"
-assert '[[ "$(response_contains "$list_response" "list_issues")" == "yes" ]]' "Response mentions list_issues tool"
+list_session=$(json_field "$list_response" "sessionId")
+list_response_text=$(json_field "$list_response" "response")
+assert '[[ -n "$list_session" ]]' "Got a session ID" "sessionId='$list_session'"
+assert '[[ "$(response_contains "$list_response" "list_issues")" == "yes" ]]' "Response mentions list_issues tool" "response: ${list_response_text:0:200}"
 
 list_has_linear=$(response_contains "$list_response" "get_issue")
 list_has_posthog=$(response_contains "$list_response" "insight-query")
-assert '[[ "$list_has_linear" == "yes" || "$list_has_posthog" == "yes" ]]' "Response mentions proxied tools (linear or posthog)"
+assert '[[ "$list_has_linear" == "yes" || "$list_has_posthog" == "yes" ]]' "Response mentions proxied tools (linear or posthog)" "response: ${list_response_text:0:200}"
 
 # ── 3. Trigger: actual tool call ────────────────────────────────────────────
 
@@ -132,14 +119,17 @@ issues_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 issues_response=$(echo "$issues_raw" | parse_done)
 
-assert '[[ "$(json_field "$issues_response" "sessionId")" != "" ]]' "Got a session ID"
-assert '[[ "$(response_contains "$issues_response" "list_issues")" == "yes" ]]' "Tool calls include list_issues"
+issues_session=$(json_field "$issues_response" "sessionId")
+issues_tool_calls=$(json_field "$issues_response" "toolCalls")
+issues_response_text=$(json_field "$issues_response" "response")
+assert '[[ -n "$issues_session" ]]' "Got a session ID" "sessionId='$issues_session'"
+assert '[[ "$(response_contains "$issues_response" "list_issues")" == "yes" ]]' "Tool calls include list_issues" "toolCalls: ${issues_tool_calls:0:200} | response: ${issues_response_text:0:200}"
 
 has_response=$(echo "$issues_response" | node -e "
   const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
   console.log(d.response && d.response.length > 20 ? 'yes' : 'no');
 " 2>/dev/null || echo "no")
-assert '[[ "$has_response" == "yes" ]]' "Response contains substantive content"
+assert '[[ "$has_response" == "yes" ]]' "Response contains substantive content" "response length: ${#issues_response_text}"
 
 # ── 4. Memory continuity: session resume + notes ────────────────────────────
 
@@ -149,28 +139,29 @@ echo "=== Memory Continuity: Session Resume + Notes ==="
 CORR_KEY="e2e-test-$(date +%s)"
 NOTES_FILE="$WORKLOG_DIR/$TODAY/notes/$(echo "$CORR_KEY" | sed 's/[^a-zA-Z0-9_-]/-/g; s/-\+/-/g').md"
 
-# Generate a random code word so the agent can only know it from trigger #1
-SECRET_CODE="THOR$(date +%s | tail -c 6)"
+# Generate a random phrase so the agent can only know it from trigger #1
+PHRASE="THOR$(date +%s | tail -c 6)"
 
-# 4a. First trigger — tell the agent a secret code word
-echo "  Sending trigger #1 (new session — planting secret code: $SECRET_CODE)..."
+# 4a. First trigger — tell the agent a phrase to remember
+echo "  Sending trigger #1 (new session — planting phrase: $PHRASE)..."
 trigger1_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"Remember this secret code for later: $SECRET_CODE. Confirm you have noted it by repeating the code back to me.\",\"correlationKey\":\"$CORR_KEY\"}" \
+  -d "{\"prompt\":\"Our team mascot name is $PHRASE. Confirm by repeating the mascot name back to me.\",\"correlationKey\":\"$CORR_KEY\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 trigger1=$(echo "$trigger1_raw" | parse_done)
 
 session1=$(json_field "$trigger1" "sessionId")
 resumed1=$(json_field "$trigger1" "resumed")
-response1_has_code=$(response_contains "$trigger1" "$SECRET_CODE")
+response1_has_phrase=$(response_contains "$trigger1" "$PHRASE")
 
-assert '[[ -n "$session1" ]]' "Trigger #1: got a session ID"
-assert '[[ "$resumed1" == "false" ]]' "Trigger #1: was NOT a resumed session"
-assert '[[ "$response1_has_code" == "yes" ]]' "Trigger #1: agent confirmed the secret code"
-assert '[[ -f "$NOTES_FILE" ]]' "Trigger #1: notes file created"
+response1_text=$(json_field "$trigger1" "response")
+assert '[[ -n "$session1" ]]' "Trigger #1: got a session ID" "sessionId='$session1'"
+assert '[[ "$resumed1" == "false" ]]' "Trigger #1: was NOT a resumed session" "resumed='$resumed1'"
+assert '[[ "$response1_has_phrase" == "yes" ]]' "Trigger #1: agent confirmed the phrase" "response: ${response1_text:0:200}"
+assert '[[ -f "$NOTES_FILE" ]]' "Trigger #1: notes file created" "expected: $NOTES_FILE"
 
 if [[ -f "$NOTES_FILE" ]]; then
-  assert 'grep -q "$SECRET_CODE" "$NOTES_FILE"' "Trigger #1: notes file contains the secret code"
+  assert 'grep -q "$PHRASE" "$NOTES_FILE"' "Trigger #1: notes file contains the phrase" "phrase=$PHRASE, file=$NOTES_FILE"
 fi
 
 # 4b. Verify session exists in OpenCode via its native API
@@ -182,27 +173,28 @@ oc_session_id=$(echo "$oc_session" | node -e "
   console.log(d.id || '');
 " 2>/dev/null || echo "")
 
-assert '[[ "$oc_session_id" == "$session1" ]]' "OpenCode API confirms session exists"
+assert '[[ "$oc_session_id" == "$session1" ]]' "OpenCode API confirms session exists" "expected='$session1', got='$oc_session_id'"
 
-# 4c. Second trigger — ask the agent to recall the secret code
-echo "  Sending trigger #2 (resume session — asking agent to recall the code)..."
+# 4c. Second trigger — ask the agent to recall the phrase
+echo "  Sending trigger #2 (resume session — asking agent to recall the phrase)..."
 trigger2_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"What was the secret code I told you earlier? Reply with just the code, nothing else.\",\"correlationKey\":\"$CORR_KEY\"}" \
+  -d "{\"prompt\":\"What is our team mascot name? Reply with just the name, nothing else.\",\"correlationKey\":\"$CORR_KEY\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 trigger2=$(echo "$trigger2_raw" | parse_done)
 
 session2=$(json_field "$trigger2" "sessionId")
 resumed2=$(json_field "$trigger2" "resumed")
-response2_has_code=$(response_contains "$trigger2" "$SECRET_CODE")
+response2_has_phrase=$(response_contains "$trigger2" "$PHRASE")
 
-assert '[[ "$session2" == "$session1" ]]' "Trigger #2: reused the SAME session ID"
-assert '[[ "$resumed2" == "true" ]]' "Trigger #2: was a resumed session"
-assert '[[ "$response2_has_code" == "yes" ]]' "Trigger #2: agent recalled the secret code ($SECRET_CODE)"
+response2_text=$(json_field "$trigger2" "response")
+assert '[[ "$session2" == "$session1" ]]' "Trigger #2: reused the SAME session ID" "expected='$session1', got='$session2'"
+assert '[[ "$resumed2" == "true" ]]' "Trigger #2: was a resumed session" "resumed='$resumed2'"
+assert '[[ "$response2_has_phrase" == "yes" ]]' "Trigger #2: agent recalled the phrase ($PHRASE)" "response: ${response2_text:0:200}"
 
 if [[ -f "$NOTES_FILE" ]]; then
-  assert 'grep -q "Follow-up" "$NOTES_FILE"' "Trigger #2: notes file has follow-up entry"
-  assert 'grep -q "Result" "$NOTES_FILE"' "Trigger #2: notes file has result summary"
+  assert 'grep -q "Follow-up" "$NOTES_FILE"' "Trigger #2: notes file has follow-up entry" "file has no 'Follow-up' heading"
+  assert 'grep -q "Result" "$NOTES_FILE"' "Trigger #2: notes file has result summary" "file has no 'Result' heading"
 fi
 
 echo ""
@@ -218,49 +210,47 @@ fi
 echo ""
 echo "=== Cross-Session Memory: ALWAYS.md ==="
 
-MEMORY_CODE="MEM$(date +%s | tail -c 6)"
+MEMORY_PHRASE="MEM$(date +%s | tail -c 6)"
 CORR_KEY_A="e2e-memory-writer-$(date +%s)"
 CORR_KEY_B="e2e-memory-reader-$(date +%s)"
 
-# 5a. Trigger with corr key A — ask the agent to write a fact to ALWAYS.md
-echo "  Sending trigger A (writing pinned memory with code: $MEMORY_CODE)..."
+# 5a. Trigger with corr key A — ask the agent to remember something important
+echo "  Sending trigger A (asking agent to remember phrase: $MEMORY_PHRASE)..."
 trigger_a_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"Write the following line to /workspace/memory/ALWAYS.md (create the file if it does not exist): 'The deployment secret code is $MEMORY_CODE'. Do nothing else. Confirm when done.\",\"correlationKey\":\"$CORR_KEY_A\"}" \
+  -d "{\"prompt\":\"Please remember this for all future sessions: our team mascot is called $MEMORY_PHRASE. Save it to your pinned memory so you never forget.\",\"correlationKey\":\"$CORR_KEY_A\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 trigger_a=$(echo "$trigger_a_raw" | parse_done)
 
 status_a=$(json_field "$trigger_a" "status")
-assert '[[ "$status_a" == "completed" ]]' "Trigger A: completed successfully"
+response_a_text=$(json_field "$trigger_a" "response")
+assert '[[ "$status_a" == "completed" ]]' "Trigger A: completed successfully" "status='$status_a', response: ${response_a_text:0:200}"
 
-# Verify ALWAYS.md was created and contains the code
-assert '[[ -f "$MEMORY_DIR/ALWAYS.md" ]]' "ALWAYS.md was created"
+# Verify ALWAYS.md was created and contains the phrase
+assert '[[ -f "$MEMORY_DIR/ALWAYS.md" ]]' "ALWAYS.md was created" "expected: $MEMORY_DIR/ALWAYS.md"
 if [[ -f "$MEMORY_DIR/ALWAYS.md" ]]; then
-  assert 'grep -q "$MEMORY_CODE" "$MEMORY_DIR/ALWAYS.md"' "ALWAYS.md contains the memory code ($MEMORY_CODE)"
+  assert 'grep -q "$MEMORY_PHRASE" "$MEMORY_DIR/ALWAYS.md"' "ALWAYS.md contains the memory phrase ($MEMORY_PHRASE)" "file content: $(cat "$MEMORY_DIR/ALWAYS.md")"
   echo ""
   echo "  ALWAYS.md content:"
   cat "$MEMORY_DIR/ALWAYS.md" | sed 's/^/    /'
 fi
 
-# 5b. Trigger with corr key B (different session) — ask about the code
+# 5b. Trigger with corr key B (different session) — ask about the phrase
 echo ""
-echo "  Sending trigger B (new session, different corr key — asking about the code)..."
+echo "  Sending trigger B (new session, different corr key — asking about the phrase)..."
 trigger_b_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"What is the deployment secret code? Reply with just the code, nothing else.\",\"correlationKey\":\"$CORR_KEY_B\"}" \
+  -d "{\"prompt\":\"What is our team mascot called? Reply with just the name.\",\"correlationKey\":\"$CORR_KEY_B\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 trigger_b=$(echo "$trigger_b_raw" | parse_done)
 
 session_b=$(json_field "$trigger_b" "sessionId")
 resumed_b=$(json_field "$trigger_b" "resumed")
-response_b_has_code=$(response_contains "$trigger_b" "$MEMORY_CODE")
+response_b_has_phrase=$(response_contains "$trigger_b" "$MEMORY_PHRASE")
 
-assert '[[ "$resumed_b" == "false" ]]' "Trigger B: was NOT a resumed session (different corr key)"
-assert '[[ "$response_b_has_code" == "yes" ]]' "Trigger B: agent recalled cross-session memory code ($MEMORY_CODE)"
-
-# 5c. Cleanup ALWAYS.md
-rm -f "$MEMORY_DIR/ALWAYS.md"
-echo "  Cleaned up ALWAYS.md"
+response_b_text=$(json_field "$trigger_b" "response")
+assert '[[ "$resumed_b" == "false" ]]' "Trigger B: was NOT a resumed session (different corr key)" "resumed='$resumed_b'"
+assert '[[ "$response_b_has_phrase" == "yes" ]]' "Trigger B: agent recalled cross-session memory phrase ($MEMORY_PHRASE)" "response: ${response_b_text:0:200}"
 
 # ── Results ─────────────────────────────────────────────────────────────────
 
