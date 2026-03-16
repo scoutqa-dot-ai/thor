@@ -6,49 +6,50 @@ An event-driven AI team member that monitors Slack, GitHub, Linear, and PostHog,
 
 ```
                         ┌─────────┐
-                        │ ingress │ :8080
+                        │ ingress │
                         │ (nginx) │
                         └────┬────┘
-                  ┌──────────┴──────────┐
-                  ▼                      ▼
+                  ┌──────────┴─────────┐
+                  ▼                    ▼
            ┌──────────┐          ┌───────────┐
-           │ gateway  │ :3002    │ opencode  │ :4096
+           │ gateway  │          │ opencode  │
            │ webhooks │          │ AI engine │
-           └────┬─────┘          └─────┬─────┘
-                │                      │ MCP
-                ▼                      ▼
-           ┌─────────┐           ┌──────────┐
-           │ runner  │ :3000     │  proxy   │ :3010–3014
-           │ sessions│           │ policy   │
-           └─────────┘           └────┬─────┘
-                                      │
-                    ┌────────┬────────┼────────┬────────┐
-                    ▼        ▼        ▼        ▼        ▼
-                 Linear  PostHog    Slack    GitHub    Git
-                 (hosted) (hosted)   MCP    (hosted)   MCP
-                                    :3003             :3004
+           └────┬─────┘          └──┬─────┬──┘
+                │               MCP │     │ CLI
+                ▼                   ▼     ▼
+           ┌─────────┐    ┌──────────┐   ┌──────────────┐
+           │ runner  │    │  proxy   │   │ git-wrappers │
+           │ sessions│    │ policy   │   │ git/gh CLI   │
+           └─────────┘    └────┬─────┘   └──────────────┘
+                               │
+                    ┌──────────┼──────────┬──────────┐
+                    ▼          ▼          ▼          ▼
+                 Linear     PostHog     Slack     Grafana
+                 (hosted)   (hosted)     MCP       MCP
 ```
 
-Gateway receives events and triggers the runner. OpenCode connects to proxy instances for tool access.
+Gateway receives events and triggers the runner. OpenCode connects to proxy instances for tool access and uses git-wrappers for Git/GitHub CLI operations.
 
 ## Services
 
-| Service       | Port      | Package           | Role                                                                     |
-| ------------- | --------- | ----------------- | ------------------------------------------------------------------------ |
-| **ingress**   | 8080      | `docker/ingress`  | Nginx reverse proxy with Vouch SSO                                       |
-| **gateway**   | 3002      | `@thor/gateway`   | Slack & GitHub webhook ingestion, event batching, trigger orchestration  |
-| **runner**    | 3000      | `@thor/runner`    | OpenCode session management, prompt execution, NDJSON progress streaming |
-| **opencode**  | 4096      | Docker image      | AI agent runtime (headless server)                                       |
-| **proxy**     | 3010–3014 | `@thor/proxy`     | MCP tool allow-listing, credential injection, audit logging              |
-| **slack-mcp** | 3003      | `@thor/slack-mcp` | Slack API MCP server, progress message lifecycle                         |
-| **git-mcp**   | 3004      | `@thor/git-mcp`   | Git command execution with PAT credential isolation                      |
-| **data**      | 3080      | `docker/data`     | Nginx credential proxy for internal APIs (requires custom config)        |
-| **vouch**     | 9090      | `docker/vouch`    | OAuth/SSO authentication proxy                                           |
+| Service          | Port      | Package              | Role                                                                     |
+| ---------------- | --------- | -------------------- | ------------------------------------------------------------------------ |
+| **cron**         | —         | `docker/cron`        | BusyBox crond for scheduled `hey-thor` prompts                           |
+| **data**         | 3080      | `docker/data`        | Nginx credential proxy for internal APIs (requires custom config)        |
+| **gateway**      | 3002      | `@thor/gateway`      | Slack & GitHub webhook ingestion, event batching, trigger orchestration  |
+| **git-wrappers** | 3004      | `@thor/git-wrappers` | Git/GitHub CLI proxy with PAT credential isolation                       |
+| **grafana-mcp**  | 8000      | Docker image         | Grafana MCP server for Loki/Tempo queries                                |
+| **ingress**      | 8080      | `docker/ingress`     | Nginx reverse proxy with Vouch SSO                                       |
+| **opencode**     | 4096      | Docker image         | AI agent runtime (headless server)                                       |
+| **proxy**        | 3010–3013 | `@thor/proxy`        | MCP tool allow-listing, credential injection, audit logging              |
+| **runner**       | 3000      | `@thor/runner`       | OpenCode session management, prompt execution, NDJSON progress streaming |
+| **slack-mcp**    | 3003      | `@thor/slack-mcp`    | Slack API MCP server, progress message lifecycle                         |
+| **vouch**        | 9090      | Docker image         | OAuth/SSO authentication proxy (Vouch Proxy)                             |
 
 ## How It Works
 
-1. **Events arrive** — Slack mentions and GitHub webhooks hit the gateway
-2. **Smart batching** — Events are queued per correlation key (e.g., Slack thread) with configurable delays (3s for direct mentions, 60s for unaddressed messages and GitHub events)
+1. **Events arrive** — Slack mentions, GitHub webhooks, and cron schedules hit the gateway
+2. **Smart batching** — Events are queued per correlation key (e.g., Slack thread) with configurable delays (3s for direct mentions, 60s for unaddressed messages and GitHub events, immediate for cron)
 3. **Session continuity** — The runner maps correlation keys to persistent OpenCode sessions, resuming context across interactions
 4. **Policy-enforced tools** — OpenCode accesses integrations through proxy instances that enforce allow-lists and log every tool call
 5. **Progress visibility** — Tool activity streams back to Slack as live-updating progress messages that auto-clean when the bot replies
@@ -66,10 +67,14 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 ```bash
 # Set required environment variables
 export GITHUB_PAT=github_pat_...
+export GRAFANA_SERVICE_ACCOUNT_TOKEN=glsa_...
+export GRAFANA_URL=https://your-instance.grafana.net
 export LINEAR_API_KEY=lin_api_...
 export POSTHOG_API_KEY=phx_...
 export SLACK_BOT_TOKEN=xoxb-...
+export SLACK_BOT_USER_ID=U...
 export SLACK_SIGNING_SECRET=...
+export VOUCH_DOMAINS=example.com
 export VOUCH_GOOGLE_CLIENT_ID=...
 export VOUCH_GOOGLE_CLIENT_SECRET=...
 export VOUCH_JWT_SECRET=...
@@ -98,10 +103,13 @@ Copy `.env.example` to `.env` and fill in:
 
 | Variable                            | Required | Service            | Purpose                                                          |
 | ----------------------------------- | -------- | ------------------ | ---------------------------------------------------------------- |
+| `CRON_SECRET`                       | No       | gateway, cron      | Shared secret for cron endpoint auth                             |
 | `DATA_ROUTES`                       | No       | data               | Comma-separated list of data proxy routes (see below)            |
-| `GIT_USER_NAME`                     | No       | git-mcp            | Git author name (default: `thor`)                                |
-| `GIT_USER_EMAIL`                    | No       | git-mcp            | Git author email (default: `thor@localhost`)                     |
-| `GITHUB_PAT`                        | Yes      | proxy, git-mcp     | GitHub fine-grained PAT                                          |
+| `GIT_USER_EMAIL`                    | No       | git-wrappers       | Git author email (default: `thor@localhost`)                     |
+| `GIT_USER_NAME`                     | No       | git-wrappers       | Git author name (default: `thor`)                                |
+| `GITHUB_PAT`                        | Yes      | git-wrappers       | GitHub fine-grained PAT                                          |
+| `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | grafana-mcp        | Grafana service account token                                    |
+| `GRAFANA_URL`                       | Yes      | grafana-mcp        | Grafana instance URL                                             |
 | `INGRESS_PORT`                      | No       | ingress            | Host port (default: `8080`)                                      |
 | `LINEAR_API_KEY`                    | Yes      | proxy              | Linear API access                                                |
 | `OPENCODE_URL`                      | No       | runner             | OpenCode server URL (default: `http://opencode:4096`)            |
@@ -109,10 +117,12 @@ Copy `.env.example` to `.env` and fill in:
 | `SESSION_CWD`                       | No       | runner             | Working directory for new sessions (default: `/workspace`)       |
 | `SLACK_ALLOWED_CHANNEL_IDS`         | No       | gateway, slack-mcp | Comma-separated channel IDs to restrict the bot to               |
 | `SLACK_BOT_TOKEN`                   | Yes      | slack-mcp          | Slack app bot token (`xoxb-...`)                                 |
+| `SLACK_BOT_USER_ID`                 | Yes      | gateway            | Bot's Slack user ID — used to ignore own messages                |
 | `SLACK_SIGNING_SECRET`              | Yes      | gateway            | Webhook signature verification                                   |
 | `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | gateway            | Signature timestamp tolerance (default: `300`)                   |
 | `VOUCH_CALLBACK_URL`                | No       | vouch              | OAuth callback URL (default: `http://localhost:8080/vouch/auth`) |
 | `VOUCH_COOKIE_DOMAIN`               | No       | vouch              | Cookie domain (default: `localhost`)                             |
+| `VOUCH_DOMAINS`                     | Yes      | vouch              | Allowed domain for Vouch login (e.g., `example.com`)             |
 | `VOUCH_GOOGLE_CLIENT_ID`            | Yes      | vouch              | Google OAuth client ID                                           |
 | `VOUCH_GOOGLE_CLIENT_SECRET`        | Yes      | vouch              | Google OAuth client secret                                       |
 | `VOUCH_JWT_SECRET`                  | Yes      | vouch              | Session JWT signing secret                                       |
@@ -144,10 +154,10 @@ The bundled agent prompt (`docker/opencode/agents/build.md`) contains only gener
 
 #### 4. Source repos
 
-Exec into the git-mcp container to clone repos — this runs as the `thor` user with the correct PAT credentials, avoiding permission issues:
+Exec into the git-wrappers container to clone repos — this runs as the `thor` user with the correct PAT credentials, avoiding permission issues:
 
 ```bash
-docker compose exec git-mcp git clone https://github.com/your-org/your-repo.git /workspace/repos/your-repo
+docker compose exec git-wrappers git clone https://github.com/your-org/your-repo.git /workspace/repos/your-repo
 ```
 
 Repos in `/workspace/repos/` are mounted read-only into OpenCode. Thor creates worktrees under `/workspace/worktrees/` for code changes.
@@ -195,11 +205,11 @@ thor/
 │   ├── runner/        # OpenCode session management, progress streaming
 │   ├── proxy/         # MCP policy proxy (one instance per integration)
 │   ├── slack-mcp/     # Slack MCP server + progress message manager
-│   └── git-mcp/       # Git MCP server with credential isolation
+│   └── git-wrappers/  # Git/GitHub CLI proxy with credential isolation
 ├── docker/
 │   ├── opencode/      # OpenCode container image
 │   ├── ingress/       # Nginx ingress config
-│   ├── vouch/         # Vouch SSO proxy config
+│   ├── cron/          # BusyBox crond for scheduled prompts
 │   └── data/          # Internal API credential proxy
 ├── docs/
 │   ├── feat/          # Feature specs and architecture
@@ -235,8 +245,7 @@ The allow list uses exact tool names. Environment variables in headers are inter
 | 3010 | `proxy.linear.json`  | Linear hosted MCP  |
 | 3011 | `proxy.posthog.json` | PostHog hosted MCP |
 | 3012 | `proxy.slack.json`   | `slack-mcp:3003`   |
-| 3013 | `proxy.github.json`  | GitHub hosted MCP  |
-| 3014 | `proxy.git.json`     | `git-mcp:3004`     |
+| 3013 | `proxy.grafana.json` | `grafana-mcp:8000` |
 
 Environment variables are documented in the Deployment Configuration section above.
 
@@ -249,7 +258,7 @@ Thor runs an AI agent with access to external APIs, so security is enforced in l
 Each service holds only the credentials it needs. OpenCode has no direct access to any API token.
 
 - **Proxy** — Injects API keys into upstream MCP requests via config-time `${ENV_VAR}` interpolation. Credentials never reach OpenCode.
-- **git-mcp** — Injects `GITHUB_PAT` at execution time via `GIT_ASKPASS` (a temporary script). The PAT is never passed as a CLI argument or environment variable visible to the git process.
+- **git-wrappers** — Injects `GITHUB_PAT` at execution time via `GIT_ASKPASS` (a temporary script). The PAT is never passed as a CLI argument or environment variable visible to the git process.
 - **data** — Nginx sidecar that injects API keys into proxied requests. Routes are configured via `DATA_ROUTES` env vars in `.env` (see `.env.example`). The entrypoint generates the nginx config at startup — no manual template editing needed. Falls back to httpbin.org when no routes are set. **Trade-off:** the data container receives the full `.env` via `env_file` so that admins can add new proxy targets without editing `docker-compose.yml`. This means all env vars (including unrelated secrets like `SLACK_BOT_TOKEN`) are visible inside the container. This is acceptable because the data container runs stock nginx, which does not expose environment variables to proxied requests or logs. If stricter isolation is needed, use a dedicated `data.env` file instead.
 - **slack-mcp** — Holds `SLACK_BOT_TOKEN` exclusively; no other service touches Slack's API directly.
 
@@ -260,7 +269,7 @@ The proxy sits between OpenCode and every upstream MCP server. Each proxy instan
 - Tools not in the allow-list are **never listed** to OpenCode and **never executed**
 - Blocked calls return an error: `"Unknown tool: <name>"`
 - Policy drift detection at startup — if an allow-list entry doesn't match any upstream tool, the proxy warns (dev) or refuses to start (production)
-- git-mcp blocks `clone` and `init` commands server-side — Thor can only work with repos that an admin has explicitly cloned into `/workspace/repos/`. This prevents the agent from fetching arbitrary repositories that could contain malicious instructions or prompt injection in READMEs, issue templates, or commit messages
+- git-wrappers blocks `clone` and `init` commands server-side — Thor can only work with repos that an admin has explicitly cloned into `/workspace/repos/`. This prevents the agent from fetching arbitrary repositories that could contain malicious instructions or prompt injection in READMEs, issue templates, or commit messages
 
 ### Webhook Authentication
 
@@ -287,9 +296,11 @@ OpenCode's container mounts are scoped:
 
 | Mount                  | Access     | Purpose                                   |
 | ---------------------- | ---------- | ----------------------------------------- |
+| `/workspace/cron`      | read-write | Crontab for scheduled jobs                |
+| `/workspace/memory`    | read-write | Persistent agent memory                   |
 | `/workspace/repos`     | read-only  | Source code — cannot be modified directly |
-| `/workspace/worktrees` | read-write | Git worktrees for changes                 |
 | `/workspace/worklog`   | read-only  | Audit logs — cannot be tampered with      |
+| `/workspace/worktrees` | read-write | Git worktrees for changes                 |
 
 ### Audit Logging
 
