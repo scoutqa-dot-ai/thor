@@ -111,10 +111,10 @@ Copy `.env.example` to `.env` and fill in:
 | `SLACK_BOT_TOKEN`                   | Yes      | slack-mcp          | Slack app bot token (`xoxb-...`)                                 |
 | `SLACK_SIGNING_SECRET`              | Yes      | gateway            | Webhook signature verification                                   |
 | `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | gateway            | Signature timestamp tolerance (default: `300`)                   |
-| `VOUCH_GOOGLE_CLIENT_ID`            | Yes      | vouch              | Google OAuth client ID                                           |
-| `VOUCH_GOOGLE_CLIENT_SECRET`        | Yes      | vouch              | Google OAuth client secret                                       |
 | `VOUCH_CALLBACK_URL`                | No       | vouch              | OAuth callback URL (default: `http://localhost:8080/vouch/auth`) |
 | `VOUCH_COOKIE_DOMAIN`               | No       | vouch              | Cookie domain (default: `localhost`)                             |
+| `VOUCH_GOOGLE_CLIENT_ID`            | Yes      | vouch              | Google OAuth client ID                                           |
+| `VOUCH_GOOGLE_CLIENT_SECRET`        | Yes      | vouch              | Google OAuth client secret                                       |
 | `VOUCH_JWT_SECRET`                  | Yes      | vouch              | Session JWT signing secret                                       |
 | `VOUCH_WHITELIST`                   | Yes      | vouch              | Comma-separated email allowlist for Vouch login                  |
 

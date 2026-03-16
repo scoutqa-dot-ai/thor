@@ -185,18 +185,22 @@ services:
         condition: service_healthy
 
   vouch:
-    build:
-      context: ./docker/vouch
+    image: quay.io/vouch/vouch-proxy:0.45.1
     restart: unless-stopped
     ports:
       - "127.0.0.1:9090:9090"
-    volumes:
-      - ./docker/vouch/config.yml:/template/config.yml:ro
     environment:
-      - VOUCH_CALLBACK_URL=${VOUCH_CALLBACK_URL:-http://localhost:8080/vouch/auth}
+      - OAUTH_CALLBACK_URL=${VOUCH_CALLBACK_URL:-http://localhost:8080/vouch/auth}
+      - OAUTH_CLIENT_ID=${VOUCH_GOOGLE_CLIENT_ID:?set VOUCH_GOOGLE_CLIENT_ID}
+      - OAUTH_CLIENT_SECRET=${VOUCH_GOOGLE_CLIENT_SECRET:?set VOUCH_GOOGLE_CLIENT_SECRET}
+      - OAUTH_PROVIDER=google
+      - OAUTH_SCOPES=openid,email,profile
       - VOUCH_COOKIE_DOMAIN=${VOUCH_COOKIE_DOMAIN:-localhost}
-      - VOUCH_GOOGLE_CLIENT_ID=${VOUCH_GOOGLE_CLIENT_ID:?set VOUCH_GOOGLE_CLIENT_ID}
-      - VOUCH_GOOGLE_CLIENT_SECRET=${VOUCH_GOOGLE_CLIENT_SECRET:?set VOUCH_GOOGLE_CLIENT_SECRET}
+      - VOUCH_COOKIE_MAXAGE=4320
+      - VOUCH_COOKIE_SECURE=false
+      - VOUCH_DOCUMENT_ROOT=/vouch
+      - VOUCH_DOMAINS=vouch
+      - VOUCH_JWT_MAXAGE=4320
       - VOUCH_JWT_SECRET=${VOUCH_JWT_SECRET:?set VOUCH_JWT_SECRET}
       - VOUCH_WHITELIST=${VOUCH_WHITELIST:?set VOUCH_WHITELIST}
     healthcheck:
