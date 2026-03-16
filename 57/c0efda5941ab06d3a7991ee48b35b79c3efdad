@@ -1,0 +1,23 @@
+docker/opencode/opencode.json
+  4998aa2d583aca61 30-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "57c0efda5941ab06d3a7991ee48b35b79c3efdad",
+  "prompts": {
+    "4998aa2d583aca61": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "89dc9004-a909-4ccf-9d09-a104a4ad1a40",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
