@@ -152,6 +152,7 @@ services:
     environment:
       - NODE_ENV=production
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+      - SLACK_BOT_USER_ID=${SLACK_BOT_USER_ID:?set SLACK_BOT_USER_ID}
       - SLACK_ALLOWED_CHANNEL_IDS=${SLACK_ALLOWED_CHANNEL_IDS:-}
       - CRON_SECRET=${CRON_SECRET:-}
     volumes:

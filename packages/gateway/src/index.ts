@@ -15,6 +15,7 @@ const QUEUE_DIR = process.env.QUEUE_DIR || "data/queue";
 const SLACK_ALLOWED_CHANNEL_IDS = [
   ...parseAllowedChannelIds(process.env.SLACK_ALLOWED_CHANNEL_IDS),
 ];
+const SLACK_BOT_USER_ID = process.env.SLACK_BOT_USER_ID || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const PROXY_HOST = process.env.PROXY_HOST || "proxy";
 
@@ -22,6 +23,7 @@ const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
   signingSecret: SLACK_SIGNING_SECRET,
   slackMcpUrl: SLACK_MCP_URL,
+  slackBotUserId: SLACK_BOT_USER_ID,
   proxyHost: PROXY_HOST,
   timestampToleranceSeconds: SLACK_TIMESTAMP_TOLERANCE_SECONDS,
   queueDir: QUEUE_DIR,

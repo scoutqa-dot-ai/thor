@@ -19,6 +19,7 @@ async function withServer<T>(
   const { app, queue } = createGatewayApp({
     signingSecret: "signing-secret",
     slackMcpUrl: "http://slack-mcp.test",
+    slackBotUserId: "U0BOTEXAMPLE",
     runnerUrl: "http://runner.test",
     fetchImpl,
     queueDir,

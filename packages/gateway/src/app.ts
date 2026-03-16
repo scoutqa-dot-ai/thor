@@ -70,12 +70,11 @@ const SLACK_UNADDRESSED_DELAY_MS = 60_000;
 /** Batch delay for GitHub events (ms). */
 const GITHUB_DELAY_MS = 60_000;
 
-/** Our bot's Slack user ID — used to ignore our own messages. */
-const SELF_USER_ID = "U0BOTEXAMPLE";
-
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
   slackMcpUrl: string;
+  /** Our bot's Slack user ID — used to ignore our own messages. */
+  slackBotUserId: string;
   /** Proxy hostname for approval resolution. Default: "proxy". */
   proxyHost?: string;
   timestampToleranceSeconds?: number;
@@ -113,6 +112,7 @@ export interface GatewayApp {
 export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   // --- Event queue with handler ---
 
+  const selfUserId = config.slackBotUserId;
   const batchDelay = config.slackActiveDelayMs ?? SLACK_ACTIVE_DELAY_MS;
   const unaddressedDelay = config.slackUnaddressedDelayMs ?? SLACK_UNADDRESSED_DELAY_MS;
   const githubDelay = config.githubDelayMs ?? GITHUB_DELAY_MS;
@@ -259,8 +259,15 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const event = envelope.data.event;
     const eventId = envelope.data.event_id;
 
+    // Skip all Slack events when bot user ID is not configured
+    if (!selfUserId) {
+      logInfo(log, "event_ignored_no_bot_user_id", { eventId });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
     // Ignore our own messages
-    if (event.user === SELF_USER_ID) {
+    if (event.user === selfUserId) {
       logInfo(log, "event_ignored_self", { eventId });
       res.status(200).json({ ok: true, ignored: true });
       return;
@@ -311,7 +318,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     // Skip if it's a duplicate of an app_mention (Slack sends both events)
-    if (event.type === "message" && !event.subtype && event.text?.includes(`<@${SELF_USER_ID}>`)) {
+    if (event.type === "message" && !event.subtype && event.text?.includes(`<@${selfUserId}>`)) {
       logInfo(log, "event_ignored_mention_duplicate", { eventId });
       res.status(200).json({ ok: true, ignored: true });
       return;
