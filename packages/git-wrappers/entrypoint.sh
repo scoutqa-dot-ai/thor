@@ -1,5 +1,5 @@
 #!/bin/sh
-# Git credential setup for the git-mcp container.
+# Git credential setup for the git-wrappers container.
 # Configures GIT_ASKPASS so any process (Node.js or interactive shell)
 # can authenticate to GitHub over HTTPS using the PAT.
 
@@ -11,6 +11,7 @@ if [ -n "$GITHUB_PAT" ]; then
   chmod 700 "$ASKPASS_SCRIPT"
 
   export GIT_ASKPASS="$ASKPASS_SCRIPT"
+  export GH_TOKEN="$GITHUB_PAT"
   export GIT_TERMINAL_PROMPT=0
   export GIT_CONFIG_COUNT=1
   export GIT_CONFIG_KEY_0="credential.username"

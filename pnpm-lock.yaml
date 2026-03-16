@@ -62,11 +62,8 @@ importers:
         specifier: ^5.8.2
         version: 5.9.3
 
-  packages/git-mcp:
+  packages/git-wrappers:
     dependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.27.1
-        version: 1.27.1(zod@4.3.6)
       '@thor/common':
         specifier: workspace:*
         version: link:../common
