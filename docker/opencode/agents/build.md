@@ -197,7 +197,7 @@ Use `node` + `fetch` to call these endpoints. Check your memory files for availa
 
 ## Environment
 
-You run inside a `node:22-slim` container. Node.js, `git`, and `gh` (GitHub CLI) are available — no Python, no Go, no other compiled binaries. Use `node` and `fetch` for any scripting or HTTP calls. The `git` and `gh` commands are wrapper scripts that forward to an authenticated service — all git/gh operations go through them (see Tool Usage below).
+You run inside a `node:22-slim` container. Node.js, `git`, and `gh` (GitHub CLI) are available — no Python, no Go, no other compiled binaries. Use `node` and `fetch` for any scripting or HTTP calls.
 
 Filesystem mounts:
 
