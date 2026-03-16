@@ -43,6 +43,28 @@ services:
       timeout: 3s
       retries: 10
 
+  grafana-mcp:
+    image: grafana/mcp-grafana:latest
+    restart: unless-stopped
+    entrypoint:
+      [
+        "/app/mcp-grafana",
+        "--transport",
+        "streamable-http",
+        "--address",
+        "0.0.0.0:8000",
+        "--enabled-tools",
+        "datasource,loki,proxied",
+      ]
+    environment:
+      - GRAFANA_URL=${GRAFANA_URL:?set GRAFANA_URL}
+      - GRAFANA_SERVICE_ACCOUNT_TOKEN=${GRAFANA_SERVICE_ACCOUNT_TOKEN:?set GRAFANA_SERVICE_ACCOUNT_TOKEN}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/mcp"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   proxy:
     build:
       context: .
@@ -54,9 +76,10 @@ services:
       - "127.0.0.1:3012:3012"
       - "127.0.0.1:3013:3013"
       - "127.0.0.1:3014:3014"
+      - "127.0.0.1:3015:3015"
     environment:
       - NODE_ENV=production
-      - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.github.json,3014:proxy.git.json
+      - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.github.json,3014:proxy.git.json,3015:proxy.grafana.json
       - LINEAR_API_KEY=${LINEAR_API_KEY}
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
       - GITHUB_PAT=${GITHUB_PAT}
@@ -67,13 +90,15 @@ services:
         condition: service_healthy
       git-mcp:
         condition: service_healthy
+      grafana-mcp:
+        condition: service_healthy
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "Promise.all([3010,3011,3012,3013,3014].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
+          "Promise.all([3010,3011,3012,3013,3014,3015].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
         ]
       interval: 5s
       timeout: 5s
