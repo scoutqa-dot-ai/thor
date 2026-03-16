@@ -1,0 +1,29 @@
+.env.example
+  f03febe9779a0f4c 47
+docker/vouch/config.yml
+  f03febe9779a0f4c 6
+README.md
+  f03febe9779a0f4c 117
+docker-compose.yml
+  f03febe9779a0f4c 196-197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f3ccaea18daa63ba231bf8b28df8a643d8a43e08",
+  "prompts": {
+    "f03febe9779a0f4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a742cf2-df50-4264-a278-1d17b8199d8b",
+        "model": "<synthetic>"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 2,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
