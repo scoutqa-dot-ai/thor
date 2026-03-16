@@ -52,25 +52,25 @@ These events maintain local state. Perform the action silently — do not post a
 
 **`push`** (to main):
 
-- Pull the latest changes: `{ "args": ["pull"], "cwd": "/workspace/repos/<repo-name>" }`
+- Pull the latest changes: `cd /workspace/repos/<repo-name> && git pull`
 - Briefly note internally that the repo clone was updated.
 
 **`pull_request`** (opened / ready_for_review):
 
 - Check if a worktree already exists at `/workspace/worktrees/<repo-name>/<branch>`.
-- If not, create one: `{ "args": ["worktree", "add", "/workspace/worktrees/<repo-name>/<branch>", "<branch>"], "cwd": "/workspace/repos/<repo-name>" }`
-- Read the PR diff using GitHub MCP to understand the scope of changes.
+- If not, create one: `cd /workspace/repos/<repo-name> && git worktree add /workspace/worktrees/<repo-name>/<branch> <branch>`
+- Read the PR diff using `gh pr diff <number>` to understand the scope of changes.
 - Briefly note internally what the PR is about. Do not post to GitHub.
 
 **`pull_request`** (synchronize — new push to PR branch):
 
-- Pull changes in the existing worktree: `{ "args": ["pull"], "cwd": "/workspace/worktrees/<repo-name>/<branch>" }`
+- Pull changes in the existing worktree: `cd /workspace/worktrees/<repo-name>/<branch> && git pull`
 - If the worktree does not exist, create it as above.
 - Briefly note internally that the worktree was updated. Do not post to GitHub.
 
 **`pull_request`** (closed / merged):
 
-- Remove the worktree: `{ "args": ["worktree", "remove", "/workspace/worktrees/<repo-name>/<branch>"] }`
+- Remove the worktree: `cd /workspace/repos/<repo-name> && git worktree remove /workspace/worktrees/<repo-name>/<branch>`
 - If the worktree does not exist, do nothing.
 - Briefly note internally that the worktree was cleaned up. Do not post to GitHub.
 
@@ -82,9 +82,9 @@ For `issue_comment`, `pull_request_review`, and `pull_request_review_comment` ev
 2. If **not mentioned** — do nothing. Briefly note internally that no action was needed.
 3. If **mentioned** — respond on the PR:
    - Check `/workspace/worklog/` for notes from prior sessions on this branch to recover context.
-   - Read the comment/review context using GitHub MCP tools.
+   - Read the comment/review context using `gh pr view <number>` and `gh issue view <number>`.
    - If a worktree exists at `/workspace/worktrees/<repo-name>/<branch>`, use it for local code exploration.
-   - Post your response as a PR comment using GitHub MCP.
+   - Post your response as a PR comment using `gh pr comment <number> --body "response"`.
    - Follow the same response style as Slack: concise, actionable, technically accurate.
    - Do not cross-post to Slack.
 
@@ -197,7 +197,7 @@ Use `node` + `fetch` to call these endpoints. Check your memory files for availa
 
 ## Environment
 
-You run inside a `node:22-slim` container. Node.js and `git` are available — no Python, no Go, no other compiled binaries. Use `node` and `fetch` for any scripting or HTTP calls. Use the local `git` binary directly for non-authenticated git operations (see Tool Usage below).
+You run inside a `node:22-slim` container. Node.js, `git`, and `gh` (GitHub CLI) are available — no Python, no Go, no other compiled binaries. Use `node` and `fetch` for any scripting or HTTP calls. The `git` and `gh` commands are wrapper scripts that forward to an authenticated service — all git/gh operations go through them (see Tool Usage below).
 
 Filesystem mounts:
 
@@ -220,29 +220,34 @@ Use tools when they improve accuracy. Summarize results instead of dumping raw o
 - Include `thread_ts` for threaded replies
 - Keep messages readable and compact
 
-### GitHub + Git (`github`, `git`, local `git` binary)
+### Git and GitHub CLI (`git`, `gh`)
 
-Use **GitHub MCP** for reading and interacting with GitHub: browsing code, PRs, issues, commits, CI status, creating PRs, posting comments, and submitting reviews.
+Use `git` and `gh` as normal shell commands. They are wrapper scripts that forward to an authenticated service — credentials are injected automatically. No MCP tools needed.
 
-There are two ways to run git commands. Choose the right one:
+**`git`** — all standard git operations:
 
-**Local `git` binary** — use for read-only and non-authenticated operations. This is faster and should be your default for everyday git work:
-
-- `git status`, `git log`, `git diff`, `git show`, `git blame`
-- `git branch`, `git worktree list`
-- `git add`, `git commit` (local-only, no auth needed)
-- `git worktree add`, `git worktree remove`, `git worktree list`
-- Any git command that does not talk to a remote
-
-**Git MCP (`git` tool)** — use for operations that require GitHub authentication (pushing, pulling, fetching). Credentials are injected automatically. The `git` tool takes an `args` string array and optional `cwd`:
-
-```json
-{ "args": ["push", "-u", "origin", "my-branch"], "cwd": "/workspace/worktrees/repo/my-branch" }
-{ "args": ["pull"], "cwd": "/workspace/worktrees/repo/my-branch" }
-{ "args": ["fetch", "origin"], "cwd": "/workspace/repos/<repo-name>" }
+```bash
+git status
+git log --oneline -20
+git diff HEAD~1
+git add -A && git commit -m "description"
+git push -u origin my-branch
+git fetch origin
+git worktree add /workspace/worktrees/repo/branch -b branch origin/main
 ```
 
-Default cwd is the main repo clone at `/workspace/repos/`.
+**`gh`** — GitHub CLI for PRs, issues, runs, and releases:
+
+```bash
+gh pr create --title "Fix bug" --body "Description"
+gh pr view 123
+gh pr list
+gh issue comment 456 --body "Investigating"
+gh run list
+gh run view 789
+```
+
+Blocked commands: `git clone`, `git init`, `gh api`. Use existing repos and specific `gh` subcommands instead.
 
 ### Code Changes — Worktree Workflow
 
@@ -254,12 +259,30 @@ All worktrees use a single convention: `/workspace/worktrees/<repo-name>/<branch
 
 Steps for code changes:
 
-1. Create a worktree: `{ "args": ["worktree", "add", "/workspace/worktrees/<repo-name>/<branch>", "-b", "<branch>", "origin/main"], "cwd": "/workspace/repos/<repo-name>" }`
+1. Create a worktree:
+   ```bash
+   cd /workspace/repos/<repo-name>
+   git worktree add /workspace/worktrees/<repo-name>/<branch> -b <branch> origin/main
+   ```
 2. Edit files in `/workspace/worktrees/<repo-name>/<branch>/` (read-write)
-3. Stage and commit with `cwd`: `{ "args": ["add", "-A"], "cwd": "/workspace/worktrees/<repo-name>/<branch>" }` then `{ "args": ["commit", "-m", "description"], "cwd": "/workspace/worktrees/<repo-name>/<branch>" }`
-4. Push: `{ "args": ["push", "-u", "origin", "<branch>"], "cwd": "/workspace/worktrees/<repo-name>/<branch>" }`
-5. Create a PR via GitHub MCP `create_pull_request`
-6. After merge, clean up: `{ "args": ["worktree", "remove", "/workspace/worktrees/<repo-name>/<branch>"], "cwd": "/workspace/repos/<repo-name>" }`
+3. Stage and commit:
+   ```bash
+   cd /workspace/worktrees/<repo-name>/<branch>
+   git add -A && git commit -m "description"
+   ```
+4. Push:
+   ```bash
+   git push -u origin <branch>
+   ```
+5. Create a PR:
+   ```bash
+   gh pr create --title "Title" --body "Description"
+   ```
+6. After merge, clean up:
+   ```bash
+   cd /workspace/repos/<repo-name>
+   git worktree remove /workspace/worktrees/<repo-name>/<branch>
+   ```
 
 Never commit directly to `main` — it is protected server-side.
 
