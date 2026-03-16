@@ -24,10 +24,10 @@ services:
       timeout: 3s
       retries: 10
 
-  git-mcp:
+  git-wrappers:
     build:
       context: .
-      target: git-mcp
+      target: git-wrappers
     restart: unless-stopped
     ports:
       - "127.0.0.1:3004:3004"
@@ -52,20 +52,15 @@ services:
       - "127.0.0.1:3010:3010"
       - "127.0.0.1:3011:3011"
       - "127.0.0.1:3012:3012"
-      - "127.0.0.1:3013:3013"
-      - "127.0.0.1:3014:3014"
     environment:
       - NODE_ENV=production
-      - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.github.json,3014:proxy.git.json
+      - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json
       - LINEAR_API_KEY=${LINEAR_API_KEY}
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
-      - GITHUB_PAT=${GITHUB_PAT}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:
       slack-mcp:
-        condition: service_healthy
-      git-mcp:
         condition: service_healthy
     healthcheck:
       test:
@@ -73,7 +68,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "Promise.all([3010,3011,3012,3013,3014].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
+          "Promise.all([3010,3011,3012].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
         ]
       interval: 5s
       timeout: 5s
@@ -110,6 +105,8 @@ services:
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
     depends_on:
       proxy:
+        condition: service_healthy
+      git-wrappers:
         condition: service_healthy
       data:
         condition: service_healthy
