@@ -35,6 +35,7 @@ services:
       - NODE_ENV=production
       - GITHUB_PAT=${GITHUB_PAT}
     volumes:
+      - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace/repos:/workspace/repos
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
     healthcheck:
