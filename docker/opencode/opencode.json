@@ -18,19 +18,9 @@
       "url": "http://proxy:3012/mcp",
       "enabled": true
     },
-    "github": {
-      "type": "remote",
-      "url": "http://proxy:3013/mcp",
-      "enabled": true
-    },
-    "git": {
-      "type": "remote",
-      "url": "http://proxy:3014/mcp",
-      "enabled": true
-    },
     "grafana": {
       "type": "remote",
-      "url": "http://proxy:3015/mcp",
+      "url": "http://proxy:3013/mcp",
       "enabled": true
     }
   }

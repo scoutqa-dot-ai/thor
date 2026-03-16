@@ -16,6 +16,7 @@ set -euo pipefail
 
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 PROXY_LINEAR_URL="${PROXY_LINEAR_URL:-http://localhost:3010}"
+GIT_WRAPPERS_URL="${GIT_WRAPPERS_URL:-http://localhost:3004}"
 OPENCODE_URL="${OPENCODE_URL:-http://localhost:4096}"
 WORKLOG_DIR="${WORKLOG_DIR:-./docker-volumes/workspace/worklog}"
 MEMORY_DIR="${MEMORY_DIR:-./docker-volumes/workspace/memory}"
