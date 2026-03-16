@@ -1,0 +1,33 @@
+packages/gateway/src/app.ts
+  ab9375645439ad6e 524-525
+docker/cron/hey-thor
+  ab9375645439ad6e 4-10,12,15
+packages/gateway/src/cron.test.ts
+  ab9375645439ad6e 78-110
+docs/plan/2026031701_scheduler.md
+  ab9375645439ad6e 1-255
+packages/runner/src/index.ts
+  ab9375645439ad6e 369-373
+packages/gateway/src/cron.ts
+  ab9375645439ad6e 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "eddc38b7369d17f8a8233f578ea3e01226944168",
+  "prompts": {
+    "ab9375645439ad6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "842813ee-bfcf-48f1-a21a-b2610355f32f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 458,
+      "total_deletions": 155,
+      "accepted_lines": 306,
+      "overriden_lines": 0
+    }
+  }
+}
