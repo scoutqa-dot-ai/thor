@@ -39,27 +39,71 @@ describe("validateCwd", () => {
 // ── git policy ──────────────────────────────────────────────────────────────
 
 describe("validateGitArgs", () => {
-  it("allows common git commands", () => {
-    expect(validateGitArgs(["status"])).toBeNull();
-    expect(validateGitArgs(["log", "--oneline", "-10"])).toBeNull();
-    expect(validateGitArgs(["diff"])).toBeNull();
-    expect(validateGitArgs(["push", "origin", "my-branch"])).toBeNull();
-    expect(validateGitArgs(["commit", "-m", "fix typo"])).toBeNull();
-    expect(validateGitArgs(["worktree", "add", "/workspace/worktrees/repo/branch"])).toBeNull();
-    expect(validateGitArgs(["add", "-A"])).toBeNull();
-    expect(validateGitArgs(["fetch", "origin"])).toBeNull();
+  describe("allowed commands", () => {
+    it("allows read commands", () => {
+      expect(validateGitArgs(["status"])).toBeNull();
+      expect(validateGitArgs(["log", "--oneline", "-10"])).toBeNull();
+      expect(validateGitArgs(["diff"])).toBeNull();
+      expect(validateGitArgs(["show", "HEAD"])).toBeNull();
+      expect(validateGitArgs(["branch", "-a"])).toBeNull();
+      expect(validateGitArgs(["blame", "file.ts"])).toBeNull();
+      expect(validateGitArgs(["rev-parse", "HEAD"])).toBeNull();
+      expect(validateGitArgs(["ls-files"])).toBeNull();
+      expect(validateGitArgs(["grep", "TODO"])).toBeNull();
+      expect(validateGitArgs(["submodule", "status"])).toBeNull();
+    });
+
+    it("allows write commands", () => {
+      expect(validateGitArgs(["add", "-A"])).toBeNull();
+      expect(validateGitArgs(["commit", "-m", "fix typo"])).toBeNull();
+      expect(validateGitArgs(["merge", "main"])).toBeNull();
+      expect(validateGitArgs(["rebase", "main"])).toBeNull();
+      expect(validateGitArgs(["cherry-pick", "abc123"])).toBeNull();
+      expect(validateGitArgs(["revert", "abc123"])).toBeNull();
+      expect(validateGitArgs(["reset", "HEAD~1"])).toBeNull();
+      expect(validateGitArgs(["restore", "file.ts"])).toBeNull();
+      expect(validateGitArgs(["stash"])).toBeNull();
+    });
+
+    it("allows remote commands", () => {
+      expect(validateGitArgs(["fetch", "origin"])).toBeNull();
+      expect(validateGitArgs(["pull"])).toBeNull();
+      expect(validateGitArgs(["push", "origin", "my-branch"])).toBeNull();
+      expect(validateGitArgs(["remote", "-v"])).toBeNull();
+    });
+
+    it("allows worktree commands", () => {
+      expect(validateGitArgs(["worktree", "add", "/workspace/worktrees/repo/branch"])).toBeNull();
+    });
+
+    it("allows subcommand after flags", () => {
+      expect(validateGitArgs(["-C", "/workspace/repos/foo", "status"])).toBeNull();
+    });
   });
 
-  it("blocks git clone", () => {
-    expect(validateGitArgs(["clone", "https://github.com/foo/bar"])).not.toBeNull();
-  });
+  describe("blocked commands", () => {
+    it("blocks git clone", () => {
+      expect(validateGitArgs(["clone", "https://github.com/foo/bar"])).not.toBeNull();
+    });
 
-  it("blocks git init", () => {
-    expect(validateGitArgs(["init"])).not.toBeNull();
-  });
+    it("blocks git init", () => {
+      expect(validateGitArgs(["init"])).not.toBeNull();
+    });
 
-  it("blocks clone even with flags before it", () => {
-    expect(validateGitArgs(["-C", "/tmp", "clone", "https://github.com/foo/bar"])).not.toBeNull();
+    it("blocks clone even with flags before it", () => {
+      expect(validateGitArgs(["-C", "/tmp", "clone", "https://github.com/foo/bar"])).not.toBeNull();
+    });
+
+    it("blocks checkout and switch (agent stays on assigned branch)", () => {
+      expect(validateGitArgs(["checkout", "main"])).not.toBeNull();
+      expect(validateGitArgs(["switch", "feature"])).not.toBeNull();
+    });
+
+    it("blocks arbitrary commands", () => {
+      expect(validateGitArgs(["fsck"])).not.toBeNull();
+      expect(validateGitArgs(["gc"])).not.toBeNull();
+      expect(validateGitArgs(["daemon"])).not.toBeNull();
+    });
   });
 
   it("rejects empty args", () => {

@@ -41,7 +41,53 @@ function normalizePath(p: string): string {
 
 // ── git policy ──────────────────────────────────────────────────────────────
 
-const BLOCKED_GIT_SUBCOMMANDS = ["clone", "init"];
+/**
+ * Allowed git subcommands (allowlist — everything else is blocked).
+ */
+const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  // read
+  "status",
+  "log",
+  "diff",
+  "show",
+  "branch",
+  "tag",
+  "stash",
+  "blame",
+  "shortlog",
+  "describe",
+  "rev-parse",
+  "ls-files",
+  "ls-tree",
+  "cat-file",
+  "name-rev",
+  "reflog",
+  "grep",
+  "submodule",
+  // write (local) — no checkout/switch; agent stays on its assigned branch
+  "add",
+  "commit",
+  "merge",
+  "rebase",
+  "cherry-pick",
+  "revert",
+  "reset",
+  "restore",
+  "rm",
+  "mv",
+  "clean",
+  "apply",
+  "am",
+  // worktree
+  "worktree",
+  // remote (fetch/push/pull only)
+  "fetch",
+  "pull",
+  "push",
+  "remote",
+  // config (read-only use; write is harmless to local .git/config)
+  "config",
+]);
 
 export function validateGitArgs(args: string[]): string | null {
   if (!Array.isArray(args) || args.length === 0) {
@@ -54,8 +100,8 @@ export function validateGitArgs(args: string[]): string | null {
     return "no git subcommand found";
   }
 
-  if (BLOCKED_GIT_SUBCOMMANDS.includes(subcommand.toLowerCase())) {
-    return `"git ${subcommand}" is not allowed. Use existing repos in /workspace/repos and create worktrees for changes.`;
+  if (!ALLOWED_GIT_SUBCOMMANDS.has(subcommand.toLowerCase())) {
+    return `"git ${subcommand}" is not allowed`;
   }
 
   return null;
