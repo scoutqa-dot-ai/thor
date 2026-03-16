@@ -1,8 +1,6 @@
 # Thor — Docker Compose
 #
-# Start:   LINEAR_API_KEY=xxx POSTHOG_API_KEY=xxx OAUTH_CLIENT_ID=xxx OAUTH_CLIENT_SECRET=xxx SSO_JWT_SECRET=xxx docker compose up --build -d
-# Ingress: port 8080 routes /slack/* → gateway, everything else → opencode
-# Slack:   add SLACK_SIGNING_SECRET to enable the gateway service
+# Start:   docker compose up --build -d
 # Test:    ./scripts/test-e2e.sh
 # Logs:    docker compose logs -f
 # Stop:    docker compose down
@@ -87,9 +85,8 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:3080:80"
-    environment:
-      - ACME_WEBAPP_ADMIN_API_KEY=${ACME_WEBAPP_ADMIN_API_KEY:-}
-      - ACME_AGENT_ADMIN_API_KEY=${ACME_AGENT_ADMIN_API_KEY:-}
+    env_file:
+      - .env
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost/health"]
       interval: 5s
@@ -194,11 +191,11 @@ services:
     volumes:
       - ./docker/vouch/config.yml:/template/config.yml:ro
     environment:
-      - OAUTH_CLIENT_ID=${OAUTH_CLIENT_ID:?set OAUTH_CLIENT_ID}
-      - OAUTH_CLIENT_SECRET=${OAUTH_CLIENT_SECRET:?set OAUTH_CLIENT_SECRET}
-      - SSO_JWT_SECRET=${SSO_JWT_SECRET:?set SSO_JWT_SECRET}
-      - SSO_COOKIE_DOMAIN=${SSO_COOKIE_DOMAIN:-localhost}
-      - SSO_CALLBACK_URL=${SSO_CALLBACK_URL:-http://localhost:8080/vouch/auth}
+      - VOUCH_GOOGLE_CLIENT_ID=${VOUCH_GOOGLE_CLIENT_ID:?set VOUCH_GOOGLE_CLIENT_ID}
+      - VOUCH_GOOGLE_CLIENT_SECRET=${VOUCH_GOOGLE_CLIENT_SECRET:?set VOUCH_GOOGLE_CLIENT_SECRET}
+      - VOUCH_JWT_SECRET=${VOUCH_JWT_SECRET:?set VOUCH_JWT_SECRET}
+      - VOUCH_COOKIE_DOMAIN=${VOUCH_COOKIE_DOMAIN:-localhost}
+      - VOUCH_CALLBACK_URL=${VOUCH_CALLBACK_URL:-http://localhost:8080/vouch/auth}
     healthcheck:
       test: ["CMD", "/vouch-proxy", "-healthcheck"]
       interval: 5s

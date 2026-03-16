@@ -35,8 +35,7 @@ const log = createLogger("runner");
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const OPENCODE_URL = (process.env.OPENCODE_URL || "http://127.0.0.1:4096").replace(/\/$/, "");
 const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
-const SESSION_DIRECTORY =
-  process.env.GIT_MCP_DEFAULT_CWD || "/workspace/repos/acme-project";
+const SESSION_DIRECTORY = process.env.SESSION_CWD || "/workspace";
 
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);

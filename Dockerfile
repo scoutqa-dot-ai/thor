@@ -63,7 +63,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 COPY packages/git-mcp/entrypoint.sh /entrypoint.sh
 USER thor
 RUN mkdir -p /workspace/repos
-RUN git config --global user.name "Thor" && git config --global user.email "thor@acme.example"
 WORKDIR /workspace/repos
 ENV PORT=3004
 EXPOSE 3004

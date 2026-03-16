@@ -1,20 +1,9 @@
-# Example GitHub Actions workflow to notify Thor of PR-related events.
-#
-# Setup:
-#   1. Copy this file to .github/workflows/notify-thor.yml in the source repo
-#   2. Add THOR_GATEWAY_URL as a repository secret (e.g. https://thor.internal:8080)
-#
-# Supported events (must match Thor gateway's supported list):
-#   - pull_request
-#   - pull_request_review
-#   - pull_request_review_comment (inline diff comments)
-#   - push (to main)
-#   - issue_comment (PR comments only — resolved via gh pr view)
+# Example workflow to notify Thor of GitHub events.
 #
 # When Thor adds support for new events, update the `on:` triggers and the
 # notify job below to include them.
 
-name: Notify Thor
+name: "[Thor] Push GitHub events"
 
 on:
   pull_request:
@@ -31,8 +20,10 @@ on:
 jobs:
   notify:
     runs-on: ubuntu-latest
+
     # Skip issue_comment events that are not on PRs
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+
     steps:
       - name: Resolve branch
         id: branch
@@ -58,12 +49,19 @@ jobs:
           esac
 
       - name: Send to Thor
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BRANCH_NAME: ${{ steps.branch.outputs.name }}
+          REPOSITORY_NAME: ${{ github.repository }}
+          GITHUB_EVENT_JSON: ${{ toJSON(github.event) }}
         run: |
-          curl -sf -X POST "${{ secrets.THOR_GATEWAY_URL }}/github/events" \
+          printf '%s' "$GITHUB_EVENT_JSON" > "$RUNNER_TEMP/github-event.json"
+
+          curl -sf -X POST "${{ vars.THOR_GATEWAY_URL }}/github/events" \
             -H "Content-Type: application/json" \
             -d "$(jq -n \
-              --arg event "${{ github.event_name }}" \
-              --arg branch "${{ steps.branch.outputs.name }}" \
-              --arg repository "${{ github.repository }}" \
-              --argjson payload '${{ toJSON(github.event) }}' \
-              '{event: $event, branch: $branch, repository: $repository, payload: $payload}')"
+              --arg event "$EVENT_NAME" \
+              --arg branch "$BRANCH_NAME" \
+              --arg repository "$REPOSITORY_NAME" \
+              --slurpfile payload "$RUNNER_TEMP/github-event.json" \
+              '{event: $event, branch: $branch, repository: $repository, payload: $payload[0]}')"

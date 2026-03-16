@@ -3,19 +3,19 @@ vouch:
   document_root: /vouch
   allowAllUsers: true
   cookie:
-    domain: ${SSO_COOKIE_DOMAIN}
+    domain: ${VOUCH_COOKIE_DOMAIN}
     secure: false
     name: VouchCookie
     maxAge: 4320
   jwt:
-    secret: ${SSO_JWT_SECRET}
+    secret: ${VOUCH_JWT_SECRET}
     maxAge: 4320
 
 oauth:
   provider: google
-  client_id: ${OAUTH_CLIENT_ID}
-  client_secret: ${OAUTH_CLIENT_SECRET}
-  callback_url: ${SSO_CALLBACK_URL}
+  client_id: ${VOUCH_GOOGLE_CLIENT_ID}
+  client_secret: ${VOUCH_GOOGLE_CLIENT_SECRET}
+  callback_url: ${VOUCH_CALLBACK_URL}
   scopes:
     - openid
     - email

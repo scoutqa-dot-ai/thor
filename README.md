@@ -1,6 +1,6 @@
 # Thor
 
-AI team member for the Acme team — an event-driven agent that monitors Slack, GitHub, Linear, and PostHog, then takes action through OpenCode sessions with policy-enforced tool access.
+An event-driven AI team member that monitors Slack, GitHub, Linear, and PostHog, then takes action through OpenCode sessions with policy-enforced tool access.
 
 ## Architecture
 
@@ -42,7 +42,7 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 | **proxy**     | 3010–3014 | `@thor/proxy`     | MCP tool allow-listing, credential injection, audit logging              |
 | **slack-mcp** | 3003      | `@thor/slack-mcp` | Slack API MCP server, progress message lifecycle                         |
 | **git-mcp**   | 3004      | `@thor/git-mcp`   | Git command execution with PAT credential isolation                      |
-| **data**      | 3080      | `docker/data`     | Nginx credential proxy for internal Acme APIs                           |
+| **data**      | 3080      | `docker/data`     | Nginx credential proxy for internal APIs (requires custom config)        |
 | **vouch**     | 9090      | `docker/vouch`    | OAuth/SSO authentication proxy                                           |
 
 ## How It Works
@@ -65,14 +65,14 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 
 ```bash
 # Set required environment variables
-export SLACK_BOT_TOKEN=xoxb-...
-export SLACK_SIGNING_SECRET=...
+export GITHUB_PAT=github_pat_...
 export LINEAR_API_KEY=lin_api_...
 export POSTHOG_API_KEY=phx_...
-export GITHUB_PAT=github_pat_...
-export OAUTH_CLIENT_ID=...
-export OAUTH_CLIENT_SECRET=...
-export SSO_JWT_SECRET=...
+export SLACK_BOT_TOKEN=xoxb-...
+export SLACK_SIGNING_SECRET=...
+export VOUCH_GOOGLE_CLIENT_ID=...
+export VOUCH_GOOGLE_CLIENT_SECRET=...
+export VOUCH_JWT_SECRET=...
 
 # Start all services
 docker compose up --build -d
@@ -87,9 +87,76 @@ docker compose logs -f
 docker compose down
 ```
 
-### GitHub Webhook Setup
+### Deployment Configuration
 
-Copy `docs/notify-thor.example.yml` to `.github/workflows/notify-thor.yml` in any source repository you want Thor to monitor. Add `THOR_GATEWAY_URL` as a repository secret pointing to the gateway endpoint.
+Thor ships with generic defaults. A new deployment needs the following configuration:
+
+#### 1. Environment variables (`.env`)
+
+Copy `.env.example` to `.env` and fill in:
+
+| Variable                            | Required | Service            | Purpose                                                          |
+| ----------------------------------- | -------- | ------------------ | ---------------------------------------------------------------- |
+| `DATA_ROUTES`                       | No       | data               | Comma-separated list of data proxy routes (see below)            |
+| `GIT_USER_NAME`                     | No       | git-mcp            | Git author name (default: `thor`)                                |
+| `GIT_USER_EMAIL`                    | No       | git-mcp            | Git author email (default: `thor@localhost`)                     |
+| `GITHUB_PAT`                        | Yes      | proxy, git-mcp     | GitHub fine-grained PAT                                          |
+| `INGRESS_PORT`                      | No       | ingress            | Host port (default: `8080`)                                      |
+| `LINEAR_API_KEY`                    | Yes      | proxy              | Linear API access                                                |
+| `OPENCODE_URL`                      | No       | runner             | OpenCode server URL (default: `http://opencode:4096`)            |
+| `POSTHOG_API_KEY`                   | Yes      | proxy              | PostHog API access                                               |
+| `SESSION_CWD`                       | No       | runner             | Working directory for new sessions (default: `/workspace`)       |
+| `SLACK_ALLOWED_CHANNEL_IDS`         | No       | gateway, slack-mcp | Comma-separated channel IDs to restrict the bot to               |
+| `SLACK_BOT_TOKEN`                   | Yes      | slack-mcp          | Slack app bot token (`xoxb-...`)                                 |
+| `SLACK_SIGNING_SECRET`              | Yes      | gateway            | Webhook signature verification                                   |
+| `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | gateway            | Signature timestamp tolerance (default: `300`)                   |
+| `VOUCH_GOOGLE_CLIENT_ID`            | Yes      | vouch              | Google OAuth client ID                                           |
+| `VOUCH_GOOGLE_CLIENT_SECRET`        | Yes      | vouch              | Google OAuth client secret                                       |
+| `VOUCH_CALLBACK_URL`                | No       | vouch              | OAuth callback URL (default: `http://localhost:8080/vouch/auth`) |
+| `VOUCH_COOKIE_DOMAIN`               | No       | vouch              | Cookie domain (default: `localhost`)                             |
+| `VOUCH_JWT_SECRET`                  | Yes      | vouch              | Session JWT signing secret                                       |
+
+#### 2. Data proxy routes (`.env`)
+
+If you have internal APIs that Thor should access with injected credentials, add routes to `.env`:
+
+```bash
+DATA_ROUTES=billing,analytics
+DATA_ROUTE_billing_UPSTREAM=https://billing.example.com/
+DATA_ROUTE_billing_KEY=sk-your-api-key
+DATA_ROUTE_billing_HEADER=X-Custom-Auth    # optional, defaults to X-API-Key
+DATA_ROUTE_analytics_UPSTREAM=https://analytics.example.com/
+DATA_ROUTE_analytics_KEY=sk-your-other-key
+```
+
+The data container generates its nginx config from these vars at startup. When `DATA_ROUTES` is empty, it proxies to httpbin.org as a no-op fallback. See `docker/data/default.conf.template.example` for the equivalent static config.
+
+#### 3. Agent context (OpenCode memory)
+
+The bundled agent prompt (`docker/opencode/agents/build.md`) contains only generic behavior rules — no team-specific context. After starting Thor, open the OpenCode web UI and tell Thor about your team in conversation. Ask it to remember key facts — Thor writes them to its persistent memory directory automatically. Things to tell it:
+
+- Your team name, Slack bot ID, and key channel IDs
+- Team members — names, Slack IDs, GitHub usernames, and roles
+- Which repos are mounted, default branches, CI conventions
+- If using the data proxy, the available routes and their API schemas
+
+#### 4. Source repos
+
+Exec into the git-mcp container to clone repos — this runs as the `thor` user with the correct PAT credentials, avoiding permission issues:
+
+```bash
+docker compose exec git-mcp git clone https://github.com/your-org/your-repo.git /workspace/repos/your-repo
+```
+
+Repos in `/workspace/repos/` are mounted read-only into OpenCode. Thor creates worktrees under `/workspace/worktrees/` for code changes.
+
+#### 5. GitHub webhook setup
+
+Copy `docs/notify-thor.example.yml` to `.github/workflows/notify-thor.yml` in any source repository you want Thor to monitor. Add `THOR_GATEWAY_URL` as a repository variable pointing to the gateway endpoint.
+
+#### 6. Cron jobs (optional)
+
+Add scheduled prompts to `docker-volumes/workspace/cron/crontab`. Each line triggers Thor with a prompt on a schedule. See `docs/plan/2026031204_cron-triggers.md` for examples.
 
 ## Development
 
@@ -169,28 +236,7 @@ The allow list uses exact tool names. Environment variables in headers are inter
 | 3013 | `proxy.github.json`  | GitHub hosted MCP  |
 | 3014 | `proxy.git.json`     | `git-mcp:3004`     |
 
-## Environment Variables
-
-### Required
-
-| Variable               | Service        | Description                          |
-| ---------------------- | -------------- | ------------------------------------ |
-| `SLACK_BOT_TOKEN`      | slack-mcp      | Slack app bot token (`xoxb-...`)     |
-| `SLACK_SIGNING_SECRET` | gateway        | Slack webhook signature verification |
-| `LINEAR_API_KEY`       | proxy          | Linear API access                    |
-| `POSTHOG_API_KEY`      | proxy          | PostHog API access                   |
-| `GITHUB_PAT`           | proxy, git-mcp | GitHub fine-grained PAT              |
-| `OAUTH_CLIENT_ID`      | vouch          | OAuth provider client ID             |
-| `OAUTH_CLIENT_SECRET`  | vouch          | OAuth provider client secret         |
-| `SSO_JWT_SECRET`       | vouch          | Session JWT signing secret           |
-
-### Optional
-
-| Variable                            | Default                 | Description                         |
-| ----------------------------------- | ----------------------- | ----------------------------------- |
-| `INGRESS_PORT`                      | `8080`                  | Host port for ingress               |
-| `OPENCODE_URL`                      | `http://127.0.0.1:4096` | OpenCode server URL                 |
-| `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | `300`                   | Slack signature timestamp tolerance |
+Environment variables are documented in the Deployment Configuration section above.
 
 ## Security
 
@@ -202,7 +248,7 @@ Each service holds only the credentials it needs. OpenCode has no direct access 
 
 - **Proxy** — Injects API keys into upstream MCP requests via config-time `${ENV_VAR}` interpolation. Credentials never reach OpenCode.
 - **git-mcp** — Injects `GITHUB_PAT` at execution time via `GIT_ASKPASS` (a temporary script). The PAT is never passed as a CLI argument or environment variable visible to the git process.
-- **data** — Nginx sidecar that injects internal Acme API keys into proxied requests.
+- **data** — Nginx sidecar that injects API keys into proxied requests. Routes are configured via `DATA_ROUTES` env vars in `.env` (see `.env.example`). The entrypoint generates the nginx config at startup — no manual template editing needed. Falls back to httpbin.org when no routes are set. **Trade-off:** the data container receives the full `.env` via `env_file` so that admins can add new proxy targets without editing `docker-compose.yml`. This means all env vars (including unrelated secrets like `SLACK_BOT_TOKEN`) are visible inside the container. This is acceptable because the data container runs stock nginx, which does not expose environment variables to proxied requests or logs. If stricter isolation is needed, use a dedicated `data.env` file instead.
 - **slack-mcp** — Holds `SLACK_BOT_TOKEN` exclusively; no other service touches Slack's API directly.
 
 ### Tool Policy Enforcement
@@ -212,7 +258,7 @@ The proxy sits between OpenCode and every upstream MCP server. Each proxy instan
 - Tools not in the allow-list are **never listed** to OpenCode and **never executed**
 - Blocked calls return an error: `"Unknown tool: <name>"`
 - Policy drift detection at startup — if an allow-list entry doesn't match any upstream tool, the proxy warns (dev) or refuses to start (production)
-- git-mcp additionally blocks `clone` and `init` commands server-side; all repos are pre-mounted
+- git-mcp blocks `clone` and `init` commands server-side — Thor can only work with repos that an admin has explicitly cloned into `/workspace/repos/`. This prevents the agent from fetching arbitrary repositories that could contain malicious instructions or prompt injection in READMEs, issue templates, or commit messages
 
 ### Webhook Authentication
 

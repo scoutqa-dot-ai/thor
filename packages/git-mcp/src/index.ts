@@ -14,8 +14,6 @@ import { execGit } from "./git.js";
 const log = createLogger("git-mcp");
 
 const PORT = parseInt(process.env.PORT || "3004", 10);
-const GIT_MCP_DEFAULT_CWD =
-  process.env.GIT_MCP_DEFAULT_CWD || "/workspace/repos/acme-project";
 
 // --- Tool definitions ---
 
@@ -36,10 +34,11 @@ const tools: Tool[] = [
         },
         cwd: {
           type: "string",
-          description: `Working directory for the command. Defaults to ${GIT_MCP_DEFAULT_CWD}.`,
+          description:
+            "Working directory for the command. Must be an absolute path (e.g. /workspace/repos/my-repo or /workspace/worktrees/my-repo/my-branch).",
         },
       },
-      required: ["args"],
+      required: ["args", "cwd"],
     },
   },
 ];
@@ -79,7 +78,18 @@ async function handleToolCall(
     };
   }
 
-  const cwd = typeof args.cwd === "string" ? args.cwd : GIT_MCP_DEFAULT_CWD;
+  if (typeof args.cwd !== "string" || !args.cwd) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: "cwd is required — provide the working directory (e.g. /workspace/repos/my-repo)",
+        },
+      ],
+      isError: true,
+    };
+  }
+  const cwd = args.cwd;
 
   const result = await execGit(gitArgs, cwd);
 
@@ -210,5 +220,5 @@ app.delete("/mcp", async (req, res) => {
 // --- Startup ---
 
 app.listen(PORT, () => {
-  logInfo(log, "git_mcp_listening", { port: PORT, defaultCwd: GIT_MCP_DEFAULT_CWD });
+  logInfo(log, "git_mcp_listening", { port: PORT });
 });

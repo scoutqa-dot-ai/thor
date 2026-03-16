@@ -1,2 +1,4 @@
 FROM nginx:alpine
-COPY default.conf.template /etc/nginx/templates/default.conf.template
+RUN rm /etc/nginx/conf.d/default.conf
+COPY entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
