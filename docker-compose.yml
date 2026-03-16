@@ -135,6 +135,7 @@ services:
     environment:
       - NODE_ENV=production
       - OPENCODE_URL=http://opencode:4096
+      - SESSION_CWD=${SESSION_CWD}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:
