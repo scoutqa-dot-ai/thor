@@ -72,8 +72,17 @@ describe("validateGitArgs", () => {
       expect(validateGitArgs(["remote", "-v"])).toBeNull();
     });
 
-    it("allows worktree commands", () => {
+    it("allows worktree add under /workspace/worktrees/", () => {
       expect(validateGitArgs(["worktree", "add", "/workspace/worktrees/repo/branch"])).toBeNull();
+      expect(
+        validateGitArgs(["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/feat"]),
+      ).toBeNull();
+    });
+
+    it("allows worktree list/remove/prune", () => {
+      expect(validateGitArgs(["worktree", "list"])).toBeNull();
+      expect(validateGitArgs(["worktree", "remove", "/workspace/worktrees/repo/old"])).toBeNull();
+      expect(validateGitArgs(["worktree", "prune"])).toBeNull();
     });
 
     it("allows subcommand after flags", () => {
@@ -97,6 +106,20 @@ describe("validateGitArgs", () => {
     it("blocks checkout and switch (agent stays on assigned branch)", () => {
       expect(validateGitArgs(["checkout", "main"])).not.toBeNull();
       expect(validateGitArgs(["switch", "feature"])).not.toBeNull();
+    });
+
+    it("blocks worktree add outside /workspace/worktrees/", () => {
+      expect(validateGitArgs(["worktree", "add", "/tmp/evil"])).not.toBeNull();
+      expect(validateGitArgs(["worktree", "add", "/workspace/repos/sneaky"])).not.toBeNull();
+      expect(
+        validateGitArgs(["worktree", "add", "/workspace/worktrees/../repos/escape"]),
+      ).not.toBeNull();
+    });
+
+    it("allows worktree paths with nested branch names", () => {
+      expect(
+        validateGitArgs(["worktree", "add", "/workspace/worktrees/repo/feat/my-feature"]),
+      ).toBeNull();
     });
 
     it("blocks arbitrary commands", () => {

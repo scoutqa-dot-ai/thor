@@ -104,6 +104,11 @@ export function validateGitArgs(args: string[]): string | null {
     return `"git ${subcommand}" is not allowed`;
   }
 
+  // Restrict worktree add paths to /workspace/worktrees/
+  if (subcommand.toLowerCase() === "worktree") {
+    return validateGitWorktree(args);
+  }
+
   return null;
 }
 
@@ -120,6 +125,45 @@ function findGitSubcommand(args: string[]): string | null {
       i += 1; // skip standalone flag
     } else {
       return arg; // first non-flag is the subcommand
+    }
+  }
+  return null;
+}
+
+const WORKTREE_PREFIX = "/workspace/worktrees/";
+
+function validateGitWorktree(args: string[]): string | null {
+  // Find "worktree" then the sub-subcommand (add, list, remove, etc.)
+  const wtIdx = args.indexOf("worktree");
+  const subSub = args[wtIdx + 1];
+
+  // "worktree add <path>" — validate the path
+  if (subSub === "add") {
+    // Find the path: first positional arg after "add" (skip flags)
+    const path = findWorktreePath(args, wtIdx + 2);
+    if (!path) {
+      return '"git worktree add" requires a path';
+    }
+    const normalized = normalizePath(path);
+    if (!normalized.startsWith(WORKTREE_PREFIX)) {
+      return `worktree path must be under ${WORKTREE_PREFIX}`;
+    }
+  }
+
+  return null;
+}
+
+function findWorktreePath(args: string[], startIdx: number): string | null {
+  const flagsWithValue = new Set(["-b", "-B"]);
+  let i = startIdx;
+  while (i < args.length) {
+    const arg = args[i];
+    if (flagsWithValue.has(arg)) {
+      i += 2;
+    } else if (arg.startsWith("-")) {
+      i += 1;
+    } else {
+      return arg;
     }
   }
   return null;
