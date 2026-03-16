@@ -1,0 +1,23 @@
+docker-compose.yml
+  4998aa2d583aca61 63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "c4117b17a03df7bfb3bc619c9cf7f988793c5b62",
+  "prompts": {
+    "4998aa2d583aca61": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "89dc9004-a909-4ccf-9d09-a104a4ad1a40",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
