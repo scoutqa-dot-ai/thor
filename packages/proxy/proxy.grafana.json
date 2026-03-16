@@ -4,8 +4,7 @@
   },
   "allow": [
     "list_datasources",
-    "get_datasource_by_uid",
-    "get_datasource_by_name",
+    "get_datasource",
     "query_loki_logs",
     "list_loki_label_names",
     "list_loki_label_values",

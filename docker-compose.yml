@@ -49,11 +49,11 @@ services:
     entrypoint:
       [
         "/app/mcp-grafana",
-        "--transport",
+        "-transport",
         "streamable-http",
-        "--address",
+        "-address",
         "0.0.0.0:8000",
-        "--enabled-tools",
+        "-enabled-tools",
         "datasource,loki,proxied",
       ]
     environment:
