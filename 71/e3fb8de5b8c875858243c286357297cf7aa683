@@ -1,0 +1,25 @@
+packages/git-wrappers/src/policy.test.ts
+  93847bddc2bdbcac 42-43,47-53,56-76,79-81,84-106
+packages/git-wrappers/src/policy.ts
+  93847bddc2bdbcac 44-90,103-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "71e3fb8de5b8c875858243c286357297cf7aa683",
+  "prompts": {
+    "93847bddc2bdbcac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eb2a7110-351d-449a-871a-4aec764ec45f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 119,
+      "total_deletions": 29,
+      "accepted_lines": 106,
+      "overriden_lines": 0
+    }
+  }
+}
