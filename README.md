@@ -73,6 +73,7 @@ export SLACK_SIGNING_SECRET=...
 export VOUCH_GOOGLE_CLIENT_ID=...
 export VOUCH_GOOGLE_CLIENT_SECRET=...
 export VOUCH_JWT_SECRET=...
+export VOUCH_WHITELIST=alice@example.com,bob@example.com
 
 # Start all services
 docker compose up --build -d
@@ -115,6 +116,7 @@ Copy `.env.example` to `.env` and fill in:
 | `VOUCH_CALLBACK_URL`                | No       | vouch              | OAuth callback URL (default: `http://localhost:8080/vouch/auth`) |
 | `VOUCH_COOKIE_DOMAIN`               | No       | vouch              | Cookie domain (default: `localhost`)                             |
 | `VOUCH_JWT_SECRET`                  | Yes      | vouch              | Session JWT signing secret                                       |
+| `VOUCH_WHITELIST`                   | Yes      | vouch              | Comma-separated email allowlist for Vouch login                  |
 
 #### 2. Data proxy routes (`.env`)
 

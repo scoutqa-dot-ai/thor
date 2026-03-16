@@ -1,7 +1,8 @@
 vouch:
   port: 9090
   document_root: /vouch
-  allowAllUsers: true
+  domains:
+    - ${VOUCH_COOKIE_DOMAIN}
   cookie:
     domain: ${VOUCH_COOKIE_DOMAIN}
     secure: false

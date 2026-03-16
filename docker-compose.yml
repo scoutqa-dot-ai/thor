@@ -193,11 +193,12 @@ services:
     volumes:
       - ./docker/vouch/config.yml:/template/config.yml:ro
     environment:
+      - VOUCH_CALLBACK_URL=${VOUCH_CALLBACK_URL:-http://localhost:8080/vouch/auth}
+      - VOUCH_COOKIE_DOMAIN=${VOUCH_COOKIE_DOMAIN:-localhost}
       - VOUCH_GOOGLE_CLIENT_ID=${VOUCH_GOOGLE_CLIENT_ID:?set VOUCH_GOOGLE_CLIENT_ID}
       - VOUCH_GOOGLE_CLIENT_SECRET=${VOUCH_GOOGLE_CLIENT_SECRET:?set VOUCH_GOOGLE_CLIENT_SECRET}
       - VOUCH_JWT_SECRET=${VOUCH_JWT_SECRET:?set VOUCH_JWT_SECRET}
-      - VOUCH_COOKIE_DOMAIN=${VOUCH_COOKIE_DOMAIN:-localhost}
-      - VOUCH_CALLBACK_URL=${VOUCH_CALLBACK_URL:-http://localhost:8080/vouch/auth}
+      - VOUCH_WHITELIST=${VOUCH_WHITELIST:?set VOUCH_WHITELIST}
     healthcheck:
       test: ["CMD", "/vouch-proxy", "-healthcheck"]
       interval: 5s
