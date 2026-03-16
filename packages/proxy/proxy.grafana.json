@@ -1,0 +1,22 @@
+{
+  "upstream": {
+    "url": "http://grafana-mcp:8000/mcp"
+  },
+  "allow": [
+    "list_datasources",
+    "get_datasource",
+    "query_loki_logs",
+    "list_loki_label_names",
+    "list_loki_label_values",
+    "query_loki_stats",
+    "query_loki_patterns",
+    "tempo_traceql-search",
+    "tempo_traceql-metrics-instant",
+    "tempo_traceql-metrics-range",
+    "tempo_get-trace",
+    "tempo_get-attribute-names",
+    "tempo_get-attribute-values",
+    "tempo_docs-traceql"
+  ],
+  "approve": []
+}

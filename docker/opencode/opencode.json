@@ -27,6 +27,11 @@
       "type": "remote",
       "url": "http://proxy:3014/mcp",
       "enabled": true
+    },
+    "grafana": {
+      "type": "remote",
+      "url": "http://proxy:3015/mcp",
+      "enabled": true
     }
   }
 }
