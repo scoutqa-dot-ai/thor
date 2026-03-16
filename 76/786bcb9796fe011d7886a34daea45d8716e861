@@ -1,0 +1,31 @@
+packages/gateway/src/app.test.ts
+  f03febe9779a0f4c 22
+docker-compose.yml
+  f03febe9779a0f4c 155
+.env.example
+  f03febe9779a0f4c 36
+packages/gateway/src/index.ts
+  f03febe9779a0f4c 18,26
+packages/gateway/src/app.ts
+  f03febe9779a0f4c 76-77,115,262-268,270,321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "76786bcb9796fe011d7886a34daea45d8716e861",
+  "prompts": {
+    "f03febe9779a0f4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a742cf2-df50-4264-a278-1d17b8199d8b",
+        "model": "<synthetic>"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 6,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    }
+  }
+}
