@@ -1,0 +1,45 @@
+docker-compose.yml
+  8e19f894a447a36f 88-89,194-198
+packages/git-mcp/src/index.ts
+  8e19f894a447a36f 38,41,81-85,88-92
+docker/opencode/agents/build.md
+  8e19f894a447a36f 178,194,196,242,245
+docker/data/default.conf.template.example
+  8e19f894a447a36f 13,22
+docker/vouch/config.yml
+  8e19f894a447a36f 6,11,16-18
+docker/data/Dockerfile
+  8e19f894a447a36f 2-4
+packages/git-mcp/entrypoint.sh
+  8e19f894a447a36f 20-22
+docs/notify-thor.example.yml
+  8e19f894a447a36f 60
+packages/runner/src/index.ts
+  8e19f894a447a36f 38
+README.md
+  8e19f894a447a36f 3,45,68,71-75,90,92-98,100-132,134-159,239,251,261
+docker/data/entrypoint.sh
+  8e19f894a447a36f 1-97
+.env.example
+  8e19f894a447a36f 4-23,26,29-33,36-37,39-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "9f2d030be6b33974c56935ee2a4b6b84f583b30c",
+  "prompts": {
+    "8e19f894a447a36f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d3133111-db10-43b4-bc22-8c08d9a89f71",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 356,
+      "total_deletions": 247,
+      "accepted_lines": 258,
+      "overriden_lines": 3
+    }
+  }
+}
