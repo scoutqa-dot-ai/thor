@@ -1,0 +1,35 @@
+packages/git-wrappers/entrypoint.sh
+  93847bddc2bdbcac 2,14
+vitest.config.ts
+  93847bddc2bdbcac 7
+packages/git-wrappers/src/exec.ts
+  93847bddc2bdbcac 1-32
+packages/git-wrappers/package.json
+  93847bddc2bdbcac 2
+packages/git-wrappers/src/index.ts
+  93847bddc2bdbcac 3-4,6,10,16,19-24,26,28-30,34-36,40-42,44-45,49-60,63-68,70-75,79,82
+packages/git-wrappers/src/policy.test.ts
+  93847bddc2bdbcac 1-158
+packages/git-wrappers/src/policy.ts
+  93847bddc2bdbcac 1-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f7e60043a703393767ef7f57155b5a0a9b0e796d",
+  "prompts": {
+    "93847bddc2bdbcac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eb2a7110-351d-449a-871a-4aec764ec45f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 870,
+      "total_deletions": 498,
+      "accepted_lines": 620,
+      "overriden_lines": 0
+    }
+  }
+}
