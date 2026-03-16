@@ -1,0 +1,23 @@
+README.md
+  f03febe9779a0f4c 17-23,25,27,31,36-38,40-42,44-45,47,51-52,70-71,75,77,106,108-112,157,160,208,212,248,261,272,299-300,303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "68d5dcbe14b1b625a3ae30bc3ceb742d816bc80f",
+  "prompts": {
+    "f03febe9779a0f4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a742cf2-df50-4264-a278-1d17b8199d8b",
+        "model": "<synthetic>"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 82,
+      "total_deletions": 70,
+      "accepted_lines": 42,
+      "overriden_lines": 2
+    }
+  }
+}
