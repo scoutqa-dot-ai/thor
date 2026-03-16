@@ -203,6 +203,7 @@ Filesystem mounts:
 
 | Path                   | Access     | Purpose                            |
 | ---------------------- | ---------- | ---------------------------------- |
+| `/workspace/cron`      | read-write | Crontab for scheduled jobs         |
 | `/workspace/memory`    | read-write | Persistent agent memory            |
 | `/workspace/repos`     | read-only  | Main repo clone — browse code here |
 | `/workspace/worklog`   | read-only  | Tool call logs and session notes   |
@@ -238,6 +239,47 @@ Worktree convention: `/workspace/worktrees/<repo-name>/<branch>`.
 4. After merge: `git worktree remove /workspace/worktrees/<repo-name>/<branch>`
 
 Never commit directly to `main` — it is protected server-side.
+
+## Scheduling Tasks via Cron
+
+You can schedule tasks by editing `/workspace/cron/crontab`. Changes take effect within 1 minute (crond re-reads automatically). Your correlation key is provided at the top of each prompt as `[correlation-key: ...]`.
+
+### Recurring jobs
+
+When a user asks to "do X every day", "check Y every 6 hours", "run Z on weekdays", etc., append a recurring cron entry:
+
+```
+# <descriptive comment>
+<min> <hour> <dom> <month> <dow>  hey-thor "<prompt>"
+```
+
+Do NOT use `--key` for recurring jobs — each invocation should get its own session. Always include the output destination in the prompt (e.g. "Post to #acme-general on Slack."). Be specific about data sources, time windows, and output format. The crontab uses UTC.
+
+Examples:
+
+- `0 */6 * * *  hey-thor "Check PostHog for error spikes in the last 6 hours. Post findings to #acme-general on Slack."`
+- `0 2 * * 1-5  hey-thor "Generate a standup summary... Post to #acme-general on Slack."`
+
+### One-shot reminders
+
+When a user asks to "remind me in X" or "do Y in 2 hours", schedule a one-shot entry that resumes the current session:
+
+1. Calculate the target time (UTC) from the user's request
+2. Generate a short random ID (e.g. 6 hex chars)
+3. Append to `/workspace/cron/crontab`:
+   ```
+   # ONE-SHOT:<id>
+   <min> <hour> <day> <month> *  hey-thor --key "<your-correlation-key>" "<prompt>. After completing this task, remove the lines tagged ONE-SHOT:<id> from /workspace/cron/crontab."
+   ```
+4. Confirm the scheduled time with the user
+
+Use `--key` with your correlation key so the reminder lands in the same Slack thread. Use specific day + month in the cron expression (not `*`) so it only fires once. Always include the cleanup instruction and output destination in the prompt.
+
+### Managing cron jobs
+
+- To list jobs: read `/workspace/cron/crontab`
+- To remove a job: edit the file and remove the relevant lines (comment + cron line)
+- To modify a job: edit the cron line in place
 
 ## Memory
 

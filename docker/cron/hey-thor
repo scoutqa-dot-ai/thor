@@ -1,9 +1,18 @@
 #!/bin/sh
 set -e
 
-[ -z "$1" ] && { echo "Usage: hey-thor \"<prompt>\""; exit 1; }
+KEY=""
+while [ $# -gt 1 ]; do
+  case "$1" in
+    --key) KEY="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+
+[ -z "$1" ] && { echo "Usage: hey-thor [--key <correlationKey>] \"<prompt>\""; exit 1; }
 
 JSON="{\"prompt\":$(printf '%s' "$1" | jq -Rs .)}"
+[ -n "$KEY" ] && JSON="{\"prompt\":$(printf '%s' "$1" | jq -Rs .),\"correlationKey\":$(printf '%s' "$KEY" | jq -Rs .)}"
 
 exec curl -sf -X POST "${GATEWAY_URL}/cron" \
   -H "Content-Type: application/json" \

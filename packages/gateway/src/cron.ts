@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 
 export const CronRequestSchema = z.object({
   prompt: z.string().min(1),
+  correlationKey: z.string().optional(),
 });
 
 export type CronRequest = z.infer<typeof CronRequestSchema>;
