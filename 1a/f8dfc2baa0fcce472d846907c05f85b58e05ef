@@ -1,0 +1,27 @@
+packages/proxy/proxy.grafana.json
+  4998aa2d583aca61 1-23
+.env.example
+  4998aa2d583aca61 20-23
+docker-compose.yml
+  4998aa2d583aca61 46-67,79,82,93-94,101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1af8dfc2baa0fcce472d846907c05f85b58e05ef",
+  "prompts": {
+    "4998aa2d583aca61": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "89dc9004-a909-4ccf-9d09-a104a4ad1a40",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 113,
+      "total_deletions": 2,
+      "accepted_lines": 113,
+      "overriden_lines": 0
+    }
+  }
+}
