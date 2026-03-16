@@ -20,7 +20,7 @@ COPY packages/gateway/package.json packages/gateway/
 COPY packages/proxy/package.json packages/proxy/
 COPY packages/runner/package.json packages/runner/
 COPY packages/slack-mcp/package.json packages/slack-mcp/
-COPY packages/git-mcp/package.json packages/git-mcp/
+COPY packages/git-wrappers/package.json packages/git-wrappers/
 RUN pnpm install --frozen-lockfile
 
 # --- Build all packages ---
@@ -42,7 +42,7 @@ COPY packages/proxy/proxy.*.json /app/packages/proxy/
 COPY packages/proxy/multi-proxy.sh /app/packages/proxy/
 USER thor
 WORKDIR /workspace
-EXPOSE 3010 3011 3012 3013
+EXPOSE 3010 3011 3012
 CMD ["bash", "/app/packages/proxy/multi-proxy.sh"]
 
 FROM build AS runner
@@ -58,13 +58,16 @@ ENV PORT=3003
 EXPOSE 3003
 CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
 
-FROM build AS git-mcp
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY packages/git-mcp/entrypoint.sh /entrypoint.sh
+FROM build AS git-wrappers
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
+COPY packages/git-wrappers/entrypoint.sh /entrypoint.sh
 USER thor
 RUN mkdir -p /workspace/repos
 WORKDIR /workspace/repos
 ENV PORT=3004
 EXPOSE 3004
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["node", "/app/packages/git-mcp/dist/index.js"]
+CMD ["node", "/app/packages/git-wrappers/dist/index.js"]
