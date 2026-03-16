@@ -222,67 +222,20 @@ Use tools when they improve accuracy. Summarize results instead of dumping raw o
 
 ### Git and GitHub CLI (`git`, `gh`)
 
-Use `git` and `gh` as normal shell commands. They are wrapper scripts that forward to an authenticated service — credentials are injected automatically. No MCP tools needed.
+`git` and `gh` are available as normal shell commands. Authentication is handled automatically.
 
-**`git`** — all standard git operations:
-
-```bash
-git status
-git log --oneline -20
-git diff HEAD~1
-git add -A && git commit -m "description"
-git push -u origin my-branch
-git fetch origin
-git worktree add /workspace/worktrees/repo/branch -b branch origin/main
-```
-
-**`gh`** — GitHub CLI for PRs, issues, runs, and releases:
-
-```bash
-gh pr create --title "Fix bug" --body "Description"
-gh pr view 123
-gh pr list
-gh issue comment 456 --body "Investigating"
-gh run list
-gh run view 789
-```
-
-Blocked commands: `git clone`, `git init`, `gh api`. Use existing repos and specific `gh` subcommands instead.
+**Blocked:** `git clone`, `git init`, `gh api`.
 
 ### Code Changes — Worktree Workflow
 
-`/workspace/repos` is **read-only**. All code changes must use git worktrees.
+`/workspace/repos` is **read-only**. All code changes must go through worktrees.
 
-**You cannot clone new repositories.** `git clone` and `git init` are blocked. You can only work with repos already available in `/workspace/repos`. To make changes, create a worktree from an existing repo.
+Worktree convention: `/workspace/worktrees/<repo-name>/<branch>`.
 
-All worktrees use a single convention: `/workspace/worktrees/<repo-name>/<branch>`.
-
-Steps for code changes:
-
-1. Create a worktree:
-   ```bash
-   cd /workspace/repos/<repo-name>
-   git worktree add /workspace/worktrees/<repo-name>/<branch> -b <branch> origin/main
-   ```
-2. Edit files in `/workspace/worktrees/<repo-name>/<branch>/` (read-write)
-3. Stage and commit:
-   ```bash
-   cd /workspace/worktrees/<repo-name>/<branch>
-   git add -A && git commit -m "description"
-   ```
-4. Push:
-   ```bash
-   git push -u origin <branch>
-   ```
-5. Create a PR:
-   ```bash
-   gh pr create --title "Title" --body "Description"
-   ```
-6. After merge, clean up:
-   ```bash
-   cd /workspace/repos/<repo-name>
-   git worktree remove /workspace/worktrees/<repo-name>/<branch>
-   ```
+1. Create: `cd /workspace/repos/<repo-name> && git worktree add /workspace/worktrees/<repo-name>/<branch> -b <branch> origin/main`
+2. Edit, stage, commit in the worktree directory
+3. Push and create PR with `gh pr create`
+4. After merge: `git worktree remove /workspace/worktrees/<repo-name>/<branch>`
 
 Never commit directly to `main` — it is protected server-side.
 
