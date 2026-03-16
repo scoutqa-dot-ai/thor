@@ -366,6 +366,11 @@ app.post("/trigger", async (req, res) => {
       }
     }
 
+    // --- Correlation key: inject into every prompt so the agent always knows its own key ---
+    if (correlationKey) {
+      prompt = `[correlation-key: ${correlationKey}]\n\n${prompt}`;
+    }
+
     const parts: TextPartInput[] = [{ type: "text", text: prompt }];
     const modelConfig = model
       ? {

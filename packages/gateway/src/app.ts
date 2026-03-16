@@ -521,8 +521,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const { prompt } = parsed.data;
-    const correlationKey = deriveCronCorrelationKey(prompt);
+    const { prompt, correlationKey: providedKey } = parsed.data;
+    const correlationKey = providedKey ?? deriveCronCorrelationKey(prompt);
 
     const payload: CronPayload = { prompt };
 
