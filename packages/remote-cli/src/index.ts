@@ -1,6 +1,6 @@
 import express from "express";
 import { createLogger, logInfo, logError } from "@thor/common";
-import { execCommand } from "./exec.js";
+import { execCommand, execCommandStream } from "./exec.js";
 import { validateCwd, validateGitArgs, validateGhArgs, validateScoutqaArgs } from "./policy.js";
 
 const log = createLogger("remote-cli");
@@ -77,9 +77,12 @@ app.post("/exec/gh", async (req, res) => {
 });
 
 /**
- * POST /exec/scoutqa — execute a scoutqa CLI command
- * Body: { args: string[], cwd: string }
- * Response: { stdout, stderr, exitCode }
+ * POST /exec/scoutqa — execute a scoutqa CLI command (streaming)
+ * Body: { args: string[] }
+ * Response: newline-delimited JSON chunks:
+ *   { "stream": "stdout", "data": "..." }
+ *   { "stream": "stderr", "data": "..." }
+ *   { "exitCode": 0 }                        ← final line
  */
 app.post("/exec/scoutqa", async (req, res) => {
   try {
@@ -92,11 +95,29 @@ app.post("/exec/scoutqa", async (req, res) => {
     }
 
     logInfo(log, "exec_scoutqa", { args });
-    const result = await execCommand("scoutqa", args, "/workspace");
-    res.json(result);
+
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    const write = (obj: Record<string, unknown>) => {
+      res.write(JSON.stringify(obj) + "\n");
+    };
+
+    const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
+      onStdout: (data) => write({ stream: "stdout", data }),
+      onStderr: (data) => write({ stream: "stderr", data }),
+    });
+
+    write({ exitCode });
+    res.end();
   } catch (err) {
     logError(log, "exec_scoutqa_error", err instanceof Error ? err.message : String(err));
-    res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+    if (!res.headersSent) {
+      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+    } else {
+      res.write(JSON.stringify({ exitCode: 1 }) + "\n");
+      res.end();
+    }
   }
 });
 

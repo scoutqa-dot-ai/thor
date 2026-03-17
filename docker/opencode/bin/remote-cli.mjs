@@ -1,18 +1,21 @@
 #!/usr/bin/env node
 /**
- * Shared HTTP client for git/gh wrapper scripts.
+ * Shared HTTP client for git/gh/scoutqa wrapper scripts.
  *
  * Usage: node remote-cli.mjs <endpoint> <arg1> <arg2> ...
- *   endpoint: "git" or "gh"
+ *   endpoint: "git", "gh", or "scoutqa"
  *
  * Env:
  *   THOR_REMOTE_CLI_URL — base URL of the remote-cli service (e.g. http://remote-cli:3004)
+ *
+ * git/gh endpoints return buffered JSON: { stdout, stderr, exitCode }
+ * scoutqa endpoint streams NDJSON: { stream, data } chunks + { exitCode } final line
  */
 
 const [endpoint, ...args] = process.argv.slice(2);
 
 if (!endpoint) {
-  process.stderr.write("Usage: remote-cli.mjs <git|gh> [args...]\n");
+  process.stderr.write("Usage: remote-cli.mjs <git|gh|scoutqa> [args...]\n");
   process.exit(1);
 }
 
@@ -32,7 +35,38 @@ try {
     body: JSON.stringify({ args, cwd }),
   });
 
-  if (!res.ok && res.headers.get("content-type")?.includes("application/json")) {
+  const contentType = res.headers.get("content-type") || "";
+
+  // NDJSON streaming response (scoutqa)
+  if (contentType.includes("application/x-ndjson")) {
+    let exitCode = 1;
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    for await (const chunk of res.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop(); // keep incomplete line in buffer
+      for (const line of lines) {
+        if (!line) continue;
+        const msg = JSON.parse(line);
+        if (msg.stream === "stdout") process.stdout.write(msg.data);
+        else if (msg.stream === "stderr") process.stderr.write(msg.data);
+        if (msg.exitCode !== undefined) exitCode = msg.exitCode;
+      }
+    }
+    // flush remaining buffer
+    if (buffer.trim()) {
+      const msg = JSON.parse(buffer);
+      if (msg.stream === "stdout") process.stdout.write(msg.data);
+      else if (msg.stream === "stderr") process.stderr.write(msg.data);
+      if (msg.exitCode !== undefined) exitCode = msg.exitCode;
+    }
+    process.exit(exitCode);
+  }
+
+  // Buffered JSON response (git/gh)
+  if (!res.ok && contentType.includes("application/json")) {
     const body = await res.json();
     if (body.stderr) process.stderr.write(body.stderr);
     if (body.stdout) process.stdout.write(body.stdout);

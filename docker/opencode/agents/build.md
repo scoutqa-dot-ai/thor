@@ -202,7 +202,7 @@ Use `node` + `fetch` to call these endpoints. Check your memory files for availa
 **Workflow:**
 
 1. Create an execution: `scoutqa create-execution --url <url> --prompt "<test instruction>"`
-2. The execution runs server-side. The CLI streams progress and results.
+2. The execution runs server-side. Progress streams to your terminal in real time.
 3. To send follow-up instructions: `scoutqa send-message --execution-id <id> --prompt "<message>"`
 4. To release resources when done: `scoutqa complete-execution --execution-id <id>`
 5. To list recent executions: `scoutqa list-executions --limit 5`
