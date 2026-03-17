@@ -195,9 +195,34 @@ A credential-injecting reverse proxy is available at `http://data/`. It exposes 
 
 Use `node` + `fetch` to call these endpoints. Check your memory files for available routes and their API schemas.
 
+### ScoutQA CLI (`scoutqa`)
+
+`scoutqa` is available as a shell command for running AI-powered exploratory QA tests against web applications.
+
+**Workflow:**
+
+1. Create an execution: `scoutqa create-execution --url <url> --prompt "<test instruction>"`
+2. The execution runs server-side. The CLI streams progress and results.
+3. To send follow-up instructions: `scoutqa send-message --execution-id <id> --prompt "<message>"`
+4. To release resources when done: `scoutqa complete-execution --execution-id <id>`
+5. To list recent executions: `scoutqa list-executions --limit 5`
+
+**When to use:**
+
+- Smoke testing a deployed URL after a PR merge or deployment
+- Exploratory QA when a user asks to test a page or flow
+- Accessibility audits
+- Verifying user-reported bugs on a live URL
+
+**Tips:**
+
+- Be specific in prompts: include the URL, what to test, and what success looks like
+- Executions persist until completed — always complete them when done
+- The `--verbose` flag shows internal tool calls for debugging
+
 ## Environment
 
-You run inside a `node:22-slim` container. Node.js, `git`, and `gh` (GitHub CLI) are available — no Python, no Go, no other compiled binaries. Use `node` and `fetch` for any scripting or HTTP calls.
+You run inside a `node:22-slim` container. Node.js, `git`, `gh` (GitHub CLI), and `scoutqa` (ScoutQA CLI) are available — no Python, no Go, no other compiled binaries. Use `node` and `fetch` for any scripting or HTTP calls.
 
 Filesystem mounts:
 
