@@ -1,0 +1,45 @@
+docker/opencode/Dockerfile
+  d98fd3d9cf160d4e 6,10,15
+docker/opencode/bin/scoutqa
+  d98fd3d9cf160d4e 1-2
+pnpm-lock.yaml
+  d98fd3d9cf160d4e 65
+README.md
+  d98fd3d9cf160d4e 21,31,40,108-110,157,160,208,261,272
+packages/remote-cli/src/index.ts
+  d98fd3d9cf160d4e 6,16,106
+docker/opencode/bin/remote-cli.mjs
+  d98fd3d9cf160d4e 9,19,21,52
+packages/remote-cli/entrypoint.sh
+  d98fd3d9cf160d4e 2
+docs/plan/2026031702_scoutqa-mcp.md
+  d98fd3d9cf160d4e 1-58
+packages/remote-cli/package.json
+  d98fd3d9cf160d4e 2
+Dockerfile
+  d98fd3d9cf160d4e 23,61,66-67,74
+docker-compose.yml
+  d98fd3d9cf160d4e 27,30,37,143
+docs/plan/2026031601_gh-cli-proxy.md
+  d98fd3d9cf160d4e 8,20,22,27,32,40,46,52,56,68,76,98,101,103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "7cb496317e8de81494e73eddae56862ff2226c7b",
+  "prompts": {
+    "d98fd3d9cf160d4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74016c86-5ee8-42cb-afa6-59e8497585b0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 236,
+      "total_deletions": 108,
+      "accepted_lines": 173,
+      "overriden_lines": 0
+    }
+  }
+}
