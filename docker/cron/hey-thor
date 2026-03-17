@@ -9,12 +9,21 @@ while [ $# -gt 1 ]; do
   esac
 done
 
-[ -z "$1" ] && { echo "Usage: hey-thor [--key <correlationKey>] \"<prompt>\""; exit 1; }
+[ -z "$1" ] && { echo "Usage: hey-thor [--key <key>] '<prompt>'"; exit 1; }
+
+echo "[hey-thor] prompt length: ${#1}"
+echo "[hey-thor] prompt preview: $(printf '%.80s' "$1")..."
 
 JSON="{\"prompt\":$(printf '%s' "$1" | jq -Rs .)}"
 [ -n "$KEY" ] && JSON="{\"prompt\":$(printf '%s' "$1" | jq -Rs .),\"correlationKey\":$(printf '%s' "$KEY" | jq -Rs .)}"
 
-exec curl -sf -X POST "${GATEWAY_URL}/cron" \
+echo "[hey-thor] json length: ${#JSON}"
+echo "[hey-thor] posting to ${GATEWAY_URL}/cron"
+
+printf '%s' "$JSON" | curl -v -X POST "${GATEWAY_URL}/cron" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${CRON_SECRET}" \
-  -d "$JSON"
+  -d @- 2>&1
+
+echo ""
+echo "[hey-thor] exit code: $?"

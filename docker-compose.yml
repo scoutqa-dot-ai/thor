@@ -184,7 +184,7 @@ services:
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
       - SLACK_BOT_USER_ID=${SLACK_BOT_USER_ID:?set SLACK_BOT_USER_ID}
       - SLACK_ALLOWED_CHANNEL_IDS=${SLACK_ALLOWED_CHANNEL_IDS:-}
-      - CRON_SECRET=${CRON_SECRET:-}
+      - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:
@@ -207,7 +207,7 @@ services:
     restart: unless-stopped
     environment:
       - GATEWAY_URL=http://gateway:3002
-      - CRON_SECRET=${CRON_SECRET:-}
+      - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
     volumes:
       - ./docker-volumes/workspace/cron:/workspace/cron:ro
     depends_on:

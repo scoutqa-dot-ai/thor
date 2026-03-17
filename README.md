@@ -103,7 +103,7 @@ Copy `.env.example` to `.env` and fill in:
 
 | Variable                            | Required | Service            | Purpose                                                          |
 | ----------------------------------- | -------- | ------------------ | ---------------------------------------------------------------- |
-| `CRON_SECRET`                       | No       | gateway, cron      | Shared secret for cron endpoint auth                             |
+| `CRON_SECRET`                       | Yes      | gateway, cron      | Shared secret for cron endpoint auth                             |
 | `DATA_ROUTES`                       | No       | data               | Comma-separated list of data proxy routes (see below)            |
 | `GIT_USER_EMAIL`                    | No       | git-wrappers       | Git author email (default: `thor@localhost`)                     |
 | `GIT_USER_NAME`                     | No       | git-wrappers       | Git author name (default: `thor`)                                |
