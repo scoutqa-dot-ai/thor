@@ -1,0 +1,25 @@
+docker-compose.yml
+  f03febe9779a0f4c 36-37
+docker/opencode/agents/build.md
+  f03febe9779a0f4c 256,258,262-263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "182c9c05d4c51ac73c11a2d8e403a46e36cdf0fe",
+  "prompts": {
+    "f03febe9779a0f4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a742cf2-df50-4264-a278-1d17b8199d8b",
+        "model": "<synthetic>"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 3,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
