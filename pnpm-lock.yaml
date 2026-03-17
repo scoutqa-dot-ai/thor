@@ -62,28 +62,6 @@ importers:
         specifier: ^5.8.2
         version: 5.9.3
 
-  packages/remote-cli:
-    dependencies:
-      '@thor/common':
-        specifier: workspace:*
-        version: link:../common
-      express:
-        specifier: ^5.1.0
-        version: 5.2.1
-    devDependencies:
-      '@types/express':
-        specifier: ^5.0.2
-        version: 5.0.6
-      '@types/node':
-        specifier: ^22.13.10
-        version: 22.19.15
-      tsx:
-        specifier: ^4.19.3
-        version: 4.21.0
-      typescript:
-        specifier: ^5.8.2
-        version: 5.9.3
-
   packages/proxy:
     dependencies:
       '@modelcontextprotocol/sdk':
@@ -99,6 +77,31 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@types/express':
+        specifier: ^5.0.2
+        version: 5.0.6
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.3
+        version: 4.21.0
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+
+  packages/remote-cli:
+    dependencies:
+      '@thor/common':
+        specifier: workspace:*
+        version: link:../common
+      express:
+        specifier: ^5.1.0
+        version: 5.2.1
+    devDependencies:
+      '@scoutqa/cli':
+        specifier: 0.10.4-alpha.1
+        version: 0.10.4-alpha.1
       '@types/express':
         specifier: ^5.0.2
         version: 5.0.6
@@ -478,6 +481,11 @@ packages:
     resolution: {integrity: sha512-2HRCml6OztYXyJXAvdDXPKcawukWY2GpR5/nxKp4iBgiO3wcoEGkAaqctIbZcNB6KlUQBIqt8VYkNSj2397EfA==}
     cpu: [x64]
     os: [win32]
+
+  '@scoutqa/cli@0.10.4-alpha.1':
+    resolution: {integrity: sha512-F203MB9d61mU91fCv05wXwVZ3wUFmwWroL7KTLOE/Sjv6Hx32RL5IEgAWowGix9mHcktfioQloKpdnw0m1sfbw==}
+    engines: {node: '>=20.0.0'}
+    hasBin: true
 
   '@slack/logger@4.0.0':
     resolution: {integrity: sha512-Wz7QYfPAlG/DR+DfABddUZeNgoeY7d1J39OCR2jR+v7VBsB8ezulDK5szTnDDPDwLH5IWhLvXIHlCFZV7MSKgA==}
@@ -1557,6 +1565,8 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.59.0':
     optional: true
+
+  '@scoutqa/cli@0.10.4-alpha.1': {}
 
   '@slack/logger@4.0.0':
     dependencies:
