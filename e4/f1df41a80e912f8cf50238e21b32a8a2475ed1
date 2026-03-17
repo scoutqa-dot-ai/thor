@@ -1,0 +1,23 @@
+docker/ingress/nginx.conf
+  fb19b0a0d406e9f5 73-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e4f1df41a80e912f8cf50238e21b32a8a2475ed1",
+  "prompts": {
+    "fb19b0a0d406e9f5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f22667e0-8818-4d1c-87f6-a562578c1bb7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 0,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
