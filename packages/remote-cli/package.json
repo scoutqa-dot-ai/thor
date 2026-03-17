@@ -1,5 +1,5 @@
 {
-  "name": "@thor/git-wrappers",
+  "name": "@thor/remote-cli",
   "version": "0.0.1",
   "private": true,
   "type": "module",

@@ -62,7 +62,7 @@ importers:
         specifier: ^5.8.2
         version: 5.9.3
 
-  packages/git-wrappers:
+  packages/remote-cli:
     dependencies:
       '@thor/common':
         specifier: workspace:*

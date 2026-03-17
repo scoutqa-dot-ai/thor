@@ -6,7 +6,7 @@
  *   endpoint: "git" or "gh"
  *
  * Env:
- *   THOR_GIT_EXEC_URL — base URL of the git-wrappers service (e.g. http://git-wrappers:3004)
+ *   THOR_REMOTE_CLI_URL — base URL of the remote-cli service (e.g. http://remote-cli:3004)
  */
 
 const [endpoint, ...args] = process.argv.slice(2);
@@ -16,9 +16,9 @@ if (!endpoint) {
   process.exit(1);
 }
 
-const baseUrl = process.env.THOR_GIT_EXEC_URL;
+const baseUrl = process.env.THOR_REMOTE_CLI_URL;
 if (!baseUrl) {
-  process.stderr.write("THOR_GIT_EXEC_URL is not set\n");
+  process.stderr.write("THOR_REMOTE_CLI_URL is not set\n");
   process.exit(1);
 }
 
@@ -49,6 +49,6 @@ try {
   if (body.stderr) process.stderr.write(body.stderr);
   process.exit(body.exitCode ?? 0);
 } catch (err) {
-  process.stderr.write(`Failed to reach git-wrappers: ${err.message}\n`);
+  process.stderr.write(`Failed to reach remote-cli: ${err.message}\n`);
   process.exit(1);
 }

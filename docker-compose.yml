@@ -24,16 +24,17 @@ services:
       timeout: 3s
       retries: 10
 
-  git-wrappers:
+  remote-cli:
     build:
       context: .
-      target: git-wrappers
+      target: remote-cli
     restart: unless-stopped
     ports:
       - "127.0.0.1:3004:3004"
     environment:
       - NODE_ENV=production
       - GITHUB_PAT=${GITHUB_PAT}
+      - SCOUT_API_KEY=${SCOUT_API_KEY:-}
     volumes:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace/repos:/workspace/repos
@@ -139,7 +140,7 @@ services:
     depends_on:
       proxy:
         condition: service_healthy
-      git-wrappers:
+      remote-cli:
         condition: service_healthy
       data:
         condition: service_healthy
