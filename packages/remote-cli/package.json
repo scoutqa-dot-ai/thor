@@ -1,5 +1,5 @@
 {
-  "name": "@thor/git-wrappers",
+  "name": "@thor/remote-cli",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -15,6 +15,7 @@
     "express": "^5.1.0"
   },
   "devDependencies": {
+    "@scoutqa/cli": "0.10.4-alpha.1",
     "@types/express": "^5.0.2",
     "@types/node": "^22.13.10",
     "tsx": "^4.19.3",

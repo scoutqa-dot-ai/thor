@@ -20,7 +20,7 @@ COPY packages/gateway/package.json packages/gateway/
 COPY packages/proxy/package.json packages/proxy/
 COPY packages/runner/package.json packages/runner/
 COPY packages/slack-mcp/package.json packages/slack-mcp/
-COPY packages/git-wrappers/package.json packages/git-wrappers/
+COPY packages/remote-cli/package.json packages/remote-cli/
 RUN pnpm install --frozen-lockfile
 
 # --- Build all packages ---
@@ -58,16 +58,17 @@ ENV PORT=3003
 EXPOSE 3003
 CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
 
-FROM build AS git-wrappers
+FROM build AS remote-cli
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
-COPY packages/git-wrappers/entrypoint.sh /entrypoint.sh
+RUN npm i -g @scoutqa/cli@latest
+COPY packages/remote-cli/entrypoint.sh /entrypoint.sh
 USER thor
 RUN mkdir -p /workspace/repos
 WORKDIR /workspace/repos
 ENV PORT=3004
 EXPOSE 3004
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["node", "/app/packages/git-wrappers/dist/index.js"]
+CMD ["node", "/app/packages/remote-cli/dist/index.js"]

@@ -1,9 +1,9 @@
 import express from "express";
 import { createLogger, logInfo, logError } from "@thor/common";
-import { execCommand } from "./exec.js";
-import { validateCwd, validateGitArgs, validateGhArgs } from "./policy.js";
+import { execCommand, execCommandStream } from "./exec.js";
+import { validateCwd, validateGitArgs, validateGhArgs, validateScoutqaArgs } from "./policy.js";
 
-const log = createLogger("git-wrappers");
+const log = createLogger("remote-cli");
 
 const PORT = parseInt(process.env.PORT || "3004", 10);
 
@@ -13,7 +13,7 @@ const app = express();
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "git-wrappers" });
+  res.json({ status: "ok", service: "remote-cli" });
 });
 
 /**
@@ -76,8 +76,53 @@ app.post("/exec/gh", async (req, res) => {
   }
 });
 
+/**
+ * POST /exec/scoutqa — execute a scoutqa CLI command (streaming)
+ * Body: { args: string[] }
+ * Response: newline-delimited JSON chunks:
+ *   { "stream": "stdout", "data": "..." }
+ *   { "stream": "stderr", "data": "..." }
+ *   { "exitCode": 0 }                        ← final line
+ */
+app.post("/exec/scoutqa", async (req, res) => {
+  try {
+    const { args } = req.body ?? {};
+
+    const argsError = validateScoutqaArgs(args);
+    if (argsError) {
+      res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
+      return;
+    }
+
+    logInfo(log, "exec_scoutqa", { args });
+
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    const write = (obj: Record<string, unknown>) => {
+      res.write(JSON.stringify(obj) + "\n");
+    };
+
+    const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
+      onStdout: (data) => write({ stream: "stdout", data }),
+      onStderr: (data) => write({ stream: "stderr", data }),
+    });
+
+    write({ exitCode });
+    res.end();
+  } catch (err) {
+    logError(log, "exec_scoutqa_error", err instanceof Error ? err.message : String(err));
+    if (!res.headersSent) {
+      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+    } else {
+      res.write(JSON.stringify({ exitCode: 1 }) + "\n");
+      res.end();
+    }
+  }
+});
+
 // ── Startup ─────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  logInfo(log, "git_wrappers_listening", { port: PORT });
+  logInfo(log, "remote_cli_listening", { port: PORT });
 });

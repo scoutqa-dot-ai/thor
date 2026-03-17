@@ -1,5 +1,5 @@
 #!/bin/sh
-# Git credential setup for the git-wrappers container.
+# Git credential setup for the remote-cli container.
 # Configures GIT_ASKPASS so any process (Node.js or interactive shell)
 # can authenticate to GitHub over HTTPS using the PAT.
 

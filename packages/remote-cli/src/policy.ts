@@ -169,6 +169,37 @@ function findWorktreePath(args: string[], startIdx: number): string | null {
   return null;
 }
 
+// ── scoutqa policy ──────────────────────────────────────────────────────────
+
+const ALLOWED_SCOUTQA_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "create-execution",
+  "send-message",
+  "list-executions",
+  "complete-execution",
+  "auth",
+]);
+
+export function validateScoutqaArgs(args: string[]): string | null {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "args must be a non-empty array";
+  }
+
+  const subcommand = args[0];
+  if (!ALLOWED_SCOUTQA_SUBCOMMANDS.has(subcommand)) {
+    return `"scoutqa ${subcommand}" is not allowed`;
+  }
+
+  // auth subcommand: only allow "status"
+  if (subcommand === "auth") {
+    const sub = args[1];
+    if (sub !== "status") {
+      return `"scoutqa auth ${sub || ""}" is not allowed — only "scoutqa auth status" is permitted`;
+    }
+  }
+
+  return null;
+}
+
 // ── gh policy ───────────────────────────────────────────────────────────────
 
 /**
