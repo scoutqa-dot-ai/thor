@@ -1,0 +1,31 @@
+packages/remote-cli/src/exec.test.ts
+  d98fd3d9cf160d4e 1-98
+packages/remote-cli/src/index.ts
+  d98fd3d9cf160d4e 3,80-85,98-112,115-120
+docker/opencode/bin/remote-cli.mjs
+  d98fd3d9cf160d4e 3,6,10-12,18,38-66,68-69
+docker/opencode/agents/build.md
+  d98fd3d9cf160d4e 205
+packages/remote-cli/src/exec.ts
+  d98fd3d9cf160d4e 8,11-12,26,35,39-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f82fc682abd4a12fa90746b85ea36acf0afcaf4c",
+  "prompts": {
+    "d98fd3d9cf160d4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74016c86-5ee8-42cb-afa6-59e8497585b0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 228,
+      "total_deletions": 37,
+      "accepted_lines": 206,
+      "overriden_lines": 0
+    }
+  }
+}
