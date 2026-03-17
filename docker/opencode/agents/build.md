@@ -253,12 +253,14 @@ When a user asks to "do X every day", "check Y every 6 hours", "run Z on weekday
 <min> <hour> <dom> <month> <dow>  hey-thor "<prompt>"
 ```
 
-Do NOT use `--key` for recurring jobs — each invocation should get its own session. Always include the output destination in the prompt (e.g. "Post to #acme-general on Slack."). Be specific about data sources, time windows, and output format. The crontab uses UTC.
+Do NOT use `--key` for recurring jobs — each invocation should get its own session. Always include the output destination in the prompt. Be specific about data sources, time windows, and output format. The crontab uses UTC.
+
+**Important:** Never use `#` in crontab prompts — BusyBox crond treats `#` as a comment delimiter even mid-line, which truncates the command and causes shell syntax errors. Use Slack channel IDs (e.g. `C01AB23CD`) instead of channel names (e.g. `#general`).
 
 Examples:
 
-- `0 */6 * * *  hey-thor "Check PostHog for error spikes in the last 6 hours. Post findings to #acme-general on Slack."`
-- `0 2 * * 1-5  hey-thor "Generate a standup summary... Post to #acme-general on Slack."`
+- `0 */6 * * *  hey-thor "Check PostHog for error spikes in the last 6 hours. Post findings to C01AB23CD on Slack."`
+- `0 2 * * 1-5  hey-thor "Generate a standup summary... Post to C01AB23CD on Slack."`
 
 ### One-shot reminders
 

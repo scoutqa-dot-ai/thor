@@ -33,6 +33,8 @@ services:
       - "127.0.0.1:3004:3004"
     environment:
       - NODE_ENV=production
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-thor@localhost}
+      - GIT_USER_NAME=${GIT_USER_NAME:-thor}
       - GITHUB_PAT=${GITHUB_PAT}
     volumes:
       - ./docker-volumes/home/thor:/home/thor
