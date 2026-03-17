@@ -1,0 +1,38 @@
+packages/common/src/notes.test.ts
+  0562803b3433b7be 601-602,606-607,615,618-620,625,629,632-634,639,644-648,651,656-658,670,675-676,681-682,686-691,694-696,702-703,708-713,716-718,722-723,726-731,734-736,742,748,751-753,760,763-765,772-777,780-782
+packages/common/src/notes.ts
+  0562803b3433b7be 259,266-270,272-273,282-283,285,292-306,308-309,311-313,315,317,319-320,322-326,332,342-367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8e1bb3cd9383db769978eb7e4ef63d8ebf17fa00",
+  "prompts": {
+    "0562803b3433b7be": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d55f1c00-7ec7-4ec9-bfca-ac04ba969b81",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 213,
+      "total_deletions": 33,
+      "accepted_lines": 207,
+      "overriden_lines": 0
+    },
+    "d98fd3d9cf160d4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74016c86-5ee8-42cb-afa6-59e8497585b0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 26,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  }
+}
