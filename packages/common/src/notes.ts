@@ -242,28 +242,6 @@ ${opts.context || `Alias for ${opts.correlationKey}`}
 // Alias extraction from tool call results
 // ---------------------------------------------------------------------------
 
-/** Discriminated union of tool artifacts that can produce aliases. */
-const ToolArtifactSchema = z.discriminatedUnion("tool", [
-  z.object({
-    tool: z.literal("post_message"),
-    input: z.object({
-      channel: z.string().optional(),
-      thread_ts: z.string().optional(),
-    }),
-    output: z.string(),
-  }),
-  z.object({
-    tool: z.literal("git"),
-    input: z.object({
-      args: z.array(z.string()),
-      cwd: z.string().optional(),
-    }),
-    output: z.string(),
-  }),
-]);
-
-type ToolArtifactUnion = z.infer<typeof ToolArtifactSchema>;
-
 /** Loose input type — parsed into the discriminated union via safeParse. */
 export interface ToolArtifact {
   tool: string;
@@ -278,15 +256,21 @@ export interface ExtractedAlias {
 }
 
 /** Tool names that can produce cross-channel aliases. */
-const ALIASABLE_TOOLS = new Set(["post_message", "git"]);
+const ALIASABLE_TOOLS = new Set(["slack_post_message", "bash"]);
 
 /** Check if a tool name is aliasable. */
 export function isAliasableTool(tool: string): boolean {
   return ALIASABLE_TOOLS.has(tool);
 }
 
-/** Zod schema for post_message JSON output. */
-const PostMessageOutputSchema = z.object({
+/** Zod schema for slack_post_message input. */
+const SlackPostMessageInput = z.object({
+  channel: z.string().optional(),
+  thread_ts: z.string().optional(),
+});
+
+/** Zod schema for slack_post_message JSON output. */
+const SlackPostMessageOutput = z.object({
   ts: z.string().min(1),
   channel: z.string().optional(),
 });
@@ -295,60 +279,57 @@ const PostMessageOutputSchema = z.object({
  * Extract aliases from completed tool call artifacts.
  *
  * Each tool has specific extraction logic:
- * - `post_message`: new thread → `slack:thread:{ts}`, reply → `slack:thread:{thread_ts}`
- * - `git` with push: → `git:branch:{repo}:{branch}`
+ * - `slack_post_message`: new thread → `slack:thread:{ts}`, reply → `slack:thread:{thread_ts}`
+ * - `bash` with [thor:meta]: parses structured metadata from remote-cli output → `git:branch:{repo}:{branch}`
  *
- * Best-effort: malformed artifacts are silently skipped via Zod safeParse.
+ * Best-effort: malformed artifacts are silently skipped.
  */
 export function extractAliases(artifacts: ToolArtifact[]): ExtractedAlias[] {
   const aliases: ExtractedAlias[] = [];
 
   for (const raw of artifacts) {
     try {
-      const parsed = ToolArtifactSchema.safeParse(raw);
-      if (!parsed.success) continue;
+      if (raw.tool === "bash") {
+        // Parse [thor:meta] lines emitted by remote-cli.mjs in the tool output.
+        const metaEntries = extractThorMeta(raw.output);
+        for (const meta of metaEntries) {
+          if (meta.cmd !== "git" && meta.cmd !== "gh") continue;
+          const branch = extractBranchFromGitArgs(meta.args);
+          if (!branch) continue;
 
-      const artifact: ToolArtifactUnion = parsed.data;
+          const repo = inferRepoFromPath(meta.cwd || "");
+          if (!repo) continue;
 
-      switch (artifact.tool) {
-        case "post_message": {
-          const channel = artifact.input.channel || "unknown";
-
-          if (artifact.input.thread_ts) {
-            // Reply to existing thread — alias the thread so future events route here
-            aliases.push({
-              alias: `slack:thread:${artifact.input.thread_ts}`,
-              context: `Replied in thread in ${channel}`,
-            });
-          } else {
-            // New thread — alias the new message ts
-            const output = PostMessageOutputSchema.safeParse(JSON.parse(artifact.output));
-            if (!output.success) break;
-
-            const resolvedChannel = output.data.channel || channel;
-            aliases.push({
-              alias: `slack:thread:${output.data.ts}`,
-              context: `New thread posted to ${resolvedChannel}`,
-            });
-          }
-          break;
-        }
-
-        case "git": {
-          const { args, cwd } = artifact.input;
-          const branch = extractBranchFromGitArgs(args);
-          if (!branch) break;
-
-          const repo = inferRepoFromPath(cwd || "");
-          if (!repo) break;
-
-          const subcommand = args[0];
           aliases.push({
             alias: `git:branch:${repo}:${branch}`,
-            context: `git ${subcommand} in ${cwd || "(default cwd)"}`,
+            context: `${meta.cmd} ${meta.args[0]} in ${meta.cwd || "(default cwd)"}`,
           });
-          break;
         }
+        continue;
+      }
+
+      if (raw.tool === "slack_post_message") {
+        const input = SlackPostMessageInput.safeParse(raw.input);
+        if (!input.success) continue;
+
+        const channel = input.data.channel || "unknown";
+
+        if (input.data.thread_ts) {
+          aliases.push({
+            alias: `slack:thread:${input.data.thread_ts}`,
+            context: `Replied in thread in ${channel}`,
+          });
+        } else {
+          const output = SlackPostMessageOutput.safeParse(JSON.parse(raw.output));
+          if (!output.success) continue;
+
+          const resolvedChannel = output.data.channel || channel;
+          aliases.push({
+            alias: `slack:thread:${output.data.ts}`,
+            context: `New thread posted to ${resolvedChannel}`,
+          });
+        }
+        continue;
       }
     } catch {
       // Best-effort: skip malformed output (e.g. JSON.parse failure)
@@ -356,6 +337,32 @@ export function extractAliases(artifacts: ToolArtifact[]): ExtractedAlias[] {
   }
 
   return aliases;
+}
+
+/** Schema for [thor:meta] JSON payloads emitted by remote-cli.mjs. */
+const ThorMetaSchema = z.object({
+  cmd: z.string(),
+  args: z.array(z.string()),
+  cwd: z.string().optional(),
+});
+
+/**
+ * Extract all [thor:meta] entries from tool output.
+ * Returns parsed metadata objects; malformed lines are silently skipped.
+ */
+function extractThorMeta(output: string): Array<{ cmd: string; args: string[]; cwd?: string }> {
+  const results: Array<{ cmd: string; args: string[]; cwd?: string }> = [];
+  const regex = /\[thor:meta]\s*(.+)/g;
+  let match;
+  while ((match = regex.exec(output)) !== null) {
+    try {
+      const parsed = ThorMetaSchema.safeParse(JSON.parse(match[1]));
+      if (parsed.success) results.push(parsed.data);
+    } catch {
+      // skip malformed JSON
+    }
+  }
+  return results;
 }
 
 /**

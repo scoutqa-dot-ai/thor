@@ -598,11 +598,13 @@ describe("notes", () => {
 describe("alias extraction", () => {
   describe("isAliasableTool", () => {
     it("returns true for aliasable tools", () => {
-      expect(isAliasableTool("post_message")).toBe(true);
-      expect(isAliasableTool("git")).toBe(true);
+      expect(isAliasableTool("slack_post_message")).toBe(true);
+      expect(isAliasableTool("bash")).toBe(true);
     });
 
     it("returns false for non-aliasable tools", () => {
+      expect(isAliasableTool("post_message")).toBe(false);
+      expect(isAliasableTool("git")).toBe(false);
       expect(isAliasableTool("create_pull_request")).toBe(false);
       expect(isAliasableTool("read_channel")).toBe(false);
       expect(isAliasableTool("list_issues")).toBe(false);
@@ -610,148 +612,50 @@ describe("alias extraction", () => {
   });
 
   describe("extractAliases", () => {
-    it("extracts slack thread alias from post_message (new thread)", () => {
+    it("extracts slack thread alias from slack_post_message (new thread)", () => {
       const aliases = extractAliases([
         {
-          tool: "post_message",
-          input: { channel: "C123ABC", text: "Hello" },
-          output: JSON.stringify({ ok: true, ts: "1710000000.123", channel: "C123ABC" }),
+          tool: "slack_post_message",
+          input: { channel: "C999XYZ", text: "Health report" },
+          output: JSON.stringify({ ok: true, ts: "1710099999.456", channel: "C999XYZ" }),
         },
       ]);
 
       expect(aliases).toEqual([
-        { alias: "slack:thread:1710000000.123", context: "New thread posted to C123ABC" },
+        { alias: "slack:thread:1710099999.456", context: "New thread posted to C999XYZ" },
       ]);
     });
 
-    it("aliases thread_ts for post_message replies", () => {
+    it("aliases thread_ts for slack_post_message replies", () => {
       const aliases = extractAliases([
         {
-          tool: "post_message",
-          input: { channel: "C123ABC", text: "Reply", thread_ts: "1710000000.100" },
-          output: JSON.stringify({ ok: true, ts: "1710000000.200", channel: "C123ABC" }),
+          tool: "slack_post_message",
+          input: { channel: "C999XYZ", text: "Follow up", thread_ts: "1710099999.456" },
+          output: JSON.stringify({ ok: true, ts: "1710099999.789", channel: "C999XYZ" }),
         },
       ]);
 
       expect(aliases).toEqual([
-        { alias: "slack:thread:1710000000.100", context: "Replied in thread in C123ABC" },
+        { alias: "slack:thread:1710099999.456", context: "Replied in thread in C999XYZ" },
       ]);
-    });
-
-    it("extracts git branch alias from git push", () => {
-      const aliases = extractAliases([
-        {
-          tool: "git",
-          input: {
-            args: ["push", "origin", "feat/login-fix"],
-            cwd: "/workspace/repos/acme-project",
-          },
-          output: "(no output)",
-        },
-      ]);
-
-      expect(aliases).toEqual([
-        {
-          alias: "git:branch:acme/project:feat/login-fix",
-          context: "git push in /workspace/repos/acme-project",
-        },
-      ]);
-    });
-
-    it("extracts git branch alias from checkout", () => {
-      const aliases = extractAliases([
-        {
-          tool: "git",
-          input: {
-            args: ["checkout", "feat/review"],
-            cwd: "/workspace/repos/acme-project",
-          },
-          output: "Switched to branch 'feat/review'",
-        },
-      ]);
-
-      expect(aliases).toEqual([
-        {
-          alias: "git:branch:acme/project:feat/review",
-          context: "git checkout in /workspace/repos/acme-project",
-        },
-      ]);
-    });
-
-    it("extracts git branch alias from checkout -b", () => {
-      const aliases = extractAliases([
-        {
-          tool: "git",
-          input: { args: ["checkout", "-b", "feat/new"], cwd: "/workspace/repos/org-repo" },
-          output: "Switched to new branch 'feat/new'",
-        },
-      ]);
-
-      expect(aliases).toEqual([
-        {
-          alias: "git:branch:org/repo:feat/new",
-          context: "git checkout in /workspace/repos/org-repo",
-        },
-      ]);
-    });
-
-    it("extracts git branch alias from switch", () => {
-      const aliases = extractAliases([
-        {
-          tool: "git",
-          input: { args: ["switch", "feat/login"], cwd: "/workspace/repos/acme-project" },
-          output: "Switched to branch 'feat/login'",
-        },
-      ]);
-
-      expect(aliases).toEqual([
-        {
-          alias: "git:branch:acme/project:feat/login",
-          context: "git switch in /workspace/repos/acme-project",
-        },
-      ]);
-    });
-
-    it("strips origin/ prefix from checkout of remote branch", () => {
-      const aliases = extractAliases([
-        {
-          tool: "git",
-          input: { args: ["checkout", "origin/feat/review"], cwd: "/workspace/repos/org-repo" },
-          output: "HEAD is now at abc123",
-        },
-      ]);
-
-      expect(aliases).toEqual([
-        {
-          alias: "git:branch:org/repo:feat/review",
-          context: "git checkout in /workspace/repos/org-repo",
-        },
-      ]);
-    });
-
-    it("skips git commands that don't involve branches", () => {
-      const aliases = extractAliases([
-        {
-          tool: "git",
-          input: { args: ["log", "--oneline", "-5"], cwd: "/workspace/repos/org-repo" },
-          output: "abc123 some commit",
-        },
-      ]);
-
-      expect(aliases).toEqual([]);
     });
 
     it("handles multiple artifacts in a single call", () => {
+      const pushMeta = JSON.stringify({
+        cmd: "git",
+        args: ["push", "origin", "fix/bug"],
+        cwd: "/workspace/repos/org-repo",
+      });
       const aliases = extractAliases([
         {
-          tool: "post_message",
+          tool: "slack_post_message",
           input: { channel: "C001", text: "Starting" },
           output: JSON.stringify({ ok: true, ts: "111.000", channel: "C001" }),
         },
         {
-          tool: "git",
-          input: { args: ["push", "origin", "fix/bug"], cwd: "/workspace/repos/org-repo" },
-          output: "(no output)",
+          tool: "bash",
+          input: { command: "git push origin fix/bug" },
+          output: `(no output)\n[thor:meta] ${pushMeta}\n`,
         },
       ]);
 
@@ -763,31 +667,119 @@ describe("alias extraction", () => {
     it("skips malformed output gracefully", () => {
       const aliases = extractAliases([
         {
-          tool: "post_message",
+          tool: "slack_post_message",
           input: { channel: "C001", text: "Hello" },
           output: "not json at all",
         },
         {
-          tool: "git",
-          input: { args: ["push", "origin", "main"] },
+          tool: "bash",
+          input: { command: "git push origin main" },
           output: "error: something went wrong",
         },
       ]);
 
-      // post_message: JSON.parse fails → skipped
-      // git: no cwd → no repo → skipped
+      // slack_post_message: JSON.parse fails → skipped
+      // bash: no [thor:meta] → skipped
       expect(aliases).toEqual([]);
     });
 
-    it("handles git push with HEAD:branch syntax", () => {
+    it("extracts git alias from bash tool with [thor:meta]", () => {
+      const meta = JSON.stringify({
+        cmd: "git",
+        args: ["push", "origin", "feat/login-fix"],
+        cwd: "/workspace/repos/acme-project",
+      });
       const aliases = extractAliases([
         {
-          tool: "git",
-          input: {
-            args: ["push", "origin", "HEAD:refs/heads/feat/new"],
-            cwd: "/workspace/repos/acme-app",
-          },
-          output: "(no output)",
+          tool: "bash",
+          input: { command: "git push origin feat/login-fix" },
+          output: `Everything up-to-date\n[thor:meta] ${meta}\n`,
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:acme/project:feat/login-fix",
+          context: "git push in /workspace/repos/acme-project",
+        },
+      ]);
+    });
+
+    it("extracts gh alias from bash tool with [thor:meta]", () => {
+      const meta = JSON.stringify({
+        cmd: "gh",
+        args: ["pr", "create", "--head", "feat/new"],
+        cwd: "/workspace/repos/org-repo",
+      });
+      const aliases = extractAliases([
+        {
+          tool: "bash",
+          input: { command: "gh pr create --head feat/new" },
+          output: `https://github.com/org/repo/pull/42\n[thor:meta] ${meta}\n`,
+        },
+      ]);
+
+      // gh pr create doesn't push a branch — no branch extracted from args
+      expect(aliases).toEqual([]);
+    });
+
+    it("extracts git checkout alias from bash tool with [thor:meta]", () => {
+      const meta = JSON.stringify({
+        cmd: "git",
+        args: ["checkout", "-b", "feat/new-feature"],
+        cwd: "/workspace/repos/org-repo",
+      });
+      const aliases = extractAliases([
+        {
+          tool: "bash",
+          input: { command: "git checkout -b feat/new-feature" },
+          output: `Switched to a new branch 'feat/new-feature'\n[thor:meta] ${meta}\n`,
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:org/repo:feat/new-feature",
+          context: "git checkout in /workspace/repos/org-repo",
+        },
+      ]);
+    });
+
+    it("skips bash tool output without [thor:meta]", () => {
+      const aliases = extractAliases([
+        {
+          tool: "bash",
+          input: { command: "ls -la" },
+          output: "total 42\ndrwxr-xr-x ...",
+        },
+      ]);
+
+      expect(aliases).toEqual([]);
+    });
+
+    it("skips malformed [thor:meta] in bash output", () => {
+      const aliases = extractAliases([
+        {
+          tool: "bash",
+          input: { command: "git push origin main" },
+          output: "Everything up-to-date\n[thor:meta] not-json\n",
+        },
+      ]);
+
+      expect(aliases).toEqual([]);
+    });
+
+    it("handles git push with HEAD:branch syntax via bash", () => {
+      const meta = JSON.stringify({
+        cmd: "git",
+        args: ["push", "origin", "HEAD:refs/heads/feat/new"],
+        cwd: "/workspace/repos/acme-app",
+      });
+      const aliases = extractAliases([
+        {
+          tool: "bash",
+          input: { command: "git push origin HEAD:refs/heads/feat/new" },
+          output: `(no output)\n[thor:meta] ${meta}\n`,
         },
       ]);
 

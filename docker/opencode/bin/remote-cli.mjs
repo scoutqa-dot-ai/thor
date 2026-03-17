@@ -81,6 +81,14 @@ try {
   const body = await res.json();
   if (body.stdout) process.stdout.write(body.stdout);
   if (body.stderr) process.stderr.write(body.stderr);
+
+  // Emit structured metadata so the runner can extract aliases from bash tool output.
+  // Only for git/gh — the runner parses [thor:meta] lines to link sessions across channels.
+  if ((endpoint === "git" || endpoint === "gh") && (body.exitCode ?? 0) === 0) {
+    const meta = JSON.stringify({ cmd: endpoint, args, cwd });
+    process.stderr.write(`\n[thor:meta] ${meta}\n`);
+  }
+
   process.exit(body.exitCode ?? 0);
 } catch (err) {
   process.stderr.write(`Failed to reach remote-cli: ${err.message}\n`);
