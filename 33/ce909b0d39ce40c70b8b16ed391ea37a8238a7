@@ -1,0 +1,31 @@
+docker/opencode/Dockerfile
+  f03febe9779a0f4c 4
+packages/runner/package.json
+  f03febe9779a0f4c 14
+docker/opencode/agents/thinker.md
+  f03febe9779a0f4c 1-18
+docker/opencode/agents/coder.md
+  f03febe9779a0f4c 1-16
+docker/opencode/agents/build.md
+  f03febe9779a0f4c 3,239-258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "33ce909b0d39ce40c70b8b16ed391ea37a8238a7",
+  "prompts": {
+    "f03febe9779a0f4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a742cf2-df50-4264-a278-1d17b8199d8b",
+        "model": "<synthetic>"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 78,
+      "total_deletions": 24,
+      "accepted_lines": 57,
+      "overriden_lines": 0
+    }
+  }
+}
