@@ -5,6 +5,7 @@ import {
   logError,
   logInfo,
   resolveCorrelationKey,
+  resolveCorrelationKeys,
 } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
@@ -19,7 +20,7 @@ import {
   type RunnerDeps,
   type SlackMcpDeps,
 } from "./service.js";
-import { getGitHubCorrelationKey, parseGitHubEvent, type GitHubEvent } from "./github.js";
+import { getGitHubCorrelationKeys, parseGitHubEvent, type GitHubEvent } from "./github.js";
 import {
   getSlackCorrelationKey,
   parseSlackTs,
@@ -475,10 +476,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const rawKey = getGitHubCorrelationKey(event);
-    const correlationKey = resolveCorrelationKey(rawKey);
-    if (correlationKey !== rawKey) {
-      logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
+    const rawKeys = getGitHubCorrelationKeys(event);
+    const correlationKey = resolveCorrelationKeys(rawKeys);
+    if (correlationKey !== rawKeys[0]) {
+      logInfo(log, "corr_key_resolved", { rawKeys, correlationKey });
     }
 
     logInfo(log, "github_event_accepted", {

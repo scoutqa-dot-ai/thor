@@ -52,6 +52,8 @@ Aliased from branch created during this session
 
 ### Resolution
 
+> **OUTDATED** — Single-key resolution replaced by multi-key resolution. See [Amendment: Multi-key correlation resolution](#amendment-multi-key-correlation-resolution--2026-03-18).
+
 When an event arrives with raw corr key (e.g. `slack:thread:1710000000.123`):
 
 1. **Alias scan** (always first): grep `worklog/*/notes/*.md` for `^#{1,3} Session: {rawKey}$`. If found, read the `# Session:` h1 line from that file to get the canonical corr key.
@@ -62,6 +64,8 @@ Alias scan runs first because a key may have been aliased to a newer session. Di
 The scan is bounded — only `.md` files in recent day directories, typically 10-50 files. Cheap `readFileSync` + regex on the single matched file.
 
 ### Registration
+
+> **OUTDATED** — Tool names and repo inference changed. See [Amendment: Multi-key correlation resolution](#amendment-multi-key-correlation-resolution--2026-03-18).
 
 After a trigger completes, the runner inspects tool call results for cross-channel artifacts and appends aliases:
 
@@ -140,6 +144,8 @@ The runner already receives `ToolPart` events via SSE. Currently it only collect
 
 #### Tools that produce aliasable artifacts
 
+> **OUTDATED** — `post_message` → `slack_post_message`, `git` tool → `bash` with `[thor:meta]`, repo inference changed. See [Amendment: Multi-key correlation resolution](#amendment-multi-key-correlation-resolution--2026-03-18).
+
 | Tool name      | Input to inspect                | Output to extract         | Alias format                 |
 | -------------- | ------------------------------- | ------------------------- | ---------------------------- |
 | `post_message` | `thread_ts` absent → new thread | parse JSON for `ts` field | `slack:thread:{ts}`          |
@@ -209,3 +215,74 @@ Steps:
 | ------------------- | ------- | ------------------------------- | -------- |
 | `@thor/common`      | —       | Notes utilities (extended)      | Existing |
 | No new dependencies | —       | File scanning uses `fs` + regex | —        |
+
+---
+
+## Amendment: Multi-key correlation resolution — 2026-03-18
+
+### Problem
+
+The original design assumed the runner could infer the full `owner/repo` from the container filesystem path using a "first hyphen = owner separator" convention (e.g. `acme-project` → `acme/project`). This broke for multi-hyphen names like `katalon-scout-private` where the owner is `katalon-studio` — the heuristic produced `katalon/scout-private` instead of `katalon-studio/katalon-scout-private`.
+
+Additionally:
+
+- **Worktree paths** (`/workspace/worktrees/{name}/{branch}`) were not matched by `inferRepoFromPath`, which only checked `/workspace/repos/`.
+- **Tool names changed**: the `git` MCP tool was removed; git operations now go through the `bash` tool with `[thor:meta]` structured output from `remote-cli.mjs`. Similarly `post_message` became `slack_post_message`.
+
+### Design change: multi-key resolution
+
+Instead of trying to reconstruct the full `owner/repo` on the runner side, the gateway now emits **multiple correlation keys** for GitHub events:
+
+```
+getGitHubCorrelationKeys(event) → [
+  "git:branch:katalon-studio/katalon-scout-private:feat/foo",   // canonical (full)
+  "git:branch:katalon-scout-private:feat/foo"                    // alias (repo name only)
+]
+```
+
+The runner registers aliases using only the directory name (no owner prefix):
+
+```
+inferRepoFromPath("/workspace/worktrees/katalon-scout-private/feat/foo")
+→ "katalon-scout-private"
+→ alias: "git:branch:katalon-scout-private:feat/foo"
+```
+
+Resolution uses `resolveCorrelationKeys(rawKeys: string[])`:
+
+1. Try resolving each key (both as h1 canonical and h3 alias) across all notes files.
+2. Collect all matches with their file paths.
+3. Sort by file path descending (paths contain dates → most recent wins).
+4. Return the canonical key from the most recent match. Fall back to `rawKeys[0]` if nothing resolves.
+
+This ensures that when an old session matches the canonical key but a newer session matches the alias key, the newer session wins.
+
+### Changes
+
+| Component               | Change                                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `gateway/src/github.ts` | `getGitHubCorrelationKey()` → `getGitHubCorrelationKeys()`, returns `string[]` with canonical + short alias |
+| `gateway/src/app.ts`    | Uses `resolveCorrelationKeys(rawKeys)` for GitHub events                                                    |
+| `common/src/notes.ts`   | New `resolveCorrelationKeys()` — tries all keys, picks most recent match                                    |
+| `common/src/notes.ts`   | New `grepAllNotesFiles()` — returns all matches instead of just first                                       |
+| `common/src/notes.ts`   | `inferRepoFromPath` — matches `/workspace/worktrees/` paths, drops hyphen-split heuristic                   |
+| `common/src/notes.ts`   | `ALIASABLE_TOOLS` — `bash` + `slack_post_message` (was `git` + `post_message`)                              |
+
+### Updated tool → alias mapping
+
+| Tool name             | Input to inspect                 | Output to extract         | Alias format                     |
+| --------------------- | -------------------------------- | ------------------------- | -------------------------------- |
+| `slack_post_message`  | `thread_ts` absent → new thread  | parse JSON for `ts` field | `slack:thread:{ts}`              |
+| `slack_post_message`  | `thread_ts` present → reply      | (not needed)              | `slack:thread:{thread_ts}`       |
+| `bash` (git via meta) | `[thor:meta]` with push args     | (not needed)              | `git:branch:{repo-dir}:{branch}` |
+| `bash` (git via meta) | `[thor:meta]` with checkout args | (not needed)              | `git:branch:{repo-dir}:{branch}` |
+| `bash` (git via meta) | `[thor:meta]` with switch args   | (not needed)              | `git:branch:{repo-dir}:{branch}` |
+
+### Decision log (continued)
+
+| #   | Decision                                                             | Rationale                                                                                                                                                                        |
+| --- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D11 | **Gateway emits multiple corr keys (canonical + alias)**             | Runner cannot reliably infer `owner/repo` from filesystem. Gateway has the full name from GitHub webhooks. Short alias using repo-name-only matches what the runner can produce. |
+| D12 | **Multi-key resolution picks most recent match**                     | An old session may match the canonical key while a newer session matches the alias. Most-recent wins ensures events route to the active conversation.                            |
+| D13 | **Drop first-hyphen owner/repo inference**                           | Ambiguous for multi-hyphen names (e.g. `katalon-scout-private`). No reliable heuristic exists. Directory name alone is sufficient as an alias key.                               |
+| D14 | **Match `/workspace/worktrees/` in addition to `/workspace/repos/`** | Agent creates git worktrees for branches. Push/commit operations happen in worktree paths. Both must be recognized.                                                              |

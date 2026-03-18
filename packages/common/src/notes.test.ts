@@ -661,7 +661,7 @@ describe("alias extraction", () => {
 
       expect(aliases).toHaveLength(2);
       expect(aliases[0].alias).toBe("slack:thread:111.000");
-      expect(aliases[1].alias).toBe("git:branch:org/repo:fix/bug");
+      expect(aliases[1].alias).toBe("git:branch:org-repo:fix/bug");
     });
 
     it("skips malformed output gracefully", () => {
@@ -699,7 +699,7 @@ describe("alias extraction", () => {
 
       expect(aliases).toEqual([
         {
-          alias: "git:branch:acme/project:feat/login-fix",
+          alias: "git:branch:acme-project:feat/login-fix",
           context: "git push in /workspace/repos/acme-project",
         },
       ]);
@@ -739,8 +739,30 @@ describe("alias extraction", () => {
 
       expect(aliases).toEqual([
         {
-          alias: "git:branch:org/repo:feat/new-feature",
+          alias: "git:branch:org-repo:feat/new-feature",
           context: "git checkout in /workspace/repos/org-repo",
+        },
+      ]);
+    });
+
+    it("extracts git alias from worktree cwd path", () => {
+      const meta = JSON.stringify({
+        cmd: "git",
+        args: ["push", "-u", "origin", "feat-admin-endpoint"],
+        cwd: "/workspace/worktrees/acme-app/feat-admin-endpoint",
+      });
+      const aliases = extractAliases([
+        {
+          tool: "bash",
+          input: { command: "git push -u origin feat-admin-endpoint" },
+          output: `branch set up to track\n[thor:meta] ${meta}\n`,
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:acme-app:feat-admin-endpoint",
+          context: "git push in /workspace/worktrees/acme-app/feat-admin-endpoint",
         },
       ]);
     });
@@ -785,7 +807,7 @@ describe("alias extraction", () => {
 
       expect(aliases).toEqual([
         {
-          alias: "git:branch:acme/app:feat/new",
+          alias: "git:branch:acme-app:feat/new",
           context: "git push in /workspace/repos/acme-app",
         },
       ]);

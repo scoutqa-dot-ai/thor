@@ -13,6 +13,7 @@ export {
   getSessionIdFromNotes,
   registerAlias,
   resolveCorrelationKey,
+  resolveCorrelationKeys,
   isAliasableTool,
   extractAliases,
   getNotesLineCount,

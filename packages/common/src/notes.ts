@@ -367,21 +367,16 @@ function extractThorMeta(output: string): Array<{ cmd: string; args: string[]; c
 
 /**
  * Infer repo identifier from a local path.
- * Convention: /workspace/repos/{owner}-{repo} → {owner}/{repo}
- *             /workspace/repos/{repo}         → {repo}
+ * Matches both /workspace/repos/{name} and /workspace/worktrees/{name}/...
+ * Returns just the directory name (no owner prefix) — the gateway emits
+ * a short alias using the same repo-name-only format so they match.
  */
 function inferRepoFromPath(cwdPath: string): string | undefined {
   if (!cwdPath) return undefined;
-  // Match /workspace/repos/{name} or deeper worktree paths
-  const match = cwdPath.match(/\/workspace\/repos\/([^/]+)/);
+  // Match /workspace/repos/{name} or /workspace/worktrees/{name}
+  const match = cwdPath.match(/\/workspace\/(?:repos|worktrees)\/([^/]+)/);
   if (!match) return undefined;
-  const dirName = match[1];
-  // Convention: first hyphen separates owner from repo (e.g., "acme-project" → "acme/project")
-  const hyphenIdx = dirName.indexOf("-");
-  if (hyphenIdx > 0) {
-    return `${dirName.slice(0, hyphenIdx)}/${dirName.slice(hyphenIdx + 1)}`;
-  }
-  return dirName;
+  return match[1];
 }
 
 /**
@@ -460,21 +455,72 @@ export function resolveCorrelationKey(rawKey: string): string {
 }
 
 /**
+ * Resolve multiple candidate correlation keys, returning the most recent match.
+ *
+ * Tries each key in order, collecting all resolved canonical keys with their
+ * file paths. Returns the canonical key from the most recent notes file
+ * (by directory date). Falls back to the first key if nothing resolves.
+ */
+export function resolveCorrelationKeys(rawKeys: string[]): string {
+  if (rawKeys.length === 0) return "";
+  if (rawKeys.length === 1) return resolveCorrelationKey(rawKeys[0]);
+
+  const candidates: Array<{ canonical: string; file: string }> = [];
+
+  for (const key of rawKeys) {
+    try {
+      // Check as alias (h3)
+      const aliasFiles = grepAllNotesFiles(`^### Session: ${escapeRegExp(key)}$`);
+      for (const f of aliasFiles) {
+        const canonical = extractH1Key(f);
+        if (canonical) candidates.push({ canonical, file: f });
+      }
+
+      // Check as canonical (h1)
+      const h1Files = grepAllNotesFiles(`^# Session: ${escapeRegExp(key)}(\\s*\\(continued\\))?$`);
+      for (const f of h1Files) {
+        candidates.push({ canonical: key, file: f });
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  if (candidates.length === 0) return rawKeys[0];
+
+  // Pick the most recent by file path (paths contain date: worklog/2026-03-17/notes/...)
+  candidates.sort((a, b) => b.file.localeCompare(a.file));
+  return candidates[0].canonical;
+}
+
+/**
  * Run grep across all notes files, returning the first matching file path.
  * Returns undefined if no match or grep fails.
  */
 function grepNotesFiles(pattern: string): string | undefined {
+  const files = grepAllNotesFiles(pattern);
+  return files.length > 0 ? files[0] : undefined;
+}
+
+/**
+ * Run grep across all notes files, returning all matching file paths.
+ * Returns empty array if no match or grep fails.
+ */
+function grepAllNotesFiles(pattern: string): string[] {
   try {
-    const result = execFileSync("grep", ["-rl", "-m", "1", "--include=*.md", "-E", pattern, "."], {
+    const result = execFileSync("grep", ["-rl", "--include=*.md", "-E", pattern, "."], {
       cwd: WORKLOG_DIR,
       encoding: "utf-8",
       timeout: 5000,
     });
-    const firstLine = result.trim().split("\n")[0];
-    return firstLine ? join(WORKLOG_DIR, firstLine) : undefined;
+    return result
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => join(WORKLOG_DIR, line));
   } catch {
     // grep returns exit code 1 for no matches, or WORKLOG_DIR doesn't exist
-    return undefined;
+    return [];
   }
 }
 

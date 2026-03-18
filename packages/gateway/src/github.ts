@@ -42,7 +42,23 @@ export function parseGitHubEvent(body: unknown): GitHubEvent | undefined {
 //
 // All events use git:branch:{repo}:{branch} so that PR activity,
 // reviews, comments, and pushes to the same branch share a session.
+//
+// Returns an array: [canonical, ...aliases].
+// The canonical key uses the full owner/repo name from GitHub.
+// An alias using just the repo name is added so that runner-side
+// correlation (which only has the directory name) can match.
 
-export function getGitHubCorrelationKey(event: GitHubEvent): string {
-  return `git:branch:${event.repository}:${event.branch}`;
+export function getGitHubCorrelationKeys(event: GitHubEvent): string[] {
+  const canonical = `git:branch:${event.repository}:${event.branch}`;
+  const keys = [canonical];
+
+  // Add short alias: git:branch:{repo-name}:{branch}
+  const slashIdx = event.repository.indexOf("/");
+  if (slashIdx > 0) {
+    const repoName = event.repository.slice(slashIdx + 1);
+    const alias = `git:branch:${repoName}:${event.branch}`;
+    if (alias !== canonical) keys.push(alias);
+  }
+
+  return keys;
 }
