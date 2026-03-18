@@ -112,6 +112,8 @@ Copy `.env.example` to `.env` and fill in:
 | `GRAFANA_URL`                       | Yes      | grafana-mcp        | Grafana instance URL                                             |
 | `INGRESS_PORT`                      | No       | ingress            | Host port (default: `8080`)                                      |
 | `LINEAR_API_KEY`                    | Yes      | proxy              | Linear API access                                                |
+| `OPENCODE_CPU_LIMIT`                | No       | opencode           | CPU limit for OpenCode container (default: `3`)                  |
+| `OPENCODE_MEMORY_LIMIT`             | No       | opencode           | Memory limit for OpenCode container (default: `4g`)              |
 | `OPENCODE_URL`                      | No       | runner             | OpenCode server URL (default: `http://opencode:4096`)            |
 | `POSTHOG_API_KEY`                   | Yes      | proxy              | PostHog API access                                               |
 | `SESSION_CWD`                       | No       | runner             | Working directory for new sessions (default: `/workspace`)       |
