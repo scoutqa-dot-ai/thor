@@ -1,0 +1,33 @@
+packages/common/src/notes.test.ts
+  0562803b3433b7be 664,702,742,748-769,810
+packages/gateway/src/app.ts
+  0562803b3433b7be 8,23,479-482
+packages/gateway/src/github.ts
+  0562803b3433b7be 45-49,51-61,63
+packages/common/src/notes.ts
+  0562803b3433b7be 370-372,376-377,379,458-495,501-509,516,519-520,523
+packages/common/src/index.ts
+  0562803b3433b7be 16
+docs/plan/2026031301_correlation-key-aliasing.md
+  0562803b3433b7be 55,68-69,147-148,218-285
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "302423e56f92a51fa3476ba500cb5ccefd8837bf",
+  "prompts": {
+    "0562803b3433b7be": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d55f1c00-7ec7-4ec9-bfca-ac04ba969b81",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 224,
+      "total_deletions": 64,
+      "accepted_lines": 193,
+      "overriden_lines": 0
+    }
+  }
+}
