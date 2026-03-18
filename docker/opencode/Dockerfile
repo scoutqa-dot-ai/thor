@@ -1,7 +1,7 @@
 FROM node:22-slim
 
 RUN groupadd --gid 1001 thor && useradd --uid 1001 --gid thor --create-home thor
-RUN npm i -g opencode-ai@1.2.24
+RUN npm i -g opencode-ai@1.2.27
 
 # git/gh wrapper scripts — forward to remote-cli service over HTTP
 COPY bin/remote-cli.mjs /usr/local/bin/remote-cli.mjs

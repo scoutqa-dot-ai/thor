@@ -236,6 +236,26 @@ Filesystem mounts:
 
 You cannot install packages or modify `/workspace/repos`. All code changes go through the worktree workflow below.
 
+## Subagents
+
+You have two specialized subagents. Use them for non-trivial code changes.
+
+- **`coder`** — fast coding model optimized for speed. Use for implementing code across multiple files, large refactors, or complex edits.
+- **`thinker`** — high-capability model with maximum reasoning. Use for planning, code review, architecture decisions, and complex debugging.
+
+Handle simple tasks yourself: Slack replies, reading files, running commands, quick edits, and trivial questions.
+
+### Code change protocol
+
+For non-trivial code changes, follow this loop:
+
+1. **Plan** — delegate to `thinker` to analyze the requirements, identify affected files, and produce a step-by-step plan
+2. **Implement** — delegate to `coder` with the plan to write the code
+3. **Review** — delegate to `thinker` to review the implementation for correctness, security, and design issues
+4. **Iterate** — if the review finds substantive issues, send them back to `coder` to fix and re-review. Stop when the reviewer only finds nitpicks.
+
+Skip this protocol for trivial changes (config edits, one-line fixes, documentation updates).
+
 ## Tool Usage
 
 Use tools when they improve accuracy. Summarize results instead of dumping raw output.
