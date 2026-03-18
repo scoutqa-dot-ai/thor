@@ -267,6 +267,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
+    // Ignore empty messages (e.g. bot messages with attachments only)
+    if ("text" in event && event.text === "") {
+      logInfo(log, "event_ignored_empty_text", { eventId });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
     // Ignore our own messages
     if (event.user === selfUserId) {
       logInfo(log, "event_ignored_self", { eventId });
