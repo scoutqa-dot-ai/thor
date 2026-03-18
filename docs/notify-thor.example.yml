@@ -6,6 +6,9 @@
 name: "[Thor] Push GitHub events"
 
 on:
+  check_run:
+    types: [completed]
+  deployment_status:
   pull_request:
     types: [opened, synchronize, ready_for_review, closed]
   pull_request_review:
@@ -21,8 +24,10 @@ jobs:
   notify:
     runs-on: ubuntu-latest
 
-    # Skip issue_comment events that are not on PRs
-    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    # Skip successful check runs and issue comments that are not on PRs
+    if: >-
+      (github.event_name != 'check_run' || (github.event.check_run.conclusion == 'failure' && github.event.check_run.pull_requests[0]))
+      && (github.event_name != 'issue_comment' || github.event.issue.pull_request)
 
     steps:
       - name: Resolve branch
@@ -31,6 +36,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           case "${{ github.event_name }}" in
+            check_run)
+              # Use the first associated PR's branch, or fall back to the head branch
+              BRANCH="${{ github.event.check_run.check_suite.head_branch }}"
+              if [ -n "${{ github.event.check_run.pull_requests[0].head.ref }}" ]; then
+                BRANCH="${{ github.event.check_run.pull_requests[0].head.ref }}"
+              fi
+              echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
+              ;;
+            deployment_status)
+              echo "name=${{ github.event.deployment.ref }}" >> "$GITHUB_OUTPUT"
+              ;;
             pull_request)
               echo "name=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
               ;;
