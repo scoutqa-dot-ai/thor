@@ -87,6 +87,8 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "remote",
   // config (read-only use; write is harmless to local .git/config)
   "config",
+  // misc
+  "version",
 ]);
 
 export function validateGitArgs(args: string[]): string | null {
