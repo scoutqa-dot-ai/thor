@@ -1,0 +1,23 @@
+docs/notify-thor.example.yml
+  f03febe9779a0f4c 9-11,27-30,39-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "7953a273b241553b755abf3d1230a8704d9da278",
+  "prompts": {
+    "f03febe9779a0f4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a742cf2-df50-4264-a278-1d17b8199d8b",
+        "model": "<synthetic>"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 21,
+      "total_deletions": 5,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
