@@ -1,0 +1,23 @@
+packages/gateway/src/github.ts
+  f03febe9779a0f4c 3-126,133-135,147-150,154-164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "cdca611613ba72c282d17a5107532aa53b0eed3f",
+  "prompts": {
+    "f03febe9779a0f4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a742cf2-df50-4264-a278-1d17b8199d8b",
+        "model": "<synthetic>"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 286,
+      "total_deletions": 155,
+      "accepted_lines": 151,
+      "overriden_lines": 0
+    }
+  }
+}
