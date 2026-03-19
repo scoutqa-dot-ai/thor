@@ -21,6 +21,17 @@
 | D13 | No artificial timeout; 1h Daytona session limit if API supports        | Coding tasks vary in duration. Let the caller decide when to abort.                      |
 | D14 | Fail loud on syncOut failure, no retry                                 | Agent can use --pull to recover. Keep error handling simple.                             |
 | D15 | Git-diff partial sync + Daytona snapshots for warm starts              | Full tar on first sync, git-diff on repeat. Snapshots for base image.                    |
+| D16 | No in-memory sandbox cache — always query Daytona API                  | Survives restarts, no stale cache. One extra list call is negligible vs 3-5 per invoke.  |
+| D17 | Use `daytona-medium` snapshot, not custom Docker image                 | Pre-built Daytona snapshot has node/git/daytona user. Configurable via SANDBOX_SNAPSHOT. |
+| D18 | Install opencode at setup time (pinned version), not baked into image  | No custom image to maintain. Pin version in code for reproducibility.                    |
+| D19 | Split setup into one-time install + per-prompt auth upload             | Auth tokens expire. Refresh fields stripped to prevent sandbox invalidating main creds.  |
+| D20 | PTY streaming instead of Daytona sessions for agent execution          | Sessions hang with opencode (no output). PTY via createPty streams JSON in real-time.    |
+| D21 | `--session <id>` flag for opencode session continuity                  | Main agent decides which session to continue. Supports multiple concurrent sessions.     |
+| D22 | Drop `--reconnect`, keep `--pull` and `--session`                      | PTY doesn't support reconnect like sessions did. --pull still useful for file recovery.  |
+| D23 | Exclude .git from tar, init standalone repo in sandbox                 | Worktree .git is a pointer file to host git dir which doesn't exist in sandbox.          |
+| D24 | Sync deleted files both directions (syncIn partial + syncOut)          | Detect via git diff --diff-filter=D locally, git status --porcelain in sandbox.          |
+| D25 | Re-commit in sandbox after partial syncIn                              | Keeps sandbox HEAD current so next syncOut diff is accurate.                             |
+| D26 | Require DAYTONA_API_KEY, drop apiUrl/target config                     | Only API key needed. Simplifies provider constructor. Fail fast if missing.              |
 
 ## Architecture
 
@@ -43,18 +54,18 @@
 │                                     ▼                                   │
 │  POST /exec/sandbox-coder handler:                                      │
 │    1. validateCwd(cwd) — must be /workspace/worktrees/...               │
-│    2. Parse args: prompt vs --reconnect vs --pull                       │
-│    3. sandboxManager.getOrCreate(cwd) → sandbox ID (with lock)          │
-│    4. syncIn(sandboxId, cwd) — tar worktree → upload to Daytona         │
-│    5. createSession → executeSessionCommand(opencode run)               │
-│    6. Stream logs via getSessionCommandLogs → NDJSON to client          │
+│    2. Parse args: prompt vs --pull vs --session <id>                     │
+│    3. sandboxManager.getOrCreate(cwd) → sandbox ID (remote query + lock)│
+│    4. setupSandboxOpenCode (one-time) + uploadSandboxAuth (every call)  │
+│    5. syncIn(sandboxId, cwd) — tar worktree → upload to Daytona         │
+│    6. createPty → stream opencode JSON output in real-time (D20)        │
 │    7. syncOut(sandboxId, cwd) — download changed files → write worktree │
 │    8. Write { stream: "stderr", data: "[sandbox:done] ..." } → end      │
 │                                                                         │
 │  ┌──────────────────────┐    ┌──────────────────────────────────┐       │
 │  │  SandboxManager      │    │  SandboxProvider interface        │       │
 │  │  (manager.ts)        │───▶│  DaytonaSandboxProvider           │       │
-│  │  Map + lock + reconcile   │  (provider.ts)                    │       │
+│  │  remote query + lock      │  (provider.ts)                    │       │
 │  └──────────────────────┘    └──────────────────────────────────┘       │
 │                                        │                                │
 │                                        │ @daytonaio/sdk                  │
@@ -63,8 +74,8 @@
 │            │  Daytona API (external)                  │                  │
 │            │  - createSandbox (with labels)           │                  │
 │            │  - file upload/download                  │                  │
-│            │  - createSession / executeSessionCommand │                  │
-│            │  - getSessionCommandLogs (streaming)     │                  │
+│            │  - createPty (real-time streaming)       │                  │
+│            │  - executeCommand (sync operations)      │                  │
 │            │  - destroySandbox                        │                  │
 │            └──────────────────────────────────────────┘                  │
 └─────────────────────────────────────────────────────────────────────────┘
