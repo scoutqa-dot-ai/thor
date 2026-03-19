@@ -1,0 +1,25 @@
+docker/opencode/agents/build.md
+  aaf614e70d417cc6 84-93,100,102
+docs/plan/2026031901_hosted-coding-sandbox-evaluation.md
+  aaf614e70d417cc6 18-19,234-316,318-368,370-466
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "16d9e9b662eaa9586239aa27f478d14e4e699862",
+  "prompts": {
+    "aaf614e70d417cc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84068c5b-0712-4e08-aaef-a832bf563508",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 646,
+      "total_deletions": 403,
+      "accepted_lines": 246,
+      "overriden_lines": 2
+    }
+  }
+}
