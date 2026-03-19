@@ -23,11 +23,13 @@ Thor can create and manage a hosted coding sandbox for a task so that one isolat
 ## Principles
 
 - **Isolation first** — each coding sandbox is independent from other Thor sessions
-- **One sandbox, one coding thread** — the default unit of work is one sandbox per branch / PR
+- **One sandbox, one coding thread** — the default unit of work is one sandbox per branch / PR, with the option for multiple sandboxes per task when parallel execution is beneficial
 - **Secrets stay outside when possible** — hosted sandboxes should not become long-lived secret stores
 - **Thor remains the orchestrator** — the sandbox is an execution environment, not a replacement for Thor's control plane
 - **PR-oriented workflow** — the feature should support normal branch, review, and follow-up cycles
-- **Provider-flexible** — Thor should be able to evaluate and adopt a hosted provider without changing the product contract
+- **Provider-flexible** — Thor should be able to evaluate and adopt a hosted provider without changing the product contract, mediated by a provider-agnostic sandbox interface
+- **Execution-only sandboxes** — sandboxes are tool-free execution environments; MCP tools and broker access remain in Thor's control plane
+- **Graceful degradation** — Thor can fall back to local execution when hosted sandbox providers are unavailable
 
 ## In Scope
 
@@ -38,6 +40,10 @@ Thor can create and manage a hosted coding sandbox for a task so that one isolat
 - source movement into and out of sandboxes
 - secure access from sandboxes to Thor-managed broker services
 - artifacts produced by sandbox runs, such as logs, screenshots, reports, and code changes
+- live preview URLs exposed by sandboxes for reviewable running applications
+- real-time telemetry streaming from sandbox execution back to Thor's control plane
+- multiple sandboxes per task when parallel execution is beneficial (e.g. coding + testing simultaneously)
+- provider-agnostic sandbox interface that decouples Thor from any single provider
 
 ## Out of Scope
 
@@ -86,6 +92,8 @@ When the feature is working well:
 - Thor can associate a sandbox with a repo, branch, PR, and Thor session
 - Thor can tell whether an event should create a new sandbox or attach to an existing one
 - sandbox identity remains stable across follow-up events until cleanup
+- sandbox creation must be idempotent — concurrent requests for the same identity key resolve to a single sandbox
+- the identity model supports multiple sandboxes per branch / PR when different sessions require parallel execution
 
 ### Isolated execution
 
@@ -107,8 +115,8 @@ When the feature is working well:
 
 ### Secure broker access
 
-- sandboxes can reach Thor-managed services needed for coding workflows
-- the product contract assumes those services can remain outside the sandbox
+- sandboxes are execution-only environments — MCP tools and broker access remain in Thor's control plane
+- the product contract assumes external services remain outside the sandbox boundary
 - the feature should support short-lived sandbox identity instead of permanent credentials whenever possible
 
 ### Coding workflow support
@@ -116,6 +124,25 @@ When the feature is working well:
 - sandboxes can run code, package installs, tests, and local servers
 - sandboxes can support browser-based or preview-based validation where needed
 - sandboxes can produce logs, reports, and artifacts that Thor can reference later
+
+### Live preview
+
+- sandboxes can expose HTTP preview URLs for running applications
+- preview URLs can be included in PR comments and Slack messages for human review
+- preview URLs should require authentication or short expiry to prevent unauthorized access
+
+### Real-time telemetry
+
+- sandboxes can stream structured execution data (test results, build logs, metrics) back to Thor in real time
+- Thor can react to telemetry mid-execution — abort failing suites, report progress, adjust approach
+- telemetry streaming should be resilient to disconnection and support reconnection
+
+### Provider abstraction
+
+- Thor interacts with sandboxes through a provider-agnostic interface (SandboxProvider)
+- the interface covers the full lifecycle: create, start, stop, resume, destroy, exec, stream, preview
+- a local provider implementation wraps the existing OpenCode container as a degraded-mode fallback
+- the hosted provider implementation is the default for production use
 
 ## Non-Functional Requirements
 
@@ -132,7 +159,11 @@ When the feature is working well:
 
 ### Performance
 
-- sandbox startup should be practical for day-to-day coding work
+- cold start (new sandbox, no cache): < 120 seconds
+- warm resume (paused sandbox): < 15 seconds
+- source sync (medium repo, ~500 MB): < 60 seconds
+- command execution overhead: < 2 seconds per command
+- preview URL availability: < 30 seconds after application start
 - the feature should support warm or prebuilt environments to reduce repeated setup time
 
 ### Observability
@@ -151,8 +182,83 @@ The feature is successful when:
 - secret-bearing broker services can remain outside the sandbox boundary
 - code changes and artifacts can flow back into Thor's normal GitHub workflow
 
+## Failure Modes
+
+Expected failure modes and their recovery behavior. Implementation must handle each of these explicitly.
+
+### Sandbox creation
+
+| Failure | Recovery |
+| --- | --- |
+| Provider API timeout | Retry once with backoff, then fall back to local execution |
+| Provider quota exceeded | Queue the request, retry with backoff, alert if sustained |
+| Invalid sandbox configuration | Fail fast with descriptive error, do not retry |
+| Provider outage (sustained) | Fall back to local OpenCode execution for the duration |
+
+### Source sync
+
+| Failure | Recovery |
+| --- | --- |
+| Authentication failure (bad PAT) | Fail with clear auth error, do not create sandbox |
+| Repository not found | Fail with descriptive error, do not create sandbox |
+| Clone timeout (large repo) | Retry once, then fail and report estimated repo size |
+| Branch does not exist | Clone succeeds but checkout fails — fail with branch-not-found error |
+
+### Sandbox resume
+
+| Failure | Recovery |
+| --- | --- |
+| Sandbox was garbage-collected | Detect 404, create a new sandbox for the same identity |
+| Sandbox state corrupted | Destroy and recreate, log the corruption event |
+| Provider lost the snapshot | Same as garbage-collected — create new |
+
+### Command execution
+
+| Failure | Recovery |
+| --- | --- |
+| Process timeout | Kill the process, report timeout with last output |
+| OOM kill inside sandbox | Detect exit code 137, report memory limit exceeded |
+| Sandbox crashes mid-execution | Detect connection loss, attempt to retrieve partial results, report crash |
+
+### Telemetry streaming
+
+| Failure | Recovery |
+| --- | --- |
+| Stream disconnects | Reconnect with backoff, accept gap in telemetry |
+| Backpressure (too much data) | Drop oldest unprocessed events, log the gap |
+| Malformed stream data | Skip malformed events, log parse errors |
+
+### Preview URLs
+
+| Failure | Recovery |
+| --- | --- |
+| Port not exposed correctly | Report setup error with port discovery details |
+| Sandbox stopped but URL cached | Detect dead link on access, remove from PR comment or mark stale |
+| Provider rate limits previews | Report rate limit, suggest retrying later |
+
+### Sandbox destruction
+
+| Failure | Recovery |
+| --- | --- |
+| Destroy API fails | Retry with backoff, alert on sustained failure (zombie sandbox risk) |
+| Work not extracted before destroy | Block destruction until code extraction confirms success |
+
+### Multi-sandbox coordination
+
+| Failure | Recovery |
+| --- | --- |
+| Duplicate sandbox creation (race condition) | Idempotent creation — resolve to single sandbox per identity key |
+| Two sandboxes modify same files | Detect conflict at extraction time, report to Thor for resolution |
+| Coordination timeout between sandboxes | Time out the waiting sandbox, continue with available results |
+
+### Cost control
+
+| Failure | Recovery |
+| --- | --- |
+| Sandbox costs exceed budget threshold | Alert, then auto-pause idle sandboxes starting with oldest |
+| Zombie sandbox accruing cost | Periodic sweep detects sandboxes with no activity, destroys after grace period |
+
 ## Open Questions
 
 - what level of state preservation is truly required for Thor's day-to-day coding work?
 - which provider offers the best balance of isolation, lifecycle, and integration fit?
-- how much provider-specific capability should Thor expose directly versus normalizing behind its own sandbox contract?
