@@ -1,0 +1,25 @@
+docs/feat/hosted-coding-sandboxes.md
+  aaf614e70d417cc6 26,30-32,43-46,95-96,118-119,128-146,162-166,185-260
+docs/plan/2026031901_hosted-coding-sandbox-evaluation.md
+  aaf614e70d417cc6 13-17,51,53-72,77-78,80,87,91-97,103-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "91f5a342484b776c75ba441a1d3007b71f80ed7c",
+  "prompts": {
+    "aaf614e70d417cc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84068c5b-0712-4e08-aaef-a832bf563508",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 153,
+      "total_deletions": 22,
+      "accepted_lines": 153,
+      "overriden_lines": 0
+    }
+  }
+}
