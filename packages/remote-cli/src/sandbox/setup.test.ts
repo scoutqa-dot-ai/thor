@@ -22,12 +22,6 @@ function createMockProvider(): SandboxProvider & { calls: MockCall[] } {
     async list() {
       return [];
     },
-    async createSnapshot() {
-      return "snapshot-1";
-    },
-    async getSnapshot() {
-      return null;
-    },
     async createSession() {},
     async execSessionCommand(): Promise<SessionExecResult> {
       return { commandId: "cmd-1" };

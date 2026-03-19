@@ -10,9 +10,6 @@ import { createLogger, logInfo } from "@thor/common";
 
 const log = createLogger("sandbox-provider");
 
-/** Base image for creating snapshots — should have Node.js + opencode + git pre-installed. */
-const SNAPSHOT_BASE_IMAGE = process.env.SANDBOX_SNAPSHOT_IMAGE || "node:22-slim";
-
 // ── Provider interface ──────────────────────────────────────────────────────
 
 export interface SandboxInfo {
@@ -29,7 +26,6 @@ export interface SessionExecResult {
 export interface SandboxProvider {
   create(opts: {
     image?: string;
-    snapshot?: string;
     labels: Record<string, string>;
     envVars?: Record<string, string>;
     autoStopInterval?: number;
@@ -38,12 +34,6 @@ export interface SandboxProvider {
   destroy(sandboxId: string): Promise<void>;
 
   list(labels: Record<string, string>): Promise<SandboxInfo[]>;
-
-  /** Create a named snapshot from an existing sandbox (for warm starts). */
-  createSnapshot(sandboxId: string, name: string): Promise<string>;
-
-  /** Check if a snapshot exists by name. */
-  getSnapshot(name: string): Promise<string | null>;
 
   createSession(sandboxId: string, sessionId: string): Promise<void>;
 
@@ -101,40 +91,19 @@ export class DaytonaSandboxProvider implements SandboxProvider {
 
   async create(opts: {
     image?: string;
-    snapshot?: string;
     labels: Record<string, string>;
     envVars?: Record<string, string>;
     autoStopInterval?: number;
   }): Promise<string> {
-    logInfo(log, "sandbox_create", { labels: opts.labels, snapshot: opts.snapshot });
-    const createOpts: Record<string, unknown> = {
+    logInfo(log, "sandbox_create", { labels: opts.labels });
+    const sandbox = await this.client.create({
+      image: opts.image || "node:22-slim",
       labels: opts.labels,
       envVars: opts.envVars,
       autoStopInterval: opts.autoStopInterval ?? 3600, // 1h default (D13)
-    };
-    if (opts.snapshot) {
-      createOpts.snapshot = opts.snapshot;
-    } else {
-      createOpts.image = opts.image || "node:22-slim";
-    }
-    const sandbox = await this.client.create(createOpts);
+    });
     this.sandboxCache.set(sandbox.id, sandbox);
     return sandbox.id;
-  }
-
-  async createSnapshot(_sandboxId: string, name: string): Promise<string> {
-    logInfo(log, "snapshot_create", { name, image: SNAPSHOT_BASE_IMAGE });
-    await this.client.snapshot.create({ name, image: SNAPSHOT_BASE_IMAGE });
-    return name;
-  }
-
-  async getSnapshot(name: string): Promise<string | null> {
-    try {
-      const snapshot = await this.client.snapshot.get(name);
-      return snapshot?.name ?? null;
-    } catch {
-      return null;
-    }
   }
 
   async destroy(sandboxId: string): Promise<void> {

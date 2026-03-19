@@ -11,7 +11,6 @@ import type { SandboxProvider } from "./provider.js";
 const log = createLogger("sandbox-manager");
 
 const SANDBOX_IMAGE = process.env.SANDBOX_IMAGE || "node:22-slim";
-const SANDBOX_SNAPSHOT = process.env.SANDBOX_SNAPSHOT || "thor-main-baseline";
 const LABEL_THOR = "thor";
 const LABEL_WORKTREE = "worktree";
 
@@ -62,26 +61,9 @@ export class SandboxManager {
   private async doCreate(cwd: string): Promise<string> {
     const labels = { [LABEL_THOR]: "true", [LABEL_WORKTREE]: cwd };
 
-    // Try snapshot-first for warm start (D15), fall back to image
-    const snapshot = await this.provider.getSnapshot(SANDBOX_SNAPSHOT);
-    if (snapshot) {
-      logInfo(log, "sandbox_creating_from_snapshot", { cwd, snapshot });
-      try {
-        const sandboxId = await this.provider.create({ snapshot, labels });
-        logInfo(log, "sandbox_created", { cwd, sandboxId, fromSnapshot: true });
-        return sandboxId;
-      } catch (err) {
-        logError(
-          log,
-          "sandbox_snapshot_fallback",
-          `snapshot create failed, falling back to image: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-
     logInfo(log, "sandbox_creating", { cwd });
     const sandboxId = await this.provider.create({ image: SANDBOX_IMAGE, labels });
-    logInfo(log, "sandbox_created", { cwd, sandboxId, fromSnapshot: false });
+    logInfo(log, "sandbox_created", { cwd, sandboxId });
     return sandboxId;
   }
 
