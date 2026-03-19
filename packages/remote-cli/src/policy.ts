@@ -213,6 +213,50 @@ export function validateScoutqaArgs(args: string[]): string | null {
   return null;
 }
 
+// ── sandbox-coder policy ────────────────────────────────────────────────
+
+const WORKTREES_ONLY_PREFIX = "/workspace/worktrees/";
+
+/**
+ * Validate cwd specifically for sandbox-coder: must be under /workspace/worktrees/.
+ */
+export function validateSandboxCwd(cwd: string): string | null {
+  if (!cwd || !cwd.startsWith("/")) {
+    return "cwd must be an absolute path";
+  }
+
+  const normalized = normalizePath(cwd);
+  if (!normalized.startsWith(WORKTREES_ONLY_PREFIX)) {
+    return `sandbox-coder requires cwd under ${WORKTREES_ONLY_PREFIX}`;
+  }
+
+  return null;
+}
+
+export function validateSandboxCoderArgs(args: string[]): string | null {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "args must be a non-empty array";
+  }
+
+  // Subcommands: --reconnect <session-id>, --pull <sandbox-id>, or a prompt
+  const first = args[0];
+  if (first === "--reconnect") {
+    if (args.length < 2 || !args[1]) {
+      return "--reconnect requires a session ID";
+    }
+    return null;
+  }
+  if (first === "--pull") {
+    if (args.length < 2 || !args[1]) {
+      return "--pull requires a sandbox ID";
+    }
+    return null;
+  }
+
+  // Regular prompt — args joined into prompt string
+  return null;
+}
+
 // ── gh policy ───────────────────────────────────────────────────────────────
 
 /**
