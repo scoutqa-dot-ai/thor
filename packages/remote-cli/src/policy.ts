@@ -143,7 +143,7 @@ function findGitSubcommand(args: string[]): string | null {
   return null;
 }
 
-const WORKTREE_PREFIX = "/workspace/worktrees/";
+const WORKTREES_PREFIX = "/workspace/worktrees/";
 
 function validateGitWorktree(args: string[]): string | null {
   // Find "worktree" then the sub-subcommand (add, list, remove, etc.)
@@ -158,8 +158,8 @@ function validateGitWorktree(args: string[]): string | null {
       return '"git worktree add" requires a path';
     }
     const normalized = normalizePath(path);
-    if (!normalized.startsWith(WORKTREE_PREFIX)) {
-      return `worktree path must be under ${WORKTREE_PREFIX}`;
+    if (!normalized.startsWith(WORKTREES_PREFIX)) {
+      return `worktree path must be under ${WORKTREES_PREFIX}`;
     }
   }
 
@@ -215,8 +215,6 @@ export function validateScoutqaArgs(args: string[]): string | null {
 
 // ── sandbox-coder policy ────────────────────────────────────────────────
 
-const WORKTREES_ONLY_PREFIX = "/workspace/worktrees/";
-
 /**
  * Validate cwd specifically for sandbox-coder: must be under /workspace/worktrees/.
  */
@@ -226,8 +224,8 @@ export function validateSandboxCwd(cwd: string): string | null {
   }
 
   const normalized = normalizePath(cwd);
-  if (!normalized.startsWith(WORKTREES_ONLY_PREFIX)) {
-    return `sandbox-coder requires cwd under ${WORKTREES_ONLY_PREFIX}`;
+  if (!normalized.startsWith(WORKTREES_PREFIX)) {
+    return `sandbox-coder requires cwd under ${WORKTREES_PREFIX}`;
   }
 
   return null;

@@ -261,7 +261,9 @@ app.post("/exec/sandbox-coder", async (req, res) => {
     await sandboxProvider.createSession(sandboxId, sessionId);
     write({ stream: "stderr", data: `[sandbox:session] ${sessionId}\n` });
 
-    const agentCommand = `opencode run --format json ${JSON.stringify(prompt)}`;
+    // Single-quote the prompt to prevent shell metachar expansion ($(), backticks)
+    const escapedPrompt = prompt.replace(/'/g, "'\\''");
+    const agentCommand = `opencode run --format json '${escapedPrompt}'`;
     const execResult = await sandboxProvider.execSessionCommand(sandboxId, sessionId, agentCommand);
 
     // Stream logs from the session command
