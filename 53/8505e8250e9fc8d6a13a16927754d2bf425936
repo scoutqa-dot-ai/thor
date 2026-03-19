@@ -1,0 +1,31 @@
+docker/opencode/Dockerfile
+  9f58709810d05dc6 12
+packages/remote-cli/src/policy.ts
+  9f58709810d05dc6 216-259
+docker/opencode/bin/sandbox-coder
+  9f58709810d05dc6 1-2
+packages/remote-cli/src/index.ts
+  9f58709810d05dc6 8-10,131-185
+packages/remote-cli/src/policy.test.ts
+  9f58709810d05dc6 2,232-288
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "538505e8250e9fc8d6a13a16927754d2bf425936",
+  "prompts": {
+    "9f58709810d05dc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91b89209-34f0-4b34-906a-58ee50eac5ae",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 174,
+      "total_deletions": 2,
+      "accepted_lines": 169,
+      "overriden_lines": 0
+    }
+  }
+}
