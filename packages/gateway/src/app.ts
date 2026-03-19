@@ -95,6 +95,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   cronSecret?: string;
   /** Git username (e.g. GitHub login) — used to detect @mentions in GitHub events. */
   gitUsername?: string;
+  /** Maps Slack channel IDs to repo names for working directory resolution. */
+  channelRepos?: Map<string, string>;
 }
 
 const InteractivityBodySchema = z.object({
@@ -151,6 +153,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           slackMcpDeps,
           hasInterrupt,
           ack,
+          config.channelRepos,
         )
           .then((result) => {
             if (result.busy) {

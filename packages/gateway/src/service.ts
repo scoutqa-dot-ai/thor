@@ -1,8 +1,10 @@
 import { createLogger, logInfo, logError, ProgressEventSchema } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
-import { type GitHubEvent } from "./github.js";
+import { type GitHubEvent, getRepoName } from "./github.js";
 import { getSlackCorrelationKey, getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
+
+const WORKSPACE_ROOT = "/workspace";
 
 const log = createLogger("gateway-service");
 
@@ -40,6 +42,7 @@ export async function triggerRunnerSlack(
   slackMcpDeps: SlackMcpDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
+  channelRepos?: Map<string, string>,
 ): Promise<TriggerResult> {
   if (events.length === 0) return { busy: false };
 
@@ -47,6 +50,9 @@ export async function triggerRunnerSlack(
     events.length === 1
       ? `Slack event:\n\n${JSON.stringify(events[0])}`
       : `Slack events:\n\n${JSON.stringify(events)}`;
+  const last = events[events.length - 1];
+  const repo = channelRepos?.get(last.channel);
+  const directory = repo ? `${WORKSPACE_ROOT}/repos/${repo}` : undefined;
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -54,6 +60,7 @@ export async function triggerRunnerSlack(
       prompt,
       correlationKey,
       interrupt,
+      ...(directory ? { directory } : {}),
     }),
   });
 
@@ -75,7 +82,6 @@ export async function triggerRunnerSlack(
   onAccepted?.();
 
   // Consume NDJSON stream and forward progress events to slack-mcp
-  const last = events[events.length - 1];
   const channel = last.channel;
   const threadTs = getSlackThreadTs(last);
 
@@ -175,10 +181,13 @@ export async function triggerRunnerGitHub(
       ? `GitHub ${events[0].event} event:\n\n${JSON.stringify(events[0].payload)}`
       : `GitHub events:\n\n${JSON.stringify(events.map((e) => ({ event: e.event, payload: e.payload })))}`;
 
+  const last = events[events.length - 1];
+  const repoName = getRepoName(last.repository);
+  const directory = `${WORKSPACE_ROOT}/repos/${repoName}`;
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, correlationKey, interrupt }),
+    body: JSON.stringify({ prompt, correlationKey, interrupt, directory }),
   });
 
   if (!response.ok) {

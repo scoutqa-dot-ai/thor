@@ -1,4 +1,4 @@
-import { createLogger, logInfo, parseAllowedChannelIds } from "@thor/common";
+import { createLogger, logInfo, parseAllowedChannelIds, parseChannelRepoMap } from "@thor/common";
 import { createGatewayApp } from "./app.js";
 
 const log = createLogger("gateway");
@@ -19,6 +19,7 @@ const SLACK_BOT_USER_ID = process.env.SLACK_BOT_USER_ID || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const PROXY_HOST = process.env.PROXY_HOST || "proxy";
 const GIT_USER_NAME = process.env.GIT_USER_NAME || "";
+const SLACK_CHANNEL_REPOS = parseChannelRepoMap(process.env.SLACK_CHANNEL_REPOS);
 
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
@@ -31,6 +32,7 @@ const { app } = createGatewayApp({
   allowedChannelIds: SLACK_ALLOWED_CHANNEL_IDS,
   cronSecret: CRON_SECRET || undefined,
   gitUsername: GIT_USER_NAME || undefined,
+  channelRepos: SLACK_CHANNEL_REPOS,
 });
 
 app.listen(PORT, () => {

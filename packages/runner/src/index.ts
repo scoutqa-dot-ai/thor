@@ -11,7 +11,7 @@ import type {
   ToolStateCompleted,
   ToolStateError,
 } from "@opencode-ai/sdk";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import {
   createLogger,
   logInfo,
@@ -110,6 +110,8 @@ const TriggerRequestSchema = z.object({
   /** If true (default), abort a busy session before sending the prompt.
    *  If false, return {busy: true} without aborting. */
   interrupt: z.boolean().optional(),
+  /** Working directory for the OpenCode session. Overrides SESSION_CWD. */
+  directory: z.string().optional(),
 });
 
 type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
@@ -216,14 +218,24 @@ app.post("/trigger", async (req, res) => {
     return;
   }
 
-  let { prompt, model, correlationKey, sessionId: requestedSessionId } = parsed.data;
+  let { prompt, model, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
 
   try {
     await ensureOpencodeAvailable();
 
+    const sessionDirectory = directory || SESSION_DIRECTORY;
+    if (!existsSync(sessionDirectory)) {
+      logError(log, "directory_not_found", `Directory does not exist: ${sessionDirectory}`, {
+        directory: sessionDirectory,
+        correlationKey,
+      });
+      res.status(400).json({ error: `Directory does not exist: ${sessionDirectory}` });
+      return;
+    }
+
     const client = createOpencodeClient({
       baseUrl: OPENCODE_URL,
-      directory: SESSION_DIRECTORY,
+      directory: sessionDirectory,
     });
 
     // --- Session resolution: resume existing or create new ---
