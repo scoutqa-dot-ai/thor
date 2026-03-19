@@ -45,8 +45,9 @@ async function syncInFull(
 ): Promise<void> {
   logInfo(log, "sync_in_full", { sandboxId, worktreePath });
 
-  // Handle empty worktree: check if there are any files
-  const tarball = await createTarball(worktreePath, []);
+  // Exclude .git — worktrees have a pointer file referencing the host's git dir
+  // which doesn't exist in the sandbox. We init a standalone repo instead.
+  const tarball = await createTarball(worktreePath, [], ["--exclude", ".git"]);
   if (tarball.length === 0) {
     logInfo(log, "sync_in_empty_worktree", { sandboxId });
     return;
@@ -55,7 +56,12 @@ async function syncInFull(
   await provider.uploadFile(sandboxId, `${SANDBOX_WORKDIR}/source.tar.gz`, tarball);
   const { exitCode: extractExit } = await provider.executeCommand(
     sandboxId,
-    `mkdir -p ${SANDBOX_WORKDIR}/src && tar -xzf ${SANDBOX_WORKDIR}/source.tar.gz -C ${SANDBOX_WORKDIR}/src && rm ${SANDBOX_WORKDIR}/source.tar.gz`,
+    [
+      `mkdir -p ${SANDBOX_WORKDIR}/src`,
+      `tar -xzf ${SANDBOX_WORKDIR}/source.tar.gz -C ${SANDBOX_WORKDIR}/src`,
+      `rm ${SANDBOX_WORKDIR}/source.tar.gz`,
+      `cd ${SANDBOX_WORKDIR}/src && git init && git add -A && git commit -m sync --allow-empty`,
+    ].join(" && "),
   );
   if (extractExit !== 0) {
     throw new Error(
@@ -74,26 +80,47 @@ async function syncInPartial(
 ): Promise<void> {
   logInfo(log, "sync_in_partial", { sandboxId, worktreePath });
 
-  // Get changed tracked files + untracked files
-  const changedFiles = await getChangedFiles(worktreePath);
-  if (changedFiles.length === 0) {
+  const { changed, deleted } = await getLocalChanges(worktreePath);
+
+  if (changed.length === 0 && deleted.length === 0) {
     logInfo(log, "sync_in_partial_no_changes", { sandboxId });
     return;
   }
 
-  const tarball = await createTarball(worktreePath, changedFiles);
-  await provider.uploadFile(sandboxId, `${SANDBOX_WORKDIR}/patch.tar.gz`, tarball);
-  const { exitCode: patchExit } = await provider.executeCommand(
-    sandboxId,
-    `tar -xzf ${SANDBOX_WORKDIR}/patch.tar.gz -C ${SANDBOX_WORKDIR}/src && rm ${SANDBOX_WORKDIR}/patch.tar.gz`,
-  );
-  if (patchExit !== 0) {
-    throw new Error(
-      `syncIn partial extract failed in sandbox ${sandboxId} with exit code ${patchExit}`,
+  logInfo(log, "sync_in_partial_files", { sandboxId, changed, deleted });
+
+  // Upload and extract changed/new files
+  if (changed.length > 0) {
+    const tarball = await createTarball(worktreePath, changed);
+    await provider.uploadFile(sandboxId, `${SANDBOX_WORKDIR}/patch.tar.gz`, tarball);
+    const { exitCode: patchExit } = await provider.executeCommand(
+      sandboxId,
+      `tar -xzf ${SANDBOX_WORKDIR}/patch.tar.gz -C ${SANDBOX_WORKDIR}/src && rm ${SANDBOX_WORKDIR}/patch.tar.gz`,
     );
+    if (patchExit !== 0) {
+      throw new Error(
+        `syncIn partial extract failed in sandbox ${sandboxId} with exit code ${patchExit}`,
+      );
+    }
   }
 
-  logInfo(log, "sync_in_partial_done", { sandboxId, files: changedFiles.length });
+  // Remove deleted files in sandbox
+  if (deleted.length > 0) {
+    const rmArgs = deleted.map((f) => `'${f.replace(/'/g, "'\\''")}'`).join(" ");
+    await provider.executeCommand(sandboxId, `cd ${SANDBOX_WORKDIR}/src && rm -f -- ${rmArgs}`);
+  }
+
+  // Re-snapshot so sandbox HEAD stays current for next syncOut
+  await provider.executeCommand(
+    sandboxId,
+    `cd ${SANDBOX_WORKDIR}/src && git add -A && git commit -m sync --allow-empty`,
+  );
+
+  logInfo(log, "sync_in_partial_done", {
+    sandboxId,
+    filesChanged: changed.length,
+    filesDeleted: deleted.length,
+  });
 }
 
 // ── syncOut ─────────────────────────────────────────────────────────────────
@@ -141,8 +168,15 @@ export async function syncOut(
     throw new Error(`git status failed in sandbox ${sandboxId} with exit code ${statusExit}`);
   }
 
-  const changedFiles = parseFileList(diffOutput).concat(parseFileList(untrackedOutput));
   const deletedFiles = parseDeletedFiles(statusOutput);
+  const deletedSet = new Set(deletedFiles);
+
+  // Filter deleted files out of the download list — git diff includes deletions
+  const changedFiles = parseFileList(diffOutput)
+    .filter((f) => !deletedSet.has(f))
+    .concat(parseFileList(untrackedOutput));
+
+  logInfo(log, "sync_out_files", { sandboxId, changed: changedFiles, deleted: deletedFiles });
 
   // Download changed files
   let filesChanged = 0;
@@ -179,9 +213,9 @@ export async function syncOut(
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Create a gzipped tarball of the worktree (or specific files). */
-function createTarball(cwd: string, files: string[]): Promise<Buffer> {
+function createTarball(cwd: string, files: string[], extraArgs: string[] = []): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const args = ["-czf", "-", "-C", cwd, "--"];
+    const args = ["-czf", "-", ...extraArgs, "-C", cwd, "--"];
     if (files.length > 0) {
       args.push(...files);
     } else {
@@ -198,22 +232,28 @@ function createTarball(cwd: string, files: string[]): Promise<Buffer> {
   });
 }
 
-/** Get changed tracked + new untracked files via git. */
-function getChangedFiles(worktreePath: string): Promise<string[]> {
+/** Get changed/new files and deleted files separately via git. */
+function getLocalChanges(worktreePath: string): Promise<{ changed: string[]; deleted: string[] }> {
   return new Promise((resolve, reject) => {
-    // Combine: modified/staged files + untracked files
-    execFile(
-      "sh",
-      [
-        "-c",
-        "git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null",
-      ],
-      { cwd: worktreePath },
-      (err, stdout) => {
-        if (err) return reject(err);
-        resolve(parseFileList(stdout));
-      },
-    );
+    // --diff-filter=d (lowercase) excludes deletions; =D (uppercase) selects only deletions
+    const script = [
+      "echo '---CHANGED---'",
+      "git diff --name-only --diff-filter=d HEAD 2>/dev/null",
+      "git ls-files --others --exclude-standard 2>/dev/null",
+      "echo '---DELETED---'",
+      "git diff --name-only --diff-filter=D HEAD 2>/dev/null",
+    ].join("; ");
+
+    execFile("sh", ["-c", script], { cwd: worktreePath }, (err, stdout) => {
+      if (err) return reject(err);
+      const sections = stdout.split("---DELETED---");
+      const changedSection = (sections[0] ?? "").replace("---CHANGED---", "");
+      const deletedSection = sections[1] ?? "";
+      resolve({
+        changed: parseFileList(changedSection),
+        deleted: parseFileList(deletedSection),
+      });
+    });
   });
 }
 
