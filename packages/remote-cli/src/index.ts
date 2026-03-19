@@ -11,6 +11,7 @@ import {
 } from "./policy.js";
 import { DaytonaSandboxProvider } from "./sandbox/provider.js";
 import { SandboxManager } from "./sandbox/manager.js";
+import { syncIn, syncOut } from "./sandbox/sync.js";
 
 const log = createLogger("remote-cli");
 
@@ -196,40 +197,105 @@ app.post("/exec/sandbox-coder", async (req, res) => {
     const first = args[0] as string;
 
     if (first === "--reconnect") {
-      // TODO: Phase 4 — resume streaming from existing Daytona session
-      write({ stream: "stderr", data: "[sandbox:error] --reconnect not yet implemented\n" });
-      write({ exitCode: 1 });
+      // Resume streaming from existing Daytona session (D7, D12)
+      const sessionId = args[1] as string;
+      const sandboxId = sandboxManager.get(cwd);
+      if (!sandboxId) {
+        write({ stream: "stderr", data: "[sandbox:error] no sandbox found for this worktree\n" });
+        write({ exitCode: 2 });
+        res.end();
+        return;
+      }
+
+      write({ stream: "stderr", data: `[sandbox:id] ${sandboxId}\n` });
+      write({ stream: "stderr", data: `[sandbox:session] ${sessionId}\n` });
+      write({ stream: "stderr", data: "[sandbox:phase] reconnecting\n" });
+
+      // Get the latest command in this session and stream its logs
+      const session = await sandboxProvider.getSessionCommandLogs(
+        sandboxId,
+        sessionId,
+        sessionId, // commandId — we use sessionId as commandId for simplicity
+        (chunk) => write({ stream: "stdout", data: chunk }),
+        (chunk) => write({ stream: "stderr", data: chunk }),
+      );
+
+      // After reconnect completes, do syncOut
+      write({ stream: "stderr", data: "[sandbox:phase] sync_out\n" });
+      const result = await syncOut(sandboxProvider, sandboxId, cwd);
+      write({ stream: "stderr", data: `[sandbox:done] files_changed=${result.filesChanged}\n` });
+      write({ exitCode: 0 });
       res.end();
       return;
     }
 
     if (first === "--pull") {
-      // TODO: Phase 3/4 — syncOut only
-      write({ stream: "stderr", data: "[sandbox:error] --pull not yet implemented\n" });
-      write({ exitCode: 1 });
+      // SyncOut only — recover files from sandbox (D12, D14)
+      const targetSandboxId = args[1] as string;
+      write({ stream: "stderr", data: `[sandbox:id] ${targetSandboxId}\n` });
+      write({ stream: "stderr", data: "[sandbox:phase] sync_out\n" });
+
+      const result = await syncOut(sandboxProvider, targetSandboxId, cwd);
+      write({ stream: "stderr", data: `[sandbox:done] files_changed=${result.filesChanged}\n` });
+      write({ exitCode: 0 });
       res.end();
       return;
     }
 
-    // Regular prompt — get or create sandbox
-    const prompt = args.join(" ");
-    write({ stream: "stderr", data: "[sandbox:phase] sandbox_create\n" });
+    // ── Regular prompt — full pipeline: create → syncIn → agent → syncOut ──
 
+    const prompt = args.join(" ");
+
+    // Step 1: Get or create sandbox
+    write({ stream: "stderr", data: "[sandbox:phase] sandbox_create\n" });
     const sandboxId = await sandboxManager.getOrCreate(cwd);
     write({ stream: "stderr", data: `[sandbox:id] ${sandboxId}\n` });
 
-    // TODO: Phase 3 — syncIn(provider, sandboxId, cwd)
+    // Step 2: Sync worktree files into sandbox
     write({ stream: "stderr", data: "[sandbox:phase] sync_in\n" });
+    await syncIn(sandboxProvider, sandboxId, cwd);
 
-    // TODO: Phase 4 — createSession + execSessionCommand + streamLogs
+    // Step 3: Create session and run agent (D7)
     write({ stream: "stderr", data: "[sandbox:phase] agent_running\n" });
-    write({ stream: "stdout", data: `sandbox-coder: prompt="${prompt}" sandbox=${sandboxId}\n` });
+    const sessionId = `sess-${Date.now()}`;
+    await sandboxProvider.createSession(sandboxId, sessionId);
+    write({ stream: "stderr", data: `[sandbox:session] ${sessionId}\n` });
 
-    // TODO: Phase 3 — syncOut(provider, sandboxId, cwd)
+    const agentCommand = `opencode run --format json ${JSON.stringify(prompt)}`;
+    const execResult = await sandboxProvider.execSessionCommand(sandboxId, sessionId, agentCommand);
+
+    // Stream logs from the session command
+    await sandboxProvider.getSessionCommandLogs(
+      sandboxId,
+      sessionId,
+      execResult.commandId,
+      (chunk) => write({ stream: "stdout", data: chunk }),
+      (chunk) => write({ stream: "stderr", data: chunk }),
+    );
+
+    // Check agent exit code
+    const cmdInfo = await sandboxProvider.executeCommand(
+      sandboxId,
+      `cat /tmp/.sandbox-exit-code 2>/dev/null || echo 0`,
+    );
+
+    // Step 4: Sync changed files back to worktree
     write({ stream: "stderr", data: "[sandbox:phase] sync_out\n" });
+    const syncResult = await syncOut(sandboxProvider, sandboxId, cwd);
 
-    write({ stream: "stderr", data: "[sandbox:done] files_changed=0\n" });
-    write({ exitCode: 0 });
+    const exitCode = execResult.exitCode ?? 0;
+    if (exitCode !== 0) {
+      write({
+        stream: "stderr",
+        data: `[sandbox:error] agent exited with code ${exitCode}\n`,
+      });
+    }
+
+    write({
+      stream: "stderr",
+      data: `[sandbox:done] files_changed=${syncResult.filesChanged} files_deleted=${syncResult.filesDeleted}\n`,
+    });
+    write({ exitCode });
     res.end();
   } catch (err) {
     logError(log, "exec_sandbox_coder_error", err instanceof Error ? err.message : String(err));
