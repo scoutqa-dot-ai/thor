@@ -261,26 +261,39 @@ app.post("/exec/sandbox-coder", async (req, res) => {
     write({ stream: "stderr", data: "[sandbox:phase] sync_in\n" });
     await syncIn(sandboxProvider, sandboxId, cwd);
 
-    // Step 3: Run agent via executeCommand (synchronous, waits for completion)
+    // Step 3: Create session and run agent (D7)
     write({ stream: "stderr", data: "[sandbox:phase] agent_running\n" });
+    const sessionId = `sess-${Date.now()}`;
+    await sandboxProvider.createSession(sandboxId, sessionId);
+    write({ stream: "stderr", data: `[sandbox:session] ${sessionId}\n` });
 
     // Single-quote the prompt to prevent shell metachar expansion ($(), backticks)
     const escapedPrompt = prompt.replace(/'/g, "'\\''");
-    const agentCommand = `cd /home/daytona/src && opencode run --format json '${escapedPrompt}'`;
-    const { exitCode: agentExitCode, result: agentOutput } = await sandboxProvider.executeCommand(
+    const agentCommand = `opencode run --format json '${escapedPrompt}'`;
+    const execResult = await sandboxProvider.execSessionCommand(sandboxId, sessionId, agentCommand);
+
+    // Stream logs from the session command
+    await sandboxProvider.getSessionCommandLogs(
       sandboxId,
-      agentCommand,
+      sessionId,
+      execResult.commandId,
+      (chunk) => write({ stream: "stdout", data: chunk }),
+      (chunk) => write({ stream: "stderr", data: chunk }),
     );
 
-    if (agentOutput) {
-      write({ stream: "stdout", data: agentOutput });
-    }
+    // Get agent exit code from the session command (async exec returns it after completion)
+    const agentExitCode =
+      (await sandboxProvider.getSessionCommandExitCode(
+        sandboxId,
+        sessionId,
+        execResult.commandId,
+      )) ?? 0;
 
     // Step 4: Sync changed files back to worktree
     write({ stream: "stderr", data: "[sandbox:phase] sync_out\n" });
     const syncResult = await syncOut(sandboxProvider, sandboxId, cwd);
 
-    const exitCode = agentExitCode;
+    const exitCode = agentExitCode || (execResult.exitCode ?? 0);
     if (exitCode !== 0) {
       write({
         stream: "stderr",
