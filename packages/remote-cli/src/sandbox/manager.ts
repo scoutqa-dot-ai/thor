@@ -10,7 +10,7 @@ import type { SandboxProvider } from "./provider.js";
 
 const log = createLogger("sandbox-manager");
 
-const SANDBOX_IMAGE = process.env.SANDBOX_IMAGE || "daytona-medium";
+const SANDBOX_SNAPSHOT = process.env.SANDBOX_SNAPSHOT || "daytona-medium";
 const LABEL_THOR = "thor";
 const LABEL_WORKTREE = "worktree";
 
@@ -61,8 +61,8 @@ export class SandboxManager {
   private async doCreate(cwd: string): Promise<string> {
     const labels = { [LABEL_THOR]: "true", [LABEL_WORKTREE]: cwd };
 
-    logInfo(log, "sandbox_creating", { cwd });
-    const sandboxId = await this.provider.create({ image: SANDBOX_IMAGE, labels });
+    logInfo(log, "sandbox_creating", { cwd, snapshot: SANDBOX_SNAPSHOT });
+    const sandboxId = await this.provider.create({ snapshot: SANDBOX_SNAPSHOT, labels });
     logInfo(log, "sandbox_created", { cwd, sandboxId });
     return sandboxId;
   }

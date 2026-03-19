@@ -26,6 +26,7 @@ export interface SessionExecResult {
 export interface SandboxProvider {
   create(opts: {
     image?: string;
+    snapshot?: string;
     labels: Record<string, string>;
     envVars?: Record<string, string>;
     autoStopInterval?: number;
@@ -91,13 +92,14 @@ export class DaytonaSandboxProvider implements SandboxProvider {
 
   async create(opts: {
     image?: string;
+    snapshot?: string;
     labels: Record<string, string>;
     envVars?: Record<string, string>;
     autoStopInterval?: number;
   }): Promise<string> {
-    logInfo(log, "sandbox_create", { labels: opts.labels });
+    logInfo(log, "sandbox_create", { labels: opts.labels, snapshot: opts.snapshot });
     const sandbox = await this.client.create({
-      image: opts.image || "node:22-slim",
+      ...(opts.snapshot ? { snapshot: opts.snapshot } : { image: opts.image || "node:22-slim" }),
       labels: opts.labels,
       envVars: opts.envVars,
       autoStopInterval: opts.autoStopInterval ?? 3600, // 1h default (D13)
