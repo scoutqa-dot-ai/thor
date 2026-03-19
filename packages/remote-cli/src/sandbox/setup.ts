@@ -45,6 +45,19 @@ export async function setupSandboxOpenCode(
 ): Promise<void> {
   logInfo(log, "sandbox_setup_start", { sandboxId });
 
+  // Install OpenCode if not already present
+  const { exitCode: whichExit } = await provider.executeCommand(sandboxId, "which opencode");
+  if (whichExit !== 0) {
+    logInfo(log, "sandbox_setup_installing_opencode", { sandboxId });
+    const { exitCode: installExit } = await provider.executeCommand(
+      sandboxId,
+      "npm install -g opencode-ai",
+    );
+    if (installExit !== 0) {
+      throw new Error(`Failed to install opencode-ai in sandbox ${sandboxId}`);
+    }
+  }
+
   // Create config directories
   await provider.executeCommand(
     sandboxId,
