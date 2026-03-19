@@ -1,0 +1,40 @@
+packages/remote-cli/src/index.ts
+  1f6c729c01f15bdb 15,233,237-238
+packages/remote-cli/src/sandbox/setup.ts
+  1f6c729c01f15bdb 4-6,19-22,39-40,72-84,86,93,97-98
+packages/remote-cli/src/sandbox/setup.test.ts
+  1f6c729c01f15bdb 7,9,119-135,137,140-141,146-149,156-166,172-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "404720fce647c9b07c11572b786502dc9bc7f5fe",
+  "prompts": {
+    "1f6c729c01f15bdb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c3c3ead-07c5-4fc6-bfc7-87e62952e858",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 87,
+      "total_deletions": 30,
+      "accepted_lines": 79,
+      "overriden_lines": 0
+    },
+    "9f58709810d05dc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91b89209-34f0-4b34-906a-58ee50eac5ae",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 19,
+      "total_deletions": 8,
+      "accepted_lines": 19,
+      "overriden_lines": 0
+    }
+  }
+}
