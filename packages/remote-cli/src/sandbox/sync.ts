@@ -15,7 +15,7 @@ import type { SandboxProvider } from "./provider.js";
 
 const log = createLogger("sandbox-sync");
 
-const SANDBOX_WORKDIR = "/home/daytona/workspace";
+const SANDBOX_WORKDIR = "/home/daytona";
 
 /** Track which sandboxes have had their first sync (for git-diff partial). */
 const syncedSandboxes = new Set<string>();

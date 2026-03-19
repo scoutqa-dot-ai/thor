@@ -31,7 +31,7 @@ const SANDBOX_OPENCODE_CONFIG = {
 };
 
 const SANDBOX_AGENT_PROMPT = `You are a coding agent running in an isolated sandbox.
-Your job is to edit files, run tests, and fix bugs in the source code at /home/daytona/workspace/src.
+Your job is to edit files, run tests, and fix bugs in the source code at /home/daytona/src.
 Do not attempt external API calls — you have no network access to external services.
 Focus on writing correct, well-tested code.`;
 
@@ -45,20 +45,7 @@ export async function setupSandboxOpenCode(
 ): Promise<void> {
   logInfo(log, "sandbox_setup_start", { sandboxId });
 
-  // Install OpenCode if not already present
-  const { exitCode: whichExit } = await provider.executeCommand(sandboxId, "which opencode");
-  if (whichExit !== 0) {
-    logInfo(log, "sandbox_setup_installing_opencode", { sandboxId });
-    const { exitCode: installExit } = await provider.executeCommand(
-      sandboxId,
-      "npm install -g opencode-ai",
-    );
-    if (installExit !== 0) {
-      throw new Error(`Failed to install opencode-ai in sandbox ${sandboxId}`);
-    }
-  }
-
-  // Create config directories
+  // Create config directories (may already exist, but ensure they're there)
   await provider.executeCommand(
     sandboxId,
     `mkdir -p ${OPENCODE_CONFIG_DIR} ${OPENCODE_DATA_DIR} ${OPENCODE_CONFIG_DIR}/agents`,

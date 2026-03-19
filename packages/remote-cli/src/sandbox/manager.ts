@@ -10,7 +10,7 @@ import type { SandboxProvider } from "./provider.js";
 
 const log = createLogger("sandbox-manager");
 
-const SANDBOX_IMAGE = process.env.SANDBOX_IMAGE || "node:22-slim";
+const SANDBOX_IMAGE = process.env.SANDBOX_IMAGE || "daytona-medium";
 const LABEL_THOR = "thor";
 const LABEL_WORKTREE = "worktree";
 
