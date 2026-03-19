@@ -49,6 +49,9 @@ function createMockProvider(): MockProvider {
     async executeCommand() {
       return { exitCode: 0, result: "" };
     },
+    async getSessionCommandExitCode() {
+      return 0;
+    },
   };
   return mock;
 }

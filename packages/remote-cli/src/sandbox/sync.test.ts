@@ -49,6 +49,9 @@ function createMockProvider(): SandboxProvider & { calls: MockCall[]; files: Map
       mock.calls.push({ method: "executeCommand", args: [command] });
       return { exitCode: 0, result: "" };
     },
+    async getSessionCommandExitCode() {
+      return 0;
+    },
   };
   return mock;
 }

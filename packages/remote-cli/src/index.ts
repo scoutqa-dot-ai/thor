@@ -280,12 +280,13 @@ app.post("/exec/sandbox-coder", async (req, res) => {
       (chunk) => write({ stream: "stderr", data: chunk }),
     );
 
-    // Check agent exit code — prefer the file-based exit code over the async exec result
-    const cmdInfo = await sandboxProvider.executeCommand(
-      sandboxId,
-      `cat /tmp/.sandbox-exit-code 2>/dev/null || echo 0`,
-    );
-    const agentExitCode = parseInt(cmdInfo.result.trim(), 10) || 0;
+    // Get agent exit code from the session command (async exec returns it after completion)
+    const agentExitCode =
+      (await sandboxProvider.getSessionCommandExitCode(
+        sandboxId,
+        sessionId,
+        execResult.commandId,
+      )) ?? 0;
 
     // Step 4: Sync changed files back to worktree
     write({ stream: "stderr", data: "[sandbox:phase] sync_out\n" });

@@ -70,6 +70,13 @@ export interface SandboxProvider {
     command: string,
     cwd?: string,
   ): Promise<{ exitCode: number; result: string }>;
+
+  /** Get the exit code of a completed session command. */
+  getSessionCommandExitCode(
+    sandboxId: string,
+    sessionId: string,
+    commandId: string,
+  ): Promise<number | undefined>;
 }
 
 // ── Daytona implementation ──────────────────────────────────────────────────
@@ -193,5 +200,15 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     const sandbox = await this.getSandbox(sandboxId);
     const result = await sandbox.process.executeCommand(command, cwd);
     return { exitCode: result.exitCode, result: result.result };
+  }
+
+  async getSessionCommandExitCode(
+    sandboxId: string,
+    sessionId: string,
+    commandId: string,
+  ): Promise<number | undefined> {
+    const sandbox = await this.getSandbox(sandboxId);
+    const cmd = await sandbox.process.getSessionCommand(sessionId, commandId);
+    return cmd.exitCode;
   }
 }
