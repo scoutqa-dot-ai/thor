@@ -1,0 +1,37 @@
+docker-compose.yml
+  9f58709810d05dc6 40-43,46
+packages/remote-cli/src/sandbox/manager.test.ts
+  9f58709810d05dc6 11,20,34-38,90-113
+packages/remote-cli/src/sandbox/manager.ts
+  9f58709810d05dc6 14,63-81,83-84
+packages/remote-cli/src/sandbox/setup.ts
+  9f58709810d05dc6 1-81
+packages/remote-cli/src/index.ts
+  9f58709810d05dc6 15,255-258
+packages/remote-cli/src/sandbox/sync.test.ts
+  9f58709810d05dc6 28-33
+packages/remote-cli/src/sandbox/provider.ts
+  9f58709810d05dc6 13-15,31-32,42-46,96-97,102-103,107-113,118-132
+packages/remote-cli/src/sandbox/setup.test.ts
+  9f58709810d05dc6 1-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "19b1a01d723d741f16955bbe0d7f84d0f915330a",
+  "prompts": {
+    "9f58709810d05dc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91b89209-34f0-4b34-906a-58ee50eac5ae",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 310,
+      "total_deletions": 15,
+      "accepted_lines": 306,
+      "overriden_lines": 0
+    }
+  }
+}
