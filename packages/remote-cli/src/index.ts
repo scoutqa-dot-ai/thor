@@ -20,11 +20,12 @@ const PORT = parseInt(process.env.PORT || "3004", 10);
 
 // ── Sandbox manager (D6, D8) ───────────────────────────────────────────────
 
-const sandboxProvider = new DaytonaSandboxProvider({
-  apiKey: process.env.DAYTONA_API_KEY,
-  apiUrl: process.env.DAYTONA_API_URL,
-  target: process.env.DAYTONA_TARGET,
-});
+const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY;
+if (!DAYTONA_API_KEY) {
+  throw new Error("DAYTONA_API_KEY environment variable is required");
+}
+
+const sandboxProvider = new DaytonaSandboxProvider(DAYTONA_API_KEY);
 const sandboxManager = new SandboxManager(sandboxProvider);
 
 // ── Express app ─────────────────────────────────────────────────────────────

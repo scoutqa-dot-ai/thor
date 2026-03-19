@@ -76,8 +76,8 @@ export class DaytonaSandboxProvider implements SandboxProvider {
   /** Cache sandbox instances to avoid repeated API calls within a session. */
   private sandboxCache = new Map<string, Sandbox>();
 
-  constructor(config?: { apiKey?: string; apiUrl?: string; target?: string }) {
-    this.client = new Daytona(config);
+  constructor(apiKey: string) {
+    this.client = new Daytona({ apiKey });
   }
 
   private async getSandbox(sandboxId: string): Promise<Sandbox> {
