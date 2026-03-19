@@ -15,6 +15,8 @@
 | D7  | Evaluate preview URL and telemetry streaming support          | These capabilities differentiate sandbox providers for Thor's workflows.  |
 | D8  | Design a provider-agnostic SandboxProvider interface          | Prevents vendor lock-in and enables local fallback.                       |
 | D9  | Sandboxes are execution-only (no MCP tool access)             | Simplifies architecture; broker access stays in Thor's control plane.     |
+| D10 | Replace coder subagent with sandbox-coder binary              | Single tool, same pattern as git/gh/scoutqa. Sandbox lifecycle is infra.  |
+| D11 | Keep thinker subagent for planning and review                 | Thinker operates locally on code review and reasoning, no sandbox needed. |
 
 ## Phase 1 — Feature Definition
 
@@ -228,6 +230,239 @@ Steps:
 - The LocalProvider fallback strategy is documented
 - The multi-sandbox identity model is documented
 - The result is ready to seed a later implementation plan
+
+### Integration Direction
+
+#### 3.1 Architecture: the `sandbox-coder` binary
+
+The agent invokes sandbox coding via a CLI binary, the same way it uses `git`, `gh`, and `scoutqa`. No new MCP servers, no OpenCode modifications.
+
+```
+  OpenCode container                          remote-cli service
+  ─────────────────                           ──────────────────
+  Primary agent (Thor)                        POST /sandbox/exec
+    │                                           │
+    │  $ sandbox-coder \                        ├─ SandboxManager
+    │      --worktree /workspace/worktrees/ \   │   ├─ ensure sandbox exists
+    │      acme-api/fix-auth \                  │   │   (create or resume)
+    │      "fix JWT expiry, add test"           │   ├─ sync worktree → sandbox
+    │                                           │   ├─ start OpenCode in sandbox
+    │  ◀──── streams NDJSON progress ────────── │   ├─ stream output back
+    │                                           │   ├─ sync sandbox → worktree
+    │  exit code 0                              │   └─ return result
+    │                                           │
+    ├─ reads changed files from worktree        │
+    ├─ commits, pushes via remote-cli           │
+    └─ continues orchestration                  │
+                                                │
+                                              Daytona sandbox
+                                                ├─ OpenCode instance (no MCP)
+                                                ├─ edits files, runs tests
+                                                ├─ streams logs via Daytona API
+                                                └─ preview URLs (port-based)
+```
+
+**How it works:**
+
+1. The primary agent (Thor) works locally for investigation, triage, and orchestration — using its normal tools (Read, Bash, MCP) and subagents (thinker)
+2. When Thor needs substantial coding done, it calls `sandbox-coder` from bash with a natural language task
+3. The `sandbox-coder` binary sends the request to `remote-cli` (which already has worktree and provider access)
+4. `remote-cli` ensures a sandbox exists for the worktree, syncs source, starts a coding agent inside the sandbox, and streams output back
+5. When done, changes are synced back to the worktree. Thor sees the modified files and continues (commit, push, open PR)
+
+**Why this design:**
+
+- Same pattern as existing binaries (`git`, `gh`, `scoutqa`) — the agent already knows how to use CLI tools
+- No new MCP server, no proxy port, no `opencode.json` change
+- `remote-cli` already has worktree access and mediates external operations — sandbox management is a natural extension
+- Streaming via stdout/NDJSON works with OpenCode's bash tool
+- Cleanup is automatic: `remote-cli` already intercepts `git worktree remove` and can destroy the associated sandbox
+
+**What the agent prompt says** (addition to `build.md`):
+
+```markdown
+### Sandbox Coding
+
+For substantial code changes (multi-file edits, running tests, starting
+servers, browser validation), use `sandbox-coder` in the worktree:
+
+cd /workspace/worktrees/<repo>/<branch>
+sandbox-coder "implement the auth fix and add regression tests"
+
+This runs an isolated coding agent in a remote sandbox. Changes sync
+back to the worktree automatically. The coder/thinker subagents remain
+available for quick local edits and reasoning that don't need isolation.
+```
+
+**What Thor owns:**
+
+- Session identity, correlation keys, notes files
+- Decision to invoke `sandbox-coder` vs work locally
+- Source packaging and code extraction (inside remote-cli)
+- MCP tool access (GitHub PRs, Linear issues, Slack messages)
+- Committing and pushing code after sandbox returns
+- Cost tracking and lifecycle policies
+
+**What the provider owns:**
+
+- Isolated filesystem and process space
+- Compute resource allocation and scaling
+- Preview URL routing and auth
+- Log streaming infrastructure
+- Snapshot / archive storage
+
+**Sandbox lifecycle is bound to the worktree:**
+
+| Worktree event                                    | Sandbox action                             |
+| ------------------------------------------------- | ------------------------------------------ |
+| First `sandbox-coder` call for worktree           | Create sandbox, sync source                |
+| Subsequent `sandbox-coder` calls                  | Reuse existing sandbox, incremental sync   |
+| Worktree idle (no calls for configurable timeout) | Pause sandbox (provider-managed auto-stop) |
+| Next `sandbox-coder` call after pause             | Resume sandbox                             |
+| `git worktree remove`                             | Destroy sandbox (remote-cli hook)          |
+
+#### 3.2 Source sync model
+
+Source enters and exits the sandbox through `remote-cli`, not through in-sandbox git credentials. The sync is transparent to the agent — `sandbox-coder` handles it automatically.
+
+**Push in (on sandbox create or incremental sync):**
+
+```
+remote-cli                      Sandbox
+  │                               │
+  ├─ git archive base_sha ──────▶ base.tar.zst (repo at base commit)
+  ├─ collect worktree delta ────▶ overlay.tar.zst (uncommitted changes)
+  ├─ collect deletions ─────────▶ deletions.txt
+  │                               │
+  │   provider.uploadFiles(...)   │
+  ├──────────────────────────────▶│
+  │                               ├─ extract base.tar.zst
+  │                               ├─ git init + commit (synthetic base)
+  │                               ├─ create branch thor/{session-id}
+  │                               ├─ apply overlay + deletions
+  │                               └─ ready to code
+```
+
+**Pull out (on sandbox-coder completion):**
+
+```
+  Sandbox                         remote-cli
+  │                               │
+  ├─ git diff ───────────────────▶ changed files
+  ├─ collect artifacts ──────────▶ artifacts (logs, coverage, screenshots)
+  │                               │
+  │   provider.downloadFiles(...) │
+  │◀──────────────────────────────┤
+  │                               ├─ apply changed files to worktree
+  │                               └─ done (agent sees files in worktree)
+```
+
+The sandbox never holds GitHub credentials. The agent commits and pushes from the worktree using `git` / `gh` via remote-cli, the same as today.
+
+For warm starts, Daytona snapshots capture the sandbox after dependency install. Subsequent sandboxes for the same repo family skip `npm install` / `pip install` by starting from a snapshot with deps pre-installed.
+
+#### 3.3 Daytona integration
+
+`remote-cli` uses the Daytona TypeScript SDK to manage sandboxes. Mapping:
+
+| Operation       | Daytona SDK                                                                  |
+| --------------- | ---------------------------------------------------------------------------- |
+| create          | create sandbox from snapshot, assign labels (`repo`, `branch`, `session_id`) |
+| stop            | stop (short idle) or archive (long idle, moves to object storage)            |
+| resume          | start stopped or archived sandbox                                            |
+| destroy         | delete sandbox                                                               |
+| source sync in  | file upload API (base + overlay)                                             |
+| source sync out | file download API (changed files)                                            |
+| exec            | detached process with stdout/stderr log streaming                            |
+| preview         | signed preview URL with configurable expiry                                  |
+
+#### 3.4 Sandbox identity (deferred)
+
+For Phase A, sandbox identity is simple: `remote-cli` maps each worktree path to a Daytona sandbox ID. The mapping is stored in memory (lost on restart — sandbox is recreated on next call). `sandbox-coder` will support an explicit `--sandbox-id` flag later for reuse, multi-sandbox, and cross-session continuity.
+
+#### 3.5 `sandbox-coder` binary interface
+
+```
+Usage:
+  sandbox-coder "<task prompt>"
+
+  Must be run from a worktree path (/workspace/worktrees/*).
+  Fails immediately if cwd is not a valid worktree.
+
+Output:
+  Streams NDJSON progress events to stdout:
+    { "type": "status",   "message": "creating sandbox..." }
+    { "type": "progress", "message": "editing src/auth.ts..." }
+    { "type": "progress", "message": "running npm test..." }
+    { "type": "test",     "passed": 47, "failed": 0, "skipped": 2 }
+    { "type": "done",     "files_changed": 3, "diff_lines": 42 }
+
+Exit codes:
+  0 — task completed, changes synced to worktree
+  1 — task failed (coding agent error or test failure)
+  2 — sandbox error (provider timeout, quota, etc.)
+
+Future flags (not in Phase A):
+  --timeout <ms>      Custom timeout (default TBD by implementation)
+  --preview <port>    Return a Daytona signed preview URL for a port
+```
+
+#### 3.6 `remote-cli` sandbox endpoint
+
+`remote-cli` gains a new endpoint that `sandbox-coder` calls:
+
+```
+POST /sandbox/exec
+  Content-Type: application/json
+
+  {
+    "cwd": "/workspace/worktrees/acme-api/fix-auth",
+    "prompt": "fix JWT expiry validation and add test"
+  }
+
+  Response: NDJSON stream (same format as sandbox-coder output)
+```
+
+The endpoint handler:
+
+1. Validate cwd is under `/workspace/worktrees/`, extract `(repo, branch)`
+2. `SandboxManager.getOrCreate(ref)` → create or resume sandbox
+3. Sync worktree → sandbox (overlay push)
+4. Install OpenCode in sandbox (from snapshot, or install on first run)
+5. Run `opencode run --format json` with the task prompt inside the sandbox
+6. Stream sandbox agent output back as NDJSON
+7. On completion: sync changed files sandbox → worktree
+8. Return exit code
+
+The sandbox stays alive after the call completes (auto-stop timeout managed by provider). Subsequent calls reuse the same sandbox with incremental sync.
+
+#### 3.7 Rollout plan
+
+```
+Phase A: sandbox-coder + Daytona
+  - Implement sandbox-coder binary in OpenCode container
+  - Implement /sandbox/exec endpoint in remote-cli with Daytona SDK
+  - Update build.md prompt with sandbox-coder instructions
+  - Worktree cleanup hook destroys sandbox on git worktree remove
+  - If sandbox-coder fails, the main agent retries or edits directly
+
+Phase B: Preview URLs
+  - sandbox-coder --preview <port> returns Daytona signed preview URLs
+  - Preview URLs included in PR comments and Slack messages
+
+Phase C: Multi-sandbox
+  - Enable secondary sandbox spawning for parallel work
+  - e.g. one sandbox coding, another running tests
+```
+
+#### Exit Criteria Check
+
+- [x] Provider: Daytona (section 3.3)
+- [x] Thor vs provider ownership (section 3.1)
+- [x] Agent integration: `sandbox-coder` binary + `remote-cli /sandbox/exec` (sections 3.5, 3.6)
+- [x] Sandbox identity: deferred, simple worktree→sandbox map for now (section 3.4)
+- [x] Rollout plan: 3 phases (section 3.7)
+- [x] Ready to seed an implementation plan
 
 ## Out of Scope
 
