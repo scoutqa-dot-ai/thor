@@ -1,0 +1,25 @@
+packages/remote-cli/src/sandbox/setup.test.ts
+  1f6c729c01f15bdb 5,139-201
+packages/remote-cli/src/sandbox/setup.ts
+  1f6c729c01f15bdb 71-72,74-75,79,94-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "540cde6a4b17693ed28b2dbe5736a7ac12230fc1",
+  "prompts": {
+    "1f6c729c01f15bdb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c3c3ead-07c5-4fc6-bfc7-87e62952e858",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 96,
+      "total_deletions": 4,
+      "accepted_lines": 92,
+      "overriden_lines": 0
+    }
+  }
+}
