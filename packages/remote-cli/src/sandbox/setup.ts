@@ -51,13 +51,18 @@ export async function setupSandboxOpenCode(
   logInfo(log, "sandbox_setup_start", { sandboxId });
 
   // Install pinned opencode version
-  const { exitCode: installExit } = await provider.executeCommand(
+  const { exitCode: installExit, result: installOutput } = await provider.executeCommand(
     sandboxId,
-    `sudo npm i -g opencode-ai@${OPENCODE_VERSION}`,
+    `sudo "$(which npm)" i -g opencode-ai@${OPENCODE_VERSION} 2>&1`,
   );
   if (installExit !== 0) {
+    logError(log, "sandbox_setup_install_failed", {
+      sandboxId,
+      exitCode: installExit,
+      output: installOutput,
+    });
     throw new Error(
-      `opencode install failed in sandbox ${sandboxId} with exit code ${installExit}`,
+      `opencode install failed in sandbox ${sandboxId} (exit ${installExit}): ${installOutput}`,
     );
   }
   logInfo(log, "sandbox_setup_opencode_installed", { sandboxId, version: OPENCODE_VERSION });
