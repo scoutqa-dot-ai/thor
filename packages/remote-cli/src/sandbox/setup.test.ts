@@ -3,7 +3,7 @@ import { writeFileSync, mkdtempSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setupSandboxOpenCode } from "./setup.js";
-import type { SandboxProvider, SessionExecResult } from "./provider.js";
+import type { SandboxProvider } from "./provider.js";
 
 // ── Mock provider ───────────────────────────────────────────────────────────
 
@@ -22,11 +22,6 @@ function createMockProvider(): SandboxProvider & { calls: MockCall[] } {
     async list() {
       return [];
     },
-    async createSession() {},
-    async execSessionCommand(): Promise<SessionExecResult> {
-      return { commandId: "cmd-1" };
-    },
-    async getSessionCommandLogs() {},
     async uploadFile(_id: string, path: string, data: Buffer) {
       mock.calls.push({ method: "uploadFile", args: [path, data.toString()] });
     },
@@ -37,8 +32,8 @@ function createMockProvider(): SandboxProvider & { calls: MockCall[] } {
       mock.calls.push({ method: "executeCommand", args: [command] });
       return { exitCode: 0, result: "" };
     },
-    async getSessionCommandExitCode() {
-      return 0;
+    async runAgentStreaming() {
+      return { exitCode: 0 };
     },
   };
   return mock;

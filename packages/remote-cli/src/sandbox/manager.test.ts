@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SandboxManager } from "./manager.js";
-import type { SandboxProvider, SandboxInfo, SessionExecResult } from "./provider.js";
+import type { SandboxProvider, SandboxInfo } from "./provider.js";
 
 // ── Mock provider ───────────────────────────────────────────────────────────
 
@@ -29,11 +29,6 @@ function createMockProvider(): MockProvider {
     async list() {
       return mock.listed;
     },
-    async createSession() {},
-    async execSessionCommand(): Promise<SessionExecResult> {
-      return { commandId: "cmd-1" };
-    },
-    async getSessionCommandLogs() {},
     async uploadFile() {},
     async downloadFile() {
       return Buffer.from("");
@@ -41,8 +36,8 @@ function createMockProvider(): MockProvider {
     async executeCommand() {
       return { exitCode: 0, result: "" };
     },
-    async getSessionCommandExitCode() {
-      return 0;
+    async runAgentStreaming() {
+      return { exitCode: 0 };
     },
   };
   return mock;

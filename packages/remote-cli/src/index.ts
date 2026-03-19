@@ -166,9 +166,9 @@ app.post("/exec/scoutqa", async (req, res) => {
  *   { "exitCode": 0 }                                       ← final line
  *
  * Subcommands (via args):
- *   sandbox-coder "prompt"              — run coding task
- *   sandbox-coder --reconnect <id>      — resume streaming from session
- *   sandbox-coder --pull <id>           — pull files from sandbox
+ *   sandbox-coder "prompt"                        — run coding task (new session)
+ *   sandbox-coder --session <id> "prompt"         — continue existing opencode session
+ *   sandbox-coder --pull <sandbox-id>             — pull files from sandbox
  */
 app.post("/exec/sandbox-coder", async (req, res) => {
   try {
@@ -198,39 +198,6 @@ app.post("/exec/sandbox-coder", async (req, res) => {
     // Parse subcommand from args (D12)
     const first = args[0] as string;
 
-    if (first === "--reconnect") {
-      // Resume streaming from existing Daytona session (D7, D12)
-      const sessionId = args[1] as string;
-      const sandboxId = await sandboxManager.find(cwd);
-      if (!sandboxId) {
-        write({ stream: "stderr", data: "[sandbox:error] no sandbox found for this worktree\n" });
-        write({ exitCode: 2 });
-        res.end();
-        return;
-      }
-
-      write({ stream: "stderr", data: `[sandbox:id] ${sandboxId}\n` });
-      write({ stream: "stderr", data: `[sandbox:session] ${sessionId}\n` });
-      write({ stream: "stderr", data: "[sandbox:phase] reconnecting\n" });
-
-      // Get the latest command in this session and stream its logs
-      await sandboxProvider.getSessionCommandLogs(
-        sandboxId,
-        sessionId,
-        sessionId, // commandId — we use sessionId as commandId for simplicity
-        (chunk) => write({ stream: "stdout", data: chunk }),
-        (chunk) => write({ stream: "stderr", data: chunk }),
-      );
-
-      // After reconnect completes, do syncOut
-      write({ stream: "stderr", data: "[sandbox:phase] sync_out\n" });
-      const result = await syncOut(sandboxProvider, sandboxId, cwd);
-      write({ stream: "stderr", data: `[sandbox:done] files_changed=${result.filesChanged}\n` });
-      write({ exitCode: 0 });
-      res.end();
-      return;
-    }
-
     if (first === "--pull") {
       // SyncOut only — recover files from sandbox (D12, D14)
       const targetSandboxId = args[1] as string;
@@ -245,6 +212,14 @@ app.post("/exec/sandbox-coder", async (req, res) => {
     }
 
     // ── Regular prompt — full pipeline: create → syncIn → agent → syncOut ──
+
+    // Parse --session <id> if provided (continue existing opencode session)
+    let opencodeSessionId: string | undefined;
+    const sessionIdx = args.indexOf("--session");
+    if (sessionIdx !== -1 && args[sessionIdx + 1]) {
+      opencodeSessionId = args[sessionIdx + 1];
+      args.splice(sessionIdx, 2);
+    }
 
     const prompt = args.join(" ");
 
@@ -261,43 +236,37 @@ app.post("/exec/sandbox-coder", async (req, res) => {
     write({ stream: "stderr", data: "[sandbox:phase] sync_in\n" });
     await syncIn(sandboxProvider, sandboxId, cwd);
 
-    // Step 3: Create session and run agent (D7)
+    // Step 3: Run agent via PTY with real-time streaming
     write({ stream: "stderr", data: "[sandbox:phase] agent_running\n" });
-    const sessionId = `sess-${Date.now()}`;
-    await sandboxProvider.createSession(sandboxId, sessionId);
-    write({ stream: "stderr", data: `[sandbox:session] ${sessionId}\n` });
 
-    // Single-quote the prompt to prevent shell metachar expansion ($(), backticks)
+    // Build opencode command with prompt and optional session flag
     const escapedPrompt = prompt.replace(/'/g, "'\\''");
-    const agentCommand = `opencode run --format json '${escapedPrompt}'`;
-    const execResult = await sandboxProvider.execSessionCommand(sandboxId, sessionId, agentCommand);
+    const sessionFlag = opencodeSessionId ? ` --session ${opencodeSessionId}` : "";
+    const agentCommand = `opencode run --format json${sessionFlag} '${escapedPrompt}'`;
 
-    // Stream logs from the session command
-    await sandboxProvider.getSessionCommandLogs(
+    const agentResult = await sandboxProvider.runAgentStreaming(
       sandboxId,
-      sessionId,
-      execResult.commandId,
-      (chunk) => write({ stream: "stdout", data: chunk }),
-      (chunk) => write({ stream: "stderr", data: chunk }),
+      agentCommand,
+      "/home/daytona/src",
+      (jsonLine) => write({ stream: "stdout", data: jsonLine + "\n" }),
     );
 
-    // Get agent exit code from the session command (async exec returns it after completion)
-    const agentExitCode =
-      (await sandboxProvider.getSessionCommandExitCode(
-        sandboxId,
-        sessionId,
-        execResult.commandId,
-      )) ?? 0;
+    // Emit the opencode session ID so the caller can use --session for follow-ups
+    if (agentResult.opencodeSessionId) {
+      write({
+        stream: "stderr",
+        data: `[sandbox:opencode_session] ${agentResult.opencodeSessionId}\n`,
+      });
+    }
 
     // Step 4: Sync changed files back to worktree
     write({ stream: "stderr", data: "[sandbox:phase] sync_out\n" });
     const syncResult = await syncOut(sandboxProvider, sandboxId, cwd);
 
-    const exitCode = agentExitCode || (execResult.exitCode ?? 0);
-    if (exitCode !== 0) {
+    if (agentResult.exitCode !== 0) {
       write({
         stream: "stderr",
-        data: `[sandbox:error] agent exited with code ${exitCode}\n`,
+        data: `[sandbox:error] agent exited with code ${agentResult.exitCode}\n`,
       });
     }
 
@@ -305,7 +274,7 @@ app.post("/exec/sandbox-coder", async (req, res) => {
       stream: "stderr",
       data: `[sandbox:done] files_changed=${syncResult.filesChanged} files_deleted=${syncResult.filesDeleted}\n`,
     });
-    write({ exitCode });
+    write({ exitCode: agentResult.exitCode });
     res.end();
   } catch (err) {
     logError(log, "exec_sandbox_coder_error", err instanceof Error ? err.message : String(err));

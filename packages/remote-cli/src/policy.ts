@@ -236,14 +236,8 @@ export function validateSandboxCoderArgs(args: string[]): string | null {
     return "args must be a non-empty array";
   }
 
-  // Subcommands: --reconnect <session-id>, --pull <sandbox-id>, or a prompt
+  // Subcommands: --pull <sandbox-id>, --session <id> <prompt>, or a prompt
   const first = args[0];
-  if (first === "--reconnect") {
-    if (args.length < 2 || !args[1]) {
-      return "--reconnect requires a session ID";
-    }
-    return null;
-  }
   if (first === "--pull") {
     if (args.length < 2 || !args[1]) {
       return "--pull requires a sandbox ID";

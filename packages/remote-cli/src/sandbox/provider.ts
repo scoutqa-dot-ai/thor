@@ -17,10 +17,10 @@ export interface SandboxInfo {
   labels: Record<string, string>;
 }
 
-export interface SessionExecResult {
-  commandId: string;
-  exitCode?: number;
-  output?: string;
+export interface AgentStreamResult {
+  exitCode: number;
+  /** OpenCode session ID extracted from JSON output (for --session continuity). */
+  opencodeSessionId?: string;
 }
 
 export interface SandboxProvider {
@@ -36,22 +36,6 @@ export interface SandboxProvider {
 
   list(labels: Record<string, string>): Promise<SandboxInfo[]>;
 
-  createSession(sandboxId: string, sessionId: string): Promise<void>;
-
-  execSessionCommand(
-    sandboxId: string,
-    sessionId: string,
-    command: string,
-  ): Promise<SessionExecResult>;
-
-  getSessionCommandLogs(
-    sandboxId: string,
-    sessionId: string,
-    commandId: string,
-    onStdout: (chunk: string) => void,
-    onStderr: (chunk: string) => void,
-  ): Promise<void>;
-
   uploadFile(sandboxId: string, remotePath: string, data: Buffer): Promise<void>;
 
   downloadFile(sandboxId: string, remotePath: string): Promise<Buffer>;
@@ -62,12 +46,16 @@ export interface SandboxProvider {
     cwd?: string,
   ): Promise<{ exitCode: number; result: string }>;
 
-  /** Get the exit code of a completed session command. */
-  getSessionCommandExitCode(
+  /**
+   * Run an agent command via PTY with real-time streaming.
+   * Uses createPty for streaming output, detects completion via step_finish event.
+   */
+  runAgentStreaming(
     sandboxId: string,
-    sessionId: string,
-    commandId: string,
-  ): Promise<number | undefined>;
+    command: string,
+    cwd: string,
+    onData: (jsonLine: string) => void,
+  ): Promise<AgentStreamResult>;
 }
 
 // ── Daytona implementation ──────────────────────────────────────────────────
@@ -120,39 +108,6 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     return result.items.map((s) => ({ id: s.id, labels: s.labels }));
   }
 
-  async createSession(sandboxId: string, sessionId: string): Promise<void> {
-    const sandbox = await this.getSandbox(sandboxId);
-    await sandbox.process.createSession(sessionId);
-  }
-
-  async execSessionCommand(
-    sandboxId: string,
-    sessionId: string,
-    command: string,
-  ): Promise<SessionExecResult> {
-    const sandbox = await this.getSandbox(sandboxId);
-    const result = await sandbox.process.executeSessionCommand(sessionId, {
-      command,
-      async: true, // run asynchronously so we can stream logs
-    });
-    return {
-      commandId: result.cmdId,
-      exitCode: result.exitCode,
-      output: result.output ?? result.stdout,
-    };
-  }
-
-  async getSessionCommandLogs(
-    sandboxId: string,
-    sessionId: string,
-    commandId: string,
-    onStdout: (chunk: string) => void,
-    onStderr: (chunk: string) => void,
-  ): Promise<void> {
-    const sandbox = await this.getSandbox(sandboxId);
-    await sandbox.process.getSessionCommandLogs(sessionId, commandId, onStdout, onStderr);
-  }
-
   async uploadFile(sandboxId: string, remotePath: string, data: Buffer): Promise<void> {
     const sandbox = await this.getSandbox(sandboxId);
     await sandbox.fs.uploadFile(data, remotePath);
@@ -173,13 +128,96 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     return { exitCode: result.exitCode, result: result.result };
   }
 
-  async getSessionCommandExitCode(
+  async runAgentStreaming(
     sandboxId: string,
-    sessionId: string,
-    commandId: string,
-  ): Promise<number | undefined> {
+    command: string,
+    cwd: string,
+    onData: (jsonLine: string) => void,
+  ): Promise<AgentStreamResult> {
     const sandbox = await this.getSandbox(sandboxId);
-    const cmd = await sandbox.process.getSessionCommand(sessionId, commandId);
-    return cmd.exitCode;
+    const ptyId = `agent-${Date.now()}`;
+
+    let opencodeSessionId: string | undefined;
+    let buffer = "";
+    let done = false;
+
+    logInfo(log, "agent_pty_start", { sandboxId, ptyId, command });
+
+    const pty = await sandbox.process.createPty({
+      id: ptyId,
+      cwd,
+      cols: 200,
+      rows: 50,
+      onData: (data) => {
+        const text = new TextDecoder().decode(data);
+        buffer += text;
+
+        // Extract complete lines and parse JSON
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? ""; // keep incomplete last line in buffer
+
+        for (const rawLine of lines) {
+          const clean = stripAnsi(rawLine).trim();
+          if (!clean || !clean.startsWith("{")) continue;
+
+          try {
+            const parsed = JSON.parse(clean);
+            onData(clean);
+
+            // Extract opencode session ID from first event
+            if (!opencodeSessionId && parsed.sessionID) {
+              opencodeSessionId = parsed.sessionID;
+            }
+
+            // Detect agent completion
+            if (parsed.type === "step_finish") {
+              done = true;
+            }
+          } catch {
+            // Not valid JSON — skip (shell prompts, INFO lines, etc.)
+          }
+        }
+      },
+    });
+
+    await pty.waitForConnection();
+
+    // Send the command
+    await pty.sendInput(`${command}\n`);
+
+    // Poll for completion — PTY stays open as a shell, so we detect via step_finish
+    const startTime = Date.now();
+    const TIMEOUT_MS = 3600_000; // 1 hour max
+    const POLL_MS = 500;
+
+    while (!done && Date.now() - startTime < TIMEOUT_MS) {
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
+
+    // Give a brief moment for any trailing output to arrive
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Kill the PTY shell
+    await pty.kill();
+    const result = await pty.wait();
+
+    logInfo(log, "agent_pty_done", {
+      sandboxId,
+      ptyId,
+      opencodeSessionId,
+      timedOut: !done,
+      durationMs: Date.now() - startTime,
+    });
+
+    return {
+      exitCode: done ? 0 : 124, // 124 = timeout convention
+      opencodeSessionId,
+    };
   }
+}
+
+/** Strip ANSI escape sequences from PTY output. */
+function stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\].*?\x07|\x1b\(B/g, "");
 }

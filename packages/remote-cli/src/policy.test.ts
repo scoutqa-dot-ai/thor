@@ -266,13 +266,8 @@ describe("validateSandboxCoderArgs", () => {
     expect(validateSandboxCoderArgs(["fix bug in login"])).toBeNull();
   });
 
-  it("accepts --reconnect with session ID", () => {
-    expect(validateSandboxCoderArgs(["--reconnect", "sess-abc-123"])).toBeNull();
-  });
-
-  it("rejects --reconnect without session ID", () => {
-    expect(validateSandboxCoderArgs(["--reconnect"])).not.toBeNull();
-    expect(validateSandboxCoderArgs(["--reconnect", ""])).not.toBeNull();
+  it("accepts --session with session ID and prompt", () => {
+    expect(validateSandboxCoderArgs(["--session", "ses_abc123", "fix the bug"])).toBeNull();
   });
 
   it("accepts --pull with sandbox ID", () => {
