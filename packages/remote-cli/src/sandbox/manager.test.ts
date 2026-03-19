@@ -57,17 +57,19 @@ describe("SandboxManager", () => {
   });
 
   describe("getOrCreate", () => {
-    it("creates a new sandbox on first call", async () => {
+    it("creates a new sandbox when none exists remotely", async () => {
       const id = await manager.getOrCreate("/workspace/worktrees/repo/branch");
       expect(id).toBe("sandbox-1");
       expect(provider.createCalls).toBe(1);
     });
 
-    it("returns cached sandbox on second call", async () => {
-      const id1 = await manager.getOrCreate("/workspace/worktrees/repo/branch");
-      const id2 = await manager.getOrCreate("/workspace/worktrees/repo/branch");
-      expect(id1).toBe(id2);
-      expect(provider.createCalls).toBe(1);
+    it("returns existing sandbox found remotely", async () => {
+      provider.listed = [
+        { id: "remote-1", labels: { thor: "true", worktree: "/workspace/worktrees/repo/branch" } },
+      ];
+      const id = await manager.getOrCreate("/workspace/worktrees/repo/branch");
+      expect(id).toBe("remote-1");
+      expect(provider.createCalls).toBe(0);
     });
 
     it("creates separate sandboxes for different worktrees", async () => {
@@ -87,60 +89,50 @@ describe("SandboxManager", () => {
     });
   });
 
-  describe("destroy", () => {
-    it("removes sandbox from cache and calls provider.destroy", async () => {
-      const cwd = "/workspace/worktrees/repo/branch";
-      await manager.getOrCreate(cwd);
-      await manager.destroy(cwd);
-
-      expect(provider.destroyed).toContain("sandbox-1");
-      // After destroy, getOrCreate should create a new one
-      const id = await manager.getOrCreate(cwd);
-      expect(id).toBe("sandbox-2");
+  describe("find", () => {
+    it("returns sandbox ID when found remotely", async () => {
+      provider.listed = [
+        { id: "found-1", labels: { thor: "true", worktree: "/workspace/worktrees/repo/branch" } },
+      ];
+      const id = await manager.find("/workspace/worktrees/repo/branch");
+      expect(id).toBe("found-1");
     });
 
-    it("is a no-op for unknown worktrees", async () => {
+    it("returns undefined when no sandbox exists", async () => {
+      const id = await manager.find("/workspace/worktrees/repo/branch");
+      expect(id).toBeUndefined();
+    });
+
+    it("returns undefined if provider.list fails (non-fatal)", async () => {
+      provider.list = vi.fn().mockRejectedValue(new Error("Daytona unreachable"));
+      const id = await manager.find("/workspace/worktrees/repo/branch");
+      expect(id).toBeUndefined();
+    });
+  });
+
+  describe("destroy", () => {
+    it("finds and destroys sandbox remotely", async () => {
+      provider.listed = [
+        { id: "doomed-1", labels: { thor: "true", worktree: "/workspace/worktrees/repo/branch" } },
+      ];
+      await manager.destroy("/workspace/worktrees/repo/branch");
+      expect(provider.destroyed).toContain("doomed-1");
+    });
+
+    it("is a no-op when no sandbox exists remotely", async () => {
       await manager.destroy("/workspace/worktrees/nonexistent");
       expect(provider.destroyed).toHaveLength(0);
     });
 
     it("does not throw if provider.destroy fails", async () => {
-      const cwd = "/workspace/worktrees/repo/branch";
-      await manager.getOrCreate(cwd);
+      provider.listed = [
+        { id: "doomed-2", labels: { thor: "true", worktree: "/workspace/worktrees/repo/branch" } },
+      ];
+      const origList = provider.list.bind(provider);
+      provider.list = origList;
       provider.destroy = vi.fn().mockRejectedValue(new Error("Daytona API down"));
       // Should not throw
-      await manager.destroy(cwd);
-    });
-  });
-
-  describe("reconcile", () => {
-    it("destroys orphaned sandboxes (worktree path does not exist)", async () => {
-      provider.listed = [
-        { id: "orphan-1", labels: { thor: "true", worktree: "/workspace/worktrees/gone/branch" } },
-      ];
-      await manager.reconcile();
-      expect(provider.destroyed).toContain("orphan-1");
-    });
-
-    it("restores sandboxes with existing worktree paths", async () => {
-      // Use a path that exists on the filesystem
-      const existingPath = "/tmp";
-      provider.listed = [{ id: "live-1", labels: { thor: "true", worktree: existingPath } }];
-      await manager.reconcile();
-      expect(manager.get(existingPath)).toBe("live-1");
-      expect(provider.destroyed).not.toContain("live-1");
-    });
-
-    it("destroys sandboxes with missing worktree label", async () => {
-      provider.listed = [{ id: "unlabeled-1", labels: { thor: "true" } }];
-      await manager.reconcile();
-      expect(provider.destroyed).toContain("unlabeled-1");
-    });
-
-    it("does not throw if provider.list fails (non-fatal)", async () => {
-      provider.list = vi.fn().mockRejectedValue(new Error("Daytona unreachable"));
-      // Should not throw — logs warning and continues
-      await manager.reconcile();
+      await manager.destroy("/workspace/worktrees/repo/branch");
     });
   });
 });

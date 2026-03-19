@@ -199,7 +199,7 @@ app.post("/exec/sandbox-coder", async (req, res) => {
     if (first === "--reconnect") {
       // Resume streaming from existing Daytona session (D7, D12)
       const sessionId = args[1] as string;
-      const sandboxId = sandboxManager.get(cwd);
+      const sandboxId = await sandboxManager.find(cwd);
       if (!sandboxId) {
         write({ stream: "stderr", data: "[sandbox:error] no sandbox found for this worktree\n" });
         write({ exitCode: 2 });
@@ -311,9 +311,6 @@ app.post("/exec/sandbox-coder", async (req, res) => {
 
 // ── Startup ─────────────────────────────────────────────────────────────────
 
-// Reconcile sandbox state before accepting requests (D8)
-sandboxManager.reconcile().then(() => {
-  app.listen(PORT, () => {
-    logInfo(log, "remote_cli_listening", { port: PORT });
-  });
+app.listen(PORT, () => {
+  logInfo(log, "remote_cli_listening", { port: PORT });
 });
