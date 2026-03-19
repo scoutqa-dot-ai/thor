@@ -54,18 +54,23 @@ async function syncInFull(
   }
 
   await provider.uploadFile(sandboxId, `${SANDBOX_WORKDIR}/source.tar.gz`, tarball);
-  const { exitCode: extractExit } = await provider.executeCommand(
+  const { exitCode: extractExit, result: extractOutput } = await provider.executeCommand(
     sandboxId,
     [
       `mkdir -p ${SANDBOX_WORKDIR}/src`,
       `tar -xzf ${SANDBOX_WORKDIR}/source.tar.gz -C ${SANDBOX_WORKDIR}/src`,
       `rm ${SANDBOX_WORKDIR}/source.tar.gz`,
       `cd ${SANDBOX_WORKDIR}/src && git init && git add -A && git commit -m sync --allow-empty`,
-    ].join(" && "),
+    ].join(" && ") + " 2>&1",
   );
   if (extractExit !== 0) {
+    logError(log, "sync_in_full_extract_failed", {
+      sandboxId,
+      exitCode: extractExit,
+      output: extractOutput,
+    });
     throw new Error(
-      `syncIn full extract failed in sandbox ${sandboxId} with exit code ${extractExit}`,
+      `syncIn full extract failed in sandbox ${sandboxId} (exit ${extractExit}): ${extractOutput}`,
     );
   }
 

@@ -67,6 +67,12 @@ export async function setupSandboxOpenCode(
   }
   logInfo(log, "sandbox_setup_opencode_installed", { sandboxId, version: OPENCODE_VERSION });
 
+  // Configure git identity (persists in ~/.gitconfig for sandbox lifetime)
+  await provider.executeCommand(
+    sandboxId,
+    'git config --global user.email "sandbox@thor" && git config --global user.name "thor"',
+  );
+
   // Create config directories
   await provider.executeCommand(sandboxId, `mkdir -p ${OPENCODE_CONFIG_DIR} ${OPENCODE_DATA_DIR}`);
 
