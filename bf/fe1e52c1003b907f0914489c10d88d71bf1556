@@ -1,0 +1,25 @@
+packages/remote-cli/src/sandbox/sync.test.ts
+  1f6c729c01f15bdb 2,82,86-87,109-161,200,206-209,216-217,221,223-252
+packages/remote-cli/src/sandbox/sync.ts
+  1f6c729c01f15bdb 48-50,59-64,83-85,90-94,102-110,115-120,175-179,238-241,243-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "bffe1e52c1003b907f0914489c10d88d71bf1556",
+  "prompts": {
+    "1f6c729c01f15bdb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c3c3ead-07c5-4fc6-bfc7-87e62952e858",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 174,
+      "total_deletions": 37,
+      "accepted_lines": 164,
+      "overriden_lines": 0
+    }
+  }
+}
