@@ -1,0 +1,37 @@
+docs/plan/2026031902_sandbox-coder-phase-a.md
+  aaf614e70d417cc6 1-11,108,110,113-122,127-128,131,137-144,146,148-152,166-167,177-178,186-187,191-200,206-207,211,221-224,232-236,239-241,243,245-259,287-291,295-316,324-325,331,333-340,344-348,350
+  9f58709810d05dc6 12-107,109,111-112,123-126,129-130,132-136,145,147,153-165,168-176,179-185,188-190,201-205,208-210,212-220,225-231,237-238,242,244,260-286,292-294,317-323,326-330,332,341-343,349
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "00fbac81e07b5e0d720fda7deb7848981a984074",
+  "prompts": {
+    "9f58709810d05dc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91b89209-34f0-4b34-906a-58ee50eac5ae",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 219,
+      "total_deletions": 68,
+      "accepted_lines": 219,
+      "overriden_lines": 0
+    },
+    "aaf614e70d417cc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84068c5b-0712-4e08-aaef-a832bf563508",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 199,
+      "total_deletions": 0,
+      "accepted_lines": 131,
+      "overriden_lines": 0
+    }
+  }
+}
