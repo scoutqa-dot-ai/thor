@@ -9,7 +9,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createLogger, logInfo, logError } from "@thor/common";
 import type { SandboxProvider } from "./provider.js";
 
@@ -53,10 +53,15 @@ async function syncInFull(
   }
 
   await provider.uploadFile(sandboxId, `${SANDBOX_WORKDIR}/source.tar.gz`, tarball);
-  await provider.executeCommand(
+  const { exitCode: extractExit } = await provider.executeCommand(
     sandboxId,
     `mkdir -p ${SANDBOX_WORKDIR}/src && tar -xzf ${SANDBOX_WORKDIR}/source.tar.gz -C ${SANDBOX_WORKDIR}/src && rm ${SANDBOX_WORKDIR}/source.tar.gz`,
   );
+  if (extractExit !== 0) {
+    throw new Error(
+      `syncIn full extract failed in sandbox ${sandboxId} with exit code ${extractExit}`,
+    );
+  }
 
   logInfo(log, "sync_in_full_done", { sandboxId, bytes: tarball.length });
 }
@@ -78,10 +83,15 @@ async function syncInPartial(
 
   const tarball = await createTarball(worktreePath, changedFiles);
   await provider.uploadFile(sandboxId, `${SANDBOX_WORKDIR}/patch.tar.gz`, tarball);
-  await provider.executeCommand(
+  const { exitCode: patchExit } = await provider.executeCommand(
     sandboxId,
     `tar -xzf ${SANDBOX_WORKDIR}/patch.tar.gz -C ${SANDBOX_WORKDIR}/src && rm ${SANDBOX_WORKDIR}/patch.tar.gz`,
   );
+  if (patchExit !== 0) {
+    throw new Error(
+      `syncIn partial extract failed in sandbox ${sandboxId} with exit code ${patchExit}`,
+    );
+  }
 
   logInfo(log, "sync_in_partial_done", { sandboxId, files: changedFiles.length });
 }
@@ -107,19 +117,29 @@ export async function syncOut(
     `${SANDBOX_WORKDIR}/src`,
   );
 
+  if (diffExit !== 0) {
+    throw new Error(`git diff failed in sandbox ${sandboxId} with exit code ${diffExit}`);
+  }
+
   // Get untracked files
-  const { result: untrackedOutput } = await provider.executeCommand(
+  const { exitCode: untrackedExit, result: untrackedOutput } = await provider.executeCommand(
     sandboxId,
     "git ls-files --others --exclude-standard",
     `${SANDBOX_WORKDIR}/src`,
   );
+  if (untrackedExit !== 0) {
+    throw new Error(`git ls-files failed in sandbox ${sandboxId} with exit code ${untrackedExit}`);
+  }
 
   // Get deleted files
-  const { result: statusOutput } = await provider.executeCommand(
+  const { exitCode: statusExit, result: statusOutput } = await provider.executeCommand(
     sandboxId,
     "git status --porcelain",
     `${SANDBOX_WORKDIR}/src`,
   );
+  if (statusExit !== 0) {
+    throw new Error(`git status failed in sandbox ${sandboxId} with exit code ${statusExit}`);
+  }
 
   const changedFiles = parseFileList(diffOutput).concat(parseFileList(untrackedOutput));
   const deletedFiles = parseDeletedFiles(statusOutput);
@@ -128,8 +148,8 @@ export async function syncOut(
   let filesChanged = 0;
   for (const file of changedFiles) {
     try {
+      const localPath = safeResolvePath(worktreePath, file);
       const data = await provider.downloadFile(sandboxId, `${SANDBOX_WORKDIR}/src/${file}`);
-      const localPath = join(worktreePath, file);
       mkdirSync(dirname(localPath), { recursive: true });
       writeFileSync(localPath, data);
       filesChanged++;
@@ -145,7 +165,7 @@ export async function syncOut(
   // Delete files that were removed in sandbox
   let filesDeleted = 0;
   for (const file of deletedFiles) {
-    const localPath = join(worktreePath, file);
+    const localPath = safeResolvePath(worktreePath, file);
     if (existsSync(localPath)) {
       unlinkSync(localPath);
       filesDeleted++;
@@ -161,7 +181,7 @@ export async function syncOut(
 /** Create a gzipped tarball of the worktree (or specific files). */
 function createTarball(cwd: string, files: string[]): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const args = ["-czf", "-", "-C", cwd];
+    const args = ["-czf", "-", "-C", cwd, "--"];
     if (files.length > 0) {
       args.push(...files);
     } else {
@@ -195,6 +215,16 @@ function getChangedFiles(worktreePath: string): Promise<string[]> {
       },
     );
   });
+}
+
+/** Resolve a file path and verify it stays within the worktree boundary. */
+function safeResolvePath(worktreePath: string, file: string): string {
+  const resolved = resolve(worktreePath, file);
+  const normalizedBase = resolve(worktreePath);
+  if (!resolved.startsWith(normalizedBase + "/") && resolved !== normalizedBase) {
+    throw new Error(`path traversal detected: "${file}" resolves outside worktree`);
+  }
+  return resolved;
 }
 
 /** Parse newline-separated file list, filtering empties. */

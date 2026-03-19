@@ -6,7 +6,7 @@
  */
 
 import { Daytona, type Sandbox } from "@daytonaio/sdk";
-import { createLogger, logInfo, logError } from "@thor/common";
+import { createLogger, logInfo } from "@thor/common";
 
 const log = createLogger("sandbox-provider");
 

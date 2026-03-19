@@ -212,7 +212,7 @@ app.post("/exec/sandbox-coder", async (req, res) => {
       write({ stream: "stderr", data: "[sandbox:phase] reconnecting\n" });
 
       // Get the latest command in this session and stream its logs
-      const session = await sandboxProvider.getSessionCommandLogs(
+      await sandboxProvider.getSessionCommandLogs(
         sandboxId,
         sessionId,
         sessionId, // commandId — we use sessionId as commandId for simplicity
@@ -273,17 +273,18 @@ app.post("/exec/sandbox-coder", async (req, res) => {
       (chunk) => write({ stream: "stderr", data: chunk }),
     );
 
-    // Check agent exit code
+    // Check agent exit code — prefer the file-based exit code over the async exec result
     const cmdInfo = await sandboxProvider.executeCommand(
       sandboxId,
       `cat /tmp/.sandbox-exit-code 2>/dev/null || echo 0`,
     );
+    const agentExitCode = parseInt(cmdInfo.result.trim(), 10) || 0;
 
     // Step 4: Sync changed files back to worktree
     write({ stream: "stderr", data: "[sandbox:phase] sync_out\n" });
     const syncResult = await syncOut(sandboxProvider, sandboxId, cwd);
 
-    const exitCode = execResult.exitCode ?? 0;
+    const exitCode = agentExitCode || (execResult.exitCode ?? 0);
     if (exitCode !== 0) {
       write({
         stream: "stderr",

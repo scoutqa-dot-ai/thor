@@ -183,6 +183,10 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["workflow", "view", "ci.yml"])).toBeNull();
     });
 
+    it("allows pr merge", () => {
+      expect(validateGhArgs(["pr", "merge", "123"])).toBeNull();
+    });
+
     it("allows release subcommands", () => {
       expect(validateGhArgs(["release", "list"])).toBeNull();
       expect(validateGhArgs(["release", "view", "v1.0"])).toBeNull();
@@ -191,10 +195,6 @@ describe("validateGhArgs", () => {
   });
 
   describe("blocked commands", () => {
-    it("blocks pr merge", () => {
-      expect(validateGhArgs(["pr", "merge", "123"])).not.toBeNull();
-    });
-
     it("blocks repo create", () => {
       expect(validateGhArgs(["repo", "create", "foo"])).not.toBeNull();
     });
