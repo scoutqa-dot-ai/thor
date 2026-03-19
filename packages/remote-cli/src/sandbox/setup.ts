@@ -1,10 +1,9 @@
 /**
  * Sandbox setup — configure OpenCode environment inside a Daytona sandbox.
  *
- * Uploads opencode config (no MCP, permission: allow) and auth credentials
- * so the sandbox can run OpenCode as a coding agent.
- *
- * Setup runs once per sandbox — subsequent calls for the same sandbox are skipped.
+ * Two phases:
+ * - setupSandboxOpenCode: one-time install + config (once per sandbox)
+ * - uploadSandboxAuth: fresh auth credentials (every prompt, tokens expire)
  */
 
 import { readFileSync } from "node:fs";
@@ -17,8 +16,10 @@ const OPENCODE_CONFIG_DIR = "/home/daytona/.config/opencode";
 const OPENCODE_DATA_DIR = "/home/daytona/.local/share/opencode";
 const OPENCODE_VERSION = "1.2.27";
 
-/** Path to the host-mounted auth.json (read-only mount from opencode data volume). */
-const AUTH_JSON_PATH = process.env.OPENCODE_AUTH_PATH || "/opencode-data/auth.json";
+/** Path to the host-mounted auth.json (read at call time so env overrides work). */
+function getAuthJsonPath(): string {
+  return process.env.OPENCODE_AUTH_PATH || "/opencode-data/auth.json";
+}
 
 /** Track which sandboxes have been set up (skip on repeat calls). */
 const setupSandboxes = new Set<string>();
@@ -35,8 +36,8 @@ const SANDBOX_OPENCODE_CONFIG = {
 };
 
 /**
- * Set up OpenCode inside a sandbox: install pinned version, upload config and auth.
- * Runs once per sandbox — subsequent calls are no-ops.
+ * One-time sandbox setup: install pinned opencode version and upload config.
+ * Skipped on repeat calls for the same sandbox.
  */
 export async function setupSandboxOpenCode(
   provider: SandboxProvider,
@@ -68,27 +69,35 @@ export async function setupSandboxOpenCode(
   const configBuffer = Buffer.from(JSON.stringify(SANDBOX_OPENCODE_CONFIG, null, 2));
   await provider.uploadFile(sandboxId, `${OPENCODE_CONFIG_DIR}/opencode.json`, configBuffer);
 
-  // Upload auth.json if available — strip refresh tokens so the sandbox
-  // cannot refresh and invalidate the main opencode's credentials.
+  setupSandboxes.add(sandboxId);
+  logInfo(log, "sandbox_setup_done", { sandboxId });
+}
+
+/**
+ * Upload fresh auth credentials to the sandbox. Called before every prompt
+ * because tokens expire. Refresh fields are stripped so the sandbox cannot
+ * refresh and invalidate the main opencode's credentials.
+ */
+export async function uploadSandboxAuth(
+  provider: SandboxProvider,
+  sandboxId: string,
+): Promise<void> {
   try {
-    const authData = JSON.parse(readFileSync(AUTH_JSON_PATH, "utf-8"));
+    const authData = JSON.parse(readFileSync(getAuthJsonPath(), "utf-8"));
     const sanitized = stripRefreshFields(authData);
     await provider.uploadFile(
       sandboxId,
       `${OPENCODE_DATA_DIR}/auth.json`,
       Buffer.from(JSON.stringify(sanitized, null, 2)),
     );
-    logInfo(log, "sandbox_setup_auth_uploaded", { sandboxId });
+    logInfo(log, "sandbox_auth_uploaded", { sandboxId });
   } catch (err) {
     logError(
       log,
-      "sandbox_setup_auth_missing",
-      `auth.json not found at ${AUTH_JSON_PATH} — sandbox agent will not be able to authenticate. ${err instanceof Error ? err.message : String(err)}`,
+      "sandbox_auth_missing",
+      `auth.json not found at ${getAuthJsonPath()} — sandbox agent will not be able to authenticate. ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-
-  setupSandboxes.add(sandboxId);
-  logInfo(log, "sandbox_setup_done", { sandboxId });
 }
 
 const REFRESH_FIELD_RE = /refresh/i;

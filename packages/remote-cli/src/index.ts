@@ -12,7 +12,7 @@ import {
 import { DaytonaSandboxProvider } from "./sandbox/provider.js";
 import { SandboxManager } from "./sandbox/manager.js";
 import { syncIn, syncOut } from "./sandbox/sync.js";
-import { setupSandboxOpenCode } from "./sandbox/setup.js";
+import { setupSandboxOpenCode, uploadSandboxAuth } from "./sandbox/setup.js";
 
 const log = createLogger("remote-cli");
 
@@ -230,9 +230,12 @@ app.post("/exec/sandbox-coder", async (req, res) => {
     const sandboxId = await sandboxManager.getOrCreate(cwd);
     write({ stream: "stderr", data: `[sandbox:id] ${sandboxId}\n` });
 
-    // Step 1.5: Set up OpenCode config + auth in sandbox
+    // Step 1.5: One-time setup (install opencode, upload config)
     write({ stream: "stderr", data: "[sandbox:phase] setup\n" });
     await setupSandboxOpenCode(sandboxProvider, sandboxId);
+
+    // Step 1.6: Fresh auth credentials (every prompt — tokens expire)
+    await uploadSandboxAuth(sandboxProvider, sandboxId);
 
     // Step 2: Sync worktree files into sandbox
     write({ stream: "stderr", data: "[sandbox:phase] sync_in\n" });
