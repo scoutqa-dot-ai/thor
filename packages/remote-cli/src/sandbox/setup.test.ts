@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { writeFileSync, mkdtempSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { setupSandboxOpenCode, resetSetupState } from "./setup.js";
+import { setupSandboxOpenCode, resetSetupState, stripRefreshFields } from "./setup.js";
 import type { SandboxProvider } from "./provider.js";
 
 // ── Mock provider ───────────────────────────────────────────────────────────
@@ -134,5 +134,68 @@ describe("setupSandboxOpenCode", () => {
       process.env.OPENCODE_AUTH_PATH = origPath;
       unlinkSync(authPath);
     }
+  });
+});
+
+describe("stripRefreshFields", () => {
+  it("removes top-level refresh fields", () => {
+    const input = {
+      access_token: "abc",
+      refresh_token: "secret",
+      token_type: "bearer",
+    };
+    expect(stripRefreshFields(input)).toEqual({
+      access_token: "abc",
+      token_type: "bearer",
+    });
+  });
+
+  it("removes nested refresh fields", () => {
+    const input = {
+      provider: {
+        accessToken: "abc",
+        refreshToken: "secret",
+        refreshExpiresAt: 12345,
+        expiresAt: 99999,
+      },
+    };
+    expect(stripRefreshFields(input)).toEqual({
+      provider: {
+        accessToken: "abc",
+        expiresAt: 99999,
+      },
+    });
+  });
+
+  it("handles case-insensitive matching", () => {
+    const input = {
+      REFRESH_TOKEN: "gone",
+      Refresh: "gone",
+      canRefreshAt: "gone",
+      token: "kept",
+    };
+    expect(stripRefreshFields(input)).toEqual({ token: "kept" });
+  });
+
+  it("handles arrays", () => {
+    const input = {
+      accounts: [
+        { id: 1, token: "a", refreshToken: "x" },
+        { id: 2, token: "b", refreshToken: "y" },
+      ],
+    };
+    expect(stripRefreshFields(input)).toEqual({
+      accounts: [
+        { id: 1, token: "a" },
+        { id: 2, token: "b" },
+      ],
+    });
+  });
+
+  it("passes through primitives unchanged", () => {
+    expect(stripRefreshFields("hello")).toBe("hello");
+    expect(stripRefreshFields(42)).toBe(42);
+    expect(stripRefreshFields(null)).toBe(null);
+    expect(stripRefreshFields(true)).toBe(true);
   });
 });

@@ -68,10 +68,16 @@ export async function setupSandboxOpenCode(
   const configBuffer = Buffer.from(JSON.stringify(SANDBOX_OPENCODE_CONFIG, null, 2));
   await provider.uploadFile(sandboxId, `${OPENCODE_CONFIG_DIR}/opencode.json`, configBuffer);
 
-  // Upload auth.json if available
+  // Upload auth.json if available — strip refresh tokens so the sandbox
+  // cannot refresh and invalidate the main opencode's credentials.
   try {
-    const authData = readFileSync(AUTH_JSON_PATH);
-    await provider.uploadFile(sandboxId, `${OPENCODE_DATA_DIR}/auth.json`, authData);
+    const authData = JSON.parse(readFileSync(AUTH_JSON_PATH, "utf-8"));
+    const sanitized = stripRefreshFields(authData);
+    await provider.uploadFile(
+      sandboxId,
+      `${OPENCODE_DATA_DIR}/auth.json`,
+      Buffer.from(JSON.stringify(sanitized, null, 2)),
+    );
     logInfo(log, "sandbox_setup_auth_uploaded", { sandboxId });
   } catch (err) {
     logError(
@@ -83,6 +89,29 @@ export async function setupSandboxOpenCode(
 
   setupSandboxes.add(sandboxId);
   logInfo(log, "sandbox_setup_done", { sandboxId });
+}
+
+const REFRESH_FIELD_RE = /refresh/i;
+
+/**
+ * Recursively strip any field whose key contains "refresh" (case-insensitive)
+ * from a JSON value. Prevents the sandbox from refreshing tokens that would
+ * invalidate the main opencode's auth.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function stripRefreshFields(value: any): any {
+  if (Array.isArray(value)) {
+    return value.map(stripRefreshFields);
+  }
+  if (value !== null && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (REFRESH_FIELD_RE.test(k)) continue;
+      result[k] = stripRefreshFields(v);
+    }
+    return result;
+  }
+  return value;
 }
 
 /** Reset setup state for a sandbox (e.g. after error or destroy). */
