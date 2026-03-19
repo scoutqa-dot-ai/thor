@@ -28,6 +28,8 @@ if (!DAYTONA_API_KEY) {
 const sandboxProvider = new DaytonaSandboxProvider(DAYTONA_API_KEY);
 const sandboxManager = new SandboxManager(sandboxProvider);
 
+const SANDBOX_MODEL = process.env.SANDBOX_MODEL || "openai/gpt-5.3-codex-spark";
+
 // ── Express app ─────────────────────────────────────────────────────────────
 
 const app = express();
@@ -239,10 +241,10 @@ app.post("/exec/sandbox-coder", async (req, res) => {
     // Step 3: Run agent via PTY with real-time streaming
     write({ stream: "stderr", data: "[sandbox:phase] agent_running\n" });
 
-    // Build opencode command with prompt and optional session flag
+    // Build opencode command with prompt, model, and optional session flag
     const escapedPrompt = prompt.replace(/'/g, "'\\''");
     const sessionFlag = opencodeSessionId ? ` --session ${opencodeSessionId}` : "";
-    const agentCommand = `opencode run --format json${sessionFlag} '${escapedPrompt}'`;
+    const agentCommand = `opencode run --format json --model ${SANDBOX_MODEL}${sessionFlag} '${escapedPrompt}'`;
 
     const agentResult = await sandboxProvider.runAgentStreaming(
       sandboxId,

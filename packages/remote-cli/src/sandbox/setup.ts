@@ -2,7 +2,9 @@
  * Sandbox setup — configure OpenCode environment inside a Daytona sandbox.
  *
  * Uploads opencode config (no MCP, permission: allow) and auth credentials
- * so the sandbox can run OpenCode as an independent coding agent.
+ * so the sandbox can run OpenCode as a coding agent.
+ *
+ * Setup runs once per sandbox — subsequent calls for the same sandbox are skipped.
  */
 
 import { readFileSync } from "node:fs";
@@ -13,56 +15,58 @@ const log = createLogger("sandbox-setup");
 
 const OPENCODE_CONFIG_DIR = "/home/daytona/.config/opencode";
 const OPENCODE_DATA_DIR = "/home/daytona/.local/share/opencode";
+const OPENCODE_VERSION = "1.2.27";
 
 /** Path to the host-mounted auth.json (read-only mount from opencode data volume). */
 const AUTH_JSON_PATH = process.env.OPENCODE_AUTH_PATH || "/opencode-data/auth.json";
+
+/** Track which sandboxes have been set up (skip on repeat calls). */
+const setupSandboxes = new Set<string>();
 
 /**
  * Minimal opencode.json for sandbox coding agent:
  * - No MCP servers (isolated execution)
  * - Permission: allow (agent has full file/bash access)
- * - Model: same as main opencode instance
  */
 const SANDBOX_OPENCODE_CONFIG = {
   $schema: "https://opencode.ai/config.json",
-  model: "opencode/big-pickle",
   permission: "allow",
   mcp: {},
 };
 
-const SANDBOX_AGENT_PROMPT = `You are a coding agent running in an isolated sandbox.
-Your job is to edit files, run tests, and fix bugs in the source code at /home/daytona/src.
-Do not attempt external API calls — you have no network access to external services.
-Focus on writing correct, well-tested code.`;
-
 /**
- * Set up OpenCode inside a sandbox: upload config and auth credentials.
- * Call this once after sandbox creation, before running the agent.
+ * Set up OpenCode inside a sandbox: install pinned version, upload config and auth.
+ * Runs once per sandbox — subsequent calls are no-ops.
  */
 export async function setupSandboxOpenCode(
   provider: SandboxProvider,
   sandboxId: string,
 ): Promise<void> {
+  if (setupSandboxes.has(sandboxId)) {
+    logInfo(log, "sandbox_setup_skip", { sandboxId });
+    return;
+  }
+
   logInfo(log, "sandbox_setup_start", { sandboxId });
 
-  // Create config directories (may already exist, but ensure they're there)
-  await provider.executeCommand(
+  // Install pinned opencode version
+  const { exitCode: installExit } = await provider.executeCommand(
     sandboxId,
-    `mkdir -p ${OPENCODE_CONFIG_DIR} ${OPENCODE_DATA_DIR} ${OPENCODE_CONFIG_DIR}/agents`,
+    `sudo npm i -g opencode-ai@${OPENCODE_VERSION}`,
   );
+  if (installExit !== 0) {
+    throw new Error(
+      `opencode install failed in sandbox ${sandboxId} with exit code ${installExit}`,
+    );
+  }
+  logInfo(log, "sandbox_setup_opencode_installed", { sandboxId, version: OPENCODE_VERSION });
+
+  // Create config directories
+  await provider.executeCommand(sandboxId, `mkdir -p ${OPENCODE_CONFIG_DIR} ${OPENCODE_DATA_DIR}`);
 
   // Upload opencode.json config
   const configBuffer = Buffer.from(JSON.stringify(SANDBOX_OPENCODE_CONFIG, null, 2));
   await provider.uploadFile(sandboxId, `${OPENCODE_CONFIG_DIR}/opencode.json`, configBuffer);
-
-  // Upload agent prompt
-  const agentBuffer = Buffer.from(`---
-name: coder
-model: opencode/big-pickle
----
-${SANDBOX_AGENT_PROMPT}
-`);
-  await provider.uploadFile(sandboxId, `${OPENCODE_CONFIG_DIR}/agents/coder.md`, agentBuffer);
 
   // Upload auth.json if available
   try {
@@ -77,5 +81,11 @@ ${SANDBOX_AGENT_PROMPT}
     );
   }
 
+  setupSandboxes.add(sandboxId);
   logInfo(log, "sandbox_setup_done", { sandboxId });
+}
+
+/** Reset setup state for a sandbox (e.g. after error or destroy). */
+export function resetSetupState(sandboxId: string): void {
+  setupSandboxes.delete(sandboxId);
 }
