@@ -37,8 +37,13 @@ services:
       - GIT_USER_NAME=${GIT_USER_NAME:-thor}
       - GITHUB_PAT=${GITHUB_PAT}
       - SCOUT_API_KEY=${SCOUT_API_KEY:-}
+      - DAYTONA_API_KEY=${DAYTONA_API_KEY:-}
+      - DAYTONA_API_URL=${DAYTONA_API_URL:-}
+      - DAYTONA_TARGET=${DAYTONA_TARGET:-}
+      - OPENCODE_AUTH_PATH=/opencode-data/auth.json
     volumes:
       - ./docker-volumes/home/thor:/home/thor
+      - ./docker-volumes/opencode:/opencode-data:ro
       - ./docker-volumes/workspace/repos:/workspace/repos
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
     healthcheck:

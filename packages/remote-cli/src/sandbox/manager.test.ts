@@ -8,6 +8,7 @@ interface MockProvider extends SandboxProvider {
   createCalls: number;
   destroyed: string[];
   listed: SandboxInfo[];
+  snapshotAvailable: string | null;
 }
 
 function createMockProvider(): MockProvider {
@@ -16,6 +17,7 @@ function createMockProvider(): MockProvider {
     createCalls: 0,
     destroyed: [],
     listed: [],
+    snapshotAvailable: null,
 
     async create() {
       mock.createCalls++;
@@ -28,6 +30,12 @@ function createMockProvider(): MockProvider {
     },
     async list() {
       return mock.listed;
+    },
+    async createSnapshot() {
+      return "snapshot-1";
+    },
+    async getSnapshot() {
+      return mock.snapshotAvailable;
     },
     async createSession() {},
     async execSessionCommand(): Promise<SessionExecResult> {
@@ -77,6 +85,30 @@ describe("SandboxManager", () => {
       const id2 = await manager.getOrCreate("/workspace/worktrees/repo/branch-b");
       expect(id1).not.toBe(id2);
       expect(provider.createCalls).toBe(2);
+    });
+
+    it("uses snapshot when available (D15 warm start)", async () => {
+      provider.snapshotAvailable = "thor-main-baseline";
+      const id = await manager.getOrCreate("/workspace/worktrees/repo/branch");
+      expect(id).toBe("sandbox-1");
+      expect(provider.createCalls).toBe(1);
+    });
+
+    it("falls back to image when snapshot create fails", async () => {
+      provider.snapshotAvailable = "thor-main-baseline";
+      let callCount = 0;
+      const origCreate = provider.create.bind(provider);
+      provider.create = vi.fn().mockImplementation(async (opts) => {
+        callCount++;
+        if (callCount === 1 && opts.snapshot) {
+          throw new Error("snapshot unavailable");
+        }
+        return origCreate(opts);
+      });
+      const id = await manager.getOrCreate("/workspace/worktrees/repo/branch");
+      expect(id).toBeDefined();
+      // Two create calls: first snapshot (failed), then image (succeeded)
+      expect(provider.create).toHaveBeenCalledTimes(2);
     });
 
     it("deduplicates concurrent calls for the same worktree (D9 lock)", async () => {
