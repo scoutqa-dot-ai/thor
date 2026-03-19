@@ -1,0 +1,37 @@
+packages/gateway/src/index.ts
+  d71861c2ec383627 1,21,33
+packages/common/src/channel-filter.ts
+  d71861c2ec383627 2-23
+packages/runner/src/index.ts
+  d71861c2ec383627 14,110-111,241,246-255,258
+packages/gateway/src/app.ts
+  d71861c2ec383627 96-97,149
+docker-compose.yml
+  d71861c2ec383627 195
+packages/common/src/index.ts
+  d71861c2ec383627 1
+packages/gateway/src/github.ts
+  d71861c2ec383627 177-185,191-192
+packages/gateway/src/service.ts
+  d71861c2ec383627 3,7,38,46-48,55,160-162,166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "6e507abf7c8d2af53249bd13a44ec806f5807c6e",
+  "prompts": {
+    "d71861c2ec383627": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "831df9c0-c2fc-4357-91ad-5a7693b2af19",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 78,
+      "total_deletions": 20,
+      "accepted_lines": 69,
+      "overriden_lines": 0
+    }
+  }
+}
