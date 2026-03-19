@@ -9,10 +9,21 @@ import {
   validateSandboxCwd,
   validateSandboxCoderArgs,
 } from "./policy.js";
+import { DaytonaSandboxProvider } from "./sandbox/provider.js";
+import { SandboxManager } from "./sandbox/manager.js";
 
 const log = createLogger("remote-cli");
 
 const PORT = parseInt(process.env.PORT || "3004", 10);
+
+// ── Sandbox manager (D6, D8) ───────────────────────────────────────────────
+
+const sandboxProvider = new DaytonaSandboxProvider({
+  apiKey: process.env.DAYTONA_API_KEY,
+  apiUrl: process.env.DAYTONA_API_URL,
+  target: process.env.DAYTONA_TARGET,
+});
+const sandboxManager = new SandboxManager(sandboxProvider);
 
 // ── Express app ─────────────────────────────────────────────────────────────
 
@@ -46,6 +57,21 @@ app.post("/exec/git", async (req, res) => {
 
     logInfo(log, "exec_git", { args, cwd });
     const result = await execCommand("git", args, cwd);
+
+    // Sandbox destroy hook: after successful "git worktree remove", clean up sandbox (D8)
+    if (result.exitCode === 0 && args.includes("worktree") && args.includes("remove")) {
+      const removedPath = args[args.indexOf("remove") + 1];
+      if (removedPath) {
+        sandboxManager.destroy(removedPath).catch((err) => {
+          logError(
+            log,
+            "sandbox_destroy_hook_error",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
+      }
+    }
+
     res.json(result);
   } catch (err) {
     logError(log, "exec_git_error", err instanceof Error ? err.message : String(err));
@@ -166,13 +192,43 @@ app.post("/exec/sandbox-coder", async (req, res) => {
       res.write(JSON.stringify(obj) + "\n");
     };
 
-    // TODO: Phase 2+ will wire in SandboxManager, syncIn, agent exec, syncOut.
-    // For now, emit a stub response so the wrapper → client → server pipe is testable.
-    write({ stream: "stderr", data: "[sandbox:phase] stub\n" });
-    write({
-      stream: "stdout",
-      data: `sandbox-coder stub: args=${JSON.stringify(args)} cwd=${cwd}\n`,
-    });
+    // Parse subcommand from args (D12)
+    const first = args[0] as string;
+
+    if (first === "--reconnect") {
+      // TODO: Phase 4 — resume streaming from existing Daytona session
+      write({ stream: "stderr", data: "[sandbox:error] --reconnect not yet implemented\n" });
+      write({ exitCode: 1 });
+      res.end();
+      return;
+    }
+
+    if (first === "--pull") {
+      // TODO: Phase 3/4 — syncOut only
+      write({ stream: "stderr", data: "[sandbox:error] --pull not yet implemented\n" });
+      write({ exitCode: 1 });
+      res.end();
+      return;
+    }
+
+    // Regular prompt — get or create sandbox
+    const prompt = args.join(" ");
+    write({ stream: "stderr", data: "[sandbox:phase] sandbox_create\n" });
+
+    const sandboxId = await sandboxManager.getOrCreate(cwd);
+    write({ stream: "stderr", data: `[sandbox:id] ${sandboxId}\n` });
+
+    // TODO: Phase 3 — syncIn(provider, sandboxId, cwd)
+    write({ stream: "stderr", data: "[sandbox:phase] sync_in\n" });
+
+    // TODO: Phase 4 — createSession + execSessionCommand + streamLogs
+    write({ stream: "stderr", data: "[sandbox:phase] agent_running\n" });
+    write({ stream: "stdout", data: `sandbox-coder: prompt="${prompt}" sandbox=${sandboxId}\n` });
+
+    // TODO: Phase 3 — syncOut(provider, sandboxId, cwd)
+    write({ stream: "stderr", data: "[sandbox:phase] sync_out\n" });
+
+    write({ stream: "stderr", data: "[sandbox:done] files_changed=0\n" });
     write({ exitCode: 0 });
     res.end();
   } catch (err) {
@@ -188,6 +244,9 @@ app.post("/exec/sandbox-coder", async (req, res) => {
 
 // ── Startup ─────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-  logInfo(log, "remote_cli_listening", { port: PORT });
+// Reconcile sandbox state before accepting requests (D8)
+sandboxManager.reconcile().then(() => {
+  app.listen(PORT, () => {
+    logInfo(log, "remote_cli_listening", { port: PORT });
+  });
 });
