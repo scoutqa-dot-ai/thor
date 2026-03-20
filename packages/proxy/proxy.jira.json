@@ -1,0 +1,30 @@
+{
+  "upstream": {
+    "url": "https://mcp.atlassian.com/v1/mcp",
+    "headers": {
+      "Authorization": "Bearer ${JIRA_API_KEY}"
+    }
+  },
+  "allow": [
+    "getJiraIssue",
+    "searchJiraIssuesUsingJql",
+    "getVisibleJiraProjects",
+    "getJiraProjectIssueTypesMetadata",
+    "getJiraIssueTypeMetaWithFields",
+    "getTransitionsForJiraIssue",
+    "getJiraIssueRemoteIssueLinks",
+    "getIssueLinkTypes",
+    "lookupJiraAccountId",
+    "atlassianUserInfo",
+    "getAccessibleAtlassianResources",
+    "searchAtlassian"
+  ],
+  "approve": [
+    "addCommentToJiraIssue",
+    "createJiraIssue",
+    "editJiraIssue",
+    "transitionJiraIssue",
+    "createIssueLink",
+    "addWorklogToJiraIssue"
+  ]
+}
