@@ -15,16 +15,8 @@
     "getJiraIssueRemoteIssueLinks",
     "getIssueLinkTypes",
     "lookupJiraAccountId",
-    "atlassianUserInfo",
-    "getAccessibleAtlassianResources",
-    "searchAtlassian"
+    "getTeamworkGraphContext",
+    "getTeamworkGraphObject"
   ],
-  "approve": [
-    "addCommentToJiraIssue",
-    "createJiraIssue",
-    "editJiraIssue",
-    "transitionJiraIssue",
-    "createIssueLink",
-    "addWorklogToJiraIssue"
-  ]
+  "approve": []
 }
