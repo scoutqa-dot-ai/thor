@@ -126,7 +126,10 @@ export function stripRefreshFields(value: any): any {
   if (value !== null && typeof value === "object") {
     const result: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {
-      if (REFRESH_FIELD_RE.test(k)) continue;
+      if (REFRESH_FIELD_RE.test(k)) {
+        result[k] = typeof v === "string" ? "" : typeof v === "number" ? 0 : v;
+        continue;
+      }
       result[k] = stripRefreshFields(v);
     }
     return result;

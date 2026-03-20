@@ -58,7 +58,7 @@ describe("setupSandboxOpenCode", () => {
     await setupSandboxOpenCode(provider, "sb-1");
 
     const installCall = provider.calls.find(
-      (c) => c.method === "executeCommand" && (c.args[0] as string).includes("npm i -g opencode"),
+      (c) => c.method === "executeCommand" && (c.args[0] as string).includes("opencode-ai@"),
     );
     expect(installCall).toBeDefined();
     expect(installCall!.args[0]).toContain("opencode-ai@1.2.27");
@@ -161,8 +161,8 @@ describe("uploadSandboxAuth", () => {
       expect(authUpload).toBeDefined();
       const uploaded = JSON.parse(authUpload!.args[1] as string);
       expect(uploaded.access_token).toBe("keep");
-      expect(uploaded.refresh_token).toBeUndefined();
-      expect(uploaded.nested.refreshToken).toBeUndefined();
+      expect(uploaded.refresh_token).toBe("");
+      expect(uploaded.nested.refreshToken).toBe("");
       expect(uploaded.nested.id).toBe("keep");
     } finally {
       process.env.OPENCODE_AUTH_PATH = origPath;
@@ -183,7 +183,7 @@ describe("uploadSandboxAuth", () => {
 });
 
 describe("stripRefreshFields", () => {
-  it("removes top-level refresh fields", () => {
+  it("empties top-level refresh fields", () => {
     const input = {
       access_token: "abc",
       refresh_token: "secret",
@@ -191,11 +191,12 @@ describe("stripRefreshFields", () => {
     };
     expect(stripRefreshFields(input)).toEqual({
       access_token: "abc",
+      refresh_token: "",
       token_type: "bearer",
     });
   });
 
-  it("removes nested refresh fields", () => {
+  it("empties nested refresh fields", () => {
     const input = {
       provider: {
         accessToken: "abc",
@@ -207,6 +208,8 @@ describe("stripRefreshFields", () => {
     expect(stripRefreshFields(input)).toEqual({
       provider: {
         accessToken: "abc",
+        refreshToken: "",
+        refreshExpiresAt: 0,
         expiresAt: 99999,
       },
     });
@@ -219,7 +222,12 @@ describe("stripRefreshFields", () => {
       canRefreshAt: "gone",
       token: "kept",
     };
-    expect(stripRefreshFields(input)).toEqual({ token: "kept" });
+    expect(stripRefreshFields(input)).toEqual({
+      REFRESH_TOKEN: "",
+      Refresh: "",
+      canRefreshAt: "",
+      token: "kept",
+    });
   });
 
   it("handles arrays", () => {
@@ -231,8 +239,8 @@ describe("stripRefreshFields", () => {
     };
     expect(stripRefreshFields(input)).toEqual({
       accounts: [
-        { id: 1, token: "a" },
-        { id: 2, token: "b" },
+        { id: 1, token: "a", refreshToken: "" },
+        { id: 2, token: "b", refreshToken: "" },
       ],
     });
   });
