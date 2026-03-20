@@ -50,8 +50,11 @@ export async function setupSandboxOpenCode(
 
   logInfo(log, "sandbox_setup_start", { sandboxId });
 
-  // Remove stale opencode binary from snapshot (may be at a different path than npm installs to)
-  await provider.executeCommand(sandboxId, "sudo rm -f $(which opencode 2>/dev/null) 2>/dev/null");
+  // Fix broken snapshot: remove stale binaries that shadow npm-installed versions
+  await provider.executeCommand(
+    sandboxId,
+    "sudo rm -f $(which opencode 2>/dev/null) 2>/dev/null; sudo rm -rf /usr/bin/corepack && npm i -g corepack 2>&1",
+  );
 
   // Install pinned opencode version
   const { exitCode: installExit, result: installOutput } = await provider.executeCommand(
