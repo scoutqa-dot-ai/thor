@@ -273,6 +273,12 @@ app.post("/exec/sandbox-coder", async (req, res) => {
         stream: "stderr",
         data: `[sandbox:error] agent exited with code ${agentResult.exitCode}\n`,
       });
+      if (agentResult.stderrTail) {
+        write({
+          stream: "stderr",
+          data: `[sandbox:stderr]\n${agentResult.stderrTail}\n`,
+        });
+      }
     }
 
     write({

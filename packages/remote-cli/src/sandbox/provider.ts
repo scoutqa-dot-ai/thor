@@ -6,7 +6,7 @@
  */
 
 import { Daytona, type Sandbox } from "@daytonaio/sdk";
-import { createLogger, logInfo } from "@thor/common";
+import { createLogger, logInfo, logWarn } from "@thor/common";
 
 const log = createLogger("sandbox-provider");
 
@@ -21,6 +21,8 @@ export interface AgentStreamResult {
   exitCode: number;
   /** OpenCode session ID extracted from JSON output (for --session continuity). */
   opencodeSessionId?: string;
+  /** Last N lines of non-JSON output (stderr, stacktraces). Empty if agent completed normally. */
+  stderrTail?: string;
 }
 
 export interface SandboxProvider {
@@ -140,6 +142,13 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     let opencodeSessionId: string | undefined;
     let buffer = "";
     let done = false;
+    /** Capture non-JSON output (stderr, stacktraces, INFO lines) for diagnostics. */
+    const stderrLines: string[] = [];
+    /** Track last data timestamp to detect early process exit. */
+    let lastDataAt = Date.now();
+    /** Whether we've seen a shell prompt after our command (indicates process exited). */
+    let shellPromptAfterStart = false;
+    let commandSent = false;
 
     logInfo(log, "agent_pty_start", { sandboxId, ptyId, command });
 
@@ -151,6 +160,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
       onData: (data) => {
         const text = new TextDecoder().decode(data);
         buffer += text;
+        lastDataAt = Date.now();
 
         // Extract complete lines and parse JSON
         const lines = buffer.split("\n");
@@ -158,7 +168,20 @@ export class DaytonaSandboxProvider implements SandboxProvider {
 
         for (const rawLine of lines) {
           const clean = stripAnsi(rawLine).trim();
-          if (!clean || !clean.startsWith("{")) continue;
+          if (!clean) continue;
+
+          // Detect shell prompt returning after command was sent (process crashed/exited)
+          if (commandSent && /^\$\s*$|^bash-.*\$|^daytona@/.test(clean)) {
+            shellPromptAfterStart = true;
+            continue;
+          }
+
+          if (!clean.startsWith("{")) {
+            // Non-JSON: log as stderr (INFO lines, errors, stacktraces)
+            stderrLines.push(clean);
+            logWarn(log, "agent_pty_stderr", { sandboxId, ptyId, line: clean });
+            continue;
+          }
 
           try {
             const parsed = JSON.parse(clean);
@@ -174,7 +197,9 @@ export class DaytonaSandboxProvider implements SandboxProvider {
               done = true;
             }
           } catch {
-            // Not valid JSON — skip (shell prompts, INFO lines, etc.)
+            // Looks like JSON but isn't — treat as stderr
+            stderrLines.push(clean);
+            logWarn(log, "agent_pty_stderr", { sandboxId, ptyId, line: clean });
           }
         }
       },
@@ -184,14 +209,26 @@ export class DaytonaSandboxProvider implements SandboxProvider {
 
     // Send the command
     await pty.sendInput(`${command}\n`);
+    commandSent = true;
 
     // Poll for completion — PTY stays open as a shell, so we detect via step_finish
     const startTime = Date.now();
     const TIMEOUT_MS = 3600_000; // 1 hour max
     const POLL_MS = 500;
+    const IDLE_CRASH_MS = 10_000; // if no output for 10s after shell prompt, assume crash
 
     while (!done && Date.now() - startTime < TIMEOUT_MS) {
       await new Promise((r) => setTimeout(r, POLL_MS));
+
+      // Detect early exit: shell prompt returned and no new data for IDLE_CRASH_MS
+      if (shellPromptAfterStart && Date.now() - lastDataAt > IDLE_CRASH_MS) {
+        logWarn(log, "agent_pty_early_exit", {
+          sandboxId,
+          ptyId,
+          stderr: stderrLines.slice(-20).join("\n"),
+        });
+        break;
+      }
     }
 
     // Give a brief moment for any trailing output to arrive
@@ -201,17 +238,23 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     await pty.kill();
     const result = await pty.wait();
 
+    const timedOut = !done && !shellPromptAfterStart;
+    const crashed = !done && shellPromptAfterStart;
+
     logInfo(log, "agent_pty_done", {
       sandboxId,
       ptyId,
       opencodeSessionId,
-      timedOut: !done,
+      timedOut,
+      crashed,
       durationMs: Date.now() - startTime,
+      stderrTail: stderrLines.slice(-10).join("\n"),
     });
 
     return {
-      exitCode: done ? 0 : 124, // 124 = timeout convention
+      exitCode: done ? 0 : crashed ? 1 : 124, // 0=ok, 1=crash, 124=timeout
       opencodeSessionId,
+      stderrTail: stderrLines.length > 0 ? stderrLines.slice(-20).join("\n") : undefined,
     };
   }
 }
