@@ -4,16 +4,16 @@
 
 ## Decision Log
 
-| #   | Decision                                                                              | Rationale                                                                         |
-| --- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| D1  | Use one active sandbox per worktree in v1                                             | This matches the desired UX and keeps identity, locking, and recovery simple.     |
-| D2  | Keep the feature doc provider-neutral                                                 | Product behavior should remain stable even if provider choice changes.            |
-| D3  | Choose a provider by thin spike, not by doc-only scoring                              | Real create/attach/materialize/exec behavior matters more than scorecards.        |
-| D4  | Persist the worktree-to-sandbox registry outside process memory                       | Follow-up events and service restarts must be able to reattach correctly.         |
-| D5  | Treat workspace materialization as an abstraction                                     | Thor should not commit to one sync protocol such as `rsync` in advance.           |
-| D6  | Ship the execution plane before any nested coding agent                               | Sandbox lifecycle, materialization, and security must work on their own first.    |
-| D7  | Make short-lived credentials and post-bootstrap egress controls baseline requirements | "Safe hosted sandbox" is primarily a blast-radius problem.                        |
-| D8  | Keep local execution as the fallback path                                             | Thor still needs a degraded mode when provider APIs fail or quotas are exhausted. |
+| #   | Decision                                                                              | Rationale                                                                             |
+| --- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| D1  | Use one active sandbox per worktree in v1                                             | This matches the desired UX and keeps identity, locking, and recovery simple.         |
+| D2  | Keep the feature doc provider-neutral                                                 | Product behavior should remain stable even if provider choice changes.                |
+| D3  | Choose a provider by thin spike, not by doc-only scoring                              | Real create/attach/materialize/exec behavior matters more than scorecards.            |
+| D4  | Resolve worktree-to-sandbox mapping from provider data on demand                      | A local mirror is optional in v1 if provider lookup by worktree metadata is reliable. |
+| D5  | Treat workspace materialization as an abstraction                                     | Thor should not commit to one sync protocol such as `rsync` in advance.               |
+| D6  | Ship the execution plane before any nested coding agent                               | Sandbox lifecycle, materialization, and security must work on their own first.        |
+| D7  | Make short-lived credentials and post-bootstrap egress controls baseline requirements | "Safe hosted sandbox" is primarily a blast-radius problem.                            |
+| D8  | Keep local execution as the fallback path                                             | Thor still needs a degraded mode when provider APIs fail or quotas are exhausted.     |
 
 ## Problem
 
@@ -33,7 +33,7 @@ The implementation plan for this feature should therefore start with sandbox ide
 Steps:
 
 1. Define the worktree-scoped sandbox identity model.
-2. Define the persistent sandbox registry schema and lifecycle states.
+2. Define the worktree metadata and lifecycle state model the provider must expose.
 3. Define the provider interface for:
    - lookup
    - create
@@ -49,7 +49,7 @@ Steps:
 **Exit criteria**:
 
 - one sandbox per worktree is the explicit v1 rule
-- worktree-to-sandbox lookup survives service restarts
+- worktree-to-sandbox lookup works after service restart via provider data
 - provider responsibilities are separated from Thor responsibilities
 - no provider-specific sync protocol is embedded in the contract
 - failure states are explicit enough to implement retries and fallback
@@ -88,7 +88,7 @@ Steps:
 
 Steps:
 
-1. Implement the persistent sandbox registry.
+1. Implement worktree lookup against the chosen provider.
 2. Implement one provider adapter behind the shared interface.
 3. Implement workspace materialization and export for the chosen provider.
 4. Implement command execution and event streaming.
@@ -117,7 +117,7 @@ Steps:
 **Exit criteria**:
 
 - delegated coding is optional and not required for basic sandbox lifecycle
-- richer validation builds on the same worktree-scoped sandbox registry
+- richer validation builds on the same worktree-scoped sandbox lookup model
 - preview and artifact handling reuse the base provider interface
 
 ## Out of Scope

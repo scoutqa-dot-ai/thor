@@ -20,6 +20,24 @@ export {
 } from "./notes.js";
 export type { ToolArtifact, ExtractedAlias } from "./notes.js";
 export {
+  SandboxStatusSchema,
+  SandboxIdentitySchema,
+  SandboxPreviewSchema,
+  SandboxRecordSchema,
+} from "./sandboxes.js";
+export type {
+  SandboxStatus,
+  SandboxIdentity,
+  SandboxPreview,
+  SandboxRecord,
+  SandboxExecRequest,
+  SandboxExecEvent,
+  SandboxExecResult,
+  SandboxMaterializeRequest,
+  SandboxExportResult,
+  SandboxProvider,
+} from "./sandboxes.js";
+export {
   ProgressStartSchema,
   ProgressToolSchema,
   ProgressDoneSchema,

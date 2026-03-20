@@ -38,7 +38,7 @@ V1 is intentionally narrow:
 
 - one active sandbox per worktree
 - the worktree is the user-facing unit of work
-- Thor keeps the authoritative worktree-to-sandbox mapping
+- Thor resolves the authoritative worktree-to-sandbox mapping from provider data on demand
 - Thor may recreate a sandbox from the latest known workspace state if the original sandbox disappears
 - coordinated multi-sandbox workflows are deferred
 
