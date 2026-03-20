@@ -30,12 +30,13 @@ function createMockProvider(): SandboxProvider & { calls: MockCall[] } {
     async uploadFile(_id: string, path: string, data: Buffer) {
       mock.calls.push({ method: "uploadFile", args: [path, data.toString()] });
     },
-    async downloadFile() {
-      return Buffer.from("");
-    },
     async executeCommand(_id: string, command: string) {
       mock.calls.push({ method: "executeCommand", args: [command] });
       return { exitCode: 0, result: "" };
+    },
+    async syncIn() {},
+    async syncOut() {
+      return { filesChanged: 0, filesDeleted: 0 };
     },
     async runAgentStreaming() {
       return { exitCode: 0 };

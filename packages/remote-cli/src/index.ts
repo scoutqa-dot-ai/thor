@@ -11,7 +11,6 @@ import {
 } from "./policy.js";
 import { DaytonaSandboxProvider } from "./sandbox/provider.js";
 import { SandboxManager } from "./sandbox/manager.js";
-import { syncIn, syncOut } from "./sandbox/sync.js";
 import { setupSandboxOpenCode, uploadSandboxAuth } from "./sandbox/setup.js";
 
 const log = createLogger("remote-cli");
@@ -206,7 +205,7 @@ app.post("/exec/sandbox-coder", async (req, res) => {
       write({ stream: "stderr", data: `[sandbox:id] ${targetSandboxId}\n` });
       write({ stream: "stderr", data: "[sandbox:phase] sync_out\n" });
 
-      const result = await syncOut(sandboxProvider, targetSandboxId, cwd);
+      const result = await sandboxProvider.syncOut(targetSandboxId, cwd);
       write({ stream: "stderr", data: `[sandbox:done] files_changed=${result.filesChanged}\n` });
       write({ exitCode: 0 });
       res.end();
@@ -239,7 +238,7 @@ app.post("/exec/sandbox-coder", async (req, res) => {
 
     // Step 2: Sync worktree files into sandbox
     write({ stream: "stderr", data: "[sandbox:phase] sync_in\n" });
-    await syncIn(sandboxProvider, sandboxId, cwd);
+    await sandboxProvider.syncIn(sandboxId, cwd);
 
     // Step 3: Run agent via PTY with real-time streaming
     write({ stream: "stderr", data: "[sandbox:phase] agent_running\n" });
@@ -266,7 +265,7 @@ app.post("/exec/sandbox-coder", async (req, res) => {
 
     // Step 4: Sync changed files back to worktree
     write({ stream: "stderr", data: "[sandbox:phase] sync_out\n" });
-    const syncResult = await syncOut(sandboxProvider, sandboxId, cwd);
+    const syncResult = await sandboxProvider.syncOut(sandboxId, cwd);
 
     if (agentResult.exitCode !== 0) {
       write({

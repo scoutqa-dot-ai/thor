@@ -30,11 +30,12 @@ function createMockProvider(): MockProvider {
       return mock.listed;
     },
     async uploadFile() {},
-    async downloadFile() {
-      return Buffer.from("");
-    },
     async executeCommand() {
       return { exitCode: 0, result: "" };
+    },
+    async syncIn() {},
+    async syncOut() {
+      return { filesChanged: 0, filesDeleted: 0 };
     },
     async runAgentStreaming() {
       return { exitCode: 0 };

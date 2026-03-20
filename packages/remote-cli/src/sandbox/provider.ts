@@ -3,10 +3,14 @@
  *
  * The interface enables mocking in tests and swapping providers without
  * touching the manager or sync logic. See plan decision D6.
+ *
+ * Sync (syncIn/syncOut) is a provider concern — each implementation syncs
+ * however it wants. Daytona uses rsync over SSH (D27, D32).
  */
 
+import { execFile } from "node:child_process";
 import { Daytona, type Sandbox } from "@daytonaio/sdk";
-import { createLogger, logInfo, logWarn } from "@thor/common";
+import { createLogger, logInfo, logWarn, logError } from "@thor/common";
 
 const log = createLogger("sandbox-provider");
 
@@ -25,6 +29,11 @@ export interface AgentStreamResult {
   stderrTail?: string;
 }
 
+export interface SyncOutResult {
+  filesChanged: number;
+  filesDeleted: number;
+}
+
 export interface SandboxProvider {
   create(opts: {
     image?: string;
@@ -40,13 +49,17 @@ export interface SandboxProvider {
 
   uploadFile(sandboxId: string, remotePath: string, data: Buffer): Promise<void>;
 
-  downloadFile(sandboxId: string, remotePath: string): Promise<Buffer>;
-
   executeCommand(
     sandboxId: string,
     command: string,
     cwd?: string,
   ): Promise<{ exitCode: number; result: string }>;
+
+  /** Sync worktree files into the sandbox. Implementation-specific (D32). */
+  syncIn(sandboxId: string, worktreePath: string): Promise<void>;
+
+  /** Sync sandbox files back to the worktree. Implementation-specific (D32). */
+  syncOut(sandboxId: string, worktreePath: string): Promise<SyncOutResult>;
 
   /**
    * Run an agent command via PTY with real-time streaming.
@@ -62,10 +75,23 @@ export interface SandboxProvider {
 
 // ── Daytona implementation ──────────────────────────────────────────────────
 
+const SANDBOX_WORKDIR = "/home/daytona/src";
+
+/** SSH credentials for rsync, cached per sandbox. */
+interface SshCredentials {
+  token: string;
+  host: string;
+  expiresAt: Date;
+}
+
 export class DaytonaSandboxProvider implements SandboxProvider {
   private client: Daytona;
   /** Cache sandbox instances to avoid repeated API calls within a session. */
   private sandboxCache = new Map<string, Sandbox>();
+  /** SSH credentials per sandbox for rsync (D30). */
+  private sshCache = new Map<string, SshCredentials>();
+  /** Track which sandboxes have had their first sync (need git init). */
+  private syncedSandboxes = new Set<string>();
 
   constructor(apiKey: string) {
     this.client = new Daytona({ apiKey });
@@ -115,11 +141,6 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     await sandbox.fs.uploadFile(data, remotePath);
   }
 
-  async downloadFile(sandboxId: string, remotePath: string): Promise<Buffer> {
-    const sandbox = await this.getSandbox(sandboxId);
-    return sandbox.fs.downloadFile(remotePath);
-  }
-
   async executeCommand(
     sandboxId: string,
     command: string,
@@ -128,6 +149,123 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     const sandbox = await this.getSandbox(sandboxId);
     const result = await sandbox.process.executeCommand(command, cwd);
     return { exitCode: result.exitCode, result: result.result };
+  }
+
+  // ── Sync via rsync over SSH (D27, D32) ────────────────────────────────────
+
+  async syncIn(sandboxId: string, worktreePath: string): Promise<void> {
+    logInfo(log, "sync_in", { sandboxId, worktreePath });
+    const isFirstSync = !this.syncedSandboxes.has(sandboxId);
+
+    // Ensure target directory exists before rsync
+    if (isFirstSync) {
+      await this.executeCommand(sandboxId, `mkdir -p ${SANDBOX_WORKDIR}`);
+    }
+
+    const ssh = await this.getSshCredentials(sandboxId);
+    await this.rsync(worktreePath + "/", `${ssh.token}@${ssh.host}:${SANDBOX_WORKDIR}/`, [
+      "--filter=:- .gitignore",
+      "--exclude",
+      ".git",
+    ]);
+
+    // First sync: init a standalone git repo so the agent has one to work with (D31)
+    if (isFirstSync) {
+      const { exitCode, result } = await this.executeCommand(
+        sandboxId,
+        `cd ${SANDBOX_WORKDIR} && git init && git add -A && git commit -m sync --allow-empty 2>&1`,
+      );
+      if (exitCode !== 0) {
+        throw new Error(`git init failed in sandbox ${sandboxId} (exit ${exitCode}): ${result}`);
+      }
+      this.syncedSandboxes.add(sandboxId);
+    }
+
+    logInfo(log, "sync_in_done", { sandboxId, firstSync: isFirstSync });
+  }
+
+  async syncOut(sandboxId: string, worktreePath: string): Promise<SyncOutResult> {
+    logInfo(log, "sync_out", { sandboxId, worktreePath });
+
+    // Count files before sync to compute delta
+    const { result: beforeOutput } = await this.executeCommand(
+      sandboxId,
+      `cd ${SANDBOX_WORKDIR} && git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null`,
+    );
+    const { result: statusOutput } = await this.executeCommand(
+      sandboxId,
+      `cd ${SANDBOX_WORKDIR} && git status --porcelain 2>/dev/null`,
+    );
+
+    const changedFiles = beforeOutput.split("\n").filter((f) => f.trim().length > 0);
+    const deletedFiles = statusOutput
+      .split("\n")
+      .filter((line) => /^\s*D\s/.test(line) || /^D\s/.test(line))
+      .map((line) => line.slice(3).trim())
+      .filter((f) => f.length > 0);
+
+    const ssh = await this.getSshCredentials(sandboxId);
+    await this.rsync(`${ssh.token}@${ssh.host}:${SANDBOX_WORKDIR}/`, worktreePath + "/", [
+      "--exclude",
+      ".git",
+    ]);
+
+    const filesChanged = changedFiles.filter((f) => !deletedFiles.includes(f)).length;
+    logInfo(log, "sync_out_done", { sandboxId, filesChanged, filesDeleted: deletedFiles.length });
+    return { filesChanged, filesDeleted: deletedFiles.length };
+  }
+
+  /** Get or refresh SSH credentials for rsync (D30). */
+  private async getSshCredentials(sandboxId: string): Promise<SshCredentials> {
+    const cached = this.sshCache.get(sandboxId);
+    // Refresh if missing or expiring within 5 minutes
+    if (cached && cached.expiresAt.getTime() - Date.now() > 5 * 60 * 1000) {
+      return cached;
+    }
+
+    const sandbox = await this.getSandbox(sandboxId);
+    const sshAccess = await sandbox.createSshAccess(60);
+
+    // Parse host from sshCommand (e.g. "ssh <token>@ssh.app.daytona.io") (D33)
+    const match = sshAccess.sshCommand.match(/@(.+)$/);
+    if (!match) {
+      throw new Error(`Could not parse SSH host from sshCommand: ${sshAccess.sshCommand}`);
+    }
+
+    const creds: SshCredentials = {
+      token: sshAccess.token,
+      host: match[1],
+      expiresAt: new Date(sshAccess.expiresAt),
+    };
+    this.sshCache.set(sandboxId, creds);
+    logInfo(log, "ssh_credentials_created", { sandboxId, host: creds.host });
+    return creds;
+  }
+
+  /** Run rsync between local and remote paths. */
+  private rsync(src: string, dst: string, extraArgs: string[] = []): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const args = [
+        "-azq",
+        "--delete",
+        "-e",
+        "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
+        ...extraArgs,
+        src,
+        dst,
+      ];
+      logInfo(log, "rsync_start", {
+        src: src.replace(/[^@]*@/, "<token>@"),
+        dst: dst.replace(/[^@]*@/, "<token>@"),
+      });
+      execFile("rsync", args, { timeout: 300_000 }, (err, _stdout, stderr) => {
+        if (err) {
+          logError(log, "rsync_failed", { stderr, code: err.code });
+          return reject(new Error(`rsync failed: ${stderr || err.message}`));
+        }
+        resolve();
+      });
+    });
   }
 
   async runAgentStreaming(
