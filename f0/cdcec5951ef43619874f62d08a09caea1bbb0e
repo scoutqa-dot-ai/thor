@@ -1,0 +1,25 @@
+packages/remote-cli/src/sandbox/provider.ts
+  a053322d91abeef1 263
+Dockerfile
+  a053322d91abeef1 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f0cdcec5951ef43619874f62d08a09caea1bbb0e",
+  "prompts": {
+    "a053322d91abeef1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7220c349-9a63-4551-9040-0cc17470ebf3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
