@@ -50,6 +50,9 @@ export async function setupSandboxOpenCode(
 
   logInfo(log, "sandbox_setup_start", { sandboxId });
 
+  // Remove stale opencode binary from snapshot (may be at a different path than npm installs to)
+  await provider.executeCommand(sandboxId, "sudo rm -f $(which opencode 2>/dev/null) 2>/dev/null");
+
   // Install pinned opencode version
   const { exitCode: installExit, result: installOutput } = await provider.executeCommand(
     sandboxId,
