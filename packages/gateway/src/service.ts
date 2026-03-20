@@ -273,17 +273,6 @@ export async function updateSlackMessage(
   }
 }
 
-export async function hasRunnerSession(correlationKey: string, deps: RunnerDeps): Promise<boolean> {
-  try {
-    const response = await getFetch(deps.fetchImpl)(
-      `${deps.runnerUrl}/sessions?correlationKey=${encodeURIComponent(correlationKey)}`,
-    );
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
 export async function addSlackReaction(
   channel: string,
   timestamp: string,

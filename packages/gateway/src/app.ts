@@ -11,7 +11,6 @@ import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
 import {
   addSlackReaction,
-  hasRunnerSession,
   triggerRunnerSlack,
   triggerRunnerGitHub,
   triggerRunnerCron,
@@ -321,6 +320,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         sourceTs: parseSlackTs(event.ts),
         readyAt: Date.now() + batchDelay,
         delayMs: batchDelay,
+        interrupt: true,
       });
       return;
     }
@@ -341,35 +341,26 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
       }
 
-      void (async () => {
-        // Thread reply with existing session → short batch delay
-        // New message or thread without session → long delay, hope someone else handles it
-        const hasSession = event.thread_ts
-          ? await hasRunnerSession(correlationKey, runnerDeps)
-          : false;
-        const delay = hasSession ? batchDelay : unaddressedDelay;
-
-        logInfo(log, "event_accepted", {
-          eventId,
-          teamId: envelope.data.team_id,
-          eventType: event.type,
-          channel: event.channel,
-          ts: event.ts,
-          threadTs: event.thread_ts,
-          correlationKey,
-          delay,
-        });
-        queue.enqueue({
-          id: eventId,
-          source: "slack",
-          correlationKey,
-          payload: event,
-          receivedAt: new Date().toISOString(),
-          sourceTs: parseSlackTs(event.ts),
-          readyAt: Date.now() + delay,
-          delayMs: delay,
-        });
-      })();
+      logInfo(log, "event_accepted", {
+        eventId,
+        teamId: envelope.data.team_id,
+        eventType: event.type,
+        channel: event.channel,
+        ts: event.ts,
+        threadTs: event.thread_ts,
+        correlationKey,
+        delay: unaddressedDelay,
+      });
+      queue.enqueue({
+        id: eventId,
+        source: "slack",
+        correlationKey,
+        payload: event,
+        receivedAt: new Date().toISOString(),
+        sourceTs: parseSlackTs(event.ts),
+        readyAt: Date.now() + unaddressedDelay,
+        delayMs: unaddressedDelay,
+      });
       return;
     }
 

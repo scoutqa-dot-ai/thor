@@ -13,9 +13,11 @@
  * Flow:
  *   1. HTTP handler calls enqueue() → atomic file write (.tmp → rename).
  *   2. Fixed-interval scan (default 100ms) reads the directory.
- *   3. Group files by correlation key; check max(readyAt) per group.
- *   4. If readyAt <= now → dispatch the batch. If not → skip (wait for next tick).
- *   5. Per-key serial: if a key is already processing, skip it (files stay).
+ *   3. Group files by correlation key.
+ *   4. If any event in a group has interrupt=true → bypass both locks,
+ *      readiness based on max(readyAt) of interrupt events only (debounce).
+ *      Otherwise wait until max(readyAt) of all events <= now.
+ *   5. Non-interrupt: per-key serial + global lock (files stay until idle).
  */
 
 import {
@@ -45,6 +47,8 @@ export interface QueuedEvent<T = unknown> {
   readyAt: number;
   /** Original delay in ms used to compute readyAt. */
   delayMs?: number;
+  /** If true, this event can interrupt a running session for the same key. */
+  interrupt?: boolean;
 }
 
 const QueuedEventSchema = z.object({
@@ -56,6 +60,7 @@ const QueuedEventSchema = z.object({
   sourceTs: z.number(),
   readyAt: z.number(),
   delayMs: z.number().optional(),
+  interrupt: z.boolean().optional(),
 });
 
 export type EventHandler = (events: QueuedEvent[]) => Promise<void>;
@@ -141,8 +146,6 @@ export class EventQueue {
    * each ready group as a batch to the handler.
    */
   private scan(): void {
-    if (this.active.size > 0) return;
-
     let files: string[];
     try {
       files = readdirSync(this.dir)
@@ -173,18 +176,18 @@ export class EventQueue {
     }
 
     for (const [key, entries] of byKey) {
-      if (this.processing.has(key)) continue;
+      const interruptEntries = entries.filter((e) => e.event.interrupt);
+      const hasInterrupt = interruptEntries.length > 0;
 
-      // Batch readiness: latestArrival + shortestDelay.
-      // This batches rapid-fire same-delay events (wait for the last one) and
-      // expedites mixed-delay batches (e.g. 60s unaddressed + 3s mention → 3s
-      // window from the latest arrival).
-      const latestArrival = Math.max(
-        ...entries.map((e) => e.event.readyAt - (e.event.delayMs ?? 0)),
-      );
-      const shortestDelay = Math.min(...entries.map((e) => e.event.delayMs ?? 0));
-      const batchReadyAt = latestArrival + shortestDelay;
-      if (batchReadyAt > now) continue;
+      // Non-interrupt batches must wait for all in-flight work to finish.
+      // Interrupt batches bypass both locks so they can abort a running session.
+      if (!hasInterrupt && (this.active.size > 0 || this.processing.has(key))) continue;
+
+      // Interrupt batch: debounce on interrupt events only (ignore non-interrupt readyAt).
+      // Non-interrupt batch: wait until every event is ready.
+      const readyAtSource = hasInterrupt ? interruptEntries : entries;
+      const maxReadyAt = Math.max(...readyAtSource.map((e) => e.event.readyAt));
+      if (maxReadyAt > now) continue;
 
       this.processing.add(key);
 

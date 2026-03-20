@@ -215,11 +215,11 @@ describe("EventQueue", () => {
     expect(remaining).toHaveLength(1);
   });
 
-  it("expedites batch when a shorter-delay event joins a longer-delay event", async () => {
+  it("interrupt event pulls pending non-ready events into the same batch", async () => {
     const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
-    // Unaddressed message with 60s delay
+    // Unaddressed message with 60s delay (not ready yet)
     queue.enqueue({
       id: "slow-1",
       source: "slack",
@@ -231,16 +231,166 @@ describe("EventQueue", () => {
       delayMs: 60_000,
     });
 
-    // Mention with 0ms delay (ready now) — different delayMs expedites the batch
-    queue.enqueue(makeEvent("key-1", "mention"));
+    // Interrupt mention (ready now) — pulls in the unaddressed event
+    queue.enqueue({
+      id: `test-${++eventSeq}`,
+      source: "slack",
+      correlationKey: "key-1",
+      payload: { text: "mention" },
+      receivedAt: new Date().toISOString(),
+      sourceTs: Date.now(),
+      readyAt: 0,
+      delayMs: 0,
+      interrupt: true,
+    });
 
     await queue.flush();
 
-    // Both events should be processed together — the mention expedited the batch
+    // Both events processed together — the interrupt pulled in the unaddressed event
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0][0]).toHaveLength(2);
     expect((handler.mock.calls[0][0][0].payload as { text: string }).text).toBe("unaddressed");
     expect((handler.mock.calls[0][0][1].payload as { text: string }).text).toBe("mention");
+  });
+
+  it("non-interrupt events wait while key is processing", async () => {
+    const batches: string[][] = [];
+    let resolveFirst: (() => void) | null = null;
+
+    const handler = vi
+      .fn<(events: QueuedEvent[]) => Promise<void>>()
+      .mockImplementation(async (events) => {
+        const texts = events.map((e) => (e.payload as { text: string }).text);
+        if (texts[0] === "first") {
+          await new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        batches.push(texts);
+      });
+
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    queue.enqueue(makeEvent("key-1", "first"));
+    const flushPromise = queue.flush();
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Enqueue a non-interrupt event while first is processing
+    queue.enqueue(makeEvent("key-1", "non-interrupt"));
+
+    // Unblock
+    resolveFirst!();
+    await flushPromise;
+
+    // Non-interrupt event waited and was processed in a separate batch
+    expect(batches).toEqual([["first"], ["non-interrupt"]]);
+  });
+
+  it("interrupt events still debounce on their own readyAt", async () => {
+    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    // Interrupt event with readyAt in the future — should wait
+    queue.enqueue({
+      id: `test-${++eventSeq}`,
+      source: "slack",
+      correlationKey: "key-1",
+      payload: { text: "mention" },
+      receivedAt: new Date().toISOString(),
+      sourceTs: Date.now(),
+      readyAt: Date.now() + 60_000,
+      delayMs: 60_000,
+      interrupt: true,
+    });
+
+    await queue.flush();
+
+    // Not ready yet — interrupt still respects its own readyAt for debounce
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("interrupt events ignore non-interrupt readyAt when deciding batch readiness", async () => {
+    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    // Non-interrupt event with readyAt far in the future
+    queue.enqueue({
+      id: "slow-1",
+      source: "slack",
+      correlationKey: "key-1",
+      payload: { text: "unaddressed" },
+      receivedAt: new Date().toISOString(),
+      sourceTs: Date.now(),
+      readyAt: Date.now() + 60_000,
+      delayMs: 60_000,
+    });
+
+    // Interrupt event that is ready now
+    queue.enqueue({
+      id: `test-${++eventSeq}`,
+      source: "slack",
+      correlationKey: "key-1",
+      payload: { text: "mention" },
+      receivedAt: new Date().toISOString(),
+      sourceTs: Date.now(),
+      readyAt: 0,
+      delayMs: 0,
+      interrupt: true,
+    });
+
+    await queue.flush();
+
+    // Fires because interrupt event is ready — non-interrupt readyAt is ignored
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0]).toHaveLength(2);
+  });
+
+  it("interrupt events bypass both global and per-key locks", async () => {
+    const batches: string[][] = [];
+    let resolveFirst: (() => void) | null = null;
+
+    const handler = vi
+      .fn<(events: QueuedEvent[]) => Promise<void>>()
+      .mockImplementation(async (events) => {
+        const texts = events.map((e) => (e.payload as { text: string }).text);
+        if (texts[0] === "first") {
+          await new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        batches.push(texts);
+      });
+
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    // Start processing first event (holds both locks)
+    queue.enqueue(makeEvent("key-1", "first"));
+    const flushPromise = queue.flush();
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Enqueue an interrupt event while first is in-flight
+    queue.enqueue({
+      id: `test-${++eventSeq}`,
+      source: "slack",
+      correlationKey: "key-1",
+      payload: { text: "urgent-mention" },
+      receivedAt: new Date().toISOString(),
+      sourceTs: Date.now(),
+      readyAt: 0,
+      delayMs: 0,
+      interrupt: true,
+    });
+
+    // Unblock first handler
+    resolveFirst!();
+    await flushPromise;
+
+    // Both batches processed — interrupt didn't wait for first to finish
+    expect(batches).toHaveLength(2);
+    expect(batches).toContainEqual(["first"]);
+    expect(batches).toContainEqual(["urgent-mention"]);
   });
 
   it("handler errors do not prevent subsequent events from processing", async () => {
