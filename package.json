@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:proxy": "npx tsx scripts/test-proxy.ts",
+    "sandbox:spike": "node scripts/sandbox-spike.mjs",
     "test:e2e": "./scripts/test-e2e.sh",
     "prepare": "husky"
   },
@@ -19,6 +20,8 @@
     "*.{ts,js,json,md,yaml,yml}": "prettier --write"
   },
   "devDependencies": {
+    "@daytonaio/sdk": "^0.153.0",
+    "e2b": "^2.14.1",
     "husky": "^9.1.7",
     "lint-staged": "^16.3.2",
     "prettier": "^3.8.1",
