@@ -1,0 +1,25 @@
+docs/plan/2026032001_jira-mcp.md
+  9d76786b2e4993d1 12,22,24-28,30,32,34-46,55,57,64
+packages/proxy/proxy.jira.json
+  9d76786b2e4993d1 18-19,21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1a43370a67a2ef927805235ec37adebe1d5ffc6d",
+  "prompts": {
+    "9d76786b2e4993d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da4329d0-509c-4691-aeaf-ff222e00a9fe",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 32,
+      "total_deletions": 76,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}
