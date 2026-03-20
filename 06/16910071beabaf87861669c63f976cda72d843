@@ -1,0 +1,23 @@
+docs/plan/2026031902_sandbox-coder-phase-a.md
+  ac505d2eab66466b 28,30,61,77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "0616910071beabaf87861669c63f976cda72d843",
+  "prompts": {
+    "ac505d2eab66466b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d277acc8-2afe-455d-8657-068e2152b666",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 4,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
