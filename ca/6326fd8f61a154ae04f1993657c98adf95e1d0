@@ -1,0 +1,31 @@
+docker-compose.yml
+  9d76786b2e4993d1 89,92,95,109
+.env.example
+  9d76786b2e4993d1 27-29
+docker/opencode/opencode.json
+  9d76786b2e4993d1 25-29
+Dockerfile
+  9d76786b2e4993d1 45
+packages/proxy/proxy.jira.json
+  9d76786b2e4993d1 1-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ca6326fd8f61a154ae04f1993657c98adf95e1d0",
+  "prompts": {
+    "9d76786b2e4993d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da4329d0-509c-4691-aeaf-ff222e00a9fe",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 43,
+      "total_deletions": 3,
+      "accepted_lines": 43,
+      "overriden_lines": 0
+    }
+  }
+}
