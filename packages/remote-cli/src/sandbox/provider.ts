@@ -260,7 +260,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
       });
       execFile("rsync", args, { timeout: 300_000 }, (err, _stdout, stderr) => {
         if (err) {
-          logError(log, "rsync_failed", { stderr, code: err.code });
+          logError(log, "rsync_failed", stderr || err.message, { code: err.code });
           return reject(new Error(`rsync failed: ${stderr || err.message}`));
         }
         resolve();
