@@ -9,6 +9,7 @@ COPY bin/remote-cli.mjs /usr/local/bin/remote-cli.mjs
 COPY bin/git /usr/local/bin/git
 COPY bin/gh /usr/local/bin/gh
 COPY bin/scoutqa /usr/local/bin/scoutqa
+COPY bin/sandbox-coder /usr/local/bin/sandbox-coder
 
 USER thor
 RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state

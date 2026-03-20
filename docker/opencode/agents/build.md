@@ -77,21 +77,29 @@ A credential-injecting reverse proxy is available at `http://data/` — auth hea
 
 ## Subagents
 
-You have two specialized subagents. Use them for non-trivial code changes.
-
-- **`coder`** — fast coding model optimized for speed. Use for implementing code across multiple files, large refactors, or complex edits.
 - **`thinker`** — high-capability model with maximum reasoning. Use for planning, code review, architecture decisions, and complex debugging.
 
 Handle simple tasks yourself: Slack replies, reading files, running commands, quick edits, and trivial questions.
+
+### Sandbox Coding
+
+For substantial code changes (multi-file edits, running tests, starting servers, browser validation), use `sandbox-coder` from the worktree directory:
+
+```
+cd /workspace/worktrees/<repo>/<branch>
+sandbox-coder "implement the auth fix and add regression tests"
+```
+
+Must be run from a worktree path. Runs an isolated coding agent in a remote sandbox. Changes sync back to the worktree automatically.
 
 ### Code change protocol
 
 For non-trivial code changes, follow this loop:
 
 1. **Plan** — delegate to `thinker` to analyze the requirements, identify affected files, and produce a step-by-step plan
-2. **Implement** — delegate to `coder` with the plan to write the code
+2. **Implement** — run `sandbox-coder` with the plan as the task prompt
 3. **Review** — delegate to `thinker` to review the implementation for correctness, security, and design issues
-4. **Iterate** — if the review finds substantive issues, send them back to `coder` to fix and re-review. Stop when the reviewer only finds nitpicks.
+4. **Iterate** — if the review finds substantive issues, run `sandbox-coder` again with the review feedback. Stop when the reviewer only finds nitpicks.
 
 Skip this protocol for trivial changes (config edits, one-line fixes, documentation updates).
 

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { validateCwd, validateGitArgs, validateGhArgs } from "./policy.js";
+import {
+  validateCwd,
+  validateGitArgs,
+  validateGhArgs,
+  validateSandboxCwd,
+  validateSandboxCoderArgs,
+} from "./policy.js";
 
 // ── cwd validation ──────────────────────────────────────────────────────────
 
@@ -177,6 +183,10 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["workflow", "view", "ci.yml"])).toBeNull();
     });
 
+    it("allows pr merge", () => {
+      expect(validateGhArgs(["pr", "merge", "123"])).toBeNull();
+    });
+
     it("allows release subcommands", () => {
       expect(validateGhArgs(["release", "list"])).toBeNull();
       expect(validateGhArgs(["release", "view", "v1.0"])).toBeNull();
@@ -185,10 +195,6 @@ describe("validateGhArgs", () => {
   });
 
   describe("blocked commands", () => {
-    it("blocks pr merge", () => {
-      expect(validateGhArgs(["pr", "merge", "123"])).not.toBeNull();
-    });
-
     it("blocks repo create", () => {
       expect(validateGhArgs(["repo", "create", "foo"])).not.toBeNull();
     });
@@ -221,5 +227,63 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["api", "-X", "POST", "repos/org/repo/pulls"])).not.toBeNull();
       expect(validateGhArgs(["api", "graphql"])).not.toBeNull();
     });
+  });
+});
+
+// ── sandbox-coder policy ────────────────────────────────────────────────────
+
+describe("validateSandboxCwd", () => {
+  it("accepts paths under /workspace/worktrees/", () => {
+    expect(validateSandboxCwd("/workspace/worktrees/my-repo/my-branch")).toBeNull();
+    expect(validateSandboxCwd("/workspace/worktrees/repo/feat/deep")).toBeNull();
+  });
+
+  it("rejects /workspace/worktrees without trailing slash (not a worktree)", () => {
+    expect(validateSandboxCwd("/workspace/worktrees")).not.toBeNull();
+  });
+
+  it("rejects /workspace/repos (sandbox-coder requires worktree)", () => {
+    expect(validateSandboxCwd("/workspace/repos/my-repo")).not.toBeNull();
+  });
+
+  it("rejects relative paths", () => {
+    expect(validateSandboxCwd("workspace/worktrees/foo")).not.toBeNull();
+  });
+
+  it("rejects empty or missing cwd", () => {
+    expect(validateSandboxCwd("")).not.toBeNull();
+    expect(validateSandboxCwd(undefined as unknown as string)).not.toBeNull();
+  });
+
+  it("rejects traversal attempts", () => {
+    expect(validateSandboxCwd("/workspace/worktrees/../repos/escape")).not.toBeNull();
+  });
+});
+
+describe("validateSandboxCoderArgs", () => {
+  it("accepts a prompt (any non-flag args)", () => {
+    expect(validateSandboxCoderArgs(["implement", "auth", "fix"])).toBeNull();
+    expect(validateSandboxCoderArgs(["fix bug in login"])).toBeNull();
+  });
+
+  it("accepts --session with session ID and prompt", () => {
+    expect(validateSandboxCoderArgs(["--session", "ses_abc123", "fix the bug"])).toBeNull();
+  });
+
+  it("accepts --pull with sandbox ID", () => {
+    expect(validateSandboxCoderArgs(["--pull", "sandbox-xyz"])).toBeNull();
+  });
+
+  it("rejects --pull without sandbox ID", () => {
+    expect(validateSandboxCoderArgs(["--pull"])).not.toBeNull();
+    expect(validateSandboxCoderArgs(["--pull", ""])).not.toBeNull();
+  });
+
+  it("rejects empty args", () => {
+    expect(validateSandboxCoderArgs([])).not.toBeNull();
+  });
+
+  it("rejects non-array", () => {
+    expect(validateSandboxCoderArgs("hello" as unknown as string[])).not.toBeNull();
   });
 });
