@@ -38,6 +38,24 @@ export type {
   SandboxProvider,
 } from "./sandboxes.js";
 export {
+  createDaytonaSandboxProvider,
+  getSandboxWorktreeId,
+  getRemoteWorkspaceDir,
+  buildSandboxCommand,
+  syncLocalDirectory,
+} from "./daytona-sandbox-provider.js";
+export type { DaytonaSandboxProviderOptions } from "./daytona-sandbox-provider.js";
+export {
+  ensureSandboxForWorktree,
+  destroySandboxForWorktree,
+  SandboxProviderError,
+} from "./sandbox-control.js";
+export type {
+  EnsureSandboxAction,
+  EnsureSandboxOptions,
+  EnsureSandboxResult,
+} from "./sandbox-control.js";
+export {
   ProgressStartSchema,
   ProgressToolSchema,
   ProgressDoneSchema,

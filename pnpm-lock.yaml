@@ -29,6 +29,9 @@ importers:
 
   packages/common:
     dependencies:
+      '@daytonaio/sdk':
+        specifier: ^0.153.0
+        version: 0.153.0(ws@8.19.0)
       pino:
         specifier: ^10.3.1
         version: 10.3.1

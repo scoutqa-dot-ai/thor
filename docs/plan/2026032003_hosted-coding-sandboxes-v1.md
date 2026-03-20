@@ -4,19 +4,20 @@
 
 ## Decision Log
 
-| #   | Decision                                                                              | Rationale                                                                              |
-| --- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| D1  | Use one active sandbox per worktree in v1                                             | This matches the desired UX and keeps identity, locking, and recovery simple.          |
-| D2  | Keep the feature doc provider-neutral                                                 | Product behavior should remain stable even if provider choice changes.                 |
-| D3  | Choose a provider by thin spike, not by doc-only scoring                              | Real create/attach/materialize/exec behavior matters more than scorecards.             |
-| D4  | Resolve worktree-to-sandbox mapping from provider data on demand                      | A local mirror is optional in v1 if provider lookup by worktree metadata is reliable.  |
-| D5  | Treat workspace materialization as an abstraction                                     | Thor should not commit to one sync protocol such as `rsync` in advance.                |
-| D6  | Ship the execution plane before any nested coding agent                               | Sandbox lifecycle, materialization, and security must work on their own first.         |
-| D7  | Make short-lived credentials and post-bootstrap egress controls baseline requirements | "Safe hosted sandbox" is primarily a blast-radius problem.                             |
-| D8  | Keep local execution as the fallback path                                             | Thor still needs a degraded mode when provider APIs fail or quotas are exhausted.      |
-| D9  | Run the Phase 2 spike as a standalone harness with official provider SDKs             | The spike should validate real provider behavior without prematurely shaping app code. |
-| D10 | Materialize worktrees for the spike by direct archive upload                          | Upload-based materialization lets the spike lock down sandbox egress from the start.   |
-| D11 | Treat live egress enforcement as a provider gate, not a doc-level assumption          | The live E2B spike passed lifecycle and preview auth but did not enforce egress lock.  |
+| #   | Decision                                                                              | Rationale                                                                                  |
+| --- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| D1  | Use one active sandbox per worktree in v1                                             | This matches the desired UX and keeps identity, locking, and recovery simple.              |
+| D2  | Keep the feature doc provider-neutral                                                 | Product behavior should remain stable even if provider choice changes.                     |
+| D3  | Choose a provider by thin spike, not by doc-only scoring                              | Real create/attach/materialize/exec behavior matters more than scorecards.                 |
+| D4  | Resolve worktree-to-sandbox mapping from provider data on demand                      | A local mirror is optional in v1 if provider lookup by worktree metadata is reliable.      |
+| D5  | Treat workspace materialization as an abstraction                                     | Thor should not commit to one sync protocol such as `rsync` in advance.                    |
+| D6  | Ship the execution plane before any nested coding agent                               | Sandbox lifecycle, materialization, and security must work on their own first.             |
+| D7  | Make short-lived credentials and post-bootstrap egress controls baseline requirements | "Safe hosted sandbox" is primarily a blast-radius problem.                                 |
+| D8  | Keep local execution as the fallback path                                             | Thor still needs a degraded mode when provider APIs fail or quotas are exhausted.          |
+| D9  | Run the Phase 2 spike as a standalone harness with official provider SDKs             | The spike should validate real provider behavior without prematurely shaping app code.     |
+| D10 | Materialize worktrees for the spike by direct archive upload                          | Upload-based materialization lets the spike lock down sandbox egress from the start.       |
+| D11 | Treat live egress enforcement as a provider gate, not a doc-level assumption          | The live E2B spike passed lifecycle and preview auth but did not enforce egress lock.      |
+| D12 | Put the first Daytona control-plane flow in `@thor/common` before runner wiring       | The app should integrate against one tested `ensure` or `destroy` flow, not raw SDK calls. |
 
 ## Problem
 
