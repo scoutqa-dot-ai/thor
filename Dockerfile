@@ -19,6 +19,7 @@ COPY packages/common/package.json packages/common/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/proxy/package.json packages/proxy/
 COPY packages/runner/package.json packages/runner/
+COPY packages/sandboxd/package.json packages/sandboxd/
 COPY packages/slack-mcp/package.json packages/slack-mcp/
 COPY packages/remote-cli/package.json packages/remote-cli/
 RUN pnpm install --frozen-lockfile
@@ -51,6 +52,13 @@ WORKDIR /workspace
 ENV PORT=3000
 EXPOSE 3000
 CMD ["node", "/app/packages/runner/dist/index.js"]
+
+FROM build AS sandboxd
+USER thor
+WORKDIR /workspace
+ENV PORT=3005
+EXPOSE 3005
+CMD ["node", "/app/packages/sandboxd/dist/index.js"]
 
 FROM build AS slack-mcp
 USER thor

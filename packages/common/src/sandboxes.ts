@@ -59,6 +59,7 @@ export interface SandboxExecEvent {
 
 export interface SandboxExecResult {
   exitCode: number;
+  output?: string;
 }
 
 export interface SandboxMaterializeRequest {

@@ -46,11 +46,14 @@ const LOCAL_SYNC_EXCLUDES = new Set([".git", ".context"]);
 const DEFAULT_PREVIEW_EXPIRES_IN_SECONDS = 300;
 const DEFAULT_AUTOSTOP_MINUTES = 30;
 const DEFAULT_NETWORK_BLOCK_ALL = true;
+const DEFAULT_SANDBOX_LANGUAGE = "python";
 
 export interface DaytonaSandboxProviderOptions {
   apiKey?: string;
   apiUrl?: string;
   target?: string;
+  snapshot?: string;
+  language?: string;
   autoStopIntervalMinutes?: number;
   networkBlockAll?: boolean;
   previewExpiresInSeconds?: number;
@@ -65,6 +68,7 @@ interface DaytonaClient {
   ): Promise<{ items: DaytonaSandbox[] }>;
   create(
     params?: {
+      snapshot?: string;
       language?: string;
       labels?: Record<string, string>;
       public?: boolean;
@@ -145,16 +149,16 @@ export function createDaytonaSandboxProvider(
     },
     async create(identity) {
       const client = createClient();
-      const sandbox = await client.create(
-        {
-          language: "python",
-          labels: buildDaytonaLabels(identity),
-          public: false,
-          autoStopInterval: options.autoStopIntervalMinutes ?? DEFAULT_AUTOSTOP_MINUTES,
-          networkBlockAll: options.networkBlockAll ?? DEFAULT_NETWORK_BLOCK_ALL,
-        },
-        { timeout: 120 },
-      );
+      const createParams = {
+        ...(options.snapshot
+          ? { snapshot: options.snapshot }
+          : { language: options.language ?? DEFAULT_SANDBOX_LANGUAGE }),
+        labels: buildDaytonaLabels(identity),
+        public: false,
+        autoStopInterval: options.autoStopIntervalMinutes ?? DEFAULT_AUTOSTOP_MINUTES,
+        networkBlockAll: options.networkBlockAll ?? DEFAULT_NETWORK_BLOCK_ALL,
+      };
+      const sandbox = await client.create(createParams, { timeout: 120 });
 
       return toSandboxRecord(sandbox, identity);
     },
@@ -198,7 +202,7 @@ export function createDaytonaSandboxProvider(
           undefined,
           toDaytonaTimeoutSeconds(request.timeoutMs),
         );
-        return { exitCode: response.exitCode };
+        return { exitCode: response.exitCode, output: response.result };
       }
 
       onEvent({ type: "status", data: "running" });
@@ -590,6 +594,11 @@ async function createWorktreeArchive(
   args.push("-C", worktreePath, ".");
 
   await execFileAsync("tar", args, {
+    env: {
+      ...process.env,
+      COPYFILE_DISABLE: "1",
+      COPY_EXTENDED_ATTRIBUTES_DISABLE: "1",
+    },
     maxBuffer: 1024 * 1024 * 16,
   });
 

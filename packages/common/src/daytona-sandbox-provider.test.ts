@@ -11,7 +11,7 @@ import { cp, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, posix } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const {
   buildSandboxCommand,
@@ -154,6 +154,59 @@ describe("daytona sandbox provider", () => {
     expect(record.sandboxId).toBe(sandbox.id);
   });
 
+  it("passes the requested sandbox language through create", async () => {
+    const create = vi.fn().mockResolvedValue(createFakeSandbox());
+    const provider = createDaytonaSandboxProvider({
+      language: "typescript",
+      createClient: () => ({
+        async list() {
+          return { items: [] };
+        },
+        create,
+        async get() {
+          throw new Error("not used");
+        },
+      }),
+    });
+
+    await provider.create({
+      worktreePath: "/workspace/worktrees/acme-api/feat-sandbox",
+      repo: "acme-api",
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ language: "typescript" }),
+      expect.any(Object),
+    );
+  });
+
+  it("passes the requested snapshot through create without forcing language", async () => {
+    const create = vi.fn().mockResolvedValue(createFakeSandbox());
+    const provider = createDaytonaSandboxProvider({
+      snapshot: "daytona-medium",
+      createClient: () => ({
+        async list() {
+          return { items: [] };
+        },
+        create,
+        async get() {
+          throw new Error("not used");
+        },
+      }),
+    });
+
+    await provider.create({
+      worktreePath: "/workspace/worktrees/acme-api/feat-sandbox",
+      repo: "acme-api",
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ snapshot: "daytona-medium" }),
+      expect.any(Object),
+    );
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty("language");
+  });
+
   it("streams stdout and stderr through exec events", async () => {
     const sandbox = createFakeSandbox();
     const provider = createDaytonaSandboxProvider({
@@ -186,6 +239,30 @@ describe("daytona sandbox provider", () => {
       { type: "stderr", data: "stderr-from-session" },
       { type: "status", data: "completed:0" },
     ]);
+  });
+
+  it("returns direct command output when exec is called without a stream handler", async () => {
+    const sandbox = createFakeSandbox({
+      executeCommandResult: { exitCode: 0, result: "combined-output" },
+    });
+    const provider = createDaytonaSandboxProvider({
+      createClient: () => ({
+        async list() {
+          return { items: [] };
+        },
+        async create() {
+          throw new Error("not used");
+        },
+        async get() {
+          return sandbox;
+        },
+      }),
+    });
+
+    await expect(provider.exec(sandbox.id, { command: "echo hi" })).resolves.toEqual({
+      exitCode: 0,
+      output: "combined-output",
+    });
   });
 
   it("materializes a local worktree archive into the sandbox workspace", async () => {
@@ -303,6 +380,7 @@ function createFakeSandbox(
     state?: string;
     labels?: Record<string, string>;
     downloadFileImpl?: (remotePath: string, localPath: string) => Promise<void>;
+    executeCommandResult?: { exitCode: number; result: string };
   } = {},
 ) {
   const sandbox = {
@@ -344,7 +422,7 @@ function createFakeSandbox(
     process: {
       async executeCommand(command: string) {
         sandbox.executedCommands.push(command);
-        return { exitCode: 0, result: "" };
+        return options.executeCommandResult ?? { exitCode: 0, result: "" };
       },
       async createSession() {},
       async executeSessionCommand() {

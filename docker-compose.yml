@@ -48,6 +48,29 @@ services:
       timeout: 3s
       retries: 10
 
+  sandboxd:
+    build:
+      context: .
+      target: sandboxd
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3005:3005"
+    environment:
+      - NODE_ENV=production
+      - DAYTONA_API_KEY=${DAYTONA_API_KEY}
+      - DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}
+      - DAYTONA_TARGET=${DAYTONA_TARGET:-}
+      - SANDBOXD_DAYTONA_SNAPSHOT=daytona-medium
+      - SANDBOXD_NETWORK_BLOCK_ALL=false
+    volumes:
+      - ./docker-volumes/workspace/worktrees:/workspace/worktrees
+    healthcheck:
+      test:
+        ["CMD", "node", "-e", "fetch('http://localhost:3005/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   grafana-mcp:
     image: grafana/mcp-grafana:0.11.3
     restart: unless-stopped
@@ -148,6 +171,8 @@ services:
       proxy:
         condition: service_healthy
       remote-cli:
+        condition: service_healthy
+      sandboxd:
         condition: service_healthy
       data:
         condition: service_healthy

@@ -77,10 +77,14 @@ A credential-injecting reverse proxy is available at `http://data/` — auth hea
 
 ## Subagents
 
-You have two specialized subagents. Use them for non-trivial code changes.
+You have one local specialized subagent:
 
-- **`coder`** — fast coding model optimized for speed. Use for implementing code across multiple files, large refactors, or complex edits.
 - **`thinker`** — high-capability model with maximum reasoning. Use for planning, code review, architecture decisions, and complex debugging.
+
+For isolated code changes, use the hosted `coder` command instead of a local subagent:
+
+- `coder run --prompt "implement the requested change"`
+- `cat task.md | coder run`
 
 Handle simple tasks yourself: Slack replies, reading files, running commands, quick edits, and trivial questions.
 
@@ -89,9 +93,9 @@ Handle simple tasks yourself: Slack replies, reading files, running commands, qu
 For non-trivial code changes, follow this loop:
 
 1. **Plan** — delegate to `thinker` to analyze the requirements, identify affected files, and produce a step-by-step plan
-2. **Implement** — delegate to `coder` with the plan to write the code
+2. **Implement** — use `coder run` from the target worktree to execute the implementation in the hosted coding environment
 3. **Review** — delegate to `thinker` to review the implementation for correctness, security, and design issues
-4. **Iterate** — if the review finds substantive issues, send them back to `coder` to fix and re-review. Stop when the reviewer only finds nitpicks.
+4. **Iterate** — if the review finds substantive issues, send a follow-up task through `coder run` and re-review. Stop when the reviewer only finds nitpicks.
 
 Skip this protocol for trivial changes (config edits, one-line fixes, documentation updates).
 
