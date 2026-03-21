@@ -1,0 +1,25 @@
+packages/gateway/src/queue.ts
+  fcec761e642958d3 67,109-110,159-162,167
+packages/gateway/src/queue.test.ts
+  fcec761e642958d3 10-18,23,33,41-42,47-48,55-56,58,62-68,70-73,113,198,220-229,232-236,240-245,247-248,250-256,258,260-261,264-267,270,274-275,277-279,281-282,284,286-288,290,293-295,297-298,300-302,304-307,309-316,318-320,322-325,327-333,336-338,344,348-351,358-359,361,368,380,403,408
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "58246f9f9dd3a60ba3b78467729567be0cc1966d",
+  "prompts": {
+    "fcec761e642958d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ea2c9bb-6d57-4a3a-aaae-74e55c0431ca",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 163,
+      "total_deletions": 176,
+      "accepted_lines": 153,
+      "overriden_lines": 0
+    }
+  }
+}
