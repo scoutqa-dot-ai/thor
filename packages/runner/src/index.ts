@@ -288,7 +288,7 @@ app.post("/trigger", async (req, res) => {
 
       if (sessionStatus?.type === "busy") {
         // Non-interrupt triggers don't abort — return busy so gateway can re-enqueue.
-        const shouldInterrupt = parsed.data.interrupt !== false;
+        const shouldInterrupt = parsed.data.interrupt === true;
         if (!shouldInterrupt) {
           logInfo(log, "session_busy_nointerrupt", { sessionId, correlationKey });
           res.json({ busy: true });

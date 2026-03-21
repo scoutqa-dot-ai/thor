@@ -557,6 +557,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       sourceTs: Date.now(),
       readyAt: Date.now(),
       delayMs: 0,
+      interrupt: false,
     });
 
     logInfo(log, "cron_event_accepted", { correlationKey });

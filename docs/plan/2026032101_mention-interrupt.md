@@ -176,7 +176,7 @@ Remove `hasRunnerSession` (gateway) + pass `interrupt` flag to runner (don't abo
 | D2  | Drop global lock, keep per-key only                  | Global lock blocks unrelated keys (thread-A blocks thread-B). Per-key lock is the correct granularity — prevents same conversation from double-dispatching. With fire-and-forget, neither is load-bearing, but per-key is semantically correct and makes interrupt reasoning straightforward. |
 | D3  | Option C — fix at both layers                        | Remove `hasRunnerSession` so non-mentions always get 60s delay (likely session is done). Runner also checks interrupt flag so even if timing is unlucky, it won't abort.                                                                                                                      |
 | D4  | Re-enqueue non-interrupt events when session is busy | Messages that arrived after the session started haven't been seen by the agent. Runner returns `{busy: true}`, gateway re-enqueues so they fire once the session is idle.                                                                                                                     |
-| D5  | `interrupt` defaults to true for backwards compat    | Existing callers (cron, GitHub) don't send the flag. Default to true so they retain current abort-and-resume behavior.                                                                                                                                                                        |
+| D5  | `interrupt` defaults to false (safe by default)      | New sources should not interrupt running sessions unless explicitly opted in. Only Slack mentions and GitHub @mentions set `interrupt: true`.                                                                                                                                                 |
 | D6  | Standardize delays: interrupt=3s, non-interrupt=60s  | Consistent across Slack and GitHub. Interrupt events debounce briefly (3s) then fire. Non-interrupt events wait 60s hoping someone else handles it or the session finishes.                                                                                                                   |
 
 ## Debounce behavior
@@ -213,13 +213,13 @@ Runner `{busy: true}` re-enqueue tests are in Phase 2/3 (gateway + runner integr
 - Standardize all delays: interrupt events = 3s, non-interrupt = 60s (Slack already follows this)
 - Mention detection: check `@{gitUsername}` in `comment.body`, `review.body`, `pull_request.body`
 
-| Source                             | Interrupt      | Delay |
-| ---------------------------------- | -------------- | ----- |
-| Slack `app_mention`                | true           | 3s    |
-| Slack `message` (thread reply)     | false          | 60s   |
-| GitHub with `@gitUsername` in body | true           | 3s    |
-| GitHub without mention             | false          | 60s   |
-| Cron                               | true (default) | 0s    |
+| Source                             | Interrupt | Delay |
+| ---------------------------------- | --------- | ----- |
+| Slack `app_mention`                | true      | 3s    |
+| Slack `message` (thread reply)     | false     | 60s   |
+| GitHub with `@gitUsername` in body | true      | 3s    |
+| GitHub without mention             | false     | 60s   |
+| Cron                               | false     | 0s    |
 
 ## Out of Scope
 
