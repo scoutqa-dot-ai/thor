@@ -26,8 +26,6 @@ import {
   extractAliases,
   registerAlias,
   getNotesLineCount,
-  loadWorkspaceConfig,
-  getDefaultDirectory,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -37,9 +35,6 @@ const log = createLogger("runner");
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const OPENCODE_URL = (process.env.OPENCODE_URL || "http://127.0.0.1:4096").replace(/\/$/, "");
 const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
-const WORKSPACE_CONFIG_PATH = process.env.WORKSPACE_CONFIG || "/workspace/repos.json";
-const workspaceConfig = loadWorkspaceConfig(WORKSPACE_CONFIG_PATH);
-const SESSION_DIRECTORY = getDefaultDirectory(workspaceConfig);
 
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
@@ -114,8 +109,8 @@ const TriggerRequestSchema = z.object({
   /** If true (default), abort a busy session before sending the prompt.
    *  If false, return {busy: true} without aborting. */
   interrupt: z.boolean().optional(),
-  /** Working directory for the OpenCode session. Overrides the default from config. */
-  directory: z.string().optional(),
+  /** Working directory for the OpenCode session. */
+  directory: z.string(),
 });
 
 type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
@@ -227,7 +222,7 @@ app.post("/trigger", async (req, res) => {
   try {
     await ensureOpencodeAvailable();
 
-    const sessionDirectory = directory || SESSION_DIRECTORY;
+    const sessionDirectory = directory;
     if (!existsSync(sessionDirectory)) {
       logError(log, "directory_not_found", `Directory does not exist: ${sessionDirectory}`, {
         directory: sessionDirectory,

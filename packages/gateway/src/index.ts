@@ -4,6 +4,7 @@ import {
   loadWorkspaceConfig,
   getAllowedChannelIds,
   getChannelRepoMap,
+  getDefaultDirectory,
 } from "@thor/common";
 import { createGatewayApp } from "./app.js";
 
@@ -40,6 +41,7 @@ const { app } = createGatewayApp({
   cronSecret: CRON_SECRET || undefined,
   gitUsername: GIT_USER_NAME || undefined,
   channelRepos,
+  defaultDirectory: getDefaultDirectory(workspaceConfig),
 });
 
 app.listen(PORT, () => {

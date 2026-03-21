@@ -57,23 +57,19 @@ export async function triggerRunnerSlack(
       : `Slack events:\n\n${JSON.stringify(events)}`;
   const last = events[events.length - 1];
   const repo = channelRepos?.get(last.channel);
-  let directory: string | undefined;
-  if (repo) {
-    directory = resolveRepoDirectory(repo);
-    if (!directory) {
-      logWarn(log, "repo_directory_not_found", { repo, channel: last.channel });
-      return { busy: false };
-    }
+  if (!repo) {
+    logWarn(log, "channel_has_no_repo", { channel: last.channel });
+    return { busy: false };
+  }
+  const directory = resolveRepoDirectory(repo);
+  if (!directory) {
+    logWarn(log, "repo_directory_not_found", { repo, channel: last.channel });
+    return { busy: false };
   }
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      correlationKey,
-      interrupt,
-      ...(directory ? { directory } : {}),
-    }),
+    body: JSON.stringify({ prompt, correlationKey, interrupt, directory }),
   });
 
   if (!response.ok) {
@@ -234,7 +230,9 @@ export async function triggerRunnerCron(
   deps: RunnerDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
+  defaultDirectory?: string,
 ): Promise<TriggerResult> {
+  const directory = defaultDirectory || "/workspace";
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -242,6 +240,7 @@ export async function triggerRunnerCron(
       prompt: payload.prompt,
       correlationKey,
       interrupt,
+      directory,
     }),
   });
 
