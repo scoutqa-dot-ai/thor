@@ -18,7 +18,8 @@ The current approach uses three env vars (`SLACK_CHANNEL_REPOS`, `SLACK_ALLOWED_
 - `getAllowedChannelIds(config)`: returns `Set<string>` — union of all `channels` arrays across repos
 - `getChannelRepoMap(config)`: returns `Map<string, string>` — channel ID → repo name
 - `getRepoDirectory(config, repoName)`: returns `/workspace/repos/{name}`
-- `resolveRepoDirectory(config, repoName)`: returns the directory path if it exists on disk, `undefined` if not (caller logs warning and drops the event)
+- `resolveRepoDirectory(config, repoName)`: returns the directory path if it exists on disk, `undefined` if not (caller logs warning and drops the event). Path is constructed from config — never from user/webhook input — so path traversal is not possible
+- `isAllowedDirectory(config, directory)`: validates a directory string is under an allowed prefix (`/workspace/repos/` or `/workspace/worktrees/`) and resolves to a known repo. Used by runner to reject arbitrary paths from trigger requests
 - Export everything from `packages/common/src/index.ts`
 
 **Exit criteria:**
@@ -56,6 +57,7 @@ The current approach uses three env vars (`SLACK_CHANNEL_REPOS`, `SLACK_ALLOWED_
 
 - Runner uses `defaultDirectory` from config as session fallback
 - Runner still accepts `directory` override from trigger request (for GitHub events)
+- Runner validates `directory` with `isAllowedDirectory` — rejects paths outside allowed prefixes with 400
 - If directory doesn't exist at trigger time, runner returns 400 (existing behavior)
 
 ### Phase 4: Remove old parsing code
@@ -76,14 +78,15 @@ The current approach uses three env vars (`SLACK_CHANNEL_REPOS`, `SLACK_ALLOWED_
 
 ## Decision Log
 
-| #   | Decision                                          | Reason                                                                                                                           |
-| --- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | JSON file at `/workspace/repos.json`              | Already mounted via `./docker-volumes/workspace:/workspace`. No new volume needed.                                               |
-| 2   | Zod schema in `@thor/common`                      | Both gateway and runner depend on common. Single source of truth for validation.                                                 |
-| 3   | Fail fast on invalid config                       | Better to crash at startup than silently misbehave.                                                                              |
-| 4   | Detect duplicate channel IDs                      | One channel mapping to two repos is always a bug. Catch it early.                                                                |
-| 5   | `defaultDirectory` is optional                    | Defaults to `/workspace` if omitted. Keeps minimal configs minimal.                                                              |
-| 6   | Warn + drop at resolve time for missing repo dirs | Repos may be cloned after container starts. Don't crash at startup, but don't forward events to a non-existent directory either. |
+| #   | Decision                                          | Reason                                                                                                                                              |
+| --- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | JSON file at `/workspace/repos.json`              | Already mounted via `./docker-volumes/workspace:/workspace`. No new volume needed.                                                                  |
+| 2   | Zod schema in `@thor/common`                      | Both gateway and runner depend on common. Single source of truth for validation.                                                                    |
+| 3   | Fail fast on invalid config                       | Better to crash at startup than silently misbehave.                                                                                                 |
+| 4   | Detect duplicate channel IDs                      | One channel mapping to two repos is always a bug. Catch it early.                                                                                   |
+| 5   | `defaultDirectory` is optional                    | Defaults to `/workspace` if omitted. Keeps minimal configs minimal.                                                                                 |
+| 6   | Warn + drop at resolve time for missing repo dirs | Repos may be cloned after container starts. Don't crash at startup, but don't forward events to a non-existent directory either.                    |
+| 7   | Validate directory paths against allowed prefixes | Prevents path traversal attacks via crafted webhook payloads. Runner normalizes and checks against `/workspace/repos/` and `/workspace/worktrees/`. |
 
 ## Out of scope
 
