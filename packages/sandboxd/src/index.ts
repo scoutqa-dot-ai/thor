@@ -1,8 +1,17 @@
 import express from "express";
 
-import { createLogger, logError, logInfo } from "@thor/common";
+import {
+  cleanupStaleSandboxes,
+  createDaytonaSandboxProvider,
+  createLogger,
+  destroySandboxForWorktree,
+  logError,
+  logInfo,
+} from "@thor/common";
+import { z } from "zod/v4";
 
 import { CoderRunRequestSchema, runHostedCoder } from "./hosted-coder.js";
+import { resolveWorktreeContext } from "./worktree.js";
 
 const log = createLogger("sandboxd");
 
@@ -54,6 +63,65 @@ app.post("/coder/run", async (req, res) => {
       message: error instanceof Error ? error.message : String(error),
     });
     res.end();
+  }
+});
+
+const DestroyRequestSchema = z.object({
+  cwd: z.string().min(1),
+});
+
+app.delete("/coder/sandbox", async (req, res) => {
+  const parsed = DestroyRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid request body", details: parsed.error.issues });
+    return;
+  }
+
+  const context = resolveWorktreeContext(parsed.data.cwd);
+  logInfo(log, "sandbox_destroy", { cwd: context.cwd, worktreePath: context.worktreePath });
+
+  try {
+    const provider = createDaytonaSandboxProvider({
+      apiKey: process.env.DAYTONA_API_KEY,
+      apiUrl: process.env.DAYTONA_API_URL,
+      target: process.env.DAYTONA_TARGET,
+    });
+
+    const destroyed = await destroySandboxForWorktree(provider, {
+      worktreePath: context.worktreePath,
+      repo: context.repo,
+      branch: context.branch,
+    });
+
+    res.json({ destroyed, worktreePath: context.worktreePath });
+  } catch (error) {
+    logError(log, "sandbox_destroy_error", error instanceof Error ? error.message : String(error));
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+const DEFAULT_CLEANUP_MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+app.post("/coder/cleanup", async (_req, res) => {
+  logInfo(log, "sandbox_cleanup_start", {});
+
+  try {
+    const provider = createDaytonaSandboxProvider({
+      apiKey: process.env.DAYTONA_API_KEY,
+      apiUrl: process.env.DAYTONA_API_URL,
+      target: process.env.DAYTONA_TARGET,
+    });
+
+    const result = await cleanupStaleSandboxes(provider, DEFAULT_CLEANUP_MAX_AGE_MS);
+    logInfo(log, "sandbox_cleanup_completed", {
+      destroyed: result.destroyed.length,
+      errors: result.errors.length,
+    });
+
+    res.json(result);
+  } catch (error) {
+    logError(log, "sandbox_cleanup_error", error instanceof Error ? error.message : String(error));
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
   }
 });
 

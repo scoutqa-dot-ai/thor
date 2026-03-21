@@ -48,12 +48,14 @@ export type { DaytonaSandboxProviderOptions } from "./daytona-sandbox-provider.j
 export {
   ensureSandboxForWorktree,
   destroySandboxForWorktree,
+  cleanupStaleSandboxes,
   SandboxProviderError,
 } from "./sandbox-control.js";
 export type {
   EnsureSandboxAction,
   EnsureSandboxOptions,
   EnsureSandboxResult,
+  CleanupResult,
 } from "./sandbox-control.js";
 export {
   ProgressStartSchema,

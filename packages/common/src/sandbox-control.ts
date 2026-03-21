@@ -3,6 +3,7 @@ import type {
   SandboxMaterializeRequest,
   SandboxProvider,
   SandboxRecord,
+  SandboxStatus,
 } from "./sandboxes.js";
 
 export type EnsureSandboxAction = "created" | "resumed" | "reused";
@@ -111,4 +112,39 @@ export async function destroySandboxForWorktree(
   }
 
   return true;
+}
+
+export interface CleanupResult {
+  destroyed: string[];
+  errors: Array<{ sandboxId: string; error: string }>;
+}
+
+const STALE_STATUSES: SandboxStatus[] = ["stopped", "error"];
+
+export async function cleanupStaleSandboxes(
+  provider: SandboxProvider,
+  maxAgeMs: number,
+): Promise<CleanupResult> {
+  const all = await provider.listAll();
+  const now = Date.now();
+  const result: CleanupResult = { destroyed: [], errors: [] };
+
+  for (const record of all) {
+    if (!STALE_STATUSES.includes(record.status)) continue;
+
+    const updatedAt = new Date(record.updatedAt).getTime();
+    if (now - updatedAt < maxAgeMs) continue;
+
+    try {
+      await provider.destroy(record.sandboxId);
+      result.destroyed.push(record.sandboxId);
+    } catch (error) {
+      result.errors.push({
+        sandboxId: record.sandboxId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return result;
 }

@@ -77,6 +77,7 @@ export interface SandboxExportResult {
 export interface SandboxProvider {
   readonly providerName: string;
   findByWorktree(identity: SandboxIdentity): Promise<SandboxRecord | undefined>;
+  listAll(): Promise<SandboxRecord[]>;
   create(identity: SandboxIdentity): Promise<SandboxRecord>;
   get(sandboxId: string): Promise<SandboxRecord | undefined>;
   stop(sandboxId: string): Promise<void>;

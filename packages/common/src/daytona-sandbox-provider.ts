@@ -148,6 +148,24 @@ export function createDaytonaSandboxProvider(
 
       return result.items[0] ? toSandboxRecord(result.items[0], identity) : undefined;
     },
+    async listAll() {
+      const client = createClient();
+      const records: SandboxRecord[] = [];
+      let page = 1;
+      const pageSize = 50;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const result = await client.list(undefined, page, pageSize);
+        for (const sandbox of result.items) {
+          if (sandbox.labels["thor-worktree-id"]) {
+            records.push(toSandboxRecord(sandbox, identityFromLabels(sandbox.labels)));
+          }
+        }
+        if (result.items.length < pageSize) break;
+        page++;
+      }
+      return records;
+    },
     async create(identity) {
       const client = createClient();
       const createParams = {
