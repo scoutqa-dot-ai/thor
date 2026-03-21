@@ -1,0 +1,29 @@
+packages/common/src/daytona-sandbox-provider.ts
+  e4eabb1d25dbf5b9 50,211-216,218-219,221-238,240-247,249-262,264,266-271
+docs/plan/2026032003_hosted-coding-sandboxes-v1.md
+  e4eabb1d25dbf5b9 28,62-75,78
+packages/sandboxd/src/hosted-coder.ts
+  e4eabb1d25dbf5b9 159-163
+docker/opencode/bin/coder.mjs
+  e4eabb1d25dbf5b9 112-115,130-134,140-150,156-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a20eb40d71c7abf3f3c6588045cd104aedfb2330",
+  "prompts": {
+    "e4eabb1d25dbf5b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abd5f2df-9383-4496-bcda-ff259763f11f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 747,
+      "total_deletions": 310,
+      "accepted_lines": 462,
+      "overriden_lines": 0
+    }
+  }
+}
