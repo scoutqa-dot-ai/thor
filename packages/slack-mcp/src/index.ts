@@ -11,7 +11,6 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { WebClient } from "@slack/web-api";
 import {
-  createChannelFilter,
   createLogger,
   logInfo,
   logError,
@@ -37,7 +36,6 @@ const log = createLogger("slack-mcp");
 const PORT = parseInt(process.env.PORT || "3003", 10);
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const SLACK_ALLOWED_CHANNEL_IDS = parseAllowedChannelIds(process.env.SLACK_ALLOWED_CHANNEL_IDS);
-const isChannelAllowed = createChannelFilter(SLACK_ALLOWED_CHANNEL_IDS);
 
 if (!SLACK_BOT_TOKEN) {
   logError(log, "missing_env", "SLACK_BOT_TOKEN is required");
@@ -129,7 +127,7 @@ async function handleToolCall(
       const channel = String(args.channel);
       const text = String(args.text);
       const threadTs = args.thread_ts ? String(args.thread_ts) : undefined;
-      if (!isChannelAllowed(channel)) {
+      if (!SLACK_ALLOWED_CHANNEL_IDS.has(channel)) {
         logInfo(log, "post_message_blocked", { channel, reason: "channel_not_allowed" });
         return {
           content: [
@@ -271,7 +269,7 @@ app.post("/progress", async (req, res) => {
   }
   try {
     const { channel, threadTs, event } = parsed.data;
-    if (!isChannelAllowed(channel)) {
+    if (!SLACK_ALLOWED_CHANNEL_IDS.has(channel)) {
       logInfo(log, "progress_blocked", { channel, reason: "channel_not_allowed" });
       res.json({ ok: true, ignored: true });
       return;
@@ -292,7 +290,7 @@ app.post("/reaction", async (req, res) => {
   }
   try {
     const { channel, timestamp, reaction } = parsed.data;
-    if (!isChannelAllowed(channel)) {
+    if (!SLACK_ALLOWED_CHANNEL_IDS.has(channel)) {
       logInfo(log, "reaction_blocked", { channel, reason: "channel_not_allowed" });
       res.json({ ok: true, ignored: true });
       return;

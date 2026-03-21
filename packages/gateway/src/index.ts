@@ -50,7 +50,7 @@ app.listen(PORT, () => {
     proxyHost: PROXY_HOST,
     queueDir: QUEUE_DIR,
     configured: Boolean(SLACK_SIGNING_SECRET),
-    allowedChannels: allowedChannelIds.length > 0 ? allowedChannelIds : "all",
+    allowedChannels: allowedChannelIds,
     repos: Object.keys(workspaceConfig.repos),
   });
 });

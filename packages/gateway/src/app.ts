@@ -1,6 +1,5 @@
 import express, { type Express, type Request, type Response } from "express";
 import {
-  createChannelFilter,
   createLogger,
   logError,
   logInfo,
@@ -120,7 +119,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const selfUserId = config.slackBotUserId;
   const interruptDelay = config.interruptDelayMs ?? INTERRUPT_DELAY_MS;
   const unaddressedDelay = config.unaddressedDelayMs ?? UNADDRESSED_DELAY_MS;
-  const isChannelAllowed = createChannelFilter(new Set(config.allowedChannelIds ?? []));
+  const allowedChannels = new Set(config.allowedChannelIds ?? []);
 
   const runnerDeps: RunnerDeps = {
     runnerUrl: config.runnerUrl,
@@ -316,11 +315,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    // Block DMs and non-allowlisted channels
+    // Block non-allowlisted channels
     if (
       "channel" in event &&
       typeof event.channel === "string" &&
-      !isChannelAllowed(event.channel)
+      !allowedChannels.has(event.channel)
     ) {
       logInfo(log, "event_ignored_channel_not_allowed", { eventId, channel: event.channel });
       res.status(200).json({ ok: true, ignored: true });
