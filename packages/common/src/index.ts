@@ -3,6 +3,17 @@ export {
   parseChannelRepoMap,
   createChannelFilter,
 } from "./channel-filter.js";
+export {
+  WorkspaceConfigSchema,
+  loadWorkspaceConfig,
+  getAllowedChannelIds as getAllowedChannelIdsFromConfig,
+  getChannelRepoMap as getChannelRepoMapFromConfig,
+  getRepoDirectory,
+  resolveRepoDirectory,
+  isAllowedDirectory,
+  getDefaultDirectory,
+} from "./workspace-config.js";
+export type { WorkspaceConfig, RepoConfig } from "./workspace-config.js";
 export { writeToolCallLog } from "./worklog.js";
 export type { ToolCallLogEntry } from "./worklog.js";
 export { createLogger, logInfo, logWarn, logError } from "./logger.js";
