@@ -108,7 +108,7 @@ export function resolveRepoDirectory(repoName: string): string | undefined {
   }
 }
 
-const ALLOWED_PREFIXES = ["/workspace/repos/", "/workspace/worktrees/"];
+const ALLOWED_PREFIXES = ["/workspace/repos/"];
 
 /**
  * Check that a directory path is under an allowed workspace prefix.
