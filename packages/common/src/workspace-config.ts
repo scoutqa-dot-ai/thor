@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import { readFileSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, normalize } from "node:path";
 
 // --- Schema ---
 
@@ -95,18 +95,29 @@ export function getChannelRepoMap(config: WorkspaceConfig): Map<string, string> 
 
 /**
  * Resolve a repo name to its directory on disk.
- * Uses realpathSync to resolve symlinks and `..`, then checks the result
- * is under the allowed prefix. Returns `undefined` if the path escapes
- * the prefix or does not exist on disk.
+ * Returns the real path if the directory exists, `undefined` otherwise.
+ * Path safety (prefix check) is enforced by the runner, not here.
  */
 export function resolveRepoDirectory(repoName: string): string | undefined {
   const candidate = join(REPOS_PREFIX, repoName);
   try {
-    const real = realpathSync(candidate);
-    if (!real.startsWith(REPOS_PREFIX + "/")) return undefined;
-    return real;
+    return realpathSync(candidate);
   } catch {
     // Path does not exist on disk
     return undefined;
   }
+}
+
+const ALLOWED_PREFIXES = ["/workspace/repos/", "/workspace/worktrees/"];
+
+/**
+ * Check that a directory path is under an allowed workspace prefix.
+ * Normalizes to prevent traversal (e.g. `/workspace/repos/../../etc`).
+ * Returns true if the path is allowed, false otherwise.
+ */
+export function isAllowedDirectory(directory: string): boolean {
+  const normalized = normalize(resolve("/", directory));
+  return ALLOWED_PREFIXES.some(
+    (prefix) => normalized.startsWith(prefix) && normalized.length > prefix.length,
+  );
 }

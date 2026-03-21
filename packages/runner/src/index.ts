@@ -11,7 +11,7 @@ import type {
   ToolStateCompleted,
   ToolStateError,
 } from "@opencode-ai/sdk";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import {
   createLogger,
   logInfo,
@@ -26,6 +26,7 @@ import {
   extractAliases,
   registerAlias,
   getNotesLineCount,
+  isAllowedDirectory,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -223,12 +224,17 @@ app.post("/trigger", async (req, res) => {
     await ensureOpencodeAvailable();
 
     const sessionDirectory = directory;
-    if (!existsSync(sessionDirectory)) {
-      logError(log, "directory_not_found", `Directory does not exist: ${sessionDirectory}`, {
-        directory: sessionDirectory,
-        correlationKey,
-      });
-      res.status(400).json({ error: `Directory does not exist: ${sessionDirectory}` });
+    if (!isAllowedDirectory(sessionDirectory)) {
+      logError(
+        log,
+        "directory_not_allowed",
+        `Directory not under allowed prefix: ${sessionDirectory}`,
+        {
+          directory: sessionDirectory,
+          correlationKey,
+        },
+      );
+      res.status(400).json({ error: `Directory not allowed: ${sessionDirectory}` });
       return;
     }
 
