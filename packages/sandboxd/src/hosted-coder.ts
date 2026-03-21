@@ -6,6 +6,7 @@ import {
   ensureSandboxForWorktree,
   getRemoteWorkspaceDir,
   type EnsureSandboxResult,
+  SandboxProviderError,
   type SandboxExecEvent,
   type SandboxExportResult,
 } from "@thor/common";
@@ -129,9 +130,13 @@ export async function runHostedCoder(
       exportResult = await safeExport(provider, ensured.record.sandboxId, context.worktreePath);
     }
 
+    const category = error instanceof SandboxProviderError ? "provider" : "coding";
+
     writeEvent({
       type: "error",
+      category,
       message: error instanceof Error ? error.message : String(error),
+      ...(error instanceof SandboxProviderError ? { providerOperation: error.operation } : {}),
       sandboxId: ensured?.record.sandboxId,
       sandboxAction: ensured?.action,
       filesChanged: exportResult?.filesChanged,

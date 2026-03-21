@@ -13,7 +13,7 @@
 | D5  | Treat workspace materialization as an abstraction                                                                         | Thor should not commit to one sync protocol such as `rsync` in advance.                                                                                                                                                                                     |
 | D6  | Keep sandbox lifecycle internal even when shipping a hosted coder tool                                                    | The main agent should work through a task-oriented tool surface, not sandbox primitives.                                                                                                                                                                    |
 | D7  | Make short-lived credentials and post-bootstrap egress controls baseline requirements                                     | "Safe hosted sandbox" is primarily a blast-radius problem.                                                                                                                                                                                                  |
-| D8  | Keep local execution as the fallback path                                                                                 | Thor still needs a degraded mode when provider APIs fail or quotas are exhausted.                                                                                                                                                                           |
+| D8  | ~~Keep local execution as the fallback path~~ → Fail fast on provider errors, no local fallback in v1                     | Simplifies v1 scope; clear error categories let callers decide retry strategy without hidden degraded-mode behavior.                                                                                                                                        |
 | D9  | Run the Phase 2 spike as a standalone harness with official provider SDKs                                                 | The spike should validate real provider behavior without prematurely shaping app code.                                                                                                                                                                      |
 | D10 | Materialize worktrees for the spike by direct archive upload                                                              | Upload-based materialization lets the spike lock down sandbox egress from the start.                                                                                                                                                                        |
 | D11 | Treat live egress enforcement as a provider gate, not a doc-level assumption                                              | The live E2B spike passed lifecycle and preview auth but did not enforce egress lock.                                                                                                                                                                       |
@@ -149,7 +149,7 @@ Steps:
 8. Update the main `build.md` instructions so Thor uses the `coder` command instead of a local `coder` subagent.
 9. Reuse one sandbox per worktree where possible.
 10. Materialize worktree state into the sandbox and export code changes plus artifacts back out.
-11. Distinguish provider failures from delegated coding failures and fall back to local when needed.
+11. Distinguish provider failures from delegated coding failures and fail fast with a clear error category.
 12. Integrate sandbox attach, export, and destroy behavior with Thor's worktree lifecycle.
 
 **Exit criteria**:
@@ -160,7 +160,7 @@ Steps:
 - Thor can create or reattach the correct sandbox for a worktree
 - the hosted coder can run tests and local servers in the sandbox without shared-runtime interference
 - code changes and artifacts come back into the normal local git flow
-- provider failures are distinguishable from delegated coding failures
+- provider failures are distinguishable from delegated coding failures (fail fast, no local fallback)
 - idle sandboxes are cleaned up automatically
 
 ## Phase 4 — Richer Hosted Workflows
