@@ -18,13 +18,15 @@ Thor needs a first-class hosted sandbox feature that turns a coding task into an
 
 ## Feature Goal
 
-Thor can attach a hosted sandbox to a worktree so coding work runs in isolation, useful state can be reused across follow-up events, and code changes plus artifacts flow back into Thor's normal review workflow.
+Thor can delegate coding on a worktree to one hosted `coder` command so the work runs in isolation, useful state can be reused across follow-up events, and code changes plus artifacts flow back into Thor's normal review workflow.
 
 ## Principles
 
 - **Isolation first** - each coding sandbox is independent from other Thor sessions
 - **One sandbox per worktree in v1** - the default unit of work is one active sandbox per worktree
+- **One coder command for the main agent** - the main OpenCode agent should delegate isolated coding through one command, not through sandbox lifecycle primitives
 - **Control plane owns identity and policy** - Thor remains the source of truth for sandbox lookup, credentials, policy, and auditability
+- **Sandbox lifecycle stays internal** - create, attach, stop, resume, destroy, and provider choice are Thor implementation details, not agent-facing concepts
 - **Worktree identity must survive restarts** - sandbox lookup cannot live only in transient process memory
 - **Git-native when possible** - Thor should preserve branch and PR semantics instead of treating source as an opaque file tree
 - **Secrets stay outside when possible** - sandboxes should not become long-lived secret stores
@@ -37,77 +39,91 @@ Thor can attach a hosted sandbox to a worktree so coding work runs in isolation,
 V1 is intentionally narrow:
 
 - one active sandbox per worktree
-- the worktree is the user-facing unit of work
+- the main agent uses one `coder` command as the user-facing interface
+- low-level sandbox lifecycle is internal to Thor
 - Thor resolves the authoritative worktree-to-sandbox mapping from provider data on demand
 - Thor may recreate a sandbox from the latest known workspace state if the original sandbox disappears
 - coordinated multi-sandbox workflows are deferred
 
 ## In Scope
 
-- hosted remote sandboxes for coding tasks
+- one hosted `coder` command for isolated coding tasks on a worktree
+- internal sandbox lifecycle management behind that command
+- a dedicated `sandboxd` service that owns hosted coder orchestration
 - isolated execution for code edits, tests, local servers, and browser-driven validation
-- sandbox lifecycle management: create, attach, stop, resume or restore, destroy
-- mapping sandboxes to worktrees, sessions, branches, and PRs
+- mapping sandboxes and delegated coder sessions to worktrees, sessions, branches, and PRs
 - workspace materialization into and out of sandboxes
 - short-lived credential brokering and sandbox network policy
-- authenticated or expiring preview URLs for running applications
+- authenticated or expiring preview URLs for running applications when the delegated coder starts them
 - logs, screenshots, reports, preview metadata, and code changes produced by sandbox runs
-- real-time execution telemetry back to Thor's control plane
+- real-time execution telemetry back to Thor's control plane and back to the calling agent in summarized form
 - provider abstraction that decouples Thor from any single vendor
 
 ## Out of Scope
 
 - self-hosted sandbox infrastructure as the default recommendation
 - replacing Thor's gateway, runner, or MCP proxy architecture
+- exposing sandbox create, attach, stop, resume, destroy, or provider selection directly to the main agent
+- raw `bash-in-sandbox` style execution as the primary agent-facing abstraction
 - multi-user collaborative IDE sessions
 - coordinated multi-sandbox workflows in v1
 - provider-specific implementation details such as one mandated sync protocol
 
 ## Primary Use Cases
 
-### 1. Parallel coding sessions
+### 1. Parallel delegated coding sessions
 
-Thor works on unrelated engineering tasks at the same time, each in its own isolated sandbox.
+Thor works on unrelated engineering tasks at the same time by delegating each worktree to its own isolated hosted coder.
 
 ### 2. PR follow-up work
 
-Thor resumes the sandbox attached to a worktree when review comments, CI failures, or deployment results arrive for the same branch or PR.
+Thor resumes the hosted coder attached to a worktree when review comments, CI failures, or deployment results arrive for the same branch or PR.
 
-### 3. Test and regression execution
+### 3. Isolated coding with integrated validation
 
-Thor runs targeted tests, local servers, and regression checks inside a sandbox without affecting other coding work.
+Thor delegates a coding prompt to the hosted coder, which can edit code, run tests, start local servers, and perform regression checks without affecting other work.
 
 ### 4. Browser and GUI-assisted validation
 
-Thor uses a sandbox to run previewable applications, browser automation, or visual validation as part of coding work.
+Thor delegates coding tasks that require previewable applications, browser automation, or visual validation to the hosted coder.
 
-### 5. High-trust code handling with lower-trust execution
+### 5. High-trust orchestration with lower-trust execution
 
-Thor can operate on source code in a sandbox while keeping privileged brokers and long-lived secrets outside the sandbox boundary.
+Thor can keep privileged brokers and long-lived secrets outside the sandbox boundary while still delegating deeper coding work to an isolated hosted coder.
 
 ## User Experience Outcomes
 
 When the feature is working well:
 
-- a coding task feels like it has its own isolated workspace
+- a coding task feels like it has its own isolated coding helper
 - one worktree maps cleanly to one sandbox by default
+- the main agent delegates isolated coding through one `coder` command instead of managing sandbox lifecycle
 - follow-up events land back on the correct sandbox with minimal manual recovery
-- code execution, local servers, and browser validation happen in the sandbox rather than in Thor's shared runtime
+- code execution, local servers, and browser validation happen inside the hosted coder environment rather than in Thor's shared runtime
 - changes and artifacts come back into Thor's normal git and review flow
 
 ## Functional Requirements
 
+### Command surface
+
+- the main agent gets one `coder` command for isolated coding on a worktree
+- the command resolves the current worktree from `cwd`
+- the command accepts a coding prompt via `--prompt` or stdin
+- the command returns machine-readable progress and final results
+- the command does not expose sandbox ids, provider names, or sandbox lifecycle commands
+- the main agent does not choose between local and hosted execution primitives directly
+
 ### Worktree identity
 
-- Thor can associate a sandbox with a repo, worktree, branch or PR, and Thor session
-- Thor can determine whether an event should create a new sandbox or attach to an existing one
+- Thor can associate a sandbox and hosted coder execution with a repo, worktree, branch or PR, and Thor session
+- Thor can determine whether a coding request should create a new sandbox or attach to an existing one
 - sandbox creation is idempotent for a given worktree identity
 - sandbox lookup survives service restarts while the worktree still exists
 - v1 supports one active sandbox per worktree
 
 ### Lifecycle
 
-- Thor can create, attach to, stop, resume or restore, and destroy sandboxes
+- Thor can internally create, attach to, stop, resume or restore, and destroy sandboxes
 - idle sandboxes auto-stop after a configurable interval to control cost
 - Thor can preserve useful working state through reuse, pause/resume, or snapshot/restore depending on provider support
 - Thor can reconcile provider state after restarts and recreate a sandbox from the latest materialized workspace state if the original sandbox is gone
@@ -125,8 +141,9 @@ When the feature is working well:
 
 - each sandbox has its own writable filesystem, process space, and network boundary
 - background tasks, local servers, and browser runs in one sandbox do not affect another sandbox
-- Thor can run commands in the sandbox and may optionally attach a delegated coding agent
-- sandboxes can run package installs, tests, local servers, and browser-based validation
+- the hosted coder can run commands in the sandbox on Thor's behalf
+- the hosted coder can run package installs, tests, local servers, and browser-based validation
+- the main agent should delegate deeper isolated coding through the `coder` command instead of directly driving sandbox primitives
 
 ### Security and access
 
@@ -139,13 +156,14 @@ When the feature is working well:
 ### Observability and artifacts
 
 - sandboxes stream lifecycle events, logs, test results, and preview metadata back to Thor in real time
+- Thor returns machine-readable progress and outcomes from the hosted coder back to the calling agent
 - telemetry supports reconnection after transient disconnects
 - Thor can distinguish provider failures from coding-task failures
 - Thor can collect logs, screenshots, reports, and similar artifacts for later review
 
 ### Provider abstraction
 
-- Thor interacts with sandboxes through a provider-agnostic interface
+- Thor interacts with sandboxes through a provider-agnostic internal interface
 - the interface covers lifecycle, lookup, execution, workspace materialization, preview lookup, and event streaming
 - provider selection is an implementation decision documented in a plan, not in this feature spec
 
@@ -181,8 +199,9 @@ When the feature is working well:
 
 The feature is successful when:
 
-- Thor can run parallel coding sessions without shared-runtime interference
+- Thor can run parallel delegated coding sessions without shared-runtime interference
 - one worktree maps cleanly to one isolated coding environment by default
+- the main agent can delegate isolated coding through one `coder` command without managing sandbox lifecycle
 - follow-up events can resume the correct environment with minimal friction
 - the sandbox can support tests, local servers, and browser validation as part of normal coding work
 - privileged broker access remains outside the sandbox boundary
@@ -248,6 +267,6 @@ Implementation must explicitly handle the following classes of failure.
 
 ## Open Questions
 
-- should v1 support only direct remote execution, or also a delegated coding agent in the sandbox?
+- how much progress, preview, and artifact detail should the hosted coder return directly to the calling agent?
 - should private repo bootstrap use short-lived clone credentials, `git bundle` upload, or both?
 - which provider best satisfies Thor's worktree identity, network policy, and continuity requirements in a real spike?

@@ -4,20 +4,24 @@
 
 ## Decision Log
 
-| #   | Decision                                                                              | Rationale                                                                                  |
-| --- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| D1  | Use one active sandbox per worktree in v1                                             | This matches the desired UX and keeps identity, locking, and recovery simple.              |
-| D2  | Keep the feature doc provider-neutral                                                 | Product behavior should remain stable even if provider choice changes.                     |
-| D3  | Choose a provider by thin spike, not by doc-only scoring                              | Real create/attach/materialize/exec behavior matters more than scorecards.                 |
-| D4  | Resolve worktree-to-sandbox mapping from provider data on demand                      | A local mirror is optional in v1 if provider lookup by worktree metadata is reliable.      |
-| D5  | Treat workspace materialization as an abstraction                                     | Thor should not commit to one sync protocol such as `rsync` in advance.                    |
-| D6  | Ship the execution plane before any nested coding agent                               | Sandbox lifecycle, materialization, and security must work on their own first.             |
-| D7  | Make short-lived credentials and post-bootstrap egress controls baseline requirements | "Safe hosted sandbox" is primarily a blast-radius problem.                                 |
-| D8  | Keep local execution as the fallback path                                             | Thor still needs a degraded mode when provider APIs fail or quotas are exhausted.          |
-| D9  | Run the Phase 2 spike as a standalone harness with official provider SDKs             | The spike should validate real provider behavior without prematurely shaping app code.     |
-| D10 | Materialize worktrees for the spike by direct archive upload                          | Upload-based materialization lets the spike lock down sandbox egress from the start.       |
-| D11 | Treat live egress enforcement as a provider gate, not a doc-level assumption          | The live E2B spike passed lifecycle and preview auth but did not enforce egress lock.      |
-| D12 | Put the first Daytona control-plane flow in `@thor/common` before runner wiring       | The app should integrate against one tested `ensure` or `destroy` flow, not raw SDK calls. |
+| #   | Decision                                                                              | Rationale                                                                                                  |
+| --- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| D1  | Use one active sandbox per worktree in v1                                             | This matches the desired UX and keeps identity, locking, and recovery simple.                              |
+| D2  | Keep the feature doc provider-neutral                                                 | Product behavior should remain stable even if provider choice changes.                                     |
+| D3  | Choose a provider by thin spike, not by doc-only scoring                              | Real create/attach/materialize/exec behavior matters more than scorecards.                                 |
+| D4  | Resolve worktree-to-sandbox mapping from provider data on demand                      | A local mirror is optional in v1 if provider lookup by worktree metadata is reliable.                      |
+| D5  | Treat workspace materialization as an abstraction                                     | Thor should not commit to one sync protocol such as `rsync` in advance.                                    |
+| D6  | Keep sandbox lifecycle internal even when shipping a hosted coder tool                | The main agent should work through a task-oriented tool surface, not sandbox primitives.                   |
+| D7  | Make short-lived credentials and post-bootstrap egress controls baseline requirements | "Safe hosted sandbox" is primarily a blast-radius problem.                                                 |
+| D8  | Keep local execution as the fallback path                                             | Thor still needs a degraded mode when provider APIs fail or quotas are exhausted.                          |
+| D9  | Run the Phase 2 spike as a standalone harness with official provider SDKs             | The spike should validate real provider behavior without prematurely shaping app code.                     |
+| D10 | Materialize worktrees for the spike by direct archive upload                          | Upload-based materialization lets the spike lock down sandbox egress from the start.                       |
+| D11 | Treat live egress enforcement as a provider gate, not a doc-level assumption          | The live E2B spike passed lifecycle and preview auth but did not enforce egress lock.                      |
+| D12 | Put the first Daytona control-plane flow in `@thor/common` before runner wiring       | The app should integrate against one tested `ensure` or `destroy` flow, not raw SDK calls.                 |
+| D13 | Expose one hosted `coder` command to the main agent in v1                             | This keeps the product surface useful without teaching the main agent about sandbox internals.             |
+| D14 | Move `coder.md` out of the main OpenCode agent registry                               | The hosted coder prompt should be a runner-owned internal asset, not a locally invokable subagent.         |
+| D15 | Give hosted coder orchestration its own `sandboxd` service                            | Hosted coder sessions have a different lifecycle than the main runner and should not live in `remote-cli`. |
+| D16 | Start with `coder run` only in the first cut                                          | A blocking command is enough to prove the workflow and avoids building run registries too early.           |
 
 ## Problem
 
@@ -28,7 +32,7 @@ Thor needs isolated execution for coding work, but the current shared runtime mo
 - a safe place to run tests, servers, and browser automation
 - a clean security boundary for autonomous execution
 
-The implementation plan for this feature should therefore start with sandbox identity, lifecycle, materialization, and security, not with a provider-specific transport or a nested coding workflow.
+The implementation plan for this feature should therefore start with sandbox identity, lifecycle, materialization, and security, then expose one hosted `coder` command rather than raw sandbox operations.
 
 ## Phase 1 — Sandbox Contract and State Model
 
@@ -86,43 +90,48 @@ Steps:
 - the surviving state model is documented: filesystem only, memory plus processes, or snapshot recreation
 - a default provider is chosen for implementation
 
-## Phase 3 — Hosted Sandbox V1
+## Phase 3 — Hosted Coder V1
 
-**Goal**: Ship the hosted execution plane with one sandbox per worktree.
+**Goal**: Ship one hosted `coder` command backed by `sandboxd` and Daytona with one sandbox per worktree.
 
 Steps:
 
-1. Implement worktree lookup against the chosen provider.
-2. Implement one provider adapter behind the shared interface.
-3. Implement workspace materialization and export for the chosen provider.
-4. Implement command execution and event streaming.
-5. Implement cleanup, idle timeout, and fallback-to-local behavior.
-6. Integrate sandbox attach and destroy behavior with Thor's worktree lifecycle.
+1. Keep the low-level Daytona control plane internal to Thor.
+2. Add a dedicated `sandboxd` service to own sandbox lookup, hosted coder lifecycle, export, cleanup, and fallback.
+3. Install `/usr/local/bin/coder` in the OpenCode image as a thin wrapper over `sandboxd`.
+4. Start with one blocking `coder run` command that resolves the current worktree from `cwd`.
+5. Move the current `coder.md` prompt out of `docker/opencode/agents/` and make it a `sandboxd`-owned prompt template for the hosted coder.
+6. Update the main `build.md` instructions so Thor uses the `coder` command instead of a local `coder` subagent.
+7. Reuse one sandbox per worktree where possible.
+8. Materialize worktree state into the sandbox and export code changes plus artifacts back out.
+9. Distinguish provider failures from delegated coding failures and fall back to local when needed.
+10. Integrate sandbox attach, export, and destroy behavior with Thor's worktree lifecycle.
 
 **Exit criteria**:
 
+- the main agent can use one `coder run` command for isolated hosted coding on a worktree
+- the main agent can no longer invoke `coder` as a local OpenCode subagent
 - Thor can create or reattach the correct sandbox for a worktree
-- Thor can run tests and local servers in the sandbox without shared-runtime interference
+- the hosted coder can run tests and local servers in the sandbox without shared-runtime interference
 - code changes and artifacts come back into the normal local git flow
-- provider failures are distinguishable from task failures
+- provider failures are distinguishable from delegated coding failures
 - idle sandboxes are cleaned up automatically
 
-## Phase 4 — Delegated Coding and Richer Validation
+## Phase 4 — Richer Hosted Workflows
 
-**Goal**: Add higher-level sandbox workflows only after the base execution plane is stable.
+**Goal**: Add richer hosted workflows only after the hosted coder path is stable.
 
 Steps:
 
-1. Decide whether Thor should support a delegated coding agent inside the sandbox.
-2. If so, keep delegated-agent continuity separate from sandbox continuity.
-3. Add browser-heavy validation and richer artifact capture.
-4. Add preview URLs to downstream review surfaces where useful.
+1. Add browser-heavy validation and richer artifact capture.
+2. Add preview URLs to downstream review surfaces where useful.
+3. Add additional hosted tools only if the single `coder` abstraction proves insufficient.
 
 **Exit criteria**:
 
-- delegated coding is optional and not required for basic sandbox lifecycle
 - richer validation builds on the same worktree-scoped sandbox lookup model
-- preview and artifact handling reuse the base provider interface
+- preview and artifact handling reuse the same internal provider interface
+- the product surface remains task-oriented instead of exposing sandbox lifecycle
 
 ## Out of Scope
 
