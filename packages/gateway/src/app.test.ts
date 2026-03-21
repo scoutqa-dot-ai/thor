@@ -24,8 +24,8 @@ async function withServer<T>(
     fetchImpl,
     queueDir,
     disableQueueInterval: true,
-    slackActiveDelayMs: 0,
-    slackUnaddressedDelayMs: 0,
+    interruptDelayMs: 0,
+    unaddressedDelayMs: 0,
     ...extraConfig,
   });
 
@@ -196,17 +196,10 @@ describe("gateway", () => {
     });
   });
 
-  it("forwards thread replies when runner has an existing session", async () => {
+  it("enqueues thread replies without interrupt flag (never interrupts running session)", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // 1st call: GET /sessions?correlationKey=... → 200 (session exists)
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ sessionId: "session-123" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
-      // 2nd call: POST /trigger → 200 (fire-and-forget)
+      // POST /trigger → 200 (fire-and-forget)
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
@@ -238,18 +231,12 @@ describe("gateway", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
 
-      // Wait for async session check + enqueue, then flush
-      for (let attempt = 0; attempt < 20 && fetchImpl.mock.calls.length < 1; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
       await queue.flush();
 
-      // fetchImpl: session lookup + trigger
-      expect(fetchImpl).toHaveBeenCalledTimes(2);
-      expect(fetchImpl.mock.calls[0][0]).toBe(
-        "http://runner.test/sessions?correlationKey=slack%3Athread%3A1710000000.001",
-      );
-      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
+      // No session lookup — just trigger
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
+      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
       const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
       const promptPayload = JSON.parse(promptJson);
@@ -258,16 +245,9 @@ describe("gateway", () => {
     });
   });
 
-  it("enqueues thread replies with long delay when no runner session exists", async () => {
+  it("enqueues thread replies with long delay (no session lookup)", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // GET /sessions?correlationKey=... → 404 (no session)
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: "No session for this correlation key" }), {
-          status: 404,
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
       // POST /trigger → 200
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
@@ -300,18 +280,11 @@ describe("gateway", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
 
-      // Wait for async session check + enqueue
-      for (let attempt = 0; attempt < 20 && fetchImpl.mock.calls.length < 1; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
       await queue.flush();
 
-      // Session lookup happened, and trigger was fired
-      expect(fetchImpl).toHaveBeenCalledTimes(2);
-      expect(fetchImpl.mock.calls[0][0]).toBe(
-        "http://runner.test/sessions?correlationKey=slack%3Athread%3A1710000000.004",
-      );
-      expect(fetchImpl.mock.calls[1][0]).toBe("http://runner.test/trigger");
+      // No session lookup — just trigger
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
     });
   });
 
@@ -434,13 +407,6 @@ describe("gateway", () => {
   it("handles other bot messages like normal messages", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // GET /sessions → 200 (session exists for the thread)
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ sessionId: "session-456" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
       // POST /trigger → 200
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
@@ -474,16 +440,12 @@ describe("gateway", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
 
-      // Wait for async session check + enqueue
-      for (let attempt = 0; attempt < 20 && fetchImpl.mock.calls.length < 1; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
       await queue.flush();
 
-      // Session lookup + trigger
-      expect(fetchImpl).toHaveBeenCalledTimes(2);
-      expect(fetchImpl.mock.calls[1][0]).toBe("http://runner.test/trigger");
-      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
+      // No session lookup — just trigger
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
+      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
       expect(triggerBody.prompt).toContain("deploy completed");
       expect(triggerBody.prompt).toContain("B123");
     });

@@ -174,6 +174,32 @@ export function parseGitHubEvent(body: unknown): GitHubEvent | undefined {
 // An alias using just the repo name is added so that runner-side
 // correlation (which only has the directory name) can match.
 
+/**
+ * Check if a GitHub event payload mentions a specific username (e.g. `@thor-bot`).
+ * Uses existing payload schemas to extract comment.body, review.body, and pull_request.body.
+ */
+export function githubEventMentions(event: GitHubEvent, username: string): boolean {
+  if (!username) return false;
+  const mention = `@${username}`;
+  const p = event.payload;
+
+  const bodies: (string | null | undefined)[] = [];
+
+  const comment = IssueCommentPayload.safeParse(p);
+  if (comment.success) bodies.push(comment.data.comment.body);
+
+  const reviewComment = PullRequestReviewCommentPayload.safeParse(p);
+  if (reviewComment.success) bodies.push(reviewComment.data.comment.body);
+
+  const review = PullRequestReviewPayload.safeParse(p);
+  if (review.success) bodies.push(review.data.review.body);
+
+  const pr = PullRequestPayload.safeParse(p);
+  if (pr.success) bodies.push(pr.data.pull_request.body);
+
+  return bodies.some((b) => b?.includes(mention));
+}
+
 export function getGitHubCorrelationKeys(event: GitHubEvent): string[] {
   const canonical = `git:branch:${event.repository}:${event.branch}`;
   const keys = [canonical];

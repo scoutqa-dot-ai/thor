@@ -1,21 +1,7 @@
 /**
- * Directory-based event queue with per-key serial processing.
+ * Directory-based event queue with debounced batching.
  *
- * Incoming events are written as individual JSON files to a queue directory.
- * A fixed-interval consumer scans the directory, groups pending files by
- * correlation key, and dispatches each group as a batch to the handler once
- * the batch's readyAt deadline has passed.
- *
- * No events are dropped — the handler receives all queued events for a key
- * in chronological order and decides how to process them (e.g. combine
- * prompts into a single runner trigger).
- *
- * Flow:
- *   1. HTTP handler calls enqueue() → atomic file write (.tmp → rename).
- *   2. Fixed-interval scan (default 100ms) reads the directory.
- *   3. Group files by correlation key; check max(readyAt) per group.
- *   4. If readyAt <= now → dispatch the batch. If not → skip (wait for next tick).
- *   5. Per-key serial: if a key is already processing, skip it (files stay).
+ * See docs/plan/2026032101_mention-interrupt.md for design details.
  */
 
 import {
@@ -45,6 +31,8 @@ export interface QueuedEvent<T = unknown> {
   readyAt: number;
   /** Original delay in ms used to compute readyAt. */
   delayMs?: number;
+  /** If true, this event can interrupt a running session for the same key. */
+  interrupt?: boolean;
 }
 
 const QueuedEventSchema = z.object({
@@ -56,9 +44,16 @@ const QueuedEventSchema = z.object({
   sourceTs: z.number(),
   readyAt: z.number(),
   delayMs: z.number().optional(),
+  interrupt: z.boolean().optional(),
 });
 
-export type EventHandler = (events: QueuedEvent[]) => Promise<void>;
+/**
+ * Handler callback. Call `ack()` to confirm processing and delete the files.
+ * If the handler returns without calling ack (e.g. runner busy), files stay
+ * on disk and will be retried on the next scan cycle.
+ * If the handler throws, files are deleted to prevent infinite retry loops.
+ */
+export type EventHandler = (events: QueuedEvent[], ack: () => void) => Promise<void>;
 
 export interface EventQueueOptions {
   /** Queue directory path. Created if it doesn't exist. */
@@ -75,10 +70,10 @@ export class EventQueue {
   private readonly dir: string;
   private readonly handler: EventHandler;
 
-  /** Correlation keys with in-flight processing. */
-  private readonly processing = new Set<string>();
-  /** Tracked promises for in-flight processing (for flush). */
-  private readonly active = new Set<Promise<void>>();
+  /** Per-key in-flight promise. Prevents the same key from dispatching twice in one cycle. */
+  private readonly processing = new Map<string, Promise<void>>();
+  /** Incremented each time a handler calls ack. Used by flush() to detect progress. */
+  private ackCount = 0;
 
   private interval: ReturnType<typeof setInterval> | null = null;
 
@@ -111,7 +106,9 @@ export class EventQueue {
 
   /**
    * Manually scan the queue, process all ready events, and wait for
-   * all in-flight processing to complete. Repeats until the queue is empty.
+   * all in-flight processing to complete. Repeats while handlers keep
+   * acking (new files get deleted → new events may become ready).
+   * Stops when no handler acks in a cycle (deferred events stay on disk).
    *
    * Intended for tests (bypasses the polling interval).
    */
@@ -119,8 +116,13 @@ export class EventQueue {
     for (;;) {
       this.scan();
 
-      if (this.active.size === 0) break;
-      await Promise.allSettled([...this.active]);
+      if (this.processing.size === 0) break;
+
+      const acksBefore = this.ackCount;
+      await Promise.allSettled([...this.processing.values()]);
+
+      // If no handler acked in this cycle, remaining files are deferred — stop.
+      if (this.ackCount === acksBefore) break;
     }
   }
 
@@ -136,13 +138,7 @@ export class EventQueue {
   // Internals
   // ---------------------------------------------------------------------------
 
-  /**
-   * Read all pending event files, group by correlation key, and dispatch
-   * each ready group as a batch to the handler.
-   */
   private scan(): void {
-    if (this.active.size > 0) return;
-
     let files: string[];
     try {
       files = readdirSync(this.dir)
@@ -175,49 +171,63 @@ export class EventQueue {
     for (const [key, entries] of byKey) {
       if (this.processing.has(key)) continue;
 
-      // Batch readiness: latestArrival + shortestDelay.
-      // This batches rapid-fire same-delay events (wait for the last one) and
-      // expedites mixed-delay batches (e.g. 60s unaddressed + 3s mention → 3s
-      // window from the latest arrival).
-      const latestArrival = Math.max(
-        ...entries.map((e) => e.event.readyAt - (e.event.delayMs ?? 0)),
-      );
-      const shortestDelay = Math.min(...entries.map((e) => e.event.delayMs ?? 0));
-      const batchReadyAt = latestArrival + shortestDelay;
-      if (batchReadyAt > now) continue;
+      // When interrupt events exist, readiness is based on interrupt events only
+      // (non-interrupt events get swept in but don't delay the batch).
+      const interruptEntries = entries.filter((e) => e.event.interrupt);
+      const readyAtSource = interruptEntries.length > 0 ? interruptEntries : entries;
+      const maxReadyAt = Math.max(...readyAtSource.map((e) => e.event.readyAt));
+      if (maxReadyAt > now) continue;
 
-      this.processing.add(key);
-
+      // Set processing before calling processBatch to avoid a race where
+      // a sync throw in the handler could delete a not-yet-set key.
+      const placeholder = Promise.resolve();
+      this.processing.set(key, placeholder);
       const work = this.processBatch(key, entries);
-      this.active.add(work);
-      void work.finally(() => this.active.delete(work));
+      this.processing.set(key, work);
     }
   }
 
-  /** Process a batch of events for a single key: delete files, invoke handler, re-scan. */
+  private deleteFiles(entries: Array<{ file: string }>): void {
+    for (const { file } of entries) {
+      try {
+        unlinkSync(join(this.dir, file));
+      } catch {}
+    }
+  }
+
   private async processBatch(
     key: string,
     entries: Array<{ file: string; event: QueuedEvent }>,
   ): Promise<void> {
     try {
-      // Delete all files before processing (at-most-once delivery).
-      for (const { file } of entries) {
-        try {
-          unlinkSync(join(this.dir, file));
-        } catch {}
-      }
-
       logInfo(log, "event_processing", {
         correlationKey: key,
         count: entries.length,
         source: entries[0].event.source,
       });
 
-      await this.handler(entries.map((e) => e.event));
+      let acked = false;
+      const ack = () => {
+        if (acked) return;
+        acked = true;
+        this.ackCount++;
+        this.deleteFiles(entries);
+      };
 
-      logInfo(log, "event_completed", { correlationKey: key });
+      await this.handler(
+        entries.map((e) => e.event),
+        ack,
+      );
+
+      if (acked) {
+        logInfo(log, "event_completed", { correlationKey: key });
+      } else {
+        logInfo(log, "event_deferred", { correlationKey: key });
+      }
     } catch (err) {
       logError(log, "event_handler_error", err, { correlationKey: key });
+      // Delete on error to prevent infinite retry loops.
+      this.deleteFiles(entries);
     } finally {
       this.processing.delete(key);
     }

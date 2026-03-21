@@ -11,7 +11,6 @@ import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
 import {
   addSlackReaction,
-  hasRunnerSession,
   triggerRunnerSlack,
   triggerRunnerGitHub,
   triggerRunnerCron,
@@ -20,7 +19,12 @@ import {
   type RunnerDeps,
   type SlackMcpDeps,
 } from "./service.js";
-import { getGitHubCorrelationKeys, parseGitHubEvent, type GitHubEvent } from "./github.js";
+import {
+  getGitHubCorrelationKeys,
+  githubEventMentions,
+  parseGitHubEvent,
+  type GitHubEvent,
+} from "./github.js";
 import {
   getSlackCorrelationKey,
   parseSlackTs,
@@ -62,14 +66,11 @@ interface RawBodyRequest extends Request {
   rawBody?: string;
 }
 
-/** Default batch delay for Slack events (ms). */
-const SLACK_ACTIVE_DELAY_MS = 3000;
+/** Delay for interrupt events (mentions) — brief debounce (ms). */
+const INTERRUPT_DELAY_MS = 3000;
 
-/** Delay for unaddressed messages — hope someone else handles it first (ms). */
-const SLACK_UNADDRESSED_DELAY_MS = 60_000;
-
-/** Batch delay for GitHub events (ms). */
-const GITHUB_DELAY_MS = 60_000;
+/** Delay for non-interrupt events — hope someone else handles it or session finishes (ms). */
+const UNADDRESSED_DELAY_MS = 60_000;
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
@@ -83,16 +84,16 @@ export interface GatewayAppConfig extends RunnerDeps {
   queueDir?: string;
   /** Disable the queue polling interval (for tests). Default: false. */
   disableQueueInterval?: boolean;
-  /** Delay for mentions and active-session events in ms. Default: 3000. */
-  slackActiveDelayMs?: number;
-  /** Delay for unaddressed messages in ms. Default: 60000. */
-  slackUnaddressedDelayMs?: number;
-  /** Delay for GitHub events in ms. Default: 60000. */
-  githubDelayMs?: number;
+  /** Delay for interrupt events (mentions) in ms. Default: 3000. */
+  interruptDelayMs?: number;
+  /** Delay for non-interrupt events in ms. Default: 60000. */
+  unaddressedDelayMs?: number;
   /** Slack channel IDs the bot is allowed to respond in. Empty = allow all. */
   allowedChannelIds?: string[];
   /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
   cronSecret?: string;
+  /** Git username (e.g. GitHub login) — used to detect @mentions in GitHub events. */
+  gitUsername?: string;
 }
 
 const InteractivityBodySchema = z.object({
@@ -114,9 +115,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   // --- Event queue with handler ---
 
   const selfUserId = config.slackBotUserId;
-  const batchDelay = config.slackActiveDelayMs ?? SLACK_ACTIVE_DELAY_MS;
-  const unaddressedDelay = config.slackUnaddressedDelayMs ?? SLACK_UNADDRESSED_DELAY_MS;
-  const githubDelay = config.githubDelayMs ?? GITHUB_DELAY_MS;
+  const interruptDelay = config.interruptDelayMs ?? INTERRUPT_DELAY_MS;
+  const unaddressedDelay = config.unaddressedDelayMs ?? UNADDRESSED_DELAY_MS;
   const isChannelAllowed = createChannelFilter(new Set(config.allowedChannelIds ?? []));
 
   const runnerDeps: RunnerDeps = {
@@ -132,63 +132,94 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
     disableInterval: config.disableQueueInterval === true,
-    handler: async (events: QueuedEvent[]) => {
+    handler: async (events: QueuedEvent[], ack: () => void) => {
       const slackEvents = events.filter(isSlackEvent);
       const githubEvents = events.filter(isGitHubEvent);
 
       if (slackEvents.length > 0) {
         const lastEvent = slackEvents[slackEvents.length - 1];
+        const hasInterrupt = events.some((e) => e.interrupt);
 
+        // Fire-and-forget: ack is called inside triggerRunnerSlack after
+        // runner accepts (before NDJSON stream). If busy, ack is not called
+        // and files stay on disk for retry.
         triggerRunnerSlack(
           slackEvents.map((e) => e.payload),
           lastEvent.correlationKey,
           runnerDeps,
           slackMcpDeps,
+          hasInterrupt,
+          ack,
         )
-          .then(() =>
-            logInfo(log, "slack_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: slackEvents.length,
-            }),
-          )
+          .then((result) => {
+            if (result.busy) {
+              logInfo(log, "slack_trigger_busy", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: slackEvents.length,
+              });
+            } else {
+              logInfo(log, "slack_trigger_fired", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: slackEvents.length,
+              });
+            }
+          })
           .catch((error) =>
             logError(log, "slack_trigger_failed", error, {
               correlationKey: lastEvent.correlationKey,
             }),
           );
+        return;
       }
 
       if (githubEvents.length > 0) {
         const lastEvent = githubEvents[githubEvents.length - 1];
+        const hasInterrupt = events.some((e) => e.interrupt);
 
         triggerRunnerGitHub(
           githubEvents.map((e) => e.payload),
           lastEvent.correlationKey,
           runnerDeps,
+          hasInterrupt,
+          ack,
         )
-          .then(() =>
-            logInfo(log, "github_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: githubEvents.length,
-            }),
-          )
+          .then((result) => {
+            if (result.busy) {
+              logInfo(log, "github_trigger_busy", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: githubEvents.length,
+              });
+            } else {
+              logInfo(log, "github_trigger_fired", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: githubEvents.length,
+              });
+            }
+          })
           .catch((error) =>
             logError(log, "github_trigger_failed", error, {
               correlationKey: lastEvent.correlationKey,
             }),
           );
+        return;
       }
 
       const cronEvents = events.filter(isCronEvent);
       if (cronEvents.length > 0) {
         const lastEvent = cronEvents[cronEvents.length - 1];
 
-        triggerRunnerCron(lastEvent.payload, lastEvent.correlationKey, runnerDeps)
-          .then(() =>
-            logInfo(log, "cron_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
-            }),
-          )
+        triggerRunnerCron(lastEvent.payload, lastEvent.correlationKey, runnerDeps, false, ack)
+          .then((result) => {
+            if (result.busy) {
+              logInfo(log, "cron_trigger_busy", {
+                correlationKey: lastEvent.correlationKey,
+              });
+            } else {
+              logInfo(log, "cron_trigger_fired", {
+                correlationKey: lastEvent.correlationKey,
+              });
+            }
+          })
           .catch((error) =>
             logError(log, "cron_trigger_failed", error, {
               correlationKey: lastEvent.correlationKey,
@@ -319,8 +350,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         payload: event,
         receivedAt: new Date().toISOString(),
         sourceTs: parseSlackTs(event.ts),
-        readyAt: Date.now() + batchDelay,
-        delayMs: batchDelay,
+        readyAt: Date.now() + interruptDelay,
+        delayMs: interruptDelay,
+        interrupt: true,
       });
       return;
     }
@@ -341,35 +373,26 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
       }
 
-      void (async () => {
-        // Thread reply with existing session → short batch delay
-        // New message or thread without session → long delay, hope someone else handles it
-        const hasSession = event.thread_ts
-          ? await hasRunnerSession(correlationKey, runnerDeps)
-          : false;
-        const delay = hasSession ? batchDelay : unaddressedDelay;
-
-        logInfo(log, "event_accepted", {
-          eventId,
-          teamId: envelope.data.team_id,
-          eventType: event.type,
-          channel: event.channel,
-          ts: event.ts,
-          threadTs: event.thread_ts,
-          correlationKey,
-          delay,
-        });
-        queue.enqueue({
-          id: eventId,
-          source: "slack",
-          correlationKey,
-          payload: event,
-          receivedAt: new Date().toISOString(),
-          sourceTs: parseSlackTs(event.ts),
-          readyAt: Date.now() + delay,
-          delayMs: delay,
-        });
-      })();
+      logInfo(log, "event_accepted", {
+        eventId,
+        teamId: envelope.data.team_id,
+        eventType: event.type,
+        channel: event.channel,
+        ts: event.ts,
+        threadTs: event.thread_ts,
+        correlationKey,
+        delay: unaddressedDelay,
+      });
+      queue.enqueue({
+        id: eventId,
+        source: "slack",
+        correlationKey,
+        payload: event,
+        receivedAt: new Date().toISOString(),
+        sourceTs: parseSlackTs(event.ts),
+        readyAt: Date.now() + unaddressedDelay,
+        delayMs: unaddressedDelay,
+      });
       return;
     }
 
@@ -489,9 +512,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       logInfo(log, "corr_key_resolved", { rawKeys, correlationKey });
     }
 
+    const isMention = config.gitUsername ? githubEventMentions(event, config.gitUsername) : false;
+    const delay = isMention ? interruptDelay : unaddressedDelay;
+
     logInfo(log, "github_event_accepted", {
       event: event.event,
       correlationKey,
+      interrupt: isMention,
     });
 
     queue.enqueue({
@@ -501,8 +528,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       payload: event,
       receivedAt: new Date().toISOString(),
       sourceTs: Date.now(),
-      readyAt: Date.now() + githubDelay,
-      delayMs: githubDelay,
+      readyAt: Date.now() + delay,
+      delayMs: delay,
+      interrupt: isMention,
     });
 
     res.status(200).json({ ok: true });
@@ -543,6 +571,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       sourceTs: Date.now(),
       readyAt: Date.now(),
       delayMs: 0,
+      interrupt: false,
     });
 
     logInfo(log, "cron_event_accepted", { correlationKey });
