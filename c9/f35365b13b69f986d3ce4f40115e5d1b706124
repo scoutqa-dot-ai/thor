@@ -1,0 +1,27 @@
+packages/gateway/src/app.ts
+  d71861c2ec383627 216
+packages/gateway/src/service.ts
+  d71861c2ec383627 238,253-257
+scripts/test-e2e.sh
+  d71861c2ec383627 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "c9f35365b13b69f986d3ce4f40115e5d1b706124",
+  "prompts": {
+    "d71861c2ec383627": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "831df9c0-c2fc-4357-91ad-5a7693b2af19",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 2,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
