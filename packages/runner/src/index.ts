@@ -26,6 +26,9 @@ import {
   extractAliases,
   registerAlias,
   getNotesLineCount,
+  loadWorkspaceConfig,
+  getDefaultDirectory,
+  isAllowedDirectory,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -35,7 +38,9 @@ const log = createLogger("runner");
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const OPENCODE_URL = (process.env.OPENCODE_URL || "http://127.0.0.1:4096").replace(/\/$/, "");
 const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
-const SESSION_DIRECTORY = process.env.SESSION_CWD || "/workspace";
+const WORKSPACE_CONFIG_PATH = process.env.WORKSPACE_CONFIG || "/workspace/repos.json";
+const workspaceConfig = loadWorkspaceConfig(WORKSPACE_CONFIG_PATH);
+const SESSION_DIRECTORY = getDefaultDirectory(workspaceConfig);
 
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
@@ -223,7 +228,19 @@ app.post("/trigger", async (req, res) => {
   try {
     await ensureOpencodeAvailable();
 
-    const sessionDirectory = directory || SESSION_DIRECTORY;
+    let sessionDirectory = directory || SESSION_DIRECTORY;
+    if (directory) {
+      const allowed = isAllowedDirectory(directory);
+      if (!allowed) {
+        logError(log, "directory_not_allowed", `Directory outside allowed prefixes: ${directory}`, {
+          directory,
+          correlationKey,
+        });
+        res.status(400).json({ error: `Directory not allowed: ${directory}` });
+        return;
+      }
+      sessionDirectory = allowed;
+    }
     if (!existsSync(sessionDirectory)) {
       logError(log, "directory_not_found", `Directory does not exist: ${sessionDirectory}`, {
         directory: sessionDirectory,

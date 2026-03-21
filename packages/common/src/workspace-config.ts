@@ -51,6 +51,16 @@ export function loadWorkspaceConfig(path: string): WorkspaceConfig {
     throw new Error(`Invalid workspace config at ${path}:\n${issues.join("\n")}`);
   }
 
+  // Validate repo name format (alphanumeric, dashes, underscores, dots only)
+  const VALID_REPO_NAME = /^[a-zA-Z0-9._-]+$/;
+  for (const repo of Object.keys(result.data.repos)) {
+    if (!VALID_REPO_NAME.test(repo)) {
+      throw new Error(
+        `Invalid repo name "${repo}" in workspace config: must contain only alphanumeric characters, dashes, underscores, or dots`,
+      );
+    }
+  }
+
   // Detect duplicate channel IDs across repos
   const seen = new Map<string, string>(); // channel → repo
   for (const [repo, config] of Object.entries(result.data.repos)) {
