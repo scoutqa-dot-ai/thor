@@ -1,0 +1,23 @@
+docs/plan/2026032101_mention-interrupt.md
+  fcec761e642958d3 5,7,9,11,13,15-21,23,27,29,33,35,37,39,41,43,45,47,49,51,53,57,59,61,63-67,69,71-77,79,81-84,86,88-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "77d028bc2997317696e3d04e19887337558a22be",
+  "prompts": {
+    "fcec761e642958d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ea2c9bb-6d57-4a3a-aaae-74e55c0431ca",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 56,
+      "total_deletions": 189,
+      "accepted_lines": 56,
+      "overriden_lines": 0
+    }
+  }
+}
