@@ -1,0 +1,35 @@
+packages/gateway/src/app.test.ts
+  d71861c2ec383627 9-16,37-38,702
+packages/gateway/src/cron.test.ts
+  d71861c2ec383627 60,75,94
+packages/gateway/src/github.test.ts
+  d71861c2ec383627 9-16
+docker/cron/hey-thor
+  d71861c2ec383627 17-20
+packages/gateway/src/cron.ts
+  d71861c2ec383627 7,14
+packages/gateway/src/service.ts
+  d71861c2ec383627 241
+docker/opencode/agents/build.md
+  d71861c2ec383627 144,147,156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "06f118cf4aad9bb78676192be1c2139263519670",
+  "prompts": {
+    "d71861c2ec383627": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "831df9c0-c2fc-4357-91ad-5a7693b2af19",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 35,
+      "total_deletions": 28,
+      "accepted_lines": 34,
+      "overriden_lines": 0
+    }
+  }
+}
