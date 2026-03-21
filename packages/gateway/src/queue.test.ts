@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EventQueue, type QueuedEvent } from "./queue.js";
+import { EventQueue, type EventHandler, type QueuedEvent } from "./queue.js";
 
 let queueDir: string;
 let queue: EventQueue | null;
@@ -29,6 +29,11 @@ afterEach(() => {
 });
 
 let eventSeq = 0;
+
+/** Handler that always acks (normal processing). */
+function ackHandler(): ReturnType<typeof vi.fn<EventHandler>> {
+  return vi.fn<EventHandler>().mockImplementation(async (_events, ack) => ack());
+}
 
 /** Helper: create a non-interrupt event. */
 function makeEvent(key: string, text: string, delayMs = 0): QueuedEvent {
@@ -61,7 +66,7 @@ function makeMention(key: string, text: string, delayMs = 3_000): QueuedEvent {
 
 /** Extract text payloads from handler calls, grouped by batch. */
 function batchTexts(handler: ReturnType<typeof vi.fn>): string[][] {
-  return handler.mock.calls.map((c: [QueuedEvent[]]) =>
+  return handler.mock.calls.map((c: [QueuedEvent[], () => void]) =>
     c[0].map((e: QueuedEvent) => (e.payload as { text: string }).text),
   );
 }
@@ -72,7 +77,7 @@ describe("EventQueue", () => {
   // ---------------------------------------------------------------------------
 
   it("processes a single enqueued event", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     queue.enqueue(makeEvent("key-1", "hello"));
@@ -85,7 +90,7 @@ describe("EventQueue", () => {
   });
 
   it("batches multiple events for the same key into a single handler call", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     queue.enqueue(makeEvent("key-1", "first"));
@@ -102,7 +107,7 @@ describe("EventQueue", () => {
   });
 
   it("processes independent keys concurrently", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     queue.enqueue(makeEvent("key-a", "alpha"));
@@ -110,7 +115,9 @@ describe("EventQueue", () => {
     await queue.flush();
 
     expect(handler).toHaveBeenCalledTimes(2);
-    const keys = handler.mock.calls.map((c: [QueuedEvent[]]) => c[0][0].correlationKey).sort();
+    const keys = handler.mock.calls
+      .map((c: [QueuedEvent[], () => void]) => c[0][0].correlationKey)
+      .sort();
     expect(keys).toEqual(["key-a", "key-b"]);
   });
 
@@ -118,17 +125,16 @@ describe("EventQueue", () => {
     const batches: string[][] = [];
     let resolveFirst: (() => void) | null = null;
 
-    const handler = vi
-      .fn<(events: QueuedEvent[]) => Promise<void>>()
-      .mockImplementation(async (events) => {
-        const texts = events.map((e) => (e.payload as { text: string }).text);
-        if (texts[0] === "first") {
-          await new Promise<void>((resolve) => {
-            resolveFirst = resolve;
-          });
-        }
-        batches.push(texts);
-      });
+    const handler = vi.fn<EventHandler>().mockImplementation(async (events, ack) => {
+      const texts = events.map((e) => (e.payload as { text: string }).text);
+      if (texts[0] === "first") {
+        await new Promise<void>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      ack();
+      batches.push(texts);
+    });
 
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
@@ -146,8 +152,8 @@ describe("EventQueue", () => {
     expect(batches).toEqual([["first"], ["second", "third"]]);
   });
 
-  it("cleans up processed files from the queue directory", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+  it("ack deletes files from the queue directory", async () => {
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     queue.enqueue(makeEvent("key-1", "hello"));
@@ -157,8 +163,43 @@ describe("EventQueue", () => {
     expect(remaining).toHaveLength(0);
   });
 
+  it("files stay on disk when handler does not call ack", async () => {
+    const handler = vi.fn<EventHandler>().mockImplementation(async () => {
+      // Don't call ack — simulates busy/deferred
+    });
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    queue.enqueue(makeEvent("key-1", "deferred"));
+    await queue.flush();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
+    expect(remaining).toHaveLength(1);
+  });
+
+  it("deferred events are retried on next flush", async () => {
+    let callCount = 0;
+    const handler = vi.fn<EventHandler>().mockImplementation(async (_events, ack) => {
+      callCount++;
+      if (callCount >= 2) ack(); // ack on second attempt
+    });
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    queue.enqueue(makeEvent("key-1", "retry-me"));
+
+    // First flush: handler doesn't ack → files stay
+    await queue.flush();
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    // Second flush: handler acks → files deleted
+    await queue.flush();
+    expect(handler).toHaveBeenCalledTimes(2);
+    const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
+    expect(remaining).toHaveLength(0);
+  });
+
   it("ignores .tmp files in the queue directory", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     writeFileSync(
@@ -171,7 +212,7 @@ describe("EventQueue", () => {
   });
 
   it("handles corrupt files without crashing", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     writeFileSync(join(queueDir, "000000000000000_corrupt.json"), "not json{{{");
@@ -186,7 +227,7 @@ describe("EventQueue", () => {
   });
 
   it("deduplicates events with the same id (retry overwrites file)", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     const event: QueuedEvent = {
@@ -209,20 +250,23 @@ describe("EventQueue", () => {
     expect((handler.mock.calls[0][0][0].payload as { text: string }).text).toBe("retry");
   });
 
-  it("handler errors do not prevent subsequent events from processing", async () => {
+  it("handler errors delete files to prevent infinite retry", async () => {
     let callCount = 0;
-    const handler = vi
-      .fn<(events: QueuedEvent[]) => Promise<void>>()
-      .mockImplementation(async () => {
-        callCount++;
-        if (callCount === 1) throw new Error("handler failed");
-      });
+    const handler = vi.fn<EventHandler>().mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) throw new Error("handler failed");
+    });
 
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     queue.enqueue(makeEvent("key-1", "will-fail"));
     await queue.flush();
 
+    // Files deleted on error
+    const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
+    expect(remaining).toHaveLength(0);
+
+    // Subsequent events still process
     queue.enqueue(makeEvent("key-1", "will-succeed"));
     await queue.flush();
 
@@ -234,7 +278,7 @@ describe("EventQueue", () => {
   // ---------------------------------------------------------------------------
 
   it("S1: mention while idle — fires after 3s debounce", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     queue.enqueue(makeMention("key-1", "hey @thor"));
@@ -252,7 +296,7 @@ describe("EventQueue", () => {
   });
 
   it("S4: non-mention, no session — fires after 60s", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     queue.enqueue(makeEvent("key-1", "just a message", 60_000));
@@ -268,7 +312,7 @@ describe("EventQueue", () => {
   });
 
   it("S5: multiple rapid mentions debounce — sliding 3s window", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     // Mention at T+0 (readyAt = T+3s)
@@ -291,7 +335,7 @@ describe("EventQueue", () => {
   });
 
   it("S6: non-mention pending, then mention arrives — mention pulls batch forward", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     // Non-mention at T+0 with 60s delay
@@ -316,7 +360,7 @@ describe("EventQueue", () => {
   });
 
   it("S8: mention in thread A while session runs for thread B — independent", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     // Thread A mention
@@ -329,7 +373,9 @@ describe("EventQueue", () => {
 
     // Both fire independently
     expect(handler).toHaveBeenCalledTimes(2);
-    const keys = handler.mock.calls.map((c: [QueuedEvent[]]) => c[0][0].correlationKey).sort();
+    const keys = handler.mock.calls
+      .map((c: [QueuedEvent[], () => void]) => c[0][0].correlationKey)
+      .sort();
     expect(keys).toEqual(["key-a", "key-b"]);
   });
 
@@ -338,7 +384,7 @@ describe("EventQueue", () => {
   // ---------------------------------------------------------------------------
 
   it("interrupt events still debounce on their own readyAt", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     queue.enqueue(makeMention("key-1", "mention", 60_000));
@@ -352,7 +398,7 @@ describe("EventQueue", () => {
   });
 
   it("interrupt events ignore non-interrupt readyAt when deciding batch readiness", async () => {
-    const handler = vi.fn<(events: QueuedEvent[]) => Promise<void>>().mockResolvedValue(undefined);
+    const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
     // Non-interrupt with readyAt far in the future
@@ -381,17 +427,16 @@ describe("EventQueue", () => {
     const batches: string[][] = [];
     let resolveFirst: (() => void) | null = null;
 
-    const handler = vi
-      .fn<(events: QueuedEvent[]) => Promise<void>>()
-      .mockImplementation(async (events) => {
-        const texts = events.map((e) => (e.payload as { text: string }).text);
-        if (texts[0] === "first") {
-          await new Promise<void>((resolve) => {
-            resolveFirst = resolve;
-          });
-        }
-        batches.push(texts);
-      });
+    const handler = vi.fn<EventHandler>().mockImplementation(async (events, ack) => {
+      const texts = events.map((e) => (e.payload as { text: string }).text);
+      if (texts[0] === "first") {
+        await new Promise<void>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      ack();
+      batches.push(texts);
+    });
 
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 

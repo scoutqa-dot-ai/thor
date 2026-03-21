@@ -39,6 +39,7 @@ export async function triggerRunnerSlack(
   deps: RunnerDeps,
   slackMcpDeps: SlackMcpDeps,
   interrupt?: boolean,
+  onAccepted?: () => void,
 ): Promise<TriggerResult> {
   if (events.length === 0) return { busy: false };
 
@@ -70,22 +71,23 @@ export async function triggerRunnerSlack(
     }
   }
 
-  // Consume NDJSON stream and forward progress events to slack-mcp
+  // Runner accepted — safe to delete queue files.
+  onAccepted?.();
+
+  // Fire-and-forget NDJSON stream consumption.
   const last = events[events.length - 1];
   const channel = last.channel;
   const threadTs = getSlackThreadTs(last);
 
-  try {
-    await consumeNdjsonStream(response, channel, threadTs, slackMcpDeps);
-  } catch (err) {
+  consumeNdjsonStream(response, channel, threadTs, slackMcpDeps).catch((err) => {
     logError(log, "stream_consume_error", err instanceof Error ? err.message : String(err));
-    await forwardProgressEvent(
+    forwardProgressEvent(
       channel,
       threadTs,
       { type: "error", error: err instanceof Error ? err.message : "stream error" },
       slackMcpDeps,
-    );
-  }
+    ).catch(() => {});
+  });
 
   return { busy: false };
 }

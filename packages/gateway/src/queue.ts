@@ -47,7 +47,13 @@ const QueuedEventSchema = z.object({
   interrupt: z.boolean().optional(),
 });
 
-export type EventHandler = (events: QueuedEvent[]) => Promise<void>;
+/**
+ * Handler callback. Call `ack()` to confirm processing and delete the files.
+ * If the handler returns without calling ack (e.g. runner busy), files stay
+ * on disk and will be retried on the next scan cycle.
+ * If the handler throws, files are deleted to prevent infinite retry loops.
+ */
+export type EventHandler = (events: QueuedEvent[], ack: () => void) => Promise<void>;
 
 export interface EventQueueOptions {
   /** Queue directory path. Created if it doesn't exist. */
@@ -66,6 +72,8 @@ export class EventQueue {
 
   /** Per-key in-flight promise. Prevents the same key from dispatching twice in one cycle. */
   private readonly processing = new Map<string, Promise<void>>();
+  /** Incremented each time a handler calls ack. Used by flush() to detect progress. */
+  private ackCount = 0;
 
   private interval: ReturnType<typeof setInterval> | null = null;
 
@@ -98,7 +106,9 @@ export class EventQueue {
 
   /**
    * Manually scan the queue, process all ready events, and wait for
-   * all in-flight processing to complete. Repeats until the queue is empty.
+   * all in-flight processing to complete. Repeats while handlers keep
+   * acking (new files get deleted → new events may become ready).
+   * Stops when no handler acks in a cycle (deferred events stay on disk).
    *
    * Intended for tests (bypasses the polling interval).
    */
@@ -107,7 +117,12 @@ export class EventQueue {
       this.scan();
 
       if (this.processing.size === 0) break;
+
+      const acksBefore = this.ackCount;
       await Promise.allSettled([...this.processing.values()]);
+
+      // If no handler acked in this cycle, remaining files are deferred — stop.
+      if (this.ackCount === acksBefore) break;
     }
   }
 
@@ -172,28 +187,47 @@ export class EventQueue {
     }
   }
 
+  private deleteFiles(entries: Array<{ file: string }>): void {
+    for (const { file } of entries) {
+      try {
+        unlinkSync(join(this.dir, file));
+      } catch {}
+    }
+  }
+
   private async processBatch(
     key: string,
     entries: Array<{ file: string; event: QueuedEvent }>,
   ): Promise<void> {
     try {
-      for (const { file } of entries) {
-        try {
-          unlinkSync(join(this.dir, file));
-        } catch {}
-      }
-
       logInfo(log, "event_processing", {
         correlationKey: key,
         count: entries.length,
         source: entries[0].event.source,
       });
 
-      await this.handler(entries.map((e) => e.event));
+      let acked = false;
+      const ack = () => {
+        if (acked) return;
+        acked = true;
+        this.ackCount++;
+        this.deleteFiles(entries);
+      };
 
-      logInfo(log, "event_completed", { correlationKey: key });
+      await this.handler(
+        entries.map((e) => e.event),
+        ack,
+      );
+
+      if (acked) {
+        logInfo(log, "event_completed", { correlationKey: key });
+      } else {
+        logInfo(log, "event_deferred", { correlationKey: key });
+      }
     } catch (err) {
       logError(log, "event_handler_error", err, { correlationKey: key });
+      // Delete on error to prevent infinite retry loops.
+      this.deleteFiles(entries);
     } finally {
       this.processing.delete(key);
     }

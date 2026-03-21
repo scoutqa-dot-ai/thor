@@ -131,7 +131,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
     disableInterval: config.disableQueueInterval === true,
-    handler: async (events: QueuedEvent[]) => {
+    handler: async (events: QueuedEvent[], ack: () => void) => {
       const slackEvents = events.filter(isSlackEvent);
       const githubEvents = events.filter(isGitHubEvent);
 
@@ -139,39 +139,31 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         const lastEvent = slackEvents[slackEvents.length - 1];
         const hasInterrupt = events.some((e) => e.interrupt);
 
-        triggerRunnerSlack(
+        const result = await triggerRunnerSlack(
           slackEvents.map((e) => e.payload),
           lastEvent.correlationKey,
           runnerDeps,
           slackMcpDeps,
           hasInterrupt,
-        )
-          .then((result) => {
-            if (result.busy) {
-              // Runner is busy, re-enqueue events for next scan cycle
-              logInfo(log, "slack_trigger_busy_reenqueue", {
-                correlationKey: lastEvent.correlationKey,
-                batchSize: slackEvents.length,
-              });
-              for (const event of slackEvents) {
-                queue.enqueue({
-                  ...event,
-                  readyAt: Date.now(),
-                });
-              }
-            } else {
-              logInfo(log, "slack_trigger_fired", {
-                correlationKey: lastEvent.correlationKey,
-                batchSize: slackEvents.length,
-              });
-            }
-          })
-          .catch((error) =>
-            logError(log, "slack_trigger_failed", error, {
-              correlationKey: lastEvent.correlationKey,
-            }),
-          );
+          ack,
+        );
+
+        if (result.busy) {
+          logInfo(log, "slack_trigger_busy", {
+            correlationKey: lastEvent.correlationKey,
+            batchSize: slackEvents.length,
+          });
+        } else {
+          logInfo(log, "slack_trigger_fired", {
+            correlationKey: lastEvent.correlationKey,
+            batchSize: slackEvents.length,
+          });
+        }
+        return;
       }
+
+      // GitHub and cron don't have busy semantics — ack immediately.
+      ack();
 
       if (githubEvents.length > 0) {
         const lastEvent = githubEvents[githubEvents.length - 1];
