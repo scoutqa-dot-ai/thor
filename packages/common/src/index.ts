@@ -5,7 +5,6 @@ export {
   getAllowedChannelIds,
   getChannelRepoMap,
   resolveRepoDirectory,
-  getDefaultDirectory,
 } from "./workspace-config.js";
 export type { WorkspaceConfig, RepoConfig } from "./workspace-config.js";
 export { writeToolCallLog } from "./worklog.js";

@@ -6,6 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGatewayApp } from "./app.js";
 import type { EventQueue } from "./queue.js";
 
+vi.mock("@thor/common", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@thor/common")>();
+  return {
+    ...actual,
+    resolveRepoDirectory: (repoName: string) => `/workspace/repos/${repoName}`,
+  };
+});
+
 function sign(body: string, secret: string, timestamp: string): string {
   return `v0=${createHmac("sha256", secret).update(`v0:${timestamp}:${body}`).digest("hex")}`;
 }

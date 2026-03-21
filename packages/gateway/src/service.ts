@@ -230,9 +230,7 @@ export async function triggerRunnerCron(
   deps: RunnerDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
-  defaultDirectory?: string,
 ): Promise<TriggerResult> {
-  const directory = defaultDirectory || "/workspace";
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -240,7 +238,7 @@ export async function triggerRunnerCron(
       prompt: payload.prompt,
       correlationKey,
       interrupt,
-      directory,
+      directory: payload.directory,
     }),
   });
 

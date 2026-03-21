@@ -96,8 +96,6 @@ export interface GatewayAppConfig extends RunnerDeps {
   gitUsername?: string;
   /** Maps Slack channel IDs to repo names for working directory resolution. */
   channelRepos?: Map<string, string>;
-  /** Default working directory for cron jobs. */
-  defaultDirectory?: string;
 }
 
 const InteractivityBodySchema = z.object({
@@ -213,14 +211,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       if (cronEvents.length > 0) {
         const lastEvent = cronEvents[cronEvents.length - 1];
 
-        triggerRunnerCron(
-          lastEvent.payload,
-          lastEvent.correlationKey,
-          runnerDeps,
-          false,
-          ack,
-          config.defaultDirectory,
-        )
+        triggerRunnerCron(lastEvent.payload, lastEvent.correlationKey, runnerDeps, false, ack)
           .then((result) => {
             if (result.busy) {
               logInfo(log, "cron_trigger_busy", {
@@ -574,10 +565,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const { prompt, correlationKey: providedKey } = parsed.data;
+    const { prompt, correlationKey: providedKey, directory } = parsed.data;
     const correlationKey = providedKey ?? deriveCronCorrelationKey(prompt);
 
-    const payload: CronPayload = { prompt };
+    const payload: CronPayload = { prompt, directory };
 
     queue.enqueue({
       id: `cron-${Date.now()}`,

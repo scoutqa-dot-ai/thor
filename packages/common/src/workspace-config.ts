@@ -9,7 +9,6 @@ const RepoConfigSchema = z.object({
 });
 
 export const WorkspaceConfigSchema = z.object({
-  defaultDirectory: z.string().optional(),
   repos: z.record(z.string(), RepoConfigSchema),
 });
 
@@ -18,7 +17,6 @@ export type RepoConfig = z.infer<typeof RepoConfigSchema>;
 
 // --- Loader ---
 
-const DEFAULT_DIRECTORY = "/workspace";
 const REPOS_PREFIX = "/workspace/repos";
 
 /**
@@ -111,11 +109,4 @@ export function resolveRepoDirectory(repoName: string): string | undefined {
     // Path does not exist on disk
     return undefined;
   }
-}
-
-/**
- * Get the default directory from config, falling back to /workspace.
- */
-export function getDefaultDirectory(config: WorkspaceConfig): string {
-  return config.defaultDirectory ?? DEFAULT_DIRECTORY;
 }
