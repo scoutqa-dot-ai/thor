@@ -28,7 +28,6 @@ import {
   getNotesLineCount,
   loadWorkspaceConfig,
   getDefaultDirectory,
-  isAllowedDirectory,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -228,19 +227,7 @@ app.post("/trigger", async (req, res) => {
   try {
     await ensureOpencodeAvailable();
 
-    let sessionDirectory = directory || SESSION_DIRECTORY;
-    if (directory) {
-      const allowed = isAllowedDirectory(directory);
-      if (!allowed) {
-        logError(log, "directory_not_allowed", `Directory outside allowed prefixes: ${directory}`, {
-          directory,
-          correlationKey,
-        });
-        res.status(400).json({ error: `Directory not allowed: ${directory}` });
-        return;
-      }
-      sessionDirectory = allowed;
-    }
+    const sessionDirectory = directory || SESSION_DIRECTORY;
     if (!existsSync(sessionDirectory)) {
       logError(log, "directory_not_found", `Directory does not exist: ${sessionDirectory}`, {
         directory: sessionDirectory,

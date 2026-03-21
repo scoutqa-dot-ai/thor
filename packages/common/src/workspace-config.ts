@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
-import { readFileSync, existsSync } from "node:fs";
-import { resolve, normalize } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { join } from "node:path";
 
 // --- Schema ---
 
@@ -20,7 +20,6 @@ export type RepoConfig = z.infer<typeof RepoConfigSchema>;
 
 const DEFAULT_DIRECTORY = "/workspace";
 const REPOS_PREFIX = "/workspace/repos";
-const ALLOWED_PREFIXES = ["/workspace/repos/", "/workspace/worktrees/"];
 
 /**
  * Load and validate workspace config from a JSON file.
@@ -49,16 +48,6 @@ export function loadWorkspaceConfig(path: string): WorkspaceConfig {
   if (!result.success) {
     const issues = result.error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`);
     throw new Error(`Invalid workspace config at ${path}:\n${issues.join("\n")}`);
-  }
-
-  // Validate repo name format (alphanumeric, dashes, underscores, dots only)
-  const VALID_REPO_NAME = /^[a-zA-Z0-9._-]+$/;
-  for (const repo of Object.keys(result.data.repos)) {
-    if (!VALID_REPO_NAME.test(repo)) {
-      throw new Error(
-        `Invalid repo name "${repo}" in workspace config: must contain only alphanumeric characters, dashes, underscores, or dots`,
-      );
-    }
   }
 
   // Detect duplicate channel IDs across repos
@@ -107,40 +96,21 @@ export function getChannelRepoMap(config: WorkspaceConfig): Map<string, string> 
 }
 
 /**
- * Get the expected directory path for a repo.
- * Sanitizes the repo name to prevent path traversal.
- */
-export function getRepoDirectory(repoName: string): string {
-  const sanitized = repoName.replace(/[^a-zA-Z0-9._-]/g, "");
-  if (!sanitized || sanitized !== repoName) {
-    throw new Error(`Invalid repo name: "${repoName}"`);
-  }
-  return `${REPOS_PREFIX}/${sanitized}`;
-}
-
-/**
- * Resolve a repo's directory, returning the path if it exists on disk,
- * `undefined` if not. Path is constructed from the repo name — never from
- * user/webhook input — so path traversal is not possible.
+ * Resolve a repo name to its directory on disk.
+ * Uses realpathSync to resolve symlinks and `..`, then checks the result
+ * is under the allowed prefix. Returns `undefined` if the path escapes
+ * the prefix or does not exist on disk.
  */
 export function resolveRepoDirectory(repoName: string): string | undefined {
-  const dir = getRepoDirectory(repoName);
-  return existsSync(dir) ? dir : undefined;
-}
-
-/**
- * Validate that a directory string is under an allowed workspace prefix.
- * Normalizes the path to prevent traversal attacks (e.g. `/workspace/repos/../../..`).
- * Returns the normalized path if valid, `undefined` if not.
- */
-export function isAllowedDirectory(directory: string): string | undefined {
-  const normalized = normalize(resolve("/", directory));
-  for (const prefix of ALLOWED_PREFIXES) {
-    if (normalized.startsWith(prefix) && normalized.length > prefix.length) {
-      return normalized;
-    }
+  const candidate = join(REPOS_PREFIX, repoName);
+  try {
+    const real = realpathSync(candidate);
+    if (!real.startsWith(REPOS_PREFIX + "/")) return undefined;
+    return real;
+  } catch {
+    // Path does not exist on disk
+    return undefined;
   }
-  return undefined;
 }
 
 /**

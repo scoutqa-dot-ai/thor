@@ -1,9 +1,10 @@
 import {
   createLogger,
   logInfo,
+  logWarn,
   logError,
   ProgressEventSchema,
-  getRepoDirectory,
+  resolveRepoDirectory,
 } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { type GitHubEvent, getRepoName } from "./github.js";
@@ -56,7 +57,14 @@ export async function triggerRunnerSlack(
       : `Slack events:\n\n${JSON.stringify(events)}`;
   const last = events[events.length - 1];
   const repo = channelRepos?.get(last.channel);
-  const directory = repo ? getRepoDirectory(repo) : undefined;
+  let directory: string | undefined;
+  if (repo) {
+    directory = resolveRepoDirectory(repo);
+    if (!directory) {
+      logWarn(log, "repo_directory_not_found", { repo, channel: last.channel });
+      return { busy: false };
+    }
+  }
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -187,7 +195,11 @@ export async function triggerRunnerGitHub(
 
   const last = events[events.length - 1];
   const repoName = getRepoName(last.repository);
-  const directory = getRepoDirectory(repoName);
+  const directory = resolveRepoDirectory(repoName);
+  if (!directory) {
+    logWarn(log, "repo_directory_not_found", { repo: repoName });
+    return { busy: false };
+  }
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

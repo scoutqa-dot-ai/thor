@@ -4,9 +4,7 @@ export {
   loadWorkspaceConfig,
   getAllowedChannelIds,
   getChannelRepoMap,
-  getRepoDirectory,
   resolveRepoDirectory,
-  isAllowedDirectory,
   getDefaultDirectory,
 } from "./workspace-config.js";
 export type { WorkspaceConfig, RepoConfig } from "./workspace-config.js";
