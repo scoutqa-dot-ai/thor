@@ -1,0 +1,31 @@
+packages/common/src/sandboxes.ts
+  e4eabb1d25dbf5b9 80
+packages/common/src/sandbox-control.ts
+  e4eabb1d25dbf5b9 6,116-150
+packages/common/src/daytona-sandbox-provider.ts
+  e4eabb1d25dbf5b9 151-168
+packages/sandboxd/src/index.ts
+  e4eabb1d25dbf5b9 4-7,9-11,14,69-127
+packages/common/src/index.ts
+  e4eabb1d25dbf5b9 51,58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "65d8ddc07435a21cbd027c70c4cbef385d20be92",
+  "prompts": {
+    "e4eabb1d25dbf5b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abd5f2df-9383-4496-bcda-ff259763f11f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 128,
+      "total_deletions": 3,
+      "accepted_lines": 124,
+      "overriden_lines": 0
+    }
+  }
+}
