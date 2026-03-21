@@ -109,7 +109,10 @@ async function readStdin() {
 }
 
 async function streamNdjson(response) {
-  let exitCode = response.ok ? 0 : 1;
+  // Default to failure — only a terminal "result" event overrides to success.
+  // This ensures truncated streams (sandboxd crash, network drop) fail closed.
+  let exitCode = response.ok ? 1 : 1;
+  let sawTerminalEvent = false;
   const decoder = new TextDecoder();
   let buffer = "";
 
@@ -124,16 +127,39 @@ async function streamNdjson(response) {
       }
 
       process.stdout.write(`${line}\n`);
-      exitCode = updateExitCode(exitCode, line);
+      const updated = updateExitCode(exitCode, line);
+      if (updated !== exitCode || isTerminalEvent(line)) {
+        sawTerminalEvent = true;
+      }
+      exitCode = updated;
     }
   }
 
   if (buffer.trim()) {
     process.stdout.write(`${buffer}\n`);
-    exitCode = updateExitCode(exitCode, buffer);
+    const updated = updateExitCode(exitCode, buffer);
+    if (updated !== exitCode || isTerminalEvent(buffer)) {
+      sawTerminalEvent = true;
+    }
+    exitCode = updated;
+  }
+
+  // If no result/error event arrived, the stream was truncated
+  if (!sawTerminalEvent) {
+    process.stderr.write("coder: stream ended without a terminal event\n");
+    return 1;
   }
 
   return exitCode;
+}
+
+function isTerminalEvent(line) {
+  try {
+    const event = JSON.parse(line);
+    return event.type === "result" || event.type === "error";
+  } catch {
+    return false;
+  }
 }
 
 function updateExitCode(currentExitCode, line) {

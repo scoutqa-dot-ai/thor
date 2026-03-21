@@ -47,6 +47,7 @@ const DEFAULT_PREVIEW_EXPIRES_IN_SECONDS = 300;
 const DEFAULT_AUTOSTOP_MINUTES = 30;
 const DEFAULT_NETWORK_BLOCK_ALL = true;
 const DEFAULT_SANDBOX_LANGUAGE = "python";
+const POLL_INTERVAL_MS = 300;
 
 export interface DaytonaSandboxProviderOptions {
   apiKey?: string;
@@ -207,29 +208,67 @@ export function createDaytonaSandboxProvider(
 
       onEvent({ type: "status", data: "running" });
 
-      const sessionId = `thor-sandbox-${randomUUID().slice(0, 8)}`;
-      await sandbox.process.createSession(sessionId);
-      const started = await sandbox.process.executeSessionCommand(
-        sessionId,
-        { command: wrappedCommand, runAsync: true },
-        toDaytonaTimeoutSeconds(request.timeoutMs),
-      );
+      // Daytona session-log streaming stalls for opencode run (D19).
+      // Workaround: run via blocking executeCommand with tee to a file,
+      // poll the file in parallel for incremental output.
+      const streamFile = `/tmp/thor-exec-${randomUUID().slice(0, 8)}.log`;
+      // Use pipefail so the pipeline returns the command's exit code, not tee's
+      const teeCommand = `set -o pipefail; ${wrappedCommand} 2>&1 | tee ${streamFile}`;
 
-      if (!started.cmdId) {
-        throw new Error("Daytona exec did not return a command id");
+      let lastOffset = 0;
+      let polling = true;
+
+      const poll = async () => {
+        while (polling) {
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+          if (!polling) break;
+          try {
+            const result = await sandbox.process.executeCommand(
+              `dd if=${streamFile} bs=1 skip=${lastOffset} 2>/dev/null`,
+            );
+            const chunk = result.result;
+            if (chunk.length > 0) {
+              lastOffset += Buffer.byteLength(chunk, "utf-8");
+              onEvent({ type: "stdout", data: chunk });
+            }
+          } catch {
+            // File may not exist yet
+          }
+        }
+      };
+
+      const pollPromise = poll();
+
+      try {
+        const response = await sandbox.process.executeCommand(
+          teeCommand,
+          undefined,
+          undefined,
+          toDaytonaTimeoutSeconds(request.timeoutMs),
+        );
+        polling = false;
+        await pollPromise;
+
+        // Emit any remaining output the final poll may have missed
+        try {
+          const tail = await sandbox.process.executeCommand(
+            `dd if=${streamFile} bs=1 skip=${lastOffset} 2>/dev/null`,
+          );
+          if (tail.result.length > 0) {
+            onEvent({ type: "stdout", data: tail.result });
+          }
+        } catch {
+          // best-effort
+        }
+
+        const exitCode = response.exitCode;
+        onEvent({ type: "status", data: `completed:${exitCode}` });
+        return { exitCode };
+      } finally {
+        polling = false;
+        // Clean up temp file
+        sandbox.process.executeCommand(`rm -f ${streamFile}`).catch(() => {});
       }
-
-      await sandbox.process.getSessionCommandLogs(
-        sessionId,
-        started.cmdId,
-        (chunk) => onEvent({ type: "stdout", data: chunk }),
-        (chunk) => onEvent({ type: "stderr", data: chunk }),
-      );
-
-      const completed = await sandbox.process.getSessionCommand(sessionId, started.cmdId);
-      const exitCode = completed.exitCode ?? 1;
-      onEvent({ type: "status", data: `completed:${exitCode}` });
-      return { exitCode };
     },
     async materializeWorkspace(sandboxId, request) {
       const sandbox = await requireSandbox(createClient, sandboxId);

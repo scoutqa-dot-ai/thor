@@ -6,6 +6,7 @@ import {
   ensureSandboxForWorktree,
   getRemoteWorkspaceDir,
   type EnsureSandboxResult,
+  type SandboxExecEvent,
   type SandboxExportResult,
 } from "@thor/common";
 import { z } from "zod/v4";
@@ -80,16 +81,15 @@ export async function runHostedCoder(
 
     writeEvent({ type: "status", phase: "bootstrap_opencode" });
     const authJson = await readOptionalFile(DEFAULT_AUTH_PATH);
-    writeEvent({ type: "status", phase: "bootstrap_exec", status: "running" });
-    const bootstrapResult = await provider.exec(ensured.record.sandboxId, {
-      command: buildBootstrapCommand(authJson),
-    });
-    emitCombinedOutput(bootstrapResult.output, "bootstrap_exec", writeEvent);
-    writeEvent({
-      type: "status",
-      phase: "bootstrap_exec",
-      status: `completed:${bootstrapResult.exitCode}`,
-    });
+    const bootstrapResult = await execWithStreaming(
+      provider,
+      ensured.record.sandboxId,
+      {
+        command: buildBootstrapCommand(authJson),
+      },
+      "bootstrap_exec",
+      writeEvent,
+    );
 
     if (bootstrapResult.exitCode !== 0) {
       throw new Error(`sandbox bootstrap failed with exit code ${bootstrapResult.exitCode}`);
@@ -97,19 +97,19 @@ export async function runHostedCoder(
 
     writeEvent({ type: "status", phase: "run_hosted_coder" });
     const remoteWorkspaceDir = getRemoteWorkspaceDir(context.worktreePath);
-    writeEvent({ type: "status", phase: "run_exec", status: "running" });
-    const opencodeResult = await provider.exec(ensured.record.sandboxId, {
-      command: buildOpencodeRunCommand(
-        buildDelegatedPrompt(request.prompt, context.focusPath),
-        remoteWorkspaceDir,
-      ),
-    });
-    emitCombinedOutput(opencodeResult.output, "run_exec", writeEvent, { parseJson: true });
-    writeEvent({
-      type: "status",
-      phase: "run_exec",
-      status: `completed:${opencodeResult.exitCode}`,
-    });
+    const opencodeResult = await execWithStreaming(
+      provider,
+      ensured.record.sandboxId,
+      {
+        command: buildOpencodeRunCommand(
+          buildDelegatedPrompt(request.prompt, context.focusPath),
+          remoteWorkspaceDir,
+        ),
+      },
+      "run_exec",
+      writeEvent,
+      { parseJsonStdout: true },
+    );
 
     writeEvent({ type: "status", phase: "export_workspace" });
     exportResult = await provider.exportWorkspace(ensured.record.sandboxId, context.worktreePath);
@@ -156,7 +156,11 @@ function buildBootstrapCommand(authJson?: string): string {
   ];
 
   if (authJson) {
-    lines.splice(1, 0, writeFileCommand('"$XDG_DATA_HOME/opencode/auth.json"', authJson));
+    // Insert after env setup + config writes so XDG_DATA_HOME is already set
+    const insertIndex = lines.indexOf(
+      'if ! command -v git >/dev/null 2>&1; then echo "git is required in the Daytona snapshot" >&2; exit 1; fi',
+    );
+    lines.splice(insertIndex, 0, writeFileCommand('"$XDG_DATA_HOME/opencode/auth.json"', authJson));
   }
 
   return lines.join("\n");
@@ -219,33 +223,109 @@ function buildDelegatedPrompt(prompt: string, focusPath?: string): string {
   ].join("\n");
 }
 
-function emitCombinedOutput(
-  output: string | undefined,
+async function execWithStreaming(
+  provider: ReturnType<typeof createDaytonaSandboxProvider>,
+  sandboxId: string,
+  request: { command: string },
   phase: string,
   writeEvent: WriteEvent,
-  options: { parseJson?: boolean } = {},
-): void {
-  for (const line of (output ?? "").split(/\r?\n/)) {
-    if (!line.trim()) {
-      continue;
-    }
+  options: { parseJsonStdout?: boolean } = {},
+): Promise<{ exitCode: number }> {
+  const stdoutBuffer = createLineBuffer((line) =>
+    forwardExecLine(line, phase, "stdout", writeEvent, options),
+  );
+  const stderrBuffer = createLineBuffer((line) =>
+    forwardExecLine(line, phase, "stderr", writeEvent, options),
+  );
 
-    if (options.parseJson) {
-      try {
-        writeEvent({ type: "opencode", event: JSON.parse(line) });
-        continue;
-      } catch {
-        // fall through to raw log event
-      }
-    }
-
-    writeEvent({
-      type: "log",
-      phase,
-      stream: "stdout",
-      data: line,
+  try {
+    return await provider.exec(sandboxId, request, (event) => {
+      forwardExecEvent(event, phase, writeEvent, stdoutBuffer, stderrBuffer);
     });
+  } finally {
+    stdoutBuffer.flush();
+    stderrBuffer.flush();
   }
+}
+
+function forwardExecEvent(
+  event: SandboxExecEvent,
+  phase: string,
+  writeEvent: WriteEvent,
+  stdoutBuffer: LineBuffer,
+  stderrBuffer: LineBuffer,
+): void {
+  if (event.type === "status") {
+    writeEvent({
+      type: "status",
+      phase,
+      status: event.data,
+    });
+    return;
+  }
+
+  if (event.type === "stdout") {
+    stdoutBuffer.push(event.data);
+    return;
+  }
+
+  stderrBuffer.push(event.data);
+}
+
+function forwardExecLine(
+  line: string,
+  phase: string,
+  stream: "stdout" | "stderr",
+  writeEvent: WriteEvent,
+  options: { parseJsonStdout?: boolean } = {},
+): void {
+  if (!line.trim()) {
+    return;
+  }
+
+  if (stream === "stdout" && options.parseJsonStdout) {
+    try {
+      writeEvent({ type: "opencode", event: JSON.parse(line) });
+      return;
+    } catch {
+      // fall through to raw log event
+    }
+  }
+
+  writeEvent({
+    type: "log",
+    phase,
+    stream,
+    data: line,
+  });
+}
+
+interface LineBuffer {
+  push(chunk: string): void;
+  flush(): void;
+}
+
+function createLineBuffer(onLine: (line: string) => void): LineBuffer {
+  let buffer = "";
+
+  return {
+    push(chunk) {
+      buffer += chunk;
+      const parts = buffer.split(/\r?\n/);
+      buffer = parts.pop() ?? "";
+      for (const part of parts) {
+        onLine(part);
+      }
+    },
+    flush() {
+      if (!buffer) {
+        return;
+      }
+
+      onLine(buffer);
+      buffer = "";
+    },
+  };
 }
 
 function writeFileCommand(shellPath: string, content: string): string {
