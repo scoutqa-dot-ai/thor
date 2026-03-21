@@ -115,7 +115,7 @@ const TriggerRequestSchema = z.object({
   /** If true (default), abort a busy session before sending the prompt.
    *  If false, return {busy: true} without aborting. */
   interrupt: z.boolean().optional(),
-  /** Working directory for the OpenCode session. Overrides SESSION_CWD. */
+  /** Working directory for the OpenCode session. Overrides the default from config. */
   directory: z.string().optional(),
 });
 

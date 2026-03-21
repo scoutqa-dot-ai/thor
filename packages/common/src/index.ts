@@ -1,13 +1,9 @@
-export {
-  parseAllowedChannelIds,
-  parseChannelRepoMap,
-  createChannelFilter,
-} from "./channel-filter.js";
+export { parseAllowedChannelIds, createChannelFilter } from "./channel-filter.js";
 export {
   WorkspaceConfigSchema,
   loadWorkspaceConfig,
-  getAllowedChannelIds as getAllowedChannelIdsFromConfig,
-  getChannelRepoMap as getChannelRepoMapFromConfig,
+  getAllowedChannelIds,
+  getChannelRepoMap,
   getRepoDirectory,
   resolveRepoDirectory,
   isAllowedDirectory,

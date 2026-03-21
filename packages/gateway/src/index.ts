@@ -2,8 +2,8 @@ import {
   createLogger,
   logInfo,
   loadWorkspaceConfig,
-  getAllowedChannelIdsFromConfig,
-  getChannelRepoMapFromConfig,
+  getAllowedChannelIds,
+  getChannelRepoMap,
 } from "@thor/common";
 import { createGatewayApp } from "./app.js";
 
@@ -25,8 +25,8 @@ const GIT_USER_NAME = process.env.GIT_USER_NAME || "";
 
 const WORKSPACE_CONFIG_PATH = process.env.WORKSPACE_CONFIG || "/workspace/repos.json";
 const workspaceConfig = loadWorkspaceConfig(WORKSPACE_CONFIG_PATH);
-const allowedChannelIds = [...getAllowedChannelIdsFromConfig(workspaceConfig)];
-const channelRepos = getChannelRepoMapFromConfig(workspaceConfig);
+const allowedChannelIds = [...getAllowedChannelIds(workspaceConfig)];
+const channelRepos = getChannelRepoMap(workspaceConfig);
 
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
