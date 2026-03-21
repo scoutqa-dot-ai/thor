@@ -139,30 +139,39 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         const lastEvent = slackEvents[slackEvents.length - 1];
         const hasInterrupt = events.some((e) => e.interrupt);
 
-        const result = await triggerRunnerSlack(
+        // Fire-and-forget: ack is called inside triggerRunnerSlack after
+        // runner accepts (before NDJSON stream). If busy, ack is not called
+        // and files stay on disk for retry.
+        triggerRunnerSlack(
           slackEvents.map((e) => e.payload),
           lastEvent.correlationKey,
           runnerDeps,
           slackMcpDeps,
           hasInterrupt,
           ack,
-        );
-
-        if (result.busy) {
-          logInfo(log, "slack_trigger_busy", {
-            correlationKey: lastEvent.correlationKey,
-            batchSize: slackEvents.length,
-          });
-        } else {
-          logInfo(log, "slack_trigger_fired", {
-            correlationKey: lastEvent.correlationKey,
-            batchSize: slackEvents.length,
-          });
-        }
+        )
+          .then((result) => {
+            if (result.busy) {
+              logInfo(log, "slack_trigger_busy", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: slackEvents.length,
+              });
+            } else {
+              logInfo(log, "slack_trigger_fired", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: slackEvents.length,
+              });
+            }
+          })
+          .catch((error) =>
+            logError(log, "slack_trigger_failed", error, {
+              correlationKey: lastEvent.correlationKey,
+            }),
+          );
         return;
       }
 
-      // GitHub and cron don't have busy semantics — ack immediately.
+      // GitHub and cron: ack immediately, then fire-and-forget trigger.
       ack();
 
       if (githubEvents.length > 0) {
