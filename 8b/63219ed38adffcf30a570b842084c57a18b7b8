@@ -1,0 +1,25 @@
+packages/sandboxd/src/hosted-coder.ts
+  e4eabb1d25dbf5b9 9,133-134
+docs/plan/2026032003_hosted-coding-sandboxes-v1.md
+  e4eabb1d25dbf5b9 16,152,163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8b63219ed38adffcf30a570b842084c57a18b7b8",
+  "prompts": {
+    "e4eabb1d25dbf5b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abd5f2df-9383-4496-bcda-ff259763f11f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 3,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
