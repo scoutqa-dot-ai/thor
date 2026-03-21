@@ -1,10 +1,14 @@
-import { createLogger, logInfo, logError, ProgressEventSchema } from "@thor/common";
+import {
+  createLogger,
+  logInfo,
+  logError,
+  ProgressEventSchema,
+  getRepoDirectory,
+} from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { type GitHubEvent, getRepoName } from "./github.js";
 import { getSlackCorrelationKey, getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
-
-const WORKSPACE_ROOT = "/workspace";
 
 const log = createLogger("gateway-service");
 
@@ -52,7 +56,7 @@ export async function triggerRunnerSlack(
       : `Slack events:\n\n${JSON.stringify(events)}`;
   const last = events[events.length - 1];
   const repo = channelRepos?.get(last.channel);
-  const directory = repo ? `${WORKSPACE_ROOT}/repos/${repo}` : undefined;
+  const directory = repo ? getRepoDirectory(repo) : undefined;
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -183,7 +187,7 @@ export async function triggerRunnerGitHub(
 
   const last = events[events.length - 1];
   const repoName = getRepoName(last.repository);
-  const directory = `${WORKSPACE_ROOT}/repos/${repoName}`;
+  const directory = getRepoDirectory(repoName);
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

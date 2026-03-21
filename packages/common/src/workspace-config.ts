@@ -98,9 +98,14 @@ export function getChannelRepoMap(config: WorkspaceConfig): Map<string, string> 
 
 /**
  * Get the expected directory path for a repo.
+ * Sanitizes the repo name to prevent path traversal.
  */
 export function getRepoDirectory(repoName: string): string {
-  return `${REPOS_PREFIX}/${repoName}`;
+  const sanitized = repoName.replace(/[^a-zA-Z0-9._-]/g, "");
+  if (!sanitized || sanitized !== repoName) {
+    throw new Error(`Invalid repo name: "${repoName}"`);
+  }
+  return `${REPOS_PREFIX}/${sanitized}`;
 }
 
 /**
