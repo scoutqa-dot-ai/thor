@@ -134,7 +134,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
     disableInterval: config.disableQueueInterval === true,
-    handler: async (events: QueuedEvent[], ack: () => void) => {
+    handler: async (events: QueuedEvent[], ack: () => void, reject: (reason: string) => void) => {
       const slackEvents = events.filter(isSlackEvent);
       const githubEvents = events.filter(isGitHubEvent);
 
@@ -153,6 +153,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           hasInterrupt,
           ack,
           config.channelRepos,
+          reject,
         )
           .then((result) => {
             if (result.busy) {
@@ -185,6 +186,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           runnerDeps,
           hasInterrupt,
           ack,
+          reject,
         )
           .then((result) => {
             if (result.busy) {

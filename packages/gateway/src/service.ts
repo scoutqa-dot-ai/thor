@@ -48,6 +48,7 @@ export async function triggerRunnerSlack(
   interrupt?: boolean,
   onAccepted?: () => void,
   channelRepos?: Map<string, string>,
+  onRejected?: (reason: string) => void,
 ): Promise<TriggerResult> {
   if (events.length === 0) return { busy: false };
 
@@ -59,11 +60,13 @@ export async function triggerRunnerSlack(
   const repo = channelRepos?.get(last.channel);
   if (!repo) {
     logWarn(log, "channel_has_no_repo", { channel: last.channel });
+    onRejected?.(`channel ${last.channel} has no repo mapping`);
     return { busy: false };
   }
   const directory = resolveRepoDirectory(repo);
   if (!directory) {
     logWarn(log, "repo_directory_not_found", { repo, channel: last.channel });
+    onRejected?.(`repo directory not found for ${repo}`);
     return { busy: false };
   }
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
@@ -181,6 +184,7 @@ export async function triggerRunnerGitHub(
   deps: RunnerDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
+  onRejected?: (reason: string) => void,
 ): Promise<TriggerResult> {
   if (events.length === 0) return { busy: false };
 
@@ -194,6 +198,7 @@ export async function triggerRunnerGitHub(
   const directory = resolveRepoDirectory(repoName);
   if (!directory) {
     logWarn(log, "repo_directory_not_found", { repo: repoName });
+    onRejected?.(`repo directory not found for ${repoName}`);
     return { busy: false };
   }
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
