@@ -39,8 +39,7 @@ services:
       - SCOUT_API_KEY=${SCOUT_API_KEY:-}
     volumes:
       - ./docker-volumes/home/thor:/home/thor
-      - ./docker-volumes/workspace/repos:/workspace/repos
-      - ./docker-volumes/workspace/worktrees:/workspace/worktrees
+      - ./docker-volumes/workspace:/workspace
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3004/health').then(r=>{if(!r.ok)throw 1})"]
