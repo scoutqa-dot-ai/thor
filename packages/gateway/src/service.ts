@@ -235,6 +235,7 @@ export async function triggerRunnerCron(
   deps: RunnerDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
+  onRejected?: (reason: string) => void,
 ): Promise<TriggerResult> {
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
@@ -249,6 +250,11 @@ export async function triggerRunnerCron(
 
   if (!response.ok) {
     const text = await response.text();
+    // 4xx = client error (bad directory, invalid payload) — reject to dead-letter
+    if (response.status >= 400 && response.status < 500) {
+      onRejected?.(`Runner returned ${response.status}: ${text}`);
+      return { busy: false };
+    }
     throw new Error(`Runner returned ${response.status}: ${text}`);
   }
 
