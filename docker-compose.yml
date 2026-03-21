@@ -193,6 +193,7 @@ services:
       - SLACK_BOT_USER_ID=${SLACK_BOT_USER_ID:?set SLACK_BOT_USER_ID}
       - SLACK_ALLOWED_CHANNEL_IDS=${SLACK_ALLOWED_CHANNEL_IDS:-}
       - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
+      - GIT_USER_NAME=${GIT_USER_NAME:-thor}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:
