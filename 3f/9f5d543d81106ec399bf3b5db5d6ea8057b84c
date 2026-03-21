@@ -1,0 +1,25 @@
+packages/slack-mcp/src/index.ts
+  d71861c2ec383627 17-18,39-41,444
+docker-compose.yml
+  d71861c2ec383627 16-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3f9f5d543d81106ec399bf3b5db5d6ea8057b84c",
+  "prompts": {
+    "d71861c2ec383627": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "831df9c0-c2fc-4357-91ad-5a7693b2af19",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 5,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
