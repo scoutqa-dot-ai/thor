@@ -1,4 +1,3 @@
-export { parseAllowedChannelIds } from "./channel-filter.js";
 export {
   WorkspaceConfigSchema,
   loadWorkspaceConfig,

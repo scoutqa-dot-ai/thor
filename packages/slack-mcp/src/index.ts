@@ -14,7 +14,8 @@ import {
   createLogger,
   logInfo,
   logError,
-  parseAllowedChannelIds,
+  loadWorkspaceConfig,
+  getAllowedChannelIds,
   SlackProgressRequestSchema,
   SlackReactionRequestSchema,
   SlackApprovalRequestSchema,
@@ -35,7 +36,9 @@ const log = createLogger("slack-mcp");
 
 const PORT = parseInt(process.env.PORT || "3003", 10);
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
-const SLACK_ALLOWED_CHANNEL_IDS = parseAllowedChannelIds(process.env.SLACK_ALLOWED_CHANNEL_IDS);
+const WORKSPACE_CONFIG_PATH = process.env.WORKSPACE_CONFIG || "/workspace/repos.json";
+const workspaceConfig = loadWorkspaceConfig(WORKSPACE_CONFIG_PATH);
+const SLACK_ALLOWED_CHANNEL_IDS = getAllowedChannelIds(workspaceConfig);
 
 if (!SLACK_BOT_TOKEN) {
   logError(log, "missing_env", "SLACK_BOT_TOKEN is required");
@@ -438,6 +441,6 @@ app.listen(PORT, () => {
   logInfo(log, "slack_mcp_listening", {
     port: PORT,
     tools: tools.map((t) => t.name),
-    allowedChannels: SLACK_ALLOWED_CHANNEL_IDS.size > 0 ? [...SLACK_ALLOWED_CHANNEL_IDS] : "all",
+    allowedChannels: [...SLACK_ALLOWED_CHANNEL_IDS],
   });
 });

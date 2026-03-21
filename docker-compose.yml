@@ -13,10 +13,11 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:3003:3003"
+    volumes:
+      - ./docker-volumes/workspace:/workspace:ro
     environment:
       - NODE_ENV=production
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
-      - SLACK_ALLOWED_CHANNEL_IDS=${SLACK_ALLOWED_CHANNEL_IDS:-}
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3003/health').then(r=>{if(!r.ok)throw 1})"]
