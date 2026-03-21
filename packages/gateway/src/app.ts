@@ -156,7 +156,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               for (const event of slackEvents) {
                 queue.enqueue({
                   ...event,
-                  readyAt: Date.now() + batchDelay,
+                  readyAt: Date.now(),
                 });
               }
             } else {

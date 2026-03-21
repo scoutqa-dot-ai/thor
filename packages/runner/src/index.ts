@@ -107,6 +107,9 @@ const TriggerRequestSchema = z.object({
   correlationKey: z.string().optional(),
   /** Direct session ID to resume (bypasses correlation key lookup). */
   sessionId: z.string().optional(),
+  /** If true (default), abort a busy session before sending the prompt.
+   *  If false, return {busy: true} without aborting. */
+  interrupt: z.boolean().optional(),
 });
 
 type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
@@ -301,12 +304,20 @@ app.post("/trigger", async (req, res) => {
       logInfo(log, "session_created", { sessionId, correlationKey });
     }
 
-    // --- If resuming a busy session, abort and wait for idle ---
+    // --- If resuming a busy session, abort or bail ---
     if (resumed) {
       const statusResult = await client.session.status({});
       const sessionStatus = statusResult.data?.[sessionId];
 
       if (sessionStatus?.type === "busy") {
+        // Non-interrupt triggers don't abort — return busy so gateway can re-enqueue.
+        const shouldInterrupt = parsed.data.interrupt !== false;
+        if (!shouldInterrupt) {
+          logInfo(log, "session_busy_nointerrupt", { sessionId, correlationKey });
+          res.json({ busy: true });
+          return;
+        }
+
         logInfo(log, "session_busy_aborting", { sessionId, correlationKey });
         await client.session.abort({ path: { id: sessionId } });
 
