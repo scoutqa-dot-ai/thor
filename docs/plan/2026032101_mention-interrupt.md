@@ -12,15 +12,18 @@
 
 ## Interrupt rules
 
-| Source                               | Interrupt | Delay |
-| ------------------------------------ | --------- | ----- |
-| Slack `app_mention`                  | true      | 3s    |
-| Slack `message` (thread reply)       | false     | 60s   |
-| GitHub with `@GIT_USER_NAME` in body | true      | 3s    |
-| GitHub without mention               | false     | 60s   |
-| Cron                                 | false     | 0s    |
+| Source                                          | Interrupt | Delay |
+| ----------------------------------------------- | --------- | ----- |
+| Slack `app_mention`                             | true      | 3s    |
+| Slack `message` (engaged — Thor replied before) | false     | 3s    |
+| Slack `message` (not engaged)                   | false     | 60s   |
+| GitHub with `@GIT_USER_NAME` in body            | true      | 3s    |
+| GitHub without mention                          | false     | 60s   |
+| Cron                                            | false     | 0s    |
 
 Default for new sources: `interrupt: false`. The runner treats unset interrupt as false.
+
+"Engaged" means the worklog notes for the correlation key contain a `slack_post_message` tool call — i.e. Thor has actively replied in the thread before. This is checked via `hasSlackReply()` in `@thor/common`.
 
 ## Scenarios
 
@@ -85,11 +88,13 @@ Different correlation keys. Independent per-key locks. No cross-key blocking.
 
 ## Decision log
 
-| #   | Decision                                            | Rationale                                                                                                                             |
-| --- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | Handler stays fire-and-forget                       | Runner handles abort/resume. Awaiting would hold locks for minutes.                                                                   |
-| D2  | Drop global lock, keep per-key only                 | Global lock blocks unrelated keys. Per-key is correct granularity.                                                                    |
-| D3  | Fix at both layers (gateway + runner)               | Remove `hasRunnerSession` so non-mentions get 60s delay. Runner also checks interrupt flag as defense in depth.                       |
-| D4  | At-least-once via ack callback                      | Don't delete files until runner accepts. Crash or busy → files stay for retry. Duplicates are fine (opencode handles them).           |
-| D5  | `interrupt` defaults to false (safe by default)     | New sources should not interrupt. Only Slack mentions and GitHub @mentions set `interrupt: true`.                                     |
-| D6  | Standardize delays: interrupt=3s, non-interrupt=60s | Consistent across all sources. Interrupt events debounce briefly then fire. Non-interrupt events wait hoping someone else handles it. |
+| #   | Decision                                                       | Rationale                                                                                                                                                                                                          |
+| --- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| D1  | Handler stays fire-and-forget                                  | Runner handles abort/resume. Awaiting would hold locks for minutes.                                                                                                                                                |
+| D2  | Drop global lock, keep per-key only                            | Global lock blocks unrelated keys. Per-key is correct granularity.                                                                                                                                                 |
+| D3  | Fix at both layers (gateway + runner)                          | Remove `hasRunnerSession` so non-mentions get 60s delay. Runner also checks interrupt flag as defense in depth.                                                                                                    |
+| D4  | At-least-once via ack callback                                 | Don't delete files until runner accepts. Crash or busy → files stay for retry. Duplicates are fine (opencode handles them).                                                                                        |
+| D5  | `interrupt` defaults to false (safe by default)                | New sources should not interrupt. Only Slack mentions and GitHub @mentions set `interrupt: true`.                                                                                                                  |
+| D6  | Standardize delays: interrupt=3s, non-interrupt=60s            | Consistent across all sources. Interrupt events debounce briefly then fire. Non-interrupt events wait hoping someone else handles it.                                                                              |
+| D7  | Engaged-thread heuristic for Slack (3s if Thor replied before) | If Thor has `slack_post_message` in worklog notes → user expects Thor to stay responsive. Uses short delay without interrupt.                                                                                      |
+| D8  | Defer similar heuristic for GitHub                             | GitHub interactions go through `bash` (gh CLI), so the tool name is too generic to reliably detect engagement. Revisit when we have a clearer signal (e.g. dedicated GitHub MCP tools or richer worklog metadata). |

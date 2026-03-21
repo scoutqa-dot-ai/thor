@@ -20,6 +20,7 @@ const {
   isAliasableTool,
   extractAliases,
   getNotesLineCount,
+  hasSlackReply,
 } = await import("./notes.js");
 
 describe("notes", () => {
@@ -812,6 +813,65 @@ describe("alias extraction", () => {
         },
       ]);
     });
+  });
+});
+
+describe("hasSlackReply", () => {
+  let keyCounter = 100;
+  function uniqueKey(): string {
+    return `slack-reply-key-${++keyCounter}`;
+  }
+
+  it("returns false when no notes exist", () => {
+    expect(hasSlackReply("nonexistent-key")).toBe(false);
+  });
+
+  it("returns false when notes exist but no slack_post_message tool call", () => {
+    const key = uniqueKey();
+    createNotes({ correlationKey: key, prompt: "test", sessionId: "s1" });
+    appendSummary({
+      correlationKey: key,
+      status: "completed",
+      durationMs: 1000,
+      toolCalls: [{ tool: "bash", state: "completed" }],
+    });
+    expect(hasSlackReply(key)).toBe(false);
+  });
+
+  it("returns true when notes contain slack_post_message tool call", () => {
+    const key = uniqueKey();
+    createNotes({ correlationKey: key, prompt: "test", sessionId: "s2" });
+    appendSummary({
+      correlationKey: key,
+      status: "completed",
+      durationMs: 1000,
+      toolCalls: [
+        { tool: "bash", state: "completed" },
+        { tool: "slack_post_message", state: "completed" },
+      ],
+    });
+    expect(hasSlackReply(key)).toBe(true);
+  });
+
+  it("returns true when slack_post_message appears in any summary block", () => {
+    const key = uniqueKey();
+    createNotes({ correlationKey: key, prompt: "test", sessionId: "s3" });
+    // First session: no slack reply
+    appendSummary({
+      correlationKey: key,
+      status: "completed",
+      durationMs: 1000,
+      toolCalls: [{ tool: "bash", state: "completed" }],
+    });
+    // Follow-up: Thor replies in Slack
+    appendTrigger({ correlationKey: key, prompt: "follow up" });
+    appendSummary({
+      correlationKey: key,
+      status: "completed",
+      durationMs: 2000,
+      toolCalls: [{ tool: "slack_post_message", state: "completed" }],
+    });
+    expect(hasSlackReply(key)).toBe(true);
   });
 });
 

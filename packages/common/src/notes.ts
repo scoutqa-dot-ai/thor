@@ -535,6 +535,24 @@ function extractH1Key(filePath: string): string | undefined {
   }
 }
 
+/**
+ * Check if Thor has posted a Slack message for this correlation key.
+ *
+ * Scans the notes file for `slack_post_message` in tool call summaries.
+ * If found, Thor actively participated in the conversation and follow-up
+ * events should be prioritised (shorter delay).
+ */
+export function hasSlackReply(correlationKey: string): boolean {
+  const path = findNotesFile(correlationKey);
+  if (!path) return false;
+  try {
+    const content = readFileSync(path, "utf-8");
+    return content.includes("slack_post_message");
+  } catch {
+    return false;
+  }
+}
+
 /** Escape special regex characters in a string. */
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

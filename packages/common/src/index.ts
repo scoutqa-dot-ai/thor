@@ -17,6 +17,7 @@ export {
   isAliasableTool,
   extractAliases,
   getNotesLineCount,
+  hasSlackReply,
 } from "./notes.js";
 export type { ToolArtifact, ExtractedAlias } from "./notes.js";
 export {

@@ -6,6 +6,7 @@ import {
   logInfo,
   resolveCorrelationKey,
   resolveCorrelationKeys,
+  hasSlackReply,
 } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
@@ -373,6 +374,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
       }
 
+      // If Thor has replied in this thread before, use short delay (engaged conversation).
+      const engaged = hasSlackReply(correlationKey);
+      const delay = engaged ? interruptDelay : unaddressedDelay;
+
       logInfo(log, "event_accepted", {
         eventId,
         teamId: envelope.data.team_id,
@@ -381,7 +386,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         ts: event.ts,
         threadTs: event.thread_ts,
         correlationKey,
-        delay: unaddressedDelay,
+        delay,
+        engaged,
       });
       queue.enqueue({
         id: eventId,
@@ -390,8 +396,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         payload: event,
         receivedAt: new Date().toISOString(),
         sourceTs: parseSlackTs(event.ts),
-        readyAt: Date.now() + unaddressedDelay,
-        delayMs: unaddressedDelay,
+        readyAt: Date.now() + delay,
+        delayMs: delay,
       });
       return;
     }
