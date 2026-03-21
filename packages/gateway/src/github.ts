@@ -174,6 +174,13 @@ export function parseGitHubEvent(body: unknown): GitHubEvent | undefined {
 // An alias using just the repo name is added so that runner-side
 // correlation (which only has the directory name) can match.
 
+// Schema for extracting mentionable text fields from any GitHub payload.
+const MentionableBodySchema = z.object({
+  comment: z.object({ body: z.string() }).optional(),
+  review: z.object({ body: z.string().nullable() }).optional(),
+  pull_request: z.object({ body: z.string().nullable() }).optional(),
+});
+
 /**
  * Check if a GitHub event payload mentions a specific username (e.g. `@thor-bot`).
  * Checks comment.body, review.body, and pull_request.body fields.
@@ -181,15 +188,13 @@ export function parseGitHubEvent(body: unknown): GitHubEvent | undefined {
 export function githubEventMentions(event: GitHubEvent, username: string): boolean {
   if (!username) return false;
   const mention = `@${username}`;
-  const payload = event.payload as Record<string, unknown>;
+  const parsed = MentionableBodySchema.safeParse(event.payload);
+  if (!parsed.success) return false;
 
-  const bodies: (unknown | undefined)[] = [
-    (payload.comment as Record<string, unknown> | undefined)?.body,
-    (payload.review as Record<string, unknown> | undefined)?.body,
-    (payload.pull_request as Record<string, unknown> | undefined)?.body,
-  ];
-
-  return bodies.some((b) => typeof b === "string" && b.includes(mention));
+  const { comment, review, pull_request } = parsed.data;
+  return [comment?.body, review?.body, pull_request?.body].some(
+    (b) => typeof b === "string" && b.includes(mention),
+  );
 }
 
 export function getGitHubCorrelationKeys(event: GitHubEvent): string[] {
