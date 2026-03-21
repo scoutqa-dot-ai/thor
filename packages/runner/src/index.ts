@@ -201,29 +201,6 @@ function logPartToStdout(sessionId: string, part: Part): void {
 }
 
 /**
- * Session lookup — returns the session entry for a correlation key, or 404.
- *
- * GET /sessions?correlationKey=slack:thread:123
- * GET /sessions (no filter) — returns all entries.
- */
-app.get("/sessions", (req, res) => {
-  const correlationKey = req.query.correlationKey;
-
-  if (typeof correlationKey === "string") {
-    const sessionId = getSessionIdFromNotes(correlationKey);
-    if (!sessionId) {
-      res.status(404).json({ error: "No session for this correlation key" });
-      return;
-    }
-    res.json({ correlationKey, sessionId });
-    return;
-  }
-
-  // No filter — not supported without the map file. Use OpenCode UI instead.
-  res.json({ message: "Use ?correlationKey=<key> to look up a specific session" });
-});
-
-/**
  * Stream-based prompt handler.
  *
  * 1. Resolves or creates an OpenCode session (correlation key → session ID).
