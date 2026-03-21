@@ -1,0 +1,33 @@
+packages/gateway/src/index.ts
+  fcec761e642958d3 21,33
+packages/gateway/src/app.ts
+  fcec761e642958d3 24,26,69-70,72-73,87-90,95-96,118-119,339-340,501-503,519
+docs/plan/2026032101_mention-interrupt.md
+  fcec761e642958d3 180,208-223
+packages/gateway/src/github.test.ts
+  fcec761e642958d3 33-34
+packages/gateway/src/github.ts
+  fcec761e642958d3 177-194
+packages/gateway/src/app.test.ts
+  fcec761e642958d3 27-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5d2e468f04e69a8e34ea25167278ea234f227536",
+  "prompts": {
+    "fcec761e642958d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ea2c9bb-6d57-4a3a-aaae-74e55c0431ca",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 72,
+      "total_deletions": 27,
+      "accepted_lines": 66,
+      "overriden_lines": 0
+    }
+  }
+}
