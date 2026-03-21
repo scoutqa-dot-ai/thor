@@ -218,6 +218,7 @@ services:
       - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
     volumes:
       - ./docker-volumes/workspace/cron:/workspace/cron:ro
+      - ./docker-volumes/workspace/repos:/workspace/repos:ro
     depends_on:
       gateway:
         condition: service_healthy
