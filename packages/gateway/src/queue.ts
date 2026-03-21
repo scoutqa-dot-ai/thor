@@ -1,23 +1,7 @@
 /**
- * Directory-based event queue with per-key serial processing.
+ * Directory-based event queue with debounced batching.
  *
- * Incoming events are written as individual JSON files to a queue directory.
- * A fixed-interval consumer scans the directory, groups pending files by
- * correlation key, and dispatches each group as a batch to the handler once
- * the batch's readyAt deadline has passed.
- *
- * No events are dropped — the handler receives all queued events for a key
- * in chronological order and decides how to process them (e.g. combine
- * prompts into a single runner trigger).
- *
- * Flow:
- *   1. HTTP handler calls enqueue() → atomic file write (.tmp → rename).
- *   2. Fixed-interval scan (default 100ms) reads the directory.
- *   3. Group files by correlation key.
- *   4. If any event in a group has interrupt=true → bypass both locks,
- *      readiness based on max(readyAt) of interrupt events only (debounce).
- *      Otherwise wait until max(readyAt) of all events <= now.
- *   5. Non-interrupt: per-key serial + global lock (files stay until idle).
+ * See docs/plan/2026032101_mention-interrupt.md for design details.
  */
 
 import {
@@ -80,10 +64,8 @@ export class EventQueue {
   private readonly dir: string;
   private readonly handler: EventHandler;
 
-  /** Correlation keys with in-flight processing. */
-  private readonly processing = new Set<string>();
-  /** Tracked promises for in-flight processing (for flush). */
-  private readonly active = new Set<Promise<void>>();
+  /** Per-key in-flight promise. Prevents the same key from dispatching twice in one cycle. */
+  private readonly processing = new Map<string, Promise<void>>();
 
   private interval: ReturnType<typeof setInterval> | null = null;
 
@@ -124,8 +106,8 @@ export class EventQueue {
     for (;;) {
       this.scan();
 
-      if (this.active.size === 0) break;
-      await Promise.allSettled([...this.active]);
+      if (this.processing.size === 0) break;
+      await Promise.allSettled([...this.processing.values()]);
     }
   }
 
@@ -141,10 +123,6 @@ export class EventQueue {
   // Internals
   // ---------------------------------------------------------------------------
 
-  /**
-   * Read all pending event files, group by correlation key, and dispatch
-   * each ready group as a batch to the handler.
-   */
   private scan(): void {
     let files: string[];
     try {
@@ -176,34 +154,25 @@ export class EventQueue {
     }
 
     for (const [key, entries] of byKey) {
+      if (this.processing.has(key)) continue;
+
+      // When interrupt events exist, readiness is based on interrupt events only
+      // (non-interrupt events get swept in but don't delay the batch).
       const interruptEntries = entries.filter((e) => e.event.interrupt);
-      const hasInterrupt = interruptEntries.length > 0;
-
-      // Non-interrupt batches must wait for all in-flight work to finish.
-      // Interrupt batches bypass both locks so they can abort a running session.
-      if (!hasInterrupt && (this.active.size > 0 || this.processing.has(key))) continue;
-
-      // Interrupt batch: debounce on interrupt events only (ignore non-interrupt readyAt).
-      // Non-interrupt batch: wait until every event is ready.
-      const readyAtSource = hasInterrupt ? interruptEntries : entries;
+      const readyAtSource = interruptEntries.length > 0 ? interruptEntries : entries;
       const maxReadyAt = Math.max(...readyAtSource.map((e) => e.event.readyAt));
       if (maxReadyAt > now) continue;
 
-      this.processing.add(key);
-
       const work = this.processBatch(key, entries);
-      this.active.add(work);
-      void work.finally(() => this.active.delete(work));
+      this.processing.set(key, work);
     }
   }
 
-  /** Process a batch of events for a single key: delete files, invoke handler, re-scan. */
   private async processBatch(
     key: string,
     entries: Array<{ file: string; event: QueuedEvent }>,
   ): Promise<void> {
     try {
-      // Delete all files before processing (at-most-once delivery).
       for (const { file } of entries) {
         try {
           unlinkSync(join(this.dir, file));
