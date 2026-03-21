@@ -19,7 +19,12 @@ import {
   type RunnerDeps,
   type SlackMcpDeps,
 } from "./service.js";
-import { getGitHubCorrelationKeys, parseGitHubEvent, type GitHubEvent } from "./github.js";
+import {
+  getGitHubCorrelationKeys,
+  githubEventMentions,
+  parseGitHubEvent,
+  type GitHubEvent,
+} from "./github.js";
 import {
   getSlackCorrelationKey,
   parseSlackTs,
@@ -61,14 +66,11 @@ interface RawBodyRequest extends Request {
   rawBody?: string;
 }
 
-/** Default batch delay for Slack events (ms). */
-const SLACK_ACTIVE_DELAY_MS = 3000;
+/** Delay for interrupt events (mentions) — brief debounce (ms). */
+const INTERRUPT_DELAY_MS = 3000;
 
-/** Delay for unaddressed messages — hope someone else handles it first (ms). */
-const SLACK_UNADDRESSED_DELAY_MS = 60_000;
-
-/** Batch delay for GitHub events (ms). */
-const GITHUB_DELAY_MS = 60_000;
+/** Delay for non-interrupt events — hope someone else handles it or session finishes (ms). */
+const UNADDRESSED_DELAY_MS = 60_000;
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
@@ -82,16 +84,16 @@ export interface GatewayAppConfig extends RunnerDeps {
   queueDir?: string;
   /** Disable the queue polling interval (for tests). Default: false. */
   disableQueueInterval?: boolean;
-  /** Delay for mentions and active-session events in ms. Default: 3000. */
-  slackActiveDelayMs?: number;
-  /** Delay for unaddressed messages in ms. Default: 60000. */
-  slackUnaddressedDelayMs?: number;
-  /** Delay for GitHub events in ms. Default: 60000. */
-  githubDelayMs?: number;
+  /** Delay for interrupt events (mentions) in ms. Default: 3000. */
+  interruptDelayMs?: number;
+  /** Delay for non-interrupt events in ms. Default: 60000. */
+  unaddressedDelayMs?: number;
   /** Slack channel IDs the bot is allowed to respond in. Empty = allow all. */
   allowedChannelIds?: string[];
   /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
   cronSecret?: string;
+  /** Git username (e.g. GitHub login) — used to detect @mentions in GitHub events. */
+  gitUsername?: string;
 }
 
 const InteractivityBodySchema = z.object({
@@ -113,9 +115,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   // --- Event queue with handler ---
 
   const selfUserId = config.slackBotUserId;
-  const batchDelay = config.slackActiveDelayMs ?? SLACK_ACTIVE_DELAY_MS;
-  const unaddressedDelay = config.slackUnaddressedDelayMs ?? SLACK_UNADDRESSED_DELAY_MS;
-  const githubDelay = config.githubDelayMs ?? GITHUB_DELAY_MS;
+  const interruptDelay = config.interruptDelayMs ?? INTERRUPT_DELAY_MS;
+  const unaddressedDelay = config.unaddressedDelayMs ?? UNADDRESSED_DELAY_MS;
   const isChannelAllowed = createChannelFilter(new Set(config.allowedChannelIds ?? []));
 
   const runnerDeps: RunnerDeps = {
@@ -335,8 +336,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         payload: event,
         receivedAt: new Date().toISOString(),
         sourceTs: parseSlackTs(event.ts),
-        readyAt: Date.now() + batchDelay,
-        delayMs: batchDelay,
+        readyAt: Date.now() + interruptDelay,
+        delayMs: interruptDelay,
         interrupt: true,
       });
       return;
@@ -497,9 +498,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       logInfo(log, "corr_key_resolved", { rawKeys, correlationKey });
     }
 
+    const isMention = config.gitUsername ? githubEventMentions(event, config.gitUsername) : false;
+    const delay = isMention ? interruptDelay : unaddressedDelay;
+
     logInfo(log, "github_event_accepted", {
       event: event.event,
       correlationKey,
+      interrupt: isMention,
     });
 
     queue.enqueue({
@@ -509,8 +514,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       payload: event,
       receivedAt: new Date().toISOString(),
       sourceTs: Date.now(),
-      readyAt: Date.now() + githubDelay,
-      delayMs: githubDelay,
+      readyAt: Date.now() + delay,
+      delayMs: delay,
+      interrupt: isMention,
     });
 
     res.status(200).json({ ok: true });

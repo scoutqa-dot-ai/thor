@@ -24,8 +24,8 @@ async function withServer<T>(
     fetchImpl,
     queueDir,
     disableQueueInterval: true,
-    slackActiveDelayMs: 0,
-    slackUnaddressedDelayMs: 0,
+    interruptDelayMs: 0,
+    unaddressedDelayMs: 0,
     ...extraConfig,
   });
 

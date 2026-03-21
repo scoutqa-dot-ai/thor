@@ -30,8 +30,8 @@ async function withServer<T>(
     fetchImpl,
     queueDir,
     disableQueueInterval: true,
-    slackActiveDelayMs: 0,
-    githubDelayMs: 0,
+    interruptDelayMs: 0,
+    unaddressedDelayMs: 0,
   });
 
   const server = app.listen(0);

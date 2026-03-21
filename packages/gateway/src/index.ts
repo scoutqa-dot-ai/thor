@@ -18,6 +18,7 @@ const SLACK_ALLOWED_CHANNEL_IDS = [
 const SLACK_BOT_USER_ID = process.env.SLACK_BOT_USER_ID || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const PROXY_HOST = process.env.PROXY_HOST || "proxy";
+const GIT_USERNAME = process.env.GIT_USERNAME || "";
 
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
@@ -29,6 +30,7 @@ const { app } = createGatewayApp({
   queueDir: QUEUE_DIR,
   allowedChannelIds: SLACK_ALLOWED_CHANNEL_IDS,
   cronSecret: CRON_SECRET || undefined,
+  gitUsername: GIT_USERNAME || undefined,
 });
 
 app.listen(PORT, () => {
