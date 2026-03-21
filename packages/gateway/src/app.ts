@@ -137,19 +137,35 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
       if (slackEvents.length > 0) {
         const lastEvent = slackEvents[slackEvents.length - 1];
+        const hasInterrupt = events.some((e) => e.interrupt);
 
         triggerRunnerSlack(
           slackEvents.map((e) => e.payload),
           lastEvent.correlationKey,
           runnerDeps,
           slackMcpDeps,
+          hasInterrupt,
         )
-          .then(() =>
-            logInfo(log, "slack_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: slackEvents.length,
-            }),
-          )
+          .then((result) => {
+            if (result.busy) {
+              // Runner is busy, re-enqueue events for next scan cycle
+              logInfo(log, "slack_trigger_busy_reenqueue", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: slackEvents.length,
+              });
+              for (const event of slackEvents) {
+                queue.enqueue({
+                  ...event,
+                  readyAt: Date.now() + batchDelay,
+                });
+              }
+            } else {
+              logInfo(log, "slack_trigger_fired", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: slackEvents.length,
+              });
+            }
+          })
           .catch((error) =>
             logError(log, "slack_trigger_failed", error, {
               correlationKey: lastEvent.correlationKey,

@@ -28,13 +28,19 @@ function getFetch(fetchImpl?: typeof fetch): typeof fetch {
  * Trigger the runner and consume its NDJSON progress stream.
  * Forwards progress events to slack-mcp for Slack updates.
  */
+export interface TriggerResult {
+  /** True when the runner reported session busy and interrupt was false. */
+  busy: boolean;
+}
+
 export async function triggerRunnerSlack(
   events: SlackThreadEvent[],
   correlationKey: string,
   deps: RunnerDeps,
   slackMcpDeps: SlackMcpDeps,
-): Promise<void> {
-  if (events.length === 0) return;
+  interrupt?: boolean,
+): Promise<TriggerResult> {
+  if (events.length === 0) return { busy: false };
 
   const prompt =
     events.length === 1
@@ -46,12 +52,22 @@ export async function triggerRunnerSlack(
     body: JSON.stringify({
       prompt,
       correlationKey,
+      interrupt,
     }),
   });
 
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Runner returned ${response.status}: ${text}`);
+  }
+
+  // Check for busy response (non-interrupt hit a running session)
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const json = (await response.json()) as Record<string, unknown>;
+    if (json.busy === true) {
+      return { busy: true };
+    }
   }
 
   // Consume NDJSON stream and forward progress events to slack-mcp
@@ -70,6 +86,8 @@ export async function triggerRunnerSlack(
       slackMcpDeps,
     );
   }
+
+  return { busy: false };
 }
 
 /**

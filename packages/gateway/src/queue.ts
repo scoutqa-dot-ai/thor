@@ -163,6 +163,10 @@ export class EventQueue {
       const maxReadyAt = Math.max(...readyAtSource.map((e) => e.event.readyAt));
       if (maxReadyAt > now) continue;
 
+      // Set processing before calling processBatch to avoid a race where
+      // a sync throw in the handler could delete a not-yet-set key.
+      const placeholder = Promise.resolve();
+      this.processing.set(key, placeholder);
       const work = this.processBatch(key, entries);
       this.processing.set(key, work);
     }
