@@ -165,8 +165,10 @@ export async function triggerRunnerGitHub(
   events: GitHubEvent[],
   correlationKey: string,
   deps: RunnerDeps,
-): Promise<void> {
-  if (events.length === 0) return;
+  interrupt?: boolean,
+  onAccepted?: () => void,
+): Promise<TriggerResult> {
+  if (events.length === 0) return { busy: false };
 
   const prompt =
     events.length === 1
@@ -176,13 +178,24 @@ export async function triggerRunnerGitHub(
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, correlationKey }),
+    body: JSON.stringify({ prompt, correlationKey, interrupt }),
   });
 
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Runner returned ${response.status}: ${text}`);
   }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const json = (await response.json()) as Record<string, unknown>;
+    if (json.busy === true) {
+      return { busy: true };
+    }
+  }
+
+  onAccepted?.();
+  return { busy: false };
 }
 
 /**
@@ -194,13 +207,16 @@ export async function triggerRunnerCron(
   payload: CronPayload,
   correlationKey: string,
   deps: RunnerDeps,
-): Promise<void> {
+  interrupt?: boolean,
+  onAccepted?: () => void,
+): Promise<TriggerResult> {
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       prompt: payload.prompt,
       correlationKey,
+      interrupt,
     }),
   });
 
@@ -209,6 +225,16 @@ export async function triggerRunnerCron(
     throw new Error(`Runner returned ${response.status}: ${text}`);
   }
 
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const json = (await response.json()) as Record<string, unknown>;
+    if (json.busy === true) {
+      return { busy: true };
+    }
+  }
+
+  onAccepted?.();
+
   // Consume stream silently to avoid backpressure
   const body = response.body;
   if (body) {
@@ -216,6 +242,8 @@ export async function triggerRunnerCron(
       // discard
     }
   }
+
+  return { busy: false };
 }
 
 async function forwardApprovalNotification(

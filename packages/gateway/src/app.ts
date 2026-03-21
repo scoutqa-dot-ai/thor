@@ -172,40 +172,54 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         return;
       }
 
-      // GitHub and cron: ack immediately, then fire-and-forget trigger.
-      ack();
-
       if (githubEvents.length > 0) {
         const lastEvent = githubEvents[githubEvents.length - 1];
+        const hasInterrupt = events.some((e) => e.interrupt);
 
         triggerRunnerGitHub(
           githubEvents.map((e) => e.payload),
           lastEvent.correlationKey,
           runnerDeps,
+          hasInterrupt,
+          ack,
         )
-          .then(() =>
-            logInfo(log, "github_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: githubEvents.length,
-            }),
-          )
+          .then((result) => {
+            if (result.busy) {
+              logInfo(log, "github_trigger_busy", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: githubEvents.length,
+              });
+            } else {
+              logInfo(log, "github_trigger_fired", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: githubEvents.length,
+              });
+            }
+          })
           .catch((error) =>
             logError(log, "github_trigger_failed", error, {
               correlationKey: lastEvent.correlationKey,
             }),
           );
+        return;
       }
 
       const cronEvents = events.filter(isCronEvent);
       if (cronEvents.length > 0) {
         const lastEvent = cronEvents[cronEvents.length - 1];
 
-        triggerRunnerCron(lastEvent.payload, lastEvent.correlationKey, runnerDeps)
-          .then(() =>
-            logInfo(log, "cron_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
-            }),
-          )
+        triggerRunnerCron(lastEvent.payload, lastEvent.correlationKey, runnerDeps, false, ack)
+          .then((result) => {
+            if (result.busy) {
+              logInfo(log, "cron_trigger_busy", {
+                correlationKey: lastEvent.correlationKey,
+              });
+            } else {
+              logInfo(log, "cron_trigger_fired", {
+                correlationKey: lastEvent.correlationKey,
+              });
+            }
+          })
           .catch((error) =>
             logError(log, "cron_trigger_failed", error, {
               correlationKey: lastEvent.correlationKey,
