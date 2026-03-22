@@ -49,11 +49,16 @@ const QueuedEventSchema = z.object({
 
 /**
  * Handler callback. Call `ack()` to confirm processing and delete the files.
- * If the handler returns without calling ack (e.g. runner busy), files stay
- * on disk and will be retried on the next scan cycle.
+ * Call `reject(reason)` to move files to the dead-letter directory.
+ * If the handler returns without calling ack or reject (e.g. runner busy),
+ * files stay on disk and will be retried on the next scan cycle.
  * If the handler throws, files are deleted to prevent infinite retry loops.
  */
-export type EventHandler = (events: QueuedEvent[], ack: () => void) => Promise<void>;
+export type EventHandler = (
+  events: QueuedEvent[],
+  ack: () => void,
+  reject: (reason: string) => void,
+) => Promise<void>;
 
 export interface EventQueueOptions {
   /** Queue directory path. Created if it doesn't exist. */
@@ -68,20 +73,23 @@ export interface EventQueueOptions {
 
 export class EventQueue {
   private readonly dir: string;
+  private readonly deadLetterDir: string;
   private readonly handler: EventHandler;
 
   /** Per-key in-flight promise. Prevents the same key from dispatching twice in one cycle. */
   private readonly processing = new Map<string, Promise<void>>();
-  /** Incremented each time a handler calls ack. Used by flush() to detect progress. */
+  /** Incremented each time a handler calls ack or reject. Used by flush() to detect progress. */
   private ackCount = 0;
 
   private interval: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: EventQueueOptions) {
     this.dir = options.dir;
+    this.deadLetterDir = join(this.dir, "dead-letter");
     this.handler = options.handler;
 
     mkdirSync(this.dir, { recursive: true });
+    mkdirSync(this.deadLetterDir, { recursive: true });
 
     if (!options.disableInterval) {
       this.interval = setInterval(() => this.scan(), options.intervalMs ?? 100);
@@ -195,6 +203,15 @@ export class EventQueue {
     }
   }
 
+  private moveToDeadLetter(entries: Array<{ file: string }>, reason: string): void {
+    for (const { file } of entries) {
+      try {
+        renameSync(join(this.dir, file), join(this.deadLetterDir, file));
+      } catch {}
+    }
+    logInfo(log, "event_dead_lettered", { count: entries.length, reason });
+  }
+
   private async processBatch(
     key: string,
     entries: Array<{ file: string; event: QueuedEvent }>,
@@ -206,20 +223,27 @@ export class EventQueue {
         source: entries[0].event.source,
       });
 
-      let acked = false;
+      let settled = false;
       const ack = () => {
-        if (acked) return;
-        acked = true;
+        if (settled) return;
+        settled = true;
         this.ackCount++;
         this.deleteFiles(entries);
+      };
+      const reject = (reason: string) => {
+        if (settled) return;
+        settled = true;
+        this.ackCount++;
+        this.moveToDeadLetter(entries, reason);
       };
 
       await this.handler(
         entries.map((e) => e.event),
         ack,
+        reject,
       );
 
-      if (acked) {
+      if (settled) {
         logInfo(log, "event_completed", { correlationKey: key });
       } else {
         logInfo(log, "event_deferred", { correlationKey: key });

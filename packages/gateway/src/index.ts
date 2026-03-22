@@ -1,4 +1,10 @@
-import { createLogger, logInfo, parseAllowedChannelIds } from "@thor/common";
+import {
+  createLogger,
+  logInfo,
+  loadWorkspaceConfig,
+  getAllowedChannelIds,
+  getChannelRepoMap,
+} from "@thor/common";
 import { createGatewayApp } from "./app.js";
 
 const log = createLogger("gateway");
@@ -12,13 +18,15 @@ const SLACK_TIMESTAMP_TOLERANCE_SECONDS = parseInt(
   10,
 );
 const QUEUE_DIR = process.env.QUEUE_DIR || "data/queue";
-const SLACK_ALLOWED_CHANNEL_IDS = [
-  ...parseAllowedChannelIds(process.env.SLACK_ALLOWED_CHANNEL_IDS),
-];
 const SLACK_BOT_USER_ID = process.env.SLACK_BOT_USER_ID || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const PROXY_HOST = process.env.PROXY_HOST || "proxy";
 const GIT_USER_NAME = process.env.GIT_USER_NAME || "";
+
+const WORKSPACE_CONFIG_PATH = process.env.WORKSPACE_CONFIG || "/workspace/repos.json";
+const workspaceConfig = loadWorkspaceConfig(WORKSPACE_CONFIG_PATH);
+const allowedChannelIds = [...getAllowedChannelIds(workspaceConfig)];
+const channelRepos = getChannelRepoMap(workspaceConfig);
 
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
@@ -28,9 +36,10 @@ const { app } = createGatewayApp({
   proxyHost: PROXY_HOST,
   timestampToleranceSeconds: SLACK_TIMESTAMP_TOLERANCE_SECONDS,
   queueDir: QUEUE_DIR,
-  allowedChannelIds: SLACK_ALLOWED_CHANNEL_IDS,
+  allowedChannelIds,
   cronSecret: CRON_SECRET || undefined,
   gitUsername: GIT_USER_NAME || undefined,
+  channelRepos,
 });
 
 app.listen(PORT, () => {
@@ -41,6 +50,7 @@ app.listen(PORT, () => {
     proxyHost: PROXY_HOST,
     queueDir: QUEUE_DIR,
     configured: Boolean(SLACK_SIGNING_SECRET),
-    allowedChannels: SLACK_ALLOWED_CHANNEL_IDS.length > 0 ? SLACK_ALLOWED_CHANNEL_IDS : "all",
+    allowedChannels: allowedChannelIds,
+    repos: Object.keys(workspaceConfig.repos),
   });
 });

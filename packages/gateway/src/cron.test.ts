@@ -57,7 +57,7 @@ describe("POST /cron", () => {
           "Content-Type": "application/json",
           Authorization: "Bearer s3cret",
         },
-        body: JSON.stringify({ prompt: "Do the thing" }),
+        body: JSON.stringify({ prompt: "Do the thing", directory: "/workspace/repos/test-repo" }),
       });
 
       expect(response.status).toBe(200);
@@ -72,6 +72,7 @@ describe("POST /cron", () => {
       const triggerBody = JSON.parse(String(triggerCall![1]?.body));
       expect(triggerBody.prompt).toBe("Do the thing");
       expect(triggerBody.correlationKey).toMatch(/^cron:/);
+      expect(triggerBody.directory).toBe("/workspace/repos/test-repo");
     });
   });
 
@@ -90,6 +91,7 @@ describe("POST /cron", () => {
         body: JSON.stringify({
           prompt: "Reminder: check deployment",
           correlationKey: "slack:C06ABC:1710600000",
+          directory: "/workspace/repos/test-repo",
         }),
       });
 

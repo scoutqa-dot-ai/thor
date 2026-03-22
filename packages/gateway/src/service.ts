@@ -1,6 +1,13 @@
-import { createLogger, logInfo, logError, ProgressEventSchema } from "@thor/common";
+import {
+  createLogger,
+  logInfo,
+  logWarn,
+  logError,
+  ProgressEventSchema,
+  resolveRepoDirectory,
+} from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
-import { type GitHubEvent } from "./github.js";
+import { type GitHubEvent, getRepoName } from "./github.js";
 import { getSlackCorrelationKey, getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
 
@@ -40,6 +47,8 @@ export async function triggerRunnerSlack(
   slackMcpDeps: SlackMcpDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
+  channelRepos?: Map<string, string>,
+  onRejected?: (reason: string) => void,
 ): Promise<TriggerResult> {
   if (events.length === 0) return { busy: false };
 
@@ -47,14 +56,23 @@ export async function triggerRunnerSlack(
     events.length === 1
       ? `Slack event:\n\n${JSON.stringify(events[0])}`
       : `Slack events:\n\n${JSON.stringify(events)}`;
+  const last = events[events.length - 1];
+  const repo = channelRepos?.get(last.channel);
+  if (!repo) {
+    logWarn(log, "channel_has_no_repo", { channel: last.channel });
+    onRejected?.(`channel ${last.channel} has no repo mapping`);
+    return { busy: false };
+  }
+  const directory = resolveRepoDirectory(repo);
+  if (!directory) {
+    logWarn(log, "repo_directory_not_found", { repo, channel: last.channel });
+    onRejected?.(`repo directory not found for ${repo}`);
+    return { busy: false };
+  }
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      correlationKey,
-      interrupt,
-    }),
+    body: JSON.stringify({ prompt, correlationKey, interrupt, directory }),
   });
 
   if (!response.ok) {
@@ -75,7 +93,6 @@ export async function triggerRunnerSlack(
   onAccepted?.();
 
   // Consume NDJSON stream and forward progress events to slack-mcp
-  const last = events[events.length - 1];
   const channel = last.channel;
   const threadTs = getSlackThreadTs(last);
 
@@ -167,6 +184,7 @@ export async function triggerRunnerGitHub(
   deps: RunnerDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
+  onRejected?: (reason: string) => void,
 ): Promise<TriggerResult> {
   if (events.length === 0) return { busy: false };
 
@@ -175,10 +193,18 @@ export async function triggerRunnerGitHub(
       ? `GitHub ${events[0].event} event:\n\n${JSON.stringify(events[0].payload)}`
       : `GitHub events:\n\n${JSON.stringify(events.map((e) => ({ event: e.event, payload: e.payload })))}`;
 
+  const last = events[events.length - 1];
+  const repoName = getRepoName(last.repository);
+  const directory = resolveRepoDirectory(repoName);
+  if (!directory) {
+    logWarn(log, "repo_directory_not_found", { repo: repoName });
+    onRejected?.(`repo directory not found for ${repoName}`);
+    return { busy: false };
+  }
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, correlationKey, interrupt }),
+    body: JSON.stringify({ prompt, correlationKey, interrupt, directory }),
   });
 
   if (!response.ok) {
@@ -209,6 +235,7 @@ export async function triggerRunnerCron(
   deps: RunnerDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
+  onRejected?: (reason: string) => void,
 ): Promise<TriggerResult> {
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
@@ -217,11 +244,17 @@ export async function triggerRunnerCron(
       prompt: payload.prompt,
       correlationKey,
       interrupt,
+      directory: payload.directory,
     }),
   });
 
   if (!response.ok) {
     const text = await response.text();
+    // 4xx = client error (bad directory, invalid payload) — reject to dead-letter
+    if (response.status >= 400 && response.status < 500) {
+      onRejected?.(`Runner returned ${response.status}: ${text}`);
+      return { busy: false };
+    }
     throw new Error(`Runner returned ${response.status}: ${text}`);
   }
 

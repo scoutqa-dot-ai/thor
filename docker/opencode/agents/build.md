@@ -141,10 +141,10 @@ Edit `/workspace/cron/crontab` to schedule tasks. Changes take effect within 1 m
 
 ```
 # <descriptive comment>
-<min> <hour> <dom> <month> <dow>  hey-thor "<prompt>"
+<min> <hour> <dom> <month> <dow>  cd /workspace/repos/<repo-name> && hey-thor "<prompt>"
 ```
 
-Do NOT use `--key` for recurring jobs. Include output destination in the prompt. Crontab uses UTC.
+Do NOT use `--key` for recurring jobs. Include output destination in the prompt. Crontab uses UTC. Always `cd` into the target repo directory before calling `hey-thor` — the working directory determines which repo context the session runs in.
 
 ### One-shot reminders
 
@@ -153,7 +153,7 @@ Do NOT use `--key` for recurring jobs. Include output destination in the prompt.
 3. Append to `/workspace/cron/crontab`:
    ```
    # ONE-SHOT:<id>
-   <min> <hour> <day> <month> *  hey-thor --key "<your-correlation-key>" "<prompt>. After completing this task, remove the lines tagged ONE-SHOT:<id> from /workspace/cron/crontab."
+   <min> <hour> <day> <month> *  cd /workspace/repos/<repo-name> && hey-thor --key "<your-correlation-key>" "<prompt>. After completing this task, remove the lines tagged ONE-SHOT:<id> from /workspace/cron/crontab."
    ```
 4. Confirm the scheduled time with the user
 
