@@ -19,9 +19,10 @@ PROXY_LINEAR_URL="${PROXY_LINEAR_URL:-http://localhost:3010}"
 GIT_WRAPPERS_URL="${GIT_WRAPPERS_URL:-http://localhost:3004}"
 OPENCODE_URL="${OPENCODE_URL:-http://localhost:4096}"
 SESSION_DIR="${SESSION_DIR:-/workspace/repos/e2e-test}"
-mkdir -p "$SESSION_DIR"
-WORKLOG_DIR="${WORKLOG_DIR:-./docker-volumes/workspace/worklog}"
-MEMORY_DIR="${MEMORY_DIR:-./docker-volumes/workspace/memory}"
+HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
+mkdir -p "${HOST_WORKSPACE}/repos/e2e-test"
+WORKLOG_DIR="${WORKLOG_DIR:-${HOST_WORKSPACE}/worklog}"
+MEMORY_DIR="${MEMORY_DIR:-${HOST_WORKSPACE}/memory}"
 TODAY=$(date +%Y-%m-%d)
 
 passed=0
@@ -263,7 +264,7 @@ echo "  $passed passed, $failed failed"
 echo ""
 
 # Clean up e2e test directory (only if we created the default one)
-[[ "$SESSION_DIR" == "/workspace/repos/e2e-test" ]] && rm -rf "$SESSION_DIR"
+[[ "$SESSION_DIR" == "/workspace/repos/e2e-test" ]] && rm -rf "${HOST_WORKSPACE}/repos/e2e-test"
 
 if [[ $failed -gt 0 ]]; then
   echo "FAIL"
