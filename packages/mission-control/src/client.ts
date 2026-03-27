@@ -112,11 +112,11 @@ export class MCClient {
     await this.request("POST", `/api/tasks/${taskId}/comments`, { content });
   }
 
-  /** Health check. */
+  /** Health check — /login returns 200 when MC is up. */
   async health(): Promise<boolean> {
     try {
-      await this.request("GET", "/api/health");
-      return true;
+      const response = await this.fetchFn(`${this.baseUrl}/login`);
+      return response.ok;
     } catch {
       return false;
     }
