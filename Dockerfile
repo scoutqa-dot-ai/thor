@@ -21,6 +21,7 @@ COPY packages/proxy/package.json packages/proxy/
 COPY packages/runner/package.json packages/runner/
 COPY packages/slack-mcp/package.json packages/slack-mcp/
 COPY packages/remote-cli/package.json packages/remote-cli/
+COPY packages/mission-control/package.json packages/mission-control/
 RUN pnpm install --frozen-lockfile
 
 # --- Build all packages ---
@@ -57,6 +58,11 @@ USER thor
 ENV PORT=3003
 EXPOSE 3003
 CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
+
+FROM build AS mission-control
+USER thor
+WORKDIR /workspace
+CMD ["node", "/app/packages/mission-control/dist/index.js"]
 
 FROM build AS remote-cli
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl openssh-client && rm -rf /var/lib/apt/lists/* \

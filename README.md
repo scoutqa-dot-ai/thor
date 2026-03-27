@@ -9,23 +9,23 @@ An event-driven AI team member that monitors Slack, GitHub, Linear, and PostHog,
                         │ ingress │
                         │ (nginx) │
                         └────┬────┘
-                  ┌──────────┴─────────┐
-                  ▼                    ▼
-           ┌──────────┐          ┌───────────┐
-           │ gateway  │          │ opencode  │
-           │ webhooks │          │ AI engine │
-           └────┬─────┘          └──┬─────┬──┘
-                │               MCP │     │ CLI
-                ▼                   ▼     ▼
-           ┌─────────┐    ┌──────────┐   ┌──────────────┐
-           │ runner  │    │  proxy   │   │ remote-cli │
-           │ sessions│    │ policy   │   │ git/gh CLI   │
-           └─────────┘    └────┬─────┘   └──────────────┘
-                               │
-                    ┌──────────┼──────────┬──────────┐
-                    ▼          ▼          ▼          ▼
-                 Linear     PostHog     Slack     Grafana
-                 (hosted)   (hosted)     MCP       MCP
+              ┌──────────┬───┴────────┐
+              ▼          ▼            ▼
+       ┌──────────┐ ┌──────────┐ ┌───────────┐
+       │ gateway  │ │ mission  │ │ opencode  │
+       │ webhooks │ │ control  │ │ AI engine │
+       └────┬─────┘ └────┬─────┘ └──┬─────┬──┘
+            │             │      MCP │     │ CLI
+            │        ┌────┘          ▼     ▼
+            ▼        ▼       ┌──────────┐  ┌──────────────┐
+       ┌─────────────────┐   │  proxy   │  │ remote-cli │
+       │     runner      │   │ policy   │  │ git/gh CLI   │
+       │    sessions     │   └────┬─────┘  └──────────────┘
+       └─────────────────┘        │
+                       ┌──────────┼──────────┬──────────┐
+                       ▼          ▼          ▼          ▼
+                    Linear     PostHog     Slack     Grafana
+                    (hosted)   (hosted)     MCP       MCP
 ```
 
 Gateway receives events and triggers the runner. OpenCode connects to proxy instances for tool access and uses remote-cli for Git/GitHub CLI operations.
@@ -35,6 +35,8 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 | Service         | Port      | Package            | Role                                                                     |
 | --------------- | --------- | ------------------ | ------------------------------------------------------------------------ |
 | **cron**        | —         | `docker/cron`      | BusyBox crond for scheduled `hey-thor` prompts                           |
+| **mc**          | 3100      | Docker image       | Mission Control task board and scheduler (UI + API)                      |
+| **mc-bridge**   | —         | `@thor/mc-bridge`  | Polls Mission Control task queue, dispatches to runner                   |
 | **data**        | 3080      | `docker/data`      | Nginx credential proxy for internal APIs (requires custom config)        |
 | **gateway**     | 3002      | `@thor/gateway`    | Slack & GitHub webhook ingestion, event batching, trigger orchestration  |
 | **remote-cli**  | 3004      | `@thor/remote-cli` | Git/GitHub CLI proxy with PAT credential isolation                       |
@@ -48,7 +50,7 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 
 ## How It Works
 
-1. **Events arrive** — Slack mentions, GitHub webhooks, and cron schedules hit the gateway
+1. **Events arrive** — Slack mentions, GitHub webhooks, cron schedules, and Mission Control tasks hit the gateway/bridge
 2. **Smart batching** — Events are queued per correlation key (e.g., Slack thread) with configurable delays (3s for direct mentions, 60s for unaddressed messages and GitHub events, immediate for cron)
 3. **Session continuity** — The runner maps correlation keys to persistent OpenCode sessions, resuming context across interactions
 4. **Policy-enforced tools** — OpenCode accesses integrations through proxy instances that enforce allow-lists and log every tool call
@@ -111,6 +113,8 @@ Copy `.env.example` to `.env` and fill in:
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | grafana-mcp        | Grafana service account token                                    |
 | `GRAFANA_URL`                       | Yes      | grafana-mcp        | Grafana instance URL                                             |
 | `INGRESS_PORT`                      | No       | ingress            | Host port (default: `8080`)                                      |
+| `MC_API_KEY`                        | No       | mc-bridge          | Mission Control API key for agent auth                           |
+| `MC_POLL_INTERVAL_MS`               | No       | mc-bridge          | Task queue poll interval (default: `10000`)                      |
 | `LINEAR_API_KEY`                    | Yes      | proxy              | Linear API access                                                |
 | `OPENCODE_CPU_LIMIT`                | No       | opencode           | CPU limit for OpenCode container (default: `3`)                  |
 | `OPENCODE_MEMORY_LIMIT`             | No       | opencode           | Memory limit for OpenCode container (default: `4g`)              |
