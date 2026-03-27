@@ -10,20 +10,20 @@ import { z } from "zod/v4";
 // --- Schemas ---
 
 export const MCTaskSchema = z.object({
-  id: z.string(),
+  id: z.union([z.string(), z.number()]).transform(String),
   title: z.string(),
-  description: z.string().optional(),
+  description: z.string().optional().nullable(),
   status: z.string(),
-  priority: z.string().optional(),
-  projectId: z.string().optional(),
-  assigneeId: z.string().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  priority: z.string().optional().nullable(),
+  projectId: z.union([z.string(), z.number()]).transform(String).optional().nullable(),
+  assigneeId: z.union([z.string(), z.number()]).transform(String).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional().nullable(),
 });
 
 export type MCTask = z.infer<typeof MCTaskSchema>;
 
 export const MCAgentSchema = z.object({
-  id: z.string(),
+  id: z.union([z.string(), z.number()]).transform(String),
   name: z.string(),
   status: z.string().optional(),
 });
@@ -73,11 +73,13 @@ export class MCClient {
 
   /** Register Thor as an agent. Returns the agent record. */
   async registerAgent(name: string, capabilities?: string[]): Promise<MCAgent> {
-    const result = await this.request("POST", "/api/agents/register", {
+    const result = (await this.request("POST", "/api/agents/register", {
       name,
       capabilities: capabilities ?? ["coding", "devops", "analysis"],
-    });
-    return MCAgentSchema.parse(result);
+    })) as Record<string, unknown>;
+    // MC wraps response: { agent: {...}, registered: bool, message: string }
+    const agentData = result.agent ?? result;
+    return MCAgentSchema.parse(agentData);
   }
 
   /** Send a heartbeat to keep the agent alive. */
