@@ -222,6 +222,46 @@ services:
       gateway:
         condition: service_healthy
 
+  mission-control:
+    image: ghcr.io/builderz-labs/mission-control:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3100:3000"
+    volumes:
+      - ./docker-volumes/mission-control:/app/data
+    environment:
+      - NODE_ENV=production
+      - MC_DATA_DIR=/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)throw 1})",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mc-bridge:
+    build:
+      context: .
+      target: mission-control
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - MC_URL=http://mission-control:3000
+      - MC_API_KEY=${MC_API_KEY:-}
+      - RUNNER_URL=http://runner:3000
+      - MC_AGENT_NAME=thor
+      - MC_POLL_INTERVAL_MS=${MC_POLL_INTERVAL_MS:-10000}
+    depends_on:
+      mission-control:
+        condition: service_healthy
+      runner:
+        condition: service_started
+
   vouch:
     image: quay.io/vouch/vouch-proxy:0.45.1
     restart: unless-stopped
