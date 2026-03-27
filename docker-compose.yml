@@ -228,10 +228,9 @@ services:
     ports:
       - "127.0.0.1:3100:3000"
     volumes:
-      - ./docker-volumes/mission-control:/app/data
+      - ./docker-volumes/mission-control:/app/.data
     environment:
       - NODE_ENV=production
-      - MC_DATA_DIR=/app/data
     healthcheck:
       test:
         [
