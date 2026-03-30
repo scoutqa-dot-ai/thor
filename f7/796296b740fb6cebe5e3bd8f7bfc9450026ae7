@@ -1,0 +1,23 @@
+packages/proxy/src/upstream.ts
+  b66caa2347e8a00f 30,32-35,48-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f7796296b740fb6cebe5e3bd8f7bfc9450026ae7",
+  "prompts": {
+    "b66caa2347e8a00f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4e5c924-966b-411e-ad5b-0236654f9aa6",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 2,
+      "accepted_lines": 16,
+      "overriden_lines": 0
+    }
+  }
+}
