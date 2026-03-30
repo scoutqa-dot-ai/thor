@@ -1,0 +1,35 @@
+Dockerfile
+  b7a14cf9a37bce03 68
+docs/plan/2026032102_workspace-config-file.md
+  b7a14cf9a37bce03 90-130
+packages/remote-cli/gitignore-global
+  b7a14cf9a37bce03 1-3
+docker/opencode/opencode.json
+  b7a14cf9a37bce03 4
+packages/remote-cli/entrypoint.sh
+  b7a14cf9a37bce03 23
+docker/opencode/agents/build.md
+  b7a14cf9a37bce03 70-71,73
+README.md
+  b7a14cf9a37bce03 167-209,213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d37cddbdb5a8cabfef2d7af06d98d642baa6e0dc",
+  "prompts": {
+    "b7a14cf9a37bce03": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "afde0015-cece-44e6-b5e6-bd9c45d68a11",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 95,
+      "total_deletions": 25,
+      "accepted_lines": 94,
+      "overriden_lines": 1
+    }
+  }
+}
