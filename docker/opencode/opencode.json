@@ -23,7 +23,7 @@
       "url": "http://proxy:3013/mcp",
       "enabled": true
     },
-    "jira": {
+    "atlassian": {
       "type": "remote",
       "url": "http://proxy:3014/mcp",
       "enabled": true

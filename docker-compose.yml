@@ -89,10 +89,10 @@ services:
       - "127.0.0.1:3014:3014"
     environment:
       - NODE_ENV=production
-      - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.grafana.json,3014:proxy.jira.json
+      - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.grafana.json,3014:proxy.atlassian.json
       - LINEAR_API_KEY=${LINEAR_API_KEY}
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
-      - JIRA_BASIC_AUTH=${JIRA_BASIC_AUTH}
+      - ATLASSIAN_BASIC_AUTH=${ATLASSIAN_BASIC_AUTH}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:

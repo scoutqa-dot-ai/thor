@@ -1,7 +1,7 @@
-# Plan: Jira MCP Integration
+# Plan: Atlassian MCP Integration
 
 **Date**: 2026-03-20
-**Goal**: Add Jira (Atlassian hosted MCP) to Thor via the existing proxy, same pattern as Linear/PostHog.
+**Goal**: Add Atlassian MCP (Jira, Confluence, JSM) to Thor via the existing proxy, same pattern as Linear/PostHog.
 
 ## Context
 
@@ -13,11 +13,11 @@ Atlassian provides a hosted MCP server at `https://mcp.atlassian.com/v1/mcp` wit
 
 - Create `proxy.jira.json` with upstream URL, Basic auth, and tool policy
 - Add port 3014 to proxy service in docker-compose.yml
-- Add `JIRA_BASIC_AUTH` env var to proxy service
+- Add `ATLASSIAN_BASIC_AUTH` env var to proxy service
 - Add `jira` MCP entry to `docker/opencode/opencode.json`
 - Update proxy healthcheck to include port 3014
 - Update Dockerfile EXPOSE for proxy target
-- Add `JIRA_BASIC_AUTH` to `.env.example`
+- Add `ATLASSIAN_BASIC_AUTH` to `.env.example`
 
 ### Phase 2 — Verify connectivity + tune tool list ✅
 
@@ -85,7 +85,7 @@ Atlassian provides a hosted MCP server at `https://mcp.atlassian.com/v1/mcp` wit
 | 3   | Jira + Confluence + JSM in one proxy              | Single upstream exposes all products; no need for separate instances                      |
 | 4   | 26 allow / 11 approve split                       | Read tools auto-forwarded; write tools require human approval for safety                  |
 | 5   | Port 3014 for proxy instance                      | Next available port after 3013 (grafana)                                                 |
-| 6   | `JIRA_BASIC_AUTH` env var (pre-encoded base64)    | Avoids runtime base64 encoding; `echo -n "email:token" \| base64` in setup               |
+| 6   | `ATLASSIAN_BASIC_AUTH` env var (pre-encoded base64)    | Avoids runtime base64 encoding; `echo -n "email:token" \| base64` in setup               |
 
 ## Out of Scope
 
