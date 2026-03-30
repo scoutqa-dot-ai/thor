@@ -1,0 +1,31 @@
+docs/plan/2026032102_workspace-config-file.md
+  b7a14cf9a37bce03 90-91,95,97,119-120,126
+docker/opencode/opencode.json
+  b7a14cf9a37bce03 4-11
+docker-compose.yml
+  b7a14cf9a37bce03 141-142
+docker/opencode/agents/build.md
+  b7a14cf9a37bce03 72
+README.md
+  b7a14cf9a37bce03 169,172-174,195-196,202
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "628bb475fecc04cefd3d8d8b3441e0434253a538",
+  "prompts": {
+    "b7a14cf9a37bce03": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "afde0015-cece-44e6-b5e6-bd9c45d68a11",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 27,
+      "total_deletions": 31,
+      "accepted_lines": 25,
+      "overriden_lines": 0
+    }
+  }
+}
