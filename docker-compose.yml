@@ -92,7 +92,7 @@ services:
       - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.grafana.json,3014:proxy.jira.json
       - LINEAR_API_KEY=${LINEAR_API_KEY}
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
-      - JIRA_API_KEY=${JIRA_API_KEY}
+      - JIRA_BASIC_AUTH=${JIRA_BASIC_AUTH}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:

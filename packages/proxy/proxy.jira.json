@@ -2,10 +2,12 @@
   "upstream": {
     "url": "https://mcp.atlassian.com/v1/mcp",
     "headers": {
-      "Authorization": "Bearer ${JIRA_API_KEY}"
+      "Authorization": "Basic ${JIRA_BASIC_AUTH}"
     }
   },
   "allow": [
+    "atlassianUserInfo",
+    "getAccessibleAtlassianResources",
     "getJiraIssue",
     "searchJiraIssuesUsingJql",
     "getVisibleJiraProjects",
@@ -16,7 +18,32 @@
     "getIssueLinkTypes",
     "lookupJiraAccountId",
     "getTeamworkGraphContext",
-    "getTeamworkGraphObject"
+    "getTeamworkGraphObject",
+    "getConfluencePage",
+    "searchConfluenceUsingCql",
+    "getConfluenceSpaces",
+    "getPagesInConfluenceSpace",
+    "getConfluencePageFooterComments",
+    "getConfluencePageInlineComments",
+    "getConfluenceCommentChildren",
+    "getConfluencePageDescendants",
+    "getJsmOpsAlerts",
+    "getJsmOpsScheduleInfo",
+    "getJsmOpsTeamInfo",
+    "search",
+    "fetch"
   ],
-  "approve": []
+  "approve": [
+    "editJiraIssue",
+    "createJiraIssue",
+    "addCommentToJiraIssue",
+    "transitionJiraIssue",
+    "addWorklogToJiraIssue",
+    "createIssueLink",
+    "createConfluencePage",
+    "updateConfluencePage",
+    "createConfluenceFooterComment",
+    "createConfluenceInlineComment",
+    "updateJsmOpsAlert"
+  ]
 }
