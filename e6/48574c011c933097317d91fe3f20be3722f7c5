@@ -1,0 +1,29 @@
+packages/proxy/proxy.jira.json
+  9d76786b2e4993d1 5,9-10,21-34,37-47
+docs/plan/2026032001_jira-mcp.md
+  9d76786b2e4993d1 8,14,16,20,24-28,30,32,36-37,47,49-63,65-77,84-86,88
+docker-compose.yml
+  9d76786b2e4993d1 95
+.env.example
+  9d76786b2e4993d1 27-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e648574c011c933097317d91fe3f20be3722f7c5",
+  "prompts": {
+    "9d76786b2e4993d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da4329d0-509c-4691-aeaf-ff222e00a9fe",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 81,
+      "total_deletions": 24,
+      "accepted_lines": 79,
+      "overriden_lines": 0
+    }
+  }
+}
