@@ -1,0 +1,63 @@
+packages/common/src/notes.test.ts
+  b66caa2347e8a00f 127,138,206,213,231
+packages/gateway/src/service.ts
+  b66caa2347e8a00f 230
+docker/opencode/opencode.json
+  b66caa2347e8a00f 6
+scripts/test-e2e.sh
+  b66caa2347e8a00f 18,88-89,102,111,113,122
+docs/plan/2026031601_gh-cli-proxy.md
+  b66caa2347e8a00f 66
+docs/plan/2026031204_cron-triggers.md
+  b66caa2347e8a00f 25,183,187,196,201-202
+packages/common/src/worklog.ts
+  b66caa2347e8a00f 5
+docs/feat/mvp.md
+  b66caa2347e8a00f 15,35,41,61,74,85,100,110,124,152,154,158,183
+packages/proxy/multi-proxy.sh
+  b66caa2347e8a00f 7
+docs/plan/2026031102_github-webhooks.md
+  b66caa2347e8a00f 58
+docs/plan/2026031401_memory.md
+  b66caa2347e8a00f 11
+docs/plan/2026031001_memory-tiers.md
+  b66caa2347e8a00f 24,38,63,84,96
+packages/common/src/logger.ts
+  b66caa2347e8a00f 7
+docs/plan/2026030901_poc.md
+  b66caa2347e8a00f 10,25,59,70,89,104,107,115,151
+docs/plan/2026031205_approval-flow.md
+  b66caa2347e8a00f 11,218,344,487
+docs/plan/2026032001_atlassian-mcp.md
+  b66caa2347e8a00f 83
+docs/plan/2026031003_slack-mcp.md
+  b66caa2347e8a00f 26,85,185
+docs/plan/2026031002_slack-app.md
+  b66caa2347e8a00f 19
+docs/plan/2026031103_slack-ephemeral-message.md
+  b66caa2347e8a00f 84
+README.md
+  b66caa2347e8a00f 3,27,69,106,227,232,234,237,246-250
+docker-compose.yml
+  b66caa2347e8a00f 91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "fc3e1cae2d376780c58988e36ee088ad06c62edc",
+  "prompts": {
+    "b66caa2347e8a00f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4e5c924-966b-411e-ad5b-0236654f9aa6",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 99,
+      "total_deletions": 110,
+      "accepted_lines": 86,
+      "overriden_lines": 0
+    }
+  }
+}
