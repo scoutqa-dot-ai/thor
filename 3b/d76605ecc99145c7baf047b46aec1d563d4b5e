@@ -1,0 +1,31 @@
+docker/opencode/opencode.json
+  9d76786b2e4993d1 26
+docker-compose.yml
+  9d76786b2e4993d1 92,95
+packages/proxy/proxy.atlassian.json
+  9d76786b2e4993d1 5
+docs/plan/2026032001_atlassian-mcp.md
+  9d76786b2e4993d1 1,4,16,20,88
+.env.example
+  9d76786b2e4993d1 27,29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3bd76605ecc99145c7baf047b46aec1d563d4b5e",
+  "prompts": {
+    "9d76786b2e4993d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "da4329d0-509c-4691-aeaf-ff222e00a9fe",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 11,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
