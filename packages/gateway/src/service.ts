@@ -227,7 +227,7 @@ export async function triggerRunnerGitHub(
 /**
  * Trigger the runner with a cron job payload.
  * Consumes the response stream silently — the prompt itself should
- * instruct the agent where to post results (Slack, Linear, etc.).
+ * instruct the agent where to post results (Slack, Atlassian, etc.).
  */
 export async function triggerRunnerCron(
   payload: CronPayload,

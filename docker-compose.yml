@@ -86,11 +86,9 @@ services:
       - "127.0.0.1:3011:3011"
       - "127.0.0.1:3012:3012"
       - "127.0.0.1:3013:3013"
-      - "127.0.0.1:3014:3014"
     environment:
       - NODE_ENV=production
-      - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.grafana.json,3014:proxy.atlassian.json
-      - LINEAR_API_KEY=${LINEAR_API_KEY}
+      - PROXY_INSTANCES=3010:proxy.atlassian.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.grafana.json
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
       - ATLASSIAN_BASIC_AUTH=${ATLASSIAN_BASIC_AUTH}
     volumes:
@@ -106,7 +104,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "Promise.all([3010,3011,3012,3013,3014].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
+          "Promise.all([3010,3011,3012,3013].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
         ]
       interval: 5s
       timeout: 5s

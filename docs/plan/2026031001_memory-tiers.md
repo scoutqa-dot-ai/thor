@@ -21,7 +21,7 @@
 ┌────────────────────────────────────────────────────────────────┐
 │                                                                │
 │  ┌──────────────────┐       ┌────────────┐                     │
-│  │  runner           │──MCP──│  proxy     │──MCP──► Linear     │
+│  │  runner           │──MCP──│  proxy     │──MCP──► Atlassian  │
 │  │                   │       │            │──MCP──► PostHog    │
 │  │ OpenCode headless │       │ policy +   │                     │
 │  │ (0.0.0.0:4096)    │       │ logging    │                     │
@@ -35,7 +35,7 @@
 │  worklog/                                                       │
 │  └─ 2026/03/10/                                                │
 │     ├─ slack-thread-123.md    ← markdown notes per session   │
-│     ├─ linear-ACME-456.md                                      │
+│     ├─ jira-ACME-456.md                                      │
 │     └─ json/                  ← proxy tool call audit logs     │
 │                                                                │
 └────────────────────────────────────────────────────────────────┘
@@ -60,7 +60,7 @@ Steps:
 
 **Exit criteria**:
 
-- `curl -X POST /trigger -d '{"prompt":"List 3 recent Linear issues","correlationKey":"test-session-1"}'` creates a new session, returns a `sessionId` and `resumed: false`
+- `curl -X POST /trigger -d '{"prompt":"List 3 recent Jira issues","correlationKey":"test-session-1"}'` creates a new session, returns a `sessionId` and `resumed: false`
 - A second `curl -X POST /trigger -d '{"prompt":"Tell me more about the first one","correlationKey":"test-session-1"}'` resumes the same session — the agent references the prior issues without re-listing them, returns `resumed: true`
 - The agent can recall information from the first prompt (e.g., secret code word test)
 
@@ -81,7 +81,7 @@ Steps:
       ├─ json/              ← proxy audit logs (existing)
       └─ notes/
          ├─ test-session-1.md
-         └─ linear-ACME-456.md
+         └─ jira-ACME-456.md
    ```
 2. On first trigger for a correlation key, create the notes file with a header:
 
@@ -93,12 +93,13 @@ Steps:
 
    ## Trigger
 
-   **Prompt**: List 3 recent Linear issues
+   **Prompt**: List 3 recent Jira issues
    **Model**: (default)
    **Time**: 2026-03-10T14:30:00Z
    ```
 
 3. On follow-up triggers (session resume), append the new prompt to the notes file:
+
    ```markdown
    ---
 
@@ -107,7 +108,9 @@ Steps:
    **Prompt**: Tell me more about the first one
    **Model**: (default)
    ```
+
 4. On session completion, append a summary block to the notes:
+
    ```markdown
    ---
 
@@ -118,6 +121,7 @@ Steps:
    **Tool calls**: 0 ((none))
    **Key findings**: <first 300 chars of response>
    ```
+
 5. Notes files survive container restarts via the `./workspace` bind mount in docker-compose
 6. **No prompt seeding** — OpenCode session already has full conversation history; notes file is for human review only
 
@@ -140,8 +144,8 @@ Steps:
 
 1. `scripts/test-e2e.sh` covers:
    - Health checks (proxy + runner)
-   - Tool listing (proxied Linear/PostHog tools visible)
-   - Tool calls (actual Linear API calls work)
+   - Tool listing (proxied Atlassian/PostHog tools visible)
+   - Tool calls (actual Atlassian API calls work)
    - Memory continuity with secret code recall test:
      - Trigger #1: Tell agent a secret code, verify it confirms
      - Trigger #2 (same correlation key): Ask agent to recall the code, verify it does

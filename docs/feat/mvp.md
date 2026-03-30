@@ -12,7 +12,7 @@ flowchart LR
     B[MCP Proxy<br/>Approval + Logging<br/>Policy Gateway]
 
     C[GitHub MCP<br/>Hosted]
-    D[Linear MCP<br/>Hosted]
+    D[Atlassian MCP<br/>Hosted]
     E[PostHog MCP<br/>Hosted]
 
     F[Slack MCP Server<br/>Custom<br/>Limited Tools]
@@ -32,13 +32,13 @@ flowchart LR
 | Integration | Approach          | Auth (MVP)       | Endpoint                             | Notes             |
 | ----------- | ----------------- | ---------------- | ------------------------------------ | ----------------- |
 | GitHub      | Hosted MCP        | Fine-grained PAT | `https://api.githubcopilot.com/mcp/` | Repository scoped |
-| Linear      | Hosted MCP        | API Key          | `https://mcp.linear.app/mcp`         | Team scoped       |
+| Atlassian   | Hosted MCP        | Basic Auth       | `https://mcp.atlassian.com/v1/mcp`   | Team scoped       |
 | PostHog     | Hosted MCP        | API Key          | `https://mcp.posthog.com/mcp`        | Project scoped    |
 | Slack       | Custom MCP Server | Slack Bot Token  | Internal container                   | Limited tools     |
 
 **GitHub** — Fine-grained PAT, repository scoped. Permissions: Contents (read), Pull requests (write), Issues (write), Actions (read). Write operations require approval.
 
-**Linear** — API Key, team scoped. Read/create/comment/update issues. Creation and status changes may require approval.
+**Atlassian** — Basic Auth (scoped API token), team scoped. Read/create/comment/update Jira issues, Confluence pages, and JSM alerts. Write operations may require approval.
 
 **PostHog** — API Key, pinned to organization + project. Read-only queries and error investigation. Mutations (feature flags, experiments) require approval.
 
@@ -58,7 +58,7 @@ Each tool call is evaluated as one of:
 
 For approval, the proxy sends a Slack notification via the Slack MCP server. Once resolved, the proxy executes or discards the request. Thor will be notified once approved/rejected. In rare cases, Thor can choose to poll the action ID and wait for the outcome.
 
-Approval is typically required for: PR creation, issue modifications, Linear status updates, PostHog config changes, etc.
+Approval is typically required for: PR creation, issue modifications, Jira status updates, PostHog config changes, etc.
 
 ---
 
@@ -71,7 +71,7 @@ Initial trigger sources:
 - **Slack mention** — user @mentions Thor in a thread
 - **Scheduled job** — cron tasks (e.g. PostHog error check every 6h)
 - **Approval resolution** — emits back into the originating session
-- **Webhook event** — external systems like Linear
+- **Webhook event** — external systems like Jira
 
 ---
 
@@ -82,7 +82,7 @@ A **session** groups related events by correlation key:
 | Source   | Correlation Key            | Example                            |
 | -------- | -------------------------- | ---------------------------------- |
 | Slack    | Thread ID                  | `slack:thread:1234567890.123`      |
-| Linear   | Issue ID                   | `linear:issue:ABC-123`             |
+| Jira     | Issue ID                   | `jira:issue:ABC-123`               |
 | Cron     | Job name + schedule window | `cron:posthog-check:2026-03-08T06` |
 | Approval | Originating session ID     | (inherits)                         |
 
@@ -97,7 +97,7 @@ idle → collecting → running → cooldown → idle
 | Source   | Debounce  |
 | -------- | --------- |
 | Slack    | ~5 sec    |
-| Linear   | ~2 sec    |
+| Jira     | ~2 sec    |
 | Approval | immediate |
 | Cron     | immediate |
 
@@ -107,7 +107,7 @@ idle → collecting → running → cooldown → idle
 
 ### Event Merging
 
-Batched events are merged into a single prompt. Slack: multiple thread messages become one context block. Linear: multiple webhook payloads become one change description.
+Batched events are merged into a single prompt. Slack: multiple thread messages become one context block. Jira: multiple webhook payloads become one change description.
 
 ### Memory
 
@@ -121,7 +121,7 @@ Three layers:
 worklog/
 └─ 2026/03/08/
    ├─ slack-abc-123.md
-   ├─ linear-ACME-456.md
+   ├─ jira-ACME-456.md
    └─ posthog-check-06h.md
 ```
 
@@ -149,13 +149,13 @@ Three examples of how Thor contributes across product and engineering work.
 
 A scheduled job queries PostHog and notices a 40% error rate increase on `/api/execute`. Thor checks GitHub for recent merges, finds PR #1047 landed 20 minutes before the spike, and reads the diff. A changed import path matches the error stack trace. It drafts a one-line fix — the policy proxy holds the PR for approval and pings Slack. An engineer approves, the draft PR appears, and Thor posts a summary linking the PR, the PostHog chart, and the original merge.
 
-### Bug filed in Linear, Thor prepares context
+### Bug filed in Jira, Thor prepares context
 
-A new bug is filed in Linear. The webhook triggers Thor. It reads the issue description, searches the codebase for relevant files, checks git blame for recent changes in that area, and pulls related PostHog session data. It comments on the Linear issue with a summary: likely affected files, recent commits, and who last touched the code. No fix attempted — just triage prep that saves 15 minutes of context-gathering.
+A new bug is filed in Jira. The webhook triggers Thor. It reads the issue description, searches the codebase for relevant files, checks git blame for recent changes in that area, and pulls related PostHog session data. It comments on the Jira issue with a summary: likely affected files, recent commits, and who last touched the code. No fix attempted — just triage prep that saves 15 minutes of context-gathering.
 
 ### Daily codebase health digest
 
-A daily cron job has Thor review open PRs older than 5 days, Linear issues marked "in progress" with no linked PR, and CI runs with increasing flakiness. It posts a morning summary to Slack: "3 stale PRs, 2 issues with no linked code, `auth.test.ts` has failed 4 of the last 10 runs." This is the product side of its role — tracking delivery health so the team can act on it.
+A daily cron job has Thor review open PRs older than 5 days, Jira issues marked "in progress" with no linked PR, and CI runs with increasing flakiness. It posts a morning summary to Slack: "3 stale PRs, 2 issues with no linked code, `auth.test.ts` has failed 4 of the last 10 runs." This is the product side of its role — tracking delivery health so the team can act on it.
 
 ---
 
@@ -180,7 +180,7 @@ A daily cron job has Thor review open PRs older than 5 days, Linear issues marke
 
 [OpenClaw](https://openclaw.ai/) ([GitHub](https://github.com/openclaw/openclaw)) — AGPL-3.0, 68k+ stars, TypeScript. Formerly Clawdbot/Moltbot. Model-agnostic (Claude, GPT, DeepSeek, Kimi).
 
-**Pros**: Native MCP client (JSON-RPC 2.0 over stdio/HTTP). 13,700+ community skills covering GitHub, Linear, PostHog, Slack. Persistent memory (daily + long-term) reduces memory-layer build effort. Messaging-first design — Slack triggers work out of the box. Heartbeat loop supports cron-like scheduled tasks without external scheduler. Skill system (markdown + TypeScript) is lightweight for custom workflows. Model-agnostic — swap LLM providers without code changes.
+**Pros**: Native MCP client (JSON-RPC 2.0 over stdio/HTTP). 13,700+ community skills covering GitHub, Jira, PostHog, Slack. Persistent memory (daily + long-term) reduces memory-layer build effort. Messaging-first design — Slack triggers work out of the box. Heartbeat loop supports cron-like scheduled tasks without external scheduler. Skill system (markdown + TypeScript) is lightweight for custom workflows. Model-agnostic — swap LLM providers without code changes.
 
 **Cons**: Serious security track record — CVE-2026-25253 (critical RCE), 824+ malicious skills found in registry, 30,000+ exposed instances discovered without auth. Enterprise readiness rated 1.2/5. Auth disabled by default; hardening requires gateway tokens, firewall, TLS proxy, secrets manager, and disabled public skill registry. General-purpose personal assistant, not a purpose-built coding agent — coding quality depends on skill prompts and underlying LLM. Own session/memory model conflicts with the proposal's lifecycle (idle → collecting → running → cooldown); an external agent-runner is still needed for debounce and correlation. Policy proxy routing requires redirecting all MCP connections through config — workable but fights the default direct-connect architecture. Fast-moving release cycle with rocky security history demands ongoing maintenance.
 

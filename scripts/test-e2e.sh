@@ -5,7 +5,7 @@
 # Tests the full chain: curl -> runner -> OpenCode service -> per-upstream proxies -> MCP servers
 #
 # Prerequisites:
-#   - Both services running (either `pnpm dev` with LINEAR_API_KEY, or `docker compose up`)
+#   - Both services running (either `pnpm dev` or `docker compose up`)
 #   - OpenCode configured with an LLM provider in the runner environment
 #
 # Usage:
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
-PROXY_LINEAR_URL="${PROXY_LINEAR_URL:-http://localhost:3010}"
+PROXY_POSTHOG_URL="${PROXY_POSTHOG_URL:-http://localhost:3010}"
 GIT_WRAPPERS_URL="${GIT_WRAPPERS_URL:-http://localhost:3004}"
 OPENCODE_URL="${OPENCODE_URL:-http://localhost:4096}"
 SESSION_DIR="${SESSION_DIR:-/workspace/repos/e2e-test}"
@@ -85,8 +85,8 @@ response_contains() {
 echo ""
 echo "=== Health Checks ==="
 
-proxy_health=$(curl -sf "$PROXY_LINEAR_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy (linear) is healthy" "got: $proxy_health"
+proxy_health=$(curl -sf "$PROXY_POSTHOG_URL/health" 2>/dev/null || echo '{}')
+assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy (posthog) is healthy" "got: $proxy_health"
 
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
 assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy" "got: $runner_health"
@@ -99,7 +99,7 @@ echo "  (this may take a moment while the agent session runs)"
 
 list_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"List the tools available to you. Only list tool names from linear or posthog, one per line. Nothing else.\",\"directory\":\"$SESSION_DIR\"}" \
+  -d "{\"prompt\":\"List the tools available to you. Only list tool names from atlassian or posthog, one per line. Nothing else.\",\"directory\":\"$SESSION_DIR\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 list_response=$(echo "$list_raw" | parse_done)
 
@@ -108,9 +108,9 @@ list_response_text=$(json_field "$list_response" "response")
 assert '[[ -n "$list_session" ]]' "Got a session ID" "sessionId='$list_session'"
 assert '[[ "$(response_contains "$list_response" "list_issues")" == "yes" ]]' "Response mentions list_issues tool" "response: ${list_response_text:0:200}"
 
-list_has_linear=$(response_contains "$list_response" "get_issue")
+list_has_atlassian=$(response_contains "$list_response" "get_issue")
 list_has_posthog=$(response_contains "$list_response" "insight-query")
-assert '[[ "$list_has_linear" == "yes" || "$list_has_posthog" == "yes" ]]' "Response mentions proxied tools (linear or posthog)" "response: ${list_response_text:0:200}"
+assert '[[ "$list_has_atlassian" == "yes" || "$list_has_posthog" == "yes" ]]' "Response mentions proxied tools (atlassian or posthog)" "response: ${list_response_text:0:200}"
 
 # ── 3. Trigger: actual tool call ────────────────────────────────────────────
 
@@ -119,7 +119,7 @@ echo "=== Trigger: Tool Call (list issues) ==="
 
 issues_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"Use the linear tools to list the 2 most recent Linear issues. Show their identifier, title, and status in a table.\",\"directory\":\"$SESSION_DIR\"}" \
+  -d "{\"prompt\":\"Use the atlassian tools to list the 2 most recent Jira issues. Show their identifier, title, and status in a table.\",\"directory\":\"$SESSION_DIR\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 issues_response=$(echo "$issues_raw" | parse_done)
 

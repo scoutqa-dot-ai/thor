@@ -1,6 +1,6 @@
 # Thor
 
-An event-driven AI team member that monitors Slack, GitHub, Linear, and PostHog, then takes action through OpenCode sessions with policy-enforced tool access.
+An event-driven AI team member that monitors Slack, GitHub, Atlassian, and PostHog, then takes action through OpenCode sessions with policy-enforced tool access.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ An event-driven AI team member that monitors Slack, GitHub, Linear, and PostHog,
                                │
                     ┌──────────┼──────────┬──────────┐
                     ▼          ▼          ▼          ▼
-                 Linear     PostHog     Slack     Grafana
+                Atlassian   PostHog     Slack     Grafana
                  (hosted)   (hosted)     MCP       MCP
 ```
 
@@ -66,10 +66,10 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 
 ```bash
 # Set required environment variables
+export ATLASSIAN_BASIC_AUTH=base64_encoded_email:token
 export GITHUB_PAT=github_pat_...
 export GRAFANA_SERVICE_ACCOUNT_TOKEN=glsa_...
 export GRAFANA_URL=https://your-instance.grafana.net
-export LINEAR_API_KEY=lin_api_...
 export POSTHOG_API_KEY=phx_...
 export SLACK_BOT_TOKEN=xoxb-...
 export SLACK_BOT_USER_ID=U...
@@ -103,6 +103,7 @@ Copy `.env.example` to `.env` and fill in:
 
 | Variable                            | Required | Service            | Purpose                                                          |
 | ----------------------------------- | -------- | ------------------ | ---------------------------------------------------------------- |
+| `ATLASSIAN_BASIC_AUTH`              | Yes      | proxy              | Base64-encoded `email:api-token` for Atlassian API access        |
 | `CRON_SECRET`                       | Yes      | gateway, cron      | Shared secret for cron endpoint auth                             |
 | `DATA_ROUTES`                       | No       | data               | Comma-separated list of data proxy routes (see below)            |
 | `GIT_USER_EMAIL`                    | No       | remote-cli         | Git author email (default: `thor@localhost`)                     |
@@ -111,7 +112,6 @@ Copy `.env.example` to `.env` and fill in:
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | grafana-mcp        | Grafana service account token                                    |
 | `GRAFANA_URL`                       | Yes      | grafana-mcp        | Grafana instance URL                                             |
 | `INGRESS_PORT`                      | No       | ingress            | Host port (default: `8080`)                                      |
-| `LINEAR_API_KEY`                    | Yes      | proxy              | Linear API access                                                |
 | `OPENCODE_CPU_LIMIT`                | No       | opencode           | CPU limit for OpenCode container (default: `3`)                  |
 | `OPENCODE_MEMORY_LIMIT`             | No       | opencode           | Memory limit for OpenCode container (default: `4g`)              |
 | `OPENCODE_URL`                      | No       | runner             | OpenCode server URL (default: `http://opencode:4096`)            |
@@ -224,17 +224,17 @@ thor/
 
 ### Proxy Configuration
 
-Each integration has a policy config file (e.g., `proxy.linear.json`):
+Each integration has a policy config file (e.g., `proxy.atlassian.json`):
 
 ```json
 {
   "upstream": {
-    "url": "https://mcp.linear.app/mcp",
+    "url": "https://mcp.atlassian.com/v1/mcp",
     "headers": {
-      "Authorization": "Bearer ${LINEAR_API_KEY}"
+      "Authorization": "Basic ${ATLASSIAN_BASIC_AUTH}"
     }
   },
-  "allow": ["get_issue", "list_issues", "list_teams"]
+  "allow": ["get_issue", "list_issues", "list_projects"]
 }
 ```
 
@@ -242,12 +242,12 @@ The allow list uses exact tool names. Environment variables in headers are inter
 
 ### Proxy Instances
 
-| Port | Config               | Upstream           |
-| ---- | -------------------- | ------------------ |
-| 3010 | `proxy.linear.json`  | Linear hosted MCP  |
-| 3011 | `proxy.posthog.json` | PostHog hosted MCP |
-| 3012 | `proxy.slack.json`   | `slack-mcp:3003`   |
-| 3013 | `proxy.grafana.json` | `grafana-mcp:8000` |
+| Port | Config                 | Upstream             |
+| ---- | ---------------------- | -------------------- |
+| 3010 | `proxy.atlassian.json` | Atlassian hosted MCP |
+| 3011 | `proxy.posthog.json`   | PostHog hosted MCP   |
+| 3012 | `proxy.slack.json`     | `slack-mcp:3003`     |
+| 3013 | `proxy.grafana.json`   | `grafana-mcp:8000`   |
 
 Environment variables are documented in the Deployment Configuration section above.
 

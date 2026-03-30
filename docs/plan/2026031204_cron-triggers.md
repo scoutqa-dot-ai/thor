@@ -22,7 +22,7 @@ This plan adds a `POST /cron` HTTP endpoint to the gateway. Scheduling runs in a
 | D4  | **Cron events use `source: "cron"` in EventQueue**           | Follows the existing pattern (slack, github). The queue handler dispatches based on source type.                                                                                                                              |
 | D5  | **Immediate dispatch (delayMs: 0)**                          | Per mvp.md spec. Cron events don't batch — each tick fires independently.                                                                                                                                                     |
 | D6  | **Correlation key: `cron:{md5(prompt)}:{epoch}`**            | md5 of the prompt groups related runs; epoch ensures each invocation gets its own session. Always auto-derived — no override needed.                                                                                          |
-| D7  | **No `--slack` flag — prompt instructs the agent**           | The prompt itself tells the agent where to post results (Slack, Linear, etc.) via MCP tools. No special gateway plumbing for output routing.                                                                                  |
+| D7  | **No `--slack` flag — prompt instructs the agent**           | The prompt itself tells the agent where to post results (Slack, Jira, etc.) via MCP tools. No special gateway plumbing for output routing.                                                                                    |
 | D8  | **`CRON_SECRET` required — fail fast if unset**              | `POST /cron` always requires `Authorization: Bearer <CRON_SECRET>`. If the env var is not configured, the endpoint returns 401 immediately. No permissive mode.                                                               |
 | D9  | **Crontab on shared volume, not baked into image**           | `docker-volumes/workspace/cron/` is mounted **rw in OpenCode** and **ro in the cron container**. OpenCode can add/edit/remove jobs at runtime. BusyBox crond re-reads the crontab every wake cycle — no reload signal needed. |
 | D10 | **`hey-thor` CLI baked into image, not on volume**           | The CLI is stable infrastructure; the crontab is the dynamic part. CLI in image, config on volume.                                                                                                                            |
@@ -180,11 +180,11 @@ Steps:
 
 ## Example Schedules
 
-The crontab at `docker-volumes/workspace/cron/crontab` is the single source of truth. Each line is a standard cron expression followed by a `hey-thor` invocation. Available upstream MCP servers via proxy: **GitHub** (port 3013), **Linear** (port 3010), **PostHog** (port 3011), **Slack** (port 3012), **Git** (port 3014).
+The crontab at `docker-volumes/workspace/cron/crontab` is the single source of truth. Each line is a standard cron expression followed by a `hey-thor` invocation. Available upstream MCP servers via proxy: **GitHub** (port 3013), **Atlassian** (port 3010), **PostHog** (port 3011), **Slack** (port 3012), **Git** (port 3014).
 
 ```crontab
 # ── Daily Brief (weekdays 9:15 AM VN time / 2:15 UTC) ──────────────────────
-15 2 * * 1-5  hey-thor "Generate a Daily Brief for the Acme team. Include: (1) What shipped — list PRs merged in acme/acme-project in the last 24h with PR number, title, and author. (2) Heads up — find Linear issues in the Acme project that are urgent or due within 3 days but still in Backlog/Todo; flag open PRs older than 2 days with no review. (3) Action items — based on overdue issues and stale PRs, tag the assignee with specific asks. (4) Product pulse — query PostHog for yesterday's visitor count, signup count, execution count, and agent completion rate; compare to the day before and show trend arrows. (5) Quick wins — small PRs (<100 lines) ready for review. Format with Slack mrkdwn, use emoji section headers. Keep it to one concise message. Post to #acme-general on Slack."
+15 2 * * 1-5  hey-thor "Generate a Daily Brief for the Acme team. Include: (1) What shipped — list PRs merged in acme/acme-project in the last 24h with PR number, title, and author. (2) Heads up — find Jira issues in the Acme project that are urgent or due within 3 days but still in Backlog/Todo; flag open PRs older than 2 days with no review. (3) Action items — based on overdue issues and stale PRs, tag the assignee with specific asks. (4) Product pulse — query PostHog for yesterday's visitor count, signup count, execution count, and agent completion rate; compare to the day before and show trend arrows. (5) Quick wins — small PRs (<100 lines) ready for review. Format with Slack mrkdwn, use emoji section headers. Keep it to one concise message. Post to #acme-general on Slack."
 
 # ── Error Spike Monitor (every 6 hours) ─────────────────────────────────────
 0 */6 * * *  hey-thor "Check PostHog for error rate spikes in the last 6 hours. If any endpoint shows >20% increase in error rate, investigate recent GitHub merges in acme/acme-project for likely causes. Post findings with links to the relevant PRs and PostHog error details to #acme-general on Slack."
@@ -193,13 +193,13 @@ The crontab at `docker-volumes/workspace/cron/crontab` is the single source of t
 0 9 * * 1-5  hey-thor "Find all open PRs in acme/acme-project that have had no review activity in the last 48 hours. For each, mention the PR author and requested reviewers. Sort by age, oldest first. Post to #acme-general on Slack."
 
 # ── Weekly Initiative Health (Monday 9:30 AM VN / 2:30 UTC) ─────────────────
-30 2 * * 1  hey-thor "Generate a weekly initiative health report. For each active Linear initiative in the Acme project: show % complete, issues closed vs remaining this week, and any blockers. Cross-reference with GitHub — flag initiatives where no PRs were merged in the past 7 days. Post to #acme-general on Slack."
+30 2 * * 1  hey-thor "Generate a weekly initiative health report. For each active Jira initiative in the Acme project: show % complete, issues closed vs remaining this week, and any blockers. Cross-reference with GitHub — flag initiatives where no PRs were merged in the past 7 days. Post to #acme-general on Slack."
 ```
 
 ### Prompt Design Guidelines
 
-- **Include output destination in the prompt** — "Post to #acme-general on Slack" or "Create a Linear issue in the Acme project". The agent uses MCP tools to deliver results — no special gateway plumbing needed.
-- **Be specific about data sources** — name the GitHub repo, Linear project, Slack channel, or PostHog event explicitly so the agent doesn't guess.
+- **Include output destination in the prompt** — "Post to #acme-general on Slack" or "Create a Jira issue in the Acme project". The agent uses MCP tools to deliver results — no special gateway plumbing needed.
+- **Be specific about data sources** — name the GitHub repo, Jira project, Slack channel, or PostHog event explicitly so the agent doesn't guess.
 - **Define the output format** — "Slack mrkdwn", "one message", "bullet points" prevents the agent from dumping raw data.
 - **Include thresholds** — ">20% increase", "older than 2 days", "<100 lines" give the agent clear decision criteria.
 - **Time-window the query** — "last 24h", "last 6 hours", "past 7 days" prevents unbounded data fetches.

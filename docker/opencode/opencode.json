@@ -3,7 +3,7 @@
   "model": "opencode/big-pickle",
   "permission": "allow",
   "mcp": {
-    "linear": {
+    "atlassian": {
       "type": "remote",
       "url": "http://proxy:3010/mcp",
       "enabled": true
@@ -21,11 +21,6 @@
     "grafana": {
       "type": "remote",
       "url": "http://proxy:3013/mcp",
-      "enabled": true
-    },
-    "atlassian": {
-      "type": "remote",
-      "url": "http://proxy:3014/mcp",
       "enabled": true
     }
   }
