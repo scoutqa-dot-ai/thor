@@ -89,7 +89,7 @@ export class MCClient {
 
   /** Poll the task queue for work assigned to this agent. */
   async pollQueue(agentId: string): Promise<MCTask | undefined> {
-    const result = await this.request("GET", `/api/tasks/queue?agentId=${agentId}`);
+    const result = await this.request("GET", `/api/tasks/queue?agent=${agentId}`);
     if (!result) return undefined;
 
     // Queue may return a single task or null
