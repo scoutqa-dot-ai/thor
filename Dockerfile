@@ -22,6 +22,7 @@ COPY packages/runner/package.json packages/runner/
 COPY packages/slack-mcp/package.json packages/slack-mcp/
 COPY packages/remote-cli/package.json packages/remote-cli/
 COPY packages/mission-control/package.json packages/mission-control/
+COPY packages/personal-slack-mcp/package.json packages/personal-slack-mcp/
 RUN pnpm install --frozen-lockfile
 
 # --- Build all packages ---
@@ -78,3 +79,9 @@ ENV PORT=3004
 EXPOSE 3004
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "/app/packages/remote-cli/dist/index.js"]
+
+FROM build AS personal-slack-mcp
+USER thor
+ENV PORT=3020
+EXPOSE 3020
+CMD ["node", "/app/packages/personal-slack-mcp/dist/index.js"]

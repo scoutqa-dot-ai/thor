@@ -25,6 +25,23 @@ services:
       timeout: 3s
       retries: 10
 
+  personal-slack-mcp:
+    build:
+      context: .
+      target: personal-slack-mcp
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3020:3020"
+    environment:
+      - NODE_ENV=production
+      - PERSONAL_SLACK_TOKEN=${PERSONAL_SLACK_TOKEN}
+    healthcheck:
+      test:
+        ["CMD", "node", "-e", "fetch('http://localhost:3020/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   remote-cli:
     build:
       context: .
@@ -88,7 +105,7 @@ services:
       - "127.0.0.1:3013:3013"
     environment:
       - NODE_ENV=production
-      - PROXY_INSTANCES=3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.grafana.json
+      - PROXY_INSTANCES=3010:proxy.linear.json,3012:proxy.slack.json,3013:proxy.grafana.json
       - LINEAR_API_KEY=${LINEAR_API_KEY}
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
     volumes:
@@ -104,7 +121,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "Promise.all([3010,3011,3012,3013].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
+          "Promise.all([3010,3012,3013].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
         ]
       interval: 5s
       timeout: 5s
@@ -231,6 +248,7 @@ services:
       - ./docker-volumes/mission-control:/app/.data
     environment:
       - NODE_ENV=production
+      - AUTH_PASS=${MC_AUTH_PASS}
     healthcheck:
       test:
         [
@@ -275,9 +293,9 @@ services:
       - OAUTH_SCOPES=openid,email,profile
       - VOUCH_COOKIE_DOMAIN=${VOUCH_COOKIE_DOMAIN:-localhost}
       - VOUCH_COOKIE_MAXAGE=4320
-      - VOUCH_COOKIE_SECURE=false
+      - VOUCH_COOKIE_SECURE=true
       - VOUCH_DOCUMENT_ROOT=/vouch
-      - VOUCH_DOMAINS=vouch
+      - VOUCH_DOMAINS=huytieu.com
       - VOUCH_JWT_MAXAGE=4320
       - VOUCH_JWT_SECRET=${VOUCH_JWT_SECRET:?set VOUCH_JWT_SECRET}
       - VOUCH_WHITELIST=${VOUCH_WHITELIST:?set VOUCH_WHITELIST}
