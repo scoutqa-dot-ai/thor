@@ -92,21 +92,21 @@ export async function triggerRunnerSlack(
   // Runner accepted — safe to delete queue files.
   onAccepted?.();
 
-  // Consume NDJSON stream and forward progress events to slack-mcp
+  // Consume NDJSON stream in the background so the queue handler can return
+  // immediately. This keeps the per-key processing lock short (released as
+  // soon as the runner accepts) while still forwarding progress events.
   const channel = last.channel;
   const threadTs = getSlackThreadTs(last);
 
-  try {
-    await consumeNdjsonStream(response, channel, threadTs, slackMcpDeps);
-  } catch (err) {
+  void consumeNdjsonStream(response, channel, threadTs, slackMcpDeps).catch(async (err) => {
     logError(log, "stream_consume_error", err instanceof Error ? err.message : String(err));
     await forwardProgressEvent(
       channel,
       threadTs,
       { type: "error", error: err instanceof Error ? err.message : "stream error" },
       slackMcpDeps,
-    );
-  }
+    ).catch(() => {});
+  });
 
   return { busy: false };
 }
