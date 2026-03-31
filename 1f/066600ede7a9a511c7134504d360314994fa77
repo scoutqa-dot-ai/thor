@@ -1,0 +1,40 @@
+README.md
+  008c236e09ad0742 169-171,175-176,203
+docs/plan/2026032102_workspace-config-file.md
+  008c236e09ad0742 90,95,97-99
+docker/opencode/agents/build.md
+  008c236e09ad0742 72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1f066600ede7a9a511c7134504d360314994fa77",
+  "prompts": {
+    "008c236e09ad0742": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f3ccd0e-c4df-42eb-b200-f00783cf670c",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 26,
+      "total_deletions": 25,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    },
+    "d3e7d878488099bf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "382a8092-627c-48d4-a0c5-d3d9f12b9e24",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 30,
+      "total_deletions": 9,
+      "accepted_lines": 15,
+      "overriden_lines": 4
+    }
+  }
+}
