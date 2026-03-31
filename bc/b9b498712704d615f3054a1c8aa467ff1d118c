@@ -1,0 +1,25 @@
+packages/proxy/src/index.ts
+  1eed7ae924d01bc0 267
+packages/proxy/src/approval-store.ts
+  1eed7ae924d01bc0 15-17,51,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "bcb9b498712704d615f3054a1c8aa467ff1d118c",
+  "prompts": {
+    "1eed7ae924d01bc0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9c0f7ac-1ccb-4060-b6fe-19b31fcd76b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 33,
+      "total_deletions": 4,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}
