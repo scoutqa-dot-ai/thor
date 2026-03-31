@@ -1,0 +1,25 @@
+scripts/test-proxy.ts
+  362f2807b1e0b015 10,14,17,119-120
+scripts/test-e2e.sh
+  362f2807b1e0b015 18,88-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a5f5614a5705ea90ffaa1c320cab63f4484dacdd",
+  "prompts": {
+    "362f2807b1e0b015": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f920c369-f9c6-4097-ab65-e09f1bfe71af",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 6,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
