@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y git python3 make g++ && rm -rf /var/lib
 WORKDIR /src
 
 # https://github.com/scoutqa-dot-ai/thor-opencode/tree/thor/v1.3.9
-RUN git clone --depth 1 --branch d087608 https://github.com/scoutqa-dot-ai/thor-opencode.git .
+RUN git clone --depth 1 --single-branch --branch thor/v1.3.9 https://github.com/scoutqa-dot-ai/thor-opencode.git . \
+    && git checkout d087608
 
 RUN bun install
 RUN cd packages/opencode && bun run build --single
