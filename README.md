@@ -101,34 +101,33 @@ Thor ships with generic defaults. A new deployment needs the following configura
 
 Copy `.env.example` to `.env` and fill in:
 
-| Variable                            | Required | Service            | Purpose                                                          |
-| ----------------------------------- | -------- | ------------------ | ---------------------------------------------------------------- |
-| `ATLASSIAN_BASIC_AUTH`              | Yes      | proxy              | Base64-encoded `email:api-token` for Atlassian API access        |
-| `CRON_SECRET`                       | Yes      | gateway, cron      | Shared secret for cron endpoint auth                             |
-| `DATA_ROUTES`                       | No       | data               | Comma-separated list of data proxy routes (see below)            |
-| `GIT_USER_EMAIL`                    | No       | remote-cli         | Git author email (default: `thor@localhost`)                     |
-| `GIT_USER_NAME`                     | No       | remote-cli         | Git author name (default: `thor`)                                |
-| `GITHUB_PAT`                        | Yes      | remote-cli         | GitHub fine-grained PAT                                          |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | grafana-mcp        | Grafana service account token                                    |
-| `GRAFANA_URL`                       | Yes      | grafana-mcp        | Grafana instance URL                                             |
-| `INGRESS_PORT`                      | No       | ingress            | Host port (default: `8080`)                                      |
-| `OPENCODE_CPU_LIMIT`                | No       | opencode           | CPU limit for OpenCode container (default: `3`)                  |
-| `OPENCODE_MEMORY_LIMIT`             | No       | opencode           | Memory limit for OpenCode container (default: `4g`)              |
-| `OPENCODE_URL`                      | No       | runner             | OpenCode server URL (default: `http://opencode:4096`)            |
-| `POSTHOG_API_KEY`                   | Yes      | proxy              | PostHog API access                                               |
-| `SESSION_CWD`                       | No       | runner             | Working directory for new sessions (default: `/workspace`)       |
-| `SLACK_ALLOWED_CHANNEL_IDS`         | No       | gateway, slack-mcp | Comma-separated channel IDs to restrict the bot to               |
-| `SLACK_BOT_TOKEN`                   | Yes      | slack-mcp          | Slack app bot token (`xoxb-...`)                                 |
-| `SLACK_BOT_USER_ID`                 | Yes      | gateway            | Bot's Slack user ID — used to ignore own messages                |
-| `SLACK_SIGNING_SECRET`              | Yes      | gateway            | Webhook signature verification                                   |
-| `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | gateway            | Signature timestamp tolerance (default: `300`)                   |
-| `VOUCH_CALLBACK_URL`                | No       | vouch              | OAuth callback URL (default: `http://localhost:8080/vouch/auth`) |
-| `VOUCH_COOKIE_DOMAIN`               | No       | vouch              | Cookie domain (default: `localhost`)                             |
-| `VOUCH_DOMAINS`                     | Yes      | vouch              | Allowed domain for Vouch login (e.g., `example.com`)             |
-| `VOUCH_GOOGLE_CLIENT_ID`            | Yes      | vouch              | Google OAuth client ID                                           |
-| `VOUCH_GOOGLE_CLIENT_SECRET`        | Yes      | vouch              | Google OAuth client secret                                       |
-| `VOUCH_JWT_SECRET`                  | Yes      | vouch              | Session JWT signing secret                                       |
-| `VOUCH_WHITELIST`                   | Yes      | vouch              | Comma-separated email allowlist for Vouch login                  |
+| Variable                            | Required | Service       | Purpose                                                          |
+| ----------------------------------- | -------- | ------------- | ---------------------------------------------------------------- |
+| `ATLASSIAN_BASIC_AUTH`              | Yes      | proxy         | Base64-encoded `email:api-token` for Atlassian API access        |
+| `CRON_SECRET`                       | Yes      | gateway, cron | Shared secret for cron endpoint auth                             |
+| `DATA_ROUTES`                       | No       | data          | Comma-separated list of data proxy routes (see below)            |
+| `GIT_USER_EMAIL`                    | No       | remote-cli    | Git author email (default: `thor@localhost`)                     |
+| `GIT_USER_NAME`                     | No       | remote-cli    | Git author name (default: `thor`)                                |
+| `GITHUB_PAT`                        | Yes      | remote-cli    | GitHub fine-grained PAT                                          |
+| `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | grafana-mcp   | Grafana service account token                                    |
+| `GRAFANA_URL`                       | Yes      | grafana-mcp   | Grafana instance URL                                             |
+| `INGRESS_PORT`                      | No       | ingress       | Host port (default: `8080`)                                      |
+| `OPENCODE_CPU_LIMIT`                | No       | opencode      | CPU limit for OpenCode container (default: `3`)                  |
+| `OPENCODE_MEMORY_LIMIT`             | No       | opencode      | Memory limit for OpenCode container (default: `4g`)              |
+| `OPENCODE_URL`                      | No       | runner        | OpenCode server URL (default: `http://opencode:4096`)            |
+| `POSTHOG_API_KEY`                   | Yes      | proxy         | PostHog API access                                               |
+| `SESSION_CWD`                       | No       | runner        | Working directory for new sessions (default: `/workspace`)       |
+| `SLACK_BOT_TOKEN`                   | Yes      | slack-mcp     | Slack app bot token (`xoxb-...`)                                 |
+| `SLACK_BOT_USER_ID`                 | Yes      | gateway       | Bot's Slack user ID — used to ignore own messages                |
+| `SLACK_SIGNING_SECRET`              | Yes      | gateway       | Webhook signature verification                                   |
+| `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | gateway       | Signature timestamp tolerance (default: `300`)                   |
+| `VOUCH_CALLBACK_URL`                | No       | vouch         | OAuth callback URL (default: `http://localhost:8080/vouch/auth`) |
+| `VOUCH_COOKIE_DOMAIN`               | No       | vouch         | Cookie domain (default: `localhost`)                             |
+| `VOUCH_DOMAINS`                     | Yes      | vouch         | Allowed domain for Vouch login (e.g., `example.com`)             |
+| `VOUCH_GOOGLE_CLIENT_ID`            | Yes      | vouch         | Google OAuth client ID                                           |
+| `VOUCH_GOOGLE_CLIENT_SECRET`        | Yes      | vouch         | Google OAuth client secret                                       |
+| `VOUCH_JWT_SECRET`                  | Yes      | vouch         | Session JWT signing secret                                       |
+| `VOUCH_WHITELIST`                   | Yes      | vouch         | Comma-separated email allowlist for Vouch login                  |
 
 #### 2. Data proxy routes (`.env`)
 
