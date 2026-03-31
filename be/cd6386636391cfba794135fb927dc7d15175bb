@@ -1,0 +1,23 @@
+docker/opencode/Dockerfile
+  b7a14cf9a37bce03 11-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "becd6386636391cfba794135fb927dc7d15175bb",
+  "prompts": {
+    "b7a14cf9a37bce03": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "afde0015-cece-44e6-b5e6-bd9c45d68a11",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 3,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
