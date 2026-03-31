@@ -1,0 +1,62 @@
+packages/runner/src/index.ts
+  1eed7ae924d01bc0 150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1eb56054d502eb78eb070fa58e1bf3629fa0cd13",
+  "prompts": {
+    "1eed7ae924d01bc0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9c0f7ac-1ccb-4060-b6fe-19b31fcd76b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 33,
+      "total_deletions": 4,
+      "accepted_lines": 16,
+      "overriden_lines": 0
+    },
+    "ab9375645439ad6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "842813ee-bfcf-48f1-a21a-b2610355f32f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 42,
+      "total_deletions": 1,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    },
+    "d71861c2ec383627": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "831df9c0-c2fc-4357-91ad-5a7693b2af19",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 4,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    },
+    "fcec761e642958d3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ea2c9bb-6d57-4a3a-aaae-74e55c0431ca",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 56,
+      "total_deletions": 189,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}
