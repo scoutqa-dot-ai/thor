@@ -1,0 +1,47 @@
+packages/slack-mcp/src/index.ts
+  362f2807b1e0b015 319,321-322
+Dockerfile
+  362f2807b1e0b015 43-44
+packages/common/src/progress-events.ts
+  362f2807b1e0b015 42,75
+packages/gateway/src/service.ts
+  362f2807b1e0b015 285,298
+packages/proxy/src/upstream.ts
+  362f2807b1e0b015 12-16,23-24,26,30,33,45
+packages/runner/src/index.ts
+  362f2807b1e0b015 612,621,627
+docker/opencode/opencode.json
+  362f2807b1e0b015 8
+packages/gateway/src/app.ts
+  362f2807b1e0b015 85-86,477-478,480,488,490,492-493,503-504
+packages/common/src/workspace-config.ts
+  362f2807b1e0b015 12-22,25,30-31,157-189
+packages/common/src/index.ts
+  362f2807b1e0b015 10-12,17-19
+packages/proxy/src/index.ts
+  362f2807b1e0b015 1,19-23,30,32,34,36-40,42-43,45-49,51-70,72-77,79-80,82-93,97-112,114,133,135,140-151,157-162,172,221-222,230-231,233,235,242,251,253,257,259,267,269,293-295,299-309,313-337,341-342,347,353-356,361-366,370,372-374,376-379,381-384,395-397,465,477-479,481,483-484
+docker-compose.yml
+  362f2807b1e0b015 85
+packages/gateway/src/index.ts
+  362f2807b1e0b015 24,35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b2d1f414138758c0168131709092b9d14c9fc124",
+  "prompts": {
+    "362f2807b1e0b015": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f920c369-f9c6-4097-ab65-e09f1bfe71af",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 372,
+      "total_deletions": 196,
+      "accepted_lines": 316,
+      "overriden_lines": 0
+    }
+  }
+}
