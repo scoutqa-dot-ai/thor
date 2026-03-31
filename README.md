@@ -1,6 +1,6 @@
 # Thor
 
-An event-driven AI team member that monitors Slack, GitHub, Linear, and PostHog, then takes action through OpenCode sessions with policy-enforced tool access.
+An event-driven AI team member that monitors Slack, GitHub, Atlassian, and PostHog, then takes action through OpenCode sessions with policy-enforced tool access.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ An event-driven AI team member that monitors Slack, GitHub, Linear, and PostHog,
                                │
                     ┌──────────┼──────────┬──────────┐
                     ▼          ▼          ▼          ▼
-                 Linear     PostHog     Slack     Grafana
+                Atlassian   PostHog     Slack     Grafana
                  (hosted)   (hosted)     MCP       MCP
 ```
 
@@ -66,10 +66,10 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 
 ```bash
 # Set required environment variables
+export ATLASSIAN_BASIC_AUTH=base64_encoded_email:token
 export GITHUB_PAT=github_pat_...
 export GRAFANA_SERVICE_ACCOUNT_TOKEN=glsa_...
 export GRAFANA_URL=https://your-instance.grafana.net
-export LINEAR_API_KEY=lin_api_...
 export POSTHOG_API_KEY=phx_...
 export SLACK_BOT_TOKEN=xoxb-...
 export SLACK_BOT_USER_ID=U...
@@ -103,6 +103,7 @@ Copy `.env.example` to `.env` and fill in:
 
 | Variable                            | Required | Service            | Purpose                                                          |
 | ----------------------------------- | -------- | ------------------ | ---------------------------------------------------------------- |
+| `ATLASSIAN_BASIC_AUTH`              | Yes      | proxy              | Base64-encoded `email:api-token` for Atlassian API access        |
 | `CRON_SECRET`                       | Yes      | gateway, cron      | Shared secret for cron endpoint auth                             |
 | `DATA_ROUTES`                       | No       | data               | Comma-separated list of data proxy routes (see below)            |
 | `GIT_USER_EMAIL`                    | No       | remote-cli         | Git author email (default: `thor@localhost`)                     |
@@ -111,7 +112,6 @@ Copy `.env.example` to `.env` and fill in:
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | grafana-mcp        | Grafana service account token                                    |
 | `GRAFANA_URL`                       | Yes      | grafana-mcp        | Grafana instance URL                                             |
 | `INGRESS_PORT`                      | No       | ingress            | Host port (default: `8080`)                                      |
-| `LINEAR_API_KEY`                    | Yes      | proxy              | Linear API access                                                |
 | `OPENCODE_CPU_LIMIT`                | No       | opencode           | CPU limit for OpenCode container (default: `3`)                  |
 | `OPENCODE_MEMORY_LIMIT`             | No       | opencode           | Memory limit for OpenCode container (default: `4g`)              |
 | `OPENCODE_URL`                      | No       | runner             | OpenCode server URL (default: `http://opencode:4096`)            |
@@ -164,11 +164,49 @@ docker compose exec remote-cli git clone https://github.com/your-org/your-repo.g
 
 Repos in `/workspace/repos/` are mounted read-only into OpenCode. Thor creates worktrees under `/workspace/worktrees/` for code changes.
 
-#### 5. GitHub webhook setup
+#### 5. Per-workspace MCP servers
+
+Slack is available globally (configured in the base `docker/opencode/opencode.json`). Other MCP servers are configured **per repo** via `.thor.opencode/opencode.json` in the repo root.
+
+If a repo has both `.opencode/` and `.thor.opencode/`, Thor merges them with `.thor.opencode/` taking precedence — so humans can use OpenCode normally while Thor gets its own config overlay. Similarly, if a repo has both `AGENTS.md` and `THOR.md`, Thor loads `THOR.md` and ignores `AGENTS.md`/`CLAUDE.md`.
+
+```bash
+# Example: give a repo access to Atlassian and Grafana
+mkdir -p docker-volumes/workspace/repos/your-repo/.thor.opencode
+cat > docker-volumes/workspace/repos/your-repo/.thor.opencode/opencode.json << 'EOF'
+{
+  "mcp": {
+    "atlassian": {
+      "type": "remote",
+      "url": "http://proxy:3010/mcp",
+      "enabled": true
+    },
+    "grafana": {
+      "type": "remote",
+      "url": "http://proxy:3013/mcp",
+      "enabled": true
+    }
+  }
+}
+EOF
+```
+
+Available MCP servers (all policy-proxied):
+
+| Name      | URL                     | Tools                       |
+| --------- | ----------------------- | --------------------------- |
+| slack     | `http://proxy:3012/mcp` | Messaging, progress updates |
+| atlassian | `http://proxy:3010/mcp` | Jira issues, Confluence     |
+| posthog   | `http://proxy:3011/mcp` | Product analytics           |
+| grafana   | `http://proxy:3013/mcp` | Loki/Tempo log queries      |
+
+OpenCode merges per-repo config with the global config. A repo without `.thor.opencode/` gets only Slack.
+
+#### 6. GitHub webhook setup
 
 Copy `docs/notify-thor.example.yml` to `.github/workflows/notify-thor.yml` in any source repository you want Thor to monitor. Add `THOR_GATEWAY_URL` as a repository variable pointing to the gateway endpoint.
 
-#### 6. Cron jobs (optional)
+#### 7. Cron jobs (optional)
 
 Add scheduled prompts to `docker-volumes/workspace/cron/crontab`. Each line triggers Thor with a prompt on a schedule. See `docs/plan/2026031204_cron-triggers.md` for examples.
 
@@ -224,17 +262,17 @@ thor/
 
 ### Proxy Configuration
 
-Each integration has a policy config file (e.g., `proxy.linear.json`):
+Each integration has a policy config file (e.g., `proxy.atlassian.json`):
 
 ```json
 {
   "upstream": {
-    "url": "https://mcp.linear.app/mcp",
+    "url": "https://mcp.atlassian.com/v1/mcp",
     "headers": {
-      "Authorization": "Bearer ${LINEAR_API_KEY}"
+      "Authorization": "Basic ${ATLASSIAN_BASIC_AUTH}"
     }
   },
-  "allow": ["get_issue", "list_issues", "list_teams"]
+  "allow": ["get_issue", "list_issues", "list_projects"]
 }
 ```
 
@@ -242,12 +280,12 @@ The allow list uses exact tool names. Environment variables in headers are inter
 
 ### Proxy Instances
 
-| Port | Config               | Upstream           |
-| ---- | -------------------- | ------------------ |
-| 3010 | `proxy.linear.json`  | Linear hosted MCP  |
-| 3011 | `proxy.posthog.json` | PostHog hosted MCP |
-| 3012 | `proxy.slack.json`   | `slack-mcp:3003`   |
-| 3013 | `proxy.grafana.json` | `grafana-mcp:8000` |
+| Port | Config                 | Upstream             |
+| ---- | ---------------------- | -------------------- |
+| 3010 | `proxy.atlassian.json` | Atlassian hosted MCP |
+| 3011 | `proxy.posthog.json`   | PostHog hosted MCP   |
+| 3012 | `proxy.slack.json`     | `slack-mcp:3003`     |
+| 3013 | `proxy.grafana.json`   | `grafana-mcp:8000`   |
 
 Environment variables are documented in the Deployment Configuration section above.
 

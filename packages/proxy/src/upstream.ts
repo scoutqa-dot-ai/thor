@@ -27,7 +27,12 @@ export async function connectUpstream(config: ProxyConfig): Promise<UpstreamConn
     requestInit: { headers },
   });
 
-  await client.connect(transport);
+  try {
+    await client.connect(transport);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to connect to upstream MCP server at ${config.upstream.url}: ${msg}`);
+  }
   logInfo(log, "upstream_connected", { url: config.upstream.url });
 
   // Crash on upstream disconnect — Docker restart policy will recover.
@@ -38,7 +43,13 @@ export async function connectUpstream(config: ProxyConfig): Promise<UpstreamConn
     process.exit(1);
   };
 
-  const { tools } = await client.listTools();
+  let tools: Tool[];
+  try {
+    ({ tools } = await client.listTools());
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Connected to ${config.upstream.url} but failed to list tools: ${msg}`);
+  }
   logInfo(log, "upstream_tools_listed", {
     toolCount: tools.length,
     tools: tools.map((t) => t.name),

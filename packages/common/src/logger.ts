@@ -4,7 +4,7 @@
  * Usage:
  *   import { createLogger, logInfo, logError } from "@thor/common";
  *   const logger = createLogger("proxy");
- *   logInfo(logger, "config_loaded", { upstreams: ["linear", "posthog"] });
+ *   logInfo(logger, "config_loaded", { upstreams: ["atlassian", "posthog"] });
  *   logError(logger, "start_failed", new Error("port in use"), { port: 3001 });
  */
 

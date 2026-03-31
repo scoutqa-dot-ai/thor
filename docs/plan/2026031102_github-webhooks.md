@@ -55,7 +55,7 @@ All supported events use `git:branch:{repo}:{branch}` so that PR activity, revie
 - PR review events: `git:branch:{repo}:{head.ref}`
 - Push events: `git:branch:{repo}:{branch}`
 
-Issues, releases, and issue comments are out of scope (use Linear instead).
+Issues, releases, and issue comments are out of scope (use Jira instead).
 
 ## Phases
 

@@ -124,7 +124,7 @@ describe("notes", () => {
       durationMs: 5432,
       toolCalls: [
         { tool: "posthog__list-errors", state: "completed" },
-        { tool: "linear__list_issues", state: "completed" },
+        { tool: "atlassian__list_issues", state: "completed" },
       ],
       responsePreview: "Found 3 critical errors in the auth module.",
     });
@@ -135,7 +135,7 @@ describe("notes", () => {
     expect(content).toContain("**Duration**: 5.4s");
     expect(content).toContain("**Tool calls**: 2");
     expect(content).toContain("posthog__list-errors");
-    expect(content).toContain("linear__list_issues");
+    expect(content).toContain("atlassian__list_issues");
     expect(content).toContain("**Key findings**: Found 3 critical errors");
   });
 
@@ -203,14 +203,14 @@ describe("notes", () => {
 
     appendTrigger({
       correlationKey: key,
-      prompt: "Find related Linear issues",
+      prompt: "Find related Atlassian issues",
     });
 
     appendSummary({
       correlationKey: key,
       status: "completed",
       durationMs: 2000,
-      toolCalls: [{ tool: "linear__list_issues", state: "completed" }],
+      toolCalls: [{ tool: "atlassian__list_issues", state: "completed" }],
       responsePreview: "Found ACME-123 related to auth.",
     });
 
@@ -228,7 +228,7 @@ describe("notes", () => {
 
     // Both tool names present
     expect(content).toContain("posthog__list-errors");
-    expect(content).toContain("linear__list_issues");
+    expect(content).toContain("atlassian__list_issues");
   });
 
   it("getSessionIdFromNotes returns session ID from notes file", () => {

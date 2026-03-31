@@ -81,4 +81,4 @@ Gateway ──(trigger)──▶ Runner
 - Final response posting to Slack (the agent already does this via its own `post_message` tool call)
 - Ephemeral messages (Slack's `chat.postEphemeral`) — these can't be updated after posting, defeating the purpose
 - Rich Block Kit formatting — plain text with emoji is sufficient for MVP
-- Progress for non-Slack triggers (cron, Linear) — can be added later with same pattern
+- Progress for non-Slack triggers (cron, Jira) — can be added later with same pattern

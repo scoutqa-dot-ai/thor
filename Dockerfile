@@ -42,7 +42,7 @@ COPY packages/proxy/proxy.*.json /app/packages/proxy/
 COPY packages/proxy/multi-proxy.sh /app/packages/proxy/
 USER thor
 WORKDIR /workspace
-EXPOSE 3010 3011 3012
+EXPOSE 3010 3011 3012 3014
 CMD ["bash", "/app/packages/proxy/multi-proxy.sh"]
 
 FROM build AS runner

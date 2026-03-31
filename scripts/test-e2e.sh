@@ -5,7 +5,7 @@
 # Tests the full chain: curl -> runner -> OpenCode service -> per-upstream proxies -> MCP servers
 #
 # Prerequisites:
-#   - Both services running (either `pnpm dev` with LINEAR_API_KEY, or `docker compose up`)
+#   - Both services running (either `pnpm dev` or `docker compose up`)
 #   - OpenCode configured with an LLM provider in the runner environment
 #
 # Usage:
@@ -15,11 +15,14 @@
 set -euo pipefail
 
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
-PROXY_LINEAR_URL="${PROXY_LINEAR_URL:-http://localhost:3010}"
+PROXY_POSTHOG_URL="${PROXY_POSTHOG_URL:-http://localhost:3010}"
 GIT_WRAPPERS_URL="${GIT_WRAPPERS_URL:-http://localhost:3004}"
 OPENCODE_URL="${OPENCODE_URL:-http://localhost:4096}"
-WORKLOG_DIR="${WORKLOG_DIR:-./docker-volumes/workspace/worklog}"
-MEMORY_DIR="${MEMORY_DIR:-./docker-volumes/workspace/memory}"
+SESSION_DIR="${SESSION_DIR:-/workspace/repos/e2e-test}"
+HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
+mkdir -p "${HOST_WORKSPACE}/repos/e2e-test"
+WORKLOG_DIR="${WORKLOG_DIR:-${HOST_WORKSPACE}/worklog}"
+MEMORY_DIR="${MEMORY_DIR:-${HOST_WORKSPACE}/memory}"
 TODAY=$(date +%Y-%m-%d)
 
 passed=0
@@ -82,8 +85,8 @@ response_contains() {
 echo ""
 echo "=== Health Checks ==="
 
-proxy_health=$(curl -sf "$PROXY_LINEAR_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy (linear) is healthy" "got: $proxy_health"
+proxy_health=$(curl -sf "$PROXY_POSTHOG_URL/health" 2>/dev/null || echo '{}')
+assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy (posthog) is healthy" "got: $proxy_health"
 
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
 assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy" "got: $runner_health"
@@ -96,7 +99,7 @@ echo "  (this may take a moment while the agent session runs)"
 
 list_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"List the tools available to you. Only list tool names from linear or posthog, one per line. Nothing else."}' \
+  -d "{\"prompt\":\"List the tools available to you. Only list tool names from atlassian or posthog, one per line. Nothing else.\",\"directory\":\"$SESSION_DIR\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 list_response=$(echo "$list_raw" | parse_done)
 
@@ -105,9 +108,9 @@ list_response_text=$(json_field "$list_response" "response")
 assert '[[ -n "$list_session" ]]' "Got a session ID" "sessionId='$list_session'"
 assert '[[ "$(response_contains "$list_response" "list_issues")" == "yes" ]]' "Response mentions list_issues tool" "response: ${list_response_text:0:200}"
 
-list_has_linear=$(response_contains "$list_response" "get_issue")
+list_has_atlassian=$(response_contains "$list_response" "get_issue")
 list_has_posthog=$(response_contains "$list_response" "insight-query")
-assert '[[ "$list_has_linear" == "yes" || "$list_has_posthog" == "yes" ]]' "Response mentions proxied tools (linear or posthog)" "response: ${list_response_text:0:200}"
+assert '[[ "$list_has_atlassian" == "yes" || "$list_has_posthog" == "yes" ]]' "Response mentions proxied tools (atlassian or posthog)" "response: ${list_response_text:0:200}"
 
 # ── 3. Trigger: actual tool call ────────────────────────────────────────────
 
@@ -116,7 +119,7 @@ echo "=== Trigger: Tool Call (list issues) ==="
 
 issues_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"Use the linear tools to list the 2 most recent Linear issues. Show their identifier, title, and status in a table."}' \
+  -d "{\"prompt\":\"Use the atlassian tools to list the 2 most recent Jira issues. Show their identifier, title, and status in a table.\",\"directory\":\"$SESSION_DIR\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 issues_response=$(echo "$issues_raw" | parse_done)
 
@@ -147,7 +150,7 @@ PHRASE="THOR$(date +%s | tail -c 6)"
 echo "  Sending trigger #1 (new session — planting phrase: $PHRASE)..."
 trigger1_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"Our team mascot name is $PHRASE. Confirm by repeating the mascot name back to me.\",\"correlationKey\":\"$CORR_KEY\"}" \
+  -d "{\"prompt\":\"Our team mascot name is $PHRASE. Confirm by repeating the mascot name back to me.\",\"correlationKey\":\"$CORR_KEY\",\"directory\":\"$SESSION_DIR\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 trigger1=$(echo "$trigger1_raw" | parse_done)
 
@@ -180,7 +183,7 @@ assert '[[ "$oc_session_id" == "$session1" ]]' "OpenCode API confirms session ex
 echo "  Sending trigger #2 (resume session — asking agent to recall the phrase)..."
 trigger2_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"What is our team mascot name? Reply with just the name, nothing else.\",\"correlationKey\":\"$CORR_KEY\"}" \
+  -d "{\"prompt\":\"What is our team mascot name? Reply with just the name, nothing else.\",\"correlationKey\":\"$CORR_KEY\",\"directory\":\"$SESSION_DIR\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 trigger2=$(echo "$trigger2_raw" | parse_done)
 
@@ -219,7 +222,7 @@ CORR_KEY_B="e2e-memory-reader-$(date +%s)"
 echo "  Sending trigger A (asking agent to remember phrase: $MEMORY_PHRASE)..."
 trigger_a_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"Please remember this for all future sessions: our team mascot is called $MEMORY_PHRASE. Save it to your pinned memory so you never forget.\",\"correlationKey\":\"$CORR_KEY_A\"}" \
+  -d "{\"prompt\":\"Please remember this for all future sessions: our team mascot is called $MEMORY_PHRASE. Save it to your pinned memory so you never forget.\",\"correlationKey\":\"$CORR_KEY_A\",\"directory\":\"$SESSION_DIR\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 trigger_a=$(echo "$trigger_a_raw" | parse_done)
 
@@ -241,7 +244,7 @@ echo ""
 echo "  Sending trigger B (new session, different corr key — asking about the phrase)..."
 trigger_b_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"What is our team mascot called? Reply with just the name.\",\"correlationKey\":\"$CORR_KEY_B\"}" \
+  -d "{\"prompt\":\"What is our team mascot called? Reply with just the name.\",\"correlationKey\":\"$CORR_KEY_B\",\"directory\":\"$SESSION_DIR\"}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 trigger_b=$(echo "$trigger_b_raw" | parse_done)
 
@@ -259,6 +262,9 @@ echo ""
 echo "=== Results ==="
 echo "  $passed passed, $failed failed"
 echo ""
+
+# Clean up e2e test directory (only if we created the default one)
+[[ "$SESSION_DIR" == "/workspace/repos/e2e-test" ]] && rm -rf "${HOST_WORKSPACE}/repos/e2e-test"
 
 if [[ $failed -gt 0 ]]; then
   echo "FAIL"

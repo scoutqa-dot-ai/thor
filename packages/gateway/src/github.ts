@@ -200,14 +200,22 @@ export function githubEventMentions(event: GitHubEvent, username: string): boole
   return bodies.some((b) => b?.includes(mention));
 }
 
+/**
+ * Extract the short repo name from an "owner/repo" string.
+ * Returns the full string if there's no slash.
+ */
+export function getRepoName(repository: string): string {
+  const slashIdx = repository.indexOf("/");
+  return slashIdx > 0 ? repository.slice(slashIdx + 1) : repository;
+}
+
 export function getGitHubCorrelationKeys(event: GitHubEvent): string[] {
   const canonical = `git:branch:${event.repository}:${event.branch}`;
   const keys = [canonical];
 
   // Add short alias: git:branch:{repo-name}:{branch}
-  const slashIdx = event.repository.indexOf("/");
-  if (slashIdx > 0) {
-    const repoName = event.repository.slice(slashIdx + 1);
+  const repoName = getRepoName(event.repository);
+  if (repoName !== event.repository) {
     const alias = `git:branch:${repoName}:${event.branch}`;
     if (alias !== canonical) keys.push(alias);
   }

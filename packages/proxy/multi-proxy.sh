@@ -4,7 +4,7 @@
 #
 # Environment:
 #   PROXY_INSTANCES — comma-separated list of port:config pairs
-#     e.g. "3010:proxy.linear.json,3011:proxy.posthog.json,3012:proxy.slack.json"
+#     e.g. "3010:proxy.atlassian.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.grafana.json"
 #
 # All other environment variables (API keys, etc.) are inherited by each instance.
 

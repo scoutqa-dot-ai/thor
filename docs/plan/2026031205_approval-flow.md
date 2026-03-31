@@ -8,7 +8,7 @@
 
 ## Problem
 
-The proxy currently has a binary model: tools are either **exposed** (always callable) or **hidden**. There's no middle ground for tools that should be available but require human approval before execution — e.g., `create_pull_request`, `update_pull_request`, Linear status changes.
+The proxy currently has a binary model: tools are either **exposed** (always callable) or **hidden**. There's no middle ground for tools that should be available but require human approval before execution — e.g., `create_pull_request`, `update_pull_request`, Jira status changes.
 
 Per `docs/feat/mvp.md`, the proxy should support three policy decisions: **allow**, **block**, and **approval required**.
 
@@ -215,7 +215,7 @@ The runner derives the notification target from the correlation key it already h
 ### Phase 4: Integration + Config
 
 - Update `proxy.github.json` to move write tools to `approve`
-- Update `proxy.linear.json` if needed
+- Update `proxy.jira.json` if needed
 - Add `approvalChannel` to configs
 - Docker-compose: ensure gateway can reach proxy resolution endpoints
 - End-to-end manual test
@@ -341,7 +341,7 @@ Tool lists captured live from upstream MCP servers on 2026-03-12.
 
 **Summary**: 24 allow, 3 approve, 54 hidden. Currently: 20 allow, 0 approve, 61 hidden.
 
-### Linear MCP (42 upstream tools)
+### Atlassian MCP (42 upstream tools)
 
 | Tool                   | Current | Suggested   | Reason                  |
 | ---------------------- | ------- | ----------- | ----------------------- |
@@ -484,7 +484,7 @@ Tool lists captured live from upstream MCP servers on 2026-03-12.
 | Server    | Upstream | allow  | approve | hidden  |
 | --------- | -------- | ------ | ------- | ------- |
 | GitHub    | 81       | 24     | 3       | 54      |
-| Linear    | 42       | 15     | 1       | 26      |
+| Atlassian | 42       | 15     | 1       | 26      |
 | PostHog   | 60       | 28     | 10      | 22      |
 | Slack     | 4        | 4      | 0       | 0       |
 | Git       | 1        | 1      | 0       | 0       |

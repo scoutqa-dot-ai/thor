@@ -14,8 +14,10 @@ done
 echo "[hey-thor] prompt length: ${#1}"
 echo "[hey-thor] prompt preview: $(printf '%.80s' "$1")..."
 
-JSON="{\"prompt\":$(printf '%s' "$1" | jq -Rs .)}"
-[ -n "$KEY" ] && JSON="{\"prompt\":$(printf '%s' "$1" | jq -Rs .),\"correlationKey\":$(printf '%s' "$KEY" | jq -Rs .)}"
+DIR=$(printf '%s' "$PWD" | jq -Rs .)
+PROMPT=$(printf '%s' "$1" | jq -Rs .)
+JSON="{\"prompt\":${PROMPT},\"directory\":${DIR}}"
+[ -n "$KEY" ] && JSON="{\"prompt\":${PROMPT},\"correlationKey\":$(printf '%s' "$KEY" | jq -Rs .),\"directory\":${DIR}}"
 
 echo "[hey-thor] json length: ${#JSON}"
 echo "[hey-thor] posting to ${GATEWAY_URL}/cron"

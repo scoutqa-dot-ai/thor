@@ -2,7 +2,7 @@
  * File-based work log.
  *
  * Writes one JSON file per event to a day-partitioned directory:
- *   ./worklog/2026-03-09/json/20260309T143021.456Z_tool-call_linear__list-issues.json
+ *   ./worklog/2026-03-09/json/20260309T143021.456Z_tool-call_atlassian__list-issues.json
  *
  * The day directory (e.g. ./worklog/2026-03-09/) is reserved for higher-level
  * summary files; raw JSON event files go into the json/ subdirectory.

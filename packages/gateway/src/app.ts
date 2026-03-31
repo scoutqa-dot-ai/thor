@@ -1,6 +1,5 @@
 import express, { type Express, type Request, type Response } from "express";
 import {
-  createChannelFilter,
   createLogger,
   logError,
   logInfo,
@@ -95,6 +94,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   cronSecret?: string;
   /** Git username (e.g. GitHub login) — used to detect @mentions in GitHub events. */
   gitUsername?: string;
+  /** Maps Slack channel IDs to repo names for working directory resolution. */
+  channelRepos?: Map<string, string>;
 }
 
 const InteractivityBodySchema = z.object({
@@ -118,7 +119,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const selfUserId = config.slackBotUserId;
   const interruptDelay = config.interruptDelayMs ?? INTERRUPT_DELAY_MS;
   const unaddressedDelay = config.unaddressedDelayMs ?? UNADDRESSED_DELAY_MS;
-  const isChannelAllowed = createChannelFilter(new Set(config.allowedChannelIds ?? []));
+  const allowedChannels = new Set(config.allowedChannelIds ?? []);
 
   const runnerDeps: RunnerDeps = {
     runnerUrl: config.runnerUrl,
@@ -133,7 +134,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
     disableInterval: config.disableQueueInterval === true,
-    handler: async (events: QueuedEvent[], ack: () => void) => {
+    handler: async (events: QueuedEvent[], ack: () => void, reject: (reason: string) => void) => {
       const slackEvents = events.filter(isSlackEvent);
       const githubEvents = events.filter(isGitHubEvent);
 
@@ -151,6 +152,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           slackMcpDeps,
           hasInterrupt,
           ack,
+          config.channelRepos,
+          reject,
         )
           .then((result) => {
             if (result.busy) {
@@ -183,6 +186,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           runnerDeps,
           hasInterrupt,
           ack,
+          reject,
         )
           .then((result) => {
             if (result.busy) {
@@ -209,7 +213,14 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       if (cronEvents.length > 0) {
         const lastEvent = cronEvents[cronEvents.length - 1];
 
-        triggerRunnerCron(lastEvent.payload, lastEvent.correlationKey, runnerDeps, false, ack)
+        triggerRunnerCron(
+          lastEvent.payload,
+          lastEvent.correlationKey,
+          runnerDeps,
+          false,
+          ack,
+          reject,
+        )
           .then((result) => {
             if (result.busy) {
               logInfo(log, "cron_trigger_busy", {
@@ -313,11 +324,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    // Block DMs and non-allowlisted channels
+    // Block non-allowlisted channels
     if (
       "channel" in event &&
       typeof event.channel === "string" &&
-      !isChannelAllowed(event.channel)
+      !allowedChannels.has(event.channel)
     ) {
       logInfo(log, "event_ignored_channel_not_allowed", { eventId, channel: event.channel });
       res.status(200).json({ ok: true, ignored: true });
@@ -563,10 +574,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const { prompt, correlationKey: providedKey } = parsed.data;
+    const { prompt, correlationKey: providedKey, directory } = parsed.data;
     const correlationKey = providedKey ?? deriveCronCorrelationKey(prompt);
 
-    const payload: CronPayload = { prompt };
+    const payload: CronPayload = { prompt, directory };
 
     queue.enqueue({
       id: `cron-${Date.now()}`,

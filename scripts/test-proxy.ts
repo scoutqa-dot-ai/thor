@@ -7,7 +7,6 @@
  * 3. tools/call (hidden) — non-exposed tool is rejected as unknown
  *
  * Prerequisites:
- *   - LINEAR_API_KEY set in environment (or .env)
  *   - Proxy running on http://localhost:3010  (or PROXY_URL override)
  *
  * Usage:

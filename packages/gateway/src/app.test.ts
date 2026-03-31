@@ -6,6 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGatewayApp, type GatewayAppConfig } from "./app.js";
 import type { EventQueue } from "./queue.js";
 
+vi.mock("@thor/common", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@thor/common")>();
+  return {
+    ...actual,
+    resolveRepoDirectory: (repoName: string) => `/workspace/repos/${repoName}`,
+  };
+});
+
 function sign(body: string, secret: string, timestamp: string): string {
   return `v0=${createHmac("sha256", secret).update(`v0:${timestamp}:${body}`).digest("hex")}`;
 }
@@ -26,6 +34,8 @@ async function withServer<T>(
     disableQueueInterval: true,
     interruptDelayMs: 0,
     unaddressedDelayMs: 0,
+    allowedChannelIds: ["C123"],
+    channelRepos: new Map([["C123", "test-repo"]]),
     ...extraConfig,
   });
 
@@ -689,7 +699,7 @@ describe("gateway", () => {
         const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
         expect(triggerCall).toBeDefined();
       },
-      { allowedChannelIds: ["C_ALLOWED"] },
+      { allowedChannelIds: ["C_ALLOWED"], channelRepos: new Map([["C_ALLOWED", "test-repo"]]) },
     );
   });
 

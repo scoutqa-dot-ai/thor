@@ -26,6 +26,7 @@ import {
   extractAliases,
   registerAlias,
   getNotesLineCount,
+  isAllowedDirectory,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -35,7 +36,6 @@ const log = createLogger("runner");
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const OPENCODE_URL = (process.env.OPENCODE_URL || "http://127.0.0.1:4096").replace(/\/$/, "");
 const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
-const SESSION_DIRECTORY = process.env.SESSION_CWD || "/workspace";
 
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
@@ -110,6 +110,8 @@ const TriggerRequestSchema = z.object({
   /** If true (default), abort a busy session before sending the prompt.
    *  If false, return {busy: true} without aborting. */
   interrupt: z.boolean().optional(),
+  /** Working directory for the OpenCode session. */
+  directory: z.string(),
 });
 
 type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
@@ -216,14 +218,29 @@ app.post("/trigger", async (req, res) => {
     return;
   }
 
-  let { prompt, model, correlationKey, sessionId: requestedSessionId } = parsed.data;
+  let { prompt, model, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
 
   try {
     await ensureOpencodeAvailable();
 
+    const sessionDirectory = directory;
+    if (!isAllowedDirectory(sessionDirectory)) {
+      logError(
+        log,
+        "directory_not_allowed",
+        `Directory not under allowed prefix: ${sessionDirectory}`,
+        {
+          directory: sessionDirectory,
+          correlationKey,
+        },
+      );
+      res.status(400).json({ error: `Directory not allowed: ${sessionDirectory}` });
+      return;
+    }
+
     const client = createOpencodeClient({
       baseUrl: OPENCODE_URL,
-      directory: SESSION_DIRECTORY,
+      directory: sessionDirectory,
     });
 
     // --- Session resolution: resume existing or create new ---
