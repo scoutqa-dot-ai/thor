@@ -5,7 +5,7 @@
   "mcp": {
     "slack": {
       "type": "remote",
-      "url": "http://proxy:3012/mcp",
+      "url": "http://proxy:3001/slack",
       "enabled": true
     }
   }

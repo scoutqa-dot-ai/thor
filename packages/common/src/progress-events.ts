@@ -39,7 +39,7 @@ export const ProgressApprovalRequiredSchema = z.object({
   actionId: z.string(),
   tool: z.string(),
   args: z.record(z.string(), z.unknown()),
-  proxyPort: z.number().optional(),
+  proxyName: z.string().optional(),
 });
 
 // --- Discriminated union ---
@@ -72,7 +72,7 @@ export const SlackApprovalRequestSchema = z.object({
   actionId: z.string(),
   tool: z.string(),
   args: z.record(z.string(), z.unknown()),
-  proxyPort: z.number().optional(),
+  proxyName: z.string().optional(),
 });
 
 export type SlackProgressRequest = z.infer<typeof SlackProgressRequestSchema>;

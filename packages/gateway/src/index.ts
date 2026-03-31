@@ -21,6 +21,7 @@ const QUEUE_DIR = process.env.QUEUE_DIR || "data/queue";
 const SLACK_BOT_USER_ID = process.env.SLACK_BOT_USER_ID || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const PROXY_HOST = process.env.PROXY_HOST || "proxy";
+const PROXY_PORT = parseInt(process.env.PROXY_PORT || "3001", 10);
 const GIT_USER_NAME = process.env.GIT_USER_NAME || "";
 
 const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
@@ -31,6 +32,7 @@ const { app } = createGatewayApp({
   slackMcpUrl: SLACK_MCP_URL,
   slackBotUserId: SLACK_BOT_USER_ID,
   proxyHost: PROXY_HOST,
+  proxyPort: PROXY_PORT,
   timestampToleranceSeconds: SLACK_TIMESTAMP_TOLERANCE_SECONDS,
   queueDir: QUEUE_DIR,
   cronSecret: CRON_SECRET || undefined,

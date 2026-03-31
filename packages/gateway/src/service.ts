@@ -295,7 +295,7 @@ export async function triggerRunnerCron(
 async function forwardApprovalNotification(
   channel: string,
   threadTs: string,
-  event: { actionId: string; tool: string; args: Record<string, unknown>; proxyPort?: number },
+  event: { actionId: string; tool: string; args: Record<string, unknown>; proxyName?: string },
   deps: SlackMcpDeps,
 ): Promise<void> {
   try {
@@ -308,7 +308,7 @@ async function forwardApprovalNotification(
         actionId: event.actionId,
         tool: event.tool,
         args: event.args,
-        proxyPort: event.proxyPort,
+        proxyName: event.proxyName,
       }),
     });
   } catch (err) {

@@ -9,12 +9,26 @@ const RepoConfigSchema = z.object({
   channels: z.array(z.string()).optional(),
 });
 
+const ProxyUpstreamSchema = z.object({
+  url: z.string(),
+  headers: z.record(z.string(), z.string()).optional(),
+});
+
+const ProxyConfigSchema = z.object({
+  upstream: ProxyUpstreamSchema,
+  allow: z.array(z.string()).default([]),
+  approve: z.array(z.string()).default([]),
+});
+
 export const WorkspaceConfigSchema = z.object({
   repos: z.record(z.string(), RepoConfigSchema),
+  proxies: z.record(z.string(), ProxyConfigSchema).optional(),
 });
 
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;
+export type ProxyConfig = z.infer<typeof ProxyConfigSchema>;
+export type ProxyUpstream = z.infer<typeof ProxyUpstreamSchema>;
 
 // --- Loader ---
 
@@ -153,6 +167,40 @@ export function getChannelRepoMap(config: WorkspaceConfig): Map<string, string> 
     }
   }
   return map;
+}
+
+/**
+ * Get proxy config by name, or undefined if not configured.
+ */
+export function getProxyConfig(config: WorkspaceConfig, name: string): ProxyConfig | undefined {
+  return config.proxies?.[name];
+}
+
+/**
+ * Interpolate ${ENV_VAR} references in a string.
+ */
+export function interpolateEnv(value: string): string {
+  return value.replace(/\$\{(\w+)\}/g, (_match, name: string) => {
+    const envVal = process.env[name];
+    if (envVal === undefined) {
+      throw new Error(`Environment variable ${name} is not set`);
+    }
+    return envVal;
+  });
+}
+
+/**
+ * Interpolate all string values in a headers record.
+ */
+export function interpolateHeaders(
+  headers: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    result[key] = interpolateEnv(value);
+  }
+  return result;
 }
 
 /**

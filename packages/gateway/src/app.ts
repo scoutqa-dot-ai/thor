@@ -82,6 +82,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   slackBotUserId: string;
   /** Proxy hostname for approval resolution. Default: "proxy". */
   proxyHost?: string;
+  /** Proxy port for approval resolution. Default: 3001. */
+  proxyPort?: number;
   timestampToleranceSeconds?: number;
   /** Directory for the event queue. Default: "data/queue". */
   queueDir?: string;
@@ -469,34 +471,34 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           const channel = payload.channel?.id;
           const messageTs = payload.message?.ts;
 
-          // Button value format: "v1:{actionId}:{proxyPort}" (versioned)
-          // Legacy (no version prefix) is rejected.
+          // Button value formats:
+          //   v2:{actionId}:{upstreamName} — current (name-based routing)
+          //   v1:{actionId}:{proxyPort}    — legacy (port-based routing)
           const parts = action.value.split(":");
-          if (parts[0] !== "v1" || parts.length < 3) {
+          let actionId: string;
+          let proxyUrl: string;
+
+          if (parts[0] === "v2" && parts.length >= 3) {
+            actionId = parts[1];
+            const upstreamName = parts[2];
+            proxyUrl = `http://${proxyHost}:${config.proxyPort ?? 3001}/${upstreamName}`;
+          } else if (parts[0] === "v1" && parts.length >= 3) {
+            // TODO: Remove v1 support once all in-flight approvals have drained (safe after 2026-05-01)
+            actionId = parts[1];
+            const proxyPort = parseInt(parts[2], 10);
+            proxyUrl = `http://${proxyHost}:${proxyPort}`;
+          } else {
             logError(log, "approval_resolve_failed", "Unrecognized button value format", {
               value: action.value,
             });
             res.status(200).json({ ok: true });
             return;
           }
-          const actionId = parts[1];
-          const proxyPort = parseInt(parts[2], 10);
 
-          logInfo(log, "approval_action", { actionId, decision, reviewer, proxyPort });
-
-          if (!proxyPort) {
-            logError(log, "approval_resolve_failed", "No proxy port in button value", {
-              actionId,
-            });
-            res.status(200).json({ ok: true });
-            return;
-          }
+          logInfo(log, "approval_action", { actionId, decision, reviewer, proxyUrl });
 
           // Respond immediately to Slack (must reply within 3s)
           res.status(200).json({ ok: true });
-
-          // Resolve asynchronously
-          const proxyUrl = `http://${proxyHost}:${proxyPort}`;
           void (async () => {
             const resolved = await resolveApproval(
               actionId,

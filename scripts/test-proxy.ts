@@ -7,13 +7,14 @@
  * 3. tools/call (hidden) — non-exposed tool is rejected as unknown
  *
  * Prerequisites:
- *   - Proxy running on http://localhost:3010  (or PROXY_URL override)
+ *   - Proxy running on http://localhost:3001  (or PROXY_URL override)
  *
  * Usage:
  *   npx tsx scripts/test-proxy.ts
+ *   PROXY_URL=http://localhost:3001/atlassian npx tsx scripts/test-proxy.ts
  */
 
-const PROXY_URL = process.env.PROXY_URL || "http://localhost:3010/mcp";
+const PROXY_URL = process.env.PROXY_URL || "http://localhost:3001/atlassian";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -115,7 +116,11 @@ async function testInitialize(): Promise<void> {
   })) as { result?: { serverInfo?: { name: string } } };
 
   assert(sessionId !== null, "Session ID received");
-  assert(result?.result?.serverInfo?.name === "thor-proxy", "Server identifies as thor-proxy");
+  const serverName = result?.result?.serverInfo?.name ?? "";
+  assert(
+    serverName.startsWith("thor-proxy"),
+    `Server identifies as thor-proxy* (got: ${serverName})`,
+  );
 }
 
 async function testToolsList(): Promise<string[]> {

@@ -82,13 +82,9 @@ services:
       target: proxy
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3010:3010"
-      - "127.0.0.1:3011:3011"
-      - "127.0.0.1:3012:3012"
-      - "127.0.0.1:3013:3013"
+      - "127.0.0.1:3001:3001"
     environment:
       - NODE_ENV=production
-      - PROXY_INSTANCES=3010:proxy.atlassian.json,3011:proxy.posthog.json,3012:proxy.slack.json,3013:proxy.grafana.json
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
       - ATLASSIAN_BASIC_AUTH=${ATLASSIAN_BASIC_AUTH}
     volumes:
@@ -100,12 +96,7 @@ services:
         condition: service_healthy
     healthcheck:
       test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "Promise.all([3010,3011,3012,3013].map(p=>fetch('http://localhost:'+p+'/health'))).then(rs=>{if(rs.some(r=>!r.ok))throw 1})",
-        ]
+        ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>{if(!r.ok)throw 1})"]
       interval: 5s
       timeout: 5s
       retries: 10
