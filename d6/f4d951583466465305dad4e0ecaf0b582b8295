@@ -1,0 +1,29 @@
+packages/remote-cli/src/index.ts
+  1eed7ae924d01bc0 40,42
+packages/gateway/src/app.ts
+  1eed7ae924d01bc0 163,169,197,203,230,235
+packages/gateway/src/service.ts
+  1eed7ae924d01bc0 41-42,90,113,221,226,267,281
+packages/runner/src/index.ts
+  1eed7ae924d01bc0 287,299,409,551,557-562
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d6f4d951583466465305dad4e0ecaf0b582b8295",
+  "prompts": {
+    "1eed7ae924d01bc0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9c0f7ac-1ccb-4060-b6fe-19b31fcd76b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 26,
+      "total_deletions": 10,
+      "accepted_lines": 26,
+      "overriden_lines": 0
+    }
+  }
+}
