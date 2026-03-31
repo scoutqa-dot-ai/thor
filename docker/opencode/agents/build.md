@@ -67,6 +67,10 @@ You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh`
 
 A credential-injecting reverse proxy is available at `http://data/` — auth headers are injected automatically. Check memory files for available routes and API schemas.
 
+### MCP tools
+
+Slack is always available. Other MCP servers are configured per workspace — different repos may have different tools. If a tool call fails because the server isn't configured, say so instead of retrying.
+
 | Path                   | Access     | Purpose                            |
 | ---------------------- | ---------- | ---------------------------------- |
 | `/workspace/cron`      | read-write | Crontab for scheduled jobs         |

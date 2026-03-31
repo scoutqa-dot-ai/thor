@@ -78,15 +78,51 @@ The current approach uses three env vars (`SLACK_CHANNEL_REPOS`, `SLACK_ALLOWED_
 
 ## Decision Log
 
-| #   | Decision                                          | Reason                                                                                                                                              |
-| --- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | JSON file at `/workspace/repos.json`              | Already mounted via `./docker-volumes/workspace:/workspace`. No new volume needed.                                                                  |
-| 2   | Zod schema in `@thor/common`                      | Both gateway and runner depend on common. Single source of truth for validation.                                                                    |
-| 3   | Fail fast on invalid config                       | Better to crash at startup than silently misbehave.                                                                                                 |
-| 4   | Detect duplicate channel IDs                      | One channel mapping to two repos is always a bug. Catch it early.                                                                                   |
-| 5   | `defaultDirectory` is optional                    | Defaults to `/workspace` if omitted. Keeps minimal configs minimal.                                                                                 |
-| 6   | Warn + drop at resolve time for missing repo dirs | Repos may be cloned after container starts. Don't crash at startup, but don't forward events to a non-existent directory either.                    |
-| 7   | Validate directory paths against allowed prefixes | Prevents path traversal attacks via crafted webhook payloads. Runner normalizes and checks against `/workspace/repos/` and `/workspace/worktrees/`. |
+| #   | Decision                                          | Reason                                                                                                                                                |
+| --- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | JSON file at `/workspace/repos.json`              | Already mounted via `./docker-volumes/workspace:/workspace`. No new volume needed.                                                                    |
+| 2   | Zod schema in `@thor/common`                      | Both gateway and runner depend on common. Single source of truth for validation.                                                                      |
+| 3   | Fail fast on invalid config                       | Better to crash at startup than silently misbehave.                                                                                                   |
+| 4   | Detect duplicate channel IDs                      | One channel mapping to two repos is always a bug. Catch it early.                                                                                     |
+| 5   | `defaultDirectory` is optional                    | Defaults to `/workspace` if omitted. Keeps minimal configs minimal.                                                                                   |
+| 6   | Warn + drop at resolve time for missing repo dirs | Repos may be cloned after container starts. Don't crash at startup, but don't forward events to a non-existent directory either.                      |
+| 7   | Validate directory paths against allowed prefixes | Prevents path traversal attacks via crafted webhook payloads. Runner normalizes and checks against `/workspace/repos/` and `/workspace/worktrees/`.   |
+| 8   | Per-repo MCP via `.thor.opencode/`                | Forked OpenCode natively resolves `.thor.opencode/opencode.json` from the working directory. Slack stays global; other MCP servers are per-workspace. |
+| 9   | Slack in global config only                       | Global `opencode.json` sets model + permission + Slack MCP. Other servers configured per workspace so repos only get the tools they need.             |
+
+## Per-repo MCP configuration
+
+MCP servers are configured per repo using `.thor.opencode/opencode.json` in the repo root. The forked OpenCode natively looks for this directory in the working directory and merges it with the global config when a session starts.
+
+**Override semantics:** If a repo has both `.opencode/` and `.thor.opencode/`, Thor merges them with `.thor.opencode/` values taking precedence. This lets humans use OpenCode normally with `.opencode` while Thor gets its own config overlay. For agent instructions, if a repo has both `AGENTS.md` and `THOR.md`, Thor loads `THOR.md` first and ignores `AGENTS.md`/`CLAUDE.md`.
+
+Slack is always available globally. Example `.thor.opencode/opencode.json` for a repo that also needs Atlassian and Grafana:
+
+```json
+{
+  "mcp": {
+    "atlassian": {
+      "type": "remote",
+      "url": "http://proxy:3010/mcp",
+      "enabled": true
+    },
+    "grafana": {
+      "type": "remote",
+      "url": "http://proxy:3013/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+Available MCP servers (all proxied):
+
+| Name      | URL                     | Port |
+| --------- | ----------------------- | ---- |
+| slack     | `http://proxy:3012/mcp` | 3012 |
+| atlassian | `http://proxy:3010/mcp` | 3010 |
+| posthog   | `http://proxy:3011/mcp` | 3011 |
+| grafana   | `http://proxy:3013/mcp` | 3013 |
 
 ## Out of scope
 

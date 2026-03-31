@@ -164,11 +164,49 @@ docker compose exec remote-cli git clone https://github.com/your-org/your-repo.g
 
 Repos in `/workspace/repos/` are mounted read-only into OpenCode. Thor creates worktrees under `/workspace/worktrees/` for code changes.
 
-#### 5. GitHub webhook setup
+#### 5. Per-workspace MCP servers
+
+Slack is available globally (configured in the base `docker/opencode/opencode.json`). Other MCP servers are configured **per repo** via `.thor.opencode/opencode.json` in the repo root.
+
+If a repo has both `.opencode/` and `.thor.opencode/`, Thor merges them with `.thor.opencode/` taking precedence — so humans can use OpenCode normally while Thor gets its own config overlay. Similarly, if a repo has both `AGENTS.md` and `THOR.md`, Thor loads `THOR.md` and ignores `AGENTS.md`/`CLAUDE.md`.
+
+```bash
+# Example: give a repo access to Atlassian and Grafana
+mkdir -p docker-volumes/workspace/repos/your-repo/.thor.opencode
+cat > docker-volumes/workspace/repos/your-repo/.thor.opencode/opencode.json << 'EOF'
+{
+  "mcp": {
+    "atlassian": {
+      "type": "remote",
+      "url": "http://proxy:3010/mcp",
+      "enabled": true
+    },
+    "grafana": {
+      "type": "remote",
+      "url": "http://proxy:3013/mcp",
+      "enabled": true
+    }
+  }
+}
+EOF
+```
+
+Available MCP servers (all policy-proxied):
+
+| Name      | URL                     | Tools                       |
+| --------- | ----------------------- | --------------------------- |
+| slack     | `http://proxy:3012/mcp` | Messaging, progress updates |
+| atlassian | `http://proxy:3010/mcp` | Jira issues, Confluence     |
+| posthog   | `http://proxy:3011/mcp` | Product analytics           |
+| grafana   | `http://proxy:3013/mcp` | Loki/Tempo log queries      |
+
+OpenCode merges per-repo config with the global config. A repo without `.thor.opencode/` gets only Slack.
+
+#### 6. GitHub webhook setup
 
 Copy `docs/notify-thor.example.yml` to `.github/workflows/notify-thor.yml` in any source repository you want Thor to monitor. Add `THOR_GATEWAY_URL` as a repository variable pointing to the gateway endpoint.
 
-#### 6. Cron jobs (optional)
+#### 7. Cron jobs (optional)
 
 Add scheduled prompts to `docker-volumes/workspace/cron/crontab`. Each line triggers Thor with a prompt on a schedule. See `docs/plan/2026031204_cron-triggers.md` for examples.
 

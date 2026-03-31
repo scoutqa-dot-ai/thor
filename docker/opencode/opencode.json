@@ -3,24 +3,9 @@
   "model": "opencode/big-pickle",
   "permission": "allow",
   "mcp": {
-    "atlassian": {
-      "type": "remote",
-      "url": "http://proxy:3010/mcp",
-      "enabled": true
-    },
-    "posthog": {
-      "type": "remote",
-      "url": "http://proxy:3011/mcp",
-      "enabled": true
-    },
     "slack": {
       "type": "remote",
       "url": "http://proxy:3012/mcp",
-      "enabled": true
-    },
-    "grafana": {
-      "type": "remote",
-      "url": "http://proxy:3013/mcp",
       "enabled": true
     }
   }
