@@ -6,6 +6,9 @@ import {
   resolveCorrelationKey,
   resolveCorrelationKeys,
   hasSlackReply,
+  getAllowedChannelIds,
+  getChannelRepoMap,
+  type ConfigLoader,
 } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
@@ -88,14 +91,12 @@ export interface GatewayAppConfig extends RunnerDeps {
   interruptDelayMs?: number;
   /** Delay for non-interrupt events in ms. Default: 60000. */
   unaddressedDelayMs?: number;
-  /** Slack channel IDs the bot is allowed to respond in. Empty = allow all. */
-  allowedChannelIds?: string[];
   /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
   cronSecret?: string;
   /** Git username (e.g. GitHub login) — used to detect @mentions in GitHub events. */
   gitUsername?: string;
-  /** Maps Slack channel IDs to repo names for working directory resolution. */
-  channelRepos?: Map<string, string>;
+  /** Dynamic workspace config loader — re-reads config.json on each request. */
+  getConfig?: ConfigLoader;
 }
 
 const InteractivityBodySchema = z.object({
@@ -119,7 +120,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const selfUserId = config.slackBotUserId;
   const interruptDelay = config.interruptDelayMs ?? INTERRUPT_DELAY_MS;
   const unaddressedDelay = config.unaddressedDelayMs ?? UNADDRESSED_DELAY_MS;
-  const allowedChannels = new Set(config.allowedChannelIds ?? []);
+
+  /** Read allowed channels dynamically from config on each call. */
+  const isChannelAllowed = (channel: string): boolean => {
+    if (!config.getConfig) return true; // no config = allow all
+    return getAllowedChannelIds(config.getConfig()).has(channel);
+  };
+  /** Read channel→repo map dynamically from config on each call. */
+  const getChannelRepos = (): Map<string, string> | undefined => {
+    if (!config.getConfig) return undefined;
+    return getChannelRepoMap(config.getConfig());
+  };
 
   const runnerDeps: RunnerDeps = {
     runnerUrl: config.runnerUrl,
@@ -153,7 +164,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             slackMcpDeps,
             hasInterrupt,
             ack,
-            config.channelRepos,
+            getChannelRepos(),
             reject,
           );
           if (result.busy) {
@@ -325,7 +336,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     if (
       "channel" in event &&
       typeof event.channel === "string" &&
-      !allowedChannels.has(event.channel)
+      !isChannelAllowed(event.channel)
     ) {
       logInfo(log, "event_ignored_channel_not_allowed", { eventId, channel: event.channel });
       res.status(200).json({ ok: true, ignored: true });

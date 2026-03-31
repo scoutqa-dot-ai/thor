@@ -1,9 +1,9 @@
 import {
   createLogger,
   logInfo,
-  loadWorkspaceConfig,
+  createConfigLoader,
   getAllowedChannelIds,
-  getChannelRepoMap,
+  WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 import { createGatewayApp } from "./app.js";
 
@@ -23,10 +23,7 @@ const CRON_SECRET = process.env.CRON_SECRET || "";
 const PROXY_HOST = process.env.PROXY_HOST || "proxy";
 const GIT_USER_NAME = process.env.GIT_USER_NAME || "";
 
-const WORKSPACE_CONFIG_PATH = process.env.WORKSPACE_CONFIG || "/workspace/repos.json";
-const workspaceConfig = loadWorkspaceConfig(WORKSPACE_CONFIG_PATH);
-const allowedChannelIds = [...getAllowedChannelIds(workspaceConfig)];
-const channelRepos = getChannelRepoMap(workspaceConfig);
+const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
@@ -36,13 +33,22 @@ const { app } = createGatewayApp({
   proxyHost: PROXY_HOST,
   timestampToleranceSeconds: SLACK_TIMESTAMP_TOLERANCE_SECONDS,
   queueDir: QUEUE_DIR,
-  allowedChannelIds,
   cronSecret: CRON_SECRET || undefined,
   gitUsername: GIT_USER_NAME || undefined,
-  channelRepos,
+  getConfig,
 });
 
 app.listen(PORT, () => {
+  let configSummary: Record<string, unknown> = {};
+  try {
+    const config = getConfig();
+    configSummary = {
+      allowedChannels: [...getAllowedChannelIds(config)],
+      repos: Object.keys(config.repos),
+    };
+  } catch {
+    configSummary = { config: "not available yet" };
+  }
   logInfo(log, "gateway_started", {
     port: PORT,
     runnerUrl: RUNNER_URL,
@@ -50,7 +56,6 @@ app.listen(PORT, () => {
     proxyHost: PROXY_HOST,
     queueDir: QUEUE_DIR,
     configured: Boolean(SLACK_SIGNING_SECRET),
-    allowedChannels: allowedChannelIds,
-    repos: Object.keys(workspaceConfig.repos),
+    ...configSummary,
   });
 });

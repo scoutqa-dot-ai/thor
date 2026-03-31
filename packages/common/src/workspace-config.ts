@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
+import { createLogger, logWarn } from "./logger.js";
 
 // --- Schema ---
 
@@ -48,6 +49,22 @@ export function loadWorkspaceConfig(path: string): WorkspaceConfig {
     throw new Error(`Invalid workspace config at ${path}:\n${issues.join("\n")}`);
   }
 
+  // Validate proxy names: alphanumeric + hyphens only, no reserved names
+  const RESERVED_PROXY_NAMES = new Set(["health"]);
+  const PROXY_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+  for (const name of Object.keys(result.data.proxies ?? {})) {
+    if (!PROXY_NAME_RE.test(name)) {
+      throw new Error(
+        `Invalid proxy name "${name}" in workspace config: must be lowercase alphanumeric with hyphens`,
+      );
+    }
+    if (RESERVED_PROXY_NAMES.has(name)) {
+      throw new Error(
+        `Reserved proxy name "${name}" in workspace config: collides with /${name} endpoint`,
+      );
+    }
+  }
+
   // Detect duplicate channel IDs across repos
   const seen = new Map<string, string>(); // channel → repo
   for (const [repo, config] of Object.entries(result.data.repos)) {
@@ -63,6 +80,51 @@ export function loadWorkspaceConfig(path: string): WorkspaceConfig {
   }
 
   return result.data;
+}
+
+export const WORKSPACE_CONFIG_PATH = "/workspace/config.json";
+
+// --- Dynamic loader ---
+
+export interface ConfigLoader {
+  /** Returns the current workspace config, re-reading from disk if the TTL has expired. */
+  (): WorkspaceConfig;
+  /** Force an immediate reload on next access. */
+  invalidate(): void;
+}
+
+const configLog = createLogger("config-loader");
+
+/**
+ * Create a config loader that re-reads config.json on every access.
+ * The file is tiny (<1KB) so there's no need for caching — changes
+ * take effect immediately.
+ */
+export function createConfigLoader(path: string): ConfigLoader {
+  let lastGood: WorkspaceConfig | null = null;
+
+  const loader = (() => {
+    try {
+      lastGood = loadWorkspaceConfig(path);
+      return lastGood;
+    } catch (err) {
+      // If we have a previous good config, keep using it
+      if (lastGood) {
+        logWarn(configLog, "config_reload_failed_using_last_good", {
+          path,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return lastGood;
+      }
+      throw new Error(
+        `Failed to load workspace config from ${path} and no previous config available`,
+      );
+    }
+  }) as ConfigLoader;
+
+  loader.invalidate = () => {};
+
+  return loader;
 }
 
 // --- Helpers ---

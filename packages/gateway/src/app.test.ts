@@ -3,8 +3,30 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ConfigLoader, WorkspaceConfig } from "@thor/common";
 import { createGatewayApp, type GatewayAppConfig } from "./app.js";
 import type { EventQueue } from "./queue.js";
+
+/** Create a fake ConfigLoader from channel IDs and channel→repo map for tests. */
+function fakeConfigLoader(
+  channelIds: string[],
+  channelRepoEntries?: [string, string][],
+): ConfigLoader {
+  const repos: Record<string, { channels: string[] }> = {};
+  // Build a single repo entry per channel (or use channelRepoEntries mapping)
+  if (channelRepoEntries) {
+    for (const [ch, repo] of channelRepoEntries) {
+      if (!repos[repo]) repos[repo] = { channels: [] };
+      repos[repo].channels.push(ch);
+    }
+  } else {
+    repos["test-repo"] = { channels: channelIds };
+  }
+  const config: WorkspaceConfig = { repos };
+  const loader = (() => config) as ConfigLoader;
+  loader.invalidate = () => {};
+  return loader;
+}
 
 vi.mock("@thor/common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@thor/common")>();
@@ -34,8 +56,7 @@ async function withServer<T>(
     disableQueueInterval: true,
     interruptDelayMs: 0,
     unaddressedDelayMs: 0,
-    allowedChannelIds: ["C123"],
-    channelRepos: new Map([["C123", "test-repo"]]),
+    getConfig: fakeConfigLoader(["C123"], [["C123", "test-repo"]]),
     ...extraConfig,
   });
 
@@ -654,7 +675,7 @@ describe("gateway", () => {
         expect(await response.json()).toEqual({ ok: true, ignored: true });
         expect(fetchImpl).not.toHaveBeenCalled();
       },
-      { allowedChannelIds: ["C_ALLOWED"] },
+      { getConfig: fakeConfigLoader(["C_ALLOWED"]) },
     );
   });
 
@@ -699,7 +720,7 @@ describe("gateway", () => {
         const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
         expect(triggerCall).toBeDefined();
       },
-      { allowedChannelIds: ["C_ALLOWED"], channelRepos: new Map([["C_ALLOWED", "test-repo"]]) },
+      { getConfig: fakeConfigLoader(["C_ALLOWED"], [["C_ALLOWED", "test-repo"]]) },
     );
   });
 
@@ -737,7 +758,7 @@ describe("gateway", () => {
         expect(await response.json()).toEqual({ ok: true, ignored: true });
         expect(fetchImpl).not.toHaveBeenCalled();
       },
-      { allowedChannelIds: ["C_ALLOWED"] },
+      { getConfig: fakeConfigLoader(["C_ALLOWED"]) },
     );
   });
 
