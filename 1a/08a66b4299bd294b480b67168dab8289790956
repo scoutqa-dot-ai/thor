@@ -1,0 +1,23 @@
+docker/opencode/agents/build.md
+  b7a14cf9a37bce03 72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1a08a66b4299bd294b480b67168dab8289790956",
+  "prompts": {
+    "b7a14cf9a37bce03": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "afde0015-cece-44e6-b5e6-bd9c45d68a11",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
