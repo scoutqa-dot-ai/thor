@@ -142,37 +142,36 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         const lastEvent = slackEvents[slackEvents.length - 1];
         const hasInterrupt = events.some((e) => e.interrupt);
 
-        // Fire-and-forget: ack is called inside triggerRunnerSlack after
-        // runner accepts (before NDJSON stream). If busy, ack is not called
-        // and files stay on disk for retry.
-        triggerRunnerSlack(
-          slackEvents.map((e) => e.payload),
-          lastEvent.correlationKey,
-          runnerDeps,
-          slackMcpDeps,
-          hasInterrupt,
-          ack,
-          config.channelRepos,
-          reject,
-        )
-          .then((result) => {
-            if (result.busy) {
-              logInfo(log, "slack_trigger_busy", {
-                correlationKey: lastEvent.correlationKey,
-                batchSize: slackEvents.length,
-              });
-            } else {
-              logInfo(log, "slack_trigger_fired", {
-                correlationKey: lastEvent.correlationKey,
-                batchSize: slackEvents.length,
-              });
-            }
-          })
-          .catch((error) =>
-            logError(log, "slack_trigger_failed", error, {
-              correlationKey: lastEvent.correlationKey,
-            }),
+        // Await the trigger so the queue keeps the per-key processing lock
+        // until the runner responds. triggerRunnerSlack returns as soon as
+        // the runner accepts (NDJSON stream is consumed in the background).
+        try {
+          const result = await triggerRunnerSlack(
+            slackEvents.map((e) => e.payload),
+            lastEvent.correlationKey,
+            runnerDeps,
+            slackMcpDeps,
+            hasInterrupt,
+            ack,
+            config.channelRepos,
+            reject,
           );
+          if (result.busy) {
+            logInfo(log, "slack_trigger_busy", {
+              correlationKey: lastEvent.correlationKey,
+              batchSize: slackEvents.length,
+            });
+          } else {
+            logInfo(log, "slack_trigger_fired", {
+              correlationKey: lastEvent.correlationKey,
+              batchSize: slackEvents.length,
+            });
+          }
+        } catch (error) {
+          logError(log, "slack_trigger_failed", error, {
+            correlationKey: lastEvent.correlationKey,
+          });
+        }
         return;
       }
 
@@ -180,32 +179,31 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         const lastEvent = githubEvents[githubEvents.length - 1];
         const hasInterrupt = events.some((e) => e.interrupt);
 
-        triggerRunnerGitHub(
-          githubEvents.map((e) => e.payload),
-          lastEvent.correlationKey,
-          runnerDeps,
-          hasInterrupt,
-          ack,
-          reject,
-        )
-          .then((result) => {
-            if (result.busy) {
-              logInfo(log, "github_trigger_busy", {
-                correlationKey: lastEvent.correlationKey,
-                batchSize: githubEvents.length,
-              });
-            } else {
-              logInfo(log, "github_trigger_fired", {
-                correlationKey: lastEvent.correlationKey,
-                batchSize: githubEvents.length,
-              });
-            }
-          })
-          .catch((error) =>
-            logError(log, "github_trigger_failed", error, {
-              correlationKey: lastEvent.correlationKey,
-            }),
+        try {
+          const result = await triggerRunnerGitHub(
+            githubEvents.map((e) => e.payload),
+            lastEvent.correlationKey,
+            runnerDeps,
+            hasInterrupt,
+            ack,
+            reject,
           );
+          if (result.busy) {
+            logInfo(log, "github_trigger_busy", {
+              correlationKey: lastEvent.correlationKey,
+              batchSize: githubEvents.length,
+            });
+          } else {
+            logInfo(log, "github_trigger_fired", {
+              correlationKey: lastEvent.correlationKey,
+              batchSize: githubEvents.length,
+            });
+          }
+        } catch (error) {
+          logError(log, "github_trigger_failed", error, {
+            correlationKey: lastEvent.correlationKey,
+          });
+        }
         return;
       }
 
@@ -213,30 +211,29 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       if (cronEvents.length > 0) {
         const lastEvent = cronEvents[cronEvents.length - 1];
 
-        triggerRunnerCron(
-          lastEvent.payload,
-          lastEvent.correlationKey,
-          runnerDeps,
-          false,
-          ack,
-          reject,
-        )
-          .then((result) => {
-            if (result.busy) {
-              logInfo(log, "cron_trigger_busy", {
-                correlationKey: lastEvent.correlationKey,
-              });
-            } else {
-              logInfo(log, "cron_trigger_fired", {
-                correlationKey: lastEvent.correlationKey,
-              });
-            }
-          })
-          .catch((error) =>
-            logError(log, "cron_trigger_failed", error, {
-              correlationKey: lastEvent.correlationKey,
-            }),
+        try {
+          const result = await triggerRunnerCron(
+            lastEvent.payload,
+            lastEvent.correlationKey,
+            runnerDeps,
+            false,
+            ack,
+            reject,
           );
+          if (result.busy) {
+            logInfo(log, "cron_trigger_busy", {
+              correlationKey: lastEvent.correlationKey,
+            });
+          } else {
+            logInfo(log, "cron_trigger_fired", {
+              correlationKey: lastEvent.correlationKey,
+            });
+          }
+        } catch (error) {
+          logError(log, "cron_trigger_failed", error, {
+            correlationKey: lastEvent.correlationKey,
+          });
+        }
       }
     },
   });
