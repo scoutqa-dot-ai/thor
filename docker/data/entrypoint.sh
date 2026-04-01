@@ -6,6 +6,7 @@
 #   DATA_ROUTE_billing_UPSTREAM=https://billing.example.com/
 #   DATA_ROUTE_billing_KEY=sk-xxx
 #   DATA_ROUTE_billing_HEADER=X-Custom-Auth   (optional, defaults to X-API-Key)
+#   DATA_ROUTE_billing_READONLY=true          (optional, reject non-GET/HEAD)
 #
 # Each route creates:  /<name>/ → proxy_pass <upstream>
 #                      with header <HEADER>: <KEY>
@@ -54,10 +55,12 @@ else
     upstream_var="DATA_ROUTE_${route}_UPSTREAM"
     key_var="DATA_ROUTE_${route}_KEY"
     header_var="DATA_ROUTE_${route}_HEADER"
+    readonly_var="DATA_ROUTE_${route}_READONLY"
 
-    upstream=$(eval echo "\$$upstream_var")
-    key=$(eval echo "\$$key_var")
-    header=$(eval echo "\$$header_var")
+    upstream=$(printenv "$upstream_var" 2>/dev/null || true)
+    key=$(printenv "$key_var" 2>/dev/null || true)
+    header=$(printenv "$header_var" 2>/dev/null || true)
+    readonly_flag=$(printenv "$readonly_var" 2>/dev/null || true)
     : "${header:=X-API-Key}"
 
     if [ -z "$upstream" ]; then
@@ -78,10 +81,19 @@ else
         proxy_ssl_server_name on;
 ROUTE
 
+    # Restrict to GET/HEAD if readonly flag is set
+    if [ "$readonly_flag" = "true" ]; then
+      cat >> "$CONF" <<'READONLY'
+        limit_except GET HEAD {
+            deny all;
+        }
+READONLY
+    fi
+
     # Only add auth header if a key is provided
     if [ -n "$key" ]; then
       cat >> "$CONF" <<AUTH
-        proxy_set_header ${header} ${key};
+        proxy_set_header ${header} "${key}";
 AUTH
     fi
 
