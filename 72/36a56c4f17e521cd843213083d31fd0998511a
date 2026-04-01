@@ -1,0 +1,33 @@
+docker/cron/entrypoint.sh
+  4fd26fbb655cfd4e 7
+docs/plan/2026031701_scheduler.md
+  4fd26fbb655cfd4e 10,28,30,52,138,145,171,176,189,217,238,242,267
+docker/opencode/agents/build.md
+  4fd26fbb655cfd4e 140,157,160
+README.md
+  4fd26fbb655cfd4e 210
+docs/plan/2026031204_cron-triggers.md
+  4fd26fbb655cfd4e 27,102,110,128,142,148,150,178,185
+scripts/test-cron-reload.sh
+  4fd26fbb655cfd4e 37,112,139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "7236a56c4f17e521cd843213083d31fd0998511a",
+  "prompts": {
+    "4fd26fbb655cfd4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "be36a413-ea4b-4ad3-a6b7-29df6268f7c7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 31,
+      "total_deletions": 31,
+      "accepted_lines": 30,
+      "overriden_lines": 0
+    }
+  }
+}
