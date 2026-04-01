@@ -1,0 +1,27 @@
+packages/runner/src/approval-parser.test.ts
+  362f2807b1e0b015 3-6,10-38,40
+packages/proxy/src/index.ts
+  362f2807b1e0b015 288-297
+packages/runner/src/index.ts
+  362f2807b1e0b015 608-609,616,618-642,645
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "52f5b41fecaaa6a0cab30c5d0a63b110f9cf0102",
+  "prompts": {
+    "362f2807b1e0b015": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f920c369-f9c6-4097-ab65-e09f1bfe71af",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 88,
+      "total_deletions": 25,
+      "accepted_lines": 74,
+      "overriden_lines": 0
+    }
+  }
+}
