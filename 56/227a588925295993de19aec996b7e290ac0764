@@ -1,0 +1,23 @@
+docs/plan/2026033101_dynamic-config.md
+  362f2807b1e0b015 1,224-298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "56227a588925295993de19aec996b7e290ac0764",
+  "prompts": {
+    "362f2807b1e0b015": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f920c369-f9c6-4097-ab65-e09f1bfe71af",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 77,
+      "total_deletions": 0,
+      "accepted_lines": 77,
+      "overriden_lines": 0
+    }
+  }
+}
