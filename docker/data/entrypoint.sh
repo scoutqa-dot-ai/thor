@@ -57,10 +57,10 @@ else
     header_var="DATA_ROUTE_${route}_HEADER"
     readonly_var="DATA_ROUTE_${route}_READONLY"
 
-    upstream=$(printenv "$upstream_var" 2>/dev/null)
-    key=$(printenv "$key_var" 2>/dev/null)
-    header=$(printenv "$header_var" 2>/dev/null)
-    readonly_flag=$(printenv "$readonly_var" 2>/dev/null)
+    upstream=$(printenv "$upstream_var" 2>/dev/null || true)
+    key=$(printenv "$key_var" 2>/dev/null || true)
+    header=$(printenv "$header_var" 2>/dev/null || true)
+    readonly_flag=$(printenv "$readonly_var" 2>/dev/null || true)
     : "${header:=X-API-Key}"
 
     if [ -z "$upstream" ]; then
