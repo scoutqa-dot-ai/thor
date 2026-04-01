@@ -230,7 +230,6 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "pr comment",
   "pr ready",
   "pr review",
-  "pr merge",
   "issue view",
   "issue list",
   "issue comment",
