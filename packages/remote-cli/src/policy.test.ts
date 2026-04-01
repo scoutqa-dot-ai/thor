@@ -65,11 +65,23 @@ describe("validateGitArgs", () => {
       expect(validateGitArgs(["stash"])).toBeNull();
     });
 
-    it("allows remote commands", () => {
+    it("allows remote read commands", () => {
       expect(validateGitArgs(["fetch", "origin"])).toBeNull();
       expect(validateGitArgs(["pull"])).toBeNull();
       expect(validateGitArgs(["push", "origin", "my-branch"])).toBeNull();
       expect(validateGitArgs(["remote", "-v"])).toBeNull();
+      expect(validateGitArgs(["remote", "--verbose"])).toBeNull();
+      expect(validateGitArgs(["remote"])).toBeNull();
+      expect(validateGitArgs(["remote", "show", "origin"])).toBeNull();
+      expect(validateGitArgs(["remote", "get-url", "origin"])).toBeNull();
+    });
+
+    it("allows push to origin", () => {
+      expect(validateGitArgs(["push"])).toBeNull();
+      expect(validateGitArgs(["push", "origin"])).toBeNull();
+      expect(validateGitArgs(["push", "origin", "my-branch"])).toBeNull();
+      expect(validateGitArgs(["push", "-u", "origin", "my-branch"])).toBeNull();
+      expect(validateGitArgs(["push", "--force", "origin", "my-branch"])).toBeNull();
     });
 
     it("allows worktree add under /workspace/worktrees/", () => {
@@ -120,6 +132,29 @@ describe("validateGitArgs", () => {
       expect(
         validateGitArgs(["worktree", "add", "/workspace/worktrees/repo/feat/my-feature"]),
       ).toBeNull();
+    });
+
+    it("blocks git remote add/set-url/rename/remove", () => {
+      expect(
+        validateGitArgs(["remote", "add", "evil", "https://evil.com/repo.git"]),
+      ).not.toBeNull();
+      expect(
+        validateGitArgs(["remote", "set-url", "origin", "https://evil.com/repo.git"]),
+      ).not.toBeNull();
+      expect(validateGitArgs(["remote", "rename", "origin", "old"])).not.toBeNull();
+      expect(validateGitArgs(["remote", "remove", "origin"])).not.toBeNull();
+      expect(validateGitArgs(["remote", "prune", "origin"])).not.toBeNull();
+    });
+
+    it("blocks push to non-origin remotes", () => {
+      expect(validateGitArgs(["push", "evil", "main"])).not.toBeNull();
+      expect(validateGitArgs(["push", "https://evil.com/repo.git", "main"])).not.toBeNull();
+      expect(validateGitArgs(["push", "upstream", "main"])).not.toBeNull();
+    });
+
+    it("blocks push to non-origin even with flags", () => {
+      expect(validateGitArgs(["push", "-u", "evil", "main"])).not.toBeNull();
+      expect(validateGitArgs(["push", "--force", "evil", "main"])).not.toBeNull();
     });
 
     it("blocks arbitrary commands", () => {

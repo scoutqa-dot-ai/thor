@@ -122,6 +122,16 @@ export function validateGitArgs(args: string[]): string | null {
     return validateGitWorktree(args);
   }
 
+  // Restrict remote to read-only sub-subcommands
+  if (subcommand.toLowerCase() === "remote") {
+    return validateGitRemote(args);
+  }
+
+  // Restrict push to origin only (block pushing to arbitrary remotes/URLs)
+  if (subcommand.toLowerCase() === "push") {
+    return validateGitPush(args);
+  }
+
   return null;
 }
 
@@ -179,6 +189,61 @@ function findWorktreePath(args: string[], startIdx: number): string | null {
       return arg;
     }
   }
+  return null;
+}
+
+// ── git remote policy ──────────────────────────────────────────────────────
+
+const ALLOWED_REMOTE_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "show",
+  "get-url",
+  "-v",
+  "--verbose",
+]);
+
+function validateGitRemote(args: string[]): string | null {
+  const remoteIdx = args.indexOf("remote");
+  const subSub = args[remoteIdx + 1];
+
+  // bare "git remote" (lists remotes) is allowed
+  if (!subSub) return null;
+
+  // -v/--verbose is a flag, not a sub-subcommand, but it's the common read case
+  if (!ALLOWED_REMOTE_SUBCOMMANDS.has(subSub)) {
+    return `"git remote ${subSub}" is not allowed — only read-only operations (show, get-url, -v) are permitted`;
+  }
+
+  return null;
+}
+
+// ── git push policy ────────────────────────────────────────────────────────
+
+function validateGitPush(args: string[]): string | null {
+  const pushIdx = args.indexOf("push");
+
+  // Find the first positional arg after "push" (the remote name or URL)
+  let i = pushIdx + 1;
+  while (i < args.length) {
+    const arg = args[i];
+    // Skip flags; --set-upstream/-u consume no extra arg
+    if (arg === "--force" || arg === "-f" || arg === "--force-with-lease") {
+      i += 1;
+    } else if (arg === "-u" || arg === "--set-upstream") {
+      i += 1;
+    } else if (arg === "--delete" || arg === "-d") {
+      i += 1;
+    } else if (arg.startsWith("-")) {
+      i += 1;
+    } else {
+      // First positional arg = remote
+      if (arg !== "origin") {
+        return `"git push ${arg}" is not allowed — only pushing to "origin" is permitted`;
+      }
+      return null;
+    }
+  }
+
+  // No remote specified — defaults to origin, which is fine
   return null;
 }
 
