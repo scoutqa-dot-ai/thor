@@ -1,0 +1,25 @@
+docker/data/entrypoint.sh
+  53626e43e5bbe7cf 9,58,60-63,84-92,96
+.env.example
+  53626e43e5bbe7cf 12,18-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2b3fce800b6d1cfd973133f20daa129f6a962f14",
+  "prompts": {
+    "53626e43e5bbe7cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f528f219-2a4c-49c6-8616-05eb51480966",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 27,
+      "total_deletions": 11,
+      "accepted_lines": 21,
+      "overriden_lines": 0
+    }
+  }
+}
