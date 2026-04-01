@@ -1,0 +1,23 @@
+packages/proxy/src/index.ts
+  362f2807b1e0b015 83-87,90-91,93-96,98,101,105-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "023696807ae8b5750a46660b1719f08cf842a3eb",
+  "prompts": {
+    "362f2807b1e0b015": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f920c369-f9c6-4097-ab65-e09f1bfe71af",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 29,
+      "total_deletions": 21,
+      "accepted_lines": 24,
+      "overriden_lines": 0
+    }
+  }
+}
