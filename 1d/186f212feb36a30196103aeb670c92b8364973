@@ -1,0 +1,31 @@
+scripts/test-cron-reload.sh
+  4fd26fbb655cfd4e 5-6,16,68-69,71-73,75-77,80-81,83,86-87,101,103,108-109,127,129-131,136-137,155,157-159
+docker/cron/Dockerfile
+  4fd26fbb655cfd4e 3-5,7-11
+docs/plan/2026031701_scheduler.md
+  4fd26fbb655cfd4e 10,13
+docs/plan/2026031204_cron-triggers.md
+  4fd26fbb655cfd4e 13,27,110,137,141-143,148,229
+docker/cron/entrypoint.sh
+  4fd26fbb655cfd4e 4-5,7-10,12,15-21,23,25-35,37-38,40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1d186f212feb36a30196103aeb670c92b8364973",
+  "prompts": {
+    "4fd26fbb655cfd4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "be36a413-ea4b-4ad3-a6b7-29df6268f7c7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 138,
+      "total_deletions": 141,
+      "accepted_lines": 88,
+      "overriden_lines": 0
+    }
+  }
+}
