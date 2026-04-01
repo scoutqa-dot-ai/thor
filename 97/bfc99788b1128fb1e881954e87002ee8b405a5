@@ -1,0 +1,25 @@
+packages/runner/src/approval-parser.test.ts
+  362f2807b1e0b015 1-31
+packages/runner/src/index.ts
+  362f2807b1e0b015 612
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "97bfc99788b1128fb1e881954e87002ee8b405a5",
+  "prompts": {
+    "362f2807b1e0b015": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f920c369-f9c6-4097-ab65-e09f1bfe71af",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 33,
+      "total_deletions": 2,
+      "accepted_lines": 33,
+      "overriden_lines": 0
+    }
+  }
+}
