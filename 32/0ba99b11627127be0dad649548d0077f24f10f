@@ -1,0 +1,23 @@
+docs/plan/2026031204_cron-triggers.md
+  4fd26fbb655cfd4e 108,229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "320ba99b11627127be0dad649548d0077f24f10f",
+  "prompts": {
+    "4fd26fbb655cfd4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "be36a413-ea4b-4ad3-a6b7-29df6268f7c7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 3,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
