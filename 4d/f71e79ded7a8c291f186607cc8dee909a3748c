@@ -1,0 +1,27 @@
+docs/plan/2026031204_cron-triggers.md
+  c49cf363a676b789 13,27,29-30,112,139,142-143,148
+docker/cron/Dockerfile
+  c49cf363a676b789 19
+docker/cron/entrypoint.sh
+  c49cf363a676b789 9,12-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4df71e79ded7a8c291f186607cc8dee909a3748c",
+  "prompts": {
+    "c49cf363a676b789": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee9520ce-9c82-4fe4-9007-4617f89bc944",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 25,
+      "total_deletions": 17,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    }
+  }
+}
