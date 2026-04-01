@@ -285,7 +285,16 @@ function createProxyServer(instance: ProxyInstance): Server {
         content: [
           {
             type: "text" as const,
-            text: `⏳ Approval required for \`${toolName}\`. Action ID: ${action.id}. Proxy-Name: ${instance.name}. Use \`check_approval_status\` with this ID to check the outcome.`,
+            text: `⏳ Approval required for \`${toolName}\`. Use \`check_approval_status\` with action ID \`${action.id}\` to check the outcome.`,
+          },
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              type: "approval_required",
+              actionId: action.id,
+              proxyName: instance.name,
+              tool: toolName,
+            }),
           },
         ],
         isError: false,

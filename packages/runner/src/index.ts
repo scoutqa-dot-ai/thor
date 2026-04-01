@@ -683,23 +683,44 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
 }
 
 /**
- * Parse a tool result for approval-required pattern.
- * The proxy returns: "⏳ Approval required for `tool`. Action ID: <uuid>. ..."
+ * Parse a tool result for approval-required signal.
+ * The proxy returns a JSON content item with { type: "approval_required", actionId, proxyName, tool }.
  */
-const ACTION_ID_PATTERN = /Action ID:\s*([0-9a-f-]{36})/;
-const PROXY_NAME_PATTERN = /Proxy-Name:\s*(\S+)/;
 function parseApprovalResult(
   output: string,
   tool: string,
   args: Record<string, unknown>,
 ): ProgressEvent | undefined {
-  if (!output.includes("Approval required")) return undefined;
-  const match = output.match(ACTION_ID_PATTERN);
-  if (!match) return undefined;
-  const nameMatch = output.match(PROXY_NAME_PATTERN);
+  if (!output.includes("approval_required") && !output.includes("Approval required")) {
+    return undefined;
+  }
+
+  // Try structured JSON first (proxy embeds a JSON content item)
+  const jsonMatch = output.match(/\{[^{}]*"type"\s*:\s*"approval_required"[^{}]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.actionId) {
+        return {
+          type: "approval_required",
+          actionId: parsed.actionId,
+          tool,
+          args,
+          ...(parsed.proxyName ? { proxyName: parsed.proxyName } : {}),
+        };
+      }
+    } catch {
+      // Malformed JSON — fall through to regex
+    }
+  }
+
+  // Regex fallback for older proxy versions
+  const actionMatch = output.match(/Action ID:\s*([0-9a-f-]{36})/);
+  if (!actionMatch) return undefined;
+  const nameMatch = output.match(/Proxy-Name:\s*([a-z0-9][a-z0-9-]*)/);
   return {
     type: "approval_required",
-    actionId: match[1],
+    actionId: actionMatch[1],
     tool,
     args,
     ...(nameMatch ? { proxyName: nameMatch[1] } : {}),
