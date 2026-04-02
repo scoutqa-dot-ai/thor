@@ -19,8 +19,14 @@ CONF="/etc/nginx/conf.d/default.conf"
 
 # --- Health endpoint (always present) ---
 cat > "$CONF" <<'HEALTH'
+map $uri $loggable {
+    default 1;
+    /health 0;
+}
+
 server {
     listen 80;
+    access_log /var/log/nginx/access.log combined if=$loggable;
 
     location /health {
         return 200 '{"status":"ok"}';
