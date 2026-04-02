@@ -24,6 +24,11 @@ export function logWarn(logger: Logger, event: string, data?: Record<string, unk
   logger.warn({ event, ...data }, event);
 }
 
+/** Truncate a string to `max` characters, appending "…" if trimmed. */
+export function truncate(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max)}…`;
+}
+
 export function logError(
   logger: Logger,
   event: string,

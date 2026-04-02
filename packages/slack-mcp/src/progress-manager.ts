@@ -72,6 +72,14 @@ function updateProgressStatus(
 export async function onBotReply(channel: string, threadTs: string): Promise<void> {
   const key = threadKey(channel, threadTs);
   const thread = progressMessages.get(key);
+  const hasActiveSession = activeSessions.has(key);
+  logInfo(log, "on_bot_reply", {
+    key,
+    progressCount: thread?.size ?? 0,
+    statuses: thread ? [...thread.values()].map((e) => e.status) : [],
+    hasActiveSession,
+    ts: Date.now(),
+  });
   if (!thread) return;
 
   const deletions: Promise<void>[] = [];
@@ -137,7 +145,15 @@ class ProgressSession {
   }
 
   async onToolCall(toolName: string): Promise<void> {
-    if (this.finished) return;
+    if (this.finished) {
+      logInfo(log, "tool_after_finish", {
+        channel: this.channel,
+        threadTs: this.threadTs,
+        tool: toolName,
+        ts: Date.now(),
+      });
+      return;
+    }
 
     this.toolCallCount++;
     this.lastTools = [...this.lastTools.slice(-2), toolName];
@@ -156,10 +172,21 @@ class ProgressSession {
   }
 
   async finish(status: "completed" | "error", errorMsg?: string): Promise<void> {
+    logInfo(log, "session_finish", {
+      channel: this.channel,
+      threadTs: this.threadTs,
+      status,
+      alreadyFinished: this.finished,
+      toolCallCount: this.toolCallCount,
+      hasMessageTs: !!this.messageTs,
+      thresholdMet: this.thresholdMet,
+      ts: Date.now(),
+    });
     if (this.finished) return;
     this.finished = true;
 
-    if (!this.thresholdMet) return;
+    // Always post errors so failures are never invisible in Slack.
+    if (!this.thresholdMet && status === "completed") return;
 
     const elapsed = formatDuration(Date.now() - this.startTime);
 
@@ -242,6 +269,15 @@ export async function handleProgressEvent(
   deps: SlackDeps,
 ): Promise<void> {
   const key = threadKey(channel, threadTs);
+
+  logInfo(log, "progress_recv", {
+    key,
+    type: event.type,
+    ...(event.type === "tool" ? { tool: event.tool } : {}),
+    ...(event.type === "done" ? { status: event.status } : {}),
+    hasSession: activeSessions.has(key),
+    ts: Date.now(),
+  });
 
   if (event.type === "start") {
     // New session — replace any existing one

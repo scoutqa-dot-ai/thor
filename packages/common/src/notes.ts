@@ -30,6 +30,7 @@ import {
 } from "node:fs";
 import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
+import { truncate } from "./logger.js";
 import { z } from "zod/v4";
 
 const WORKLOG_DIR = process.env.WORKLOG_DIR || "/workspace/worklog";
@@ -612,10 +613,7 @@ export function appendSummary(opts: {
   }
 
   if (opts.responsePreview) {
-    const preview =
-      opts.responsePreview.length > 300
-        ? opts.responsePreview.slice(0, 300) + "..."
-        : opts.responsePreview;
+    const preview = truncate(opts.responsePreview, 300);
     entry += `**Key findings**: ${preview}\n`;
   }
 

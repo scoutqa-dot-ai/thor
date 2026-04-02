@@ -15,7 +15,9 @@ import { readFileSync } from "node:fs";
 import {
   createLogger,
   logInfo,
+  logWarn,
   logError,
+  truncate,
   createNotes,
   continueNotes,
   appendTrigger,
@@ -143,16 +145,25 @@ function logPartToStdout(sessionId: string, part: Part): void {
     if (status === "completed") {
       const completed = toolPart.state as ToolStateCompleted;
       const durationMs = completed.time.end - completed.time.start;
-      logInfo(log, "tool_completed", {
+      const extra: Record<string, unknown> = {
         sessionId: sid,
         tool: toolPart.tool,
         durationMs,
-      });
+      };
+      // For long-running tools (task, bash), include an output snippet to aid debugging.
+      if (toolPart.tool === "task" || durationMs > 60_000) {
+        const raw = typeof completed.output === "string" ? completed.output : "";
+        if (raw.length > 0) {
+          extra.outputSnippet = truncate(raw, 400);
+        }
+      }
+      logInfo(log, "tool_completed", extra);
     } else if (status === "error") {
       const errState = toolPart.state as ToolStateError;
-      logError(log, "tool_error", errState.error, {
+      logWarn(log, "tool_error", {
         sessionId: sid,
         tool: toolPart.tool,
+        error: String(errState.error),
       });
     }
     // pending/running — silent
@@ -413,6 +424,15 @@ app.post("/trigger", async (req, res) => {
     res.status(200);
 
     function emit(event: ProgressEvent): void {
+      logInfo(log, "progress_emit", {
+        sessionId,
+        type: event.type,
+        ...(event.type === "tool" ? { tool: event.tool } : {}),
+        ...(event.type === "done"
+          ? { status: event.status, durationMs: (event as { durationMs?: number }).durationMs }
+          : {}),
+        ts: Date.now(),
+      });
       res.write(JSON.stringify(event) + "\n");
     }
 
@@ -436,10 +456,38 @@ app.post("/trigger", async (req, res) => {
     let sessionError: string | undefined;
     let finished = false;
 
+    // Track child sessions (task sub-agents) for progress forwarding.
+    // Maps child session ID → agent name (e.g. "coder", "explore").
+    const childSessions = new Map<string, string>();
+    // Last agent name seen from a subtask part — used to label newly discovered children.
+    let lastSubtaskAgent = "task";
+
     for await (const event of stream) {
       if (finished) break;
 
-      if (!isSessionEvent(event, sessionId)) continue;
+      const isParent = isSessionEvent(event, sessionId);
+
+      // Forward tool progress from child sessions (task sub-agents) so
+      // Slack progress isn't silent while a task runs.
+      if (!isParent) {
+        if (
+          event.type === "message.part.updated" &&
+          childSessions.has(event.properties.part.sessionID)
+        ) {
+          const part = event.properties.part;
+          if (part.type === "tool") {
+            const toolPart = part as ToolPart;
+            const status = toolPart.state.status;
+            if (status === "completed" || status === "error") {
+              const agent = childSessions.get(event.properties.part.sessionID);
+              const prefixedTool = agent ? `${agent}/${toolPart.tool}` : toolPart.tool;
+              logPartToStdout(sessionId, part);
+              emit({ type: "tool", tool: prefixedTool, status });
+            }
+          }
+        }
+        continue;
+      }
 
       if (event.type === "message.part.updated") {
         const part = event.properties.part;
@@ -447,6 +495,33 @@ app.post("/trigger", async (req, res) => {
 
         // Stdout logging (selective)
         logPartToStdout(sessionId, part);
+
+        // Capture agent name from subtask parts (emitted before task tool starts).
+        if (part.type === "subtask") {
+          const subtaskPart = part as Part & { agent: string };
+          lastSubtaskAgent = subtaskPart.agent || "task";
+        }
+
+        // Track child sessions spawned by task tools.
+        if (part.type === "tool") {
+          const toolPart = part as ToolPart;
+          if (toolPart.tool === "task" && toolPart.state.status === "running") {
+            const agentName = lastSubtaskAgent;
+            // Discover child sessions asynchronously — best effort.
+            client.session
+              .children({ path: { id: sessionId } })
+              .then((resp) => {
+                if (resp.data) {
+                  for (const child of resp.data) {
+                    if (!childSessions.has(child.id)) {
+                      childSessions.set(child.id, agentName);
+                    }
+                  }
+                }
+              })
+              .catch(() => {});
+          }
+        }
 
         // Accumulate data for response regardless of filtering
         if (part.type === "text") {
@@ -500,7 +575,10 @@ app.post("/trigger", async (req, res) => {
           errorProps.error && "data" in errorProps.error
             ? (errorProps.error.data as { message?: string }).message || errorProps.error.name
             : "Unknown error";
-        logError(log, "session_error", sessionError, { sessionId });
+        logError(log, "session_error", sessionError, {
+          sessionId,
+          errorDetail: JSON.stringify(errorProps.error),
+        });
         finished = true;
         break;
       } else if (event.type === "session.idle") {

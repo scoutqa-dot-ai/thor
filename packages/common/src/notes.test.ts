@@ -178,7 +178,7 @@ describe("notes", () => {
     });
 
     const content = readNotes(key)!;
-    expect(content).toContain("...");
+    expect(content).toContain("…");
     // Should not contain the full 500-char string
     expect(content).not.toContain("A".repeat(500));
   });
