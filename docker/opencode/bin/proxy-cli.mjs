@@ -30,19 +30,55 @@ if (!proxyUrl) {
 
 const cwd = process.cwd();
 
+// --- HTTP helpers ---
+
 async function jsonPost(url, body) {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
   });
   return { res, body: await res.json() };
 }
 
 async function jsonGet(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
   return { res, body: await res.json() };
 }
+
+// --- Fuzzy matching (substring) ---
+
+function fuzzyMatch(input, candidates) {
+  const lower = input.toLowerCase();
+  return candidates.filter((c) => c.toLowerCase().includes(lower) || lower.includes(c.toLowerCase()));
+}
+
+function suggestMatch(input, candidates) {
+  const matches = fuzzyMatch(input, candidates);
+  if (matches.length > 0) {
+    return `Did you mean "${matches[0]}"? `;
+  }
+  return "";
+}
+
+// --- Upstream list cache (for fuzzy suggestions) ---
+
+let cachedUpstreams = null;
+
+async function getUpstreamNames() {
+  if (cachedUpstreams) return cachedUpstreams;
+  try {
+    const { res, body } = await jsonPost(`${proxyUrl}/tools`, { cwd });
+    if (res.ok && body.upstreams) {
+      cachedUpstreams = body.upstreams.map((u) => u.name);
+      return cachedUpstreams;
+    }
+  } catch {}
+  return [];
+}
+
+// --- Main ---
 
 try {
   if (command === "mcp") {
@@ -51,7 +87,11 @@ try {
     await handleApproval(args);
   }
 } catch (err) {
-  process.stderr.write(`Failed to reach proxy at ${proxyUrl}: ${err.message}\n`);
+  if (err.name === "TimeoutError") {
+    process.stderr.write(`Timeout reaching proxy at ${proxyUrl} (120s)\n`);
+  } else {
+    process.stderr.write(`Failed to reach proxy at ${proxyUrl}: ${err.message}\n`);
+  }
   process.exit(1);
 }
 
@@ -73,6 +113,15 @@ async function handleMcp(args) {
   if (args.length === 1 || args[1] === "--help") {
     const { res, body } = await jsonPost(`${proxyUrl}/${upstream}/tools`, { cwd });
     if (!res.ok) {
+      // Fuzzy match on unknown upstream (403 = access denied, 404 = unknown)
+      if (res.status === 403 || res.status === 404) {
+        const upstreams = await getUpstreamNames();
+        const suggestion = suggestMatch(upstream, upstreams);
+        process.stderr.write(
+          `Unknown upstream "${upstream}". ${suggestion}Available upstreams: ${upstreams.join(", ") || "(none)"}\n`,
+        );
+        process.exit(1);
+      }
       process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
       process.exit(1);
     }
@@ -86,15 +135,24 @@ async function handleMcp(args) {
   if (args.length === 3 && args[2] === "--help") {
     const { res, body } = await jsonPost(`${proxyUrl}/${upstream}/tools`, { cwd });
     if (!res.ok) {
+      if (res.status === 403 || res.status === 404) {
+        const upstreams = await getUpstreamNames();
+        const suggestion = suggestMatch(upstream, upstreams);
+        process.stderr.write(
+          `Unknown upstream "${upstream}". ${suggestion}Available upstreams: ${upstreams.join(", ") || "(none)"}\n`,
+        );
+        process.exit(1);
+      }
       process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
       process.exit(1);
     }
     const toolInfo = body.tools?.find((t) => t.name === tool);
     if (!toolInfo) {
-      process.stderr.write(`Unknown tool "${tool}" on upstream "${upstream}"\n`);
-      if (body.tools?.length) {
-        process.stderr.write(`Available tools: ${body.tools.map((t) => t.name).join(", ")}\n`);
-      }
+      const toolNames = body.tools?.map((t) => t.name) || [];
+      const suggestion = suggestMatch(tool, toolNames);
+      process.stderr.write(
+        `Unknown tool "${tool}" on upstream "${upstream}". ${suggestion}Available tools: ${toolNames.join(", ")}\n`,
+      );
       process.exit(1);
     }
     process.stdout.write(JSON.stringify(toolInfo, null, 2) + "\n");
@@ -116,11 +174,29 @@ async function handleMcp(args) {
     arguments: toolArgs,
     cwd,
   });
+
   if (!res.ok) {
     process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
     process.exit(1);
   }
+
+  // Output the raw result
   process.stdout.write(JSON.stringify(body) + "\n");
+
+  // If the tool call returned an error, auto-append the schema as a hint
+  if (body.isError && body.content?.[0]?.text && !body.content[0].text.includes("Unknown tool")) {
+    try {
+      const { body: toolsBody } = await jsonPost(`${proxyUrl}/${upstream}/tools`, { cwd });
+      const toolInfo = toolsBody.tools?.find((t) => t.name === tool);
+      if (toolInfo?.inputSchema) {
+        process.stderr.write(
+          `\n[hint] Input schema for "${tool}":\n${JSON.stringify(toolInfo.inputSchema, null, 2)}\n`,
+        );
+      }
+    } catch {
+      // Best-effort hint — ignore failures
+    }
+  }
 }
 
 async function handleApproval(args) {
@@ -155,6 +231,8 @@ async function handleApproval(args) {
     return;
   }
 
-  process.stderr.write(`Unknown subcommand: ${subcommand}\nUsage:\n  approval status <action-id>\n  approval list\n`);
+  process.stderr.write(
+    `Unknown subcommand: ${subcommand}\nUsage:\n  approval status <action-id>\n  approval list\n`,
+  );
   process.exit(1);
 }
