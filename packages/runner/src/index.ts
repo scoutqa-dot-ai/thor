@@ -49,8 +49,6 @@ const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
 /** Pinned memory file — injected into every new or stale session prompt. */
 const PINNED_MEMORY_PATH = process.env.PINNED_MEMORY_PATH || "/workspace/memory/ALWAYS.md";
 
-const PROXY_URL = process.env.THOR_PROXY_URL || "http://proxy:3001";
-
 const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
 /** Read pinned memory file, returns content or undefined. */
@@ -65,9 +63,9 @@ function readPinnedMemory(): string | undefined {
 
 /**
  * Build tool instructions block for a session based on the repo's configured upstreams.
- * Fetches tool descriptions from the proxy for each allowed upstream.
+ * Renders entirely from workspace config — no proxy dependency.
  */
-async function buildToolInstructions(directory: string): Promise<string | undefined> {
+function buildToolInstructions(directory: string): string | undefined {
   const repo = extractRepoFromCwd(directory);
   if (!repo) return undefined;
 
@@ -90,48 +88,14 @@ async function buildToolInstructions(directory: string): Promise<string | undefi
     const allow = proxyDef.allow ?? [];
     const approve = proxyDef.approve ?? [];
 
-    // Try to fetch tool descriptions from the proxy
-    let toolDescriptions: Array<{ name: string; description?: string; classification: string }> =
-      [];
-    try {
-      const res = await fetch(`${PROXY_URL}/${upstreamName}/tools`, {
-        headers: { "x-thor-directory": directory },
-      });
-      if (res.ok) {
-        const data = (await res.json()) as {
-          tools: Array<{ name: string; description?: string; classification: string }>;
-        };
-        toolDescriptions = data.tools;
-      }
-    } catch {
-      // Proxy unreachable — fall back to config-only tool names
-    }
-
-    // Group tools by classification
-    const allowTools =
-      toolDescriptions.length > 0
-        ? toolDescriptions.filter((t) => t.classification === "allow")
-        : allow.map((name) => ({ name, classification: "allow" as const }));
-
-    const approveTools =
-      toolDescriptions.length > 0
-        ? toolDescriptions.filter((t) => t.classification === "approve")
-        : approve.map((name) => ({ name, classification: "approve" as const }));
-
-    if (allowTools.length > 0) {
+    if (allow.length > 0) {
       sections.push(`## ${upstreamName} (allow)`);
-      for (const t of allowTools) {
-        const desc = "description" in t && t.description ? `: ${t.description}` : "";
-        sections.push(`- ${t.name}${desc}`);
-      }
+      for (const name of allow) sections.push(`- ${name}`);
     }
 
-    if (approveTools.length > 0) {
+    if (approve.length > 0) {
       sections.push(`## ${upstreamName} (approve — requires human approval)`);
-      for (const t of approveTools) {
-        const desc = "description" in t && t.description ? `: ${t.description}` : "";
-        sections.push(`- ${t.name}${desc}`);
-      }
+      for (const name of approve) sections.push(`- ${name}`);
     }
   }
 
@@ -475,7 +439,7 @@ app.post("/trigger", async (req, res) => {
       }
 
       // Tool instructions: inject MCP tool list from config
-      const toolInstructions = await buildToolInstructions(sessionDirectory);
+      const toolInstructions = buildToolInstructions(sessionDirectory);
       if (toolInstructions) {
         prompt = `${toolInstructions}\n\n${prompt}`;
         logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });
