@@ -6,6 +6,9 @@ import {
   resolveCorrelationKey,
   resolveCorrelationKeys,
   hasSlackReply,
+  getAllowedChannelIds,
+  getChannelRepoMap,
+  type ConfigLoader,
 } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
@@ -79,6 +82,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   slackBotUserId: string;
   /** Proxy hostname for approval resolution. Default: "proxy". */
   proxyHost?: string;
+  /** Proxy port for approval resolution. Default: 3001. */
+  proxyPort?: number;
   timestampToleranceSeconds?: number;
   /** Directory for the event queue. Default: "data/queue". */
   queueDir?: string;
@@ -88,14 +93,12 @@ export interface GatewayAppConfig extends RunnerDeps {
   interruptDelayMs?: number;
   /** Delay for non-interrupt events in ms. Default: 60000. */
   unaddressedDelayMs?: number;
-  /** Slack channel IDs the bot is allowed to respond in. Empty = allow all. */
-  allowedChannelIds?: string[];
   /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
   cronSecret?: string;
   /** Git username (e.g. GitHub login) — used to detect @mentions in GitHub events. */
   gitUsername?: string;
-  /** Maps Slack channel IDs to repo names for working directory resolution. */
-  channelRepos?: Map<string, string>;
+  /** Dynamic workspace config loader — re-reads config.json on each request. */
+  getConfig?: ConfigLoader;
 }
 
 const InteractivityBodySchema = z.object({
@@ -119,7 +122,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const selfUserId = config.slackBotUserId;
   const interruptDelay = config.interruptDelayMs ?? INTERRUPT_DELAY_MS;
   const unaddressedDelay = config.unaddressedDelayMs ?? UNADDRESSED_DELAY_MS;
-  const allowedChannels = new Set(config.allowedChannelIds ?? []);
+
+  /** Read allowed channels dynamically from config on each call. */
+  const isChannelAllowed = (channel: string): boolean => {
+    if (!config.getConfig) return true; // no config = allow all
+    return getAllowedChannelIds(config.getConfig()).has(channel);
+  };
+  /** Read channel→repo map dynamically from config on each call. */
+  const getChannelRepos = (): Map<string, string> | undefined => {
+    if (!config.getConfig) return undefined;
+    return getChannelRepoMap(config.getConfig());
+  };
 
   const runnerDeps: RunnerDeps = {
     runnerUrl: config.runnerUrl,
@@ -153,7 +166,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             slackMcpDeps,
             hasInterrupt,
             ack,
-            config.channelRepos,
+            getChannelRepos(),
             reject,
           );
           if (result.busy) {
@@ -325,7 +338,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     if (
       "channel" in event &&
       typeof event.channel === "string" &&
-      !allowedChannels.has(event.channel)
+      !isChannelAllowed(event.channel)
     ) {
       logInfo(log, "event_ignored_channel_not_allowed", { eventId, channel: event.channel });
       res.status(200).json({ ok: true, ignored: true });
@@ -458,34 +471,34 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           const channel = payload.channel?.id;
           const messageTs = payload.message?.ts;
 
-          // Button value format: "v1:{actionId}:{proxyPort}" (versioned)
-          // Legacy (no version prefix) is rejected.
+          // Button value formats:
+          //   v2:{actionId}:{upstreamName} — current (name-based routing)
+          //   v1:{actionId}:{proxyPort}    — legacy (port-based routing)
           const parts = action.value.split(":");
-          if (parts[0] !== "v1" || parts.length < 3) {
+          let actionId: string;
+          let proxyUrl: string;
+
+          if (parts[0] === "v2" && parts.length >= 3) {
+            actionId = parts[1];
+            const upstreamName = parts[2];
+            proxyUrl = `http://${proxyHost}:${config.proxyPort ?? 3001}/${upstreamName}`;
+          } else if (parts[0] === "v1" && parts.length >= 3) {
+            // TODO: Remove v1 support once all in-flight approvals have drained (safe after 2026-05-01)
+            actionId = parts[1];
+            const proxyPort = parseInt(parts[2], 10);
+            proxyUrl = `http://${proxyHost}:${proxyPort}`;
+          } else {
             logError(log, "approval_resolve_failed", "Unrecognized button value format", {
               value: action.value,
             });
             res.status(200).json({ ok: true });
             return;
           }
-          const actionId = parts[1];
-          const proxyPort = parseInt(parts[2], 10);
 
-          logInfo(log, "approval_action", { actionId, decision, reviewer, proxyPort });
-
-          if (!proxyPort) {
-            logError(log, "approval_resolve_failed", "No proxy port in button value", {
-              actionId,
-            });
-            res.status(200).json({ ok: true });
-            return;
-          }
+          logInfo(log, "approval_action", { actionId, decision, reviewer, proxyUrl });
 
           // Respond immediately to Slack (must reply within 3s)
           res.status(200).json({ ok: true });
-
-          // Resolve asynchronously
-          const proxyUrl = `http://${proxyHost}:${proxyPort}`;
           void (async () => {
             const resolved = await resolveApproval(
               actionId,

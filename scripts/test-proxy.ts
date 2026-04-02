@@ -1,19 +1,24 @@
 /**
- * Test script for the MCP Policy Proxy.
+ * Test script for the MCP Policy Proxy (sessionless endpoints).
  *
- * Tests three exit criteria:
- * 1. tools/list — returns only the curated (allowed) tools
- * 2. tools/call (allowed) — forwards to upstream and returns result
- * 3. tools/call (hidden) — non-exposed tool is rejected as unknown
+ * Tests:
+ * 1. POST /tools — list upstreams for a repo
+ * 2. POST /:upstream/tools — list tools on an upstream
+ * 3. POST /:upstream/tools/call (allowed) — forwards to upstream
+ * 4. POST /:upstream/tools/call (hidden) — rejected as unknown
+ * 5. GET /approval/:id — approval status lookup
  *
  * Prerequisites:
- *   - Proxy running on http://localhost:3010  (or PROXY_URL override)
+ *   - Proxy running on http://localhost:3001  (or PROXY_URL override)
+ *   - config.json with at least one repo + upstream configured
  *
  * Usage:
  *   npx tsx scripts/test-proxy.ts
+ *   PROXY_URL=http://localhost:3001 CWD=/workspace/repos/acme-app npx tsx scripts/test-proxy.ts
  */
 
-const PROXY_URL = process.env.PROXY_URL || "http://localhost:3010/mcp";
+const PROXY_URL = process.env.PROXY_URL || "http://localhost:3001";
+const CWD = process.env.CWD || "/workspace/repos/acme-app";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -30,181 +35,132 @@ function assert(condition: boolean, message: string): void {
   }
 }
 
-let requestId = 0;
-function nextId(): number {
-  return ++requestId;
-}
-
-/**
- * Send a JSON-RPC request to the proxy over Streamable HTTP.
- * Handles session ID propagation.
- */
-let sessionId: string | null = null;
-
-async function rpc(method: string, params?: Record<string, unknown>): Promise<unknown> {
-  const body = {
-    jsonrpc: "2.0",
-    id: nextId(),
-    method,
-    ...(params !== undefined ? { params } : {}),
-  };
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "application/json, text/event-stream",
-  };
-  if (sessionId) {
-    headers["mcp-session-id"] = sessionId;
-  }
-
-  const res = await fetch(PROXY_URL, {
+async function post(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<{ status: number; data: unknown }> {
+  const res = await fetch(`${PROXY_URL}${path}`, {
     method: "POST",
-    headers,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  return { status: res.status, data: await res.json() };
+}
 
-  // Capture session ID from response
-  const sid = res.headers.get("mcp-session-id");
-  if (sid) {
-    sessionId = sid;
-  }
-
-  const contentType = res.headers.get("content-type") || "";
-
-  if (contentType.includes("text/event-stream")) {
-    // Parse SSE response — collect all data events
-    const text = await res.text();
-    const lines = text.split("\n");
-    const dataLines: string[] = [];
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        dataLines.push(line.slice(6));
-      }
-    }
-    // Return the last JSON-RPC response found
-    for (let i = dataLines.length - 1; i >= 0; i--) {
-      try {
-        const parsed = JSON.parse(dataLines[i]);
-        if (parsed.id !== undefined || parsed.method !== undefined) {
-          return parsed;
-        }
-      } catch {
-        // skip non-JSON lines
-      }
-    }
-    throw new Error(`No valid JSON-RPC response found in SSE stream:\n${text}`);
-  }
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HTTP ${res.status}: ${text}`);
-  }
-
-  return res.json();
+async function get(path: string): Promise<{ status: number; data: unknown }> {
+  const res = await fetch(`${PROXY_URL}${path}`);
+  return { status: res.status, data: await res.json() };
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
-async function testInitialize(): Promise<void> {
-  console.log("\n── Test: Initialize session ──");
+async function testListUpstreams(): Promise<string> {
+  console.log("\n── Test: POST /tools (list upstreams) ──");
 
-  const result = (await rpc("initialize", {
-    protocolVersion: "2025-03-26",
-    capabilities: {},
-    clientInfo: { name: "test-script", version: "0.0.1" },
-  })) as { result?: { serverInfo?: { name: string } } };
-
-  assert(sessionId !== null, "Session ID received");
-  assert(result?.result?.serverInfo?.name === "thor-proxy", "Server identifies as thor-proxy");
-}
-
-async function testToolsList(): Promise<string[]> {
-  console.log("\n── Test: tools/list ──");
-
-  // Send initialized notification first (required by MCP protocol)
-  await rpc("notifications/initialized");
-
-  const result = (await rpc("tools/list", {})) as {
-    result?: { tools?: Array<{ name: string; description?: string }> };
+  const { status, data } = await post("/tools", { cwd: CWD });
+  const body = data as {
+    upstreams?: Array<{ name: string; toolCount: number; connected: boolean }>;
   };
 
-  const tools = result?.result?.tools || [];
+  assert(status === 200, `Status 200 (got ${status})`);
+  assert(Array.isArray(body.upstreams), "Response has upstreams array");
+  assert(body.upstreams!.length > 0, `Found ${body.upstreams!.length} upstream(s)`);
 
-  assert(tools.length > 0, `Received ${tools.length} tools from proxy`);
+  const upstream = body.upstreams![0].name;
+  console.log(`  Upstreams: ${body.upstreams!.map((u) => u.name).join(", ")}`);
 
-  // With single-upstream proxy, tools are NOT prefixed
-  const noPrefixed = tools.every((t) => !t.name.includes("__"));
-  assert(noPrefixed, "Tool names have no upstream prefix (single-upstream mode)");
+  return upstream;
+}
 
-  // Log first few tool names
+async function testListTools(upstream: string): Promise<string[]> {
+  console.log(`\n── Test: POST /${upstream}/tools (list tools) ──`);
+
+  const { status, data } = await post(`/${upstream}/tools`, { cwd: CWD });
+  const body = data as {
+    tools?: Array<{ name: string; description?: string; classification: string }>;
+  };
+
+  assert(status === 200, `Status 200 (got ${status})`);
+  assert(Array.isArray(body.tools), "Response has tools array");
+  assert(body.tools!.length > 0, `Found ${body.tools!.length} tool(s)`);
+
   console.log(
-    `  Tools (first 5): ${tools
-      .slice(0, 5)
+    `  Tools (first 5): ${body
+      .tools!.slice(0, 5)
       .map((t) => t.name)
       .join(", ")}`,
   );
 
-  return tools.map((t) => t.name);
+  return body.tools!.map((t) => t.name);
 }
 
-async function testAllowedToolCall(tools: string[]): Promise<void> {
-  console.log("\n── Test: tools/call (allowed) ──");
+async function testAllowedToolCall(upstream: string, tools: string[]): Promise<void> {
+  console.log(`\n── Test: POST /${upstream}/tools/call (allowed) ──`);
 
-  const allowedTool = tools[0];
-
-  if (!allowedTool) {
+  const tool = tools[0];
+  if (!tool) {
     console.error("  ✗ No tool found to test");
     failed++;
     return;
   }
 
-  console.log(`  Calling: ${allowedTool}`);
+  console.log(`  Calling: ${tool}`);
 
-  // Try calling with empty/minimal args — we expect it to succeed (or fail at upstream level, not at proxy level)
-  const result = (await rpc("tools/call", {
-    name: allowedTool,
+  const { status, data } = await post(`/${upstream}/tools/call`, {
+    name: tool,
     arguments: {},
-  })) as {
-    result?: { content?: Array<{ type: string; text: string }>; isError?: boolean };
-  };
+    cwd: CWD,
+  });
+  const body = data as { content?: Array<{ type: string; text: string }>; isError?: boolean };
 
-  assert(result?.result !== undefined, "Received a result (tool call was forwarded)");
+  assert(status === 200 || status === 502, `Status 200 or 502 (got ${status})`);
+  assert(body.content !== undefined, "Response has content");
 
-  const content = result?.result?.content;
-  if (content && content.length > 0) {
-    const text = content[0].text || "";
-    assert(!text.includes("Unknown tool"), "Response is NOT an unknown-tool error");
+  if (body.content && body.content.length > 0) {
+    const text = body.content[0].text || "";
+    assert(!text.includes("Unknown tool"), "Not an unknown-tool error");
     console.log(`  Response preview: ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}`);
   }
 }
 
-async function testHiddenToolCall(): Promise<void> {
-  console.log("\n── Test: tools/call (hidden) ──");
+async function testHiddenToolCall(upstream: string): Promise<void> {
+  console.log(`\n── Test: POST /${upstream}/tools/call (hidden) ──`);
 
-  // Call a tool name that is not in the curated allow list
-  const result = (await rpc("tools/call", {
+  const { data } = await post(`/${upstream}/tools/call`, {
     name: "fake_write_tool",
     arguments: {},
-  })) as {
-    result?: { content?: Array<{ type: string; text: string }>; isError?: boolean };
-  };
+    cwd: CWD,
+  });
+  const body = data as { content?: Array<{ type: string; text: string }>; isError?: boolean };
 
-  assert(result?.result?.isError === true, "Call returned an error");
-  const text = result?.result?.content?.[0]?.text || "";
+  assert(body.isError === true, "Call returned isError: true");
+  const text = body.content?.[0]?.text || "";
   assert(text.includes("Unknown tool"), `Error message: "${text}"`);
+}
+
+async function testApprovalLookup(): Promise<void> {
+  console.log("\n── Test: GET /approval/:id (not found) ──");
+
+  const { status, data } = await get("/approval/00000000-0000-0000-0000-000000000000");
+  const body = data as { error?: string };
+
+  assert(status === 404, `Status 404 (got ${status})`);
+  assert(body.error?.includes("No approval action found") === true, "Error message is correct");
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  console.log("MCP Policy Proxy — Test Script");
+  console.log("MCP Policy Proxy — Sessionless Endpoint Tests");
   console.log(`Target: ${PROXY_URL}`);
+  console.log(`CWD: ${CWD}`);
 
   try {
-    await testInitialize();
-    const tools = await testToolsList();
-    await testAllowedToolCall(tools);
-    await testHiddenToolCall();
+    const upstream = await testListUpstreams();
+    const tools = await testListTools(upstream);
+    await testAllowedToolCall(upstream, tools);
+    await testHiddenToolCall(upstream);
+    await testApprovalLookup();
   } catch (err) {
     console.error("\nFatal error:", err);
     failed++;

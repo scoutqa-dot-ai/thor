@@ -14,8 +14,9 @@ import {
   createLogger,
   logInfo,
   logError,
-  loadWorkspaceConfig,
+  createConfigLoader,
   getAllowedChannelIds,
+  WORKSPACE_CONFIG_PATH,
   SlackProgressRequestSchema,
   SlackReactionRequestSchema,
   SlackApprovalRequestSchema,
@@ -36,9 +37,11 @@ const log = createLogger("slack-mcp");
 
 const PORT = parseInt(process.env.PORT || "3003", 10);
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
-const WORKSPACE_CONFIG_PATH = process.env.WORKSPACE_CONFIG || "/workspace/repos.json";
-const workspaceConfig = loadWorkspaceConfig(WORKSPACE_CONFIG_PATH);
-const allowedChannelIds = getAllowedChannelIds(workspaceConfig);
+const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
+
+/** Check channel allowlist dynamically — re-reads config.json on each request. */
+const isChannelAllowed = (channel: string): boolean =>
+  getAllowedChannelIds(getConfig()).has(channel);
 
 if (!SLACK_BOT_TOKEN) {
   logError(log, "missing_env", "SLACK_BOT_TOKEN is required");
@@ -130,7 +133,7 @@ async function handleToolCall(
       const channel = String(args.channel);
       const text = String(args.text);
       const threadTs = args.thread_ts ? String(args.thread_ts) : undefined;
-      if (!allowedChannelIds.has(channel)) {
+      if (!isChannelAllowed(channel)) {
         logInfo(log, "post_message_blocked", { channel, reason: "channel_not_allowed" });
         return {
           content: [
@@ -272,7 +275,7 @@ app.post("/progress", async (req, res) => {
   }
   try {
     const { channel, threadTs, event } = parsed.data;
-    if (!allowedChannelIds.has(channel)) {
+    if (!isChannelAllowed(channel)) {
       logInfo(log, "progress_blocked", { channel, reason: "channel_not_allowed" });
       res.json({ ok: true, ignored: true });
       return;
@@ -293,7 +296,7 @@ app.post("/reaction", async (req, res) => {
   }
   try {
     const { channel, timestamp, reaction } = parsed.data;
-    if (!allowedChannelIds.has(channel)) {
+    if (!isChannelAllowed(channel)) {
       logInfo(log, "reaction_blocked", { channel, reason: "channel_not_allowed" });
       res.json({ ok: true, ignored: true });
       return;
@@ -313,10 +316,10 @@ app.post("/approval", async (req, res) => {
     return;
   }
   try {
-    const { channel, threadTs, actionId, tool, args, proxyPort } = parsed.data;
+    const { channel, threadTs, actionId, tool, args, proxyName } = parsed.data;
     const argsPreview = JSON.stringify(args, null, 2).slice(0, 200);
-    // Versioned button value: "v1:{actionId}:{proxyPort}" so gateway can evolve the format.
-    const buttonValue = proxyPort ? `v1:${actionId}:${proxyPort}` : actionId;
+    // Versioned button value: "v2:{actionId}:{upstreamName}" so gateway can route approval.
+    const buttonValue = proxyName ? `v2:${actionId}:${proxyName}` : actionId;
     const result = await slackDeps.client.chat.postMessage({
       channel,
       thread_ts: threadTs,
@@ -438,9 +441,15 @@ app.delete("/mcp", async (req, res) => {
 // --- Startup ---
 
 app.listen(PORT, () => {
+  let channels: string[] = [];
+  try {
+    channels = [...getAllowedChannelIds(getConfig())];
+  } catch {
+    // Config not available yet — will be loaded on first request
+  }
   logInfo(log, "slack_mcp_listening", {
     port: PORT,
     tools: tools.map((t) => t.name),
-    allowedChannels: [...allowedChannelIds],
+    allowedChannels: channels,
   });
 });

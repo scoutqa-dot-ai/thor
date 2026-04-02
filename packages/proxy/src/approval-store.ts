@@ -31,7 +31,10 @@ export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type ApprovalAction = z.infer<typeof ApprovalActionSchema>;
 
 export class ApprovalStore {
-  constructor(private readonly baseDir: string) {}
+  constructor(
+    private readonly baseDir: string,
+    private readonly fallbackDirs: string[] = [],
+  ) {}
 
   /** Create a pending approval action. Returns the action. */
   create(tool: string, args: Record<string, unknown>): ApprovalAction {
@@ -48,14 +51,16 @@ export class ApprovalStore {
     return action;
   }
 
-  /** Get an action by ID. Scans date directories (most recent first). */
+  /** Get an action by ID. Scans date directories (most recent first), including fallback dirs. */
   get(id: string): ApprovalAction | undefined {
-    // Try today first, then scan recent directories
-    const dirs = this.listDateDirs();
-    for (const dir of dirs) {
-      const filePath = join(this.baseDir, dir, `${id}.json`);
-      if (existsSync(filePath)) {
-        return ApprovalActionSchema.parse(JSON.parse(readFileSync(filePath, "utf-8")));
+    // Search primary dir, then fallback dirs (for legacy approval actions)
+    for (const dir of [this.baseDir, ...this.fallbackDirs]) {
+      const dateDirs = this.listDateDirsIn(dir);
+      for (const dateDir of dateDirs) {
+        const filePath = join(dir, dateDir, `${id}.json`);
+        if (existsSync(filePath)) {
+          return ApprovalActionSchema.parse(JSON.parse(readFileSync(filePath, "utf-8")));
+        }
       }
     }
     return undefined;
@@ -85,6 +90,34 @@ export class ApprovalStore {
     return action;
   }
 
+  /** List all pending actions (scans all date directories, most recent first). */
+  listPending(): ApprovalAction[] {
+    const pending: ApprovalAction[] = [];
+    for (const dir of [this.baseDir, ...this.fallbackDirs]) {
+      const dateDirs = this.listDateDirsIn(dir);
+      for (const dateDir of dateDirs) {
+        const dirPath = join(dir, dateDir);
+        let files: string[];
+        try {
+          files = readdirSync(dirPath).filter((f) => f.endsWith(".json"));
+        } catch {
+          continue;
+        }
+        for (const file of files) {
+          try {
+            const action = ApprovalActionSchema.parse(
+              JSON.parse(readFileSync(join(dirPath, file), "utf-8")),
+            );
+            if (action.status === "pending") pending.push(action);
+          } catch {
+            // skip corrupt files
+          }
+        }
+      }
+    }
+    return pending;
+  }
+
   private write(action: ApprovalAction): void {
     const dir = join(this.baseDir, action.dateSegment);
     mkdirSync(dir, { recursive: true });
@@ -92,9 +125,9 @@ export class ApprovalStore {
   }
 
   /** List date directories in reverse order (most recent first). */
-  private listDateDirs(): string[] {
-    if (!existsSync(this.baseDir)) return [];
-    return readdirSync(this.baseDir)
+  private listDateDirsIn(dir: string): string[] {
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
       .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
       .sort()
       .reverse();

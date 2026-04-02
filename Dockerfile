@@ -38,12 +38,10 @@ EXPOSE 3002
 CMD ["node", "/app/packages/gateway/dist/index.js"]
 
 FROM build AS proxy
-COPY packages/proxy/proxy.*.json /app/packages/proxy/
-COPY packages/proxy/multi-proxy.sh /app/packages/proxy/
 USER thor
 WORKDIR /workspace
-EXPOSE 3010 3011 3012 3014
-CMD ["bash", "/app/packages/proxy/multi-proxy.sh"]
+EXPOSE 3001
+CMD ["node", "/app/packages/proxy/dist/index.js"]
 
 FROM build AS runner
 USER thor

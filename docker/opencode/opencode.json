@@ -2,11 +2,5 @@
   "$schema": "https://opencode.ai/config.json",
   "model": "opencode/big-pickle",
   "permission": "allow",
-  "mcp": {
-    "slack": {
-      "type": "remote",
-      "url": "http://proxy:3012/mcp",
-      "enabled": true
-    }
-  }
+  "mcp": {}
 }

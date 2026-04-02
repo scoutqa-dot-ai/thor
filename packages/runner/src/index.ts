@@ -29,6 +29,10 @@ import {
   registerAlias,
   getNotesLineCount,
   isAllowedDirectory,
+  createConfigLoader,
+  WORKSPACE_CONFIG_PATH,
+  extractRepoFromCwd,
+  getRepoProxies,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -45,6 +49,8 @@ const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
 /** Pinned memory file — injected into every new or stale session prompt. */
 const PINNED_MEMORY_PATH = process.env.PINNED_MEMORY_PATH || "/workspace/memory/ALWAYS.md";
 
+const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
+
 /** Read pinned memory file, returns content or undefined. */
 function readPinnedMemory(): string | undefined {
   try {
@@ -53,6 +59,57 @@ function readPinnedMemory(): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Build tool instructions block for a session based on the repo's configured upstreams.
+ * Renders entirely from workspace config — no proxy dependency.
+ */
+function buildToolInstructions(directory: string): string | undefined {
+  const repo = extractRepoFromCwd(directory);
+  if (!repo) return undefined;
+
+  let config;
+  try {
+    config = getWorkspaceConfig();
+  } catch {
+    return undefined;
+  }
+
+  const allowed = getRepoProxies(config, repo);
+  if (!allowed || allowed.length === 0) return undefined;
+
+  const sections: string[] = [];
+
+  for (const upstreamName of allowed) {
+    const proxyDef = config.proxies?.[upstreamName];
+    if (!proxyDef) continue;
+
+    const allow = proxyDef.allow ?? [];
+    const approve = proxyDef.approve ?? [];
+
+    if (allow.length > 0) {
+      sections.push(`## ${upstreamName} (allow)`);
+      for (const name of allow) sections.push(`- ${name}`);
+    }
+
+    if (approve.length > 0) {
+      sections.push(`## ${upstreamName} (approve — requires human approval)`);
+      for (const name of approve) sections.push(`- ${name}`);
+    }
+  }
+
+  if (sections.length === 0) return undefined;
+
+  return [
+    "[Available MCP tools — use the `mcp` CLI to call these]",
+    "",
+    ...sections,
+    "",
+    'Usage: mcp <upstream> <tool> \'{"arg":"value"}\'',
+    "Run `mcp <upstream> <tool> --help` to see tool description and input schema.",
+    "Run `approval status <id>` to check approval status.",
+  ].join("\n");
 }
 
 async function fetchOpencode(path: string): Promise<Response> {
@@ -134,6 +191,40 @@ type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
 // | reasoning       | No         | No                      | Internal CoT, fires many times         |
 // | snapshot/patch  | No         | No                      | Infrastructure noise                   |
 // | compaction      | No         | No                      | Infrastructure noise                   |
+
+/** How many args to show per command in progress. */
+const CMD_DEPTH: Record<string, number> = {
+  git: 2,
+  gh: 2,
+  mcp: 3,
+  approval: 2,
+  docker: 2,
+  kubectl: 2,
+  npm: 2,
+  pnpm: 2,
+  bun: 2,
+};
+
+/**
+ * Extract a short display name from a tool part.
+ * For bash, parses the command to show e.g. "git checkout", "mcp slack post_message".
+ * For other tools, returns the tool name as-is.
+ */
+function toolDisplayName(toolPart: ToolPart): string {
+  if (toolPart.tool !== "bash") return toolPart.tool;
+
+  const input = toolPart.state.input as { command?: string } | undefined;
+  const command = input?.command;
+  if (!command) return "bash";
+
+  const parts = command.trimStart().split(/\s+/);
+  const cmd = parts[0];
+  if (!cmd) return "bash";
+
+  const depth = CMD_DEPTH[cmd] ?? 1;
+  return parts.slice(0, depth).join(" ");
+}
+
 /** Log a part to stdout if it's interesting. */
 function logPartToStdout(sessionId: string, part: Part): void {
   const sid = sessionId.slice(0, 12);
@@ -141,13 +232,14 @@ function logPartToStdout(sessionId: string, part: Part): void {
   if (part.type === "tool") {
     const toolPart = part as ToolPart;
     const status = toolPart.state.status;
+    const tool = toolDisplayName(toolPart);
 
     if (status === "completed") {
       const completed = toolPart.state as ToolStateCompleted;
       const durationMs = completed.time.end - completed.time.start;
       const extra: Record<string, unknown> = {
         sessionId: sid,
-        tool: toolPart.tool,
+        tool,
         durationMs,
       };
       // For long-running tools (task, bash), include an output snippet to aid debugging.
@@ -162,7 +254,7 @@ function logPartToStdout(sessionId: string, part: Part): void {
       const errState = toolPart.state as ToolStateError;
       logWarn(log, "tool_error", {
         sessionId: sid,
-        tool: toolPart.tool,
+        tool,
         error: String(errState.error),
       });
     }
@@ -380,6 +472,13 @@ app.post("/trigger", async (req, res) => {
         prompt = `[Pinned memory — important context from prior sessions]\n${pinnedMemory}\n\n${prompt}`;
         logInfo(log, "pinned_memory_injected", { path: PINNED_MEMORY_PATH });
       }
+
+      // Tool instructions: inject MCP tool list from config
+      const toolInstructions = buildToolInstructions(sessionDirectory);
+      if (toolInstructions) {
+        prompt = `${toolInstructions}\n\n${prompt}`;
+        logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });
+      }
     }
 
     // --- Correlation key: inject into every prompt so the agent always knows its own key ---
@@ -456,33 +555,22 @@ app.post("/trigger", async (req, res) => {
     let sessionError: string | undefined;
     let finished = false;
 
-    // Track child sessions (task sub-agents) for progress forwarding.
-    // Maps child session ID → agent name (e.g. "coder", "explore").
-    const childSessions = new Map<string, string>();
-    // Last agent name seen from a subtask part — used to label newly discovered children.
-    let lastSubtaskAgent = "task";
-
     for await (const event of stream) {
       if (finished) break;
 
       const isParent = isSessionEvent(event, sessionId);
 
-      // Forward tool progress from child sessions (task sub-agents) so
+      // Forward tool progress from child sessions so
       // Slack progress isn't silent while a task runs.
       if (!isParent) {
-        if (
-          event.type === "message.part.updated" &&
-          childSessions.has(event.properties.part.sessionID)
-        ) {
+        if (event.type === "message.part.updated") {
           const part = event.properties.part;
           if (part.type === "tool") {
             const toolPart = part as ToolPart;
             const status = toolPart.state.status;
             if (status === "completed" || status === "error") {
-              const agent = childSessions.get(event.properties.part.sessionID);
-              const prefixedTool = agent ? `${agent}/${toolPart.tool}` : toolPart.tool;
-              logPartToStdout(sessionId, part);
-              emit({ type: "tool", tool: prefixedTool, status });
+              const displayName = toolDisplayName(toolPart);
+              emit({ type: "tool", tool: displayName, status });
             }
           }
         }
@@ -496,33 +584,6 @@ app.post("/trigger", async (req, res) => {
         // Stdout logging (selective)
         logPartToStdout(sessionId, part);
 
-        // Capture agent name from subtask parts (emitted before task tool starts).
-        if (part.type === "subtask") {
-          const subtaskPart = part as Part & { agent: string };
-          lastSubtaskAgent = subtaskPart.agent || "task";
-        }
-
-        // Track child sessions spawned by task tools.
-        if (part.type === "tool") {
-          const toolPart = part as ToolPart;
-          if (toolPart.tool === "task" && toolPart.state.status === "running") {
-            const agentName = lastSubtaskAgent;
-            // Discover child sessions asynchronously — best effort.
-            client.session
-              .children({ path: { id: sessionId } })
-              .then((resp) => {
-                if (resp.data) {
-                  for (const child of resp.data) {
-                    if (!childSessions.has(child.id)) {
-                      childSessions.set(child.id, agentName);
-                    }
-                  }
-                }
-              })
-              .catch(() => {});
-          }
-        }
-
         // Accumulate data for response regardless of filtering
         if (part.type === "text") {
           const textPart = part as TextPart;
@@ -532,8 +593,9 @@ app.post("/trigger", async (req, res) => {
           const toolPart = part as ToolPart;
           const status = toolPart.state.status;
           if (status === "completed" || status === "error") {
-            collectedToolCalls.push({ tool: toolPart.tool, state: status });
-            emit({ type: "tool", tool: toolPart.tool, status });
+            const displayName = toolDisplayName(toolPart);
+            collectedToolCalls.push({ tool: displayName, state: status });
+            emit({ type: "tool", tool: displayName, status });
 
             // Detect approval-required tool results and emit approval event.
             if (status === "completed") {
@@ -683,26 +745,47 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
 }
 
 /**
- * Parse a tool result for approval-required pattern.
- * The proxy returns: "⏳ Approval required for `tool`. Action ID: <uuid>. ..."
+ * Parse a tool result for approval-required signal.
+ * The proxy returns a JSON content item with { type: "approval_required", actionId, proxyName, tool }.
  */
-const ACTION_ID_PATTERN = /Action ID:\s*([0-9a-f-]{36})/;
-const PROXY_PORT_PATTERN = /Proxy-Port:\s*(\d+)/;
 function parseApprovalResult(
   output: string,
   tool: string,
   args: Record<string, unknown>,
 ): ProgressEvent | undefined {
-  if (!output.includes("Approval required")) return undefined;
-  const match = output.match(ACTION_ID_PATTERN);
-  if (!match) return undefined;
-  const portMatch = output.match(PROXY_PORT_PATTERN);
+  if (!output.includes("approval_required") && !output.includes("Approval required")) {
+    return undefined;
+  }
+
+  // Try structured JSON first (proxy embeds a JSON content item)
+  const jsonMatch = output.match(/\{[^{}]*"type"\s*:\s*"approval_required"[^{}]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.actionId) {
+        return {
+          type: "approval_required",
+          actionId: parsed.actionId,
+          tool,
+          args,
+          ...(parsed.proxyName ? { proxyName: parsed.proxyName } : {}),
+        };
+      }
+    } catch {
+      // Malformed JSON — fall through to regex
+    }
+  }
+
+  // Regex fallback for older proxy versions
+  const actionMatch = output.match(/Action ID:\s*([0-9a-f-]{36})/);
+  if (!actionMatch) return undefined;
+  const nameMatch = output.match(/Proxy-Name:\s*([a-z0-9][a-z0-9-]*)/);
   return {
     type: "approval_required",
-    actionId: match[1],
+    actionId: actionMatch[1],
     tool,
     args,
-    ...(portMatch ? { proxyPort: parseInt(portMatch[1], 10) } : {}),
+    ...(nameMatch ? { proxyName: nameMatch[1] } : {}),
   };
 }
 

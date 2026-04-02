@@ -15,7 +15,7 @@
 set -euo pipefail
 
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
-PROXY_POSTHOG_URL="${PROXY_POSTHOG_URL:-http://localhost:3010}"
+PROXY_URL="${PROXY_URL:-http://localhost:3001}"
 GIT_WRAPPERS_URL="${GIT_WRAPPERS_URL:-http://localhost:3004}"
 OPENCODE_URL="${OPENCODE_URL:-http://localhost:4096}"
 SESSION_DIR="${SESSION_DIR:-/workspace/repos/e2e-test}"
@@ -85,8 +85,8 @@ response_contains() {
 echo ""
 echo "=== Health Checks ==="
 
-proxy_health=$(curl -sf "$PROXY_POSTHOG_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy (posthog) is healthy" "got: $proxy_health"
+proxy_health=$(curl -sf "$PROXY_URL/health" 2>/dev/null || echo '{}')
+assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy is healthy" "got: $proxy_health"
 
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
 assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy" "got: $runner_health"
