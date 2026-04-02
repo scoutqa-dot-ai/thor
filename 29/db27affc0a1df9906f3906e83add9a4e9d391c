@@ -1,0 +1,39 @@
+docker/opencode/Dockerfile
+  c04c5d89ec095fca 47
+packages/remote-cli/src/index.ts
+  c04c5d89ec095fca 10-19,50,54,80,84,107,124
+packages/common/src/workspace-config.ts
+  c04c5d89ec095fca 68
+packages/runner/src/index.ts
+  c04c5d89ec095fca 96
+docker/opencode/bin/proxy-cli.mjs
+  c04c5d89ec095fca 31-35,37-43,47-51,55,84,113,126,148,200
+.gitignore
+  c04c5d89ec095fca 4
+packages/proxy/src/index.ts
+  c04c5d89ec095fca 181-191,193-195,198,201,229-230,285,303-304,335,389,425,436,451
+docker/opencode/bin/remote-cli.mjs
+  c04c5d89ec095fca 30-31,37-39
+docker/opencode/plugins/thor.js
+  c04c5d89ec095fca 5-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "29db27affc0a1df9906f3906e83add9a4e9d391c",
+  "prompts": {
+    "c04c5d89ec095fca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe3ae83-8e92-4531-afaf-fa1a5788e7b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 105,
+      "total_deletions": 64,
+      "accepted_lines": 79,
+      "overriden_lines": 0
+    }
+  }
+}
