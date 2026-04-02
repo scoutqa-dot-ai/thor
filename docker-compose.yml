@@ -232,6 +232,7 @@ services:
       - VOUCH_JWT_MAXAGE=4320
       - VOUCH_JWT_SECRET=${VOUCH_JWT_SECRET:?set VOUCH_JWT_SECRET}
       - VOUCH_WHITELIST=${VOUCH_WHITELIST:?set VOUCH_WHITELIST}
+      - VOUCH_LOGLEVEL=error
     healthcheck:
       test: ["CMD", "/vouch-proxy", "-healthcheck"]
       interval: 5s
