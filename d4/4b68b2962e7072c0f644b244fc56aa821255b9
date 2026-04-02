@@ -1,0 +1,23 @@
+packages/runner/src/index.ts
+  c04c5d89ec095fca 194-227,235,242,257,582-583,635-637
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d44b68b2962e7072c0f644b244fc56aa821255b9",
+  "prompts": {
+    "c04c5d89ec095fca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe3ae83-8e92-4531-afaf-fa1a5788e7b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 42,
+      "total_deletions": 5,
+      "accepted_lines": 42,
+      "overriden_lines": 0
+    }
+  }
+}
