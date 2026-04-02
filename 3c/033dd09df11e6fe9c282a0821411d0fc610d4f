@@ -1,0 +1,25 @@
+packages/common/src/notes.test.ts
+  2f46ac48facd1c64 181
+packages/runner/src/index.ts
+  2f46ac48facd1c64 552-557,561,563-583,592-617
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3c033dd09df11e6fe9c282a0821411d0fc610d4f",
+  "prompts": {
+    "2f46ac48facd1c64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b720f8c8-d417-404f-967c-3d1250a2d3ff",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 63,
+      "total_deletions": 8,
+      "accepted_lines": 57,
+      "overriden_lines": 0
+    }
+  }
+}
