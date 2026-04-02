@@ -121,11 +121,10 @@ async function handleMcp(args) {
 
   const upstream = args[0];
 
-  // mcp <upstream> (or --help) — list tools
-  if (args.length === 1 || args[1] === "--help") {
+  // Fetch tools for this upstream (shared across subcommands)
+  async function fetchTools() {
     const { res, body } = await jsonGet(`${proxyUrl}/${upstream}/tools`);
     if (!res.ok) {
-      // Fuzzy match on unknown upstream (403 = access denied, 404 = unknown)
       if (res.status === 403 || res.status === 404) {
         const upstreams = await getUpstreamNames();
         const suggestion = suggestMatch(upstream, upstreams);
@@ -137,36 +136,39 @@ async function handleMcp(args) {
       process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
       process.exit(1);
     }
-    process.stdout.write(JSON.stringify(body, null, 2) + "\n");
+    return body.tools ?? [];
+  }
+
+  // Resolve a tool by name (exact or fuzzy). Exits on no match.
+  function resolveTool(tools, name) {
+    const exact = tools.find((t) => t.name === name);
+    if (exact) return exact;
+
+    const matches = fuzzyMatch(name, tools.map((t) => t.name));
+    if (matches.length === 1) {
+      return tools.find((t) => t.name === matches[0]);
+    }
+
+    const suggestion = suggestMatch(name, tools.map((t) => t.name));
+    process.stderr.write(
+      `Unknown tool "${name}" on upstream "${upstream}". ${suggestion}Available tools: ${tools.map((t) => t.name).join(", ")}\n`,
+    );
+    process.exit(1);
+  }
+
+  // mcp <upstream> — list tool names only
+  if (args.length === 1) {
+    const tools = await fetchTools();
+    for (const t of tools) process.stdout.write(`${t.name}\n`);
     return;
   }
 
   const tool = args[1];
 
-  // mcp <upstream> <tool> --help — tool schema
-  if (args.length === 3 && args[2] === "--help") {
-    const { res, body } = await jsonGet(`${proxyUrl}/${upstream}/tools`);
-    if (!res.ok) {
-      if (res.status === 403 || res.status === 404) {
-        const upstreams = await getUpstreamNames();
-        const suggestion = suggestMatch(upstream, upstreams);
-        process.stderr.write(
-          `Unknown upstream "${upstream}". ${suggestion}Available upstreams: ${upstreams.join(", ") || "(none)"}\n`,
-        );
-        process.exit(1);
-      }
-      process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
-      process.exit(1);
-    }
-    const toolInfo = body.tools?.find((t) => t.name === tool);
-    if (!toolInfo) {
-      const toolNames = body.tools?.map((t) => t.name) || [];
-      const suggestion = suggestMatch(tool, toolNames);
-      process.stderr.write(
-        `Unknown tool "${tool}" on upstream "${upstream}". ${suggestion}Available tools: ${toolNames.join(", ")}\n`,
-      );
-      process.exit(1);
-    }
+  // mcp <upstream> <tool> [--help] — show tool schema (exact or fuzzy)
+  if (args.length === 2 || (args.length === 3 && args[2] === "--help")) {
+    const tools = await fetchTools();
+    const toolInfo = resolveTool(tools, tool);
     process.stdout.write(JSON.stringify(toolInfo, null, 2) + "\n");
     return;
   }
@@ -177,7 +179,19 @@ async function handleMcp(args) {
   try {
     toolArgs = JSON.parse(jsonArg);
   } catch {
+    // Invalid JSON — show error with schema hint
     process.stderr.write(`Invalid JSON argument: ${jsonArg}\n`);
+    try {
+      const tools = await fetchTools();
+      const toolInfo = resolveTool(tools, tool);
+      if (toolInfo.inputSchema) {
+        process.stderr.write(
+          `\n[hint] Input schema for "${toolInfo.name}":\n${JSON.stringify(toolInfo.inputSchema, null, 2)}\n`,
+        );
+      }
+    } catch {
+      // Best-effort hint
+    }
     process.exit(1);
   }
 
@@ -197,8 +211,8 @@ async function handleMcp(args) {
   // If the tool call returned an error, auto-append the schema as a hint
   if (body.isError && body.content?.[0]?.text && !body.content[0].text.includes("Unknown tool")) {
     try {
-      const { body: toolsBody } = await jsonGet(`${proxyUrl}/${upstream}/tools`);
-      const toolInfo = toolsBody.tools?.find((t) => t.name === tool);
+      const tools = await fetchTools();
+      const toolInfo = tools.find((t) => t.name === tool);
       if (toolInfo?.inputSchema) {
         process.stderr.write(
           `\n[hint] Input schema for "${tool}":\n${JSON.stringify(toolInfo.inputSchema, null, 2)}\n`,
