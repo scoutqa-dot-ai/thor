@@ -159,7 +159,8 @@ class ProgressSession {
     if (this.finished) return;
     this.finished = true;
 
-    if (!this.thresholdMet) return;
+    // Always post errors so failures are never invisible in Slack.
+    if (!this.thresholdMet && status === "completed") return;
 
     const elapsed = formatDuration(Date.now() - this.startTime);
 

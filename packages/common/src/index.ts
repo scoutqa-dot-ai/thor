@@ -9,7 +9,7 @@ export {
 export type { WorkspaceConfig, RepoConfig } from "./workspace-config.js";
 export { writeToolCallLog } from "./worklog.js";
 export type { ToolCallLogEntry } from "./worklog.js";
-export { createLogger, logInfo, logWarn, logError } from "./logger.js";
+export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
 export type { Logger } from "./logger.js";
 export {
   readNotes,

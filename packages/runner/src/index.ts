@@ -15,7 +15,9 @@ import { readFileSync } from "node:fs";
 import {
   createLogger,
   logInfo,
+  logWarn,
   logError,
+  truncate,
   createNotes,
   continueNotes,
   appendTrigger,
@@ -143,16 +145,25 @@ function logPartToStdout(sessionId: string, part: Part): void {
     if (status === "completed") {
       const completed = toolPart.state as ToolStateCompleted;
       const durationMs = completed.time.end - completed.time.start;
-      logInfo(log, "tool_completed", {
+      const extra: Record<string, unknown> = {
         sessionId: sid,
         tool: toolPart.tool,
         durationMs,
-      });
+      };
+      // For long-running tools (task, bash), include an output snippet to aid debugging.
+      if (toolPart.tool === "task" || durationMs > 60_000) {
+        const raw = typeof completed.output === "string" ? completed.output : "";
+        if (raw.length > 0) {
+          extra.outputSnippet = truncate(raw, 400);
+        }
+      }
+      logInfo(log, "tool_completed", extra);
     } else if (status === "error") {
       const errState = toolPart.state as ToolStateError;
-      logError(log, "tool_error", errState.error, {
+      logWarn(log, "tool_error", {
         sessionId: sid,
         tool: toolPart.tool,
+        error: String(errState.error),
       });
     }
     // pending/running — silent
@@ -500,7 +511,10 @@ app.post("/trigger", async (req, res) => {
           errorProps.error && "data" in errorProps.error
             ? (errorProps.error.data as { message?: string }).message || errorProps.error.name
             : "Unknown error";
-        logError(log, "session_error", sessionError, { sessionId });
+        logError(log, "session_error", sessionError, {
+          sessionId,
+          errorDetail: JSON.stringify(errorProps.error),
+        });
         finished = true;
         break;
       } else if (event.type === "session.idle") {

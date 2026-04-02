@@ -3,6 +3,7 @@ import {
   logInfo,
   logWarn,
   logError,
+  truncate,
   ProgressEventSchema,
   resolveRepoDirectory,
 } from "@thor/common";
@@ -135,8 +136,11 @@ async function consumeNdjsonStream(
       } else {
         await forwardProgressEvent(channel, threadTs, parsed.data, slackMcpDeps);
       }
-    } catch {
-      // Skip lines that aren't valid JSON
+    } catch (err) {
+      logWarn(log, "ndjson_parse_skip", {
+        line: truncate(line, 200),
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 }
