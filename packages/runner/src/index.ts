@@ -447,10 +447,38 @@ app.post("/trigger", async (req, res) => {
     let sessionError: string | undefined;
     let finished = false;
 
+    // Track child sessions (task sub-agents) for progress forwarding.
+    // Maps child session ID → agent name (e.g. "coder", "explore").
+    const childSessions = new Map<string, string>();
+    // Last agent name seen from a subtask part — used to label newly discovered children.
+    let lastSubtaskAgent = "task";
+
     for await (const event of stream) {
       if (finished) break;
 
-      if (!isSessionEvent(event, sessionId)) continue;
+      const isParent = isSessionEvent(event, sessionId);
+
+      // Forward tool progress from child sessions (task sub-agents) so
+      // Slack progress isn't silent while a task runs.
+      if (!isParent) {
+        if (
+          event.type === "message.part.updated" &&
+          childSessions.has(event.properties.part.sessionID)
+        ) {
+          const part = event.properties.part;
+          if (part.type === "tool") {
+            const toolPart = part as ToolPart;
+            const status = toolPart.state.status;
+            if (status === "completed" || status === "error") {
+              const agent = childSessions.get(event.properties.part.sessionID);
+              const prefixedTool = agent ? `${agent}/${toolPart.tool}` : toolPart.tool;
+              logPartToStdout(sessionId, part);
+              emit({ type: "tool", tool: prefixedTool, status });
+            }
+          }
+        }
+        continue;
+      }
 
       if (event.type === "message.part.updated") {
         const part = event.properties.part;
@@ -458,6 +486,33 @@ app.post("/trigger", async (req, res) => {
 
         // Stdout logging (selective)
         logPartToStdout(sessionId, part);
+
+        // Capture agent name from subtask parts (emitted before task tool starts).
+        if (part.type === "subtask") {
+          const subtaskPart = part as Part & { agent: string };
+          lastSubtaskAgent = subtaskPart.agent || "task";
+        }
+
+        // Track child sessions spawned by task tools.
+        if (part.type === "tool") {
+          const toolPart = part as ToolPart;
+          if (toolPart.tool === "task" && toolPart.state.status === "running") {
+            const agentName = lastSubtaskAgent;
+            // Discover child sessions asynchronously — best effort.
+            client.session
+              .children({ path: { id: sessionId } })
+              .then((resp) => {
+                if (resp.data) {
+                  for (const child of resp.data) {
+                    if (!childSessions.has(child.id)) {
+                      childSessions.set(child.id, agentName);
+                    }
+                  }
+                }
+              })
+              .catch(() => {});
+          }
+        }
 
         // Accumulate data for response regardless of filtering
         if (part.type === "text") {
