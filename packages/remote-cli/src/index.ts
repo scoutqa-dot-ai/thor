@@ -7,6 +7,16 @@ const log = createLogger("remote-cli");
 
 const PORT = parseInt(process.env.PORT || "3004", 10);
 
+/** Extract Thor tracing IDs from request headers. */
+function thorIds(req: express.Request): { sessionId?: string; callId?: string } {
+  const sessionId = req.headers["x-thor-session-id"] as string | undefined;
+  const callId = req.headers["x-thor-call-id"] as string | undefined;
+  return {
+    ...(sessionId && { sessionId }),
+    ...(callId && { callId }),
+  };
+}
+
 // ── Express app ─────────────────────────────────────────────────────────────
 
 const app = express();
@@ -37,11 +47,11 @@ app.post("/exec/git", async (req, res) => {
       return;
     }
 
-    logInfo(log, "exec_git", { args, cwd });
+    logInfo(log, "exec_git", { args, cwd, ...thorIds(req) });
     const result = await execCommand("git", args, cwd);
     res.json(result);
   } catch (err) {
-    logError(log, "exec_git_error", err instanceof Error ? err.message : String(err));
+    logError(log, "exec_git_error", err instanceof Error ? err.message : String(err), thorIds(req));
     res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
   }
 });
@@ -67,11 +77,11 @@ app.post("/exec/gh", async (req, res) => {
       return;
     }
 
-    logInfo(log, "exec_gh", { args, cwd });
+    logInfo(log, "exec_gh", { args, cwd, ...thorIds(req) });
     const result = await execCommand("gh", args, cwd);
     res.json(result);
   } catch (err) {
-    logError(log, "exec_gh_error", err instanceof Error ? err.message : String(err));
+    logError(log, "exec_gh_error", err instanceof Error ? err.message : String(err), thorIds(req));
     res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
   }
 });
@@ -94,7 +104,7 @@ app.post("/exec/scoutqa", async (req, res) => {
       return;
     }
 
-    logInfo(log, "exec_scoutqa", { args });
+    logInfo(log, "exec_scoutqa", { args, ...thorIds(req) });
 
     res.setHeader("Content-Type", "application/x-ndjson");
     res.setHeader("Transfer-Encoding", "chunked");
@@ -111,7 +121,12 @@ app.post("/exec/scoutqa", async (req, res) => {
     write({ exitCode });
     res.end();
   } catch (err) {
-    logError(log, "exec_scoutqa_error", err instanceof Error ? err.message : String(err));
+    logError(
+      log,
+      "exec_scoutqa_error",
+      err instanceof Error ? err.message : String(err),
+      thorIds(req),
+    );
     if (!res.headersSent) {
       res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
     } else {

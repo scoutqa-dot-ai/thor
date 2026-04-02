@@ -28,22 +28,34 @@ if (!proxyUrl) {
   process.exit(1);
 }
 
-const cwd = process.cwd();
+const directory = process.env.THOR_DIRECTORY;
+if (!directory) {
+  process.stderr.write("THOR_DIRECTORY is not set — shell.env plugin may not be loaded\n");
+  process.exit(1);
+}
+
+const sessionId = process.env.THOR_SESSION_ID || "";
+const callId = process.env.THOR_CALL_ID || "";
+const thorHeaders = {
+  "x-thor-directory": directory,
+  ...(sessionId && { "x-thor-session-id": sessionId }),
+  ...(callId && { "x-thor-call-id": callId }),
+};
 
 // --- HTTP helpers ---
+
+async function jsonGet(url) {
+  const res = await fetch(url, { headers: thorHeaders, signal: AbortSignal.timeout(120_000) });
+  return { res, body: await res.json() };
+}
 
 async function jsonPost(url, body) {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...thorHeaders },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(120_000),
   });
-  return { res, body: await res.json() };
-}
-
-async function jsonGet(url) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
   return { res, body: await res.json() };
 }
 
@@ -69,7 +81,7 @@ let cachedUpstreams = null;
 async function getUpstreamNames() {
   if (cachedUpstreams) return cachedUpstreams;
   try {
-    const { res, body } = await jsonPost(`${proxyUrl}/tools`, { cwd });
+    const { res, body } = await jsonGet(`${proxyUrl}/upstreams`);
     if (res.ok && body.upstreams) {
       cachedUpstreams = body.upstreams.map((u) => u.name);
       return cachedUpstreams;
@@ -98,7 +110,7 @@ try {
 async function handleMcp(args) {
   // mcp (no args) — list upstreams
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-    const { res, body } = await jsonPost(`${proxyUrl}/tools`, { cwd });
+    const { res, body } = await jsonGet(`${proxyUrl}/upstreams`);
     if (!res.ok) {
       process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
       process.exit(1);
@@ -111,7 +123,7 @@ async function handleMcp(args) {
 
   // mcp <upstream> (or --help) — list tools
   if (args.length === 1 || args[1] === "--help") {
-    const { res, body } = await jsonPost(`${proxyUrl}/${upstream}/tools`, { cwd });
+    const { res, body } = await jsonGet(`${proxyUrl}/${upstream}/tools`);
     if (!res.ok) {
       // Fuzzy match on unknown upstream (403 = access denied, 404 = unknown)
       if (res.status === 403 || res.status === 404) {
@@ -133,7 +145,7 @@ async function handleMcp(args) {
 
   // mcp <upstream> <tool> --help — tool schema
   if (args.length === 3 && args[2] === "--help") {
-    const { res, body } = await jsonPost(`${proxyUrl}/${upstream}/tools`, { cwd });
+    const { res, body } = await jsonGet(`${proxyUrl}/${upstream}/tools`);
     if (!res.ok) {
       if (res.status === 403 || res.status === 404) {
         const upstreams = await getUpstreamNames();
@@ -172,7 +184,6 @@ async function handleMcp(args) {
   const { res, body } = await jsonPost(`${proxyUrl}/${upstream}/tools/call`, {
     name: tool,
     arguments: toolArgs,
-    cwd,
   });
 
   if (!res.ok) {
@@ -186,7 +197,7 @@ async function handleMcp(args) {
   // If the tool call returned an error, auto-append the schema as a hint
   if (body.isError && body.content?.[0]?.text && !body.content[0].text.includes("Unknown tool")) {
     try {
-      const { body: toolsBody } = await jsonPost(`${proxyUrl}/${upstream}/tools`, { cwd });
+      const { body: toolsBody } = await jsonGet(`${proxyUrl}/${upstream}/tools`);
       const toolInfo = toolsBody.tools?.find((t) => t.name === tool);
       if (toolInfo?.inputSchema) {
         process.stderr.write(

@@ -178,17 +178,27 @@ app.get("/health", (_req, res) => {
 
 // --- Sessionless CLI endpoints ---
 
-/** Extract and validate repo from request body's cwd field. */
+/** Extract Thor tracing IDs from request headers. */
+function thorIds(req: Request): { sessionId?: string; callId?: string } {
+  const sessionId = req.headers["x-thor-session-id"] as string | undefined;
+  const callId = req.headers["x-thor-call-id"] as string | undefined;
+  return {
+    ...(sessionId && { sessionId }),
+    ...(callId && { callId }),
+  };
+}
+
+/** Extract and validate repo from x-thor-directory header. */
 function extractRepo(req: Request, res: Response): string | null {
-  const cwd = req.body?.cwd;
-  if (!cwd || typeof cwd !== "string") {
-    res.status(400).json({ error: "Missing required field: cwd" });
+  const directory = req.headers["x-thor-directory"] as string | undefined;
+  if (!directory) {
+    res.status(400).json({ error: "Missing required header: x-thor-directory" });
     return null;
   }
-  const repo = extractRepoFromCwd(cwd);
+  const repo = extractRepoFromCwd(directory);
   if (!repo) {
     res.status(400).json({
-      error: `Cannot determine repo from cwd: ${cwd}. Expected /workspace/repos/<repo>`,
+      error: `Cannot determine repo from directory: ${directory}. Expected /workspace/repos/<repo>`,
     });
     return null;
   }
@@ -216,8 +226,8 @@ function checkRepoAccess(
   return true;
 }
 
-// POST /tools — list upstreams available to the repo (filtered by cwd)
-app.post("/tools", (req, res) => {
+// GET /upstreams — list upstreams available to the repo
+app.get("/upstreams", (req, res) => {
   const repo = extractRepo(req, res);
   if (!repo) return;
 
@@ -272,7 +282,7 @@ app.get("/approval/:id", async (req, res) => {
 
     res.status(404).json({ error: `No approval action found with ID: ${actionId}` });
   } catch (err) {
-    logError(log, "approval_lookup_error", err, { id: req.params.id });
+    logError(log, "approval_lookup_error", err, { id: req.params.id, ...thorIds(req) });
     if (!res.headersSent) {
       res.status(500).json({ error: "Internal server error" });
     }
@@ -290,8 +300,8 @@ app.get("/approvals", (_req, res) => {
   res.json({ approvals: pending });
 });
 
-// POST /:upstream/tools — list tools for an upstream (validates repo access)
-app.post("/:upstream/tools", async (req: Request<{ upstream: string }>, res) => {
+// GET /:upstream/tools — list tools for an upstream (validates repo access)
+app.get("/:upstream/tools", async (req: Request<{ upstream: string }>, res) => {
   const repo = extractRepo(req, res);
   if (!repo) return;
 
@@ -322,7 +332,7 @@ app.post("/:upstream/tools", async (req: Request<{ upstream: string }>, res) => 
 
     res.json({ tools });
   } catch (err) {
-    logError(log, "tools_list_error", err, { upstream: upstreamName });
+    logError(log, "tools_list_error", err, { upstream: upstreamName, ...thorIds(req) });
     if (!res.headersSent) {
       res.status(502).json({ error: `Upstream "${upstreamName}" is unreachable` });
     }
@@ -376,6 +386,7 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
         upstream: instance.name,
         tool: toolName,
         actionId: action.id,
+        ...thorIds(req),
       });
       writeToolCallLog({ tool: toolName, decision: "pending", args });
       res.json({
@@ -411,6 +422,7 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
         upstream: instance.name,
         tool: toolName,
         durationMs: duration,
+        ...thorIds(req),
       });
       writeToolCallLog({ tool: toolName, decision: "allowed", args, result, durationMs: duration });
       res.json(result);
@@ -421,6 +433,7 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
         upstream: instance.name,
         tool: toolName,
         durationMs: duration,
+        ...thorIds(req),
       });
       writeToolCallLog({
         tool: toolName,
@@ -435,7 +448,7 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
       } satisfies CallToolResult);
     }
   } catch (err) {
-    logError(log, "tools_call_error", err, { upstream: upstreamName });
+    logError(log, "tools_call_error", err, { upstream: upstreamName, ...thorIds(req) });
     if (!res.headersSent) {
       res.status(502).json({ error: `Upstream "${upstreamName}" is unreachable` });
     }

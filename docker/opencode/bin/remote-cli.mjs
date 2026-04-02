@@ -27,11 +27,17 @@ if (!baseUrl) {
 
 const url = `${baseUrl}/exec/${endpoint}`;
 const cwd = process.cwd();
+const sessionId = process.env.THOR_SESSION_ID || "";
+const callId = process.env.THOR_CALL_ID || "";
 
 try {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(sessionId && { "x-thor-session-id": sessionId }),
+      ...(callId && { "x-thor-call-id": callId }),
+    },
     body: JSON.stringify({ args, cwd }),
   });
 

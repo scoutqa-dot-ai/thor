@@ -95,9 +95,7 @@ async function buildToolInstructions(directory: string): Promise<string | undefi
       [];
     try {
       const res = await fetch(`${PROXY_URL}/${upstreamName}/tools`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: directory }),
+        headers: { "x-thor-directory": directory },
       });
       if (res.ok) {
         const data = (await res.json()) as {

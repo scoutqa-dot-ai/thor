@@ -65,7 +65,7 @@ export function loadWorkspaceConfig(path: string): WorkspaceConfig {
   }
 
   // Validate proxy names: alphanumeric + hyphens only, no reserved names
-  const RESERVED_PROXY_NAMES = new Set(["health", "tools", "approval", "approvals"]);
+  const RESERVED_PROXY_NAMES = new Set(["health", "upstreams", "tools", "approval", "approvals"]);
   const PROXY_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
   for (const name of Object.keys(result.data.proxies ?? {})) {
     if (!PROXY_NAME_RE.test(name)) {

@@ -44,4 +44,5 @@ ENV THOR_PROXY_URL=http://proxy:3001
 
 COPY --chown=thor:thor opencode.json /home/thor/.config/opencode/opencode.json
 COPY --chown=thor:thor agents/ /home/thor/.config/opencode/agents/
+COPY --chown=thor:thor plugins/ /home/thor/.config/opencode/plugins/
 ENTRYPOINT ["opencode"]
