@@ -1,0 +1,33 @@
+packages/runner/src/index.ts
+  2f46ac48facd1c64 18,20,243,247-255,258,261,617-618
+packages/common/src/logger.ts
+  2f46ac48facd1c64 27-31
+packages/common/src/index.ts
+  2f46ac48facd1c64 25
+packages/gateway/src/service.ts
+  2f46ac48facd1c64 6,139-143
+packages/common/src/notes.ts
+  2f46ac48facd1c64 33,616
+packages/slack-mcp/src/progress-manager.ts
+  2f46ac48facd1c64 162-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5e99d088d3be2f440baf682f4aaa700748a45981",
+  "prompts": {
+    "2f46ac48facd1c64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b720f8c8-d417-404f-967c-3d1250a2d3ff",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 37,
+      "total_deletions": 15,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}
