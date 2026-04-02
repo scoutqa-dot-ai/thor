@@ -1,0 +1,29 @@
+packages/runner/src/index.ts
+  c04c5d89ec095fca 30-33,50-53,64-147,467-470
+scripts/test-proxy.ts
+  c04c5d89ec095fca 2,4-9,13,17,20-21,38-39,41,44,47-48,57-58,60-62,65-67,70,73,76,78,81,94,100,107,109-110,112-114,119-120,126-127,129,132-134,136-137,141,147,149,154,156
+docker/opencode/agents/build.md
+  c04c5d89ec095fca 66,72-86
+docker/opencode/opencode.json
+  c04c5d89ec095fca 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "354dfa0b98fa5211b9e37919ff02e20540d8958d",
+  "prompts": {
+    "c04c5d89ec095fca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe3ae83-8e92-4531-afaf-fa1a5788e7b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 201,
+      "total_deletions": 425,
+      "accepted_lines": 197,
+      "overriden_lines": 0
+    }
+  }
+}
