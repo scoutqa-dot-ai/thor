@@ -424,6 +424,15 @@ app.post("/trigger", async (req, res) => {
     res.status(200);
 
     function emit(event: ProgressEvent): void {
+      logInfo(log, "progress_emit", {
+        sessionId,
+        type: event.type,
+        ...(event.type === "tool" ? { tool: event.tool } : {}),
+        ...(event.type === "done"
+          ? { status: event.status, durationMs: (event as { durationMs?: number }).durationMs }
+          : {}),
+        ts: Date.now(),
+      });
       res.write(JSON.stringify(event) + "\n");
     }
 

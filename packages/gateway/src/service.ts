@@ -131,6 +131,15 @@ async function consumeNdjsonStream(
       const parsed = ProgressEventSchema.safeParse(JSON.parse(line));
       if (!parsed.success) continue;
 
+      logInfo(log, "progress_relay", {
+        channel,
+        threadTs,
+        type: parsed.data.type,
+        ...(parsed.data.type === "tool" ? { tool: parsed.data.tool } : {}),
+        ...(parsed.data.type === "done" ? { status: parsed.data.status } : {}),
+        ts: Date.now(),
+      });
+
       if (parsed.data.type === "approval_required") {
         await forwardApprovalNotification(channel, threadTs, parsed.data, slackMcpDeps);
       } else {
