@@ -20,6 +20,8 @@ import {
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
   interpolateHeaders,
+  extractRepoFromCwd,
+  getRepoProxies,
   type ProxyConfig,
 } from "@thor/common";
 
@@ -384,6 +386,272 @@ setInterval(() => {
     }
   }
 }, REAP_INTERVAL_MS).unref();
+
+// --- Sessionless CLI endpoints (registered before /:upstream wildcard) ---
+
+/** Extract and validate repo from request body's cwd field. */
+function extractRepo(req: Request, res: Response): string | null {
+  const cwd = req.body?.cwd;
+  if (!cwd || typeof cwd !== "string") {
+    res.status(400).json({ error: "Missing required field: cwd" });
+    return null;
+  }
+  const repo = extractRepoFromCwd(cwd);
+  if (!repo) {
+    res.status(400).json({
+      error: `Cannot determine repo from cwd: ${cwd}. Expected /workspace/repos/<repo>`,
+    });
+    return null;
+  }
+  return repo;
+}
+
+/** Check if a repo has access to a specific upstream. Returns true or sends 403. */
+function checkRepoAccess(
+  res: Response,
+  config: ReturnType<typeof getConfig>,
+  repo: string,
+  upstreamName: string,
+): boolean {
+  const allowed = getRepoProxies(config, repo);
+  if (allowed === undefined) {
+    res.status(404).json({ error: `Repo "${repo}" not found in config` });
+    return false;
+  }
+  if (!allowed.includes(upstreamName)) {
+    res.status(403).json({
+      error: `Repo "${repo}" does not have access to upstream "${upstreamName}"`,
+    });
+    return false;
+  }
+  return true;
+}
+
+// POST /tools — list upstreams available to the repo (filtered by cwd)
+app.post("/tools", (req, res) => {
+  const repo = extractRepo(req, res);
+  if (!repo) return;
+
+  const config = getConfig();
+  const allowed = getRepoProxies(config, repo);
+  if (allowed === undefined) {
+    res.status(404).json({ error: `Repo "${repo}" not found in config` });
+    return;
+  }
+
+  const upstreams = allowed
+    .filter((name) => config.proxies?.[name])
+    .map((name) => {
+      const instance = instances.get(name);
+      return {
+        name,
+        toolCount: instance?.upstream.tools.length ?? 0,
+        connected: instances.has(name),
+      };
+    });
+
+  res.json({ upstreams });
+});
+
+// GET /approval/:id — search across all upstream approval stores
+app.get("/approval/:id", async (req, res) => {
+  try {
+    const actionId = req.params.id;
+
+    // Search across all connected instances
+    for (const instance of instances.values()) {
+      const action = instance.approvalStore.get(actionId);
+      if (action) {
+        res.json(action);
+        return;
+      }
+    }
+
+    // Also try connecting to all configured upstreams and checking
+    const config = getConfig();
+    for (const name of Object.keys(config.proxies ?? {})) {
+      if (instances.has(name)) continue; // already checked
+      const instance = await getInstance(name);
+      if (instance) {
+        const action = instance.approvalStore.get(actionId);
+        if (action) {
+          res.json(action);
+          return;
+        }
+      }
+    }
+
+    res.status(404).json({ error: `No approval action found with ID: ${actionId}` });
+  } catch (err) {
+    logError(log, "approval_lookup_error", err, { id: req.params.id });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
+});
+
+// GET /approvals — list pending approvals across all upstreams
+app.get("/approvals", (_req, res) => {
+  const pending: Array<{ upstream: string } & Record<string, unknown>> = [];
+  for (const instance of instances.values()) {
+    for (const action of instance.approvalStore.listPending()) {
+      pending.push({ upstream: instance.name, ...action });
+    }
+  }
+  res.json({ approvals: pending });
+});
+
+// POST /:upstream/tools — list tools for an upstream (validates repo access)
+app.post("/:upstream/tools", async (req: Request<{ upstream: string }>, res) => {
+  const repo = extractRepo(req, res);
+  if (!repo) return;
+
+  const upstreamName = req.params.upstream;
+  const config = getConfig();
+
+  if (!checkRepoAccess(res, config, repo, upstreamName)) return;
+
+  try {
+    const instance = await getInstance(upstreamName);
+    if (!instance) {
+      res.status(404).json({ error: `Unknown upstream: ${upstreamName}` });
+      return;
+    }
+
+    const proxyDef = config.proxies?.[upstreamName];
+    const allow = proxyDef?.allow ?? [];
+    const approve = proxyDef?.approve ?? [];
+
+    const tools = instance.upstream.tools
+      .filter((t) => classifyTool(allow, approve, t.name) !== "hidden")
+      .map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+        classification: classifyTool(allow, approve, t.name),
+      }));
+
+    res.json({ tools });
+  } catch (err) {
+    logError(log, "tools_list_error", err, { upstream: upstreamName });
+    if (!res.headersSent) {
+      res.status(502).json({ error: `Upstream "${upstreamName}" is unreachable` });
+    }
+  }
+});
+
+// POST /:upstream/tools/call — call a tool (validates repo access)
+app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res) => {
+  const repo = extractRepo(req, res);
+  if (!repo) return;
+
+  const upstreamName = req.params.upstream;
+  const config = getConfig();
+
+  if (!checkRepoAccess(res, config, repo, upstreamName)) return;
+
+  const { name: toolName, arguments: toolArgs } = req.body as {
+    name?: string;
+    arguments?: Record<string, unknown>;
+  };
+
+  if (!toolName || typeof toolName !== "string") {
+    res.status(400).json({ error: "Missing required field: name" });
+    return;
+  }
+
+  try {
+    const instance = await getInstance(upstreamName);
+    if (!instance) {
+      res.status(404).json({ error: `Unknown upstream: ${upstreamName}` });
+      return;
+    }
+
+    const proxyDef = config.proxies?.[upstreamName];
+    const allow = proxyDef?.allow ?? [];
+    const approve = proxyDef?.approve ?? [];
+    const args = toolArgs ?? {};
+
+    const classification = classifyTool(allow, approve, toolName);
+    if (classification === "hidden") {
+      res.json({
+        content: [{ type: "text", text: `Unknown tool: ${toolName}` }],
+        isError: true,
+      } satisfies CallToolResult);
+      return;
+    }
+
+    if (classification === "approve") {
+      const action = instance.approvalStore.create(toolName, args);
+      logInfo(log, "tool_call_pending_approval", {
+        upstream: instance.name,
+        tool: toolName,
+        actionId: action.id,
+      });
+      writeToolCallLog({ tool: toolName, decision: "pending", args });
+      res.json({
+        content: [
+          {
+            type: "text",
+            text: `Approval required for \`${toolName}\`. Run: approval status ${action.id}`,
+          },
+          {
+            type: "text",
+            text: JSON.stringify({
+              type: "approval_required",
+              actionId: action.id,
+              proxyName: instance.name,
+              tool: toolName,
+            }),
+          },
+        ],
+        isError: false,
+      } satisfies CallToolResult);
+      return;
+    }
+
+    // classification === "allow"
+    const start = Date.now();
+    try {
+      const result = await instance.upstream.client.callTool({
+        name: toolName,
+        arguments: args,
+      });
+      const duration = Date.now() - start;
+      logInfo(log, "tool_call", {
+        upstream: instance.name,
+        tool: toolName,
+        durationMs: duration,
+      });
+      writeToolCallLog({ tool: toolName, decision: "allowed", args, result, durationMs: duration });
+      res.json(result);
+    } catch (err) {
+      const duration = Date.now() - start;
+      const message = err instanceof Error ? err.message : String(err);
+      logError(log, "tool_call", message, {
+        upstream: instance.name,
+        tool: toolName,
+        durationMs: duration,
+      });
+      writeToolCallLog({
+        tool: toolName,
+        decision: "allowed",
+        args,
+        durationMs: duration,
+        error: message,
+      });
+      res.status(502).json({
+        content: [{ type: "text", text: `Error calling "${toolName}": ${message}` }],
+        isError: true,
+      } satisfies CallToolResult);
+    }
+  } catch (err) {
+    logError(log, "tools_call_error", err, { upstream: upstreamName });
+    if (!res.headersSent) {
+      res.status(502).json({ error: `Upstream "${upstreamName}" is unreachable` });
+    }
+  }
+});
 
 // --- MCP endpoints: /:upstream ---
 

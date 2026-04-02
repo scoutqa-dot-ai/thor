@@ -8,6 +8,8 @@ export {
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
   getProxyConfig,
+  extractRepoFromCwd,
+  getRepoProxies,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";

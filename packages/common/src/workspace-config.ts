@@ -7,6 +7,7 @@ import { createLogger, logWarn } from "./logger.js";
 
 const RepoConfigSchema = z.object({
   channels: z.array(z.string()).optional(),
+  proxies: z.array(z.string()).optional(),
 });
 
 const ProxyUpstreamSchema = z.object({
@@ -64,7 +65,7 @@ export function loadWorkspaceConfig(path: string): WorkspaceConfig {
   }
 
   // Validate proxy names: alphanumeric + hyphens only, no reserved names
-  const RESERVED_PROXY_NAMES = new Set(["health"]);
+  const RESERVED_PROXY_NAMES = new Set(["health", "tools", "approval", "approvals"]);
   const PROXY_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
   for (const name of Object.keys(result.data.proxies ?? {})) {
     if (!PROXY_NAME_RE.test(name)) {
@@ -90,6 +91,18 @@ export function loadWorkspaceConfig(path: string): WorkspaceConfig {
         );
       }
       seen.set(channel, repo);
+    }
+  }
+
+  // Validate repo.proxies entries reference top-level proxy names
+  const proxyNames = new Set(Object.keys(result.data.proxies ?? {}));
+  for (const [repo, config] of Object.entries(result.data.repos)) {
+    for (const proxyRef of config.proxies ?? []) {
+      if (!proxyNames.has(proxyRef)) {
+        throw new Error(
+          `Repo "${repo}" references unknown proxy "${proxyRef}" in workspace config. Available proxies: ${[...proxyNames].join(", ") || "(none)"}`,
+        );
+      }
     }
   }
 
@@ -216,6 +229,30 @@ export function resolveRepoDirectory(repoName: string): string | undefined {
     // Path does not exist on disk
     return undefined;
   }
+}
+
+/**
+ * Extract repo name from a cwd path under /workspace/repos/.
+ * Returns undefined if path is not under the expected prefix.
+ */
+export function extractRepoFromCwd(cwd: string): string | undefined {
+  const normalized = normalize(resolve("/", cwd));
+  if (!normalized.startsWith(REPOS_PREFIX + "/")) return undefined;
+  const rest = normalized.slice(REPOS_PREFIX.length + 1);
+  // Take the first path segment as the repo name
+  const slash = rest.indexOf("/");
+  return slash === -1 ? rest : rest.slice(0, slash);
+}
+
+/**
+ * Get the list of proxy names allowed for a repo.
+ * Returns undefined if the repo is not in config.
+ * Returns empty array if repo exists but has no proxies field.
+ */
+export function getRepoProxies(config: WorkspaceConfig, repoName: string): string[] | undefined {
+  const repo = config.repos[repoName];
+  if (!repo) return undefined;
+  return repo.proxies ?? [];
 }
 
 const ALLOWED_PREFIXES = ["/workspace/repos/"];

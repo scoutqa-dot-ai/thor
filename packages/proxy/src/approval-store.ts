@@ -90,6 +90,34 @@ export class ApprovalStore {
     return action;
   }
 
+  /** List all pending actions (scans all date directories, most recent first). */
+  listPending(): ApprovalAction[] {
+    const pending: ApprovalAction[] = [];
+    for (const dir of [this.baseDir, ...this.fallbackDirs]) {
+      const dateDirs = this.listDateDirsIn(dir);
+      for (const dateDir of dateDirs) {
+        const dirPath = join(dir, dateDir);
+        let files: string[];
+        try {
+          files = readdirSync(dirPath).filter((f) => f.endsWith(".json"));
+        } catch {
+          continue;
+        }
+        for (const file of files) {
+          try {
+            const action = ApprovalActionSchema.parse(
+              JSON.parse(readFileSync(join(dirPath, file), "utf-8")),
+            );
+            if (action.status === "pending") pending.push(action);
+          } catch {
+            // skip corrupt files
+          }
+        }
+      }
+    }
+    return pending;
+  }
+
   private write(action: ApprovalAction): void {
     const dir = join(this.baseDir, action.dateSegment);
     mkdirSync(dir, { recursive: true });

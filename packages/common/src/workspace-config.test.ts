@@ -8,6 +8,8 @@ import {
   getAllowedChannelIds,
   getChannelRepoMap,
   getProxyConfig,
+  extractRepoFromCwd,
+  getRepoProxies,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";
@@ -150,6 +152,47 @@ describe("loadWorkspaceConfig", () => {
     });
     expect(() => loadWorkspaceConfig(path)).toThrow('Duplicate channel ID "C123"');
   });
+
+  it("accepts repo with valid proxies array", () => {
+    const path = writeConfig("config.json", {
+      repos: { "my-repo": { channels: ["C1"], proxies: ["slack"] } },
+      proxies: { slack: { upstream: { url: "http://slack:3003/mcp" } } },
+    });
+    const config = loadWorkspaceConfig(path);
+    expect(config.repos["my-repo"].proxies).toEqual(["slack"]);
+  });
+
+  it("throws when repo references unknown proxy", () => {
+    const path = writeConfig("config.json", {
+      repos: { "my-repo": { proxies: ["nonexistent"] } },
+      proxies: { slack: { upstream: { url: "http://slack:3003/mcp" } } },
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow('references unknown proxy "nonexistent"');
+  });
+
+  it("throws on reserved proxy name 'tools'", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      proxies: { tools: { upstream: { url: "http://localhost" } } },
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow('Reserved proxy name "tools"');
+  });
+
+  it("throws on reserved proxy name 'approval'", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      proxies: { approval: { upstream: { url: "http://localhost" } } },
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow('Reserved proxy name "approval"');
+  });
+
+  it("throws on reserved proxy name 'approvals'", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      proxies: { approvals: { upstream: { url: "http://localhost" } } },
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow('Reserved proxy name "approvals"');
+  });
 });
 
 describe("createConfigLoader", () => {
@@ -269,5 +312,54 @@ describe("interpolateHeaders", () => {
 
   it("returns undefined for undefined input", () => {
     expect(interpolateHeaders(undefined)).toBeUndefined();
+  });
+});
+
+describe("extractRepoFromCwd", () => {
+  it("extracts repo name from direct repo path", () => {
+    expect(extractRepoFromCwd("/workspace/repos/acme-app")).toBe("acme-app");
+  });
+
+  it("extracts repo name from nested path", () => {
+    expect(extractRepoFromCwd("/workspace/repos/acme-app/src/lib")).toBe("acme-app");
+  });
+
+  it("returns undefined for non-repo path", () => {
+    expect(extractRepoFromCwd("/tmp")).toBeUndefined();
+  });
+
+  it("returns undefined for /workspace/repos/ without repo name", () => {
+    expect(extractRepoFromCwd("/workspace/repos/")).toBeUndefined();
+  });
+
+  it("returns undefined for path traversal", () => {
+    expect(extractRepoFromCwd("/workspace/repos/../etc/passwd")).toBeUndefined();
+  });
+});
+
+describe("getRepoProxies", () => {
+  it("returns proxies array for a configured repo", () => {
+    const config = loadWorkspaceConfig(
+      writeConfig("config.json", {
+        repos: { "acme-app": { proxies: ["slack", "atlassian"] } },
+        proxies: {
+          slack: { upstream: { url: "http://slack:3003/mcp" } },
+          atlassian: { upstream: { url: "http://atlassian:8000/mcp" } },
+        },
+      }),
+    );
+    expect(getRepoProxies(config, "acme-app")).toEqual(["slack", "atlassian"]);
+  });
+
+  it("returns empty array for repo without proxies field", () => {
+    const config = loadWorkspaceConfig(
+      writeConfig("config.json", { repos: { "acme-app": { channels: ["C1"] } } }),
+    );
+    expect(getRepoProxies(config, "acme-app")).toEqual([]);
+  });
+
+  it("returns undefined for unknown repo", () => {
+    const config = loadWorkspaceConfig(writeConfig("config.json", { repos: {} }));
+    expect(getRepoProxies(config, "unknown")).toBeUndefined();
   });
 });
