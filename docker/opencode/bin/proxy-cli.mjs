@@ -28,14 +28,14 @@ if (!proxyUrl) {
   process.exit(1);
 }
 
-const directory = process.env.THOR_DIRECTORY;
+const directory = process.env.THOR_OPENCODE_DIRECTORY;
 if (!directory) {
-  process.stderr.write("THOR_DIRECTORY is not set — shell.env plugin may not be loaded\n");
+  process.stderr.write("THOR_OPENCODE_DIRECTORY is not set — shell.env plugin may not be loaded\n");
   process.exit(1);
 }
 
-const sessionId = process.env.THOR_SESSION_ID || "";
-const callId = process.env.THOR_CALL_ID || "";
+const sessionId = process.env.THOR_OPENCODE_SESSION_ID || "";
+const callId = process.env.THOR_OPENCODE_CALL_ID || "";
 const thorHeaders = {
   "x-thor-directory": directory,
   ...(sessionId && { "x-thor-session-id": sessionId }),

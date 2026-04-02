@@ -27,8 +27,8 @@ if (!baseUrl) {
 
 const url = `${baseUrl}/exec/${endpoint}`;
 const cwd = process.cwd();
-const sessionId = process.env.THOR_SESSION_ID || "";
-const callId = process.env.THOR_CALL_ID || "";
+const sessionId = process.env.THOR_OPENCODE_SESSION_ID || "";
+const callId = process.env.THOR_OPENCODE_CALL_ID || "";
 
 try {
   const res = await fetch(url, {
