@@ -29,6 +29,10 @@ import {
   registerAlias,
   getNotesLineCount,
   isAllowedDirectory,
+  createConfigLoader,
+  WORKSPACE_CONFIG_PATH,
+  extractRepoFromCwd,
+  getRepoProxies,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -45,6 +49,10 @@ const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
 /** Pinned memory file — injected into every new or stale session prompt. */
 const PINNED_MEMORY_PATH = process.env.PINNED_MEMORY_PATH || "/workspace/memory/ALWAYS.md";
 
+const PROXY_URL = process.env.THOR_PROXY_URL || "http://proxy:3001";
+
+const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
+
 /** Read pinned memory file, returns content or undefined. */
 function readPinnedMemory(): string | undefined {
   try {
@@ -53,6 +61,93 @@ function readPinnedMemory(): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Build tool instructions block for a session based on the repo's configured upstreams.
+ * Fetches tool descriptions from the proxy for each allowed upstream.
+ */
+async function buildToolInstructions(directory: string): Promise<string | undefined> {
+  const repo = extractRepoFromCwd(directory);
+  if (!repo) return undefined;
+
+  let config;
+  try {
+    config = getWorkspaceConfig();
+  } catch {
+    return undefined;
+  }
+
+  const allowed = getRepoProxies(config, repo);
+  if (!allowed || allowed.length === 0) return undefined;
+
+  const sections: string[] = [];
+
+  for (const upstreamName of allowed) {
+    const proxyDef = config.proxies?.[upstreamName];
+    if (!proxyDef) continue;
+
+    const allow = proxyDef.allow ?? [];
+    const approve = proxyDef.approve ?? [];
+
+    // Try to fetch tool descriptions from the proxy
+    let toolDescriptions: Array<{ name: string; description?: string; classification: string }> =
+      [];
+    try {
+      const res = await fetch(`${PROXY_URL}/${upstreamName}/tools`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: directory }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          tools: Array<{ name: string; description?: string; classification: string }>;
+        };
+        toolDescriptions = data.tools;
+      }
+    } catch {
+      // Proxy unreachable — fall back to config-only tool names
+    }
+
+    // Group tools by classification
+    const allowTools =
+      toolDescriptions.length > 0
+        ? toolDescriptions.filter((t) => t.classification === "allow")
+        : allow.map((name) => ({ name, classification: "allow" as const }));
+
+    const approveTools =
+      toolDescriptions.length > 0
+        ? toolDescriptions.filter((t) => t.classification === "approve")
+        : approve.map((name) => ({ name, classification: "approve" as const }));
+
+    if (allowTools.length > 0) {
+      sections.push(`## ${upstreamName} (allow)`);
+      for (const t of allowTools) {
+        const desc = "description" in t && t.description ? `: ${t.description}` : "";
+        sections.push(`- ${t.name}${desc}`);
+      }
+    }
+
+    if (approveTools.length > 0) {
+      sections.push(`## ${upstreamName} (approve — requires human approval)`);
+      for (const t of approveTools) {
+        const desc = "description" in t && t.description ? `: ${t.description}` : "";
+        sections.push(`- ${t.name}${desc}`);
+      }
+    }
+  }
+
+  if (sections.length === 0) return undefined;
+
+  return [
+    "[Available MCP tools — use the `mcp` CLI to call these]",
+    "",
+    ...sections,
+    "",
+    'Usage: mcp <upstream> <tool> \'{"arg":"value"}\'',
+    "Run `mcp <upstream> <tool> --help` to see tool description and input schema.",
+    "Run `approval status <id>` to check approval status.",
+  ].join("\n");
 }
 
 async function fetchOpencode(path: string): Promise<Response> {
@@ -379,6 +474,13 @@ app.post("/trigger", async (req, res) => {
       if (pinnedMemory) {
         prompt = `[Pinned memory — important context from prior sessions]\n${pinnedMemory}\n\n${prompt}`;
         logInfo(log, "pinned_memory_injected", { path: PINNED_MEMORY_PATH });
+      }
+
+      // Tool instructions: inject MCP tool list from config
+      const toolInstructions = await buildToolInstructions(sessionDirectory);
+      if (toolInstructions) {
+        prompt = `${toolInstructions}\n\n${prompt}`;
+        logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });
       }
     }
 

@@ -63,13 +63,27 @@ For `issue_comment`, `pull_request_review`, and `pull_request_review_comment`:
 
 ## Environment
 
-You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `scoutqa` (ScoutQA CLI). No Python, Go, or other binaries. Use `node` + `fetch` for scripting and HTTP calls.
+You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI). No Python, Go, or other binaries. Use `node` + `fetch` for scripting and HTTP calls.
 
 A credential-injecting reverse proxy is available at `http://data/` — auth headers are injected automatically. Check memory files for available routes and API schemas.
 
 ### MCP tools
 
-Slack is always available. Other MCP servers are configured per workspace — different repos may have different tools. If a tool call fails because the server isn't configured, say so instead of retrying.
+MCP tools (Slack, Atlassian, Grafana, etc.) are accessed via the `mcp` CLI. Available tools are injected at the start of each session. Use `mcp` to discover and call tools:
+
+```
+mcp                                    # list available upstreams
+mcp <upstream>                          # list tools on an upstream
+mcp <upstream> <tool> --help            # show tool description and input schema
+mcp <upstream> <tool> '{"arg":"value"}' # call a tool (JSON argument)
+```
+
+For tools requiring human approval, the CLI returns an action ID. Check approval status with:
+
+```
+approval status <action-id>             # check if approved/rejected
+approval list                           # list pending approvals
+```
 
 | Path                   | Access     | Purpose                            |
 | ---------------------- | ---------- | ---------------------------------- |
