@@ -1,0 +1,25 @@
+docker-compose.yml
+  26586a23f5a5e304 235
+docker/data/entrypoint.sh
+  26586a23f5a5e304 22-26,29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "fc5bcfc192271cbb207bd8fbdf9c6655a440bee4",
+  "prompts": {
+    "26586a23f5a5e304": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5f1a09e-dec5-46ab-880c-dfb057eacdba",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 0,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
