@@ -31,10 +31,16 @@ COPY bin/git /usr/local/bin/git
 COPY bin/gh /usr/local/bin/gh
 COPY bin/scoutqa /usr/local/bin/scoutqa
 
+# mcp/approval wrapper scripts — forward to proxy service over HTTP
+COPY bin/proxy-cli.mjs /usr/local/bin/proxy-cli.mjs
+COPY bin/mcp /usr/local/bin/mcp
+COPY bin/approval /usr/local/bin/approval
+
 USER thor
 RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state
 
 ENV THOR_REMOTE_CLI_URL=http://remote-cli:3004
+ENV THOR_PROXY_URL=http://proxy:3001
 
 COPY --chown=thor:thor opencode.json /home/thor/.config/opencode/opencode.json
 COPY --chown=thor:thor agents/ /home/thor/.config/opencode/agents/
