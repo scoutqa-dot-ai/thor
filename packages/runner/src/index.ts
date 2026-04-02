@@ -191,6 +191,40 @@ type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
 // | reasoning       | No         | No                      | Internal CoT, fires many times         |
 // | snapshot/patch  | No         | No                      | Infrastructure noise                   |
 // | compaction      | No         | No                      | Infrastructure noise                   |
+
+/** How many args to show per command in progress. */
+const CMD_DEPTH: Record<string, number> = {
+  git: 2,
+  gh: 2,
+  mcp: 3,
+  approval: 2,
+  docker: 2,
+  kubectl: 2,
+  npm: 2,
+  pnpm: 2,
+  bun: 2,
+};
+
+/**
+ * Extract a short display name from a tool part.
+ * For bash, parses the command to show e.g. "git checkout", "mcp slack post_message".
+ * For other tools, returns the tool name as-is.
+ */
+function toolDisplayName(toolPart: ToolPart): string {
+  if (toolPart.tool !== "bash") return toolPart.tool;
+
+  const input = toolPart.state.input as { command?: string } | undefined;
+  const command = input?.command;
+  if (!command) return "bash";
+
+  const parts = command.trimStart().split(/\s+/);
+  const cmd = parts[0];
+  if (!cmd) return "bash";
+
+  const depth = CMD_DEPTH[cmd] ?? 1;
+  return parts.slice(0, depth).join(" ");
+}
+
 /** Log a part to stdout if it's interesting. */
 function logPartToStdout(sessionId: string, part: Part): void {
   const sid = sessionId.slice(0, 12);
@@ -198,13 +232,14 @@ function logPartToStdout(sessionId: string, part: Part): void {
   if (part.type === "tool") {
     const toolPart = part as ToolPart;
     const status = toolPart.state.status;
+    const tool = toolDisplayName(toolPart);
 
     if (status === "completed") {
       const completed = toolPart.state as ToolStateCompleted;
       const durationMs = completed.time.end - completed.time.start;
       const extra: Record<string, unknown> = {
         sessionId: sid,
-        tool: toolPart.tool,
+        tool,
         durationMs,
       };
       // For long-running tools (task, bash), include an output snippet to aid debugging.
@@ -219,7 +254,7 @@ function logPartToStdout(sessionId: string, part: Part): void {
       const errState = toolPart.state as ToolStateError;
       logWarn(log, "tool_error", {
         sessionId: sid,
-        tool: toolPart.tool,
+        tool,
         error: String(errState.error),
       });
     }
@@ -544,7 +579,8 @@ app.post("/trigger", async (req, res) => {
             const status = toolPart.state.status;
             if (status === "completed" || status === "error") {
               const agent = childSessions.get(event.properties.part.sessionID);
-              const prefixedTool = agent ? `${agent}/${toolPart.tool}` : toolPart.tool;
+              const name = toolDisplayName(toolPart);
+              const prefixedTool = agent ? `${agent}/${name}` : name;
               logPartToStdout(sessionId, part);
               emit({ type: "tool", tool: prefixedTool, status });
             }
@@ -596,8 +632,9 @@ app.post("/trigger", async (req, res) => {
           const toolPart = part as ToolPart;
           const status = toolPart.state.status;
           if (status === "completed" || status === "error") {
-            collectedToolCalls.push({ tool: toolPart.tool, state: status });
-            emit({ type: "tool", tool: toolPart.tool, status });
+            const displayName = toolDisplayName(toolPart);
+            collectedToolCalls.push({ tool: displayName, state: status });
+            emit({ type: "tool", tool: displayName, status });
 
             // Detect approval-required tool results and emit approval event.
             if (status === "completed") {
