@@ -1,0 +1,27 @@
+docker/opencode/bin/proxy-cli.mjs
+  c04c5d89ec095fca 31,33,37-38
+docker/opencode/plugins/thor.js
+  c04c5d89ec095fca 5-6,11-14,16
+docker/opencode/bin/remote-cli.mjs
+  c04c5d89ec095fca 30-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4040ac3a16f1529efa91d40194b662841f5127d2",
+  "prompts": {
+    "c04c5d89ec095fca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe3ae83-8e92-4531-afaf-fa1a5788e7b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 11,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    }
+  }
+}
