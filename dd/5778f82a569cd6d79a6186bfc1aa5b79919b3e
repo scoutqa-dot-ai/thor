@@ -1,0 +1,27 @@
+packages/runner/src/index.ts
+  15696e4931a32765 109-112
+docker/opencode/bin/proxy-cli.mjs
+  15696e4931a32765 168-169,176-195
+packages/slack-mcp/src/progress-manager.ts
+  15696e4931a32765 194-195,197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "dd5778f82a569cd6d79a6186bfc1aa5b79919b3e",
+  "prompts": {
+    "15696e4931a32765": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5bdc178-087e-4f27-93e5-1d542f0049bb",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 58,
+      "total_deletions": 40,
+      "accepted_lines": 29,
+      "overriden_lines": 0
+    }
+  }
+}
