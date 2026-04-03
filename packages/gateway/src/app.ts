@@ -3,7 +3,6 @@ import {
   createLogger,
   logError,
   logInfo,
-  resolveCorrelationKey,
   resolveCorrelationKeys,
   hasSlackReply,
   getAllowedChannelIds,
@@ -352,7 +351,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         logError(log, "reaction_failed", err, { eventId }),
       );
       const rawKey = getSlackCorrelationKey(event);
-      const correlationKey = resolveCorrelationKey(rawKey);
+      const correlationKey = resolveCorrelationKeys([rawKey]);
       if (correlationKey !== rawKey) {
         logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
       }
@@ -390,7 +389,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     if (event.type === "message" && !event.subtype) {
       res.status(200).json({ ok: true });
       const rawKey = getSlackCorrelationKey(event);
-      const correlationKey = resolveCorrelationKey(rawKey);
+      const correlationKey = resolveCorrelationKeys([rawKey]);
       if (correlationKey !== rawKey) {
         logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
       }

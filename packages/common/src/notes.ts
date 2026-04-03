@@ -464,45 +464,40 @@ function extractBranchFromGitArgs(args: string[]): string | undefined {
     return branch.replace(/^origin\//, "");
   }
 
+  // git worktree add [-b <branch>] <path> [<commit-ish>]
+  if (subcommand === "worktree" && args[1] === "add") {
+    const wtArgs = args.slice(2);
+    for (let i = 0; i < wtArgs.length; i++) {
+      if (wtArgs[i] === "-b" || wtArgs[i] === "-B") {
+        return wtArgs[i + 1]; // branch name follows -b
+      }
+    }
+    // No -b: branch is inferred from <path> basename or <commit-ish>
+    const positional = wtArgs.filter((a) => !a.startsWith("-"));
+    // positional[0] = path, positional[1] = commit-ish (often a branch name)
+    if (positional[1]) return positional[1].replace(/^origin\//, "");
+    // Fallback: basename of the worktree path
+    if (positional[0]) {
+      const base = positional[0].split("/").pop();
+      if (base) return base;
+    }
+    return undefined;
+  }
+
   return undefined;
 }
 
 /**
- * Resolve a raw correlation key to its canonical key.
+ * Resolve one or more candidate correlation keys, returning the most recent match.
  *
- * Scans all notes files for a `# Session:` (h1) or `### Session:` (h3)
- * line matching the raw key. If found, reads the file's h1 line to
- * return the canonical key.
+ * Scans all notes files for `### Session:` (h3 alias) and `# Session:`
+ * (h1 canonical) lines matching each key. When multiple files match,
+ * the most recent file (by directory date in the path) wins.
  *
- * Always scans first (no fast-path direct lookup) because a key may have
- * been aliased to a newer session — direct lookup would find the old file.
- *
- * Returns the raw key unchanged if no match is found.
- */
-export function resolveCorrelationKey(rawKey: string): string {
-  try {
-    const aliasFile = grepNotesFiles(`^### Session: ${escapeRegExp(rawKey)}$`);
-    if (aliasFile) {
-      const canonical = extractH1Key(aliasFile);
-      if (canonical) return canonical;
-    }
-  } catch {
-    // worklog dir doesn't exist yet or grep not available
-  }
-
-  return rawKey;
-}
-
-/**
- * Resolve multiple candidate correlation keys, returning the most recent match.
- *
- * Tries each key in order, collecting all resolved canonical keys with their
- * file paths. Returns the canonical key from the most recent notes file
- * (by directory date). Falls back to the first key if nothing resolves.
+ * Falls back to the first key if nothing resolves.
  */
 export function resolveCorrelationKeys(rawKeys: string[]): string {
   if (rawKeys.length === 0) return "";
-  if (rawKeys.length === 1) return resolveCorrelationKey(rawKeys[0]);
 
   const candidates: Array<{ canonical: string; file: string }> = [];
 
