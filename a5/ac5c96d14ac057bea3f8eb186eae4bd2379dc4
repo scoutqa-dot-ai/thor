@@ -1,0 +1,31 @@
+docker/opencode/bin/remote-cli.mjs
+  c04c5d89ec095fca 91
+packages/common/src/notes.test.ts
+  c04c5d89ec095fca 24,842,845,847-848,853,865,867-868,874-905
+docker/opencode/bin/proxy-cli.mjs
+  c04c5d89ec095fca 211-218
+packages/common/src/notes.ts
+  c04c5d89ec095fca 294,297-299,302-306,308,310-326,328-329,331-332,368-379,381,383,386,392-393,580-583,590
+packages/common/src/index.ts
+  c04c5d89ec095fca 42,44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a5ac5c96d14ac057bea3f8eb186eae4bd2379dc4",
+  "prompts": {
+    "c04c5d89ec095fca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe3ae83-8e92-4531-afaf-fa1a5788e7b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 209,
+      "total_deletions": 134,
+      "accepted_lines": 106,
+      "overriden_lines": 0
+    }
+  }
+}
