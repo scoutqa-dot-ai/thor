@@ -165,16 +165,34 @@ async function handleMcp(args) {
 
   const tool = args[1];
 
-  // mcp <upstream> <tool> [--help] — show tool schema (exact or fuzzy)
-  if (args.length === 2 || (args.length === 3 && args[2] === "--help")) {
+  // mcp <upstream> <tool> --help — show tool schema
+  if (args.length === 3 && args[2] === "--help") {
     const tools = await fetchTools();
     const toolInfo = resolveTool(tools, tool);
     process.stdout.write(JSON.stringify(toolInfo, null, 2) + "\n");
     return;
   }
 
-  // mcp <upstream> <tool> '<json>' — call tool
-  const jsonArg = args[2];
+  // mcp <upstream> <tool> ['<json>'] — call tool
+  // Accept JSON from positional arg OR stdin (heredoc/pipe avoids shell quoting issues).
+  let jsonArg = args[2];
+  if (!jsonArg) {
+    // No positional arg — try stdin (supports heredoc and pipe)
+    if (process.stdin.isTTY) {
+      // Interactive terminal with no arg — show help
+      const tools = await fetchTools();
+      const toolInfo = resolveTool(tools, tool);
+      process.stdout.write(JSON.stringify(toolInfo, null, 2) + "\n");
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of process.stdin) chunks.push(chunk);
+    jsonArg = Buffer.concat(chunks).toString().trim();
+    if (!jsonArg) {
+      process.stderr.write(`Usage: mcp ${upstream} ${tool} <<'EOF'\n{"arg":"val"}\nEOF\n`);
+      process.exit(1);
+    }
+  }
   let toolArgs;
   try {
     toolArgs = JSON.parse(jsonArg);
