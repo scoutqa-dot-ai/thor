@@ -291,20 +291,45 @@ export function extractAliases(artifacts: ToolArtifact[]): ExtractedAlias[] {
   for (const raw of artifacts) {
     try {
       if (raw.tool === "bash") {
-        // Parse [thor:meta] lines emitted by remote-cli.mjs in the tool output.
+        // Parse [thor:meta] lines emitted by remote-cli.mjs and proxy-cli.mjs
         const metaEntries = extractThorMeta(raw.output);
         for (const meta of metaEntries) {
-          if (meta.cmd !== "git" && meta.cmd !== "gh") continue;
-          const branch = extractBranchFromGitArgs(meta.args);
-          if (!branch) continue;
+          // git/gh: extract branch alias
+          if (meta.cmd === "git" || meta.cmd === "gh") {
+            const branch = extractBranchFromGitArgs(meta.args);
+            if (!branch) continue;
+            const repo = inferRepoFromPath(meta.cwd || "");
+            if (!repo) continue;
+            aliases.push({
+              alias: `git:branch:${repo}:${branch}`,
+              context: `${meta.cmd} ${meta.args[0]} in ${meta.cwd || "(default cwd)"}`,
+            });
+            continue;
+          }
 
-          const repo = inferRepoFromPath(meta.cwd || "");
-          if (!repo) continue;
+          // mcp: extract Slack thread alias from post_message results
+          // args = ["slack", "post_message", '{"channel":"C123",...}']
+          if (meta.cmd === "mcp" && meta.args[1] === "post_message" && meta.result) {
+            let toolInput: { channel?: string; thread_ts?: string } = {};
+            try {
+              toolInput = JSON.parse(meta.args[2] || "{}");
+            } catch {}
+            const channel = toolInput.channel || "unknown";
 
-          aliases.push({
-            alias: `git:branch:${repo}:${branch}`,
-            context: `${meta.cmd} ${meta.args[0]} in ${meta.cwd || "(default cwd)"}`,
-          });
+            if (toolInput.thread_ts) {
+              aliases.push({
+                alias: `slack:thread:${toolInput.thread_ts}`,
+                context: `Replied in thread in ${channel}`,
+              });
+            } else {
+              const output = SlackPostMessageOutput.safeParse(JSON.parse(meta.result));
+              if (!output.success) continue;
+              aliases.push({
+                alias: `slack:thread:${output.data.ts}`,
+                context: `New thread posted to ${output.data.channel || channel}`,
+              });
+            }
+          }
         }
         continue;
       }
@@ -340,19 +365,32 @@ export function extractAliases(artifacts: ToolArtifact[]): ExtractedAlias[] {
   return aliases;
 }
 
-/** Schema for [thor:meta] JSON payloads emitted by remote-cli.mjs. */
-const ThorMetaSchema = z.object({
+/**
+ * Schema for [thor:meta] JSON payloads emitted to stderr by CLI wrappers.
+ *
+ * Uniform shape: { cmd, args: string[], cwd?, result? }
+ *
+ * Producers:
+ * - remote-cli.mjs: { cmd: "git"|"gh", args: ["push","origin","main"], cwd }
+ * - proxy-cli.mjs:  { cmd: "mcp", args: ["slack","post_message",'{"channel":"C123"}'], result? }
+ *
+ * Consumer: extractThorMeta() in this module, called from extractAliases().
+ */
+export const ThorMetaSchema = z.object({
   cmd: z.string(),
-  args: z.array(z.string()),
+  args: z.array(z.string()).default([]),
   cwd: z.string().optional(),
+  result: z.string().optional(),
 });
+
+export type ThorMeta = z.infer<typeof ThorMetaSchema>;
 
 /**
  * Extract all [thor:meta] entries from tool output.
  * Returns parsed metadata objects; malformed lines are silently skipped.
  */
-function extractThorMeta(output: string): Array<{ cmd: string; args: string[]; cwd?: string }> {
-  const results: Array<{ cmd: string; args: string[]; cwd?: string }> = [];
+function extractThorMeta(output: string): ThorMeta[] {
+  const results: ThorMeta[] = [];
   const regex = /\[thor:meta]\s*(.+)/g;
   let match;
   while ((match = regex.exec(output)) !== null) {
@@ -539,16 +577,17 @@ function extractH1Key(filePath: string): string | undefined {
 /**
  * Check if Thor has posted a Slack message for this correlation key.
  *
- * Scans the notes file for `slack_post_message` in tool call summaries.
- * If found, Thor actively participated in the conversation and follow-up
- * events should be prioritised (shorter delay).
+ * Looks for a registered `slack:thread:` alias in the notes file —
+ * this is written by `registerAlias` when a Slack thread is created
+ * or replied to, regardless of whether the tool was a direct MCP call
+ * or a bash-wrapped `mcp` CLI invocation.
  */
 export function hasSlackReply(correlationKey: string): boolean {
   const path = findNotesFile(correlationKey);
   if (!path) return false;
   try {
     const content = readFileSync(path, "utf-8");
-    return content.includes("slack_post_message");
+    return content.includes("### Session: slack:thread:");
   } catch {
     return false;
   }
