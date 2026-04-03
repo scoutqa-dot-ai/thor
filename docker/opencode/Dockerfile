@@ -42,6 +42,11 @@ RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state
 ENV THOR_REMOTE_CLI_URL=http://remote-cli:3004
 ENV THOR_PROXY_URL=http://proxy:3001
 
+# Disable the question tool — it requires an interactive client to answer.
+# OpenCode only registers QuestionTool when OPENCODE_CLIENT is "app", "cli", or "desktop".
+# https://github.com/anomalyco/opencode/blob/500dcfc586e3787a329b51a74fec6d776d9165c1/packages/opencode/src/tool/registry.ts#L117
+ENV OPENCODE_CLIENT=thor
+
 COPY --chown=thor:thor opencode.json /home/thor/.config/opencode/opencode.json
 COPY --chown=thor:thor agents/ /home/thor/.config/opencode/agents/
 COPY --chown=thor:thor plugins/ /home/thor/.config/opencode/plugins/

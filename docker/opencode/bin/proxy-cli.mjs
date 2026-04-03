@@ -208,6 +208,14 @@ async function handleMcp(args) {
   // Output the raw result
   process.stdout.write(JSON.stringify(body) + "\n");
 
+  // Emit [thor:meta] for the runner to extract aliases. Shape: ThorMeta from @thor/common.
+  if (!body.isError) {
+    const meta = { cmd: "mcp", args: [upstream, tool, JSON.stringify(toolArgs)] };
+    const text = body.content?.[0]?.text;
+    if (text) meta.result = text;
+    process.stderr.write(`\n[thor:meta] ${JSON.stringify(meta)}\n`);
+  }
+
   // If the tool call returned an error, auto-append the schema as a hint
   if (body.isError && body.content?.[0]?.text && !body.content[0].text.includes("Unknown tool")) {
     try {

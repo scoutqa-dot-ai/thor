@@ -39,8 +39,9 @@ export {
   extractAliases,
   getNotesLineCount,
   hasSlackReply,
+  ThorMetaSchema,
 } from "./notes.js";
-export type { ToolArtifact, ExtractedAlias } from "./notes.js";
+export type { ToolArtifact, ExtractedAlias, ThorMeta } from "./notes.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,

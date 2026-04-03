@@ -88,8 +88,7 @@ try {
   if (body.stdout) process.stdout.write(body.stdout);
   if (body.stderr) process.stderr.write(body.stderr);
 
-  // Emit structured metadata so the runner can extract aliases from bash tool output.
-  // Only for git/gh — the runner parses [thor:meta] lines to link sessions across channels.
+  // Emit [thor:meta] for the runner to extract aliases. Shape: ThorMeta from @thor/common.
   if ((endpoint === "git" || endpoint === "gh") && (body.exitCode ?? 0) === 0) {
     const meta = JSON.stringify({ cmd: endpoint, args, cwd });
     process.stderr.write(`\n[thor:meta] ${meta}\n`);

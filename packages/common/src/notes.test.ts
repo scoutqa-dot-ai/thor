@@ -21,6 +21,7 @@ const {
   extractAliases,
   getNotesLineCount,
   hasSlackReply,
+  ThorMetaSchema,
 } = await import("./notes.js");
 
 describe("notes", () => {
@@ -838,22 +839,18 @@ describe("hasSlackReply", () => {
     expect(hasSlackReply(key)).toBe(false);
   });
 
-  it("returns true when notes contain slack_post_message tool call", () => {
+  it("returns true when a slack:thread alias is registered", () => {
     const key = uniqueKey();
     createNotes({ correlationKey: key, prompt: "test", sessionId: "s2" });
-    appendSummary({
+    registerAlias({
       correlationKey: key,
-      status: "completed",
-      durationMs: 1000,
-      toolCalls: [
-        { tool: "bash", state: "completed" },
-        { tool: "slack_post_message", state: "completed" },
-      ],
+      alias: "slack:thread:1712345678.123",
+      context: "New thread posted to C123",
     });
     expect(hasSlackReply(key)).toBe(true);
   });
 
-  it("returns true when slack_post_message appears in any summary block", () => {
+  it("returns true when slack:thread alias is registered after multiple sessions", () => {
     const key = uniqueKey();
     createNotes({ correlationKey: key, prompt: "test", sessionId: "s3" });
     // First session: no slack reply
@@ -865,13 +862,44 @@ describe("hasSlackReply", () => {
     });
     // Follow-up: Thor replies in Slack
     appendTrigger({ correlationKey: key, prompt: "follow up" });
-    appendSummary({
+    registerAlias({
       correlationKey: key,
-      status: "completed",
-      durationMs: 2000,
-      toolCalls: [{ tool: "slack_post_message", state: "completed" }],
+      alias: "slack:thread:1712345678.456",
+      context: "Replied in thread in C456",
     });
     expect(hasSlackReply(key)).toBe(true);
+  });
+});
+
+describe("ThorMetaSchema", () => {
+  it("validates remote-cli meta (git/gh)", () => {
+    // Shape emitted by remote-cli.mjs
+    const meta = { cmd: "git", args: ["push", "origin", "main"], cwd: "/workspace/repos/acme" };
+    const result = ThorMetaSchema.safeParse(meta);
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual(meta);
+  });
+
+  it("validates proxy-cli meta (mcp)", () => {
+    // Shape emitted by proxy-cli.mjs
+    const meta = {
+      cmd: "mcp",
+      args: ["slack", "post_message", '{"channel":"C123","text":"hi"}'],
+      result: '{"ok":true,"ts":"1712345678.123","channel":"C123"}',
+    };
+    const result = ThorMetaSchema.safeParse(meta);
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual(meta);
+  });
+
+  it("rejects meta with non-string args", () => {
+    const meta = { cmd: "mcp", args: [1, 2, 3] };
+    expect(ThorMetaSchema.safeParse(meta).success).toBe(false);
+  });
+
+  it("rejects meta without cmd", () => {
+    const meta = { args: ["foo"] };
+    expect(ThorMetaSchema.safeParse(meta).success).toBe(false);
   });
 });
 
