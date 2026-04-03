@@ -191,15 +191,12 @@ class ProgressSession {
     const elapsed = formatDuration(Date.now() - this.startTime);
 
     if (status === "completed") {
-      const text = `✅ Done — ${this.toolCallCount} tool calls in ${elapsed}`;
+      // Only update an existing progress message — never create a new "Done" post.
+      // If no progress message was posted (e.g. bot replied before threshold), stay silent.
       if (this.messageTs) {
+        const text = `✅ Done — ${this.toolCallCount} tool calls in ${elapsed}`;
         await this.update(text);
         updateProgressStatus(this.channel, this.threadTs, this.messageTs, "completed");
-      } else {
-        await this.post(text);
-        if (this.messageTs) {
-          updateProgressStatus(this.channel, this.threadTs, this.messageTs, "completed");
-        }
       }
       return;
     }

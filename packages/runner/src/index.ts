@@ -106,7 +106,10 @@ function buildToolInstructions(directory: string): string | undefined {
     "",
     ...sections,
     "",
-    'Usage: mcp <upstream> <tool> \'{"arg":"value"}\'',
+    "Usage: mcp <upstream> <tool> <<'EOF'",
+    '{"arg":"value"}',
+    "EOF",
+    "Always pass JSON via heredoc (<<'EOF') to avoid shell quoting issues.",
     "Run `mcp <upstream> <tool> --help` to see tool description and input schema.",
     "Run `approval status <id>` to check approval status.",
   ].join("\n");
