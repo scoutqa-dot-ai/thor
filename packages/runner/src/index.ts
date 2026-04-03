@@ -555,6 +555,9 @@ app.post("/trigger", async (req, res) => {
     let sessionError: string | undefined;
     let finished = false;
 
+    // Track child session IDs for progress forwarding.
+    const childSessionIds = new Set<string>();
+
     for await (const event of stream) {
       if (finished) break;
 
@@ -563,7 +566,10 @@ app.post("/trigger", async (req, res) => {
       // Forward tool progress from child sessions so
       // Slack progress isn't silent while a task runs.
       if (!isParent) {
-        if (event.type === "message.part.updated") {
+        if (
+          event.type === "message.part.updated" &&
+          childSessionIds.has(event.properties.part.sessionID)
+        ) {
           const part = event.properties.part;
           if (part.type === "tool") {
             const toolPart = part as ToolPart;
@@ -592,6 +598,21 @@ app.post("/trigger", async (req, res) => {
         } else if (part.type === "tool") {
           const toolPart = part as ToolPart;
           const status = toolPart.state.status;
+
+          // Discover child sessions when a task tool starts running.
+          if (toolPart.tool === "task" && status === "running") {
+            client.session
+              .children({ path: { id: sessionId } })
+              .then((resp) => {
+                if (resp.data) {
+                  for (const child of resp.data) {
+                    childSessionIds.add(child.id);
+                  }
+                }
+              })
+              .catch(() => {});
+          }
+
           if (status === "completed" || status === "error") {
             const displayName = toolDisplayName(toolPart);
             collectedToolCalls.push({ tool: displayName, state: status });
