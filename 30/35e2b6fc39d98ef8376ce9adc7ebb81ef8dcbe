@@ -1,0 +1,27 @@
+packages/slack-mcp/src/progress-manager.ts
+  85ddf4aad4abfad9 7-8,30-38,248,262
+packages/slack-mcp/src/progress-manager.test.ts
+  85ddf4aad4abfad9 73,78-79,83-90,126,141-142,146-152
+packages/slack-mcp/src/slack.ts
+  85ddf4aad4abfad9 71-72,78,84,94,96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3035e2b6fc39d98ef8376ce9adc7ebb81ef8dcbe",
+  "prompts": {
+    "85ddf4aad4abfad9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "482bbccf-4de9-4506-a7af-d9d648205fb7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 54,
+      "total_deletions": 21,
+      "accepted_lines": 42,
+      "overriden_lines": 0
+    }
+  }
+}
