@@ -46,19 +46,34 @@ const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT |
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
 
-/** Pinned memory file — injected into every new or stale session prompt. */
-const PINNED_MEMORY_PATH = process.env.PINNED_MEMORY_PATH || "/workspace/memory/ALWAYS.md";
+/** Memory directory root. */
+const MEMORY_DIR = "/workspace/memory";
+
+/** Root memory file — injected into every new or stale session prompt. */
+const ROOT_MEMORY_PATH = `${MEMORY_DIR}/README.md`;
 
 const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
-/** Read pinned memory file, returns content or undefined. */
-function readPinnedMemory(): string | undefined {
+/** Read a file, returns trimmed content or undefined. */
+function readMemoryFile(filePath: string): string | undefined {
   try {
-    const content = readFileSync(PINNED_MEMORY_PATH, "utf-8").trim();
+    const content = readFileSync(filePath, "utf-8").trim();
     return content || undefined;
   } catch {
     return undefined;
   }
+}
+
+/** Read root memory file, returns content or undefined. */
+function readRootMemory(): string | undefined {
+  return readMemoryFile(ROOT_MEMORY_PATH);
+}
+
+/** Read per-repo memory file, returns content or undefined. */
+function readRepoMemory(directory: string): string | undefined {
+  const repo = extractRepoFromCwd(directory);
+  if (!repo) return undefined;
+  return readMemoryFile(`${MEMORY_DIR}/${repo}/README.md`);
 }
 
 /**
@@ -468,12 +483,25 @@ app.post("/trigger", async (req, res) => {
       }
     }
 
-    // --- Pinned memory: inject into new or stale sessions ---
+    // --- Memory: inject into new or stale sessions ---
     if (!resumed) {
-      const pinnedMemory = readPinnedMemory();
-      if (pinnedMemory) {
-        prompt = `[Pinned memory — important context from prior sessions]\n${pinnedMemory}\n\n${prompt}`;
-        logInfo(log, "pinned_memory_injected", { path: PINNED_MEMORY_PATH });
+      const rootMemory = readRootMemory();
+      if (rootMemory) {
+        prompt = `[Root memory — important context from prior sessions]\n${rootMemory}\n\n${prompt}`;
+      } else {
+        prompt = `[Root memory: none yet — write to ${ROOT_MEMORY_PATH} to persist cross-repo context]\n\n${prompt}`;
+      }
+
+      // Per-repo memory: inject repo-specific context
+      const repo = extractRepoFromCwd(sessionDirectory);
+      if (repo) {
+        const repoMemoryPath = `${MEMORY_DIR}/${repo}/README.md`;
+        const repoMemory = readRepoMemory(sessionDirectory);
+        if (repoMemory) {
+          prompt = `[Repo memory — context for ${repo}]\n${repoMemory}\n\n${prompt}`;
+        } else {
+          prompt = `[Repo memory: none yet — write to ${repoMemoryPath} to persist per-repo context]\n\n${prompt}`;
+        }
       }
 
       // Tool instructions: inject MCP tool list from config

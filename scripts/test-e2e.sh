@@ -209,10 +209,10 @@ else
   echo "    (not found)"
 fi
 
-# ── 5. Cross-session memory via ALWAYS.md ───────────────────────────────────
+# ── 5. Cross-session memory via README.md ───────────────────────────────────
 
 echo ""
-echo "=== Cross-Session Memory: ALWAYS.md ==="
+echo "=== Cross-Session Memory: README.md ==="
 
 MEMORY_PHRASE="MEM$(date +%s | tail -c 6)"
 CORR_KEY_A="e2e-memory-writer-$(date +%s)"
@@ -230,13 +230,13 @@ status_a=$(json_field "$trigger_a" "status")
 response_a_text=$(json_field "$trigger_a" "response")
 assert '[[ "$status_a" == "completed" ]]' "Trigger A: completed successfully" "status='$status_a', response: ${response_a_text:0:200}"
 
-# Verify ALWAYS.md was created and contains the phrase
-assert '[[ -f "$MEMORY_DIR/ALWAYS.md" ]]' "ALWAYS.md was created" "expected: $MEMORY_DIR/ALWAYS.md"
-if [[ -f "$MEMORY_DIR/ALWAYS.md" ]]; then
-  assert 'grep -q "$MEMORY_PHRASE" "$MEMORY_DIR/ALWAYS.md"' "ALWAYS.md contains the memory phrase ($MEMORY_PHRASE)" "file content: $(cat "$MEMORY_DIR/ALWAYS.md")"
+# Verify README.md was created and contains the phrase
+assert '[[ -f "$MEMORY_DIR/README.md" ]]' "README.md was created" "expected: $MEMORY_DIR/README.md"
+if [[ -f "$MEMORY_DIR/README.md" ]]; then
+  assert 'grep -q "$MEMORY_PHRASE" "$MEMORY_DIR/README.md"' "README.md contains the memory phrase ($MEMORY_PHRASE)" "file content: $(cat "$MEMORY_DIR/README.md")"
   echo ""
-  echo "  ALWAYS.md content:"
-  cat "$MEMORY_DIR/ALWAYS.md" | sed 's/^/    /'
+  echo "  README.md content:"
+  cat "$MEMORY_DIR/README.md" | sed 's/^/    /'
 fi
 
 # 5b. Trigger with corr key B (different session) — ask about the phrase
@@ -256,6 +256,54 @@ response_b_text=$(json_field "$trigger_b" "response")
 assert '[[ "$resumed_b" == "false" ]]' "Trigger B: was NOT a resumed session (different corr key)" "resumed='$resumed_b'"
 assert '[[ "$response_b_has_phrase" == "yes" ]]' "Trigger B: agent recalled cross-session memory phrase ($MEMORY_PHRASE)" "response: ${response_b_text:0:200}"
 
+# ── 6. Per-repo memory via /workspace/memory/<repo>/README.md ────────────────
+
+echo ""
+echo "=== Per-Repo Memory: <repo>/README.md ==="
+
+REPO_MEMORY_PHRASE="REPO$(date +%s | tail -c 6)"
+CORR_KEY_C="e2e-repo-memory-writer-$(date +%s)"
+CORR_KEY_D="e2e-repo-memory-reader-$(date +%s)"
+
+# 6a. Trigger asking agent to save something to per-repo memory
+echo "  Sending trigger C (asking agent to save per-repo memory phrase: $REPO_MEMORY_PHRASE)..."
+trigger_c_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"Save this fact to the per-repo memory file for this repo: the deploy canary threshold is $REPO_MEMORY_PHRASE. Write it to the repo memory README.md file shown in the repo memory hint.\",\"correlationKey\":\"$CORR_KEY_C\",\"directory\":\"$SESSION_DIR\"}" \
+  --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+trigger_c=$(echo "$trigger_c_raw" | parse_done)
+
+status_c=$(json_field "$trigger_c" "status")
+response_c_text=$(json_field "$trigger_c" "response")
+assert '[[ "$status_c" == "completed" ]]' "Trigger C: completed successfully" "status='$status_c', response: ${response_c_text:0:200}"
+
+# Verify per-repo README.md was created and contains the phrase
+REPO_MEMORY_FILE="$MEMORY_DIR/e2e-test/README.md"
+assert '[[ -f "$REPO_MEMORY_FILE" ]]' "Per-repo README.md was created" "expected: $REPO_MEMORY_FILE"
+if [[ -f "$REPO_MEMORY_FILE" ]]; then
+  assert 'grep -q "$REPO_MEMORY_PHRASE" "$REPO_MEMORY_FILE"' "Per-repo README.md contains the phrase ($REPO_MEMORY_PHRASE)" "file content: $(cat "$REPO_MEMORY_FILE")"
+  echo ""
+  echo "  Per-repo README.md content:"
+  cat "$REPO_MEMORY_FILE" | sed 's/^/    /'
+fi
+
+# 6b. Trigger with different corr key — ask about the per-repo phrase
+echo ""
+echo "  Sending trigger D (new session, different corr key — asking about per-repo phrase)..."
+trigger_d_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"What is the deploy canary threshold for this repo? Reply with just the value.\",\"correlationKey\":\"$CORR_KEY_D\",\"directory\":\"$SESSION_DIR\"}" \
+  --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+trigger_d=$(echo "$trigger_d_raw" | parse_done)
+
+session_d=$(json_field "$trigger_d" "sessionId")
+resumed_d=$(json_field "$trigger_d" "resumed")
+response_d_has_phrase=$(response_contains "$trigger_d" "$REPO_MEMORY_PHRASE")
+
+response_d_text=$(json_field "$trigger_d" "response")
+assert '[[ "$resumed_d" == "false" ]]' "Trigger D: was NOT a resumed session (different corr key)" "resumed='$resumed_d'"
+assert '[[ "$response_d_has_phrase" == "yes" ]]' "Trigger D: agent recalled per-repo memory phrase ($REPO_MEMORY_PHRASE)" "response: ${response_d_text:0:200}"
+
 # ── Results ─────────────────────────────────────────────────────────────────
 
 echo ""
@@ -263,8 +311,8 @@ echo "=== Results ==="
 echo "  $passed passed, $failed failed"
 echo ""
 
-# Clean up e2e test directory (only if we created the default one)
-[[ "$SESSION_DIR" == "/workspace/repos/e2e-test" ]] && rm -rf "${HOST_WORKSPACE}/repos/e2e-test"
+# Clean up e2e test directory and per-repo memory (only if we created the default one)
+[[ "$SESSION_DIR" == "/workspace/repos/e2e-test" ]] && rm -rf "${HOST_WORKSPACE}/repos/e2e-test" "${MEMORY_DIR}/e2e-test"
 
 if [[ $failed -gt 0 ]]; then
   echo "FAIL"
