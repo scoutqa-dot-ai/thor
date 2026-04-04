@@ -1,0 +1,23 @@
+docs/plan/2026040402_secure-memory-writes.md
+  c3516173fef114f3 1-87,89-93,95-96,98-101,103-108,110,112-119,121,123,125-135,137-146,148-153,155-184,186-191,193-203,205-210,212-217,219-223,225-232,234-243,245-247,250,252-257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "57210a27c8fafbf937ad44f702b45d6707c390ce",
+  "prompts": {
+    "c3516173fef114f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a75e48a-c0e5-4185-b785-a5f23d278a58",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 286,
+      "total_deletions": 47,
+      "accepted_lines": 234,
+      "overriden_lines": 3
+    }
+  }
+}
