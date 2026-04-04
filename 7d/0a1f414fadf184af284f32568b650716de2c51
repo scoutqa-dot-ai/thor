@@ -1,0 +1,23 @@
+docker/opencode/bin/proxy-cli.mjs
+  410fd83a52ca7744 226-230,232
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "7d0a1f414fadf184af284f32568b650716de2c51",
+  "prompts": {
+    "410fd83a52ca7744": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "00f0b947-2a50-4795-952a-7df68ee03fa4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 2,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    }
+  }
+}
