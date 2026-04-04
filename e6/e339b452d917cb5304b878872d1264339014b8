@@ -1,0 +1,27 @@
+docs/plan/2026040402_secure-memory-writes.md
+  c3516173fef114f3 49
+packages/gateway/src/service.ts
+  c3516173fef114f3 60
+packages/common/src/notes.test.ts
+  c3516173fef114f3 1028,1032-1033,1051,1054,1072,1078,1087,1089-1090,1093-1095
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e6e339b452d917cb5304b878872d1264339014b8",
+  "prompts": {
+    "c3516173fef114f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a75e48a-c0e5-4185-b785-a5f23d278a58",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 15,
+      "total_deletions": 15,
+      "accepted_lines": 15,
+      "overriden_lines": 0
+    }
+  }
+}
