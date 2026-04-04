@@ -1,0 +1,29 @@
+docker/opencode/bin/memory
+  c3516173fef114f3 1-2
+docker/opencode/agents/build.md
+  c3516173fef114f3 91,196-201
+docker-compose.yml
+  c3516173fef114f3 133
+docker/opencode/Dockerfile
+  c3516173fef114f3 28,33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2d32a651d67a2299e477a39ad0ad87c62fe05987",
+  "prompts": {
+    "c3516173fef114f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a75e48a-c0e5-4185-b785-a5f23d278a58",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 4,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}
