@@ -98,6 +98,84 @@ describe("ProgressManager", () => {
     expect(text).toContain("last: Tool0, Tool1, Tool2");
   });
 
+  it("collapses consecutive duplicate tool names", async () => {
+    const deps = mockSlackDeps();
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "start", sessionId: "s1", resumed: false },
+      deps,
+    );
+    // Send 3 grep calls to hit threshold — 1 group
+    for (let i = 0; i < 3; i++) {
+      await handleProgressEvent(
+        "C123",
+        "1710000000.001",
+        { type: "tool", tool: "Grep", status: "completed" },
+        deps,
+      );
+    }
+
+    const text = chat(deps).postMessage.mock.calls[0][0].text as string;
+    expect(text).toContain("last: Grep x3");
+  });
+
+  it("collapses only consecutive duplicates, not all occurrences", async () => {
+    const deps = mockSlackDeps();
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "start", sessionId: "s1", resumed: false },
+      deps,
+    );
+    // Send: Write, Grep, Grep — 2 groups within 3 tools
+    const tools = ["Write", "Grep", "Grep"];
+    for (const tool of tools) {
+      await handleProgressEvent(
+        "C123",
+        "1710000000.001",
+        { type: "tool", tool, status: "completed" },
+        deps,
+      );
+    }
+
+    const text = chat(deps).postMessage.mock.calls[0][0].text as string;
+    expect(text).toContain("last: Write, Grep x2");
+  });
+
+  it("keeps last 3 groups, not last 3 individual tools", async () => {
+    const deps = mockSlackDeps();
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "start", sessionId: "s1", resumed: false },
+      deps,
+    );
+    // Send: Write, Read, Grep, Grep, Read, Read — should show last 3 groups
+    const tools = ["Write", "Read", "Grep", "Grep", "Read", "Read"];
+    for (const tool of tools) {
+      await handleProgressEvent(
+        "C123",
+        "1710000000.001",
+        { type: "tool", tool, status: "completed" },
+        deps,
+      );
+    }
+
+    // Advance timer so next tool triggers an update
+    vi.advanceTimersByTime(10_000);
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "tool", tool: "Grep", status: "completed" },
+      deps,
+    );
+
+    // Last update should show last 3 groups: Grep x2, Read x2, Grep
+    const updateCall = chat(deps).update.mock.calls[0][0];
+    expect(updateCall.text).toContain("last: Grep x2, Read x2, Grep");
+  });
+
   it("throttles updates to 10s intervals", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);

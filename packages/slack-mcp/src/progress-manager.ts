@@ -27,6 +27,17 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${remaining}s`;
 }
 
+/** A run of consecutive identical tool calls. */
+interface ToolGroup {
+  name: string;
+  count: number;
+}
+
+/** Format tool groups for display: [{name:"grep",count:2},{name:"read",count:1}] → "grep x2, read" */
+function formatToolGroups(groups: ToolGroup[]): string {
+  return groups.map((g) => (g.count > 1 ? `${g.name} x${g.count}` : g.name)).join(", ");
+}
+
 /** Max characters for a Block Kit mrkdwn text object. */
 const BLOCK_TEXT_LIMIT = 3000;
 
@@ -147,7 +158,8 @@ class ProgressSession {
 
   private messageTs?: string;
   private toolCallCount = 0;
-  private lastTools: string[] = [];
+  /** Last 3 groups of consecutive identical tool calls. */
+  private lastToolGroups: ToolGroup[] = [];
   private startTime: number;
   private lastUpdateTime = 0;
   private thresholdMet = false;
@@ -172,7 +184,17 @@ class ProgressSession {
     }
 
     this.toolCallCount++;
-    this.lastTools = [...this.lastTools.slice(-2), toolName];
+
+    const last = this.lastToolGroups[this.lastToolGroups.length - 1];
+    if (last && last.name === toolName) {
+      last.count++;
+    } else {
+      this.lastToolGroups.push({ name: toolName, count: 1 });
+    }
+    // Keep only the last 3 groups
+    if (this.lastToolGroups.length > 3) {
+      this.lastToolGroups = this.lastToolGroups.slice(-3);
+    }
 
     if (!this.thresholdMet) {
       if (this.toolCallCount >= TOOL_CALL_THRESHOLD) {
@@ -231,7 +253,8 @@ class ProgressSession {
 
   private async flush(): Promise<void> {
     const elapsed = formatDuration(Date.now() - this.startTime);
-    const toolSuffix = this.lastTools.length > 0 ? ` | last: ${this.lastTools.join(", ")}` : "";
+    const toolSuffix =
+      this.lastToolGroups.length > 0 ? ` | last: ${formatToolGroups(this.lastToolGroups)}` : "";
     const text = `⏳ Working... ${this.toolCallCount} tool calls | ${elapsed} elapsed${toolSuffix}`;
 
     if (this.messageTs) {
