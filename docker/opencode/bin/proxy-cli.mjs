@@ -218,36 +218,14 @@ async function handleMcp(args) {
     arguments: toolArgs,
   });
 
-  if (!res.ok) {
+  if (!res.ok && !body.stdout) {
     process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
     process.exit(1);
   }
 
-  // Output the raw result
-  process.stdout.write(JSON.stringify(body) + "\n");
-
-  // Emit [thor:meta] for the runner to extract aliases. Shape: ThorMeta from @thor/common.
-  if (!body.isError) {
-    const meta = { cmd: "mcp", args: [upstream, tool, JSON.stringify(toolArgs)] };
-    const text = body.content?.[0]?.text;
-    if (text) meta.result = text;
-    process.stderr.write(`\n[thor:meta] ${JSON.stringify(meta)}\n`);
-  }
-
-  // If the tool call returned an error, auto-append the schema as a hint
-  if (body.isError && body.content?.[0]?.text && !body.content[0].text.includes("Unknown tool")) {
-    try {
-      const tools = await fetchTools();
-      const toolInfo = tools.find((t) => t.name === tool);
-      if (toolInfo?.inputSchema) {
-        process.stderr.write(
-          `\n[hint] Input schema for "${tool}":\n${JSON.stringify(toolInfo.inputSchema, null, 2)}\n`,
-        );
-      }
-    } catch {
-      // Best-effort hint — ignore failures
-    }
-  }
+  if (body.stdout) process.stdout.write(body.stdout + "\n");
+  if (body.stderr) process.stderr.write(body.stderr);
+  process.exit(body.exitCode ?? (res.ok ? 0 : 1));
 }
 
 async function handleApproval(args) {
