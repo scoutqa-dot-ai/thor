@@ -1,0 +1,29 @@
+packages/runner/src/index.ts
+  c3516173fef114f3 192-193,344
+packages/common/src/notes.test.ts
+  c3516173fef114f3 18,1016-1114
+packages/common/src/notes.ts
+  c3516173fef114f3 43-48,110,116,122,145,156,164,181,192,196,221-243
+packages/gateway/src/service.ts
+  c3516173fef114f3 60,77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "6e761d38d739f33e411d49be94c91ee65803999f",
+  "prompts": {
+    "c3516173fef114f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a75e48a-c0e5-4185-b785-a5f23d278a58",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 147,
+      "total_deletions": 7,
+      "accepted_lines": 147,
+      "overriden_lines": 0
+    }
+  }
+}
