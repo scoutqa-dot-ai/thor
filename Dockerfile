@@ -14,7 +14,7 @@ RUN mkdir -p /workspace && chown thor:thor /workspace
 # --- Install deps (cached until lockfile or package.json changes) ---
 FROM base AS deps
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json tsup.config.ts ./
 COPY packages/common/package.json packages/common/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/proxy/package.json packages/proxy/
