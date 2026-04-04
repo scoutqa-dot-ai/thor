@@ -1,0 +1,43 @@
+packages/proxy/package.json
+  d31016c7ddafb927 7
+tsup.config.ts
+  d31016c7ddafb927 1-13
+packages/gateway/package.json
+  d31016c7ddafb927 7
+packages/common/package.json
+  d31016c7ddafb927 7
+packages/gateway/tsconfig.json
+  d31016c7ddafb927 8
+packages/proxy/tsconfig.json
+  d31016c7ddafb927 7
+packages/runner/package.json
+  d31016c7ddafb927 7
+Dockerfile
+  d31016c7ddafb927 17
+packages/remote-cli/package.json
+  d31016c7ddafb927 7
+packages/runner/tsconfig.json
+  d31016c7ddafb927 8
+packages/slack-mcp/package.json
+  d31016c7ddafb927 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "796f3d087f87177b6bcbba8eb75224c20318c492",
+  "prompts": {
+    "d31016c7ddafb927": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8a43b74e-fb1f-4eba-b01d-15037936d5ee",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 23,
+      "total_deletions": 19,
+      "accepted_lines": 23,
+      "overriden_lines": 0
+    }
+  }
+}
