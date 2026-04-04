@@ -1,0 +1,39 @@
+packages/cli/package.json
+  eccdd9dd14df8dce 1-20
+packages/cli/src/hey-thor.ts
+  eccdd9dd14df8dce 1-247
+packages/cli/tsup.config.ts
+  eccdd9dd14df8dce 1-13
+packages/cli/tsconfig.json
+  eccdd9dd14df8dce 1-10
+packages/common/src/queue-event.ts
+  eccdd9dd14df8dce 1-16
+packages/common/src/index.ts
+  eccdd9dd14df8dce 66
+packages/cli/src/hey-thor.test.ts
+  eccdd9dd14df8dce 1-116
+packages/gateway/src/queue.ts
+  eccdd9dd14df8dce 17,19,21
+docker/hey-thor/hey-thor
+  eccdd9dd14df8dce 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "fda6ab3b7b37d7f6935b4cc006969bd9bc401684",
+  "prompts": {
+    "eccdd9dd14df8dce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc61e015-fd96-4301-88d2-1c83eeab44a1",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 434,
+      "total_deletions": 20,
+      "accepted_lines": 432,
+      "overriden_lines": 0
+    }
+  }
+}
