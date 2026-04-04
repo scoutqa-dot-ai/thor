@@ -1,0 +1,25 @@
+docker/opencode/Dockerfile
+  eccdd9dd14df8dce 13
+packages/cli/src/hey-thor.ts
+  eccdd9dd14df8dce 175-181,197-203
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "00463a313349ec7bea68bf871f522462ba5688cb",
+  "prompts": {
+    "eccdd9dd14df8dce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc61e015-fd96-4301-88d2-1c83eeab44a1",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 15,
+      "total_deletions": 5,
+      "accepted_lines": 15,
+      "overriden_lines": 0
+    }
+  }
+}
