@@ -1,0 +1,27 @@
+packages/proxy/src/index.ts
+  410fd83a52ca7744 6,429,507
+packages/proxy/src/clean-result.test.ts
+  410fd83a52ca7744 1-116
+packages/proxy/src/clean-result.ts
+  410fd83a52ca7744 1-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1ab072292c45e0e612c8c4cde551c8d729434747",
+  "prompts": {
+    "410fd83a52ca7744": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "00f0b947-2a50-4795-952a-7df68ee03fa4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 175,
+      "total_deletions": 2,
+      "accepted_lines": 175,
+      "overriden_lines": 0
+    }
+  }
+}
