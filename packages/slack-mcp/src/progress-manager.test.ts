@@ -70,18 +70,24 @@ describe("ProgressManager", () => {
     expect(chat(deps).postMessage).not.toHaveBeenCalled();
   });
 
-  it("posts initial message on the 3rd tool call", async () => {
+  it("posts initial message on the 3rd tool call with context blocks", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
 
     expect(chat(deps).postMessage).toHaveBeenCalledOnce();
-    expect(chat(deps).postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "C123",
-        thread_ts: "1710000000.001",
-        text: expect.stringContaining("3 tool calls"),
-      }),
-    );
+    const call = chat(deps).postMessage.mock.calls[0][0];
+    expect(call).toMatchObject({
+      channel: "C123",
+      thread_ts: "1710000000.001",
+      text: expect.stringContaining("3 tool calls"),
+    });
+    // Verify context blocks are used for compact rendering
+    expect(call.blocks).toEqual([
+      {
+        type: "context",
+        elements: [{ type: "mrkdwn", text: expect.stringContaining("3 tool calls") }],
+      },
+    ]);
   });
 
   it("shows last 3 tool names in the progress message", async () => {
@@ -117,7 +123,7 @@ describe("ProgressManager", () => {
     expect(chat(deps).update).toHaveBeenCalledOnce();
   });
 
-  it("finish with completed status edits to done and registers for cleanup", async () => {
+  it("finish with completed status edits to done with context blocks", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
 
@@ -132,13 +138,18 @@ describe("ProgressManager", () => {
     };
     await handleProgressEvent("C123", "1710000000.001", doneEvent, deps);
 
-    expect(chat(deps).update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "C123",
-        ts: "msg.001",
-        text: expect.stringContaining("✅ Done"),
-      }),
-    );
+    const call = chat(deps).update.mock.calls[0][0];
+    expect(call).toMatchObject({
+      channel: "C123",
+      ts: "msg.001",
+      text: expect.stringContaining("✅ Done"),
+    });
+    expect(call.blocks).toEqual([
+      {
+        type: "context",
+        elements: [{ type: "mrkdwn", text: expect.stringContaining("✅ Done") }],
+      },
+    ]);
     expect(chat(deps).delete).not.toHaveBeenCalled();
     expect(getRegistrySize()).toBe(1);
   });

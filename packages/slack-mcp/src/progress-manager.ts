@@ -1,6 +1,12 @@
 import { createLogger, logInfo, logError } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
-import { postMessage, updateMessage, deleteMessage, type SlackDeps } from "./slack.js";
+import {
+  postMessage,
+  updateMessage,
+  deleteMessage,
+  type SlackDeps,
+  type SlackBlock,
+} from "./slack.js";
 
 const log = createLogger("slack-progress");
 
@@ -19,6 +25,16 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   const remaining = seconds % 60;
   return `${minutes}m ${remaining}s`;
+}
+
+/** Max characters for a Block Kit mrkdwn text object. */
+const BLOCK_TEXT_LIMIT = 3000;
+
+/** Wrap text in a context block for compact, muted rendering in Slack. */
+function contextBlocks(text: string): SlackBlock[] {
+  const truncated =
+    text.length > BLOCK_TEXT_LIMIT ? text.slice(0, BLOCK_TEXT_LIMIT - 1) + "…" : text;
+  return [{ type: "context", elements: [{ type: "mrkdwn", text: truncated }] }];
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +245,8 @@ class ProgressSession {
 
   private async post(text: string): Promise<void> {
     try {
-      const result = await postMessage(this.channel, text, this.threadTs, this.deps);
+      const blocks = contextBlocks(text);
+      const result = await postMessage(this.channel, text, this.threadTs, this.deps, blocks);
       this.messageTs = result.ts;
       // Register immediately — this is the key to avoiding the race condition
       registerProgress(this.channel, this.threadTs, this.messageTs, "in_progress", this.deps);
@@ -242,7 +259,8 @@ class ProgressSession {
   private async update(text: string): Promise<void> {
     if (!this.messageTs) return;
     try {
-      await updateMessage(this.channel, this.messageTs, text, this.deps);
+      const blocks = contextBlocks(text);
+      await updateMessage(this.channel, this.messageTs, text, this.deps, blocks);
     } catch (err) {
       logError(log, "update_error", err instanceof Error ? err.message : String(err));
     }

@@ -68,16 +68,20 @@ export type SlackFileReadResult =
       data: string;
     };
 
+export type SlackBlock = Record<string, unknown>;
+
 export async function postMessage(
   channel: string,
   text: string,
   threadTs: string | undefined,
   deps: SlackDeps,
+  blocks?: SlackBlock[],
 ): Promise<{ ts: string; channel: string }> {
   const result = await deps.client.chat.postMessage({
     channel,
     text,
     ...(threadTs ? { thread_ts: threadTs } : {}),
+    ...(blocks ? { blocks } : {}),
   });
   return { ts: result.ts ?? "", channel: result.channel ?? channel };
 }
@@ -87,8 +91,9 @@ export async function updateMessage(
   ts: string,
   text: string,
   deps: SlackDeps,
+  blocks?: SlackBlock[],
 ): Promise<void> {
-  await deps.client.chat.update({ channel, ts, text });
+  await deps.client.chat.update({ channel, ts, text, ...(blocks ? { blocks } : {}) });
 }
 
 export async function deleteMessage(channel: string, ts: string, deps: SlackDeps): Promise<void> {
