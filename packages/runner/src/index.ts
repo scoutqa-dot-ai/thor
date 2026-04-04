@@ -26,6 +26,7 @@ import {
   getSessionIdFromNotes,
   isAliasableTool,
   extractAliases,
+  extractThorMeta,
   registerAlias,
   getNotesLineCount,
   isAllowedDirectory,
@@ -798,47 +799,25 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
 
 /**
  * Parse a tool result for approval-required signal.
- * The proxy returns a JSON content item with { type: "approval_required", actionId, proxyName, tool }.
+ * The proxy emits a [thor:meta] line with { type: "approval", actionId, proxyName, tool }.
  */
 function parseApprovalResult(
   output: string,
   tool: string,
   args: Record<string, unknown>,
 ): ProgressEvent | undefined {
-  if (!output.includes("approval_required") && !output.includes("Approval required")) {
-    return undefined;
-  }
-
-  // Try structured JSON first (proxy embeds a JSON content item)
-  const jsonMatch = output.match(/\{[^{}]*"type"\s*:\s*"approval_required"[^{}]*\}/);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (parsed.actionId) {
-        return {
-          type: "approval_required",
-          actionId: parsed.actionId,
-          tool,
-          args,
-          ...(parsed.proxyName ? { proxyName: parsed.proxyName } : {}),
-        };
-      }
-    } catch {
-      // Malformed JSON — fall through to regex
+  for (const meta of extractThorMeta(output)) {
+    if (meta.type === "approval") {
+      return {
+        type: "approval_required",
+        actionId: meta.actionId,
+        tool,
+        args,
+        proxyName: meta.proxyName,
+      };
     }
   }
-
-  // Regex fallback for older proxy versions
-  const actionMatch = output.match(/Action ID:\s*([0-9a-f-]{36})/);
-  if (!actionMatch) return undefined;
-  const nameMatch = output.match(/Proxy-Name:\s*([a-z0-9][a-z0-9-]*)/);
-  return {
-    type: "approval_required",
-    actionId: actionMatch[1],
-    tool,
-    args,
-    ...(nameMatch ? { proxyName: nameMatch[1] } : {}),
-  };
+  return undefined;
 }
 
 // --- Startup ---

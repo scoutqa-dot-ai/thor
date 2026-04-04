@@ -314,6 +314,203 @@ response_d_text=$(json_field "$trigger_d" "response")
 assert '[[ "$resumed_d" == "false" ]]' "Trigger D: was NOT a resumed session (different corr key)" "resumed='$resumed_d'"
 assert '[[ "$response_d_has_phrase" == "yes" ]]' "Trigger D: agent recalled per-repo memory phrase ($REPO_MEMORY_PHRASE)" "response: ${response_d_text:0:200}"
 
+# ── 7. Approval Flow ──────────────────────────────────────────────────────────
+
+echo ""
+echo "=== Approval Flow ==="
+
+# 7a. Discover an approval-required tool from an upstream
+# The proxy enforces repo-to-proxy access, so we need a directory that maps to a
+# configured repo. Scan the workspace config for a repo that has a proxy with
+# approval-required tools.
+APPROVAL_UPSTREAM=""
+APPROVAL_TOOL=""
+APPROVAL_DIR=""
+CONFIG_FILE="${HOST_WORKSPACE}/config.json"
+
+if [[ -f "$CONFIG_FILE" ]]; then
+  # Build a list of "repo:upstream" pairs — only connected upstreams with approve lists
+  repo_upstream_pairs=$(curl -sf "$PROXY_URL/health" 2>/dev/null | node -e "
+    const health = JSON.parse(require('fs').readFileSync(0,'utf8'));
+    const connected = new Set(
+      Object.entries(health.instances || {})
+        .filter(([, info]) => info.connected)
+        .map(([name]) => name)
+    );
+    const cfg = JSON.parse(require('fs').readFileSync('$CONFIG_FILE','utf8'));
+    const repos = cfg.repos || {};
+    const proxies = cfg.proxies || {};
+    for (const [repo, rcfg] of Object.entries(repos)) {
+      for (const p of (rcfg.proxies || [])) {
+        if (connected.has(p) && (proxies[p]?.approve || []).length > 0) {
+          console.log(repo + ':' + p);
+        }
+      }
+    }
+  " 2>/dev/null || echo "")
+
+  for pair in $repo_upstream_pairs; do
+    repo_name="${pair%%:*}"
+    upstream_name="${pair##*:}"
+    test_dir="/workspace/repos/$repo_name"
+    host_dir="${HOST_WORKSPACE}/repos/$repo_name"
+    # Repo directory must exist on host (mounted into container)
+    if [[ ! -d "$host_dir" ]]; then
+      continue
+    fi
+    tools_json=$(curl -sf "$PROXY_URL/$upstream_name/tools" \
+      -H "x-thor-directory: $test_dir" 2>/dev/null || echo '{"tools":[]}')
+    found_tool=$(echo "$tools_json" | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+      const t = (d.tools || []).find(t => t.classification === 'approve');
+      console.log(t ? t.name : '');
+    " 2>/dev/null || echo "")
+    if [[ -n "$found_tool" ]]; then
+      APPROVAL_UPSTREAM="$upstream_name"
+      APPROVAL_TOOL="$found_tool"
+      APPROVAL_DIR="$test_dir"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$APPROVAL_TOOL" ]]; then
+  echo "  ⚠ No approval-required tools found — skipping approval flow tests"
+else
+  echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
+
+  # 7b. Proxy-level: call the approval-required tool directly
+  echo "  Calling tool via proxy (expecting approval interception)..."
+  call_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/tools/call" \
+    -H 'Content-Type: application/json' \
+    -H "x-thor-directory: $APPROVAL_DIR" \
+    -d "{\"name\":\"$APPROVAL_TOOL\",\"arguments\":{}}" \
+    2>/dev/null || echo '{}')
+
+  # Parse action ID — handle both {stdout,stderr,exitCode} and {content:[...]} formats
+  action_id=$(echo "$call_raw" | node -e "
+    const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+    // New format: {stdout, stderr, exitCode}
+    let text = d.stdout || '';
+    // Old format: {content: [{type:'text', text:'...'},...]}
+    if (!text && Array.isArray(d.content)) {
+      text = d.content.map(c => c.text || '').join(' ');
+    }
+    const m = text.match(/\"actionId\"\s*:\s*\"([^\"]+)\"/);
+    console.log(m ? m[1] : '');
+  " 2>/dev/null || echo "")
+
+  call_not_error=$(echo "$call_raw" | node -e "
+    const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+    // New format: exitCode === 0; Old format: isError === false
+    const ok = d.exitCode === 0 || d.isError === false;
+    console.log(ok ? 'yes' : 'no');
+  " 2>/dev/null || echo "no")
+
+  assert '[[ -n "$action_id" ]]' "Proxy: tool call returned an action ID" "response: ${call_raw:0:300}"
+  assert '[[ "$call_not_error" == "yes" ]]' "Proxy: tool call was not an error" "response: ${call_raw:0:200}"
+
+  if [[ -n "$action_id" ]]; then
+    # 7c. Check approval status is pending
+    status_raw=$(curl -sf "$PROXY_URL/approval/$action_id" 2>/dev/null || echo '{}')
+    status_val=$(json_field "$status_raw" "status")
+    status_tool=$(json_field "$status_raw" "tool")
+    assert '[[ "$status_val" == "pending" ]]' "Proxy: approval status is 'pending'" "status='$status_val'"
+    assert '[[ "$status_tool" == "$APPROVAL_TOOL" ]]' "Proxy: approval record has correct tool name" "tool='$status_tool'"
+
+    # 7d. List pending approvals — verify our action appears
+    pending_raw=$(curl -sf "$PROXY_URL/approvals" 2>/dev/null || echo '{"approvals":[]}')
+    pending_has_action=$(echo "$pending_raw" | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+      const found = (d.approvals || []).some(a => a.id === '$action_id');
+      console.log(found ? 'yes' : 'no');
+    " 2>/dev/null || echo "no")
+    assert '[[ "$pending_has_action" == "yes" ]]' "Proxy: action appears in pending approvals list" "actionId=$action_id"
+
+    # 7e. Reject the approval (safe — no side effects on the upstream MCP)
+    echo "  Rejecting approval $action_id..."
+    resolve_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/approval/$action_id/resolve" \
+      -H 'Content-Type: application/json' \
+      -d '{"decision":"rejected","reviewer":"e2e-test","reason":"e2e test — automated rejection"}' \
+      2>/dev/null || echo '{}')
+    resolve_status=$(json_field "$resolve_raw" "status")
+    resolve_reviewer=$(json_field "$resolve_raw" "reviewer")
+    assert '[[ "$resolve_status" == "rejected" ]]' "Proxy: approval was rejected" "status='$resolve_status'"
+    assert '[[ "$resolve_reviewer" == "e2e-test" ]]' "Proxy: reviewer recorded correctly" "reviewer='$resolve_reviewer'"
+
+    # 7f. Verify it's no longer in the pending list
+    pending_after=$(curl -sf "$PROXY_URL/approvals" 2>/dev/null || echo '{"approvals":[]}')
+    still_pending=$(echo "$pending_after" | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+      const found = (d.approvals || []).some(a => a.id === '$action_id');
+      console.log(found ? 'yes' : 'no');
+    " 2>/dev/null || echo "yes")
+    assert '[[ "$still_pending" == "no" ]]' "Proxy: rejected action no longer in pending list" "actionId=$action_id"
+
+    # 7g. Verify final status via GET confirms rejection
+    final_raw=$(curl -sf "$PROXY_URL/approval/$action_id" 2>/dev/null || echo '{}')
+    final_status=$(json_field "$final_raw" "status")
+    assert '[[ "$final_status" == "rejected" ]]' "Proxy: final status confirms 'rejected'" "status='$final_status'"
+  fi
+
+  # ── 7h–7j. End-to-end: rejection lands back in OpenCode session ───────────
+  #
+  # Create a pending approval via proxy, reject it, then ask the agent to poll
+  # the status using `approval status <id>` — verifying the rejection message
+  # is visible inside the OpenCode session.
+
+  echo ""
+  echo "  --- E2E: Rejection reaches OpenCode session ---"
+
+  # 7h. Create a fresh pending approval via proxy API
+  echo "  Creating pending approval via proxy..."
+  e2e_call_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/tools/call" \
+    -H 'Content-Type: application/json' \
+    -H "x-thor-directory: $APPROVAL_DIR" \
+    -d "{\"name\":\"$APPROVAL_TOOL\",\"arguments\":{}}" \
+    2>/dev/null || echo '{}')
+
+  e2e_action_id=$(echo "$e2e_call_raw" | node -e "
+    const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+    let text = d.stdout || '';
+    if (!text && Array.isArray(d.content)) text = d.content.map(c => c.text || '').join(' ');
+    const m = text.match(/\"actionId\"\s*:\s*\"([^\"]+)\"/);
+    console.log(m ? m[1] : '');
+  " 2>/dev/null || echo "")
+
+  if [[ -z "$e2e_action_id" ]]; then
+    echo "  ⚠ Could not create pending approval — skipping session tests"
+  else
+    # 7i. Reject the approval via proxy API
+    echo "  Rejecting approval $e2e_action_id..."
+    curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/approval/$e2e_action_id/resolve" \
+      -H 'Content-Type: application/json' \
+      -d '{"decision":"rejected","reviewer":"e2e-test","reason":"e2e test — automated rejection"}' \
+      2>/dev/null >/dev/null
+
+    # 7j. Ask the agent to check the approval status — rejection should be visible
+    CORR_KEY_APPROVAL="e2e-approval-$(date +%s)"
+    echo "  Sending trigger (asking agent to check approval status of $e2e_action_id)..."
+    approval_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+      -H 'Content-Type: application/json' \
+      -d "{\"prompt\":\"Run: approval status $e2e_action_id\\nThen tell me: what is the status field? Is it pending, approved, or rejected?\",\"correlationKey\":\"$CORR_KEY_APPROVAL\",\"directory\":\"$APPROVAL_DIR\"}" \
+      --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+    approval_trigger=$(echo "$approval_trigger_raw" | parse_done)
+
+    approval_session=$(json_field "$approval_trigger" "sessionId")
+    approval_trigger_text=$(json_field "$approval_trigger" "response")
+    assert '[[ -n "$approval_session" ]]' "E2E: trigger got a session ID" "sessionId='$approval_session'"
+
+    # Check that the agent's response confirms rejection
+    response_has_rejected=$(echo "$approval_trigger" | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+      const text = ((d.response || '') + JSON.stringify(d.toolCalls || [])).toLowerCase();
+      console.log(text.includes('rejected') || text.includes('rejection') ? 'yes' : 'no');
+    " 2>/dev/null || echo "no")
+    assert '[[ "$response_has_rejected" == "yes" ]]' "E2E: agent confirms rejection landed in session" "response: ${approval_trigger_text:0:300}"
+  fi
+fi
+
 # ── Results ─────────────────────────────────────────────────────────────────
 
 echo ""

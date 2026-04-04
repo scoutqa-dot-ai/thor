@@ -1,5 +1,5 @@
 import express from "express";
-import { createLogger, logInfo, logError } from "@thor/common";
+import { createLogger, logInfo, logError, computeGitAlias, formatThorMeta } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
 import { validateCwd, validateGitArgs, validateGhArgs, validateScoutqaArgs } from "./policy.js";
 
@@ -49,6 +49,10 @@ app.post("/exec/git", async (req, res) => {
 
     logInfo(log, "exec_git", { args, cwd, ...thorIds(req) });
     const result = await execCommand("git", args, cwd);
+    if ((result.exitCode ?? 0) === 0) {
+      const alias = computeGitAlias("git", args, cwd);
+      if (alias) result.stderr = (result.stderr || "") + formatThorMeta(alias);
+    }
     res.json(result);
   } catch (err) {
     logError(log, "exec_git_error", err instanceof Error ? err.message : String(err), thorIds(req));
@@ -79,6 +83,10 @@ app.post("/exec/gh", async (req, res) => {
 
     logInfo(log, "exec_gh", { args, cwd, ...thorIds(req) });
     const result = await execCommand("gh", args, cwd);
+    if ((result.exitCode ?? 0) === 0) {
+      const alias = computeGitAlias("gh", args, cwd);
+      if (alias) result.stderr = (result.stderr || "") + formatThorMeta(alias);
+    }
     res.json(result);
   } catch (err) {
     logError(log, "exec_gh_error", err instanceof Error ? err.message : String(err), thorIds(req));

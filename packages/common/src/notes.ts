@@ -264,6 +264,22 @@ export function isAliasableTool(tool: string): boolean {
   return ALIASABLE_TOOLS.has(tool);
 }
 
+/** Git subcommands that produce branch aliases worth tracking. */
+const ALIASABLE_GIT_SUBCOMMANDS = new Set(["push", "checkout", "switch", "worktree"]);
+
+/** Check if a git/gh command's args represent an aliasable branch operation. */
+export function isAliasableGitCommand(args: string[]): boolean {
+  return args.length > 0 && ALIASABLE_GIT_SUBCOMMANDS.has(args[0]);
+}
+
+/** MCP tool names that produce aliases worth tracking. */
+const ALIASABLE_MCP_TOOLS = new Set(["post_message"]);
+
+/** Check if an MCP tool name produces aliases worth tracking. */
+export function isAliasableMcpTool(tool: string): boolean {
+  return ALIASABLE_MCP_TOOLS.has(tool);
+}
+
 /** Zod schema for slack_post_message input. */
 const SlackPostMessageInput = z.object({
   channel: z.string().optional(),
@@ -279,9 +295,9 @@ const SlackPostMessageOutput = z.object({
 /**
  * Extract aliases from completed tool call artifacts.
  *
- * Each tool has specific extraction logic:
- * - `slack_post_message`: new thread → `slack:thread:{ts}`, reply → `slack:thread:{thread_ts}`
- * - `bash` with [thor:meta]: parses structured metadata from remote-cli output → `git:branch:{repo}:{branch}`
+ * Two sources:
+ * - `bash` with [thor:meta]: pre-computed aliases from remote-cli / proxy services
+ * - `slack_post_message`: direct MCP tool (not proxied through bash)
  *
  * Best-effort: malformed artifacts are silently skipped.
  */
@@ -291,44 +307,10 @@ export function extractAliases(artifacts: ToolArtifact[]): ExtractedAlias[] {
   for (const raw of artifacts) {
     try {
       if (raw.tool === "bash") {
-        // Parse [thor:meta] lines emitted by remote-cli.mjs and proxy-cli.mjs
-        const metaEntries = extractThorMeta(raw.output);
-        for (const meta of metaEntries) {
-          // git/gh: extract branch alias
-          if (meta.cmd === "git" || meta.cmd === "gh") {
-            const branch = extractBranchFromGitArgs(meta.args);
-            if (!branch) continue;
-            const repo = inferRepoFromPath(meta.cwd || "");
-            if (!repo) continue;
-            aliases.push({
-              alias: `git:branch:${repo}:${branch}`,
-              context: `${meta.cmd} ${meta.args[0]} in ${meta.cwd || "(default cwd)"}`,
-            });
-            continue;
-          }
-
-          // mcp: extract Slack thread alias from post_message results
-          // args = ["slack", "post_message", '{"channel":"C123",...}']
-          if (meta.cmd === "mcp" && meta.args[1] === "post_message" && meta.result) {
-            let toolInput: { channel?: string; thread_ts?: string } = {};
-            try {
-              toolInput = JSON.parse(meta.args[2] || "{}");
-            } catch {}
-            const channel = toolInput.channel || "unknown";
-
-            if (toolInput.thread_ts) {
-              aliases.push({
-                alias: `slack:thread:${toolInput.thread_ts}`,
-                context: `Replied in thread in ${channel}`,
-              });
-            } else {
-              const output = SlackPostMessageOutput.safeParse(JSON.parse(meta.result));
-              if (!output.success) continue;
-              aliases.push({
-                alias: `slack:thread:${output.data.ts}`,
-                context: `New thread posted to ${output.data.channel || channel}`,
-              });
-            }
+        // [thor:meta] lines contain pre-computed aliases from the service layer
+        for (const meta of extractThorMeta(raw.output)) {
+          if (meta.type === "alias") {
+            aliases.push({ alias: meta.alias, context: meta.context });
           }
         }
         continue;
@@ -366,30 +348,42 @@ export function extractAliases(artifacts: ToolArtifact[]): ExtractedAlias[] {
 }
 
 /**
- * Schema for [thor:meta] JSON payloads emitted to stderr by CLI wrappers.
+ * Schemas for [thor:meta] JSON payloads emitted to stderr by service layers.
  *
- * Uniform shape: { cmd, args: string[], cwd?, result? }
+ * Discriminated union on `type`:
+ * - `alias`: pre-computed correlation alias (git branch, Slack thread, etc.)
+ * - `approval`: approval-required signal from the proxy
  *
- * Producers:
- * - remote-cli.mjs: { cmd: "git"|"gh", args: ["push","origin","main"], cwd }
- * - proxy-cli.mjs:  { cmd: "mcp", args: ["slack","post_message",'{"channel":"C123"}'], result? }
- *
- * Consumer: extractThorMeta() in this module, called from extractAliases().
+ * Producers: remote-cli service, proxy service.
+ * Consumer: extractThorMeta() in this module.
  */
-export const ThorMetaSchema = z.object({
-  cmd: z.string(),
-  args: z.array(z.string()).default([]),
-  cwd: z.string().optional(),
-  result: z.string().optional(),
+export const ThorMetaAliasSchema = z.object({
+  type: z.literal("alias"),
+  alias: z.string(),
+  context: z.string(),
 });
 
+export const ThorMetaApprovalSchema = z.object({
+  type: z.literal("approval"),
+  actionId: z.string(),
+  proxyName: z.string(),
+  tool: z.string(),
+});
+
+export const ThorMetaSchema = z.discriminatedUnion("type", [
+  ThorMetaAliasSchema,
+  ThorMetaApprovalSchema,
+]);
+
+export type ThorMetaAlias = z.infer<typeof ThorMetaAliasSchema>;
+export type ThorMetaApproval = z.infer<typeof ThorMetaApprovalSchema>;
 export type ThorMeta = z.infer<typeof ThorMetaSchema>;
 
 /**
  * Extract all [thor:meta] entries from tool output.
  * Returns parsed metadata objects; malformed lines are silently skipped.
  */
-function extractThorMeta(output: string): ThorMeta[] {
+export function extractThorMeta(output: string): ThorMeta[] {
   const results: ThorMeta[] = [];
   const regex = /\[thor:meta]\s*(.+)/g;
   let match;
@@ -410,7 +404,7 @@ function extractThorMeta(output: string): ThorMeta[] {
  * Returns just the directory name (no owner prefix) — the gateway emits
  * a short alias using the same repo-name-only format so they match.
  */
-function inferRepoFromPath(cwdPath: string): string | undefined {
+export function inferRepoFromPath(cwdPath: string): string | undefined {
   if (!cwdPath) return undefined;
   // Match /workspace/repos/{name} or /workspace/worktrees/{name}
   const match = cwdPath.match(/\/workspace\/(?:repos|worktrees)\/([^/]+)/);
@@ -428,10 +422,11 @@ function inferRepoFromPath(cwdPath: string): string | undefined {
  * - checkout -b <branch>        → branch
  * - switch <branch>             → branch
  * - switch -c <branch>          → branch
+ * - worktree add [-b <branch>] <path> [<commit-ish>]
  *
  * Returns undefined for unrecognized patterns.
  */
-function extractBranchFromGitArgs(args: string[]): string | undefined {
+export function extractBranchFromGitArgs(args: string[]): string | undefined {
   if (args.length < 2) return undefined;
   const subcommand = args[0];
 
@@ -485,6 +480,66 @@ function extractBranchFromGitArgs(args: string[]): string | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * Build a [thor:meta] line from a typed payload.
+ * Produces the string that services embed in stderr.
+ */
+export function formatThorMeta(meta: ThorMeta): string {
+  return `\n[thor:meta] ${JSON.stringify(meta)}\n`;
+}
+
+/**
+ * Compute a git branch alias from command args and cwd.
+ * Returns a ThorMetaAlias or undefined if not aliasable.
+ */
+export function computeGitAlias(
+  cmd: "git" | "gh",
+  args: string[],
+  cwd: string,
+): ThorMetaAlias | undefined {
+  if (!isAliasableGitCommand(args)) return undefined;
+  const branch = extractBranchFromGitArgs(args);
+  if (!branch) return undefined;
+  const repo = inferRepoFromPath(cwd);
+  if (!repo) return undefined;
+  return {
+    type: "alias",
+    alias: `git:branch:${repo}:${branch}`,
+    context: `${cmd} ${args[0]} in ${cwd}`,
+  };
+}
+
+/**
+ * Compute a Slack thread alias from post_message tool call.
+ * Returns a ThorMetaAlias or undefined if not aliasable.
+ */
+export function computeSlackAlias(
+  toolArgs: Record<string, unknown>,
+  result: string,
+): ThorMetaAlias | undefined {
+  const channel = (toolArgs.channel as string) || "unknown";
+
+  if (toolArgs.thread_ts) {
+    return {
+      type: "alias",
+      alias: `slack:thread:${toolArgs.thread_ts}`,
+      context: `Replied in thread in ${channel}`,
+    };
+  }
+
+  try {
+    const output = SlackPostMessageOutput.safeParse(JSON.parse(result));
+    if (!output.success) return undefined;
+    return {
+      type: "alias",
+      alias: `slack:thread:${output.data.ts}`,
+      context: `New thread posted to ${output.data.channel || channel}`,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 /**
