@@ -1,0 +1,37 @@
+packages/remote-cli/src/index.ts
+  011571b16892f6e5 2,52-55,86-89
+packages/proxy/src/index.ts
+  011571b16892f6e5 18-20,394-395,400,421-425
+packages/common/src/notes.test.ts
+  011571b16892f6e5 21-22,27-28,686-688,727,729-731,749-753,755-758,763-764,768-770,773,775-777,782-783,789-790,819-821,826,833,835-838,843-844,848,909-910,920,922-925,932-933,936-939,941-986,988-1020,1023-1032,1035-1040,1042-1058
+packages/common/src/notes.ts
+  011571b16892f6e5 267-282,298-300,310-313,351,353-355,357-358,360-370,373-376,485-539
+docs/plan/2026040201_mcp-tool-cli.md
+  011571b16892f6e5 322,325-327,408,430
+packages/runner/src/index.ts
+  011571b16892f6e5 29,802,809-810,813,815-817,820
+packages/runner/src/approval-parser.test.ts
+  011571b16892f6e5 2-3,5-7,11,13-17,20-29,32,34,37-39,42-53
+packages/common/src/index.ts
+  011571b16892f6e5 38-39,44-51,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "83fe4fcda25541c530e209471f71727e52b9b8ac",
+  "prompts": {
+    "011571b16892f6e5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac42fe46-b845-4848-83f8-e01fdc98b79c",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 501,
+      "total_deletions": 416,
+      "accepted_lines": 394,
+      "overriden_lines": 0
+    }
+  }
+}
