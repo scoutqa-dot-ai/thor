@@ -1,0 +1,23 @@
+packages/gateway/src/cron.test.ts
+  eccdd9dd14df8dce 1,6,8,10,22,25-32,48-52,55,58-66,79-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "966df5e0152c917c6b3de27ea4bca2a9335b6fc8",
+  "prompts": {
+    "eccdd9dd14df8dce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc61e015-fd96-4301-88d2-1c83eeab44a1",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 50,
+      "total_deletions": 210,
+      "accepted_lines": 47,
+      "overriden_lines": 0
+    }
+  }
+}
