@@ -1,0 +1,31 @@
+packages/common/src/workspace-config.ts
+  c3516173fef114f3 27-28
+packages/remote-cli/src/policy.ts
+  c3516173fef114f3 2,339-383
+packages/common/src/index.ts
+  c3516173fef114f3 40
+packages/remote-cli/src/policy.test.ts
+  c3516173fef114f3 2,267-340
+packages/remote-cli/src/index.ts
+  c3516173fef114f3 5-9,16-21,156-243
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "77fd4f6d2859edaab288690f0c514f4b40aaf92c",
+  "prompts": {
+    "c3516173fef114f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a75e48a-c0e5-4185-b785-a5f23d278a58",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 237,
+      "total_deletions": 4,
+      "accepted_lines": 229,
+      "overriden_lines": 0
+    }
+  }
+}
