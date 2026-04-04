@@ -1,0 +1,29 @@
+packages/proxy/src/unwrap-result.ts
+  410fd83a52ca7744 1-16
+docker/opencode/bin/proxy-cli.mjs
+  410fd83a52ca7744 226-228,231-232,234-235,241-242
+packages/proxy/src/unwrap-result.test.ts
+  410fd83a52ca7744 1-49
+packages/proxy/src/index.ts
+  410fd83a52ca7744 6,429
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "adf7c740fe8c330061cfd4ae88560094f9122396",
+  "prompts": {
+    "410fd83a52ca7744": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "00f0b947-2a50-4795-952a-7df68ee03fa4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 76,
+      "total_deletions": 6,
+      "accepted_lines": 76,
+      "overriden_lines": 0
+    }
+  }
+}
