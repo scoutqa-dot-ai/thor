@@ -1,0 +1,27 @@
+packages/runner/src/index.ts
+  4beb28b237935234 49-50,52-53,57-58,60,67-76,486,488-492,495-504
+docker/opencode/agents/build.md
+  4beb28b237935234 180,182,184-187,189-190,192-194,196
+scripts/test-e2e.sh
+  4beb28b237935234 212,215,233-236,238-239,259-306,314-315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1f1caa53e9d5948c751df3da91c5ab50de4c20f9",
+  "prompts": {
+    "4beb28b237935234": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4419cba2-aaf9-4a82-92a6-0ecd6bf6a151",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 125,
+      "total_deletions": 41,
+      "accepted_lines": 109,
+      "overriden_lines": 0
+    }
+  }
+}
