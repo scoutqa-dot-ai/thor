@@ -387,15 +387,12 @@ else
     -d "{\"name\":\"$APPROVAL_TOOL\",\"arguments\":{}}" \
     2>/dev/null || echo '{}')
 
-  # Parse action ID — handle both {stdout,stderr,exitCode} and {content:[...]} formats
+  # Parse action ID — check stdout, stderr (thor:meta), and content (legacy MCP format)
   action_id=$(echo "$call_raw" | node -e "
     const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-    // New format: {stdout, stderr, exitCode}
-    let text = d.stdout || '';
-    // Old format: {content: [{type:'text', text:'...'},...]}
-    if (!text && Array.isArray(d.content)) {
-      text = d.content.map(c => c.text || '').join(' ');
-    }
+    const parts = [d.stdout || '', d.stderr || ''];
+    if (Array.isArray(d.content)) parts.push(...d.content.map(c => c.text || ''));
+    const text = parts.join(' ');
     const m = text.match(/\"actionId\"\s*:\s*\"([^\"]+)\"/);
     console.log(m ? m[1] : '');
   " 2>/dev/null || echo "")
@@ -472,8 +469,9 @@ else
 
   e2e_action_id=$(echo "$e2e_call_raw" | node -e "
     const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-    let text = d.stdout || '';
-    if (!text && Array.isArray(d.content)) text = d.content.map(c => c.text || '').join(' ');
+    const parts = [d.stdout || '', d.stderr || ''];
+    if (Array.isArray(d.content)) parts.push(...d.content.map(c => c.text || ''));
+    const text = parts.join(' ');
     const m = text.match(/\"actionId\"\s*:\s*\"([^\"]+)\"/);
     console.log(m ? m[1] : '');
   " 2>/dev/null || echo "")
@@ -509,6 +507,132 @@ else
     " 2>/dev/null || echo "no")
     assert '[[ "$response_has_rejected" == "yes" ]]' "E2E: agent confirms rejection landed in session" "response: ${approval_trigger_text:0:300}"
   fi
+fi
+
+# ── 8. Alias-based session matching via [thor:meta] ──────────────────────────
+#
+# When the agent runs an aliasable git command (push, worktree add), remote-cli
+# emits a [thor:meta] alias in stderr. The runner extracts this and registers it
+# in the notes file as `### Session: git:branch:<repo>:<branch>`.
+# The gateway uses resolveCorrelationKeys() to grep the notes files and map the
+# alias back to the canonical correlationKey, enabling session continuity.
+#
+# Test flow:
+#   1. Trigger #1 (runner): agent runs git worktree add → alias registered
+#   2. Trigger #2 (gateway /cron): sends the alias as correlationKey
+#      → gateway resolves alias → runner resumes session A
+#   3. Verify: notes file has follow-up entry with same session ID
+
+echo ""
+echo "=== Alias-based Session Matching (thor:meta) ==="
+
+GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
+CRON_SECRET="${CRON_SECRET:-$(docker exec thor-cron-1 printenv CRON_SECRET 2>/dev/null)}"
+
+ALIAS_TS=$(date +%s)
+ALIAS_BRANCH="e2e-alias-${ALIAS_TS}"
+CORR_KEY_ALIAS="e2e-alias-session-${ALIAS_TS}"
+ALIAS_PHRASE="ALIAS$(echo $ALIAS_TS | tail -c 6)"
+ALIAS_REPO="katalon-scout-private"
+ALIAS_DIR="/workspace/repos/$ALIAS_REPO"
+ALIAS_WORKTREE="/workspace/worktrees/$ALIAS_REPO/$ALIAS_BRANCH"
+ALIAS_NOTES_FILE="$WORKLOG_DIR/$TODAY/notes/$(echo "$CORR_KEY_ALIAS" | sed 's/[^a-zA-Z0-9_-]/-/g; s/-\+/-/g').md"
+EXPECTED_ALIAS="git:branch:${ALIAS_REPO}:${ALIAS_BRANCH}"
+
+# Check prerequisites
+if [[ ! -d "${HOST_WORKSPACE}/repos/$ALIAS_REPO/.git" ]]; then
+  echo "  ⚠ Repo $ALIAS_REPO not found or not a git repo — skipping alias tests"
+elif [[ -z "$CRON_SECRET" ]]; then
+  echo "  ⚠ CRON_SECRET not available — skipping alias tests"
+else
+  # 8a. Trigger #1 (runner): plant a phrase and run git worktree add
+  echo "  Sending trigger #1 (planting phrase $ALIAS_PHRASE + git worktree add $ALIAS_BRANCH)..."
+  alias_trigger1_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+    -H 'Content-Type: application/json' \
+    -d "{\"prompt\":\"Remember this phrase: $ALIAS_PHRASE. Then run: git worktree add -b $ALIAS_BRANCH $ALIAS_WORKTREE HEAD\",\"correlationKey\":\"$CORR_KEY_ALIAS\",\"directory\":\"$ALIAS_DIR\"}" \
+    --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+  alias_trigger1=$(echo "$alias_trigger1_raw" | parse_done)
+
+  alias_session=$(json_field "$alias_trigger1" "sessionId")
+  alias_status=$(json_field "$alias_trigger1" "status")
+  alias_trigger1_text=$(json_field "$alias_trigger1" "response")
+  assert '[[ -n "$alias_session" ]]' "Trigger #1: got a session ID" "sessionId='$alias_session'"
+  assert '[[ "$alias_status" == "completed" ]]' "Trigger #1: completed" "status='$alias_status'"
+
+  # Verify the branch was created (response mentions it)
+  response_has_branch=$(echo "$alias_trigger1" | node -e "
+    const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+    const text = (d.response || '') + JSON.stringify(d.toolCalls || []);
+    console.log(text.includes('$ALIAS_BRANCH') ? 'yes' : 'no');
+  " 2>/dev/null || echo "no")
+  assert '[[ "$response_has_branch" == "yes" ]]' "Trigger #1: agent created the branch" "response: ${alias_trigger1_text:0:200}"
+
+  # Verify alias was registered in the notes file
+  if [[ -f "$ALIAS_NOTES_FILE" ]]; then
+    assert 'grep -q "### Session: $EXPECTED_ALIAS" "$ALIAS_NOTES_FILE"' \
+      "Trigger #1: alias registered in notes" \
+      "file has no '### Session: $EXPECTED_ALIAS'"
+  else
+    assert 'false' "Trigger #1: notes file exists" "not found: $ALIAS_NOTES_FILE"
+  fi
+
+  # 8b. Trigger #2 (gateway /cron): use the git branch alias as correlationKey
+  # The gateway resolves the alias back to the canonical key → runner resumes session A
+  echo "  Sending trigger #2 via gateway (correlationKey=$EXPECTED_ALIAS)..."
+  cron_response=$(curl -sf -X POST "$GATEWAY_URL/cron" \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $CRON_SECRET" \
+    -d "{\"prompt\":\"What is the phrase I told you to remember? Reply with just the phrase.\",\"correlationKey\":\"$EXPECTED_ALIAS\",\"directory\":\"$ALIAS_DIR\"}" \
+    2>/dev/null || echo '{}')
+  cron_ok=$(json_field "$cron_response" "ok")
+  cron_resolved_key=$(json_field "$cron_response" "correlationKey")
+  assert '[[ "$cron_ok" == "true" ]]' "Trigger #2: gateway accepted the cron event" "response: $cron_response"
+  assert '[[ "$cron_resolved_key" == "$CORR_KEY_ALIAS" ]]' \
+    "Trigger #2: gateway resolved alias to canonical key" \
+    "expected='$CORR_KEY_ALIAS', got='$cron_resolved_key'"
+
+  # 8c. Wait for the cron-triggered session to complete (poll notes file for follow-up)
+  echo "  Waiting for cron trigger to complete..."
+  alias_followup_found="no"
+  for i in $(seq 1 30); do
+    if [[ -f "$ALIAS_NOTES_FILE" ]] && grep -q "## Follow-up" "$ALIAS_NOTES_FILE" 2>/dev/null; then
+      alias_followup_found="yes"
+      break
+    fi
+    sleep 2
+  done
+  assert '[[ "$alias_followup_found" == "yes" ]]' "Trigger #2: session resumed (follow-up in notes)" "timed out after 60s"
+
+  # 8d. Verify the follow-up used the same session (check notes for session ID)
+  if [[ "$alias_followup_found" == "yes" ]]; then
+    followup_session=$(grep -m1 'Session ID:' "$ALIAS_NOTES_FILE" 2>/dev/null | \
+      sed 's/^Session ID: //' || echo "")
+    assert '[[ "$followup_session" == "$alias_session" ]]' \
+      "Trigger #2: same session ID (alias mapping worked)" \
+      "expected='$alias_session', got='$followup_session'"
+
+    # Check if the agent recalled the phrase (visible in notes)
+    notes_has_phrase=$(grep -q "$ALIAS_PHRASE" "$ALIAS_NOTES_FILE" 2>/dev/null && echo "yes" || echo "no")
+    assert '[[ "$notes_has_phrase" == "yes" ]]' \
+      "Trigger #2: agent recalled phrase from session (confirms continuity)" \
+      "phrase=$ALIAS_PHRASE not found in notes"
+
+    echo ""
+    echo "  Notes file content:"
+    head -50 "$ALIAS_NOTES_FILE" | sed 's/^/    /'
+  fi
+
+  # Clean up: remove worktree and delete the test branch
+  echo ""
+  echo "  Cleaning up test worktree and branch..."
+  curl -sf -X POST "$GIT_WRAPPERS_URL/exec/git" \
+    -H 'Content-Type: application/json' \
+    -d "{\"args\":[\"worktree\",\"remove\",\"--force\",\"$ALIAS_WORKTREE\"],\"cwd\":\"$ALIAS_DIR\"}" \
+    2>/dev/null >/dev/null
+  curl -sf -X POST "$GIT_WRAPPERS_URL/exec/git" \
+    -H 'Content-Type: application/json' \
+    -d "{\"args\":[\"branch\",\"-D\",\"$ALIAS_BRANCH\"],\"cwd\":\"$ALIAS_DIR\"}" \
+    2>/dev/null >/dev/null
 fi
 
 # ── Results ─────────────────────────────────────────────────────────────────
