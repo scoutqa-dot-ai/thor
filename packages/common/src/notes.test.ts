@@ -16,7 +16,7 @@ const {
   findNotesFile,
   getSessionIdFromNotes,
   registerAlias,
-  resolveCorrelationKey,
+  resolveCorrelationKeys,
   isAliasableTool,
   extractAliases,
   getNotesLineCount,
@@ -349,26 +349,26 @@ describe("notes", () => {
       expect(content).toContain("### Session: github:pr:org/repo:42");
     });
 
-    it("resolveCorrelationKey returns canonical key for an aliased key", () => {
+    it("resolveCorrelationKeys returns canonical key for an aliased key", () => {
       const canonical = "cron:daily-check:2026-03-13T06";
       createNotes({ correlationKey: canonical, prompt: "test", sessionId: "session-resolve-1" });
       registerAlias({ correlationKey: canonical, alias: "slack:thread:222.000" });
 
-      expect(resolveCorrelationKey("slack:thread:222.000")).toBe(canonical);
+      expect(resolveCorrelationKeys(["slack:thread:222.000"])).toBe(canonical);
     });
 
-    it("resolveCorrelationKey returns canonical key when queried with canonical key", () => {
+    it("resolveCorrelationKeys returns canonical key when queried with canonical key", () => {
       const canonical = uniqueKey();
       createNotes({ correlationKey: canonical, prompt: "test", sessionId: "session-resolve-2" });
 
-      expect(resolveCorrelationKey(canonical)).toBe(canonical);
+      expect(resolveCorrelationKeys([canonical])).toBe(canonical);
     });
 
-    it("resolveCorrelationKey returns raw key unchanged when no match found", () => {
-      expect(resolveCorrelationKey("unknown:key:xyz")).toBe("unknown:key:xyz");
+    it("resolveCorrelationKeys returns raw key unchanged when no match found", () => {
+      expect(resolveCorrelationKeys(["unknown:key:xyz"])).toBe("unknown:key:xyz");
     });
 
-    it("resolveCorrelationKey returns canonical key for continued files", () => {
+    it("resolveCorrelationKeys returns canonical key for continued files", () => {
       const canonical = "resolve-continued";
       // Create old day file with alias
       const sanitized = canonical.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
@@ -381,10 +381,10 @@ describe("notes", () => {
       );
 
       // Alias from old day should still resolve
-      expect(resolveCorrelationKey("slack:thread:333.000")).toBe(canonical);
+      expect(resolveCorrelationKeys(["slack:thread:333.000"])).toBe(canonical);
     });
 
-    it("resolveCorrelationKey finds alias even when canonical file also exists for the raw key", () => {
+    it("resolveCorrelationKeys finds alias even when canonical file also exists for the raw key", () => {
       // Scenario: git push → session A, then Slack review → session B aliases the branch key
       const oldCanonical = "git:branch:org/repo:feat-y";
       const newCanonical = "slack:thread:444.000";
@@ -394,8 +394,43 @@ describe("notes", () => {
       registerAlias({ correlationKey: newCanonical, alias: oldCanonical });
 
       // Should resolve to the NEWER session that claimed this key via alias
-      const resolved = resolveCorrelationKey(oldCanonical);
+      const resolved = resolveCorrelationKeys([oldCanonical]);
       expect(resolved).toBe(newCanonical);
+    });
+
+    it("resolveCorrelationKeys picks most recent file when alias exists across multiple days", () => {
+      const oldCanonical = "resolve-multi-day-old";
+      const newCanonical = "resolve-multi-day-new";
+      const alias = "slack:thread:multi-day-555.000";
+
+      // Day 1: old session registers alias
+      const oldSanitized = oldCanonical.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
+      const oldDir = join(testDir, "2026-01-20", "notes");
+      mkdirSync(oldDir, { recursive: true });
+      writeFileSync(
+        join(oldDir, `${oldSanitized}.md`),
+        `# Session: ${oldCanonical}\nSession ID: sess-old\n\n---\n### Session: ${alias}\nOld alias\n`,
+      );
+
+      // Day 2: new session registers the same alias
+      const newSanitized = newCanonical.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
+      const newDir = join(testDir, "2026-01-21", "notes");
+      mkdirSync(newDir, { recursive: true });
+      writeFileSync(
+        join(newDir, `${newSanitized}.md`),
+        `# Session: ${newCanonical}\nSession ID: sess-new\n\n---\n### Session: ${alias}\nNew alias\n`,
+      );
+
+      // Should resolve to the NEWER session (day 2), not the older one
+      expect(resolveCorrelationKeys([alias])).toBe(newCanonical);
+    });
+
+    it("resolveCorrelationKeys checks h1 canonical keys, not just h3 aliases", () => {
+      const key = uniqueKey();
+      createNotes({ correlationKey: key, prompt: "test", sessionId: "session-h1-check" });
+
+      // Should resolve to itself via h1 match (not just return rawKey as fallback)
+      expect(resolveCorrelationKeys([key])).toBe(key);
     });
   });
 
@@ -589,7 +624,7 @@ describe("notes", () => {
       });
 
       // Alias from old day should still resolve to canonical key
-      expect(resolveCorrelationKey(aliasKey)).toBe(canonical);
+      expect(resolveCorrelationKeys([aliasKey])).toBe(canonical);
 
       // Old file should be untouched
       expect(readFileSync(oldPath, "utf-8")).toContain(`### Session: ${aliasKey}`);
@@ -765,6 +800,80 @@ describe("alias extraction", () => {
         {
           alias: "git:branch:acme-app:feat-admin-endpoint",
           context: "git push in /workspace/worktrees/acme-app/feat-admin-endpoint",
+        },
+      ]);
+    });
+
+    it("extracts git worktree add -b alias from bash tool with [thor:meta]", () => {
+      const meta = JSON.stringify({
+        cmd: "git",
+        args: [
+          "worktree",
+          "add",
+          "-b",
+          "chore/remove-scheduling",
+          "../worktrees/repo/chore-remove",
+        ],
+        cwd: "/workspace/repos/katalon-scout-private",
+      });
+      const aliases = extractAliases([
+        {
+          tool: "bash",
+          input: {
+            command: "git worktree add -b chore/remove-scheduling ../worktrees/repo/chore-remove",
+          },
+          output: `Preparing worktree\n[thor:meta] ${meta}\n`,
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:katalon-scout-private:chore/remove-scheduling",
+          context: "git worktree in /workspace/repos/katalon-scout-private",
+        },
+      ]);
+    });
+
+    it("extracts git worktree add alias from commit-ish arg", () => {
+      const meta = JSON.stringify({
+        cmd: "git",
+        args: ["worktree", "add", "../worktrees/repo/feat-x", "feat/x"],
+        cwd: "/workspace/repos/acme-app",
+      });
+      const aliases = extractAliases([
+        {
+          tool: "bash",
+          input: { command: "git worktree add ../worktrees/repo/feat-x feat/x" },
+          output: `Preparing worktree\n[thor:meta] ${meta}\n`,
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:acme-app:feat/x",
+          context: "git worktree in /workspace/repos/acme-app",
+        },
+      ]);
+    });
+
+    it("extracts git worktree add alias from path basename fallback", () => {
+      const meta = JSON.stringify({
+        cmd: "git",
+        args: ["worktree", "add", "../worktrees/acme-app/fix-bug"],
+        cwd: "/workspace/repos/acme-app",
+      });
+      const aliases = extractAliases([
+        {
+          tool: "bash",
+          input: { command: "git worktree add ../worktrees/acme-app/fix-bug" },
+          output: `Preparing worktree\n[thor:meta] ${meta}\n`,
+        },
+      ]);
+
+      expect(aliases).toEqual([
+        {
+          alias: "git:branch:acme-app:fix-bug",
+          context: "git worktree in /workspace/repos/acme-app",
         },
       ]);
     });

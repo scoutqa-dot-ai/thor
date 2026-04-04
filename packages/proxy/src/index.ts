@@ -3,6 +3,7 @@ import { type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { classifyTool, validatePolicy, PolicyDriftError, PolicyOverlapError } from "./policy.js";
 import { connectUpstream, type UpstreamConnection } from "./upstream.js";
 import { ApprovalStore } from "./approval-store.js";
+import { unwrapResult } from "./unwrap-result.js";
 import {
   writeToolCallLog,
   createLogger,
@@ -373,10 +374,7 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
 
     const classification = classifyTool(allow, approve, toolName);
     if (classification === "hidden") {
-      res.json({
-        content: [{ type: "text", text: `Unknown tool: ${toolName}` }],
-        isError: true,
-      } satisfies CallToolResult);
+      res.json({ stdout: `Unknown tool: ${toolName}`, stderr: "", exitCode: 1 });
       return;
     }
 
@@ -389,24 +387,14 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
         ...thorIds(req),
       });
       writeToolCallLog({ tool: toolName, decision: "pending", args });
-      res.json({
-        content: [
-          {
-            type: "text",
-            text: `Approval required for \`${toolName}\`. Run: approval status ${action.id}`,
-          },
-          {
-            type: "text",
-            text: JSON.stringify({
-              type: "approval_required",
-              actionId: action.id,
-              proxyName: instance.name,
-              tool: toolName,
-            }),
-          },
-        ],
-        isError: false,
-      } satisfies CallToolResult);
+      const approvalText = `Approval required for \`${toolName}\`. Run: approval status ${action.id}`;
+      const approvalJson = JSON.stringify({
+        type: "approval_required",
+        actionId: action.id,
+        proxyName: instance.name,
+        tool: toolName,
+      });
+      res.json({ stdout: `${approvalText}\n${approvalJson}`, stderr: "", exitCode: 0 });
       return;
     }
 
@@ -425,7 +413,14 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
         ...thorIds(req),
       });
       writeToolCallLog({ tool: toolName, decision: "allowed", args, result, durationMs: duration });
-      res.json(result);
+
+      const stdout = unwrapResult(result);
+      const meta = JSON.stringify({
+        cmd: "mcp",
+        args: [instance.name, toolName, JSON.stringify(args)],
+        result: stdout,
+      });
+      res.json({ stdout, stderr: `\n[thor:meta] ${meta}\n`, exitCode: 0 });
     } catch (err) {
       const duration = Date.now() - start;
       const message = err instanceof Error ? err.message : String(err);
@@ -442,10 +437,14 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
         durationMs: duration,
         error: message,
       });
-      res.status(502).json({
-        content: [{ type: "text", text: `Error calling "${toolName}": ${message}` }],
-        isError: true,
-      } satisfies CallToolResult);
+
+      let stderr = `Error calling "${toolName}": ${message}\n`;
+      // Append schema hint on error
+      const toolInfo = instance.upstream.tools.find((t) => t.name === toolName);
+      if (toolInfo?.inputSchema) {
+        stderr += `\n[hint] Input schema for "${toolName}":\n${JSON.stringify(toolInfo.inputSchema, null, 2)}\n`;
+      }
+      res.status(502).json({ stdout: "", stderr, exitCode: 1 });
     }
   } catch (err) {
     logError(log, "tools_call_error", err, { upstream: upstreamName, ...thorIds(req) });

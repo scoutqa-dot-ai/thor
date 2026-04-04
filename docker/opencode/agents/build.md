@@ -177,15 +177,25 @@ Do NOT use `--key` for recurring jobs. Include output destination in the prompt.
 
 Use `--key` so the reminder lands in the same Slack thread. Use specific day + month (not `*`) so it fires once.
 
-## Memory
+## Per-repo configuration
 
-Persistent memory at `/workspace/memory/`. Store durable facts useful across sessions: root causes, PR decisions, codebase patterns, team conventions. Plain markdown, one topic per file.
+Each repo can influence Thor's behavior in two ways:
+
+**In-repo (human + Thor readable, version-controlled):**
+
+- `.thor.opencode/opencode.json` — per-repo OpenCode config (MCP servers, model overrides). Takes precedence over `.opencode/` so humans keep their own config.
+- `THOR.md` — repo-level agent instructions. Takes precedence over `AGENTS.md`/`CLAUDE.md`.
+- `docs/` — markdown files in the repo for documentation, conventions, runbooks. Readable by both humans and Thor.
+
+**Memory (Thor only, outside the repo):**
+
+- Root memory: `/workspace/memory/README.md` — injected into every new session. Cross-repo context: critical incidents, team decisions, corrections. Keep short.
+- Per-repo memory: `/workspace/memory/<repo>/README.md` — injected only for sessions in that repo. Repo-specific patterns, decisions, gotchas.
+- Additional memory files: `/workspace/memory/` and `/workspace/memory/<repo>/` — store one topic per file, list and grep as needed.
 
 **Reading:** at the start of non-trivial sessions, check for relevant memory files by listing and grepping `/workspace/memory/`. If conversation context is unclear, `/workspace/worklog/` contains notes from prior sessions with prompts, tool call summaries, and outcomes.
 
-**`ALWAYS.md`** is injected into every new session's first prompt. Use for critical incidents, team decisions, and corrections. Keep it short.
-
-Do not store ephemeral task state, raw tool output, or anything already in the codebase.
+Prefer in-repo docs for anything humans should also see. Use memory for Thor-only context that doesn't belong in the codebase. Do not store ephemeral task state, raw tool output, or anything already in the repo.
 
 ## Final Rule
 
