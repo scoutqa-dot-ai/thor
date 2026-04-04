@@ -88,12 +88,6 @@ try {
   if (body.stdout) process.stdout.write(body.stdout);
   if (body.stderr) process.stderr.write(body.stderr);
 
-  // Emit [thor:meta] for the runner to extract aliases. Shape: ThorMeta from @thor/common.
-  if ((endpoint === "git" || endpoint === "gh") && (body.exitCode ?? 0) === 0) {
-    const meta = JSON.stringify({ cmd: endpoint, args, cwd });
-    process.stderr.write(`\n[thor:meta] ${meta}\n`);
-  }
-
   process.exit(body.exitCode ?? 0);
 } catch (err) {
   process.stderr.write(`Failed to reach remote-cli: ${err.message}\n`);

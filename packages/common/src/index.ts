@@ -35,12 +35,28 @@ export {
   registerAlias,
   resolveCorrelationKeys,
   isAliasableTool,
+  isAliasableGitCommand,
+  isAliasableMcpTool,
   extractAliases,
   getNotesLineCount,
   hasSlackReply,
   ThorMetaSchema,
+  ThorMetaAliasSchema,
+  ThorMetaApprovalSchema,
+  extractThorMeta,
+  formatThorMeta,
+  computeGitAlias,
+  computeSlackAlias,
+  inferRepoFromPath,
+  extractBranchFromGitArgs,
 } from "./notes.js";
-export type { ToolArtifact, ExtractedAlias, ThorMeta } from "./notes.js";
+export type {
+  ToolArtifact,
+  ExtractedAlias,
+  ThorMeta,
+  ThorMetaAlias,
+  ThorMetaApproval,
+} from "./notes.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,

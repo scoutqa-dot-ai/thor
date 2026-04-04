@@ -15,6 +15,9 @@ import {
   interpolateHeaders,
   extractRepoFromCwd,
   getRepoProxies,
+  isAliasableMcpTool,
+  computeSlackAlias,
+  formatThorMeta,
   type ProxyConfig,
 } from "@thor/common";
 
@@ -388,13 +391,13 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
       });
       writeToolCallLog({ tool: toolName, decision: "pending", args });
       const approvalText = `Approval required for \`${toolName}\`. Run: approval status ${action.id}`;
-      const approvalJson = JSON.stringify({
-        type: "approval_required",
+      const approvalMeta = formatThorMeta({
+        type: "approval",
         actionId: action.id,
         proxyName: instance.name,
         tool: toolName,
       });
-      res.json({ stdout: `${approvalText}\n${approvalJson}`, stderr: "", exitCode: 0 });
+      res.json({ stdout: approvalText, stderr: approvalMeta, exitCode: 0 });
       return;
     }
 
@@ -415,12 +418,12 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
       writeToolCallLog({ tool: toolName, decision: "allowed", args, result, durationMs: duration });
 
       const stdout = unwrapResult(result);
-      const meta = JSON.stringify({
-        cmd: "mcp",
-        args: [instance.name, toolName, JSON.stringify(args)],
-        result: stdout,
-      });
-      res.json({ stdout, stderr: `\n[thor:meta] ${meta}\n`, exitCode: 0 });
+      let stderr = "";
+      if (isAliasableMcpTool(toolName)) {
+        const alias = computeSlackAlias(args, stdout);
+        if (alias) stderr = formatThorMeta(alias);
+      }
+      res.json({ stdout, stderr, exitCode: 0 });
     } catch (err) {
       const duration = Date.now() - start;
       const message = err instanceof Error ? err.message : String(err);
