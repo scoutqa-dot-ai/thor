@@ -1,0 +1,23 @@
+docs/plan/2026040401_file-based-hey-thor.md
+  eccdd9dd14df8dce 3,20,22,28-32,34,54-58,133-143,152-170,173,177-181,302-303,310-320
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a2900486c8eadd5f9f7dc2e7a38cf02055d8fac0",
+  "prompts": {
+    "eccdd9dd14df8dce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc61e015-fd96-4301-88d2-1c83eeab44a1",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 77,
+      "total_deletions": 14,
+      "accepted_lines": 74,
+      "overriden_lines": 0
+    }
+  }
+}
