@@ -6,16 +6,11 @@
  */
 
 import { execFile, spawn } from "node:child_process";
+import type { ExecResult } from "@thor/common";
 
 const MAX_OUTPUT = 1024 * 256; // 256 KB
 const TIMEOUT_MS = 60_000;
 const STREAM_TIMEOUT_MS = 300_000; // 5 minutes for streaming commands
-
-export interface ExecResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
 
 export function execCommand(binary: string, args: string[], cwd: string): Promise<ExecResult> {
   return new Promise((resolve) => {
