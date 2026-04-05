@@ -1,0 +1,41 @@
+packages/remote-cli/src/exec.ts
+  d31016c7ddafb927 9
+packages/opencode-cli/src/remote-cli.ts
+  d31016c7ddafb927 1-96
+packages/opencode-cli/src/proxy-cli.ts
+  d31016c7ddafb927 1-313
+Dockerfile
+  d31016c7ddafb927 24,60-95
+packages/opencode-cli/package.json
+  d31016c7ddafb927 1-20
+packages/opencode-cli/tsconfig.json
+  d31016c7ddafb927 1-8
+packages/common/src/index.ts
+  d31016c7ddafb927 60-61
+docker-compose.yml
+  d31016c7ddafb927 121
+packages/opencode-cli/tsup.config.ts
+  d31016c7ddafb927 1-18
+packages/common/src/exec-result.ts
+  d31016c7ddafb927 1-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "6df24cc1ade0cfff2b08571ef0fc71c3611d7764",
+  "prompts": {
+    "d31016c7ddafb927": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8a43b74e-fb1f-4eba-b01d-15037936d5ee",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 599,
+      "total_deletions": 71,
+      "accepted_lines": 513,
+      "overriden_lines": 0
+    }
+  }
+}
