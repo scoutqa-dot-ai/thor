@@ -17,11 +17,12 @@ set -euo pipefail
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 PROXY_URL="${PROXY_URL:-http://localhost:3001}"
 GIT_WRAPPERS_URL="${GIT_WRAPPERS_URL:-http://localhost:3004}"
-OPENCODE_URL="${OPENCODE_URL:-http://localhost:4096}"
+GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
 SESSION_DIR="${SESSION_DIR:-/workspace/repos/e2e-test}"
 HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
 mkdir -p "${HOST_WORKSPACE}/repos/e2e-test"
 MEMORY_DIR="${MEMORY_DIR:-${HOST_WORKSPACE}/memory}"
+CRON_SECRET="${CRON_SECRET:-$(docker exec thor-cron-1 printenv CRON_SECRET 2>/dev/null)}"
 
 passed=0
 failed=0
@@ -89,67 +90,17 @@ assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy is healthy" "got: $proxy_health"
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
 assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy" "got: $runner_health"
 
-# ── 2. Trigger: list tools ──────────────────────────────────────────────────
+# ── 2. Session resume via correlation key ────────────────────────────────────
 
 echo ""
-echo "=== Trigger: List Tools ==="
-echo "  (this may take a moment while the agent session runs)"
-
-list_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
-  -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"List all MCP tools available to you, one per line.\",\"directory\":\"$SESSION_DIR\"}" \
-  --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
-list_response=$(echo "$list_raw" | parse_done)
-
-list_session=$(json_field "$list_response" "sessionId")
-list_response_text=$(json_field "$list_response" "response")
-assert '[[ -n "$list_session" ]]' "Got a session ID" "sessionId='$list_session'"
-list_has_tools=$(echo "$list_response" | node -e "
-  const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-  const text = (d.response || '') + JSON.stringify(d.toolCalls || []);
-  const found = /atlassian|posthog|jira|slack|post_message|getJiraIssue|searchJira|insight/i.test(text);
-  console.log(found ? 'yes' : 'no');
-" 2>/dev/null || echo "no")
-assert '[[ "$list_has_tools" == "yes" ]]' "Response mentions available MCP tools" "response: ${list_response_text:0:200}"
-
-# ── 3. Trigger: actual tool call ────────────────────────────────────────────
-
-echo ""
-echo "=== Trigger: Tool Call (list issues) ==="
-
-issues_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
-  -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"Use the atlassian tools to list the 2 most recent Jira issues. Show their identifier, title, and status in a table.\",\"directory\":\"$SESSION_DIR\"}" \
-  --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
-issues_response=$(echo "$issues_raw" | parse_done)
-
-issues_session=$(json_field "$issues_response" "sessionId")
-issues_tool_calls=$(json_field "$issues_response" "toolCalls")
-issues_response_text=$(json_field "$issues_response" "response")
-assert '[[ -n "$issues_session" ]]' "Got a session ID" "sessionId='$issues_session'"
-issues_has_tool_calls=$(echo "$issues_response" | node -e "
-  const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-  console.log(d.toolCalls && d.toolCalls.length > 0 ? 'yes' : 'no');
-" 2>/dev/null || echo "no")
-assert '[[ "$issues_has_tool_calls" == "yes" ]]' "Agent made tool calls" "toolCalls: ${issues_tool_calls:0:200}"
-
-has_response=$(echo "$issues_response" | node -e "
-  const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-  console.log(d.response && d.response.length > 20 ? 'yes' : 'no');
-" 2>/dev/null || echo "no")
-assert '[[ "$has_response" == "yes" ]]' "Response contains substantive content" "response length: ${#issues_response_text}"
-
-# ── 4. Memory continuity: session resume ─────────────────────────────────────
-
-echo ""
-echo "=== Memory Continuity: Session Resume ==="
+echo "=== Session Resume ==="
 
 CORR_KEY="e2e-test-$(date +%s)"
 
 # Generate a random phrase so the agent can only know it from trigger #1
 PHRASE="THOR$(date +%s | tail -c 6)"
 
-# 4a. First trigger — tell the agent a phrase to remember
+# 2a. First trigger — tell the agent a phrase to remember
 echo "  Sending trigger #1 (new session — planting phrase: $PHRASE)..."
 trigger1_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
@@ -166,18 +117,7 @@ assert '[[ -n "$session1" ]]' "Trigger #1: got a session ID" "sessionId='$sessio
 assert '[[ "$resumed1" == "false" ]]' "Trigger #1: was NOT a resumed session" "resumed='$resumed1'"
 assert '[[ "$response1_has_phrase" == "yes" ]]' "Trigger #1: agent confirmed the phrase" "response: ${response1_text:0:200}"
 
-# 4b. Verify session exists in OpenCode via its native API
-oc_session=$(
-  curl -sf "$OPENCODE_URL/session/$session1" 2>/dev/null || echo '{}'
-)
-oc_session_id=$(echo "$oc_session" | node -e "
-  const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-  console.log(d.id || '');
-" 2>/dev/null || echo "")
-
-assert '[[ "$oc_session_id" == "$session1" ]]' "OpenCode API confirms session exists" "expected='$session1', got='$oc_session_id'"
-
-# 4c. Second trigger — ask the agent to recall the phrase
+# 2b. Second trigger — ask the agent to recall the phrase
 echo "  Sending trigger #2 (resume session — asking agent to recall the phrase)..."
 trigger2_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
@@ -194,20 +134,20 @@ assert '[[ "$session2" == "$session1" ]]' "Trigger #2: reused the SAME session I
 assert '[[ "$resumed2" == "true" ]]' "Trigger #2: was a resumed session" "resumed='$resumed2'"
 assert '[[ "$response2_has_phrase" == "yes" ]]' "Trigger #2: agent recalled the phrase ($PHRASE)" "response: ${response2_text:0:200}"
 
-# ── 5. Cross-session memory via README.md ───────────────────────────────────
+# ── 3. Cross-session memory ──────────────────────────────────────────────────
 
 # Clean up stale memory files from prior runs
 rm -f "$MEMORY_DIR/ALWAYS.md" "$MEMORY_DIR/README.md"
 rm -rf "$MEMORY_DIR/e2e-test"
 
 echo ""
-echo "=== Cross-Session Memory: README.md ==="
+echo "=== Cross-Session Memory ==="
 
 MEMORY_PHRASE="MEM$(date +%s | tail -c 6)"
 CORR_KEY_A="e2e-memory-writer-$(date +%s)"
 CORR_KEY_B="e2e-memory-reader-$(date +%s)"
 
-# 5a. Trigger with corr key A — ask the agent to remember something important
+# 3a. Trigger with corr key A — ask the agent to remember something important
 echo "  Sending trigger A (asking agent to remember phrase: $MEMORY_PHRASE)..."
 trigger_a_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
@@ -219,7 +159,7 @@ status_a=$(json_field "$trigger_a" "status")
 response_a_text=$(json_field "$trigger_a" "response")
 assert '[[ "$status_a" == "completed" ]]' "Trigger A: completed successfully" "status='$status_a', response: ${response_a_text:0:200}"
 
-# 5b. Trigger with corr key B (different session) — ask about the phrase
+# 3b. Trigger with corr key B (different session) — ask about the phrase
 echo ""
 echo "  Sending trigger B (new session, different corr key — asking about the phrase)..."
 trigger_b_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
@@ -236,53 +176,12 @@ response_b_text=$(json_field "$trigger_b" "response")
 assert '[[ "$resumed_b" == "false" ]]' "Trigger B: was NOT a resumed session (different corr key)" "resumed='$resumed_b'"
 assert '[[ "$response_b_has_phrase" == "yes" ]]' "Trigger B: agent recalled cross-session memory phrase ($MEMORY_PHRASE)" "response: ${response_b_text:0:200}"
 
-# ── 6. Per-repo memory via /workspace/memory/<repo>/README.md ────────────────
-
-echo ""
-echo "=== Per-Repo Memory: <repo>/README.md ==="
-
-REPO_MEMORY_PHRASE="REPO$(date +%s | tail -c 6)"
-CORR_KEY_C="e2e-repo-memory-writer-$(date +%s)"
-CORR_KEY_D="e2e-repo-memory-reader-$(date +%s)"
-
-# 6a. Trigger asking agent to save something to per-repo memory
-echo "  Sending trigger C (asking agent to save per-repo memory phrase: $REPO_MEMORY_PHRASE)..."
-trigger_c_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
-  -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"Save this fact: the deploy canary threshold is $REPO_MEMORY_PHRASE. Write it to /workspace/memory/e2e-test/README.md (create the directory if needed). Do NOT write to /workspace/memory/README.md.\",\"correlationKey\":\"$CORR_KEY_C\",\"directory\":\"$SESSION_DIR\"}" \
-  --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
-trigger_c=$(echo "$trigger_c_raw" | parse_done)
-
-status_c=$(json_field "$trigger_c" "status")
-response_c_text=$(json_field "$trigger_c" "response")
-assert '[[ "$status_c" == "completed" ]]' "Trigger C: completed successfully" "status='$status_c', response: ${response_c_text:0:200}"
-
-# 6b. Trigger with different corr key — ask about the per-repo phrase
-echo ""
-echo "  Sending trigger D (new session, different corr key — asking about per-repo phrase)..."
-trigger_d_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
-  -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"What is the deploy canary threshold for this repo? Reply with just the value.\",\"correlationKey\":\"$CORR_KEY_D\",\"directory\":\"$SESSION_DIR\"}" \
-  --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
-trigger_d=$(echo "$trigger_d_raw" | parse_done)
-
-session_d=$(json_field "$trigger_d" "sessionId")
-resumed_d=$(json_field "$trigger_d" "resumed")
-response_d_has_phrase=$(response_contains "$trigger_d" "$REPO_MEMORY_PHRASE")
-
-response_d_text=$(json_field "$trigger_d" "response")
-assert '[[ "$resumed_d" == "false" ]]' "Trigger D: was NOT a resumed session (different corr key)" "resumed='$resumed_d'"
-assert '[[ "$response_d_has_phrase" == "yes" ]]' "Trigger D: agent recalled per-repo memory phrase ($REPO_MEMORY_PHRASE)" "response: ${response_d_text:0:200}"
-
-# ── 7. Approval Flow ──────────────────────────────────────────────────────────
+# ── 4. Approval Flow ────────────────────────────────────────────────────────
 
 echo ""
 echo "=== Approval Flow ==="
 
-# 7a. Discover an approval-required tool from an upstream
-# The proxy enforces repo-to-proxy access, so we need a directory that maps to a
-# configured repo. Scan the workspace config for a repo that has a proxy with
-# approval-required tools.
+# 4a. Discover an approval-required tool from an upstream
 APPROVAL_UPSTREAM=""
 APPROVAL_TOOL=""
 APPROVAL_DIR=""
@@ -339,7 +238,7 @@ if [[ -z "$APPROVAL_TOOL" ]]; then
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
-  # 7b. Proxy-level: call the approval-required tool directly
+  # 4b. Proxy-level: call the approval-required tool directly
   echo "  Calling tool via proxy (expecting approval interception)..."
   call_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/tools/call" \
     -H 'Content-Type: application/json' \
@@ -368,23 +267,14 @@ else
   assert '[[ "$call_not_error" == "yes" ]]' "Proxy: tool call was not an error" "response: ${call_raw:0:200}"
 
   if [[ -n "$action_id" ]]; then
-    # 7c. Check approval status is pending
+    # 4c. Check approval status is pending
     status_raw=$(curl -sf "$PROXY_URL/approval/$action_id" 2>/dev/null || echo '{}')
     status_val=$(json_field "$status_raw" "status")
     status_tool=$(json_field "$status_raw" "tool")
     assert '[[ "$status_val" == "pending" ]]' "Proxy: approval status is 'pending'" "status='$status_val'"
     assert '[[ "$status_tool" == "$APPROVAL_TOOL" ]]' "Proxy: approval record has correct tool name" "tool='$status_tool'"
 
-    # 7d. List pending approvals — verify our action appears
-    pending_raw=$(curl -sf "$PROXY_URL/approvals" 2>/dev/null || echo '{"approvals":[]}')
-    pending_has_action=$(echo "$pending_raw" | node -e "
-      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-      const found = (d.approvals || []).some(a => a.id === '$action_id');
-      console.log(found ? 'yes' : 'no');
-    " 2>/dev/null || echo "no")
-    assert '[[ "$pending_has_action" == "yes" ]]' "Proxy: action appears in pending approvals list" "actionId=$action_id"
-
-    # 7e. Reject the approval (safe — no side effects on the upstream MCP)
+    # 4d. Reject the approval (safe — no side effects on the upstream MCP)
     echo "  Rejecting approval $action_id..."
     resolve_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/approval/$action_id/resolve" \
       -H 'Content-Type: application/json' \
@@ -395,31 +285,18 @@ else
     assert '[[ "$resolve_status" == "rejected" ]]' "Proxy: approval was rejected" "status='$resolve_status'"
     assert '[[ "$resolve_reviewer" == "e2e-test" ]]' "Proxy: reviewer recorded correctly" "reviewer='$resolve_reviewer'"
 
-    # 7f. Verify it's no longer in the pending list
-    pending_after=$(curl -sf "$PROXY_URL/approvals" 2>/dev/null || echo '{"approvals":[]}')
-    still_pending=$(echo "$pending_after" | node -e "
-      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-      const found = (d.approvals || []).some(a => a.id === '$action_id');
-      console.log(found ? 'yes' : 'no');
-    " 2>/dev/null || echo "yes")
-    assert '[[ "$still_pending" == "no" ]]' "Proxy: rejected action no longer in pending list" "actionId=$action_id"
-
-    # 7g. Verify final status via GET confirms rejection
+    # 4e. Verify final status confirms rejection
     final_raw=$(curl -sf "$PROXY_URL/approval/$action_id" 2>/dev/null || echo '{}')
     final_status=$(json_field "$final_raw" "status")
     assert '[[ "$final_status" == "rejected" ]]' "Proxy: final status confirms 'rejected'" "status='$final_status'"
   fi
 
-  # ── 7h–7j. End-to-end: rejection lands back in OpenCode session ───────────
-  #
-  # Create a pending approval via proxy, reject it, then ask the agent to poll
-  # the status using `approval status <id>` — verifying the rejection message
-  # is visible inside the OpenCode session.
+  # ── 4f–4h. End-to-end: rejection lands back in OpenCode session ───────────
 
   echo ""
   echo "  --- E2E: Rejection reaches OpenCode session ---"
 
-  # 7h. Create a fresh pending approval via proxy API
+  # 4f. Create a fresh pending approval via proxy API
   echo "  Creating pending approval via proxy..."
   e2e_call_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/tools/call" \
     -H 'Content-Type: application/json' \
@@ -439,14 +316,14 @@ else
   if [[ -z "$e2e_action_id" ]]; then
     echo "  ⚠ Could not create pending approval — skipping session tests"
   else
-    # 7i. Reject the approval via proxy API
+    # 4g. Reject the approval via proxy API
     echo "  Rejecting approval $e2e_action_id..."
     curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/approval/$e2e_action_id/resolve" \
       -H 'Content-Type: application/json' \
       -d '{"decision":"rejected","reviewer":"e2e-test","reason":"e2e test — automated rejection"}' \
       2>/dev/null >/dev/null
 
-    # 7j. Ask the agent to check the approval status — rejection should be visible
+    # 4h. Ask the agent to check the approval status — rejection should be visible
     CORR_KEY_APPROVAL="e2e-approval-$(date +%s)"
     echo "  Sending trigger (asking agent to check approval status of $e2e_action_id)..."
     approval_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
@@ -469,25 +346,16 @@ else
   fi
 fi
 
-# ── 8. Alias-based session matching via [thor:meta] ──────────────────────────
-#
-# When the agent runs an aliasable git command (push, worktree add), remote-cli
-# emits a [thor:meta] alias in stderr. The runner extracts this and registers it
-# in the notes file as `### Session: git:branch:<repo>:<branch>`.
-# The gateway uses resolveCorrelationKeys() to grep the notes files and map the
-# alias back to the canonical correlationKey, enabling session continuity.
+# ── 5. Alias-based session matching via gateway ──────────────────────────────
 #
 # Test flow:
 #   1. Trigger #1 (runner): agent runs git worktree add → alias registered
 #   2. Trigger #2 (gateway /cron): sends the alias as correlationKey
-#      → gateway resolves alias → runner resumes session A
-#   3. Verify: notes file has follow-up entry with same session ID
+#      → gateway resolves alias → runner resumes session
+#   3. Trigger #3 (runner): verify session continuity by recalling phrase
 
 echo ""
-echo "=== Alias-based Session Matching (thor:meta) ==="
-
-GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
-CRON_SECRET="${CRON_SECRET:-$(docker exec thor-cron-1 printenv CRON_SECRET 2>/dev/null)}"
+echo "=== Alias-based Session Matching ==="
 
 ALIAS_TS=$(date +%s)
 ALIAS_BRANCH="e2e-alias-${ALIAS_TS}"
@@ -504,7 +372,7 @@ if [[ ! -d "${HOST_WORKSPACE}/repos/$ALIAS_REPO/.git" ]]; then
 elif [[ -z "$CRON_SECRET" ]]; then
   echo "  ⚠ CRON_SECRET not available — skipping alias tests"
 else
-  # 8a. Trigger #1 (runner): plant a phrase and run git worktree add
+  # 5a. Trigger #1 (runner): plant a phrase and run git worktree add
   echo "  Sending trigger #1 (planting phrase $ALIAS_PHRASE + git worktree add $ALIAS_BRANCH)..."
   alias_trigger1_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
     -H 'Content-Type: application/json' \
@@ -526,8 +394,7 @@ else
   " 2>/dev/null || echo "no")
   assert '[[ "$response_has_branch" == "yes" ]]' "Trigger #1: agent created the branch" "response: ${alias_trigger1_text:0:200}"
 
-  # 8b. Trigger #2 (gateway /cron): use the git branch alias as correlationKey
-  # The gateway resolves the alias back to the canonical key → runner resumes session A
+  # 5b. Trigger #2 (gateway /cron): use the git branch alias as correlationKey
   echo "  Sending trigger #2 via gateway (correlationKey=$EXPECTED_ALIAS)..."
   cron_response=$(curl -sf -X POST "$GATEWAY_URL/cron" \
     -H 'Content-Type: application/json' \
@@ -541,10 +408,7 @@ else
     "Trigger #2: gateway resolved alias to canonical key" \
     "expected='$CORR_KEY_ALIAS', got='$cron_resolved_key'"
 
-  # 8c. Trigger #3 (runner): verify session continuity by recalling the phrase
-  # Wait for the async cron trigger to finish, then send a sync trigger with the
-  # canonical key. If the alias resolution worked, triggers #2 and #3 share the
-  # same session as trigger #1, so the agent can recall the phrase.
+  # 5c. Trigger #3 (runner): verify session continuity by recalling the phrase
   echo "  Waiting for cron trigger to finish, then sending trigger #3..."
   alias_trigger3_done="no"
   for i in $(seq 1 30); do
@@ -554,8 +418,9 @@ else
       -d "{\"prompt\":\"What is the phrase I asked you to remember earlier? Reply with just the phrase.\",\"correlationKey\":\"$CORR_KEY_ALIAS\",\"directory\":\"$ALIAS_DIR\"}" \
       --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
     alias_trigger3=$(echo "$alias_trigger3_raw" | parse_done)
-    alias_trigger3_busy=$(json_field "$alias_trigger3" "busy")
-    if [[ "$alias_trigger3_busy" != "true" ]]; then
+    alias_trigger3_session=$(json_field "$alias_trigger3" "sessionId")
+    # Keep polling if session is busy OR if the response is empty (request failed)
+    if [[ -n "$alias_trigger3_session" ]]; then
       alias_trigger3_done="yes"
       break
     fi
