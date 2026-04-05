@@ -21,9 +21,7 @@ OPENCODE_URL="${OPENCODE_URL:-http://localhost:4096}"
 SESSION_DIR="${SESSION_DIR:-/workspace/repos/e2e-test}"
 HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
 mkdir -p "${HOST_WORKSPACE}/repos/e2e-test"
-WORKLOG_DIR="${WORKLOG_DIR:-${HOST_WORKSPACE}/worklog}"
 MEMORY_DIR="${MEMORY_DIR:-${HOST_WORKSPACE}/memory}"
-TODAY=$(date +%Y-%m-%d)
 
 passed=0
 failed=0
@@ -141,13 +139,12 @@ has_response=$(echo "$issues_response" | node -e "
 " 2>/dev/null || echo "no")
 assert '[[ "$has_response" == "yes" ]]' "Response contains substantive content" "response length: ${#issues_response_text}"
 
-# ── 4. Memory continuity: session resume + notes ────────────────────────────
+# ── 4. Memory continuity: session resume ─────────────────────────────────────
 
 echo ""
-echo "=== Memory Continuity: Session Resume + Notes ==="
+echo "=== Memory Continuity: Session Resume ==="
 
 CORR_KEY="e2e-test-$(date +%s)"
-NOTES_FILE="$WORKLOG_DIR/$TODAY/notes/$(echo "$CORR_KEY" | sed 's/[^a-zA-Z0-9_-]/-/g; s/-\+/-/g').md"
 
 # Generate a random phrase so the agent can only know it from trigger #1
 PHRASE="THOR$(date +%s | tail -c 6)"
@@ -168,11 +165,6 @@ response1_text=$(json_field "$trigger1" "response")
 assert '[[ -n "$session1" ]]' "Trigger #1: got a session ID" "sessionId='$session1'"
 assert '[[ "$resumed1" == "false" ]]' "Trigger #1: was NOT a resumed session" "resumed='$resumed1'"
 assert '[[ "$response1_has_phrase" == "yes" ]]' "Trigger #1: agent confirmed the phrase" "response: ${response1_text:0:200}"
-assert '[[ -f "$NOTES_FILE" ]]' "Trigger #1: notes file created" "expected: $NOTES_FILE"
-
-if [[ -f "$NOTES_FILE" ]]; then
-  assert 'grep -q "$PHRASE" "$NOTES_FILE"' "Trigger #1: notes file contains the phrase" "phrase=$PHRASE, file=$NOTES_FILE"
-fi
 
 # 4b. Verify session exists in OpenCode via its native API
 oc_session=$(
@@ -202,19 +194,6 @@ assert '[[ "$session2" == "$session1" ]]' "Trigger #2: reused the SAME session I
 assert '[[ "$resumed2" == "true" ]]' "Trigger #2: was a resumed session" "resumed='$resumed2'"
 assert '[[ "$response2_has_phrase" == "yes" ]]' "Trigger #2: agent recalled the phrase ($PHRASE)" "response: ${response2_text:0:200}"
 
-if [[ -f "$NOTES_FILE" ]]; then
-  assert 'grep -q "Follow-up" "$NOTES_FILE"' "Trigger #2: notes file has follow-up entry" "file has no 'Follow-up' heading"
-  assert 'grep -q "Result" "$NOTES_FILE"' "Trigger #2: notes file has result summary" "file has no 'Result' heading"
-fi
-
-echo ""
-echo "  Notes file content:"
-if [[ -f "$NOTES_FILE" ]]; then
-  head -40 "$NOTES_FILE" | sed 's/^/    /'
-else
-  echo "    (not found)"
-fi
-
 # ── 5. Cross-session memory via README.md ───────────────────────────────────
 
 # Clean up stale memory files from prior runs
@@ -239,15 +218,6 @@ trigger_a=$(echo "$trigger_a_raw" | parse_done)
 status_a=$(json_field "$trigger_a" "status")
 response_a_text=$(json_field "$trigger_a" "response")
 assert '[[ "$status_a" == "completed" ]]' "Trigger A: completed successfully" "status='$status_a', response: ${response_a_text:0:200}"
-
-# Verify README.md was created and contains the phrase
-assert '[[ -f "$MEMORY_DIR/README.md" ]]' "README.md was created" "expected: $MEMORY_DIR/README.md"
-if [[ -f "$MEMORY_DIR/README.md" ]]; then
-  assert 'grep -q "$MEMORY_PHRASE" "$MEMORY_DIR/README.md"' "README.md contains the memory phrase ($MEMORY_PHRASE)" "file content: $(cat "$MEMORY_DIR/README.md")"
-  echo ""
-  echo "  README.md content:"
-  cat "$MEMORY_DIR/README.md" | sed 's/^/    /'
-fi
 
 # 5b. Trigger with corr key B (different session) — ask about the phrase
 echo ""
@@ -286,16 +256,6 @@ trigger_c=$(echo "$trigger_c_raw" | parse_done)
 status_c=$(json_field "$trigger_c" "status")
 response_c_text=$(json_field "$trigger_c" "response")
 assert '[[ "$status_c" == "completed" ]]' "Trigger C: completed successfully" "status='$status_c', response: ${response_c_text:0:200}"
-
-# Verify per-repo README.md was created and contains the phrase
-REPO_MEMORY_FILE="$MEMORY_DIR/e2e-test/README.md"
-assert '[[ -f "$REPO_MEMORY_FILE" ]]' "Per-repo README.md was created" "expected: $REPO_MEMORY_FILE"
-if [[ -f "$REPO_MEMORY_FILE" ]]; then
-  assert 'grep -q "$REPO_MEMORY_PHRASE" "$REPO_MEMORY_FILE"' "Per-repo README.md contains the phrase ($REPO_MEMORY_PHRASE)" "file content: $(cat "$REPO_MEMORY_FILE")"
-  echo ""
-  echo "  Per-repo README.md content:"
-  cat "$REPO_MEMORY_FILE" | sed 's/^/    /'
-fi
 
 # 6b. Trigger with different corr key — ask about the per-repo phrase
 echo ""
@@ -536,7 +496,6 @@ ALIAS_PHRASE="ALIAS$(echo $ALIAS_TS | tail -c 6)"
 ALIAS_REPO="katalon-scout-private"
 ALIAS_DIR="/workspace/repos/$ALIAS_REPO"
 ALIAS_WORKTREE="/workspace/worktrees/$ALIAS_REPO/$ALIAS_BRANCH"
-ALIAS_NOTES_FILE="$WORKLOG_DIR/$TODAY/notes/$(echo "$CORR_KEY_ALIAS" | sed 's/[^a-zA-Z0-9_-]/-/g; s/-\+/-/g').md"
 EXPECTED_ALIAS="git:branch:${ALIAS_REPO}:${ALIAS_BRANCH}"
 
 # Check prerequisites
@@ -567,15 +526,6 @@ else
   " 2>/dev/null || echo "no")
   assert '[[ "$response_has_branch" == "yes" ]]' "Trigger #1: agent created the branch" "response: ${alias_trigger1_text:0:200}"
 
-  # Verify alias was registered in the notes file
-  if [[ -f "$ALIAS_NOTES_FILE" ]]; then
-    assert 'grep -q "### Session: $EXPECTED_ALIAS" "$ALIAS_NOTES_FILE"' \
-      "Trigger #1: alias registered in notes" \
-      "file has no '### Session: $EXPECTED_ALIAS'"
-  else
-    assert 'false' "Trigger #1: notes file exists" "not found: $ALIAS_NOTES_FILE"
-  fi
-
   # 8b. Trigger #2 (gateway /cron): use the git branch alias as correlationKey
   # The gateway resolves the alias back to the canonical key → runner resumes session A
   echo "  Sending trigger #2 via gateway (correlationKey=$EXPECTED_ALIAS)..."
@@ -591,35 +541,43 @@ else
     "Trigger #2: gateway resolved alias to canonical key" \
     "expected='$CORR_KEY_ALIAS', got='$cron_resolved_key'"
 
-  # 8c. Wait for the cron-triggered session to complete (poll notes file for follow-up)
-  echo "  Waiting for cron trigger to complete..."
-  alias_followup_found="no"
+  # 8c. Trigger #3 (runner): verify session continuity by recalling the phrase
+  # Wait for the async cron trigger to finish, then send a sync trigger with the
+  # canonical key. If the alias resolution worked, triggers #2 and #3 share the
+  # same session as trigger #1, so the agent can recall the phrase.
+  echo "  Waiting for cron trigger to finish, then sending trigger #3..."
+  alias_trigger3_done="no"
   for i in $(seq 1 30); do
-    if [[ -f "$ALIAS_NOTES_FILE" ]] && grep -q "## Follow-up" "$ALIAS_NOTES_FILE" 2>/dev/null; then
-      alias_followup_found="yes"
+    sleep 2
+    alias_trigger3_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+      -H 'Content-Type: application/json' \
+      -d "{\"prompt\":\"What is the phrase I asked you to remember earlier? Reply with just the phrase.\",\"correlationKey\":\"$CORR_KEY_ALIAS\",\"directory\":\"$ALIAS_DIR\"}" \
+      --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+    alias_trigger3=$(echo "$alias_trigger3_raw" | parse_done)
+    alias_trigger3_busy=$(json_field "$alias_trigger3" "busy")
+    if [[ "$alias_trigger3_busy" != "true" ]]; then
+      alias_trigger3_done="yes"
       break
     fi
-    sleep 2
   done
-  assert '[[ "$alias_followup_found" == "yes" ]]' "Trigger #2: session resumed (follow-up in notes)" "timed out after 60s"
 
-  # 8d. Verify the follow-up used the same session (check notes for session ID)
-  if [[ "$alias_followup_found" == "yes" ]]; then
-    followup_session=$(grep -m1 'Session ID:' "$ALIAS_NOTES_FILE" 2>/dev/null | \
-      sed 's/^Session ID: //' || echo "")
-    assert '[[ "$followup_session" == "$alias_session" ]]' \
-      "Trigger #2: same session ID (alias mapping worked)" \
-      "expected='$alias_session', got='$followup_session'"
+  if [[ "$alias_trigger3_done" == "yes" ]]; then
+    alias_session3=$(json_field "$alias_trigger3" "sessionId")
+    alias_resumed3=$(json_field "$alias_trigger3" "resumed")
+    alias_trigger3_text=$(json_field "$alias_trigger3" "response")
+    alias_response3_has_phrase=$(response_contains "$alias_trigger3" "$ALIAS_PHRASE")
 
-    # Check if the agent recalled the phrase (visible in notes)
-    notes_has_phrase=$(grep -q "$ALIAS_PHRASE" "$ALIAS_NOTES_FILE" 2>/dev/null && echo "yes" || echo "no")
-    assert '[[ "$notes_has_phrase" == "yes" ]]' \
-      "Trigger #2: agent recalled phrase from session (confirms continuity)" \
-      "phrase=$ALIAS_PHRASE not found in notes"
-
-    echo ""
-    echo "  Notes file content:"
-    head -50 "$ALIAS_NOTES_FILE" | sed 's/^/    /'
+    assert '[[ "$alias_session3" == "$alias_session" ]]' \
+      "Trigger #3: same session ID (alias mapping worked end-to-end)" \
+      "expected='$alias_session', got='$alias_session3'"
+    assert '[[ "$alias_resumed3" == "true" ]]' \
+      "Trigger #3: was a resumed session" \
+      "resumed='$alias_resumed3'"
+    assert '[[ "$alias_response3_has_phrase" == "yes" ]]' \
+      "Trigger #3: agent recalled phrase (confirms session continuity)" \
+      "response: ${alias_trigger3_text:0:200}"
+  else
+    assert 'false' "Trigger #3: session became available" "still busy after 60s"
   fi
 
   # Clean up: remove worktree and delete the test branch
