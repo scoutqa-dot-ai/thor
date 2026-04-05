@@ -51,7 +51,7 @@ app.post("/exec/git", async (req, res) => {
     const result = await execCommand("git", args, cwd);
     if ((result.exitCode ?? 0) === 0) {
       const alias = computeGitAlias("git", args, cwd);
-      if (alias) result.stderr = (result.stderr || "") + formatThorMeta(alias);
+      if (alias) result.stdout = (result.stdout || "") + formatThorMeta(alias);
     }
     res.json(result);
   } catch (err) {
@@ -85,7 +85,7 @@ app.post("/exec/gh", async (req, res) => {
     const result = await execCommand("gh", args, cwd);
     if ((result.exitCode ?? 0) === 0) {
       const alias = computeGitAlias("gh", args, cwd);
-      if (alias) result.stderr = (result.stderr || "") + formatThorMeta(alias);
+      if (alias) result.stdout = (result.stdout || "") + formatThorMeta(alias);
     }
     res.json(result);
   } catch (err) {

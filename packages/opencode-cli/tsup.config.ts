@@ -12,7 +12,9 @@ export default defineConfig({
   sourcemap: false,
   clean: true,
   outExtension: () => ({ js: ".mjs" }),
-  banner: { js: "#!/usr/bin/env node" },
+  banner: {
+    js: '#!/usr/bin/env node\nimport{createRequire as __cr}from"node:module";const require=__cr(import.meta.url);',
+  },
   // Bundle everything into standalone .mjs files
   noExternal: [/.*/],
 });

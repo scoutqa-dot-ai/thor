@@ -397,7 +397,7 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
         proxyName: instance.name,
         tool: toolName,
       });
-      res.json({ stdout: approvalText, stderr: approvalMeta, exitCode: 0 });
+      res.json({ stdout: `${approvalText}\n${approvalMeta}`, stderr: "", exitCode: 0 });
       return;
     }
 
@@ -417,13 +417,12 @@ app.post("/:upstream/tools/call", async (req: Request<{ upstream: string }>, res
       });
       writeToolCallLog({ tool: toolName, decision: "allowed", args, result, durationMs: duration });
 
-      const stdout = unwrapResult(result);
-      let stderr = "";
+      let stdout = unwrapResult(result);
       if (isAliasableMcpTool(toolName)) {
         const alias = computeSlackAlias(args, stdout);
-        if (alias) stderr = formatThorMeta(alias);
+        if (alias) stdout += formatThorMeta(alias);
       }
-      res.json({ stdout, stderr, exitCode: 0 });
+      res.json({ stdout, stderr: "", exitCode: 0 });
     } catch (err) {
       const duration = Date.now() - start;
       const message = err instanceof Error ? err.message : String(err);
