@@ -179,19 +179,17 @@ describe("onBotReply", () => {
     expect(getRegistrySize()).toBe(0);
   });
 
-  it("deletes in-progress messages (race condition: bot replies before finish)", async () => {
+  it("preserves in-progress messages when session is still active", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
-    // Message is registered as in_progress immediately on post — no finish() yet
+    // Message is registered as in_progress immediately on post — session still active
     expect(getRegistrySize()).toBe(1);
 
     await onBotReply("C123", "1710000000.001");
 
-    expect(chat(deps).delete).toHaveBeenCalledWith({
-      channel: "C123",
-      ts: "msg.001",
-    });
-    expect(getRegistrySize()).toBe(0);
+    // Should NOT delete — session is still active
+    expect(chat(deps).delete).not.toHaveBeenCalled();
+    expect(getRegistrySize()).toBe(1);
   });
 
   it("preserves error progress messages", async () => {

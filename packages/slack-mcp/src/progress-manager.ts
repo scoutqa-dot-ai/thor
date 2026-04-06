@@ -109,6 +109,13 @@ export async function onBotReply(channel: string, threadTs: string): Promise<voi
   });
   if (!thread) return;
 
+  // If there's still an active session, don't delete progress messages —
+  // the session is still running and will update/clean up its own message.
+  if (hasActiveSession) {
+    logInfo(log, "skip_delete_active_session", { key });
+    return;
+  }
+
   const deletions: Promise<void>[] = [];
 
   for (const [messageTs, entry] of thread) {
