@@ -92,4 +92,63 @@ describe("ApprovalStore", () => {
     expect(store.get(a2.id)!.tool).toBe("tool_b");
     expect(store.get(a3.id)!.tool).toBe("tool_c");
   });
+
+  describe("listPending", () => {
+    it("returns only pending actions", () => {
+      const a1 = store.create("tool_a", {});
+      const a2 = store.create("tool_b", {});
+      store.create("tool_c", {});
+
+      store.resolve(a1.id, "approved", "U1");
+      store.resolve(a2.id, "rejected", "U2");
+
+      const pending = store.listPending();
+      expect(pending.length).toBe(1);
+      expect(pending[0].tool).toBe("tool_c");
+    });
+
+    it("returns empty array when no actions exist", () => {
+      expect(store.listPending()).toEqual([]);
+    });
+
+    it("returns empty array when all actions are resolved", () => {
+      const a = store.create("tool_a", {});
+      store.resolve(a.id, "approved");
+      expect(store.listPending()).toEqual([]);
+    });
+
+    it("skips corrupt JSON files", () => {
+      const action = store.create("tool_a", {});
+      // Write a corrupt file in the same date directory
+      const { writeFileSync } = require("node:fs");
+      writeFileSync(join(tempDir, action.dateSegment, "corrupt.json"), "not-json{{{");
+
+      const pending = store.listPending();
+      expect(pending.length).toBe(1);
+      expect(pending[0].tool).toBe("tool_a");
+    });
+
+    it("includes pending actions from fallback directories", () => {
+      const fallbackDir = mkdtempSync(join(tmpdir(), "approval-fallback-"));
+      const storeWithFallback = new ApprovalStore(tempDir, [fallbackDir]);
+
+      // Create action in fallback dir directly
+      const fallbackStore = new ApprovalStore(fallbackDir);
+      const fallbackAction = fallbackStore.create("legacy_tool", { legacy: true });
+
+      // Create action in primary dir
+      storeWithFallback.create("new_tool", {});
+
+      const pending = storeWithFallback.listPending();
+      expect(pending.length).toBe(2);
+      expect(pending.map((a) => a.tool).sort()).toEqual(["legacy_tool", "new_tool"]);
+
+      rmSync(fallbackDir, { recursive: true, force: true });
+    });
+
+    it("handles missing directories gracefully", () => {
+      const storeWithMissing = new ApprovalStore("/nonexistent/path/approval-store");
+      expect(storeWithMissing.listPending()).toEqual([]);
+    });
+  });
 });

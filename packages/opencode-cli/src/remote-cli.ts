@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Shared HTTP client for git/gh/scoutqa wrapper scripts.
  *
@@ -11,6 +10,8 @@
  * git/gh endpoints return buffered JSON: { stdout, stderr, exitCode }
  * scoutqa endpoint streams NDJSON: { stream, data } chunks + { exitCode } final line
  */
+
+import { ExecResultSchema, NdjsonChunkSchema } from "@thor/common";
 
 const [endpoint, ...args] = process.argv.slice(2);
 
@@ -49,31 +50,31 @@ try {
     const decoder = new TextDecoder();
     let buffer = "";
 
-    for await (const chunk of res.body) {
-      buffer += decoder.decode(chunk, { stream: true });
+    for await (const chunk of res.body!) {
+      buffer += decoder.decode(chunk as Uint8Array, { stream: true });
       const lines = buffer.split("\n");
-      buffer = lines.pop(); // keep incomplete line in buffer
+      buffer = lines.pop()!; // keep incomplete line in buffer
       for (const line of lines) {
         if (!line) continue;
-        const msg = JSON.parse(line);
-        if (msg.stream === "stdout") process.stdout.write(msg.data);
-        else if (msg.stream === "stderr") process.stderr.write(msg.data);
-        if (msg.exitCode !== undefined) exitCode = msg.exitCode;
+        const msg = NdjsonChunkSchema.parse(JSON.parse(line));
+        if ("stream" in msg && msg.stream === "stdout") process.stdout.write(msg.data);
+        else if ("stream" in msg && msg.stream === "stderr") process.stderr.write(msg.data);
+        if ("exitCode" in msg) exitCode = msg.exitCode;
       }
     }
     // flush remaining buffer
     if (buffer.trim()) {
-      const msg = JSON.parse(buffer);
-      if (msg.stream === "stdout") process.stdout.write(msg.data);
-      else if (msg.stream === "stderr") process.stderr.write(msg.data);
-      if (msg.exitCode !== undefined) exitCode = msg.exitCode;
+      const msg = NdjsonChunkSchema.parse(JSON.parse(buffer));
+      if ("stream" in msg && msg.stream === "stdout") process.stdout.write(msg.data);
+      else if ("stream" in msg && msg.stream === "stderr") process.stderr.write(msg.data);
+      if ("exitCode" in msg) exitCode = msg.exitCode;
     }
     process.exit(exitCode);
   }
 
   // Buffered JSON response (git/gh)
   if (!res.ok && contentType.includes("application/json")) {
-    const body = await res.json();
+    const body = ExecResultSchema.parse(await res.json());
     if (body.stderr) process.stderr.write(body.stderr);
     if (body.stdout) process.stdout.write(body.stdout);
     process.exit(body.exitCode ?? 1);
@@ -84,12 +85,12 @@ try {
     process.exit(1);
   }
 
-  const body = await res.json();
+  const body = ExecResultSchema.parse(await res.json());
   if (body.stdout) process.stdout.write(body.stdout);
   if (body.stderr) process.stderr.write(body.stderr);
 
   process.exit(body.exitCode ?? 0);
 } catch (err) {
-  process.stderr.write(`Failed to reach remote-cli: ${err.message}\n`);
+  process.stderr.write(`Failed to reach remote-cli: ${(err as Error).message}\n`);
   process.exit(1);
 }

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * HTTP client for mcp/approval CLI wrappers.
  * Talks to the proxy service (not remote-cli).
@@ -14,6 +13,40 @@
  * Env:
  *   THOR_PROXY_URL — base URL of the proxy (e.g. http://proxy:3001)
  */
+
+import { z } from "zod/v4";
+import { ExecResultSchema } from "@thor/common";
+
+// --- Response schemas (proxy-specific) ---
+
+const UpstreamSchema = z.object({
+  name: z.string(),
+  toolCount: z.number(),
+  connected: z.boolean(),
+});
+
+const UpstreamsResponseSchema = z.object({
+  upstreams: z.array(UpstreamSchema),
+});
+
+const ToolInfoSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  inputSchema: z.unknown().optional(),
+  classification: z.string().optional(),
+});
+
+const ToolsResponseSchema = z.object({
+  tools: z.array(ToolInfoSchema),
+});
+
+type ToolInfo = z.infer<typeof ToolInfoSchema>;
+
+const ErrorResponseSchema = z.object({
+  error: z.string(),
+});
+
+// --- Env & headers ---
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -36,7 +69,7 @@ if (!directory) {
 
 const sessionId = process.env.THOR_OPENCODE_SESSION_ID || "";
 const callId = process.env.THOR_OPENCODE_CALL_ID || "";
-const thorHeaders = {
+const thorHeaders: Record<string, string> = {
   "x-thor-directory": directory,
   ...(sessionId && { "x-thor-session-id": sessionId }),
   ...(callId && { "x-thor-call-id": callId }),
@@ -44,29 +77,31 @@ const thorHeaders = {
 
 // --- HTTP helpers ---
 
-async function jsonGet(url) {
+async function jsonGet(url: string) {
   const res = await fetch(url, { headers: thorHeaders, signal: AbortSignal.timeout(120_000) });
-  return { res, body: await res.json() };
+  return { res, json: await res.json() };
 }
 
-async function jsonPost(url, body) {
+async function jsonPost(url: string, payload: unknown) {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...thorHeaders },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
     signal: AbortSignal.timeout(120_000),
   });
-  return { res, body: await res.json() };
+  return { res, json: await res.json() };
 }
 
 // --- Fuzzy matching (substring) ---
 
-function fuzzyMatch(input, candidates) {
+function fuzzyMatch(input: string, candidates: string[]) {
   const lower = input.toLowerCase();
-  return candidates.filter((c) => c.toLowerCase().includes(lower) || lower.includes(c.toLowerCase()));
+  return candidates.filter(
+    (c) => c.toLowerCase().includes(lower) || lower.includes(c.toLowerCase()),
+  );
 }
 
-function suggestMatch(input, candidates) {
+function suggestMatch(input: string, candidates: string[]) {
   const matches = fuzzyMatch(input, candidates);
   if (matches.length > 0) {
     return `Did you mean "${matches[0]}"? `;
@@ -76,14 +111,15 @@ function suggestMatch(input, candidates) {
 
 // --- Upstream list cache (for fuzzy suggestions) ---
 
-let cachedUpstreams = null;
+let cachedUpstreams: string[] | null = null;
 
 async function getUpstreamNames() {
   if (cachedUpstreams) return cachedUpstreams;
   try {
-    const { res, body } = await jsonGet(`${proxyUrl}/upstreams`);
-    if (res.ok && body.upstreams) {
-      cachedUpstreams = body.upstreams.map((u) => u.name);
+    const { res, json } = await jsonGet(`${proxyUrl}/upstreams`);
+    if (res.ok) {
+      const parsed = UpstreamsResponseSchema.parse(json);
+      cachedUpstreams = parsed.upstreams.map((u) => u.name);
       return cachedUpstreams;
     }
   } catch {}
@@ -99,31 +135,32 @@ try {
     await handleApproval(args);
   }
 } catch (err) {
-  if (err.name === "TimeoutError") {
+  if ((err as Error).name === "TimeoutError") {
     process.stderr.write(`Timeout reaching proxy at ${proxyUrl} (120s)\n`);
   } else {
-    process.stderr.write(`Failed to reach proxy at ${proxyUrl}: ${err.message}\n`);
+    process.stderr.write(`Failed to reach proxy at ${proxyUrl}: ${(err as Error).message}\n`);
   }
   process.exit(1);
 }
 
-async function handleMcp(args) {
+async function handleMcp(args: string[]) {
   // mcp (no args) — list upstreams
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-    const { res, body } = await jsonGet(`${proxyUrl}/upstreams`);
+    const { res, json } = await jsonGet(`${proxyUrl}/upstreams`);
     if (!res.ok) {
-      process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
+      const err = ErrorResponseSchema.safeParse(json);
+      process.stderr.write(`${err.success ? err.data.error : JSON.stringify(json)}\n`);
       process.exit(1);
     }
-    process.stdout.write(JSON.stringify(body, null, 2) + "\n");
+    process.stdout.write(JSON.stringify(json, null, 2) + "\n");
     return;
   }
 
   const upstream = args[0];
 
   // Fetch tools for this upstream (shared across subcommands)
-  async function fetchTools() {
-    const { res, body } = await jsonGet(`${proxyUrl}/${upstream}/tools`);
+  async function fetchTools(): Promise<ToolInfo[]> {
+    const { res, json } = await jsonGet(`${proxyUrl}/${upstream}/tools`);
     if (!res.ok) {
       if (res.status === 403 || res.status === 404) {
         const upstreams = await getUpstreamNames();
@@ -133,23 +170,30 @@ async function handleMcp(args) {
         );
         process.exit(1);
       }
-      process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
+      const err = ErrorResponseSchema.safeParse(json);
+      process.stderr.write(`${err.success ? err.data.error : JSON.stringify(json)}\n`);
       process.exit(1);
     }
-    return body.tools ?? [];
+    return ToolsResponseSchema.parse(json).tools;
   }
 
   // Resolve a tool by name (exact or fuzzy). Exits on no match.
-  function resolveTool(tools, name) {
+  function resolveTool(tools: ToolInfo[], name: string): ToolInfo {
     const exact = tools.find((t) => t.name === name);
     if (exact) return exact;
 
-    const matches = fuzzyMatch(name, tools.map((t) => t.name));
+    const matches = fuzzyMatch(
+      name,
+      tools.map((t) => t.name),
+    );
     if (matches.length === 1) {
-      return tools.find((t) => t.name === matches[0]);
+      return tools.find((t) => t.name === matches[0])!;
     }
 
-    const suggestion = suggestMatch(name, tools.map((t) => t.name));
+    const suggestion = suggestMatch(
+      name,
+      tools.map((t) => t.name),
+    );
     process.stderr.write(
       `Unknown tool "${name}" on upstream "${upstream}". ${suggestion}Available tools: ${tools.map((t) => t.name).join(", ")}\n`,
     );
@@ -185,7 +229,7 @@ async function handleMcp(args) {
       process.stdout.write(JSON.stringify(toolInfo, null, 2) + "\n");
       return;
     }
-    const chunks = [];
+    const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) chunks.push(chunk);
     jsonArg = Buffer.concat(chunks).toString().trim();
     if (!jsonArg) {
@@ -193,7 +237,7 @@ async function handleMcp(args) {
       process.exit(1);
     }
   }
-  let toolArgs;
+  let toolArgs: unknown;
   try {
     toolArgs = JSON.parse(jsonArg);
   } catch {
@@ -213,13 +257,15 @@ async function handleMcp(args) {
     process.exit(1);
   }
 
-  const { res, body } = await jsonPost(`${proxyUrl}/${upstream}/tools/call`, {
+  const { res, json } = await jsonPost(`${proxyUrl}/${upstream}/tools/call`, {
     name: tool,
     arguments: toolArgs,
   });
 
+  const body = ExecResultSchema.parse(json);
+
   if (!res.ok && !body.stdout) {
-    process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
+    process.stderr.write(`${body.stderr || JSON.stringify(json)}\n`);
     process.exit(1);
   }
 
@@ -228,7 +274,7 @@ async function handleMcp(args) {
   process.exit(body.exitCode ?? (res.ok ? 0 : 1));
 }
 
-async function handleApproval(args) {
+async function handleApproval(args: string[]) {
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
     process.stderr.write("Usage:\n  approval status <action-id>\n  approval list\n");
     process.exit(1);
@@ -241,22 +287,24 @@ async function handleApproval(args) {
       process.stderr.write("Usage: approval status <action-id>\n");
       process.exit(1);
     }
-    const { res, body } = await jsonGet(`${proxyUrl}/approval/${args[1]}`);
+    const { res, json } = await jsonGet(`${proxyUrl}/approval/${args[1]}`);
     if (!res.ok) {
-      process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
+      const err = ErrorResponseSchema.safeParse(json);
+      process.stderr.write(`${err.success ? err.data.error : JSON.stringify(json)}\n`);
       process.exit(1);
     }
-    process.stdout.write(JSON.stringify(body, null, 2) + "\n");
+    process.stdout.write(JSON.stringify(json, null, 2) + "\n");
     return;
   }
 
   if (subcommand === "list") {
-    const { res, body } = await jsonGet(`${proxyUrl}/approvals`);
+    const { res, json } = await jsonGet(`${proxyUrl}/approvals`);
     if (!res.ok) {
-      process.stderr.write(`${body.error || JSON.stringify(body)}\n`);
+      const err = ErrorResponseSchema.safeParse(json);
+      process.stderr.write(`${err.success ? err.data.error : JSON.stringify(json)}\n`);
       process.exit(1);
     }
-    process.stdout.write(JSON.stringify(body, null, 2) + "\n");
+    process.stdout.write(JSON.stringify(json, null, 2) + "\n");
     return;
   }
 

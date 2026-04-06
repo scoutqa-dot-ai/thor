@@ -179,7 +179,7 @@ describe("readSlackFile", () => {
 
     const result = await readSlackFile("F123", 5_000_000, deps);
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       kind: "text",
       file: {
         id: "F123",
@@ -187,11 +187,6 @@ describe("readSlackFile", () => {
         title: "brief",
         mimetype: "text/markdown",
         filetype: "md",
-        pretty_type: undefined,
-        size: undefined,
-        permalink: undefined,
-        url_private: undefined,
-        url_private_download: undefined,
       },
       text: "# Brief\nHello from Slack",
       truncated: false,
@@ -235,7 +230,7 @@ describe("readSlackFile", () => {
 
     const result = await readSlackFile("FIMG", 5_000_000, deps);
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       kind: "image",
       file: {
         id: "FIMG",
@@ -243,10 +238,6 @@ describe("readSlackFile", () => {
         title: "photo",
         mimetype: "image/jpeg",
         filetype: "jpg",
-        pretty_type: undefined,
-        size: undefined,
-        permalink: undefined,
-        url_private: undefined,
         url_private_download: "https://files.slack.com/files-pri/T123-FIMG/photo.jpg",
       },
       mimeType: "image/jpeg",

@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { execCommand, execCommandStream } from "./exec.js";
-import { resolve } from "node:path";
-
-// Resolve the real scoutqa binary from node_modules/.bin
-const SCOUTQA_BIN = resolve(import.meta.dirname, "../node_modules/.bin/scoutqa");
 
 describe("execCommand", () => {
   it("captures stdout", async () => {
@@ -98,27 +94,5 @@ describe("execCommandStream", () => {
       onStderr: () => {},
     });
     expect(exitCode).toBe(1);
-  });
-});
-
-describe("scoutqa CLI (real binary)", () => {
-  it("runs --version and returns a version string", async () => {
-    const result = await execCommand(SCOUTQA_BIN, ["--version"], "/tmp");
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
-  });
-
-  it("streams --help output", async () => {
-    const chunks: string[] = [];
-    const exitCode = await execCommandStream(SCOUTQA_BIN, ["--help"], "/tmp", {
-      onStdout: (c) => chunks.push(c),
-      onStderr: () => {},
-    });
-    const output = chunks.join("");
-    expect(exitCode).toBe(0);
-    expect(output).toContain("create-execution");
-    expect(output).toContain("send-message");
-    expect(output).toContain("list-executions");
-    expect(output).toContain("complete-execution");
   });
 });

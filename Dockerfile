@@ -14,13 +14,14 @@ RUN mkdir -p /workspace && chown thor:thor /workspace
 # --- Install deps (cached until lockfile or package.json changes) ---
 FROM base AS deps
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json tsup.config.ts ./
 COPY packages/common/package.json packages/common/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/proxy/package.json packages/proxy/
 COPY packages/runner/package.json packages/runner/
 COPY packages/slack-mcp/package.json packages/slack-mcp/
 COPY packages/remote-cli/package.json packages/remote-cli/
+COPY packages/opencode-cli/package.json packages/opencode-cli/
 RUN pnpm install --frozen-lockfile
 
 # --- Build all packages ---
@@ -55,6 +56,42 @@ USER thor
 ENV PORT=3003
 EXPOSE 3003
 CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
+
+# --- Build opencode binary from source (separate base image) ---
+FROM oven/bun:1.3 AS opencode-builder
+RUN apt-get update && apt-get install -y git python3 make g++ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+# https://github.com/scoutqa-dot-ai/thor-opencode/tree/thor/v1.3.9
+RUN git clone --depth 1 --single-branch --branch thor/v1.3.9 https://github.com/scoutqa-dot-ai/thor-opencode.git . \
+    && git checkout d087608
+RUN bun install
+RUN cd packages/opencode && bun run build --single
+RUN cp packages/opencode/dist/opencode-*/bin/opencode /tmp/opencode
+
+FROM base AS opencode
+# Install the built binary
+COPY --from=opencode-builder /tmp/opencode /usr/local/bin/opencode
+# git/gh/scoutqa wrapper scripts — forward to remote-cli service over HTTP
+COPY --from=build /app/packages/opencode-cli/dist/remote-cli.mjs /usr/local/bin/remote-cli.mjs
+COPY docker/opencode/bin/git /usr/local/bin/git
+COPY docker/opencode/bin/gh /usr/local/bin/gh
+COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
+# mcp/approval wrapper scripts — forward to proxy service over HTTP
+COPY --from=build /app/packages/opencode-cli/dist/proxy-cli.mjs /usr/local/bin/proxy-cli.mjs
+COPY docker/opencode/bin/mcp /usr/local/bin/mcp
+COPY docker/opencode/bin/approval /usr/local/bin/approval
+USER thor
+RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state
+ENV THOR_REMOTE_CLI_URL=http://remote-cli:3004
+ENV THOR_PROXY_URL=http://proxy:3001
+# Disable the question tool — it requires an interactive client to answer.
+# OpenCode only registers QuestionTool when OPENCODE_CLIENT is "app", "cli", or "desktop".
+# https://github.com/anomalyco/opencode/blob/500dcfc586e3787a329b51a74fec6d776d9165c1/packages/opencode/src/tool/registry.ts#L117
+ENV OPENCODE_CLIENT=thor
+COPY --chown=thor:thor docker/opencode/opencode.json /home/thor/.config/opencode/opencode.json
+COPY --chown=thor:thor docker/opencode/agents/ /home/thor/.config/opencode/agents/
+COPY --chown=thor:thor docker/opencode/plugins/ /home/thor/.config/opencode/plugins/
+ENTRYPOINT ["opencode"]
 
 FROM build AS remote-cli
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl openssh-client && rm -rf /var/lib/apt/lists/* \
