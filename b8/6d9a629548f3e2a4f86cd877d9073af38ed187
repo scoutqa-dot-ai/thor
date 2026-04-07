@@ -1,0 +1,25 @@
+packages/runner/src/event-bus.ts
+  0fd1c5de3c4a8b96 1-188
+packages/runner/src/event-bus.test.ts
+  0fd1c5de3c4a8b96 1-399
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b86d9a629548f3e2a4f86cd877d9073af38ed187",
+  "prompts": {
+    "0fd1c5de3c4a8b96": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e332d4cf-13f7-42f8-965d-1f4a6ca7b4c2",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 699,
+      "total_deletions": 111,
+      "accepted_lines": 625,
+      "overriden_lines": 0
+    }
+  }
+}
