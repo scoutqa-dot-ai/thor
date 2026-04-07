@@ -11,6 +11,7 @@ import type {
   ToolStateCompleted,
   ToolStateError,
 } from "@opencode-ai/sdk";
+import { EventBusRegistry } from "./event-bus.js";
 import { readFileSync } from "node:fs";
 import {
   createLogger,
@@ -54,6 +55,9 @@ const MEMORY_DIR = "/workspace/memory";
 const ROOT_MEMORY_PATH = `${MEMORY_DIR}/README.md`;
 
 const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
+
+/** Shared event buses — one SSE connection per directory, dispatches to per-session listeners. */
+const eventBuses = new EventBusRegistry(OPENCODE_URL);
 
 /** Read a file, returns trimmed content or undefined. */
 function readMemoryFile(filePath: string): string | undefined {
@@ -437,17 +441,18 @@ app.post("/trigger", async (req, res) => {
         logInfo(log, "session_busy_aborting", { sessionId, correlationKey });
         await client.session.abort({ path: { id: sessionId } });
 
-        const { stream: abortStream } = await client.event.subscribe();
+        const abortSub = await eventBuses.subscribe(sessionDirectory, [sessionId]);
         const abortDeadline = Date.now() + ABORT_TIMEOUT;
         let aborted = false;
 
-        for await (const event of abortStream) {
+        for await (const event of abortSub) {
           if (Date.now() > abortDeadline) break;
-          if (event.type === "session.idle" && event.properties.sessionID === sessionId) {
+          if (event.type === "session.idle") {
             aborted = true;
             break;
           }
         }
+        abortSub.close();
 
         if (!aborted) {
           logError(log, "session_abort_timeout", `Session did not idle within ${ABORT_TIMEOUT}ms`, {
@@ -526,8 +531,8 @@ app.post("/trigger", async (req, res) => {
         }
       : undefined;
 
-    // Subscribe to event stream BEFORE sending the prompt
-    const { stream } = await client.event.subscribe();
+    // Subscribe to event bus BEFORE sending the prompt
+    const subscription = await eventBuses.subscribe(sessionDirectory, [sessionId]);
 
     const promptStart = Date.now();
     const asyncResult = await client.session.promptAsync({
@@ -590,7 +595,7 @@ app.post("/trigger", async (req, res) => {
     // Track child session IDs for progress forwarding.
     const childSessionIds = new Set<string>();
 
-    for await (const event of stream) {
+    for await (const event of subscription) {
       if (finished) break;
 
       const isParent = isSessionEvent(event, sessionId);
@@ -639,6 +644,7 @@ app.post("/trigger", async (req, res) => {
                 if (resp.data) {
                   for (const child of resp.data) {
                     childSessionIds.add(child.id);
+                    subscription.addSessionId(child.id);
                   }
                 }
               })
@@ -701,6 +707,7 @@ app.post("/trigger", async (req, res) => {
         break;
       }
     }
+    subscription.close();
 
     const durationMs = Date.now() - promptStart;
 
