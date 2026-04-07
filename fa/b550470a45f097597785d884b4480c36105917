@@ -1,0 +1,23 @@
+docs/feat/approval-flow.md
+  3689592bac282397 1-90,92-174,176-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "fab550470a45f097597785d884b4480c36105917",
+  "prompts": {
+    "3689592bac282397": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "87525947-f943-4432-ae97-080226aea390",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 210,
+      "total_deletions": 5,
+      "accepted_lines": 202,
+      "overriden_lines": 3
+    }
+  }
+}
