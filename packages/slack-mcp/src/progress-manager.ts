@@ -252,6 +252,19 @@ class ProgressSession {
     if (this.finished) return;
     this.finished = true;
 
+    // Treat aborts as successful completions — the session was intentionally
+    // interrupted (e.g. new message arrived) and will be re-triggered.
+    if (status === "error" && errorMsg && /abort/i.test(errorMsg)) {
+      logInfo(log, "session_abort_as_completed", {
+        channel: this.channel,
+        threadTs: this.threadTs,
+        errorMsg,
+        toolCallCount: this.toolCallCount,
+      });
+      status = "completed";
+      errorMsg = undefined;
+    }
+
     // Always post errors so failures are never invisible in Slack.
     if (!this.thresholdMet && status === "completed") return;
 

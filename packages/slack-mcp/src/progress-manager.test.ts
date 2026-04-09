@@ -137,6 +137,49 @@ describe("ProgressManager", () => {
     expect(getRegistrySize()).toBe(0);
   });
 
+  it("treats abort errors as completed (updates to Done)", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3); // cross threshold, message posted
+
+    const abortEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "error",
+      error: "Aborted",
+      response: "",
+      toolCalls: [],
+      durationMs: 500,
+    };
+    await handleProgressEvent("C123", "1710000000.001", abortEvent, deps);
+
+    // Should update to "Done" — not show an error
+    expect(chat(deps).update).toHaveBeenCalledOnce();
+    const updateCall = chat(deps).update.mock.calls[0][0] as { text: string };
+    expect(updateCall.text).toContain("Done");
+    expect(updateCall.text).not.toContain("Failed");
+  });
+
+  it("suppresses abort errors even below threshold (no Slack message at all)", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 1); // below threshold
+
+    const abortEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "error",
+      error: "Aborted",
+      response: "",
+      toolCalls: [],
+      durationMs: 200,
+    };
+    await handleProgressEvent("C123", "1710000000.001", abortEvent, deps);
+
+    expect(chat(deps).postMessage).not.toHaveBeenCalled();
+    expect(chat(deps).update).not.toHaveBeenCalled();
+  });
+
   it("short run (below threshold) produces no Slack messages on finish", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 2);
