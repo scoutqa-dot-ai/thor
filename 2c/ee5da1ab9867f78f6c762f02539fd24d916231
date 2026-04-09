@@ -1,0 +1,40 @@
+packages/slack-mcp/src/progress-manager.test.ts
+  afa12333659e8724 140-182,209-211,215-216,220-228
+  63c00535d2cf4f69 207,212-214,231
+packages/slack-mcp/src/progress-manager.ts
+  63c00535d2cf4f69 117-123,145-161
+  afa12333659e8724 255-267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2cee5da1ab9867f78f6c762f02539fd24d916231",
+  "prompts": {
+    "63c00535d2cf4f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fd9655a5-f703-4204-8e04-73ea07a2b5fe",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 7,
+      "accepted_lines": 29,
+      "overriden_lines": 0
+    },
+    "afa12333659e8724": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e43653ff-06c1-404b-8db8-0db58aa9a0c9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 68,
+      "total_deletions": 12,
+      "accepted_lines": 70,
+      "overriden_lines": 0
+    }
+  }
+}
