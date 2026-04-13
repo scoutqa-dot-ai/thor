@@ -402,7 +402,7 @@ app.post("/trigger", async (req, res) => {
         }
 
         const session = await client.session.create({
-          body: { title: `trigger: ${prompt.slice(0, 50)}` },
+          body: {},
         });
         if (!session.data) {
           res.status(500).json({ error: "Failed to create session" });
@@ -414,7 +414,7 @@ app.post("/trigger", async (req, res) => {
     } else {
       // No session to resume — create a new one
       const session = await client.session.create({
-        body: { title: `trigger: ${prompt.slice(0, 50)}` },
+        body: {},
       });
       if (!session.data) {
         res.status(500).json({ error: "Failed to create session" });
