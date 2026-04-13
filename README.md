@@ -49,7 +49,7 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 ## How It Works
 
 1. **Events arrive** — Slack mentions, GitHub webhooks, and cron schedules hit the gateway
-2. **Smart batching** — Events are queued per correlation key (e.g., Slack thread) with configurable delays (3s for direct mentions, 60s for unaddressed messages and GitHub events, immediate for cron)
+2. **Smart batching** — Events are queued per correlation key (e.g., Slack thread) with configurable delays (3s for mentions and engaged threads, 60s for GitHub events, immediate for cron). Non-mention Slack messages are only forwarded if Thor has already replied in the thread.
 3. **Session continuity** — The runner maps correlation keys to persistent OpenCode sessions, resuming context across interactions
 4. **Policy-enforced tools** — OpenCode accesses integrations through proxy instances that enforce allow-lists and log every tool call
 5. **Progress visibility** — Tool activity streams back to Slack as live-updating progress messages that auto-clean when the bot replies

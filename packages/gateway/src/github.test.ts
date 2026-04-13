@@ -38,8 +38,8 @@ async function withServer<T>(
     fetchImpl,
     queueDir,
     disableQueueInterval: true,
-    interruptDelayMs: 0,
-    unaddressedDelayMs: 0,
+    shortDelayMs: 0,
+    longDelayMs: 0,
   });
 
   const server = app.listen(0);

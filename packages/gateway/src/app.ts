@@ -68,11 +68,11 @@ interface RawBodyRequest extends Request {
   rawBody?: string;
 }
 
-/** Delay for interrupt events (mentions) — brief debounce (ms). */
-const INTERRUPT_DELAY_MS = 3000;
+/** Short debounce delay for mentions and engaged threads (ms). */
+const SHORT_DELAY_MS = 3000;
 
-/** Delay for non-interrupt events — hope someone else handles it or session finishes (ms). */
-const UNADDRESSED_DELAY_MS = 60_000;
+/** Long debounce delay for unaddressed events like GitHub without mention (ms). */
+const LONG_DELAY_MS = 60_000;
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
@@ -88,10 +88,10 @@ export interface GatewayAppConfig extends RunnerDeps {
   queueDir?: string;
   /** Disable the queue polling interval (for tests). Default: false. */
   disableQueueInterval?: boolean;
-  /** Delay for interrupt events (mentions) in ms. Default: 3000. */
-  interruptDelayMs?: number;
-  /** Delay for non-interrupt events in ms. Default: 60000. */
-  unaddressedDelayMs?: number;
+  /** Short debounce delay for mentions and engaged threads (ms). Default: 3000. */
+  shortDelayMs?: number;
+  /** Long debounce delay for unaddressed events (ms). Default: 60000. */
+  longDelayMs?: number;
   /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
   cronSecret?: string;
   /** Git username (e.g. GitHub login) — used to detect @mentions in GitHub events. */
@@ -119,8 +119,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   // --- Event queue with handler ---
 
   const selfUserId = config.slackBotUserId;
-  const interruptDelay = config.interruptDelayMs ?? INTERRUPT_DELAY_MS;
-  const unaddressedDelay = config.unaddressedDelayMs ?? UNADDRESSED_DELAY_MS;
+  const shortDelay = config.shortDelayMs ?? SHORT_DELAY_MS;
+  const longDelay = config.longDelayMs ?? LONG_DELAY_MS;
 
   /** Read allowed channels dynamically from config on each call. */
   const isChannelAllowed = (channel: string): boolean => {
@@ -371,8 +371,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         payload: event,
         receivedAt: new Date().toISOString(),
         sourceTs: parseSlackTs(event.ts),
-        readyAt: Date.now() + interruptDelay,
-        delayMs: interruptDelay,
+        readyAt: Date.now() + shortDelay,
+        delayMs: shortDelay,
         interrupt: true,
       });
       return;
@@ -387,17 +387,22 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     // Message (no subtype — excludes system events like channel_join)
     if (event.type === "message" && !event.subtype) {
-      res.status(200).json({ ok: true });
       const rawKey = getSlackCorrelationKey(event);
       const correlationKey = resolveCorrelationKeys([rawKey]);
       if (correlationKey !== rawKey) {
         logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
       }
 
-      // If Thor has replied in this thread before, use short delay (engaged conversation).
+      // Only forward if Thor has replied in this thread before (engaged conversation).
+      // Users must @mention Thor to start a new conversation.
       const engaged = hasSlackReply(correlationKey);
-      const delay = engaged ? interruptDelay : unaddressedDelay;
+      if (!engaged) {
+        logInfo(log, "event_ignored_not_engaged", { eventId, correlationKey });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
 
+      res.status(200).json({ ok: true });
       logInfo(log, "event_accepted", {
         eventId,
         teamId: envelope.data.team_id,
@@ -406,8 +411,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         ts: event.ts,
         threadTs: event.thread_ts,
         correlationKey,
-        delay,
-        engaged,
       });
       queue.enqueue({
         id: eventId,
@@ -416,8 +419,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         payload: event,
         receivedAt: new Date().toISOString(),
         sourceTs: parseSlackTs(event.ts),
-        readyAt: Date.now() + delay,
-        delayMs: delay,
+        readyAt: Date.now() + shortDelay,
+        delayMs: shortDelay,
       });
       return;
     }
@@ -539,7 +542,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     const isMention = config.gitUsername ? githubEventMentions(event, config.gitUsername) : false;
-    const delay = isMention ? interruptDelay : unaddressedDelay;
+    const delay = isMention ? shortDelay : longDelay;
 
     logInfo(log, "github_event_accepted", {
       event: event.event,

@@ -12,14 +12,14 @@
 
 ## Interrupt rules
 
-| Source                                          | Interrupt | Delay |
-| ----------------------------------------------- | --------- | ----- |
-| Slack `app_mention`                             | true      | 3s    |
-| Slack `message` (engaged — Thor replied before) | false     | 3s    |
-| Slack `message` (not engaged)                   | false     | 60s   |
-| GitHub with `@GIT_USER_NAME` in body            | true      | 3s    |
-| GitHub without mention                          | false     | 60s   |
-| Cron                                            | false     | 0s    |
+| Source                                          | Interrupt | Delay   |
+| ----------------------------------------------- | --------- | ------- | ----------------------------------------------------------------- |
+| Slack `app_mention`                             | true      | 3s      |
+| Slack `message` (engaged — Thor replied before) | false     | 3s      |
+| ~~Slack `message` (not engaged)~~               | ~~false~~ | ~~60s~~ | **Obsolete** — dropped since `2026041301_slack-drop-unengaged.md` |
+| GitHub with `@GIT_USER_NAME` in body            | true      | 3s      |
+| GitHub without mention                          | false     | 60s     |
+| Cron                                            | false     | 0s      |
 
 Default for new sources: `interrupt: false`. The runner treats unset interrupt as false.
 
@@ -37,11 +37,15 @@ Mention enqueued with `interrupt: true`, 3s delay. After 3s, queue fires → run
 
 ### S3: Non-mention while session is running (same thread)
 
-Non-mention enqueued with `interrupt: false`, 60s delay. After 60s, queue fires → runner sees busy session → returns `{busy: true}` → ack not called → files stay on disk → retried on next scan. Once session finishes → fires → agent sees the message.
+> **Obsolete** — see `2026041301_slack-drop-unengaged.md`. Non-mention messages in unengaged threads are now dropped. Engaged threads use 3s delay.
+
+~~Non-mention enqueued with `interrupt: false`, 60s delay. After 60s, queue fires → runner sees busy session → returns `{busy: true}` → ack not called → files stay on disk → retried on next scan. Once session finishes → fires → agent sees the message.~~
 
 ### S4: Non-mention, no session running
 
-Non-mention enqueued with 60s delay. After 60s, fires → runner creates/resumes session → processes.
+> **Obsolete** — see `2026041301_slack-drop-unengaged.md`. Non-mention messages in unengaged threads are now dropped.
+
+~~Non-mention enqueued with 60s delay. After 60s, fires → runner creates/resumes session → processes.~~
 
 ### S5: Multiple rapid mentions (same thread)
 
@@ -49,11 +53,15 @@ Mention at T+0 (readyAt=T+3). Mention at T+1 (readyAt=T+4). Queue uses `max(read
 
 ### S6: Non-mention pending, then mention arrives (same thread)
 
-Non-mention at T+0 (readyAt=T+60). Mention at T+10 (readyAt=T+13). Batch has interrupt events → readiness based on interrupt-only readyAt = T+13. Both fire together. Mention pulls non-mention forward.
+> **Obsolete** — see `2026041301_slack-drop-unengaged.md`. Non-mention messages in unengaged threads are now dropped, so this scenario no longer applies. In engaged threads, non-mentions use 3s delay (same as mentions).
+
+~~Non-mention at T+0 (readyAt=T+60). Mention at T+10 (readyAt=T+13). Batch has interrupt events → readiness based on interrupt-only readyAt = T+13. Both fire together. Mention pulls non-mention forward.~~
 
 ### S7: Mention fires, session starts, then non-mention arrives
 
-Mention fires at T, session starts. Non-mention at T+5 (readyAt=T+65). After 65s, fires with `interrupt: false` → runner returns `{busy: true}` → retried until session finishes.
+> **Obsolete** — see `2026041301_slack-drop-unengaged.md`. After a mention creates a session and Thor replies, the thread becomes engaged — subsequent non-mentions use 3s delay instead of 60s.
+
+~~Mention fires at T, session starts. Non-mention at T+5 (readyAt=T+65). After 65s, fires with `interrupt: false` → runner returns `{busy: true}` → retried until session finishes.~~
 
 ### S8: Mention in thread A while session runs for thread B
 

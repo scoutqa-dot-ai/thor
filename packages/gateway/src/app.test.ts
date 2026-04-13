@@ -28,11 +28,13 @@ function fakeConfigLoader(
   return loader;
 }
 
+let mockHasSlackReply = false;
 vi.mock("@thor/common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@thor/common")>();
   return {
     ...actual,
     resolveRepoDirectory: (repoName: string) => `/workspace/repos/${repoName}`,
+    hasSlackReply: () => mockHasSlackReply,
   };
 });
 
@@ -54,8 +56,8 @@ async function withServer<T>(
     fetchImpl,
     queueDir,
     disableQueueInterval: true,
-    interruptDelayMs: 0,
-    unaddressedDelayMs: 0,
+    shortDelayMs: 0,
+    longDelayMs: 0,
     getConfig: fakeConfigLoader(["C123"], [["C123", "test-repo"]]),
     ...extraConfig,
   });
@@ -81,6 +83,7 @@ async function withServer<T>(
 
 afterEach(() => {
   vi.restoreAllMocks();
+  mockHasSlackReply = false;
 });
 
 describe("gateway", () => {
@@ -227,11 +230,9 @@ describe("gateway", () => {
     });
   });
 
-  it("enqueues thread replies without interrupt flag (never interrupts running session)", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      // POST /trigger → 200 (fire-and-forget)
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+  it("ignores thread replies in unengaged threads (Thor has not replied)", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    mockHasSlackReply = false;
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -260,39 +261,33 @@ describe("gateway", () => {
       });
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true });
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
 
       await queue.flush();
 
-      // No session lookup — just trigger
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
-      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
-      expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
-      const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
-      const promptPayload = JSON.parse(promptJson);
-      expect(promptPayload.type).toBe("message");
-      expect(promptPayload.text).toBe("can you also check staging?");
+      // Not engaged — should not trigger
+      expect(fetchImpl).not.toHaveBeenCalled();
     });
   });
 
-  it("enqueues thread replies with long delay (no session lookup)", async () => {
+  it("enqueues thread replies in engaged threads (Thor has replied before)", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // POST /trigger → 200
+      // POST /trigger → 200 (fire-and-forget)
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    mockHasSlackReply = true;
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
         type: "event_callback",
-        event_id: "Ev789",
+        event_id: "Ev456eng",
         team_id: "T123",
         event: {
           type: "message",
           user: "U123",
-          text: "random thread reply",
-          ts: "1710000000.005",
-          thread_ts: "1710000000.004",
+          text: "can you also check staging?",
+          ts: "1710000000.002",
+          thread_ts: "1710000000.001",
           channel: "C123",
         },
       });
@@ -313,17 +308,18 @@ describe("gateway", () => {
 
       await queue.flush();
 
-      // No session lookup — just trigger
+      // Engaged — should trigger
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
+      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+      expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
+      expect(triggerBody.interrupt).toBe(false);
     });
   });
 
-  it("enqueues new channel messages (not in a thread) with long delay", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      // POST /trigger → 200
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+  it("ignores new channel messages (not in a thread) when not engaged", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    mockHasSlackReply = false;
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -351,19 +347,12 @@ describe("gateway", () => {
       });
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true });
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
 
-      // Wait for async enqueue
-      for (let attempt = 0; attempt < 20 && fetchImpl.mock.calls.length < 1; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
       await queue.flush();
 
-      // No session lookup (not a thread reply), trigger fired
-      expect(fetchImpl).toHaveBeenCalledOnce();
-      expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
-      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
-      expect(triggerBody.prompt).toContain("anyone know why staging is down?");
+      // Not engaged — should not trigger
+      expect(fetchImpl).not.toHaveBeenCalled();
     });
   });
 
@@ -435,11 +424,12 @@ describe("gateway", () => {
     });
   });
 
-  it("handles other bot messages like normal messages", async () => {
+  it("handles other bot messages in engaged threads like normal messages", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       // POST /trigger → 200
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    mockHasSlackReply = true;
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -473,7 +463,6 @@ describe("gateway", () => {
 
       await queue.flush();
 
-      // No session lookup — just trigger
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
