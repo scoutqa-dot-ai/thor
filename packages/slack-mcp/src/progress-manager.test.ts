@@ -108,7 +108,7 @@ describe("ProgressManager", () => {
     expect(chat(deps).update).toHaveBeenCalledOnce();
   });
 
-  it("finish with completed status updates the existing progress message", async () => {
+  it("finish with completed status updates then deletes the progress message", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
 
@@ -123,14 +123,61 @@ describe("ProgressManager", () => {
     };
     await handleProgressEvent("C123", "1710000000.001", doneEvent, deps);
 
+    // Updates message to "Done", then onSessionEnd deletes it
     expect(chat(deps).update).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "C123",
         ts: "msg.001",
       }),
     );
-    expect(chat(deps).delete).not.toHaveBeenCalled();
-    expect(getRegistrySize()).toBe(1);
+    expect(chat(deps).delete).toHaveBeenCalledWith({
+      channel: "C123",
+      ts: "msg.001",
+    });
+    expect(getRegistrySize()).toBe(0);
+  });
+
+  it("treats abort errors as completed (updates to Done)", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3); // cross threshold, message posted
+
+    const abortEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "error",
+      error: "Aborted",
+      response: "",
+      toolCalls: [],
+      durationMs: 500,
+    };
+    await handleProgressEvent("C123", "1710000000.001", abortEvent, deps);
+
+    // Should update to "Done" — not show an error
+    expect(chat(deps).update).toHaveBeenCalledOnce();
+    const updateCall = chat(deps).update.mock.calls[0][0] as { text: string };
+    expect(updateCall.text).toContain("Done");
+    expect(updateCall.text).not.toContain("Failed");
+  });
+
+  it("suppresses abort errors even below threshold (no Slack message at all)", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 1); // below threshold
+
+    const abortEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "error",
+      error: "Aborted",
+      response: "",
+      toolCalls: [],
+      durationMs: 200,
+    };
+    await handleProgressEvent("C123", "1710000000.001", abortEvent, deps);
+
+    expect(chat(deps).postMessage).not.toHaveBeenCalled();
+    expect(chat(deps).update).not.toHaveBeenCalled();
   });
 
   it("short run (below threshold) produces no Slack messages on finish", async () => {
@@ -154,9 +201,34 @@ describe("ProgressManager", () => {
 });
 
 describe("onBotReply", () => {
-  it("deletes completed progress messages", async () => {
+  it("skips deletion when session is still active", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
+    // Message is registered as in_progress immediately on post — session still active
+    expect(getRegistrySize()).toBe(1);
+
+    await onBotReply("C123", "1710000000.001");
+
+    // Should NOT delete — session is still active
+    expect(chat(deps).delete).not.toHaveBeenCalled();
+    expect(getRegistrySize()).toBe(1);
+  });
+
+  it("is a no-op for unknown threads", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+
+    await onBotReply("C123", "9999999999.999");
+
+    expect(chat(deps).delete).not.toHaveBeenCalled();
+  });
+});
+
+describe("onSessionEnd (via handleProgressEvent done)", () => {
+  it("deletes completed progress messages automatically", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+    expect(getRegistrySize()).toBe(1);
 
     const doneEvent: ProgressEvent = {
       type: "done",
@@ -168,28 +240,12 @@ describe("onBotReply", () => {
       durationMs: 5000,
     };
     await handleProgressEvent("C123", "1710000000.001", doneEvent, deps);
-    expect(getRegistrySize()).toBe(1);
-
-    await onBotReply("C123", "1710000000.001");
 
     expect(chat(deps).delete).toHaveBeenCalledWith({
       channel: "C123",
       ts: "msg.001",
     });
     expect(getRegistrySize()).toBe(0);
-  });
-
-  it("preserves in-progress messages when session is still active", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 3);
-    // Message is registered as in_progress immediately on post — session still active
-    expect(getRegistrySize()).toBe(1);
-
-    await onBotReply("C123", "1710000000.001");
-
-    // Should NOT delete — session is still active
-    expect(chat(deps).delete).not.toHaveBeenCalled();
-    expect(getRegistrySize()).toBe(1);
   });
 
   it("preserves error progress messages", async () => {
@@ -208,22 +264,11 @@ describe("onBotReply", () => {
     };
     await handleProgressEvent("C123", "1710000000.001", errorEvent, deps);
 
-    await onBotReply("C123", "1710000000.001");
-
     expect(chat(deps).delete).not.toHaveBeenCalled();
     expect(getRegistrySize()).toBe(1);
   });
 
-  it("is a no-op for unknown threads", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 3);
-
-    await onBotReply("C123", "9999999999.999");
-
-    expect(chat(deps).delete).not.toHaveBeenCalled();
-  });
-
-  it("deletes multiple progress messages for the same thread", async () => {
+  it("cleans up sequential sessions in the same thread", async () => {
     const deps = mockSlackDeps();
 
     // First session
@@ -239,6 +284,10 @@ describe("onBotReply", () => {
       durationMs: 5000,
     };
     await handleProgressEvent("C123", "1710000000.001", done1, deps);
+
+    // Session 1's message cleaned up immediately
+    expect(chat(deps).delete).toHaveBeenCalledWith({ channel: "C123", ts: "msg.001" });
+    expect(getRegistrySize()).toBe(0);
 
     // Second session in same thread
     chat(deps).postMessage.mockResolvedValueOnce({ ok: true, ts: "msg.002", channel: "C123" });
@@ -260,10 +309,8 @@ describe("onBotReply", () => {
     };
     await handleProgressEvent("C123", "1710000000.001", done2, deps);
 
-    expect(getRegistrySize()).toBe(2);
-
-    await onBotReply("C123", "1710000000.001");
-
+    // Session 2's message also cleaned up
+    expect(chat(deps).delete).toHaveBeenCalledWith({ channel: "C123", ts: "msg.002" });
     expect(chat(deps).delete).toHaveBeenCalledTimes(2);
     expect(getRegistrySize()).toBe(0);
   });
