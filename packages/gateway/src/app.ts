@@ -393,8 +393,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
       }
 
-      // Only forward if Thor has replied in this thread before (engaged conversation).
-      // Users must @mention Thor to start a new conversation.
+      // Only forward if Thor is engaged in this thread (has notes with a
+      // slack:thread canonical or alias). Users must @mention to start new conversations.
       const engaged = hasSlackReply(correlationKey);
       if (!engaged) {
         logInfo(log, "event_ignored_not_engaged", { eventId, correlationKey });
