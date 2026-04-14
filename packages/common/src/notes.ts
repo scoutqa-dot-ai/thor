@@ -625,19 +625,18 @@ function extractH1Key(filePath: string): string | undefined {
 }
 
 /**
- * Check if Thor has posted a Slack message for this correlation key.
+ * Check if Thor is engaged in a Slack thread for this correlation key.
  *
- * Looks for a registered `slack:thread:` alias in the notes file —
- * this is written by `registerAlias` when a Slack thread is created
- * or replied to, regardless of whether the tool was a direct MCP call
- * or a bash-wrapped `mcp` CLI invocation.
+ * Matches both the h1 canonical key (`# Session: slack:thread:…`) for
+ * threads initiated by @mention, and h3 aliases (`### Session: slack:thread:…`)
+ * for threads created by cron/github sessions that posted into Slack.
  */
 export function hasSlackReply(correlationKey: string): boolean {
   const path = findNotesFile(correlationKey);
   if (!path) return false;
   try {
     const content = readFileSync(path, "utf-8");
-    return content.includes("### Session: slack:thread:");
+    return content.includes("# Session: slack:thread:");
   } catch {
     return false;
   }
