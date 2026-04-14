@@ -442,16 +442,22 @@ app.post("/trigger", async (req, res) => {
         await client.session.abort({ path: { id: sessionId } });
 
         const abortSub = await eventBuses.subscribe(sessionDirectory, [sessionId]);
-        const abortDeadline = Date.now() + ABORT_TIMEOUT;
-        let aborted = false;
 
-        for await (const event of abortSub) {
-          if (Date.now() > abortDeadline) break;
-          if (event.type === "session.idle") {
-            aborted = true;
-            break;
+        // Wait for session.idle with a hard timeout via Promise.race.
+        // The previous `for await` approach only checked the deadline when a
+        // new SSE event arrived — if the stream went quiet after abort, the
+        // deadline was never evaluated and the handler hung for minutes.
+        const waitForIdle = (async () => {
+          for await (const event of abortSub) {
+            if (event.type === "session.idle") return true;
           }
-        }
+          return false;
+        })();
+
+        const aborted = await Promise.race([
+          waitForIdle,
+          new Promise<false>((resolve) => setTimeout(() => resolve(false), ABORT_TIMEOUT)),
+        ]);
         abortSub.close();
 
         if (!aborted) {
