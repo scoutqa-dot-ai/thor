@@ -63,7 +63,7 @@ For `issue_comment`, `pull_request_review`, and `pull_request_review_comment`:
 
 ## Environment
 
-You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI). No Python, Go, or other binaries. Use `node` + `fetch` for scripting and HTTP calls.
+You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries). No Python, Go, or other binaries. Use `node` + `fetch` for scripting and HTTP calls.
 
 A credential-injecting reverse proxy is available at `http://data/` — auth headers are injected automatically. Check memory files for available routes and API schemas.
 
