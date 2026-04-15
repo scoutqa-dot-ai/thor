@@ -1,0 +1,25 @@
+docker/opencode/agents/langfuse.md
+  b2aa9e4a3bf64cd6 1-71
+docs/feat/mvp.md
+  b2aa9e4a3bf64cd6 38,48-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "79ee91e290ee2673abde71b60b7b745c75e87bc9",
+  "prompts": {
+    "b2aa9e4a3bf64cd6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4155675d-bdc1-4851-bb45-dc8d045e20e9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 74,
+      "total_deletions": 0,
+      "accepted_lines": 74,
+      "overriden_lines": 0
+    }
+  }
+}
