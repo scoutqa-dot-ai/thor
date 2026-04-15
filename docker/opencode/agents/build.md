@@ -153,8 +153,8 @@ Each repo can influence Thor's behavior in two ways:
 
 **In-repo (human + Thor readable, version-controlled):**
 
-- `.thor.opencode/opencode.json` — per-repo OpenCode config (MCP servers, model overrides). Takes precedence over `.opencode/` so humans keep their own config.
-- `THOR.md` — repo-level agent instructions. Takes precedence over `AGENTS.md`/`CLAUDE.md`.
+- `.opencode/opencode.json` — per-repo OpenCode config (MCP servers, model overrides).
+- `AGENTS.md` — repo-level agent instructions.
 - `docs/` — markdown files in the repo for documentation, conventions, runbooks. Readable by both humans and Thor.
 
 **Memory (Thor only, outside the repo):**

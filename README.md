@@ -165,14 +165,12 @@ Repos in `/workspace/repos/` are mounted read-only into OpenCode. Thor creates w
 
 #### 5. Per-workspace MCP servers
 
-Slack is available globally (configured in the base `docker/opencode/opencode.json`). Other MCP servers are configured **per repo** via `.thor.opencode/opencode.json` in the repo root.
-
-If a repo has both `.opencode/` and `.thor.opencode/`, Thor merges them with `.thor.opencode/` taking precedence — so humans can use OpenCode normally while Thor gets its own config overlay. Similarly, if a repo has both `AGENTS.md` and `THOR.md`, Thor loads `THOR.md` and ignores `AGENTS.md`/`CLAUDE.md`.
+Slack is available globally (configured in the base `docker/opencode/opencode.json`). Other MCP servers are configured **per repo** via `.opencode/opencode.json` in the repo root.
 
 ```bash
 # Example: give a repo access to Atlassian and Grafana
-mkdir -p docker-volumes/workspace/repos/your-repo/.thor.opencode
-cat > docker-volumes/workspace/repos/your-repo/.thor.opencode/opencode.json << 'EOF'
+mkdir -p docker-volumes/workspace/repos/your-repo/.opencode
+cat > docker-volumes/workspace/repos/your-repo/.opencode/opencode.json << 'EOF'
 {
   "mcp": {
     "atlassian": {
@@ -199,7 +197,7 @@ Available MCP servers (all policy-proxied):
 | posthog   | `http://proxy:3011/mcp` | Product analytics           |
 | grafana   | `http://proxy:3013/mcp` | Loki/Tempo log queries      |
 
-OpenCode merges per-repo config with the global config. A repo without `.thor.opencode/` gets only Slack.
+OpenCode merges per-repo config with the global config. A repo without `.opencode/` gets only Slack.
 
 #### 6. Cron jobs (optional)
 
