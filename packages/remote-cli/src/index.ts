@@ -165,7 +165,7 @@ app.post("/exec/metabase", async (req, res) => {
 
     const argsError = validateMetabaseArgs(args);
     if (argsError) {
-      res.status(400).json({ error: argsError });
+      res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
       return;
     }
 
@@ -194,11 +194,11 @@ app.post("/exec/metabase", async (req, res) => {
         break;
     }
 
-    res.json(result);
+    res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logError(log, "exec_metabase_error", message, thorIds(req));
-    res.status(500).json({ error: message });
+    res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
   }
 });
 
