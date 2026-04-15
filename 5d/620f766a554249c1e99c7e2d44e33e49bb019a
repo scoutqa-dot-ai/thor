@@ -1,0 +1,27 @@
+packages/remote-cli/src/index.ts
+  6a8f27a4b08cb8d0 168,197,201
+packages/opencode-cli/src/remote-cli.ts
+  6a8f27a4b08cb8d0 5,19,42
+docker/opencode/bin/metabase
+  6a8f27a4b08cb8d0 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5d620f766a554249c1e99c7e2d44e33e49bb019a",
+  "prompts": {
+    "6a8f27a4b08cb8d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "27cf4881-a8e2-4432-97ec-cd12fa27408a",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 6,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
