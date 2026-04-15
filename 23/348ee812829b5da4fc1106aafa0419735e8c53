@@ -1,0 +1,23 @@
+README.md
+  a6a3cd7122563172 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "23348ee812829b5da4fc1106aafa0419735e8c53",
+  "prompts": {
+    "a6a3cd7122563172": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dc39d931-f2df-4584-b323-1903a277eea3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 203,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
