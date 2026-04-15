@@ -1,0 +1,25 @@
+packages/remote-cli/src/index.ts
+  b2aa9e4a3bf64cd6 174
+packages/remote-cli/src/exec.ts
+  b2aa9e4a3bf64cd6 11-13,17,19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8149f211e65a2490afa1de6804de01cbe96fbc8f",
+  "prompts": {
+    "b2aa9e4a3bf64cd6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4155675d-bdc1-4851-bb45-dc8d045e20e9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 9,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    }
+  }
+}
