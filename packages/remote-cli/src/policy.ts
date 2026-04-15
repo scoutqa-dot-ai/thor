@@ -278,6 +278,72 @@ export function validateScoutqaArgs(args: string[]): string | null {
   return null;
 }
 
+// ── langfuse policy ────────────────────────────────────────────────────────
+
+const ALLOWED_LANGFUSE_RESOURCES: ReadonlySet<string> = new Set([
+  "traces",
+  "sessions",
+  "observations",
+  "metrics",
+  "models",
+  "prompts",
+]);
+
+const ALLOWED_LANGFUSE_ACTIONS: ReadonlySet<string> = new Set(["list", "get", "--help"]);
+
+const DENIED_LANGFUSE_FLAGS: ReadonlySet<string> = new Set([
+  "--config",
+  "--output",
+  "--output-file",
+]);
+
+export function validateLangfuseArgs(args: string[]): string | null {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "args must be a non-empty array";
+  }
+
+  // First arg must be "api"
+  if (args[0] !== "api") {
+    return `"langfuse ${args[0]}" is not allowed — only "langfuse api" is permitted`;
+  }
+
+  if (args.length < 2) {
+    return '"langfuse api" requires a resource';
+  }
+
+  const resource = args[1];
+
+  // __schema is a special case: no action required, no additional args
+  if (resource === "__schema") {
+    if (args.length > 2) {
+      return '"langfuse api __schema" does not accept additional arguments';
+    }
+    return null;
+  }
+
+  if (!ALLOWED_LANGFUSE_RESOURCES.has(resource)) {
+    return `"langfuse api ${resource}" is not allowed`;
+  }
+
+  if (args.length < 3) {
+    return `"langfuse api ${resource}" requires an action (list, get, or --help)`;
+  }
+
+  const action = args[2];
+  if (!ALLOWED_LANGFUSE_ACTIONS.has(action)) {
+    return `"langfuse api ${resource} ${action}" is not allowed — only list, get, and --help are permitted`;
+  }
+
+  // Check for denied flags anywhere in the args
+  for (const arg of args) {
+    if (DENIED_LANGFUSE_FLAGS.has(arg)) {
+      return `flag "${arg}" is not allowed`;
+    }
+  }
+
+  return null;
+}
+
 // ── gh policy ───────────────────────────────────────────────────────────────
 
 /**

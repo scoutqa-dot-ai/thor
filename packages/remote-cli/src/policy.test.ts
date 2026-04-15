@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateCwd, validateGitArgs, validateGhArgs } from "./policy.js";
+import { validateCwd, validateGitArgs, validateGhArgs, validateLangfuseArgs } from "./policy.js";
 
 // ── cwd validation ──────────────────────────────────────────────────────────
 
@@ -168,5 +168,130 @@ describe("validateGhArgs", () => {
   it("requires non-empty args with a subcommand", () => {
     expect(validateGhArgs(["pr"])).not.toBeNull();
     expect(validateGhArgs([])).not.toBeNull();
+  });
+});
+
+// ── langfuse policy ────────────────────────────────────────────────────────
+
+describe("validateLangfuseArgs", () => {
+  describe("allowed commands", () => {
+    it("allows traces list", () => {
+      expect(validateLangfuseArgs(["api", "traces", "list", "--limit", "10"])).toBeNull();
+    });
+
+    it("allows sessions get", () => {
+      expect(validateLangfuseArgs(["api", "sessions", "get", "abc-123"])).toBeNull();
+    });
+
+    it("allows metrics list with --query", () => {
+      expect(
+        validateLangfuseArgs(["api", "metrics", "list", "--query", '{"view":"observations"}']),
+      ).toBeNull();
+    });
+
+    it("allows observations list with flags", () => {
+      expect(
+        validateLangfuseArgs([
+          "api",
+          "observations",
+          "list",
+          "--user-id",
+          "uuid",
+          "--type",
+          "TOOL",
+        ]),
+      ).toBeNull();
+    });
+
+    it("allows models list", () => {
+      expect(validateLangfuseArgs(["api", "models", "list"])).toBeNull();
+    });
+
+    it("allows prompts list", () => {
+      expect(validateLangfuseArgs(["api", "prompts", "list"])).toBeNull();
+    });
+
+    it("allows __schema with no action", () => {
+      expect(validateLangfuseArgs(["api", "__schema"])).toBeNull();
+    });
+
+    it("allows --help as action", () => {
+      expect(validateLangfuseArgs(["api", "traces", "--help"])).toBeNull();
+    });
+  });
+
+  describe("blocked commands", () => {
+    it("blocks non-api subcommands", () => {
+      expect(validateLangfuseArgs(["get-skill"])).not.toBeNull();
+    });
+
+    it("blocks ingestions resource", () => {
+      expect(validateLangfuseArgs(["api", "ingestions", "create"])).not.toBeNull();
+    });
+
+    it("blocks projects resource", () => {
+      expect(validateLangfuseArgs(["api", "projects", "list"])).not.toBeNull();
+    });
+
+    it("blocks organizations resource", () => {
+      expect(validateLangfuseArgs(["api", "organizations", "list"])).not.toBeNull();
+    });
+
+    it("blocks datasets resource", () => {
+      expect(validateLangfuseArgs(["api", "datasets", "list"])).not.toBeNull();
+    });
+
+    it("blocks write actions", () => {
+      expect(validateLangfuseArgs(["api", "traces", "create"])).not.toBeNull();
+      expect(validateLangfuseArgs(["api", "traces", "update"])).not.toBeNull();
+      expect(validateLangfuseArgs(["api", "traces", "delete"])).not.toBeNull();
+      expect(validateLangfuseArgs(["api", "traces", "upsert"])).not.toBeNull();
+    });
+
+    it("blocks __schema with additional args", () => {
+      expect(validateLangfuseArgs(["api", "__schema", "create"])).not.toBeNull();
+    });
+
+    it("blocks unknown resources", () => {
+      expect(validateLangfuseArgs(["api", "unknown-thing", "list"])).not.toBeNull();
+    });
+  });
+
+  describe("dangerous flags", () => {
+    it("blocks --config flag", () => {
+      expect(
+        validateLangfuseArgs(["api", "traces", "list", "--config", "/etc/evil"]),
+      ).not.toBeNull();
+    });
+
+    it("blocks --output-file flag", () => {
+      expect(
+        validateLangfuseArgs(["api", "traces", "list", "--output-file", "/tmp/data"]),
+      ).not.toBeNull();
+    });
+
+    it("blocks --output flag", () => {
+      expect(
+        validateLangfuseArgs(["api", "traces", "list", "--output", "/tmp/data"]),
+      ).not.toBeNull();
+    });
+  });
+
+  describe("edge cases", () => {
+    it("rejects empty args", () => {
+      expect(validateLangfuseArgs([])).not.toBeNull();
+    });
+
+    it("rejects non-array", () => {
+      expect(validateLangfuseArgs("api" as unknown as string[])).not.toBeNull();
+    });
+
+    it("rejects api with no resource", () => {
+      expect(validateLangfuseArgs(["api"])).not.toBeNull();
+    });
+
+    it("rejects resource with no action", () => {
+      expect(validateLangfuseArgs(["api", "traces"])).not.toBeNull();
+    });
   });
 });

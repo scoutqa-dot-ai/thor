@@ -1,7 +1,13 @@
 import express from "express";
 import { createLogger, logInfo, logError, computeGitAlias, formatThorMeta } from "@thor/common";
-import { execCommand, execCommandStream } from "./exec.js";
-import { validateCwd, validateGitArgs, validateGhArgs, validateScoutqaArgs } from "./policy.js";
+import { execCommand, execCommandStream, MAX_OUTPUT_LARGE } from "./exec.js";
+import {
+  validateCwd,
+  validateGitArgs,
+  validateGhArgs,
+  validateScoutqaArgs,
+  validateLangfuseArgs,
+} from "./policy.js";
 
 const log = createLogger("remote-cli");
 
@@ -141,6 +147,40 @@ app.post("/exec/scoutqa", async (req, res) => {
       res.write(JSON.stringify({ exitCode: 1 }) + "\n");
       res.end();
     }
+  }
+});
+
+/**
+ * POST /exec/langfuse — execute a langfuse CLI command
+ * Body: { args: string[] }
+ * Response: { stdout, stderr, exitCode }
+ */
+app.post("/exec/langfuse", async (req, res) => {
+  try {
+    const { args } = req.body ?? {};
+
+    const argsError = validateLangfuseArgs(args);
+    if (argsError) {
+      res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
+      return;
+    }
+
+    // Ensure --json is present for data commands (skip for --help and __schema)
+    const action = args[2];
+    const needsJson = action === "list" || action === "get";
+    const finalArgs = !needsJson || args.includes("--json") ? args : [...args, "--json"];
+
+    logInfo(log, "exec_langfuse", { args: finalArgs, ...thorIds(req) });
+    const result = await execCommand("langfuse", finalArgs, "/workspace", MAX_OUTPUT_LARGE);
+    res.json(result);
+  } catch (err) {
+    logError(
+      log,
+      "exec_langfuse_error",
+      err instanceof Error ? err.message : String(err),
+      thorIds(req),
+    );
+    res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
   }
 });
 
