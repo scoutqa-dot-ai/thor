@@ -35,6 +35,7 @@ flowchart LR
 | Atlassian   | Hosted MCP        | Basic Auth       | `https://mcp.atlassian.com/v1/mcp`   | Team scoped       |
 | PostHog     | Hosted MCP        | API Key          | `https://mcp.posthog.com/mcp`        | Project scoped    |
 | Slack       | Custom MCP Server | Slack Bot Token  | Internal container                   | Limited tools     |
+| Langfuse    | Remote CLI        | API Key pair     | Internal (remote-cli)                | Read-only traces  |
 
 **GitHub** — Fine-grained PAT, repository scoped. Permissions: Contents (read), Pull requests (write), Issues (write), Actions (read). Write operations require approval.
 
@@ -43,6 +44,8 @@ flowchart LR
 **PostHog** — API Key, pinned to organization + project. Read-only queries and error investigation. Mutations (feature flags, experiments) require approval.
 
 **Slack** — Bot Token, workspace scoped. Custom MCP server restricts posting to predefined channels. Also serves as the approval notification channel for the policy proxy.
+
+**Langfuse** — API Key pair (public + secret), project scoped. Read-only access to LLM traces, sessions, observations, metrics, and prompts via the `langfuse` CLI wrapper. Uses the remote-cli pattern (same as git/gh/scoutqa), not MCP.
 
 ---
 

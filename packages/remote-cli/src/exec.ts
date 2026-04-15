@@ -8,13 +8,15 @@
 import { execFile, spawn } from "node:child_process";
 import type { ExecResult } from "@thor/common";
 
-const MAX_OUTPUT = 1024 * 256; // 256 KB
+// No maxBuffer cap — OpenCode (the caller) already truncates large outputs
+// before feeding them to the LLM context window. Capping here would silently
+// return broken JSON to the agent with no indication it was truncated.
 const TIMEOUT_MS = 60_000;
 const STREAM_TIMEOUT_MS = 300_000; // 5 minutes for streaming commands
 
 export function execCommand(binary: string, args: string[], cwd: string): Promise<ExecResult> {
   return new Promise((resolve) => {
-    const child = execFile(binary, args, { cwd, maxBuffer: MAX_OUTPUT }, (err, stdout, stderr) => {
+    const child = execFile(binary, args, { cwd, maxBuffer: Infinity }, (err, stdout, stderr) => {
       resolve({
         stdout: stdout.toString(),
         stderr: stderr.toString(),

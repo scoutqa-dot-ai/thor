@@ -38,6 +38,9 @@ services:
       - GIT_USER_NAME=${GIT_USER_NAME:-thor}
       - GITHUB_PAT=${GITHUB_PAT}
       - SCOUT_API_KEY=${SCOUT_API_KEY:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://us.cloud.langfuse.com}
     volumes:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace

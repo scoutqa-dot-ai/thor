@@ -65,6 +65,7 @@ COPY --from=build /app/packages/opencode-cli/dist/remote-cli.mjs /usr/local/bin/
 COPY docker/opencode/bin/git /usr/local/bin/git
 COPY docker/opencode/bin/gh /usr/local/bin/gh
 COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
+COPY docker/opencode/bin/langfuse /usr/local/bin/langfuse
 # mcp/approval wrapper scripts — forward to proxy service over HTTP
 COPY --from=build /app/packages/opencode-cli/dist/proxy-cli.mjs /usr/local/bin/proxy-cli.mjs
 COPY docker/opencode/bin/mcp /usr/local/bin/mcp
@@ -87,7 +88,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
-RUN npm i -g @scoutqa/cli@latest
+RUN npm i -g @scoutqa/cli@latest langfuse-cli@0.0.8
 COPY packages/remote-cli/entrypoint.sh /entrypoint.sh
 USER thor
 RUN mkdir -p /workspace/repos
