@@ -140,8 +140,8 @@ importers:
   packages/runner:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.2.27
-        version: 1.2.27
+        specifier: ^1.4.3
+        version: 1.4.3
       '@thor/common':
         specifier: workspace:*
         version: link:../common
@@ -383,8 +383,8 @@ packages:
       '@cfworker/json-schema':
         optional: true
 
-  '@opencode-ai/sdk@1.2.27':
-    resolution: {integrity: sha512-Wk0o/I+Fo+wE3zgvlJDs8Fb67KlKqX0PrV8dK5adSDkANq6r4Z25zXJg2iOir+a8ntg3rAcpel1OY4FV/TwRUA==}
+  '@opencode-ai/sdk@1.4.3':
+    resolution: {integrity: sha512-X0CAVbwoGAjTY2iecpWkx2B+GAa2jSaQKYpJ+xILopeF/OGKZUN15mjqci+L7cEuwLHV5wk3x2TStUOVCa5p0A==}
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
@@ -1669,7 +1669,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@opencode-ai/sdk@1.2.27': {}
+  '@opencode-ai/sdk@1.4.3':
+    dependencies:
+      cross-spawn: 7.0.6
 
   '@pinojs/redact@0.4.0': {}
 

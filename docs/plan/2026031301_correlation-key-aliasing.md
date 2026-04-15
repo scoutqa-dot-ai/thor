@@ -222,7 +222,7 @@ Steps:
 
 ### Problem
 
-The original design assumed the runner could infer the full `owner/repo` from the container filesystem path using a "first hyphen = owner separator" convention (e.g. `acme-project` → `acme/project`). This broke for multi-hyphen names like `katalon-scout-private` where the owner is `katalon-studio` — the heuristic produced `katalon/scout-private` instead of `katalon-studio/katalon-scout-private`.
+The original design assumed the runner could infer the full `owner/repo` from the container filesystem path using a "first hyphen = owner separator" convention (e.g. `acme-project` → `acme/project`). This broke for multi-hyphen names like `acme-multi-hyphen-repo` where the owner is `acme-labs` — the heuristic produced `acme/multi-hyphen-repo` instead of `acme-labs/acme-multi-hyphen-repo`.
 
 Additionally:
 
@@ -235,17 +235,17 @@ Instead of trying to reconstruct the full `owner/repo` on the runner side, the g
 
 ```
 getGitHubCorrelationKeys(event) → [
-  "git:branch:katalon-studio/katalon-scout-private:feat/foo",   // canonical (full)
-  "git:branch:katalon-scout-private:feat/foo"                    // alias (repo name only)
+  "git:branch:acme-labs/acme-multi-hyphen-repo:feat/foo",   // canonical (full)
+  "git:branch:acme-multi-hyphen-repo:feat/foo"              // alias (repo name only)
 ]
 ```
 
 The runner registers aliases using only the directory name (no owner prefix):
 
 ```
-inferRepoFromPath("/workspace/worktrees/katalon-scout-private/feat/foo")
-→ "katalon-scout-private"
-→ alias: "git:branch:katalon-scout-private:feat/foo"
+inferRepoFromPath("/workspace/worktrees/acme-multi-hyphen-repo/feat/foo")
+→ "acme-multi-hyphen-repo"
+→ alias: "git:branch:acme-multi-hyphen-repo:feat/foo"
 ```
 
 Resolution uses `resolveCorrelationKeys(rawKeys: string[])`:
@@ -284,5 +284,5 @@ This ensures that when an old session matches the canonical key but a newer sess
 | --- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | D11 | **Gateway emits multiple corr keys (canonical + alias)**             | Runner cannot reliably infer `owner/repo` from filesystem. Gateway has the full name from GitHub webhooks. Short alias using repo-name-only matches what the runner can produce. |
 | D12 | **Multi-key resolution picks most recent match**                     | An old session may match the canonical key while a newer session matches the alias. Most-recent wins ensures events route to the active conversation.                            |
-| D13 | **Drop first-hyphen owner/repo inference**                           | Ambiguous for multi-hyphen names (e.g. `katalon-scout-private`). No reliable heuristic exists. Directory name alone is sufficient as an alias key.                               |
+| D13 | **Drop first-hyphen owner/repo inference**                           | Ambiguous for multi-hyphen names (e.g. `acme-multi-hyphen-repo`). No reliable heuristic exists. Directory name alone is sufficient as an alias key.                              |
 | D14 | **Match `/workspace/worktrees/` in addition to `/workspace/repos/`** | Agent creates git worktrees for branches. Push/commit operations happen in worktree paths. Both must be recognized.                                                              |

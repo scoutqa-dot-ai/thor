@@ -23,7 +23,7 @@ Atlassian provides a hosted MCP server at `https://mcp.atlassian.com/v1/mcp` wit
 
 - Legacy API token (ATATT prefix, no scopes): returns only 2 Teamwork Graph tools, blocks with "requires modern API token with scopes"
 - **Scoped API token**: returns all 37 tools (Jira, Confluence, JSM, Teamwork Graph, search, fetch)
-- `getVisibleJiraProjects` returns 98 projects from `katalon.atlassian.net`
+- `getVisibleJiraProjects` returns 98 projects from `acme.atlassian.net`
 - Auth: `Basic base64(email:scoped_token)`
 - Tool list split into allow (26 read-only) and approve (11 write operations)
 

@@ -1,6 +1,6 @@
 # Thor
 
-An event-driven AI team member that monitors Slack, GitHub, Atlassian, and PostHog, then takes action through OpenCode sessions with policy-enforced tool access.
+An event-driven AI team member that monitors Slack, Atlassian, and PostHog, then takes action through OpenCode sessions with policy-enforced tool access.
 
 ## Architecture
 
@@ -28,7 +28,7 @@ An event-driven AI team member that monitors Slack, GitHub, Atlassian, and PostH
                  (hosted)   (hosted)     MCP       MCP
 ```
 
-Gateway receives events and triggers the runner. OpenCode connects to proxy instances for tool access and uses remote-cli for Git/GitHub CLI operations.
+Gateway receives events and triggers the runner. OpenCode connects to proxy instances for tool access and uses `remote-cli` for CLI-based integrations.
 
 ## Services
 
@@ -36,8 +36,8 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 | --------------- | --------- | ------------------ | ------------------------------------------------------------------------ |
 | **cron**        | —         | `docker/cron`      | BusyBox crond for scheduled `hey-thor` prompts                           |
 | **data**        | 3080      | `docker/data`      | Nginx credential proxy for internal APIs (requires custom config)        |
-| **gateway**     | 3002      | `@thor/gateway`    | Slack & GitHub webhook ingestion, event batching, trigger orchestration  |
-| **remote-cli**  | 3004      | `@thor/remote-cli` | Git/GitHub CLI proxy with PAT credential isolation                       |
+| **gateway**     | 3002      | `@thor/gateway`    | Slack webhook ingestion, event batching, trigger orchestration           |
+| **remote-cli**  | 3004      | `@thor/remote-cli` | Remote CLI gateway for CLI-based integrations                            |
 | **grafana-mcp** | 8000      | Docker image       | Grafana MCP server for Loki/Tempo queries                                |
 | **ingress**     | 8080      | `docker/ingress`   | Nginx reverse proxy with Vouch SSO                                       |
 | **opencode**    | 4096      | Docker image       | AI agent runtime (headless server)                                       |
@@ -48,8 +48,8 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 
 ## How It Works
 
-1. **Events arrive** — Slack mentions, GitHub webhooks, and cron schedules hit the gateway
-2. **Smart batching** — Events are queued per correlation key (e.g., Slack thread) with configurable delays (3s for mentions and engaged threads, 60s for GitHub events, immediate for cron). Non-mention Slack messages are only forwarded if Thor has already replied in the thread.
+1. **Events arrive** — Slack mentions and cron schedules hit the gateway
+2. **Smart batching** — Events are queued per correlation key (e.g., Slack thread) with configurable delays (3s for mentions and engaged threads, immediate for cron). Non-mention Slack messages are only forwarded if Thor has already replied in the thread.
 3. **Session continuity** — The runner maps correlation keys to persistent OpenCode sessions, resuming context across interactions
 4. **Policy-enforced tools** — OpenCode accesses integrations through proxy instances that enforce allow-lists and log every tool call
 5. **Progress visibility** — Tool activity streams back to Slack as live-updating progress messages that auto-clean when the bot replies
@@ -64,23 +64,9 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 
 ### Running with Docker Compose
 
-```bash
-# Set required environment variables
-export ATLASSIAN_BASIC_AUTH=base64_encoded_email:token
-export GITHUB_PAT=github_pat_...
-export GRAFANA_SERVICE_ACCOUNT_TOKEN=glsa_...
-export GRAFANA_URL=https://your-instance.grafana.net
-export POSTHOG_API_KEY=phx_...
-export SLACK_BOT_TOKEN=xoxb-...
-export SLACK_BOT_USER_ID=U...
-export SLACK_SIGNING_SECRET=...
-export VOUCH_DOMAINS=example.com
-export VOUCH_GOOGLE_CLIENT_ID=...
-export VOUCH_GOOGLE_CLIENT_SECRET=...
-export VOUCH_JWT_SECRET=...
-export VOUCH_WHITELIST=alice@example.com,bob@example.com
+Populate `.env` from `.env.example`, then start the stack:
 
-# Start all services
+```bash
 docker compose up --build -d
 
 # Verify health
@@ -112,6 +98,13 @@ Copy `.env.example` to `.env` and fill in:
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | grafana-mcp   | Grafana service account token                                    |
 | `GRAFANA_URL`                       | Yes      | grafana-mcp   | Grafana instance URL                                             |
 | `INGRESS_PORT`                      | No       | ingress       | Host port (default: `8080`)                                      |
+| `LANGFUSE_HOST`                     | No       | remote-cli    | Langfuse host URL (default: `https://us.cloud.langfuse.com`)     |
+| `LANGFUSE_PUBLIC_KEY`               | No       | remote-cli    | Langfuse public key for read-only trace queries                  |
+| `LANGFUSE_SECRET_KEY`               | No       | remote-cli    | Langfuse secret key for read-only trace queries                  |
+| `METABASE_ALLOWED_SCHEMAS`          | No       | remote-cli    | Comma-separated schema allowlist for discovery filtering         |
+| `METABASE_API_KEY`                  | No       | remote-cli    | Metabase API key (must be scoped to read-only DB role)           |
+| `METABASE_DATABASE_ID`              | No       | remote-cli    | Metabase database ID to query                                    |
+| `METABASE_URL`                      | No       | remote-cli    | Metabase instance URL                                            |
 | `OPENCODE_CPU_LIMIT`                | No       | opencode      | CPU limit for OpenCode container (default: `3`)                  |
 | `OPENCODE_MEMORY_LIMIT`             | No       | opencode      | Memory limit for OpenCode container (default: `4g`)              |
 | `OPENCODE_URL`                      | No       | runner        | OpenCode server URL (default: `http://opencode:4096`)            |
@@ -146,7 +139,7 @@ The data container generates its nginx config from these vars at startup. When `
 
 #### 3. Agent context (OpenCode memory)
 
-The bundled agent prompt (`docker/opencode/agents/build.md`) contains only generic behavior rules — no team-specific context. After starting Thor, open the OpenCode web UI and tell Thor about your team in conversation. Ask it to remember key facts — Thor writes them to its persistent memory directory automatically. Things to tell it:
+The bundled agent prompt (`docker/opencode/config/agents/build.md`) contains only generic behavior rules — no team-specific context. Bundled investigation skills also live under `docker/opencode/config/skills/`. After starting Thor, open the OpenCode web UI and tell Thor about your team in conversation. Ask it to remember key facts — Thor writes them to its persistent memory directory automatically. Things to tell it:
 
 - Your team name, Slack bot ID, and key channel IDs
 - Team members — names, Slack IDs, GitHub usernames, and roles
@@ -165,14 +158,12 @@ Repos in `/workspace/repos/` are mounted read-only into OpenCode. Thor creates w
 
 #### 5. Per-workspace MCP servers
 
-Slack is available globally (configured in the base `docker/opencode/opencode.json`). Other MCP servers are configured **per repo** via `.thor.opencode/opencode.json` in the repo root.
-
-If a repo has both `.opencode/` and `.thor.opencode/`, Thor merges them with `.thor.opencode/` taking precedence — so humans can use OpenCode normally while Thor gets its own config overlay. Similarly, if a repo has both `AGENTS.md` and `THOR.md`, Thor loads `THOR.md` and ignores `AGENTS.md`/`CLAUDE.md`.
+Slack is available globally (configured in the base `docker/opencode/config/opencode.json`). Other MCP servers are configured **per repo** via `.opencode/opencode.json` in the repo root.
 
 ```bash
 # Example: give a repo access to Atlassian and Grafana
-mkdir -p docker-volumes/workspace/repos/your-repo/.thor.opencode
-cat > docker-volumes/workspace/repos/your-repo/.thor.opencode/opencode.json << 'EOF'
+mkdir -p docker-volumes/workspace/repos/your-repo/.opencode
+cat > docker-volumes/workspace/repos/your-repo/.opencode/opencode.json << 'EOF'
 {
   "mcp": {
     "atlassian": {
@@ -199,13 +190,9 @@ Available MCP servers (all policy-proxied):
 | posthog   | `http://proxy:3011/mcp` | Product analytics           |
 | grafana   | `http://proxy:3013/mcp` | Loki/Tempo log queries      |
 
-OpenCode merges per-repo config with the global config. A repo without `.thor.opencode/` gets only Slack.
+OpenCode merges per-repo config with the global config. A repo without `.opencode/` gets only Slack.
 
-#### 6. GitHub webhook setup
-
-Copy `docs/notify-thor.example.yml` to `.github/workflows/notify-thor.yml` in any source repository you want Thor to monitor. Add `THOR_GATEWAY_URL` as a repository variable pointing to the gateway endpoint.
-
-#### 7. Cron jobs (optional)
+#### 6. Cron jobs (optional)
 
 Add scheduled prompts to `docker-volumes/workspace/cron/crontab`. Each line triggers Thor with a prompt on a schedule. See `docs/plan/2026031204_cron-triggers.md` for examples.
 
@@ -313,13 +300,12 @@ The proxy sits between OpenCode and every upstream MCP server. Each proxy instan
 ### Webhook Authentication
 
 - **Slack** — HMAC-SHA256 signature verification using `crypto.timingSafeEqual` with configurable timestamp tolerance (default 300s)
-- **GitHub** — Events are delivered via GitHub Actions workflow (`notify-thor.example.yml`), not direct webhooks, so payloads arrive from a trusted CI context
 
 ### SSO and Access Control
 
 - **Vouch Proxy** — Google OAuth SSO in front of OpenCode's web UI
 - **Nginx ingress** — `auth_request` directive validates sessions via Vouch; unauthenticated users are redirected to login
-- **Unprotected paths** — Only `/slack/*` and `/github/*` (webhook endpoints with their own auth) and static assets bypass SSO
+- **Unprotected paths** — Only `/slack/*` (webhook endpoint with its own auth) and static assets bypass SSO
 
 ### Non-Root Containers
 
@@ -355,7 +341,7 @@ Each record includes: tool name, decision (`allowed`/`blocked`), arguments (trun
 
 Zod schemas validate requests at every service boundary:
 
-- Gateway validates Slack event envelopes and GitHub payloads before processing
+- Gateway validates Slack event envelopes before processing
 - Runner validates trigger requests (`prompt`, `correlationKey`, `sessionId`)
 - slack-mcp enforces upper bounds on thread reads (200 replies), channel history (100 messages), and file downloads (20MB)
 - Progress events from the runner are validated against a discriminated union schema before forwarding

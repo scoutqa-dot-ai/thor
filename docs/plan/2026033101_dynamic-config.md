@@ -1,5 +1,3 @@
-<!-- /autoplan restore point: /Users/son.dao/.gstack/projects/scoutqa-dot-ai-thor/dynamic-config-autoplan-restore-20260401-065138.md -->
-
 # Dynamic Workspace Config
 
 Single `config.json` for the entire workspace — repos, channels, and MCP proxies. All config is dynamic (no restart required) except upstream connection details.

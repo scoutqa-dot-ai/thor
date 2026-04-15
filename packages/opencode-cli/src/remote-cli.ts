@@ -2,7 +2,7 @@
  * Shared HTTP client for git/gh/scoutqa wrapper scripts.
  *
  * Usage: node remote-cli.mjs <endpoint> <arg1> <arg2> ...
- *   endpoint: "git", "gh", or "scoutqa"
+ *   endpoint: "git", "gh", "scoutqa", "langfuse", or "metabase"
  *
  * Env:
  *   THOR_REMOTE_CLI_URL — base URL of the remote-cli service (e.g. http://remote-cli:3004)
@@ -16,7 +16,7 @@ import { ExecResultSchema, NdjsonChunkSchema } from "@thor/common";
 const [endpoint, ...args] = process.argv.slice(2);
 
 if (!endpoint) {
-  process.stderr.write("Usage: remote-cli.mjs <git|gh|scoutqa> [args...]\n");
+  process.stderr.write("Usage: remote-cli.mjs <git|gh|scoutqa|langfuse|metabase> [args...]\n");
   process.exit(1);
 }
 
@@ -30,6 +30,7 @@ const url = `${baseUrl}/exec/${endpoint}`;
 const cwd = process.cwd();
 const sessionId = process.env.THOR_OPENCODE_SESSION_ID || "";
 const callId = process.env.THOR_OPENCODE_CALL_ID || "";
+const nonRepoScopedEndpoints = new Set(["langfuse", "metabase"]);
 
 try {
   const res = await fetch(url, {
@@ -39,7 +40,7 @@ try {
       ...(sessionId && { "x-thor-session-id": sessionId }),
       ...(callId && { "x-thor-call-id": callId }),
     },
-    body: JSON.stringify({ args, cwd }),
+    body: JSON.stringify(nonRepoScopedEndpoints.has(endpoint) ? { args } : { args, cwd }),
   });
 
   const contentType = res.headers.get("content-type") || "";

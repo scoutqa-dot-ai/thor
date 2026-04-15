@@ -278,6 +278,140 @@ export function validateScoutqaArgs(args: string[]): string | null {
   return null;
 }
 
+// ── langfuse policy ────────────────────────────────────────────────────────
+
+const ALLOWED_LANGFUSE_RESOURCES: ReadonlySet<string> = new Set([
+  "traces",
+  "sessions",
+  "observations",
+  "metrics",
+  "models",
+  "prompts",
+]);
+
+const ALLOWED_LANGFUSE_ACTIONS: ReadonlySet<string> = new Set(["list", "get", "--help"]);
+
+const DENIED_LANGFUSE_FLAGS: ReadonlySet<string> = new Set([
+  "--config",
+  "--output",
+  "--output-file",
+  "--curl",
+  "--env",
+  "--public-key",
+  "--secret-key",
+  "--host",
+]);
+
+export function validateLangfuseArgs(args: string[]): string | null {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "args must be a non-empty array";
+  }
+
+  // First arg must be "api"
+  if (args[0] !== "api") {
+    return `"langfuse ${args[0]}" is not allowed — only "langfuse api" is permitted`;
+  }
+
+  if (args.length < 2) {
+    return '"langfuse api" requires a resource';
+  }
+
+  const resource = args[1];
+
+  // __schema is a special case: no action required, no additional args
+  if (resource === "__schema") {
+    if (args.length > 2) {
+      return '"langfuse api __schema" does not accept additional arguments';
+    }
+    return null;
+  }
+
+  if (!ALLOWED_LANGFUSE_RESOURCES.has(resource)) {
+    return `"langfuse api ${resource}" is not allowed`;
+  }
+
+  if (args.length < 3) {
+    return `"langfuse api ${resource}" requires an action (list, get, or --help)`;
+  }
+
+  const action = args[2];
+  if (!ALLOWED_LANGFUSE_ACTIONS.has(action)) {
+    return `"langfuse api ${resource} ${action}" is not allowed — only list, get, and --help are permitted`;
+  }
+
+  // Check for denied flags (handles both --flag value and --flag=value forms)
+  for (const arg of args) {
+    const flag = arg.split("=")[0];
+    if (DENIED_LANGFUSE_FLAGS.has(flag)) {
+      return `flag "${flag}" is not allowed`;
+    }
+  }
+
+  return null;
+}
+
+// ── metabase policy ────────────────────────────────────────────────────────
+
+const ALLOWED_METABASE_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "schemas",
+  "tables",
+  "columns",
+  "query",
+]);
+
+export function validateMetabaseArgs(args: string[]): string | null {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "args must be a non-empty array";
+  }
+
+  const subcommand = args[0];
+  if (!ALLOWED_METABASE_SUBCOMMANDS.has(subcommand)) {
+    return `"metabase ${subcommand}" is not allowed — valid subcommands: schemas, tables, columns, query`;
+  }
+
+  const allowedSchemas = getMetabaseAllowedSchemas();
+
+  if (subcommand === "schemas") {
+    if (args.length > 1) return '"metabase schemas" takes no arguments';
+    return null;
+  }
+
+  if (subcommand === "tables") {
+    if (args.length !== 2) return '"metabase tables" requires exactly 1 argument: <schema>';
+    const schema = args[1];
+    if (allowedSchemas.size > 0 && !allowedSchemas.has(schema)) {
+      return `schema "${schema}" is not in the allowed list`;
+    }
+    return null;
+  }
+
+  if (subcommand === "columns") {
+    if (args.length !== 3)
+      return '"metabase columns" requires exactly 2 arguments: <schema> <table>';
+    const schema = args[1];
+    if (allowedSchemas.size > 0 && !allowedSchemas.has(schema)) {
+      return `schema "${schema}" is not in the allowed list`;
+    }
+    return null;
+  }
+
+  if (subcommand === "query") {
+    if (args.length !== 2) return '"metabase query" requires exactly 1 argument: <sql>';
+    return null;
+  }
+
+  return null;
+}
+
+function getMetabaseAllowedSchemas(): Set<string> {
+  const raw = process.env.METABASE_ALLOWED_SCHEMAS || "";
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
 // ── gh policy ───────────────────────────────────────────────────────────────
 
 /**

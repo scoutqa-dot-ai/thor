@@ -38,6 +38,13 @@ services:
       - GIT_USER_NAME=${GIT_USER_NAME:-thor}
       - GITHUB_PAT=${GITHUB_PAT}
       - SCOUT_API_KEY=${SCOUT_API_KEY:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://us.cloud.langfuse.com}
+      - METABASE_URL=${METABASE_URL:-}
+      - METABASE_API_KEY=${METABASE_API_KEY:-}
+      - METABASE_DATABASE_ID=${METABASE_DATABASE_ID:-}
+      - METABASE_ALLOWED_SCHEMAS=${METABASE_ALLOWED_SCHEMAS:-}
     volumes:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
@@ -183,7 +190,6 @@ services:
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
       - SLACK_BOT_USER_ID=${SLACK_BOT_USER_ID:?set SLACK_BOT_USER_ID}
       - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
-      - GIT_USER_NAME=${GIT_USER_NAME:-thor}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:
