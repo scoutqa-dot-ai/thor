@@ -7,7 +7,9 @@ import {
   validateGhArgs,
   validateScoutqaArgs,
   validateLangfuseArgs,
+  validateMetabaseArgs,
 } from "./policy.js";
+import { listSchemas, listTables, getColumns, executeQuery } from "./metabase.js";
 
 const log = createLogger("remote-cli");
 
@@ -181,6 +183,57 @@ app.post("/exec/langfuse", async (req, res) => {
       thorIds(req),
     );
     res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+  }
+});
+
+/**
+ * POST /exec/metabase — execute a metabase CLI command
+ * Body: { args: string[] }
+ * Response: JSON (varies by subcommand)
+ *
+ * No cwd validation — metabase queries are not repo-scoped.
+ * No raw SQL logging — PII risk.
+ */
+app.post("/exec/metabase", async (req, res) => {
+  try {
+    const { args } = req.body ?? {};
+
+    const argsError = validateMetabaseArgs(args);
+    if (argsError) {
+      res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
+      return;
+    }
+
+    const subcommand = args[0];
+    // Log subcommand + schema only, never raw SQL (PII risk)
+    logInfo(log, "exec_metabase", {
+      subcommand,
+      ...(subcommand !== "query" && args[1] ? { schema: args[1] } : {}),
+      ...thorIds(req),
+    });
+
+    let result: unknown;
+
+    switch (subcommand) {
+      case "schemas":
+        result = await listSchemas();
+        break;
+      case "tables":
+        result = await listTables(args[1]);
+        break;
+      case "columns":
+        result = await getColumns(args[1], args[2]);
+        break;
+      case "query":
+        result = await executeQuery(args[1]);
+        break;
+    }
+
+    res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logError(log, "exec_metabase_error", message, thorIds(req));
+    res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
   }
 });
 

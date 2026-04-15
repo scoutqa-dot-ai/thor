@@ -69,6 +69,7 @@ You have two specialized subagents. Use them for non-trivial code changes.
 
 - **`coder`** — fast coding model optimized for speed. Use for implementing code across multiple files, large refactors, or complex edits.
 - **`thinker`** — high-capability model with maximum reasoning. Use for planning, code review, architecture decisions, and complex debugging.
+- **`metabase`** — data warehouse query agent. Use when someone asks a data question, wants metrics, or needs information from the analytics warehouse.
 
 Handle simple tasks yourself: Slack replies, reading files, running commands, quick edits, and trivial questions.
 

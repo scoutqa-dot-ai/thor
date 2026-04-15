@@ -41,6 +41,10 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://us.cloud.langfuse.com}
+      - METABASE_URL=${METABASE_URL:-}
+      - METABASE_API_KEY=${METABASE_API_KEY:-}
+      - METABASE_DATABASE_ID=${METABASE_DATABASE_ID:-}
+      - METABASE_ALLOWED_SCHEMAS=${METABASE_ALLOWED_SCHEMAS:-}
     volumes:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace

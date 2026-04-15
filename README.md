@@ -112,6 +112,10 @@ Copy `.env.example` to `.env` and fill in:
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | grafana-mcp   | Grafana service account token                                    |
 | `GRAFANA_URL`                       | Yes      | grafana-mcp   | Grafana instance URL                                             |
 | `INGRESS_PORT`                      | No       | ingress       | Host port (default: `8080`)                                      |
+| `METABASE_ALLOWED_SCHEMAS`          | No       | remote-cli    | Comma-separated schema allowlist for discovery filtering         |
+| `METABASE_API_KEY`                  | No       | remote-cli    | Metabase API key (must be scoped to read-only DB role)           |
+| `METABASE_DATABASE_ID`              | No       | remote-cli    | Metabase database ID to query                                    |
+| `METABASE_URL`                      | No       | remote-cli    | Metabase instance URL                                            |
 | `OPENCODE_CPU_LIMIT`                | No       | opencode      | CPU limit for OpenCode container (default: `3`)                  |
 | `OPENCODE_MEMORY_LIMIT`             | No       | opencode      | Memory limit for OpenCode container (default: `4g`)              |
 | `OPENCODE_URL`                      | No       | runner        | OpenCode server URL (default: `http://opencode:4096`)            |

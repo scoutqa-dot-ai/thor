@@ -66,6 +66,7 @@ COPY docker/opencode/bin/git /usr/local/bin/git
 COPY docker/opencode/bin/gh /usr/local/bin/gh
 COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
 COPY docker/opencode/bin/langfuse /usr/local/bin/langfuse
+COPY docker/opencode/bin/metabase /usr/local/bin/metabase
 # mcp/approval wrapper scripts — forward to proxy service over HTTP
 COPY --from=build /app/packages/opencode-cli/dist/proxy-cli.mjs /usr/local/bin/proxy-cli.mjs
 COPY docker/opencode/bin/mcp /usr/local/bin/mcp
