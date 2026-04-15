@@ -339,12 +339,11 @@ export function validateLangfuseArgs(args: string[]): string | null {
     return `"langfuse api ${resource} ${action}" is not allowed — only list, get, and --help are permitted`;
   }
 
-  // Check for denied flags anywhere in the args (match both --flag value and --flag=value)
+  // Check for denied flags (handles both --flag value and --flag=value forms)
   for (const arg of args) {
-    for (const denied of DENIED_LANGFUSE_FLAGS) {
-      if (arg === denied || arg.startsWith(denied + "=")) {
-        return `flag "${denied}" is not allowed`;
-      }
+    const flag = arg.split("=")[0];
+    if (DENIED_LANGFUSE_FLAGS.has(flag)) {
+      return `flag "${flag}" is not allowed`;
     }
   }
 
