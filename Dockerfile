@@ -78,9 +78,7 @@ ENV THOR_PROXY_URL=http://proxy:3001
 # OpenCode only registers QuestionTool when OPENCODE_CLIENT is "app", "cli", or "desktop".
 # https://github.com/sst/opencode/blob/main/packages/opencode/src/tool/registry.ts
 ENV OPENCODE_CLIENT=thor
-COPY --chown=thor:thor docker/opencode/opencode.json /home/thor/.config/opencode/opencode.json
-COPY --chown=thor:thor docker/opencode/agents/ /home/thor/.config/opencode/agents/
-COPY --chown=thor:thor docker/opencode/plugins/ /home/thor/.config/opencode/plugins/
+COPY --chown=thor:thor docker/opencode/config/ /home/thor/.config/opencode/
 ENTRYPOINT ["opencode"]
 
 FROM build AS remote-cli

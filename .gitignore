@@ -1,7 +1,5 @@
 node_modules/
 dist/
-*.js
-!docker/opencode/plugins/*.js
 *.d.ts
 *.js.map
 *.d.ts.map
