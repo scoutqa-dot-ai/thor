@@ -1,0 +1,39 @@
+docs/plan/2026031102_github-webhooks.md
+  da3fb2950056f38d 3-4
+docs/plan/2026031201_github-event-handling.md
+  da3fb2950056f38d 3-4
+docs/feat/mvp.md
+  da3fb2950056f38d 31,144
+Dockerfile
+  da3fb2950056f38d 96
+docs/plan/2026031102_github-mcp.md
+  da3fb2950056f38d 3-4
+docs/plan/2026031103_github-pr-workflow.md
+  da3fb2950056f38d 3-4
+README.md
+  da3fb2950056f38d 150,159,294,314
+docs/plan/2026031601_gh-cli-proxy.md
+  da3fb2950056f38d 3-4
+docker/opencode/agents/build.md
+  da3fb2950056f38d 107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "df7147e3c9b260da6117928d12aa6289036acb4f",
+  "prompts": {
+    "da3fb2950056f38d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17f1d8d6-570e-4673-a5ac-e7cb15a5cc36",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Conductor <conductor@noreply>",
+      "messages": [],
+      "total_additions": 39,
+      "total_deletions": 392,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
