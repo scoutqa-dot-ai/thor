@@ -1,7 +1,14 @@
 import express from "express";
 import { createLogger, logInfo, logError, computeGitAlias, formatThorMeta } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
-import { validateCwd, validateGitArgs, validateGhArgs, validateScoutqaArgs } from "./policy.js";
+import {
+  validateCwd,
+  validateGitArgs,
+  validateGhArgs,
+  validateScoutqaArgs,
+  validateMetabaseArgs,
+} from "./policy.js";
+import { listSchemas, listTables, getColumns, executeQuery } from "./metabase.js";
 
 const log = createLogger("remote-cli");
 
@@ -141,6 +148,57 @@ app.post("/exec/scoutqa", async (req, res) => {
       res.write(JSON.stringify({ exitCode: 1 }) + "\n");
       res.end();
     }
+  }
+});
+
+/**
+ * POST /exec/metabase — execute a metabase CLI command
+ * Body: { args: string[] }
+ * Response: JSON (varies by subcommand)
+ *
+ * No cwd validation — metabase queries are not repo-scoped.
+ * No raw SQL logging — PII risk.
+ */
+app.post("/exec/metabase", async (req, res) => {
+  try {
+    const { args } = req.body ?? {};
+
+    const argsError = validateMetabaseArgs(args);
+    if (argsError) {
+      res.status(400).json({ error: argsError });
+      return;
+    }
+
+    const subcommand = args[0];
+    // Log subcommand + schema only, never raw SQL (PII risk)
+    logInfo(log, "exec_metabase", {
+      subcommand,
+      ...(subcommand !== "query" && args[1] ? { schema: args[1] } : {}),
+      ...thorIds(req),
+    });
+
+    let result: unknown;
+
+    switch (subcommand) {
+      case "schemas":
+        result = await listSchemas();
+        break;
+      case "tables":
+        result = await listTables(args[1]);
+        break;
+      case "columns":
+        result = await getColumns(args[1], args[2]);
+        break;
+      case "query":
+        result = await executeQuery(args[1]);
+        break;
+    }
+
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logError(log, "exec_metabase_error", message, thorIds(req));
+    res.status(500).json({ error: message });
   }
 });
 

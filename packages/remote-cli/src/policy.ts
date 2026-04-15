@@ -278,6 +278,69 @@ export function validateScoutqaArgs(args: string[]): string | null {
   return null;
 }
 
+// ── metabase policy ────────────────────────────────────────────────────────
+
+const ALLOWED_METABASE_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "schemas",
+  "tables",
+  "columns",
+  "query",
+]);
+
+export function validateMetabaseArgs(args: string[]): string | null {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "args must be a non-empty array";
+  }
+
+  const subcommand = args[0];
+  if (!ALLOWED_METABASE_SUBCOMMANDS.has(subcommand)) {
+    return `"metabase ${subcommand}" is not allowed — valid subcommands: schemas, tables, columns, query`;
+  }
+
+  const allowedSchemas = getMetabaseAllowedSchemas();
+
+  if (subcommand === "schemas") {
+    if (args.length > 1) return '"metabase schemas" takes no arguments';
+    return null;
+  }
+
+  if (subcommand === "tables") {
+    if (args.length !== 2) return '"metabase tables" requires exactly 1 argument: <schema>';
+    const schema = args[1];
+    if (allowedSchemas.size > 0 && !allowedSchemas.has(schema)) {
+      return `schema "${schema}" is not in the allowed list`;
+    }
+    return null;
+  }
+
+  if (subcommand === "columns") {
+    if (args.length !== 3)
+      return '"metabase columns" requires exactly 2 arguments: <schema> <table>';
+    const schema = args[1];
+    if (allowedSchemas.size > 0 && !allowedSchemas.has(schema)) {
+      return `schema "${schema}" is not in the allowed list`;
+    }
+    return null;
+  }
+
+  if (subcommand === "query") {
+    if (args.length !== 2) return '"metabase query" requires exactly 1 argument: <sql>';
+    return null;
+  }
+
+  return null;
+}
+
+function getMetabaseAllowedSchemas(): Set<string> {
+  const raw = process.env.METABASE_ALLOWED_SCHEMAS || "";
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
 // ── gh policy ───────────────────────────────────────────────────────────────
 
 /**
