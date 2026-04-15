@@ -171,7 +171,7 @@ app.post("/exec/langfuse", async (req, res) => {
     const finalArgs = !needsJson || args.includes("--json") ? args : [...args, "--json"];
 
     logInfo(log, "exec_langfuse", { args: finalArgs, ...thorIds(req) });
-    const result = await execCommand("langfuse", finalArgs, "/workspace", Infinity);
+    const result = await execCommand("langfuse", finalArgs, "/workspace");
     res.json(result);
   } catch (err) {
     logError(
