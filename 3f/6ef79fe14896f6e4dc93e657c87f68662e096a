@@ -1,0 +1,31 @@
+.env.example
+  b2aa9e4a3bf64cd6 35-39
+Dockerfile
+  b2aa9e4a3bf64cd6 79
+docker/opencode/bin/langfuse
+  b2aa9e4a3bf64cd6 1-2
+docker/opencode/agents/build.md
+  b2aa9e4a3bf64cd6 66
+docker-compose.yml
+  b2aa9e4a3bf64cd6 41-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3f6ef79fe14896f6e4dc93e657c87f68662e096a",
+  "prompts": {
+    "b2aa9e4a3bf64cd6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4155675d-bdc1-4851-bb45-dc8d045e20e9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 1,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}
