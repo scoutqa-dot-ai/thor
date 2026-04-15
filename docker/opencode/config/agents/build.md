@@ -33,7 +33,7 @@ Do not only answer in internal chat when a Slack reply is required.
 
 ## Environment
 
-You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries). No Python, Go, or other binaries. Use `node` + `fetch` for scripting and HTTP calls.
+You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `metabase` (Metabase warehouse CLI). No Python, Go, or other binaries. Use `node` + `fetch` for scripting and HTTP calls.
 
 A credential-injecting reverse proxy is available at `http://data/` — auth headers are injected automatically. Check memory files for available routes and API schemas.
 
@@ -69,7 +69,6 @@ You have two specialized subagents. Use them for non-trivial code changes.
 
 - **`coder`** — fast coding model optimized for speed. Use for implementing code across multiple files, large refactors, or complex edits.
 - **`thinker`** — high-capability model with maximum reasoning. Use for planning, code review, architecture decisions, and complex debugging.
-- **`metabase`** — data warehouse query agent. Use when someone asks a data question, wants metrics, or needs information from the analytics warehouse.
 
 Handle simple tasks yourself: Slack replies, reading files, running commands, quick edits, and trivial questions.
 

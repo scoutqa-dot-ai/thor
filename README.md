@@ -28,7 +28,7 @@ An event-driven AI team member that monitors Slack, Atlassian, and PostHog, then
                  (hosted)   (hosted)     MCP       MCP
 ```
 
-Gateway receives events and triggers the runner. OpenCode connects to proxy instances for tool access and uses remote-cli for git/gh CLI operations.
+Gateway receives events and triggers the runner. OpenCode connects to proxy instances for tool access and uses `remote-cli` for CLI-based integrations.
 
 ## Services
 
@@ -37,7 +37,7 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 | **cron**        | —         | `docker/cron`      | BusyBox crond for scheduled `hey-thor` prompts                           |
 | **data**        | 3080      | `docker/data`      | Nginx credential proxy for internal APIs (requires custom config)        |
 | **gateway**     | 3002      | `@thor/gateway`    | Slack webhook ingestion, event batching, trigger orchestration           |
-| **remote-cli**  | 3004      | `@thor/remote-cli` | Git/GitHub CLI proxy with PAT credential isolation                       |
+| **remote-cli**  | 3004      | `@thor/remote-cli` | Remote CLI gateway for CLI-based integrations                            |
 | **grafana-mcp** | 8000      | Docker image       | Grafana MCP server for Loki/Tempo queries                                |
 | **ingress**     | 8080      | `docker/ingress`   | Nginx reverse proxy with Vouch SSO                                       |
 | **opencode**    | 4096      | Docker image       | AI agent runtime (headless server)                                       |
@@ -64,23 +64,9 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 
 ### Running with Docker Compose
 
-```bash
-# Set required environment variables
-export ATLASSIAN_BASIC_AUTH=base64_encoded_email:token
-export GITHUB_PAT=github_pat_...
-export GRAFANA_SERVICE_ACCOUNT_TOKEN=glsa_...
-export GRAFANA_URL=https://your-instance.grafana.net
-export POSTHOG_API_KEY=phx_...
-export SLACK_BOT_TOKEN=xoxb-...
-export SLACK_BOT_USER_ID=U...
-export SLACK_SIGNING_SECRET=...
-export VOUCH_DOMAINS=example.com
-export VOUCH_GOOGLE_CLIENT_ID=...
-export VOUCH_GOOGLE_CLIENT_SECRET=...
-export VOUCH_JWT_SECRET=...
-export VOUCH_WHITELIST=alice@example.com,bob@example.com
+Populate `.env` from `.env.example`, then start the stack:
 
-# Start all services
+```bash
 docker compose up --build -d
 
 # Verify health
@@ -112,6 +98,9 @@ Copy `.env.example` to `.env` and fill in:
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | grafana-mcp   | Grafana service account token                                    |
 | `GRAFANA_URL`                       | Yes      | grafana-mcp   | Grafana instance URL                                             |
 | `INGRESS_PORT`                      | No       | ingress       | Host port (default: `8080`)                                      |
+| `LANGFUSE_HOST`                     | No       | remote-cli    | Langfuse host URL (default: `https://us.cloud.langfuse.com`)     |
+| `LANGFUSE_PUBLIC_KEY`               | No       | remote-cli    | Langfuse public key for read-only trace queries                  |
+| `LANGFUSE_SECRET_KEY`               | No       | remote-cli    | Langfuse secret key for read-only trace queries                  |
 | `METABASE_ALLOWED_SCHEMAS`          | No       | remote-cli    | Comma-separated schema allowlist for discovery filtering         |
 | `METABASE_API_KEY`                  | No       | remote-cli    | Metabase API key (must be scoped to read-only DB role)           |
 | `METABASE_DATABASE_ID`              | No       | remote-cli    | Metabase database ID to query                                    |
@@ -150,7 +139,7 @@ The data container generates its nginx config from these vars at startup. When `
 
 #### 3. Agent context (OpenCode memory)
 
-The bundled agent prompt (`docker/opencode/agents/build.md`) contains only generic behavior rules — no team-specific context. After starting Thor, open the OpenCode web UI and tell Thor about your team in conversation. Ask it to remember key facts — Thor writes them to its persistent memory directory automatically. Things to tell it:
+The bundled agent prompt (`docker/opencode/config/agents/build.md`) contains only generic behavior rules — no team-specific context. Bundled investigation skills also live under `docker/opencode/config/skills/`. After starting Thor, open the OpenCode web UI and tell Thor about your team in conversation. Ask it to remember key facts — Thor writes them to its persistent memory directory automatically. Things to tell it:
 
 - Your team name, Slack bot ID, and key channel IDs
 - Team members — names, Slack IDs, GitHub usernames, and roles
@@ -169,7 +158,7 @@ Repos in `/workspace/repos/` are mounted read-only into OpenCode. Thor creates w
 
 #### 5. Per-workspace MCP servers
 
-Slack is available globally (configured in the base `docker/opencode/opencode.json`). Other MCP servers are configured **per repo** via `.opencode/opencode.json` in the repo root.
+Slack is available globally (configured in the base `docker/opencode/config/opencode.json`). Other MCP servers are configured **per repo** via `.opencode/opencode.json` in the repo root.
 
 ```bash
 # Example: give a repo access to Atlassian and Grafana

@@ -10,7 +10,7 @@ Use this skill when:
 - The user asks to debug LLM/agent behavior
 - Investigating traces, sessions, or observations in Langfuse
 - Analyzing cost, usage, or model performance
-- Looking up activity for a specific user (via Katalon UUID)
+- Looking up activity for a specific user
 - Exploring tool calls, agent steps, or execution flows
 
 ---
