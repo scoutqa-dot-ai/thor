@@ -1,6 +1,6 @@
 # Thor
 
-An event-driven AI team member that monitors Slack, GitHub, Atlassian, and PostHog, then takes action through OpenCode sessions with policy-enforced tool access.
+An event-driven AI team member that monitors Slack, Atlassian, and PostHog, then takes action through OpenCode sessions with policy-enforced tool access.
 
 ## Architecture
 
@@ -28,7 +28,7 @@ An event-driven AI team member that monitors Slack, GitHub, Atlassian, and PostH
                  (hosted)   (hosted)     MCP       MCP
 ```
 
-Gateway receives events and triggers the runner. OpenCode connects to proxy instances for tool access and uses remote-cli for Git/GitHub CLI operations.
+Gateway receives events and triggers the runner. OpenCode connects to proxy instances for tool access and uses remote-cli for git/gh CLI operations.
 
 ## Services
 
@@ -36,7 +36,7 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 | --------------- | --------- | ------------------ | ------------------------------------------------------------------------ |
 | **cron**        | —         | `docker/cron`      | BusyBox crond for scheduled `hey-thor` prompts                           |
 | **data**        | 3080      | `docker/data`      | Nginx credential proxy for internal APIs (requires custom config)        |
-| **gateway**     | 3002      | `@thor/gateway`    | Slack & GitHub webhook ingestion, event batching, trigger orchestration  |
+| **gateway**     | 3002      | `@thor/gateway`    | Slack webhook ingestion, event batching, trigger orchestration           |
 | **remote-cli**  | 3004      | `@thor/remote-cli` | Git/GitHub CLI proxy with PAT credential isolation                       |
 | **grafana-mcp** | 8000      | Docker image       | Grafana MCP server for Loki/Tempo queries                                |
 | **ingress**     | 8080      | `docker/ingress`   | Nginx reverse proxy with Vouch SSO                                       |
@@ -48,8 +48,8 @@ Gateway receives events and triggers the runner. OpenCode connects to proxy inst
 
 ## How It Works
 
-1. **Events arrive** — Slack mentions, GitHub webhooks, and cron schedules hit the gateway
-2. **Smart batching** — Events are queued per correlation key (e.g., Slack thread) with configurable delays (3s for mentions and engaged threads, 60s for GitHub events, immediate for cron). Non-mention Slack messages are only forwarded if Thor has already replied in the thread.
+1. **Events arrive** — Slack mentions and cron schedules hit the gateway
+2. **Smart batching** — Events are queued per correlation key (e.g., Slack thread) with configurable delays (3s for mentions and engaged threads, immediate for cron). Non-mention Slack messages are only forwarded if Thor has already replied in the thread.
 3. **Session continuity** — The runner maps correlation keys to persistent OpenCode sessions, resuming context across interactions
 4. **Policy-enforced tools** — OpenCode accesses integrations through proxy instances that enforce allow-lists and log every tool call
 5. **Progress visibility** — Tool activity streams back to Slack as live-updating progress messages that auto-clean when the bot replies
@@ -201,11 +201,7 @@ Available MCP servers (all policy-proxied):
 
 OpenCode merges per-repo config with the global config. A repo without `.thor.opencode/` gets only Slack.
 
-#### 6. GitHub webhook setup
-
-Copy `docs/notify-thor.example.yml` to `.github/workflows/notify-thor.yml` in any source repository you want Thor to monitor. Add `THOR_GATEWAY_URL` as a repository variable pointing to the gateway endpoint.
-
-#### 7. Cron jobs (optional)
+#### 6. Cron jobs (optional)
 
 Add scheduled prompts to `docker-volumes/workspace/cron/crontab`. Each line triggers Thor with a prompt on a schedule. See `docs/plan/2026031204_cron-triggers.md` for examples.
 
@@ -313,13 +309,12 @@ The proxy sits between OpenCode and every upstream MCP server. Each proxy instan
 ### Webhook Authentication
 
 - **Slack** — HMAC-SHA256 signature verification using `crypto.timingSafeEqual` with configurable timestamp tolerance (default 300s)
-- **GitHub** — Events are delivered via GitHub Actions workflow (`notify-thor.example.yml`), not direct webhooks, so payloads arrive from a trusted CI context
 
 ### SSO and Access Control
 
 - **Vouch Proxy** — Google OAuth SSO in front of OpenCode's web UI
 - **Nginx ingress** — `auth_request` directive validates sessions via Vouch; unauthenticated users are redirected to login
-- **Unprotected paths** — Only `/slack/*` and `/github/*` (webhook endpoints with their own auth) and static assets bypass SSO
+- **Unprotected paths** — Only `/slack/*` (webhook endpoint with its own auth) and static assets bypass SSO
 
 ### Non-Root Containers
 
@@ -355,7 +350,7 @@ Each record includes: tool name, decision (`allowed`/`blocked`), arguments (trun
 
 Zod schemas validate requests at every service boundary:
 
-- Gateway validates Slack event envelopes and GitHub payloads before processing
+- Gateway validates Slack event envelopes before processing
 - Runner validates trigger requests (`prompt`, `correlationKey`, `sessionId`)
 - slack-mcp enforces upper bounds on thread reads (200 replies), channel history (100 messages), and file downloads (20MB)
 - Progress events from the runner are validated against a discriminated union schema before forwarding

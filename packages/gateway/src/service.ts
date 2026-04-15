@@ -8,7 +8,6 @@ import {
   resolveRepoDirectory,
 } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
-import { type GitHubEvent, getRepoName } from "./github.js";
 import { getSlackCorrelationKey, getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
 
@@ -185,56 +184,6 @@ async function forwardProgressEvent(
   } catch (err) {
     logError(log, "progress_forward_error", err instanceof Error ? err.message : String(err));
   }
-}
-
-/**
- * Trigger the runner with a batch of GitHub events.
- * Combines multiple events into a single prompt, like the Slack handler.
- */
-export async function triggerRunnerGitHub(
-  events: GitHubEvent[],
-  correlationKey: string,
-  deps: RunnerDeps,
-  interrupt?: boolean,
-  onAccepted?: () => void,
-  onRejected?: (reason: string) => void,
-): Promise<TriggerResult> {
-  if (events.length === 0) return { busy: false };
-
-  const prompt =
-    events.length === 1
-      ? `GitHub ${events[0].event} event:\n\n${JSON.stringify(events[0].payload)}`
-      : `GitHub events:\n\n${JSON.stringify(events.map((e) => ({ event: e.event, payload: e.payload })))}`;
-
-  const last = events[events.length - 1];
-  const repoName = getRepoName(last.repository);
-  const directory = resolveRepoDirectory(repoName);
-  if (!directory) {
-    logWarn(log, "repo_directory_not_found", { repo: repoName });
-    onRejected?.(`repo directory not found for ${repoName}`);
-    return { busy: false };
-  }
-  const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, correlationKey, interrupt, directory }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Runner returned ${response.status}: ${text}`);
-  }
-
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    const json = (await response.json()) as Record<string, unknown>;
-    if (json.busy === true) {
-      return { busy: true };
-    }
-  }
-
-  onAccepted?.();
-  return { busy: false };
 }
 
 /**

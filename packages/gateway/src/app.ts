@@ -14,19 +14,12 @@ import { EventQueue, type QueuedEvent } from "./queue.js";
 import {
   addSlackReaction,
   triggerRunnerSlack,
-  triggerRunnerGitHub,
   triggerRunnerCron,
   resolveApproval,
   updateSlackMessage,
   type RunnerDeps,
   type SlackMcpDeps,
 } from "./service.js";
-import {
-  getGitHubCorrelationKeys,
-  githubEventMentions,
-  parseGitHubEvent,
-  type GitHubEvent,
-} from "./github.js";
 import {
   getSlackCorrelationKey,
   parseSlackTs,
@@ -42,20 +35,12 @@ interface SlackQueuedEvent extends QueuedEvent<SlackThreadEvent> {
   source: "slack";
 }
 
-interface GitHubQueuedEvent extends QueuedEvent<GitHubEvent> {
-  source: "github";
-}
-
 interface CronQueuedEvent extends QueuedEvent<CronPayload> {
   source: "cron";
 }
 
 function isSlackEvent(e: QueuedEvent): e is SlackQueuedEvent {
   return e.source === "slack";
-}
-
-function isGitHubEvent(e: QueuedEvent): e is GitHubQueuedEvent {
-  return e.source === "github";
 }
 
 function isCronEvent(e: QueuedEvent): e is CronQueuedEvent {
@@ -70,9 +55,6 @@ interface RawBodyRequest extends Request {
 
 /** Short debounce delay for mentions and engaged threads (ms). */
 const SHORT_DELAY_MS = 3000;
-
-/** Long debounce delay for unaddressed events like GitHub without mention (ms). */
-const LONG_DELAY_MS = 60_000;
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
@@ -90,12 +72,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   disableQueueInterval?: boolean;
   /** Short debounce delay for mentions and engaged threads (ms). Default: 3000. */
   shortDelayMs?: number;
-  /** Long debounce delay for unaddressed events (ms). Default: 60000. */
-  longDelayMs?: number;
   /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
   cronSecret?: string;
-  /** Git username (e.g. GitHub login) — used to detect @mentions in GitHub events. */
-  gitUsername?: string;
   /** Dynamic workspace config loader — re-reads config.json on each request. */
   getConfig?: ConfigLoader;
 }
@@ -120,7 +98,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   const selfUserId = config.slackBotUserId;
   const shortDelay = config.shortDelayMs ?? SHORT_DELAY_MS;
-  const longDelay = config.longDelayMs ?? LONG_DELAY_MS;
 
   /** Read allowed channels dynamically from config on each call. */
   const isChannelAllowed = (channel: string): boolean => {
@@ -148,7 +125,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     disableInterval: config.disableQueueInterval === true,
     handler: async (events: QueuedEvent[], ack: () => void, reject: (reason: string) => void) => {
       const slackEvents = events.filter(isSlackEvent);
-      const githubEvents = events.filter(isGitHubEvent);
 
       if (slackEvents.length > 0) {
         const lastEvent = slackEvents[slackEvents.length - 1];
@@ -181,38 +157,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           }
         } catch (error) {
           logError(log, "slack_trigger_failed", error, {
-            correlationKey: lastEvent.correlationKey,
-          });
-        }
-        return;
-      }
-
-      if (githubEvents.length > 0) {
-        const lastEvent = githubEvents[githubEvents.length - 1];
-        const hasInterrupt = events.some((e) => e.interrupt);
-
-        try {
-          const result = await triggerRunnerGitHub(
-            githubEvents.map((e) => e.payload),
-            lastEvent.correlationKey,
-            runnerDeps,
-            hasInterrupt,
-            ack,
-            reject,
-          );
-          if (result.busy) {
-            logInfo(log, "github_trigger_busy", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: githubEvents.length,
-            });
-          } else {
-            logInfo(log, "github_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: githubEvents.length,
-            });
-          }
-        } catch (error) {
-          logError(log, "github_trigger_failed", error, {
             correlationKey: lastEvent.correlationKey,
           });
         }
@@ -524,45 +468,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     res.status(200).json({ ok: true, ignored: true, interactionType });
-  });
-
-  // --- GitHub events ---
-
-  app.post("/github/events", (req: Request, res: Response) => {
-    const event = parseGitHubEvent(req.body);
-    if (!event) {
-      res.status(200).json({ ok: true, ignored: true });
-      return;
-    }
-
-    const rawKeys = getGitHubCorrelationKeys(event);
-    const correlationKey = resolveCorrelationKeys(rawKeys);
-    if (correlationKey !== rawKeys[0]) {
-      logInfo(log, "corr_key_resolved", { rawKeys, correlationKey });
-    }
-
-    const isMention = config.gitUsername ? githubEventMentions(event, config.gitUsername) : false;
-    const delay = isMention ? shortDelay : longDelay;
-
-    logInfo(log, "github_event_accepted", {
-      event: event.event,
-      correlationKey,
-      interrupt: isMention,
-    });
-
-    queue.enqueue({
-      id: crypto.randomUUID(),
-      source: "github",
-      correlationKey,
-      payload: event,
-      receivedAt: new Date().toISOString(),
-      sourceTs: Date.now(),
-      readyAt: Date.now() + delay,
-      delayMs: delay,
-      interrupt: isMention,
-    });
-
-    res.status(200).json({ ok: true });
   });
 
   // --- Cron trigger ---
