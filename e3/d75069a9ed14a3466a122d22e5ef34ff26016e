@@ -1,0 +1,29 @@
+README.md
+  483069c5527c56dd 168,200
+packages/runner/package.json
+  483069c5527c56dd 14
+Dockerfile
+  483069c5527c56dd 60,62,78
+docker/opencode/agents/build.md
+  483069c5527c56dd 186-187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e3d75069a9ed14a3466a122d22e5ef34ff26016e",
+  "prompts": {
+    "483069c5527c56dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "71021067-dca2-4316-9302-e6c1ef98cf05",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 10,
+      "total_deletions": 23,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
