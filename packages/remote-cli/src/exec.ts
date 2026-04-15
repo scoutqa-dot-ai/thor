@@ -12,8 +12,6 @@ const MAX_OUTPUT = 1024 * 256; // 256 KB
 const TIMEOUT_MS = 60_000;
 const STREAM_TIMEOUT_MS = 300_000; // 5 minutes for streaming commands
 
-export const MAX_OUTPUT_LARGE = 1024 * 1024; // 1 MB — for commands with large JSON responses
-
 export function execCommand(
   binary: string,
   args: string[],

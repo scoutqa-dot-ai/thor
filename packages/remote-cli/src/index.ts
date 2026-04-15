@@ -1,6 +1,6 @@
 import express from "express";
 import { createLogger, logInfo, logError, computeGitAlias, formatThorMeta } from "@thor/common";
-import { execCommand, execCommandStream, MAX_OUTPUT_LARGE } from "./exec.js";
+import { execCommand, execCommandStream } from "./exec.js";
 import {
   validateCwd,
   validateGitArgs,
@@ -171,7 +171,7 @@ app.post("/exec/langfuse", async (req, res) => {
     const finalArgs = !needsJson || args.includes("--json") ? args : [...args, "--json"];
 
     logInfo(log, "exec_langfuse", { args: finalArgs, ...thorIds(req) });
-    const result = await execCommand("langfuse", finalArgs, "/workspace", MAX_OUTPUT_LARGE);
+    const result = await execCommand("langfuse", finalArgs, "/workspace", Infinity);
     res.json(result);
   } catch (err) {
     logError(
