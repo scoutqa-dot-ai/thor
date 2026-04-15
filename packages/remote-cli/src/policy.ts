@@ -295,6 +295,11 @@ const DENIED_LANGFUSE_FLAGS: ReadonlySet<string> = new Set([
   "--config",
   "--output",
   "--output-file",
+  "--curl",
+  "--env",
+  "--public-key",
+  "--secret-key",
+  "--host",
 ]);
 
 export function validateLangfuseArgs(args: string[]): string | null {
@@ -334,10 +339,12 @@ export function validateLangfuseArgs(args: string[]): string | null {
     return `"langfuse api ${resource} ${action}" is not allowed — only list, get, and --help are permitted`;
   }
 
-  // Check for denied flags anywhere in the args
+  // Check for denied flags anywhere in the args (match both --flag value and --flag=value)
   for (const arg of args) {
-    if (DENIED_LANGFUSE_FLAGS.has(arg)) {
-      return `flag "${arg}" is not allowed`;
+    for (const denied of DENIED_LANGFUSE_FLAGS) {
+      if (arg === denied || arg.startsWith(denied + "=")) {
+        return `flag "${denied}" is not allowed`;
+      }
     }
   }
 

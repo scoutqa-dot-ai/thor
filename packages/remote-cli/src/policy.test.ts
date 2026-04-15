@@ -275,6 +275,26 @@ describe("validateLangfuseArgs", () => {
         validateLangfuseArgs(["api", "traces", "list", "--output", "/tmp/data"]),
       ).not.toBeNull();
     });
+
+    it("blocks --curl flag (leaks credentials)", () => {
+      expect(validateLangfuseArgs(["api", "traces", "list", "--curl"])).not.toBeNull();
+    });
+
+    it("blocks --env flag (host retargeting)", () => {
+      expect(validateLangfuseArgs(["api", "traces", "list", "--env", ".env"])).not.toBeNull();
+    });
+
+    it("blocks --public-key override", () => {
+      expect(
+        validateLangfuseArgs(["api", "traces", "list", "--public-key", "pk-evil"]),
+      ).not.toBeNull();
+    });
+
+    it("blocks flags with = syntax (bypass attempt)", () => {
+      expect(validateLangfuseArgs(["api", "traces", "list", "--output=/tmp/exfil"])).not.toBeNull();
+      expect(validateLangfuseArgs(["api", "traces", "list", "--config=/etc/evil"])).not.toBeNull();
+      expect(validateLangfuseArgs(["api", "traces", "list", "--env=.env"])).not.toBeNull();
+    });
   });
 
   describe("edge cases", () => {
