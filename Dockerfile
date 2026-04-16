@@ -17,7 +17,6 @@ WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json tsup.config.ts ./
 COPY packages/common/package.json packages/common/
 COPY packages/gateway/package.json packages/gateway/
-COPY packages/proxy/package.json packages/proxy/
 COPY packages/runner/package.json packages/runner/
 COPY packages/slack-mcp/package.json packages/slack-mcp/
 COPY packages/remote-cli/package.json packages/remote-cli/
@@ -37,12 +36,6 @@ WORKDIR /workspace
 ENV PORT=3002
 EXPOSE 3002
 CMD ["node", "/app/packages/gateway/dist/index.js"]
-
-FROM build AS proxy
-USER thor
-WORKDIR /workspace
-EXPOSE 3001
-CMD ["node", "/app/packages/proxy/dist/index.js"]
 
 FROM build AS runner
 USER thor

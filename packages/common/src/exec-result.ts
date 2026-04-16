@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 
-/** Buffered response from remote-cli (git/gh) and proxy (tool calls). */
+/** Buffered response from remote-cli exec endpoints. */
 export const ExecResultSchema = z.object({
   stdout: z.string(),
   stderr: z.string(),

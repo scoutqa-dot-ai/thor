@@ -812,7 +812,7 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
 
 /**
  * Parse a tool result for approval-required signal.
- * The proxy emits a [thor:meta] line with { type: "approval", actionId, proxyName, tool }.
+ * remote-cli emits a [thor:meta] line with { type: "approval", actionId, proxyName, tool }.
  */
 function parseApprovalResult(
   output: string,

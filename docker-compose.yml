@@ -37,6 +37,9 @@ services:
       - GIT_USER_EMAIL=${GIT_USER_EMAIL:-thor@localhost}
       - GIT_USER_NAME=${GIT_USER_NAME:-thor}
       - GITHUB_PAT=${GITHUB_PAT}
+      - ATLASSIAN_AUTH=${ATLASSIAN_AUTH}
+      - POSTHOG_API_KEY=${POSTHOG_API_KEY}
+      - RESOLVE_SECRET=${RESOLVE_SECRET:?set RESOLVE_SECRET}
       - SCOUT_API_KEY=${SCOUT_API_KEY:-}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
@@ -48,6 +51,11 @@ services:
     volumes:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
+    depends_on:
+      slack-mcp:
+        condition: service_healthy
+      grafana-mcp:
+        condition: service_healthy
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3004/health').then(r=>{if(!r.ok)throw 1})"]
@@ -81,31 +89,6 @@ services:
         ]
       interval: 5s
       timeout: 3s
-      retries: 10
-
-  proxy:
-    build:
-      context: .
-      target: proxy
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:3001:3001"
-    environment:
-      - NODE_ENV=production
-      - POSTHOG_API_KEY=${POSTHOG_API_KEY}
-      - ATLASSIAN_AUTH=${ATLASSIAN_AUTH}
-    volumes:
-      - ./docker-volumes/workspace:/workspace
-    depends_on:
-      slack-mcp:
-        condition: service_healthy
-      grafana-mcp:
-        condition: service_healthy
-    healthcheck:
-      test:
-        ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>{if(!r.ok)throw 1})"]
-      interval: 5s
-      timeout: 5s
       retries: 10
 
   data:
@@ -144,8 +127,6 @@ services:
       - ./docker-volumes/workspace/cron:/workspace/cron
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
     depends_on:
-      proxy:
-        condition: service_healthy
       remote-cli:
         condition: service_healthy
       data:
@@ -190,6 +171,9 @@ services:
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
       - SLACK_BOT_USER_ID=${SLACK_BOT_USER_ID:?set SLACK_BOT_USER_ID}
       - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
+      - REMOTE_CLI_HOST=remote-cli
+      - REMOTE_CLI_PORT=3004
+      - RESOLVE_SECRET=${RESOLVE_SECRET:?set RESOLVE_SECRET}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:
@@ -197,7 +181,7 @@ services:
         condition: service_started
       slack-mcp:
         condition: service_healthy
-      proxy:
+      remote-cli:
         condition: service_healthy
     healthcheck:
       test:
