@@ -1,0 +1,23 @@
+docs/plan/2026041602_drop-proxy.md
+  a6a24f653f1786b1 1,4,15,22-23,27-28,39-40,42,49,51-52,55-95,108-109,111-113,115-120,122-127,129,135-147,150-154,160-161,165,167,172,174-196,202-212,219-273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b18915fc6a33b62d783df13fb4585792b482f4e4",
+  "prompts": {
+    "a6a24f653f1786b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7c8ce1d3-bc49-442f-89e1-32e57c0dbc7b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 339,
+      "total_deletions": 66,
+      "accepted_lines": 306,
+      "overriden_lines": 0
+    }
+  }
+}
