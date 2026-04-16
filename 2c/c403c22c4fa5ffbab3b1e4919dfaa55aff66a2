@@ -1,0 +1,31 @@
+docs/plan/2026033101_dynamic-config.md
+  82da7c4f2a5f9dec 26
+README.md
+  82da7c4f2a5f9dec 258
+.env.example
+  82da7c4f2a5f9dec 31-42
+docker-compose.yml
+  82da7c4f2a5f9dec 96
+packages/common/src/workspace-config.test.ts
+  82da7c4f2a5f9dec 79,86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2cc403c22c4fa5ffbab3b1e4919dfaa55aff66a2",
+  "prompts": {
+    "82da7c4f2a5f9dec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d4ffc83b-c932-41e0-ba0c-5ca1308f2f63",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 25,
+      "total_deletions": 16,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    }
+  }
+}
