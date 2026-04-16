@@ -190,8 +190,10 @@ services:
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
       - SLACK_BOT_USER_ID=${SLACK_BOT_USER_ID:?set SLACK_BOT_USER_ID}
       - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
+      - OPENAI_AUTH_PATH=/opencode/auth.json
     volumes:
       - ./docker-volumes/workspace:/workspace
+      - ./docker-volumes/opencode:/opencode:ro
     depends_on:
       runner:
         condition: service_started

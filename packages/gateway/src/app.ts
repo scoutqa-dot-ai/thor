@@ -20,6 +20,7 @@ import {
   type RunnerDeps,
   type SlackMcpDeps,
 } from "./service.js";
+import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKey,
   parseSlackTs,
@@ -76,6 +77,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   cronSecret?: string;
   /** Dynamic workspace config loader — re-reads config.json on each request. */
   getConfig?: ConfigLoader;
+  /** Path to opencode auth.json for Codex usage check. */
+  openaiAuthPath?: string;
 }
 
 const InteractivityBodySchema = z.object({
@@ -214,10 +217,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }),
   );
 
-  app.get("/health", (_req, res) => {
+  app.get("/health", async (_req, res) => {
+    const result = await deepHealthCheck({
+      runnerUrl: config.runnerUrl,
+      slackMcpUrl: config.slackMcpUrl,
+      proxyHost: proxyHost,
+      proxyPort: config.proxyPort ?? 3001,
+      openaiAuthPath: config.openaiAuthPath,
+      fetchImpl: config.fetchImpl,
+    });
     res.json({
-      status: "ok",
-      service: "gateway",
+      ...result,
       runnerUrl: config.runnerUrl,
       configured: Boolean(config.signingSecret),
     });
