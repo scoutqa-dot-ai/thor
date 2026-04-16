@@ -1,0 +1,39 @@
+#!/bin/sh
+# Thor git wrapper — resolves GitHub App auth before executing real git.
+# Placed on PATH before /usr/bin/git inside the remote-cli container.
+# Falls back to PAT auth (GH_TOKEN / GIT_ASKPASS) when GitHub App is not configured.
+
+set -e
+
+REAL_GIT="/usr/bin/git"
+TAG="[thor-github-app]"
+
+# If no GitHub App config exists, pass through to real git unchanged
+if [ ! -f /workspace/config.json ] || ! grep -q '"github_app"' /workspace/config.json 2>/dev/null; then
+  exec "$REAL_GIT" "$@"
+fi
+
+# Resolve auth via the Node.js auth helper
+AUTH_JSON=$(node /app/packages/remote-cli/dist/auth-helper.js git "$@") || true
+
+if [ -n "$AUTH_JSON" ]; then
+  TOKEN=$(echo "$AUTH_JSON" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+  if [ -n "$TOKEN" ]; then
+    # Set up git credentials via GIT_ASKPASS
+    ASKPASS_SCRIPT=$(mktemp /tmp/thor-git-askpass-XXXXXX.sh)
+    printf '#!/bin/sh\necho "%s"\n' "$TOKEN" > "$ASKPASS_SCRIPT"
+    chmod 700 "$ASKPASS_SCRIPT"
+
+    export GIT_ASKPASS="$ASKPASS_SCRIPT"
+    export GIT_TERMINAL_PROMPT=0
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0="credential.username"
+    export GIT_CONFIG_VALUE_0="x-access-token"
+
+    trap 'rm -f "$ASKPASS_SCRIPT"' EXIT
+    "$REAL_GIT" "$@"
+  fi
+fi
+
+# Fallback: run real git with whatever env is already set (PAT mode)
+exec "$REAL_GIT" "$@"

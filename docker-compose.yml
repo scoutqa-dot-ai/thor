@@ -36,7 +36,10 @@ services:
       - NODE_ENV=production
       - GIT_USER_EMAIL=${GIT_USER_EMAIL:-thor@localhost}
       - GIT_USER_NAME=${GIT_USER_NAME:-thor}
-      - GITHUB_PAT=${GITHUB_PAT}
+      - GITHUB_PAT=${GITHUB_PAT:-}
+      - GITHUB_APP_ID=${GITHUB_APP_ID:-}
+      - GITHUB_APP_PRIVATE_KEY_FILE=${GITHUB_APP_PRIVATE_KEY_FILE:-}
+      - GITHUB_API_URL=${GITHUB_API_URL:-}
       - SCOUT_API_KEY=${SCOUT_API_KEY:-}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
@@ -48,6 +51,7 @@ services:
     volumes:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
+      - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3004/health').then(r=>{if(!r.ok)throw 1})"]
