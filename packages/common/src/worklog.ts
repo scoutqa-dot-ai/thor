@@ -61,7 +61,7 @@ function fileTimestamp(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Tool call log (used by the proxy)
+// Tool call log (used by remote-cli MCP handling)
 // ---------------------------------------------------------------------------
 
 export interface ToolCallLogEntry {

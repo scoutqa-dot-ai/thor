@@ -15,7 +15,7 @@ Instructions for AI agents working on this repository.
 
 3. **Commit discipline**:
    - One commit per phase (not per file, not per feature)
-   - Commit message format: `<type>: <short description>` (e.g. `feat: add mcp policy proxy`, `chore: project init`)
+   - Commit message format: `<type>: <short description>` (e.g. `feat: add mcp approval flow`, `chore: project init`)
    - Never commit secrets, `.env` files, or `node_modules`
    - Never push unless explicitly asked
 
@@ -30,9 +30,11 @@ thor/
 │   ├── feat/                  # Feature specs and architecture
 │   └── plan/                  # Implementation plans
 ├── packages/
-│   ├── proxy/                 # MCP policy proxy
+│   ├── common/                # Shared config, logging, notes, schemas
 │   ├── gateway/               # Inbound webhook gateway (Slack, etc.)
-│   └── runner/                # Agent runner + trigger endpoint
+│   ├── remote-cli/            # CLI + MCP policy gateway
+│   ├── runner/                # Agent runner + trigger endpoint
+│   └── slack-mcp/             # Slack MCP server + progress updates
 ├── scripts/                   # Test and utility scripts
 ├── docker-compose.yml
 ├── package.json               # pnpm workspace root

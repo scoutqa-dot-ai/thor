@@ -1,0 +1,58 @@
+{
+  "repos": {
+    "your-repo": {
+      "channels": ["C0123456789"],
+      "proxies": ["atlassian", "grafana", "slack"]
+    }
+  },
+  "proxies": {
+    "atlassian": {
+      "upstream": {
+        "url": "https://mcp.atlassian.com/v1/mcp",
+        "headers": {
+          "Authorization": "${ATLASSIAN_AUTH}"
+        }
+      },
+      "allow": [
+        "atlassianUserInfo",
+        "getJiraIssue",
+        "searchJiraIssuesUsingJql",
+        "getConfluencePage",
+        "search"
+      ],
+      "approve": ["createJiraIssue", "addCommentToJiraIssue"]
+    },
+    "grafana": {
+      "upstream": {
+        "url": "http://grafana-mcp:8000/mcp"
+      },
+      "allow": ["list_datasources", "query_loki_logs", "tempo_get-trace"],
+      "approve": []
+    },
+    "slack": {
+      "upstream": {
+        "url": "http://slack-mcp:3003/mcp"
+      },
+      "allow": ["post_message", "read_thread", "get_channel_history"],
+      "approve": []
+    }
+  },
+  "github_app": {
+    "installations": [
+      {
+        "org": "acme",
+        "installation_id": 12345678,
+        "app_id": "",
+        "private_key_path": "",
+        "api_url": ""
+      },
+      {
+        "org": "acme-labs",
+        "installation_id": 23456789,
+        "app_id": "",
+        "private_key_path": "",
+        "api_url": ""
+      }
+    ]
+  }
+}

@@ -21,13 +21,28 @@ const ProxyConfigSchema = z.object({
   approve: z.array(z.string()).default([]),
 });
 
+const GitHubAppInstallationSchema = z.object({
+  org: z.string(),
+  installation_id: z.number().int().positive(),
+  app_id: z.string().optional().default(""),
+  private_key_path: z.string().optional().default(""),
+  api_url: z.string().optional().default(""),
+});
+
+const GitHubAppConfigSchema = z.object({
+  installations: z.array(GitHubAppInstallationSchema),
+});
+
 export const WorkspaceConfigSchema = z.object({
   repos: z.record(z.string(), RepoConfigSchema),
   proxies: z.record(z.string(), ProxyConfigSchema).optional(),
+  github_app: GitHubAppConfigSchema.optional(),
 });
 
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;
+export type GitHubAppInstallation = z.infer<typeof GitHubAppInstallationSchema>;
+export type GitHubAppConfig = z.infer<typeof GitHubAppConfigSchema>;
 export type ProxyConfig = z.infer<typeof ProxyConfigSchema>;
 export type ProxyUpstream = z.infer<typeof ProxyUpstreamSchema>;
 
@@ -245,11 +260,11 @@ export function extractRepoFromCwd(cwd: string): string | undefined {
 }
 
 /**
- * Get the list of proxy names allowed for a repo.
+ * Get the list of upstream names allowed for a repo.
  * Returns undefined if the repo is not in config.
  * Returns empty array if repo exists but has no proxies field.
  */
-export function getRepoProxies(config: WorkspaceConfig, repoName: string): string[] | undefined {
+export function getRepoUpstreams(config: WorkspaceConfig, repoName: string): string[] | undefined {
   const repo = config.repos[repoName];
   if (!repo) return undefined;
   return repo.proxies ?? [];

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunnerDeps, SlackMcpDeps } from "./service.js";
 
 // Helper: create a ReadableStream from NDJSON lines
@@ -31,6 +31,57 @@ function jsonResponse(body: unknown, status = 200): Response {
 function textResponse(text: string, status: number): Response {
   return new Response(text, { status, headers: { "content-type": "text/plain" } });
 }
+
+describe("resolveApproval", () => {
+  it("posts resolve requests to remote-cli with the secret header", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ stdout: "ok", stderr: "", exitCode: 0 }));
+
+    const { resolveApproval } = await import("./service.js");
+    const result = await resolveApproval(
+      "act-1",
+      "approved",
+      "U123",
+      "http://remote-cli:3004",
+      "resolve-secret",
+      fetchImpl,
+      "ship it",
+    );
+
+    expect(result).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    expect(fetchImpl).toHaveBeenCalledWith("http://remote-cli:3004/exec/mcp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-thor-resolve-secret": "resolve-secret",
+      },
+      body: JSON.stringify({
+        args: ["resolve", "act-1", "approved", "U123", "ship it"],
+      }),
+    });
+  });
+
+  it("returns undefined when remote-cli reports a command failure", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        jsonResponse({ stdout: "", stderr: "Unknown subcommand: resolve\n", exitCode: 1 }),
+      );
+
+    const { resolveApproval } = await import("./service.js");
+    const result = await resolveApproval(
+      "act-1",
+      "approved",
+      "U123",
+      "http://remote-cli:3004",
+      "wrong-secret",
+      fetchImpl,
+    );
+
+    expect(result).toBeUndefined();
+  });
+});
 
 describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
   let mockRunnerFetch: ReturnType<typeof vi.fn>;

@@ -1,8 +1,10 @@
 /**
  * Generic command execution for git and gh.
  *
- * Credentials are configured at the container level via entrypoint.sh
- * (GIT_ASKPASS + GH_TOKEN), so every process can authenticate.
+ * Authentication is resolved per-invocation by the Thor git/gh wrapper
+ * binaries (see bin/git, bin/gh). When GitHub App config exists in
+ * config.json, wrappers mint installation tokens. Otherwise they fall
+ * back to PAT auth via GIT_ASKPASS + GH_TOKEN set in entrypoint.sh.
  */
 
 import { execFile, spawn } from "node:child_process";

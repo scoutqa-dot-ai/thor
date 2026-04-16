@@ -2,7 +2,7 @@
 #
 # End-to-end test for Thor.
 #
-# Tests the full chain: curl -> runner -> OpenCode service -> per-upstream proxies -> MCP servers
+# Tests the full chain: curl -> runner -> OpenCode service -> remote-cli -> MCP servers
 #
 # Prerequisites:
 #   - Both services running (either `pnpm dev` or `docker compose up`)
@@ -15,14 +15,14 @@
 set -euo pipefail
 
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
-PROXY_URL="${PROXY_URL:-http://localhost:3001}"
-GIT_WRAPPERS_URL="${GIT_WRAPPERS_URL:-http://localhost:3004}"
+REMOTE_CLI_URL="${REMOTE_CLI_URL:-http://localhost:3004}"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
 SESSION_DIR="${SESSION_DIR:-/workspace/repos/e2e-test}"
 HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
 mkdir -p "${HOST_WORKSPACE}/repos/e2e-test"
 MEMORY_DIR="${MEMORY_DIR:-${HOST_WORKSPACE}/memory}"
 CRON_SECRET="${CRON_SECRET:-$(docker exec thor-cron-1 printenv CRON_SECRET 2>/dev/null)}"
+RESOLVE_SECRET="${RESOLVE_SECRET:-$(docker exec thor-gateway-1 printenv RESOLVE_SECRET 2>/dev/null)}"
 
 passed=0
 failed=0
@@ -68,6 +68,18 @@ json_field() {
   " 2>/dev/null || echo ""
 }
 
+# Helper: extract a field from the JSON stored in an exec-result stdout field
+exec_stdout_field() {
+  local json="$1"
+  local field="$2"
+  echo "$json" | node -e "
+    const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+    const stdout = JSON.parse(d.stdout || '{}');
+    const v = stdout[\"$field\"];
+    console.log(v === undefined ? '' : typeof v === 'boolean' ? String(v) : String(v));
+  " 2>/dev/null || echo ""
+}
+
 # Helper: check if response text contains a substring
 response_contains() {
   local json="$1"
@@ -84,8 +96,8 @@ response_contains() {
 echo ""
 echo "=== Health Checks ==="
 
-proxy_health=$(curl -sf "$PROXY_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy is healthy" "got: $proxy_health"
+remote_cli_health=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null || echo '{}')
+assert '[[ "$remote_cli_health" == *"ok"* ]]' "remote-cli is healthy" "got: $remote_cli_health"
 
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
 assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy" "got: $runner_health"
@@ -189,10 +201,10 @@ CONFIG_FILE="${HOST_WORKSPACE}/config.json"
 
 if [[ -f "$CONFIG_FILE" ]]; then
   # Build a list of "repo:upstream" pairs — only connected upstreams with approve lists
-  repo_upstream_pairs=$(curl -sf "$PROXY_URL/health" 2>/dev/null | node -e "
+  repo_upstream_pairs=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null | node -e "
     const health = JSON.parse(require('fs').readFileSync(0,'utf8'));
     const connected = new Set(
-      Object.entries(health.instances || {})
+      Object.entries(health.mcp?.instances || {})
         .filter(([, info]) => info.connected)
         .map(([name]) => name)
     );
@@ -217,12 +229,10 @@ if [[ -f "$CONFIG_FILE" ]]; then
     if [[ ! -d "$host_dir" ]]; then
       continue
     fi
-    tools_json=$(curl -sf "$PROXY_URL/$upstream_name/tools" \
-      -H "x-thor-directory: $test_dir" 2>/dev/null || echo '{"tools":[]}')
-    found_tool=$(echo "$tools_json" | node -e "
-      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-      const t = (d.tools || []).find(t => t.classification === 'approve');
-      console.log(t ? t.name : '');
+    found_tool=$(node -e "
+      const cfg = JSON.parse(require('fs').readFileSync('$CONFIG_FILE','utf8'));
+      const tools = cfg.proxies?.['$upstream_name']?.approve || [];
+      console.log(tools[0] || '');
     " 2>/dev/null || echo "")
     if [[ -n "$found_tool" ]]; then
       APPROVAL_UPSTREAM="$upstream_name"
@@ -233,17 +243,16 @@ if [[ -f "$CONFIG_FILE" ]]; then
   done
 fi
 
-if [[ -z "$APPROVAL_TOOL" ]]; then
+if [[ -z "$APPROVAL_TOOL" || -z "$RESOLVE_SECRET" ]]; then
   echo "  ⚠ No approval-required tools found — skipping approval flow tests"
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
-  # 4b. Proxy-level: call the approval-required tool directly
-  echo "  Calling tool via proxy (expecting approval interception)..."
-  call_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/tools/call" \
+  # 4b. remote-cli-level: call the approval-required tool directly
+  echo "  Calling tool via remote-cli (expecting approval interception)..."
+  call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
-    -H "x-thor-directory: $APPROVAL_DIR" \
-    -d "{\"name\":\"$APPROVAL_TOOL\",\"arguments\":{}}" \
+    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",\"{}\"],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
     2>/dev/null || echo '{}')
 
   # Parse action ID — check stdout, stderr (thor:meta), and content (legacy MCP format)
@@ -263,32 +272,37 @@ else
     console.log(ok ? 'yes' : 'no');
   " 2>/dev/null || echo "no")
 
-  assert '[[ -n "$action_id" ]]' "Proxy: tool call returned an action ID" "response: ${call_raw:0:300}"
-  assert '[[ "$call_not_error" == "yes" ]]' "Proxy: tool call was not an error" "response: ${call_raw:0:200}"
+  assert '[[ -n "$action_id" ]]' "remote-cli: tool call returned an action ID" "response: ${call_raw:0:300}"
+  assert '[[ "$call_not_error" == "yes" ]]' "remote-cli: tool call was not an error" "response: ${call_raw:0:200}"
 
   if [[ -n "$action_id" ]]; then
     # 4c. Check approval status is pending
-    status_raw=$(curl -sf "$PROXY_URL/approval/$action_id" 2>/dev/null || echo '{}')
-    status_val=$(json_field "$status_raw" "status")
-    status_tool=$(json_field "$status_raw" "tool")
-    assert '[[ "$status_val" == "pending" ]]' "Proxy: approval status is 'pending'" "status='$status_val'"
-    assert '[[ "$status_tool" == "$APPROVAL_TOOL" ]]' "Proxy: approval record has correct tool name" "tool='$status_tool'"
+    status_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
+      -H 'Content-Type: application/json' \
+      -d "{\"args\":[\"status\",\"$action_id\"]}" \
+      2>/dev/null || echo '{}')
+    status_val=$(exec_stdout_field "$status_raw" "status")
+    status_tool=$(exec_stdout_field "$status_raw" "tool")
+    assert '[[ "$status_val" == "pending" ]]' "remote-cli: approval status is 'pending'" "status='$status_val'"
+    assert '[[ "$status_tool" == "$APPROVAL_TOOL" ]]' "remote-cli: approval record has correct tool name" "tool='$status_tool'"
 
     # 4d. Reject the approval (safe — no side effects on the upstream MCP)
     echo "  Rejecting approval $action_id..."
-    resolve_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/approval/$action_id/resolve" \
+    resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
       -H 'Content-Type: application/json' \
-      -d '{"decision":"rejected","reviewer":"e2e-test","reason":"e2e test — automated rejection"}' \
+      -H "x-thor-resolve-secret: $RESOLVE_SECRET" \
+      -d "{\"args\":[\"resolve\",\"$action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
       2>/dev/null || echo '{}')
-    resolve_status=$(json_field "$resolve_raw" "status")
-    resolve_reviewer=$(json_field "$resolve_raw" "reviewer")
-    assert '[[ "$resolve_status" == "rejected" ]]' "Proxy: approval was rejected" "status='$resolve_status'"
-    assert '[[ "$resolve_reviewer" == "e2e-test" ]]' "Proxy: reviewer recorded correctly" "reviewer='$resolve_reviewer'"
+    resolve_exit=$(json_field "$resolve_raw" "exitCode")
+    assert '[[ "$resolve_exit" == "0" ]]' "remote-cli: approval rejection command succeeded" "exitCode='$resolve_exit'"
 
     # 4e. Verify final status confirms rejection
-    final_raw=$(curl -sf "$PROXY_URL/approval/$action_id" 2>/dev/null || echo '{}')
-    final_status=$(json_field "$final_raw" "status")
-    assert '[[ "$final_status" == "rejected" ]]' "Proxy: final status confirms 'rejected'" "status='$final_status'"
+    final_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
+      -H 'Content-Type: application/json' \
+      -d "{\"args\":[\"status\",\"$action_id\"]}" \
+      2>/dev/null || echo '{}')
+    final_status=$(exec_stdout_field "$final_raw" "status")
+    assert '[[ "$final_status" == "rejected" ]]' "remote-cli: final status confirms 'rejected'" "status='$final_status'"
   fi
 
   # ── 4f–4h. End-to-end: rejection lands back in OpenCode session ───────────
@@ -296,12 +310,11 @@ else
   echo ""
   echo "  --- E2E: Rejection reaches OpenCode session ---"
 
-  # 4f. Create a fresh pending approval via proxy API
-  echo "  Creating pending approval via proxy..."
-  e2e_call_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/tools/call" \
+  # 4f. Create a fresh pending approval via remote-cli API
+  echo "  Creating pending approval via remote-cli..."
+  e2e_call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
-    -H "x-thor-directory: $APPROVAL_DIR" \
-    -d "{\"name\":\"$APPROVAL_TOOL\",\"arguments\":{}}" \
+    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",\"{}\"],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
     2>/dev/null || echo '{}')
 
   e2e_action_id=$(echo "$e2e_call_raw" | node -e "
@@ -316,11 +329,12 @@ else
   if [[ -z "$e2e_action_id" ]]; then
     echo "  ⚠ Could not create pending approval — skipping session tests"
   else
-    # 4g. Reject the approval via proxy API
+    # 4g. Reject the approval via remote-cli API
     echo "  Rejecting approval $e2e_action_id..."
-    curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/approval/$e2e_action_id/resolve" \
+    curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
       -H 'Content-Type: application/json' \
-      -d '{"decision":"rejected","reviewer":"e2e-test","reason":"e2e test — automated rejection"}' \
+      -H "x-thor-resolve-secret: $RESOLVE_SECRET" \
+      -d "{\"args\":[\"resolve\",\"$e2e_action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
       2>/dev/null >/dev/null
 
     # 4h. Ask the agent to check the approval status — rejection should be visible
@@ -448,11 +462,11 @@ else
   # Clean up: remove worktree and delete the test branch
   echo ""
   echo "  Cleaning up test worktree and branch..."
-  curl -sf -X POST "$GIT_WRAPPERS_URL/exec/git" \
+  curl -sf -X POST "$REMOTE_CLI_URL/exec/git" \
     -H 'Content-Type: application/json' \
     -d "{\"args\":[\"worktree\",\"remove\",\"--force\",\"$ALIAS_WORKTREE\"],\"cwd\":\"$ALIAS_DIR\"}" \
     2>/dev/null >/dev/null
-  curl -sf -X POST "$GIT_WRAPPERS_URL/exec/git" \
+  curl -sf -X POST "$REMOTE_CLI_URL/exec/git" \
     -H 'Content-Type: application/json' \
     -d "{\"args\":[\"branch\",\"-D\",\"$ALIAS_BRANCH\"],\"cwd\":\"$ALIAS_DIR\"}" \
     2>/dev/null >/dev/null

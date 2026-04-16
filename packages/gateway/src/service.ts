@@ -1,5 +1,6 @@
 import {
   createLogger,
+  ExecResultSchema,
   logInfo,
   logWarn,
   logError,
@@ -266,36 +267,44 @@ async function forwardApprovalNotification(
 }
 
 /**
- * Resolve an approval action on a specific proxy instance.
+ * Resolve an approval action through the remote-cli MCP endpoint.
  */
 export async function resolveApproval(
   actionId: string,
   decision: "approved" | "rejected",
   reviewer: string,
-  proxyUrl: string,
+  remoteCliUrl: string,
+  resolveSecret: string | undefined,
   fetchImpl?: typeof fetch,
   reason?: string,
 ): Promise<Record<string, unknown> | undefined> {
   const fetchFn = getFetch(fetchImpl);
-  const body = JSON.stringify({ decision, reviewer, ...(reason ? { reason } : {}) });
+  const args = ["resolve", actionId, decision, reviewer];
+  if (reason) args.push(reason);
 
   try {
-    const response = await fetchFn(`${proxyUrl}/approval/${actionId}/resolve`, {
+    const response = await fetchFn(`${remoteCliUrl}/exec/mcp`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
+      headers: {
+        "Content-Type": "application/json",
+        ...(resolveSecret ? { "x-thor-resolve-secret": resolveSecret } : {}),
+      },
+      body: JSON.stringify({ args }),
     });
-    if (!response.ok) {
-      const text = await response.text();
-      logError(log, "approval_resolve_error", `Proxy returned ${response.status}: ${text}`, {
-        proxyUrl,
-      });
+    const body = ExecResultSchema.parse(await response.json());
+    if (!response.ok || body.exitCode !== 0) {
+      logError(
+        log,
+        "approval_resolve_error",
+        `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
+        { remoteCliUrl },
+      );
       return undefined;
     }
-    return (await response.json()) as Record<string, unknown>;
+    return body as Record<string, unknown>;
   } catch (err) {
     logError(log, "approval_resolve_error", err instanceof Error ? err.message : String(err), {
-      proxyUrl,
+      remoteCliUrl,
     });
     return undefined;
   }

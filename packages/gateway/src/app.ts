@@ -62,10 +62,12 @@ export interface GatewayAppConfig extends RunnerDeps {
   slackMcpUrl: string;
   /** Our bot's Slack user ID — used to ignore our own messages. */
   slackBotUserId: string;
-  /** Proxy hostname for approval resolution. Default: "proxy". */
-  proxyHost?: string;
-  /** Proxy port for approval resolution. Default: 3001. */
-  proxyPort?: number;
+  /** Remote CLI hostname for approval resolution. Default: "remote-cli". */
+  remoteCliHost?: string;
+  /** Remote CLI port for approval resolution. Default: 3004. */
+  remoteCliPort?: number;
+  /** Shared secret for MCP approval resolution. */
+  resolveSecret?: string;
   timestampToleranceSeconds?: number;
   /** Directory for the event queue. Default: "data/queue". */
   queueDir?: string;
@@ -121,7 +123,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     slackMcpUrl: config.slackMcpUrl,
     fetchImpl: config.fetchImpl,
   };
-  const proxyHost = config.proxyHost ?? "proxy";
+  const remoteCliHost = config.remoteCliHost ?? "remote-cli";
+  const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;
 
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
@@ -221,8 +224,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const result = await deepHealthCheck({
       runnerUrl: config.runnerUrl,
       slackMcpUrl: config.slackMcpUrl,
-      proxyHost: proxyHost,
-      proxyPort: config.proxyPort ?? 3001,
+      remoteCliHost,
+      remoteCliPort: config.remoteCliPort ?? 3004,
       openaiAuthPath: config.openaiAuthPath,
       fetchImpl: config.fetchImpl,
     });
@@ -427,22 +430,15 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           const channel = payload.channel?.id;
           const messageTs = payload.message?.ts;
 
-          // Button value formats:
-          //   v2:{actionId}:{upstreamName} — current (name-based routing)
-          //   v1:{actionId}:{proxyPort}    — legacy (port-based routing)
+          // Button value format:
+          //   v2:{actionId}:{upstreamName}
           const parts = action.value.split(":");
           let actionId: string;
-          let proxyUrl: string;
+          let upstreamName: string;
 
           if (parts[0] === "v2" && parts.length >= 3) {
             actionId = parts[1];
-            const upstreamName = parts[2];
-            proxyUrl = `http://${proxyHost}:${config.proxyPort ?? 3001}/${upstreamName}`;
-          } else if (parts[0] === "v1" && parts.length >= 3) {
-            // TODO: Remove v1 support once all in-flight approvals have drained (safe after 2026-05-01)
-            actionId = parts[1];
-            const proxyPort = parseInt(parts[2], 10);
-            proxyUrl = `http://${proxyHost}:${proxyPort}`;
+            upstreamName = parts[2];
           } else {
             logError(log, "approval_resolve_failed", "Unrecognized button value format", {
               value: action.value,
@@ -451,7 +447,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             return;
           }
 
-          logInfo(log, "approval_action", { actionId, decision, reviewer, proxyUrl });
+          logInfo(log, "approval_action", {
+            actionId,
+            upstreamName,
+            decision,
+            reviewer,
+            remoteCliUrl,
+          });
 
           // Respond immediately to Slack (must reply within 3s)
           res.status(200).json({ ok: true });
@@ -460,11 +462,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               actionId,
               decision,
               reviewer,
-              proxyUrl,
+              remoteCliUrl,
+              config.resolveSecret,
               config.fetchImpl,
             );
             if (!resolved) {
-              logError(log, "approval_resolve_failed", "Proxy returned error", { actionId });
+              logError(log, "approval_resolve_failed", "remote-cli returned error", { actionId });
               return;
             }
             if (channel && messageTs) {
