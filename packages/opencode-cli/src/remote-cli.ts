@@ -16,7 +16,9 @@ import { ExecResultSchema, NdjsonChunkSchema } from "@thor/common";
 const [endpoint, ...args] = process.argv.slice(2);
 
 if (!endpoint) {
-  process.stderr.write("Usage: remote-cli.mjs <git|gh|scoutqa|langfuse|metabase> [args...]\n");
+  process.stderr.write(
+    "Usage: remote-cli.mjs <git|gh|scoutqa|langfuse|metabase|mcp|approval> [args...]\n",
+  );
   process.exit(1);
 }
 

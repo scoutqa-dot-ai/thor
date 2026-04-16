@@ -260,7 +260,6 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       const result = await mcpService.executeMcp(args, {
-        cwd: typeof req.body?.cwd === "string" ? req.body.cwd : undefined,
         directory: typeof req.body?.directory === "string" ? req.body.directory : undefined,
         resolveSecret: req.headers["x-thor-resolve-secret"] as string | undefined,
         ...thorIds(req),

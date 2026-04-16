@@ -65,7 +65,15 @@ export class ApprovalStore {
   ): ApprovalAction | undefined {
     const action = this.get(id);
     if (!action || action.status !== "pending") return undefined;
+    return this.resolveLoaded(action, decision, reviewer, reason);
+  }
 
+  resolveLoaded(
+    action: ApprovalAction,
+    decision: "approved" | "rejected",
+    reviewer?: string,
+    reason?: string,
+  ): ApprovalAction {
     action.status = decision;
     action.resolvedAt = new Date().toISOString();
     action.reviewer = reviewer;
@@ -107,10 +115,13 @@ export class ApprovalStore {
   }
 
   private listDateDirsIn(dir: string): string[] {
-    if (!existsSync(dir)) return [];
-    return readdirSync(dir)
-      .filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry))
-      .sort()
-      .reverse();
+    try {
+      return readdirSync(dir)
+        .filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry))
+        .sort()
+        .reverse();
+    } catch {
+      return [];
+    }
   }
 }

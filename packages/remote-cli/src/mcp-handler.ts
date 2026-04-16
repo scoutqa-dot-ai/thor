@@ -1,4 +1,4 @@
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { timingSafeEqual } from "node:crypto";
 import {
   computeSlackAlias,
   createLogger,
@@ -44,7 +44,6 @@ export interface McpExecResult {
 }
 
 export interface McpCommandContext {
-  cwd?: string;
   directory?: string;
   sessionId?: string;
   callId?: string;
@@ -296,13 +295,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     const approve = proxyDef?.approve ?? [];
 
     return instance.upstream.tools
-      .filter((tool) => classifyTool(allow, approve, tool.name) !== "hidden")
       .map((tool) => ({
         name: tool.name,
         description: tool.description,
         inputSchema: tool.inputSchema,
         classification: classifyTool(allow, approve, tool.name),
-      }));
+      }))
+      .filter((tool) => tool.classification !== "hidden");
   }
 
   function resolveTool(
@@ -367,6 +366,62 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
   }
 
+  interface UpstreamCallOpts {
+    instance: ProxyInstance;
+    toolName: string;
+    args: Record<string, unknown>;
+    logEvent: string;
+    decision: "allowed" | "blocked" | "pending" | "approved" | "rejected";
+    extraLogFields?: Record<string, unknown>;
+    inputSchema?: unknown;
+    onSuccess?: (rawResult: unknown) => void;
+    onError?: (message: string) => void;
+  }
+
+  async function executeUpstreamCall(opts: UpstreamCallOpts): Promise<McpExecResult> {
+    const { instance, toolName, args, logEvent, decision, extraLogFields, inputSchema } = opts;
+    const start = Date.now();
+    try {
+      const result = await instance.upstream.client.callTool({
+        name: toolName,
+        arguments: args,
+      });
+      const duration = Date.now() - start;
+      logInfo(log, logEvent, {
+        upstream: instance.name,
+        tool: toolName,
+        durationMs: duration,
+        ...extraLogFields,
+      });
+      writeToolCallLogFn({ tool: toolName, decision, args, result, durationMs: duration });
+      opts.onSuccess?.(result);
+
+      let stdout = unwrapResult(result);
+      if (isAliasableMcpTool(toolName)) {
+        const alias = computeSlackAlias(args, stdout);
+        if (alias) stdout += formatThorMeta(alias);
+      }
+      return ok(stdout);
+    } catch (err) {
+      const duration = Date.now() - start;
+      const message = err instanceof Error ? err.message : String(err);
+      logError(log, logEvent, message, {
+        upstream: instance.name,
+        tool: toolName,
+        durationMs: duration,
+        ...extraLogFields,
+      });
+      writeToolCallLogFn({ tool: toolName, decision, args, durationMs: duration, error: message });
+      opts.onError?.(message);
+
+      let stderr = `Error calling "${toolName}": ${message}\n`;
+      if (inputSchema) {
+        stderr += `\n[hint] Input schema for "${toolName}":\n${JSON.stringify(inputSchema, null, 2)}\n`;
+      }
+      return fail(stderr);
+    }
+  }
+
   async function callTool(
     upstreamName: string,
     toolInfo: ToolInfo,
@@ -397,56 +452,15 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return ok(`${approvalText}${approvalMeta}`);
     }
 
-    const start = Date.now();
-    try {
-      const result = await instance.upstream.client.callTool({
-        name: toolInfo.name,
-        arguments: args,
-      });
-      const duration = Date.now() - start;
-      logInfo(log, "tool_call", {
-        upstream: instance.name,
-        tool: toolInfo.name,
-        durationMs: duration,
-        ...getThorIds(context),
-      });
-      writeToolCallLogFn({
-        tool: toolInfo.name,
-        decision: "allowed",
-        args,
-        result,
-        durationMs: duration,
-      });
-
-      let stdout = unwrapResult(result);
-      if (isAliasableMcpTool(toolInfo.name)) {
-        const alias = computeSlackAlias(args, stdout);
-        if (alias) stdout += formatThorMeta(alias);
-      }
-      return ok(stdout);
-    } catch (err) {
-      const duration = Date.now() - start;
-      const message = err instanceof Error ? err.message : String(err);
-      logError(log, "tool_call", message, {
-        upstream: instance.name,
-        tool: toolInfo.name,
-        durationMs: duration,
-        ...getThorIds(context),
-      });
-      writeToolCallLogFn({
-        tool: toolInfo.name,
-        decision: "allowed",
-        args,
-        durationMs: duration,
-        error: message,
-      });
-
-      let stderr = `Error calling "${toolInfo.name}": ${message}\n`;
-      if (toolInfo.inputSchema) {
-        stderr += `\n[hint] Input schema for "${toolInfo.name}":\n${JSON.stringify(toolInfo.inputSchema, null, 2)}\n`;
-      }
-      return fail(stderr);
-    }
+    return executeUpstreamCall({
+      instance,
+      toolName: toolInfo.name,
+      args,
+      logEvent: "tool_call",
+      decision: "allowed",
+      extraLogFields: getThorIds(context),
+      inputSchema: toolInfo.inputSchema,
+    });
   }
 
   function findApproval(actionId: string): ApprovalLookup | undefined {
@@ -471,10 +485,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return fail(`No approval action found with ID: ${actionId}`);
     }
 
-    const action = lookup.store.resolve(actionId, decision, reviewer, reason);
-    if (!action) {
+    if (lookup.action.status !== "pending") {
       return fail("Not found or already resolved");
     }
+    const action = lookup.store.resolveLoaded(lookup.action, decision, reviewer, reason);
 
     if (decision === "rejected") {
       logInfo(log, "tool_call_rejected", {
@@ -492,55 +506,22 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return fail(`Unknown upstream "${lookup.upstreamName}".`);
     }
 
-    const start = Date.now();
-    try {
-      const result = await instance.upstream.client.callTool({
-        name: action.tool,
-        arguments: action.args,
-      });
-      const duration = Date.now() - start;
-      action.result = result;
-      lookup.store.update(action);
-      logInfo(log, "tool_call_approved", {
-        upstream: lookup.upstreamName,
-        tool: action.tool,
-        actionId: action.id,
-        durationMs: duration,
-      });
-      writeToolCallLogFn({
-        tool: action.tool,
-        decision: "approved",
-        args: action.args,
-        result,
-        durationMs: duration,
-      });
-
-      let stdout = unwrapResult(result);
-      if (isAliasableMcpTool(action.tool)) {
-        const alias = computeSlackAlias(action.args, stdout);
-        if (alias) stdout += formatThorMeta(alias);
-      }
-      return ok(stdout);
-    } catch (err) {
-      const duration = Date.now() - start;
-      const message = err instanceof Error ? err.message : String(err);
-      action.error = message;
-      lookup.store.update(action);
-      logError(log, "tool_call_approved_failed", message, {
-        upstream: lookup.upstreamName,
-        tool: action.tool,
-        actionId: action.id,
-        durationMs: duration,
-      });
-      writeToolCallLogFn({
-        tool: action.tool,
-        decision: "approved",
-        args: action.args,
-        durationMs: duration,
-        error: message,
-      });
-      return fail(`Error calling "${action.tool}": ${message}\n`);
-    }
+    return executeUpstreamCall({
+      instance,
+      toolName: action.tool,
+      args: action.args,
+      logEvent: "tool_call_approved",
+      decision: "approved",
+      extraLogFields: { actionId: action.id },
+      onSuccess: (rawResult) => {
+        action.result = rawResult;
+        lookup.store.update(action);
+      },
+      onError: (message) => {
+        action.error = message;
+        lookup.store.update(action);
+      },
+    });
   }
 
   return {
@@ -589,14 +570,19 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     },
 
     async closeAll(): Promise<void> {
-      for (const instance of instances.values()) {
-        await instance.upstream.client.close();
-      }
+      await Promise.allSettled(
+        [...instances.values()].map((instance) => instance.upstream.client.close()),
+      );
     },
 
     async executeMcp(args: string[], context: McpCommandContext): Promise<McpExecResult> {
       if (args[0] === "resolve") {
-        if (!deps.resolveSecret || context.resolveSecret !== deps.resolveSecret) {
+        const secretOk =
+          deps.resolveSecret &&
+          context.resolveSecret &&
+          deps.resolveSecret.length === context.resolveSecret.length &&
+          timingSafeEqual(Buffer.from(deps.resolveSecret), Buffer.from(context.resolveSecret));
+        if (!secretOk) {
           return fail("Unknown subcommand: resolve\n");
         }
         if (args.length < 4) {
