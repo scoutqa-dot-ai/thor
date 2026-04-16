@@ -305,7 +305,7 @@ The proxy sits between OpenCode and every upstream MCP server. Each proxy instan
 
 - **Vouch Proxy** — Google OAuth SSO in front of OpenCode's web UI
 - **Nginx ingress** — `auth_request` directive validates sessions via Vouch; unauthenticated users are redirected to login
-- **Unprotected paths** — Only `/slack/*` (webhook endpoint with its own auth) and static assets bypass SSO
+- **Unprotected paths** — Only `/health`, `/global/health`, `/slack/*` (webhook endpoint with its own auth), and static assets bypass SSO
 
 ### Non-Root Containers
 

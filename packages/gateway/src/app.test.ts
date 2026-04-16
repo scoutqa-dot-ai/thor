@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -87,6 +87,176 @@ afterEach(() => {
 });
 
 describe("gateway", () => {
+  it("returns filtered Codex status from /health", async () => {
+    const authDir = mkdtempSync(join(tmpdir(), "gateway-auth-"));
+    const authPath = join(authDir, "auth.json");
+    writeFileSync(authPath, JSON.stringify({ openai: { access: "token-123" } }));
+
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://proxy:3001/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "proxy" }), { status: 200 });
+      }
+      if (url === "https://chatgpt.com/backend-api/wham/usage") {
+        return new Response(
+          JSON.stringify({
+            plan_type: "prolite",
+            rate_limit: {
+              allowed: true,
+              limit_reached: false,
+              primary_window: {
+                used_percent: 1,
+                limit_window_seconds: 18000,
+                reset_after_seconds: 16117,
+                reset_at: 1776339408,
+              },
+              secondary_window: {
+                used_percent: 43,
+                limit_window_seconds: 604800,
+                reset_after_seconds: 35558,
+                reset_at: 1776358849,
+              },
+            },
+            additional_rate_limits: [
+              {
+                limit_name: "GPT-5.3-Codex-Spark",
+                metered_feature: "codex_bengalfox",
+                rate_limit: {
+                  primary_window: {
+                    used_percent: 0,
+                    limit_window_seconds: 18000,
+                    reset_after_seconds: 18000,
+                    reset_at: 1776341291,
+                  },
+                },
+              },
+            ],
+            nested: { raw: true },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    try {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const response = await fetch(`${baseUrl}/health`);
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({
+            status: "ok",
+            service: "gateway",
+            runnerUrl: "http://runner.test",
+            configured: true,
+            services: {
+              runner: { status: "ok", service: "runner" },
+              "slack-mcp": { status: "ok", service: "slack-mcp" },
+              proxy: { status: "ok", service: "proxy" },
+            },
+            codex: {
+              status: "ok",
+              authenticated: true,
+              reachable: true,
+              planType: "prolite",
+              rateLimit: {
+                allowed: true,
+                limitReached: false,
+                windows: [
+                  {
+                    name: "primary",
+                    usedPercent: 1,
+                    limitWindowSeconds: 18000,
+                    resetAfterSeconds: 16117,
+                    resetAt: "2026-04-16T11:36:48.000Z",
+                  },
+                  {
+                    name: "secondary",
+                    usedPercent: 43,
+                    limitWindowSeconds: 604800,
+                    resetAfterSeconds: 35558,
+                    resetAt: "2026-04-16T17:00:49.000Z",
+                  },
+                  {
+                    name: "primary",
+                    usedPercent: 0,
+                    limitWindowSeconds: 18000,
+                    resetAfterSeconds: 18000,
+                    resetAt: "2026-04-16T12:08:11.000Z",
+                    limitName: "GPT-5.3-Codex-Spark",
+                    meteredFeature: "codex_bengalfox",
+                  },
+                ],
+              },
+            },
+          });
+        },
+        { openaiAuthPath: authPath },
+      );
+    } finally {
+      rmSync(authDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not expose raw Codex usage payload when auth is missing", async () => {
+    const authDir = mkdtempSync(join(tmpdir(), "gateway-auth-"));
+    const authPath = join(authDir, "auth.json");
+    writeFileSync(authPath, JSON.stringify({}));
+
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://proxy:3001/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "proxy" }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    try {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const response = await fetch(`${baseUrl}/health`);
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toMatchObject({
+            status: "ok",
+            codex: {
+              status: "no_auth",
+              authenticated: false,
+              reachable: false,
+              error: "missing access token",
+            },
+          });
+          expect(fetchImpl).not.toHaveBeenCalledWith(
+            "https://chatgpt.com/backend-api/wham/usage",
+            expect.anything(),
+          );
+        },
+        { openaiAuthPath: authPath },
+      );
+    } finally {
+      rmSync(authDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns a placeholder response for the configured redirect URL", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 

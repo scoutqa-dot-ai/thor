@@ -32,6 +32,7 @@ import {
   type SlackFileReadResult,
 } from "./slack.js";
 import { handleProgressEvent, onBotReply } from "./progress-manager.js";
+import { buildInlineApprovalBlocks, formatApprovalArgs } from "./approval.js";
 
 const log = createLogger("slack-mcp");
 
@@ -317,41 +318,14 @@ app.post("/approval", async (req, res) => {
   }
   try {
     const { channel, threadTs, actionId, tool, args, proxyName } = parsed.data;
-    const argsPreview = JSON.stringify(args, null, 2).slice(0, 200);
+    const argsJson = formatApprovalArgs(args);
     // Versioned button value: "v2:{actionId}:{upstreamName}" so gateway can route approval.
     const buttonValue = proxyName ? `v2:${actionId}:${proxyName}` : actionId;
     const result = await slackDeps.client.chat.postMessage({
       channel,
       thread_ts: threadTs,
       text: `Approval required for \`${tool}\``,
-      blocks: [
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `*Approval required* for \`${tool}\`\n\`\`\`${argsPreview}\`\`\``,
-          },
-        },
-        {
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              text: { type: "plain_text", text: "Approve" },
-              style: "primary",
-              action_id: "approval_approve",
-              value: buttonValue,
-            },
-            {
-              type: "button",
-              text: { type: "plain_text", text: "Reject" },
-              style: "danger",
-              action_id: "approval_reject",
-              value: buttonValue,
-            },
-          ],
-        },
-      ],
+      blocks: buildInlineApprovalBlocks(tool, argsJson, buttonValue),
     });
     logInfo(log, "approval_posted", { actionId, tool, channel, ts: result.ts });
     res.json({ ok: true, ts: result.ts });
