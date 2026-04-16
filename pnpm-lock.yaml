@@ -114,12 +114,18 @@ importers:
 
   packages/remote-cli:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.27.1
+        version: 1.27.1(zod@4.3.6)
       '@thor/common':
         specifier: workspace:*
         version: link:../common
       express:
         specifier: ^5.1.0
         version: 5.2.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@scoutqa/cli':
         specifier: 0.10.4-alpha.1

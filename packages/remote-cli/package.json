@@ -11,8 +11,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@thor/common": "workspace:*",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@scoutqa/cli": "0.10.4-alpha.1",
