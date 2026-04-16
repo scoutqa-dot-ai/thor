@@ -94,7 +94,10 @@ Copy `.env.example` to `.env` and fill in:
 | `DATA_ROUTES`                       | No       | data          | Comma-separated list of data proxy routes (see below)            |
 | `GIT_USER_EMAIL`                    | No       | remote-cli    | Git author email (default: `thor@localhost`)                     |
 | `GIT_USER_NAME`                     | No       | remote-cli    | Git author name (default: `thor`)                                |
-| `GITHUB_PAT`                        | Yes      | remote-cli    | GitHub fine-grained PAT                                          |
+| `GITHUB_APP_ID`                     | No       | remote-cli    | GitHub App ID for GitHub App auth                                |
+| `GITHUB_API_URL`                    | No       | remote-cli    | GitHub API base URL override (default: `https://api.github.com`) |
+| `GITHUB_APP_PRIVATE_KEY_FILE`       | No       | remote-cli    | GitHub App private key path (default mount path in container)    |
+| `GITHUB_PAT`                        | No       | remote-cli    | GitHub PAT fallback when GitHub App auth is not configured       |
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | grafana-mcp   | Grafana service account token                                    |
 | `GRAFANA_URL`                       | Yes      | grafana-mcp   | Grafana instance URL                                             |
 | `INGRESS_PORT`                      | No       | ingress       | Host port (default: `8080`)                                      |
@@ -122,7 +125,43 @@ Copy `.env.example` to `.env` and fill in:
 | `VOUCH_JWT_SECRET`                  | Yes      | vouch         | Session JWT signing secret                                       |
 | `VOUCH_WHITELIST`                   | Yes      | vouch         | Comma-separated email allowlist for Vouch login                  |
 
-#### 2. Data proxy routes (`.env`)
+#### 2. Workspace config (`docker-volumes/workspace/config.json`)
+
+Thor uses a shared workspace config file at `/workspace/config.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config.json`.
+
+Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point. It shows:
+
+- `repos` — which Slack channels and MCP proxies each repo can use
+- `proxies` — upstream MCP definitions and allow/approve lists
+- `github_app.installations` — which GitHub orgs the `remote-cli` GitHub App auth layer can serve
+
+GitHub App installation entries look like this:
+
+```json
+{
+  "github_app": {
+    "installations": [
+      {
+        "org": "acme",
+        "installation_id": 12345678,
+        "app_id": "",
+        "private_key_path": "",
+        "api_url": ""
+      }
+    ]
+  }
+}
+```
+
+Field behavior:
+
+- `org` — target GitHub org login
+- `installation_id` — required GitHub App installation ID for that org
+- `app_id` — optional override; empty falls back to `GITHUB_APP_ID`
+- `private_key_path` — optional override; empty falls back to `GITHUB_APP_PRIVATE_KEY_FILE`
+- `api_url` — optional override for GitHub Enterprise; empty falls back to `GITHUB_API_URL`
+
+#### 3. Data proxy routes (`.env`)
 
 If you have internal APIs that Thor should access with injected credentials, add routes to `.env`:
 
@@ -137,7 +176,7 @@ DATA_ROUTE_analytics_KEY=sk-your-other-key
 
 The data container generates its nginx config from these vars at startup. When `DATA_ROUTES` is empty, it proxies to httpbin.org as a no-op fallback. See `docker/data/default.conf.template.example` for the equivalent static config.
 
-#### 3. Agent context (OpenCode memory)
+#### 4. Agent context (OpenCode memory)
 
 The bundled agent prompt (`docker/opencode/config/agents/build.md`) contains only generic behavior rules — no team-specific context. Bundled investigation skills also live under `docker/opencode/config/skills/`. After starting Thor, open the OpenCode web UI and tell Thor about your team in conversation. Ask it to remember key facts — Thor writes them to its persistent memory directory automatically. Things to tell it:
 
@@ -146,9 +185,9 @@ The bundled agent prompt (`docker/opencode/config/agents/build.md`) contains onl
 - Which repos are mounted, default branches, CI conventions
 - If using the data proxy, the available routes and their API schemas
 
-#### 4. Source repos
+#### 5. Source repos
 
-Exec into the remote-cli container to clone repos — this runs as the `thor` user with the correct PAT credentials, avoiding permission issues:
+Exec into the remote-cli container to clone repos — this runs as the `thor` user with the configured GitHub credentials, avoiding permission issues. GitHub App auth is preferred when `github_app.installations` is present in `config.json`; PAT remains available as fallback.
 
 ```bash
 docker compose exec remote-cli git clone https://github.com/your-org/your-repo.git /workspace/repos/your-repo
@@ -156,7 +195,7 @@ docker compose exec remote-cli git clone https://github.com/your-org/your-repo.g
 
 Repos in `/workspace/repos/` are mounted read-only into OpenCode. Thor creates worktrees under `/workspace/worktrees/` for code changes.
 
-#### 5. Per-workspace MCP servers
+#### 6. Per-workspace MCP servers
 
 Slack is available globally (configured in the base `docker/opencode/config/opencode.json`). Other MCP servers are configured **per repo** via `.opencode/opencode.json` in the repo root.
 
@@ -192,7 +231,7 @@ Available MCP servers (all policy-proxied):
 
 OpenCode merges per-repo config with the global config. A repo without `.opencode/` gets only Slack.
 
-#### 6. Cron jobs (optional)
+#### 7. Cron jobs (optional)
 
 Add scheduled prompts to `docker-volumes/workspace/cron/crontab`. Each line triggers Thor with a prompt on a schedule. See `docs/plan/2026031204_cron-triggers.md` for examples.
 
@@ -284,7 +323,7 @@ Thor runs an AI agent with access to external APIs, so security is enforced in l
 Each service holds only the credentials it needs. OpenCode has no direct access to any API token.
 
 - **Proxy** — Injects API keys into upstream MCP requests via config-time `${ENV_VAR}` interpolation. Credentials never reach OpenCode.
-- **remote-cli** — Injects `GITHUB_PAT` at execution time via `GIT_ASKPASS` (a temporary script). The PAT is never passed as a CLI argument or environment variable visible to the git process.
+- **remote-cli** — Prefers GitHub App auth via the Thor `git` / `gh` wrappers. The wrapper resolves the target org from the repo or command args, loads `github_app.installations` from `/workspace/config.json`, mints a short-lived installation token, and passes it through `GIT_ASKPASS`. If GitHub App auth is not configured, it falls back to `GITHUB_PAT`.
 - **data** — Nginx sidecar that injects API keys into proxied requests. Routes are configured via `DATA_ROUTES` env vars in `.env` (see `.env.example`). The entrypoint generates the nginx config at startup — no manual template editing needed. Falls back to httpbin.org when no routes are set. **Trade-off:** the data container receives the full `.env` via `env_file` so that admins can add new proxy targets without editing `docker-compose.yml`. This means all env vars (including unrelated secrets like `SLACK_BOT_TOKEN`) are visible inside the container. This is acceptable because the data container runs stock nginx, which does not expose environment variables to proxied requests or logs. If stricter isolation is needed, use a dedicated `data.env` file instead.
 - **slack-mcp** — Holds `SLACK_BOT_TOKEN` exclusively; no other service touches Slack's API directly.
 

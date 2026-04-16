@@ -193,6 +193,19 @@ describe("loadWorkspaceConfig", () => {
     });
     expect(() => loadWorkspaceConfig(path)).toThrow('Reserved proxy name "approvals"');
   });
+
+  it("loads the tracked workspace config example", () => {
+    const config = loadWorkspaceConfig(
+      join(process.cwd(), "docs/examples/workspace-config.example.json"),
+    );
+
+    expect(config.repos["your-repo"]).toBeDefined();
+    expect(config.proxies?.atlassian).toBeDefined();
+    expect(config.github_app?.installations.map((installation) => installation.org)).toEqual([
+      "acme",
+      "acme-labs",
+    ]);
+  });
 });
 
 describe("createConfigLoader", () => {
