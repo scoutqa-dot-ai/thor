@@ -1,0 +1,27 @@
+Dockerfile
+  7a428ea165d8a730 96,98
+packages/remote-cli/src/github-app-auth.ts
+  7a428ea165d8a730 50-51,54,67-80
+packages/remote-cli/src/github-app-auth.test.ts
+  7a428ea165d8a730 36-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "34c9429742973697a13585e145f771fecce16229",
+  "prompts": {
+    "7a428ea165d8a730": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26570e18-e28d-4435-a091-955a06fe8959",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 40,
+      "total_deletions": 6,
+      "accepted_lines": 37,
+      "overriden_lines": 0
+    }
+  }
+}
