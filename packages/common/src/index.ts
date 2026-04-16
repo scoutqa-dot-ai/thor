@@ -9,7 +9,7 @@ export {
   WORKSPACE_CONFIG_PATH,
   getProxyConfig,
   extractRepoFromCwd,
-  getRepoProxies,
+  getRepoUpstreams,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";

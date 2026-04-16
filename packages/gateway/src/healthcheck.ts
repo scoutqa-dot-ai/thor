@@ -215,25 +215,25 @@ async function checkCodexUsage(authPath: string, fetchImpl?: typeof fetch): Prom
 export interface HealthCheckDeps {
   runnerUrl: string;
   slackMcpUrl: string;
-  proxyHost: string;
-  proxyPort: number;
+  remoteCliHost: string;
+  remoteCliPort: number;
   openaiAuthPath?: string;
   fetchImpl?: typeof fetch;
 }
 
 export async function deepHealthCheck(deps: HealthCheckDeps): Promise<HealthCheckResult> {
-  const proxyUrl = `http://${deps.proxyHost}:${deps.proxyPort}`;
+  const remoteCliUrl = `http://${deps.remoteCliHost}:${deps.remoteCliPort}`;
 
-  const [runner, slackMcp, proxy, codex] = await Promise.all([
+  const [runner, slackMcp, remoteCli, codex] = await Promise.all([
     checkService(deps.runnerUrl, deps.fetchImpl),
     checkService(deps.slackMcpUrl, deps.fetchImpl),
-    checkService(proxyUrl, deps.fetchImpl),
+    checkService(remoteCliUrl, deps.fetchImpl),
     deps.openaiAuthPath
       ? checkCodexUsage(deps.openaiAuthPath, deps.fetchImpl)
       : Promise.resolve(undefined),
   ]);
 
-  const services = { runner, "slack-mcp": slackMcp, proxy };
+  const services = { runner, "slack-mcp": slackMcp, "remote-cli": remoteCli };
   const allServicesOk = Object.values(services).every((s) => s.status === "ok");
   const codexOk = !codex || codex.status === "ok" || codex.status === "no_auth";
 

@@ -1,13 +1,9 @@
-/**
- * MCP client connection to a single upstream server.
- */
-
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { createLogger, logInfo, logError } from "@thor/common";
+import { createLogger, logError, logInfo } from "@thor/common";
 
-const log = createLogger("proxy");
+const log = createLogger("mcp");
 
 export interface UpstreamConfig {
   url: string;
@@ -24,7 +20,7 @@ export async function connectUpstream(
   config: UpstreamConfig,
   onDisconnect?: () => void,
 ): Promise<UpstreamConnection> {
-  const client = new Client({ name: `thor-proxy-${name}`, version: "0.0.1" });
+  const client = new Client({ name: `thor-remote-cli-${name}`, version: "0.0.1" });
 
   const headers: Record<string, string> = {
     Accept: "application/json, text/event-stream",
@@ -43,7 +39,6 @@ export async function connectUpstream(
   }
   logInfo(log, "upstream_connected", { name, url: config.url });
 
-  // Evict on disconnect so the next request triggers a reconnect.
   client.onclose = () => {
     logError(log, "upstream_disconnected", "upstream closed unexpectedly", {
       name,
@@ -62,7 +57,7 @@ export async function connectUpstream(
   logInfo(log, "upstream_tools_listed", {
     name,
     toolCount: tools.length,
-    tools: tools.map((t) => t.name),
+    tools: tools.map((tool) => tool.name),
   });
 
   return { client, tools };

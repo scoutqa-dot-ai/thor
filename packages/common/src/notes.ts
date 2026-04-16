@@ -296,7 +296,7 @@ const SlackPostMessageOutput = z.object({
  * Extract aliases from completed tool call artifacts.
  *
  * Two sources:
- * - `bash` with [thor:meta]: pre-computed aliases from remote-cli / proxy services
+ * - `bash` with [thor:meta]: pre-computed aliases from service-side helpers
  * - `slack_post_message`: direct MCP tool (not proxied through bash)
  *
  * Best-effort: malformed artifacts are silently skipped.
@@ -352,9 +352,9 @@ export function extractAliases(artifacts: ToolArtifact[]): ExtractedAlias[] {
  *
  * Discriminated union on `type`:
  * - `alias`: pre-computed correlation alias (git branch, Slack thread, etc.)
- * - `approval`: approval-required signal from the proxy
+ * - `approval`: approval-required signal from remote-cli MCP handling
  *
- * Producers: remote-cli service, proxy service.
+ * Producer: remote-cli service.
  * Consumer: extractThorMeta() in this module.
  */
 export const ThorMetaAliasSchema = z.object({

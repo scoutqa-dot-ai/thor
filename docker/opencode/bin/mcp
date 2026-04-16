@@ -1,2 +1,2 @@
 #!/bin/sh
-exec node /usr/local/bin/proxy-cli.mjs mcp "$@"
+exec node /usr/local/bin/remote-cli.mjs mcp "$@"

@@ -9,7 +9,7 @@ import {
   getChannelRepoMap,
   getProxyConfig,
   extractRepoFromCwd,
-  getRepoProxies,
+  getRepoUpstreams,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";
@@ -350,7 +350,7 @@ describe("extractRepoFromCwd", () => {
   });
 });
 
-describe("getRepoProxies", () => {
+describe("getRepoUpstreams", () => {
   it("returns proxies array for a configured repo", () => {
     const config = loadWorkspaceConfig(
       writeConfig("config.json", {
@@ -361,18 +361,18 @@ describe("getRepoProxies", () => {
         },
       }),
     );
-    expect(getRepoProxies(config, "acme-app")).toEqual(["slack", "atlassian"]);
+    expect(getRepoUpstreams(config, "acme-app")).toEqual(["slack", "atlassian"]);
   });
 
   it("returns empty array for repo without proxies field", () => {
     const config = loadWorkspaceConfig(
       writeConfig("config.json", { repos: { "acme-app": { channels: ["C1"] } } }),
     );
-    expect(getRepoProxies(config, "acme-app")).toEqual([]);
+    expect(getRepoUpstreams(config, "acme-app")).toEqual([]);
   });
 
   it("returns undefined for unknown repo", () => {
     const config = loadWorkspaceConfig(writeConfig("config.json", { repos: {} }));
-    expect(getRepoProxies(config, "unknown")).toBeUndefined();
+    expect(getRepoUpstreams(config, "unknown")).toBeUndefined();
   });
 });

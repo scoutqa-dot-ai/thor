@@ -102,8 +102,10 @@ describe("gateway", () => {
           status: 200,
         });
       }
-      if (url === "http://proxy:3001/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "proxy" }), { status: 200 });
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
       }
       if (url === "https://chatgpt.com/backend-api/wham/usage") {
         return new Response(
@@ -162,7 +164,7 @@ describe("gateway", () => {
             services: {
               runner: { status: "ok", service: "runner" },
               "slack-mcp": { status: "ok", service: "slack-mcp" },
-              proxy: { status: "ok", service: "proxy" },
+              "remote-cli": { status: "ok", service: "remote-cli" },
             },
             codex: {
               status: "ok",
@@ -223,8 +225,10 @@ describe("gateway", () => {
           status: 200,
         });
       }
-      if (url === "http://proxy:3001/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "proxy" }), { status: 200 });
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -1020,6 +1024,67 @@ describe("gateway", () => {
         interactionType: "block_actions",
       });
       expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("resolves approval actions through remote-cli for current v2 button values", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 })))
+      .mockResolvedValueOnce(new Response("ok"));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl) => {
+        const payloads = [
+          {
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.001" },
+            actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
+          },
+        ];
+
+        for (const payloadData of payloads) {
+          const payload = encodeURIComponent(JSON.stringify(payloadData));
+          const body = `payload=${payload}`;
+          const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+          const response = await fetch(`${baseUrl}/slack/interactivity`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              "X-Slack-Request-Timestamp": timestamp,
+              "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        resolveSecret: "resolve-secret",
+      },
+    );
+
+    const execCalls = fetchImpl.mock.calls.filter(
+      ([url]) => typeof url === "string" && url === "http://remote-cli.internal:3010/exec/mcp",
+    );
+    expect(execCalls).toHaveLength(1);
+    expect(execCalls[0]?.[1]).toMatchObject({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-thor-resolve-secret": "resolve-secret",
+      },
+      body: JSON.stringify({ args: ["resolve", "act-1", "approved", "U123"] }),
     });
   });
 });

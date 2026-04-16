@@ -17,7 +17,6 @@ WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json tsup.config.ts ./
 COPY packages/common/package.json packages/common/
 COPY packages/gateway/package.json packages/gateway/
-COPY packages/proxy/package.json packages/proxy/
 COPY packages/runner/package.json packages/runner/
 COPY packages/slack-mcp/package.json packages/slack-mcp/
 COPY packages/remote-cli/package.json packages/remote-cli/
@@ -37,12 +36,6 @@ WORKDIR /workspace
 ENV PORT=3002
 EXPOSE 3002
 CMD ["node", "/app/packages/gateway/dist/index.js"]
-
-FROM build AS proxy
-USER thor
-WORKDIR /workspace
-EXPOSE 3001
-CMD ["node", "/app/packages/proxy/dist/index.js"]
 
 FROM build AS runner
 USER thor
@@ -67,14 +60,12 @@ COPY docker/opencode/bin/gh /usr/local/bin/gh
 COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
 COPY docker/opencode/bin/langfuse /usr/local/bin/langfuse
 COPY docker/opencode/bin/metabase /usr/local/bin/metabase
-# mcp/approval wrapper scripts — forward to proxy service over HTTP
-COPY --from=build /app/packages/opencode-cli/dist/proxy-cli.mjs /usr/local/bin/proxy-cli.mjs
+# mcp/approval wrapper scripts — forward to remote-cli service over HTTP
 COPY docker/opencode/bin/mcp /usr/local/bin/mcp
 COPY docker/opencode/bin/approval /usr/local/bin/approval
 USER thor
 RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state
 ENV THOR_REMOTE_CLI_URL=http://remote-cli:3004
-ENV THOR_PROXY_URL=http://proxy:3001
 # Disable the question tool — it requires an interactive client to answer.
 # OpenCode only registers QuestionTool when OPENCODE_CLIENT is "app", "cli", or "desktop".
 # https://github.com/sst/opencode/blob/main/packages/opencode/src/tool/registry.ts
