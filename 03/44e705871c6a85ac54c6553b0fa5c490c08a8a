@@ -1,0 +1,25 @@
+packages/remote-cli/src/exec.ts
+  7a428ea165d8a730 4-7
+packages/remote-cli/entrypoint.sh
+  7a428ea165d8a730 4-8,25-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "0344e705871c6a85ac54c6553b0fa5c490c08a8a",
+  "prompts": {
+    "7a428ea165d8a730": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26570e18-e28d-4435-a091-955a06fe8959",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 14,
+      "total_deletions": 4,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    }
+  }
+}
