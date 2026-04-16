@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Event } from "@opencode-ai/sdk";
-import { EventBusRegistry, SessionSubscription } from "./event-bus.js";
+import { EventBusRegistry, SessionSubscription, waitForSessionSettled } from "./event-bus.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -190,6 +190,53 @@ describe("SessionSubscription", () => {
 
     expect(collected).toHaveLength(1);
     expect(collected[0].type).toBe("session.error");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// waitForSessionSettled
+// ---------------------------------------------------------------------------
+
+describe("waitForSessionSettled", () => {
+  it("resolves true on session.idle (successful completion)", async () => {
+    const emitter = new EventEmitter();
+    const sub = new SessionSubscription(emitter, ["s1"]);
+    emitter.emit("s1", makeIdleEvent("s1"));
+
+    const settled = await waitForSessionSettled(sub, 1_000);
+    sub.close();
+    expect(settled).toBe(true);
+  });
+
+  it("resolves true on session.error (abort emits error, not idle)", async () => {
+    const emitter = new EventEmitter();
+    const sub = new SessionSubscription(emitter, ["s1"]);
+    emitter.emit("s1", makeErrorEvent("s1"));
+
+    const settled = await waitForSessionSettled(sub, 1_000);
+    sub.close();
+    expect(settled).toBe(true);
+  });
+
+  it("ignores unrelated events until settled", async () => {
+    const emitter = new EventEmitter();
+    const sub = new SessionSubscription(emitter, ["s1"]);
+    emitter.emit("s1", makePartEvent("s1"));
+    emitter.emit("s1", makePartEvent("s1"));
+    emitter.emit("s1", makeErrorEvent("s1"));
+
+    const settled = await waitForSessionSettled(sub, 1_000);
+    sub.close();
+    expect(settled).toBe(true);
+  });
+
+  it("resolves false on timeout when no settle event arrives", async () => {
+    const emitter = new EventEmitter();
+    const sub = new SessionSubscription(emitter, ["s1"]);
+
+    const settled = await waitForSessionSettled(sub, 50);
+    sub.close();
+    expect(settled).toBe(false);
   });
 });
 
