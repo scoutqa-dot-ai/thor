@@ -1,0 +1,29 @@
+packages/gateway/src/index.ts
+  6856d685f7bd7bfd 25,39
+packages/gateway/src/app.ts
+  6856d685f7bd7bfd 23,80-81,221-227
+docker-compose.yml
+  6856d685f7bd7bfd 193,196
+packages/gateway/src/healthcheck.ts
+  6856d685f7bd7bfd 1-9,28-29,140-175,179-191,195,197-202,206-209,213-246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "7b2d98519c17f25b355faaca64a66b69caf1ce4d",
+  "prompts": {
+    "6856d685f7bd7bfd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7d0a00e4-5cfd-4f74-bab6-6c3d59babdac",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 121,
+      "total_deletions": 0,
+      "accepted_lines": 124,
+      "overriden_lines": 11
+    }
+  }
+}
