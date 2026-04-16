@@ -19,6 +19,8 @@ export type {
   ProxyConfig,
   ProxyUpstream,
   ConfigLoader,
+  GitHubAppInstallation,
+  GitHubAppConfig,
 } from "./workspace-config.js";
 export { writeToolCallLog } from "./worklog.js";
 export type { ToolCallLogEntry } from "./worklog.js";

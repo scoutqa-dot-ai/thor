@@ -89,9 +89,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 RUN npm i -g @scoutqa/cli@latest langfuse-cli@0.0.8
 COPY packages/remote-cli/entrypoint.sh /entrypoint.sh
+# Thor git/gh wrappers for GitHub App auth
+COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git
+COPY packages/remote-cli/bin/gh /usr/local/lib/thor/bin/gh
+RUN chmod +x /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh
 USER thor
-RUN mkdir -p /workspace/repos
+RUN mkdir -p /workspace/repos /var/lib/remote-cli/github-app/cache
 WORKDIR /workspace/repos
+# Prepend Thor wrappers to PATH so they shadow /usr/bin/git and /usr/bin/gh
+ENV PATH="/usr/local/lib/thor/bin:$PATH"
 ENV PORT=3004
 EXPOSE 3004
 ENTRYPOINT ["/entrypoint.sh"]
