@@ -325,9 +325,7 @@ app.post("/approval", async (req, res) => {
       channel,
       thread_ts: threadTs,
       text: `Approval required for \`${tool}\``,
-      // `expand` is newer than the current Slack type package, so keep the helper
-      // flexible and cast only at the API boundary.
-      blocks: buildInlineApprovalBlocks(tool, argsJson, buttonValue) as any,
+      blocks: buildInlineApprovalBlocks(tool, argsJson, buttonValue),
     });
     logInfo(log, "approval_posted", { actionId, tool, channel, ts: result.ts });
     res.json({ ok: true, ts: result.ts });
