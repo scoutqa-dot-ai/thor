@@ -36,54 +36,6 @@ describe("loadWorkspaceConfig", () => {
     });
     const config = loadWorkspaceConfig(path);
     expect(config.repos["my-repo"].channels).toEqual(["C123"]);
-    expect(config.proxies).toBeUndefined();
-  });
-
-  it("loads a valid config with repos and proxies", () => {
-    const path = writeConfig("config.json", {
-      repos: { "my-repo": { channels: ["C123"] } },
-      proxies: {
-        atlassian: {
-          upstream: { url: "https://mcp.atlassian.com/v1/mcp" },
-          allow: ["getJiraIssue"],
-          approve: ["createJiraIssue"],
-        },
-      },
-    });
-    const config = loadWorkspaceConfig(path);
-    expect(config.proxies!.atlassian.upstream.url).toBe("https://mcp.atlassian.com/v1/mcp");
-    expect(config.proxies!.atlassian.allow).toEqual(["getJiraIssue"]);
-    expect(config.proxies!.atlassian.approve).toEqual(["createJiraIssue"]);
-  });
-
-  it("defaults allow and approve to empty arrays", () => {
-    const path = writeConfig("config.json", {
-      repos: {},
-      proxies: {
-        slack: { upstream: { url: "http://slack-mcp:3003/mcp" } },
-      },
-    });
-    const config = loadWorkspaceConfig(path);
-    expect(config.proxies!.slack.allow).toEqual([]);
-    expect(config.proxies!.slack.approve).toEqual([]);
-  });
-
-  it("loads proxy upstream headers", () => {
-    const path = writeConfig("config.json", {
-      repos: {},
-      proxies: {
-        atlassian: {
-          upstream: {
-            url: "https://mcp.atlassian.com/v1/mcp",
-            headers: { Authorization: "${ATLASSIAN_AUTH}" },
-          },
-        },
-      },
-    });
-    const config = loadWorkspaceConfig(path);
-    expect(config.proxies!.atlassian.upstream.headers).toEqual({
-      Authorization: "${ATLASSIAN_AUTH}",
-    });
   });
 
   it("throws on missing file", () => {
@@ -97,49 +49,16 @@ describe("loadWorkspaceConfig", () => {
   });
 
   it("throws on schema violation (missing repos)", () => {
-    const path = writeConfig("config.json", { proxies: {} });
+    const path = writeConfig("config.json", { github_app: {} });
     expect(() => loadWorkspaceConfig(path)).toThrow("Invalid workspace config");
   });
 
-  it("throws on invalid proxy schema (missing upstream url)", () => {
+  it("rejects the legacy top-level proxies block with a migration hint", () => {
     const path = writeConfig("config.json", {
       repos: {},
-      proxies: { bad: { upstream: {} } },
+      proxies: {},
     });
-    expect(() => loadWorkspaceConfig(path)).toThrow("Invalid workspace config");
-  });
-
-  it("throws on reserved proxy name", () => {
-    const path = writeConfig("config.json", {
-      repos: {},
-      proxies: { health: { upstream: { url: "http://localhost" } } },
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow('Reserved proxy name "health"');
-  });
-
-  it("throws on proxy name with path traversal chars", () => {
-    const path = writeConfig("config.json", {
-      repos: {},
-      proxies: { "../etc": { upstream: { url: "http://localhost" } } },
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow("Invalid proxy name");
-  });
-
-  it("throws on proxy name with uppercase", () => {
-    const path = writeConfig("config.json", {
-      repos: {},
-      proxies: { Atlassian: { upstream: { url: "http://localhost" } } },
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow("Invalid proxy name");
-  });
-
-  it("allows valid proxy names with hyphens", () => {
-    const path = writeConfig("config.json", {
-      repos: {},
-      proxies: { "my-proxy-1": { upstream: { url: "http://localhost" } } },
-    });
-    const config = loadWorkspaceConfig(path);
-    expect(config.proxies!["my-proxy-1"]).toBeDefined();
+    expect(() => loadWorkspaceConfig(path)).toThrow('Top-level "proxies" has moved to code');
   });
 
   it("throws on duplicate channel IDs across repos", () => {
@@ -155,7 +74,6 @@ describe("loadWorkspaceConfig", () => {
   it("accepts repo with valid proxies array", () => {
     const path = writeConfig("config.json", {
       repos: { "my-repo": { channels: ["C1"], proxies: ["slack"] } },
-      proxies: { slack: { upstream: { url: "http://slack:3003/mcp" } } },
     });
     const config = loadWorkspaceConfig(path);
     expect(config.repos["my-repo"].proxies).toEqual(["slack"]);
@@ -164,33 +82,10 @@ describe("loadWorkspaceConfig", () => {
   it("throws when repo references unknown proxy", () => {
     const path = writeConfig("config.json", {
       repos: { "my-repo": { proxies: ["nonexistent"] } },
-      proxies: { slack: { upstream: { url: "http://slack:3003/mcp" } } },
     });
-    expect(() => loadWorkspaceConfig(path)).toThrow('references unknown proxy "nonexistent"');
-  });
-
-  it("throws on reserved proxy name 'tools'", () => {
-    const path = writeConfig("config.json", {
-      repos: {},
-      proxies: { tools: { upstream: { url: "http://localhost" } } },
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow('Reserved proxy name "tools"');
-  });
-
-  it("throws on reserved proxy name 'approval'", () => {
-    const path = writeConfig("config.json", {
-      repos: {},
-      proxies: { approval: { upstream: { url: "http://localhost" } } },
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow('Reserved proxy name "approval"');
-  });
-
-  it("throws on reserved proxy name 'approvals'", () => {
-    const path = writeConfig("config.json", {
-      repos: {},
-      proxies: { approvals: { upstream: { url: "http://localhost" } } },
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow('Reserved proxy name "approvals"');
+    expect(() => loadWorkspaceConfig(path)).toThrow(
+      "Available proxies: atlassian, grafana, posthog, slack",
+    );
   });
 
   it("loads the tracked workspace config example", () => {
@@ -199,7 +94,7 @@ describe("loadWorkspaceConfig", () => {
     );
 
     expect(config.repos["your-repo"]).toBeDefined();
-    expect(config.proxies?.atlassian).toBeDefined();
+    expect(config.repos["your-repo"].proxies).toEqual(["atlassian", "grafana", "slack"]);
     expect(config.github_app?.installations.map((installation) => installation.org)).toEqual([
       "acme",
       "acme-labs",
@@ -334,10 +229,6 @@ describe("getRepoUpstreams", () => {
     const config = loadWorkspaceConfig(
       writeConfig("config.json", {
         repos: { "acme-app": { proxies: ["slack", "atlassian"] } },
-        proxies: {
-          slack: { upstream: { url: "http://slack:3003/mcp" } },
-          atlassian: { upstream: { url: "http://atlassian:8000/mcp" } },
-        },
       }),
     );
     expect(getRepoUpstreams(config, "acme-app")).toEqual(["slack", "atlassian"]);

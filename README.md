@@ -60,23 +60,12 @@ Example:
       "channels": ["C12345678"],
       "proxies": ["slack", "atlassian", "grafana"]
     }
-  },
-  "proxies": {
-    "slack": {
-      "upstream": { "url": "http://slack-mcp:3003/mcp" },
-      "allow": ["post_message", "read_thread"]
-    },
-    "atlassian": {
-      "upstream": {
-        "url": "https://mcp.atlassian.com/v1/mcp",
-        "headers": { "Authorization": "${ATLASSIAN_AUTH}" }
-      },
-      "allow": ["get_issue", "list_issues"],
-      "approve": ["update_issue", "create_issue"]
-    }
   }
 }
 ```
+
+The shared upstream registry and allow/approve policy are checked into
+[`packages/common/src/proxies.ts`](packages/common/src/proxies.ts).
 
 ## Deployment Configuration
 
@@ -120,7 +109,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `VOUCH_JWT_SECRET`                  | Yes      | `vouch`                 | Session JWT signing secret                                 |
 | `VOUCH_WHITELIST`                   | Yes      | `vouch`                 | Comma-separated email allowlist                            |
 
-Thor uses a shared workspace config file at `/workspace/config.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config.json`. Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point.
+Thor uses a shared workspace config file at `/workspace/config.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config.json`. Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point, and use [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
 
 GitHub App installation entries live under `github_app.installations` in that config:
 

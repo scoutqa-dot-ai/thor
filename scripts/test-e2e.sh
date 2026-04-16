@@ -201,19 +201,20 @@ CONFIG_FILE="${HOST_WORKSPACE}/config.json"
 
 if [[ -f "$CONFIG_FILE" ]]; then
   # Build a list of "repo:upstream" pairs — only connected upstreams with approve lists
-  repo_upstream_pairs=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null | node -e "
-    const health = JSON.parse(require('fs').readFileSync(0,'utf8'));
+  repo_upstream_pairs=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null | pnpm --filter @thor/remote-cli exec tsx -e "
+    import { readFileSync } from 'node:fs';
+    import { PROXY_REGISTRY } from '../common/src/proxies.ts';
+    const health = JSON.parse(readFileSync(0,'utf8'));
     const connected = new Set(
       Object.entries(health.mcp?.instances || {})
         .filter(([, info]) => info.connected)
         .map(([name]) => name)
     );
-    const cfg = JSON.parse(require('fs').readFileSync('$CONFIG_FILE','utf8'));
+    const cfg = JSON.parse(readFileSync('$CONFIG_FILE','utf8'));
     const repos = cfg.repos || {};
-    const proxies = cfg.proxies || {};
     for (const [repo, rcfg] of Object.entries(repos)) {
       for (const p of (rcfg.proxies || [])) {
-        if (connected.has(p) && (proxies[p]?.approve || []).length > 0) {
+        if (connected.has(p) && (PROXY_REGISTRY[p]?.approve || []).length > 0) {
           console.log(repo + ':' + p);
         }
       }
@@ -229,10 +230,9 @@ if [[ -f "$CONFIG_FILE" ]]; then
     if [[ ! -d "$host_dir" ]]; then
       continue
     fi
-    found_tool=$(node -e "
-      const cfg = JSON.parse(require('fs').readFileSync('$CONFIG_FILE','utf8'));
-      const tools = cfg.proxies?.['$upstream_name']?.approve || [];
-      console.log(tools[0] || '');
+    found_tool=$(pnpm --filter @thor/remote-cli exec tsx -e "
+      import { PROXY_REGISTRY } from '../common/src/proxies.ts';
+      console.log(PROXY_REGISTRY['$upstream_name']?.approve?.[0] || '');
     " 2>/dev/null || echo "")
     if [[ -n "$found_tool" ]]; then
       APPROVAL_UPSTREAM="$upstream_name"
