@@ -463,13 +463,15 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               proxyUrl,
               config.fetchImpl,
             );
-            if (channel && messageTs) {
-              const statusEmoji = decision === "approved" ? "✅" : "❌";
-              const text = `${statusEmoji} *${decision.charAt(0).toUpperCase() + decision.slice(1)}* by <@${reviewer}>`;
-              await updateSlackMessage(channel, messageTs, text, slackMcpDeps);
-            }
             if (!resolved) {
               logError(log, "approval_resolve_failed", "Proxy returned error", { actionId });
+              return;
+            }
+            if (channel && messageTs) {
+              const statusEmoji = decision === "approved" ? "✅" : "❌";
+              const decisionLabel = decision.charAt(0).toUpperCase() + decision.slice(1);
+              const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}>`;
+              await updateSlackMessage(channel, messageTs, text, slackMcpDeps);
             }
           })();
           return;

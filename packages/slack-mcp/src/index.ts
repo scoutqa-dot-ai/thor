@@ -317,7 +317,7 @@ app.post("/approval", async (req, res) => {
   }
   try {
     const { channel, threadTs, actionId, tool, args, proxyName } = parsed.data;
-    const argsPreview = JSON.stringify(args, null, 2).slice(0, 200);
+    const argsPreview = JSON.stringify(args, null, 2).slice(0, 500);
     // Versioned button value: "v2:{actionId}:{upstreamName}" so gateway can route approval.
     const buttonValue = proxyName ? `v2:${actionId}:${proxyName}` : actionId;
     const result = await slackDeps.client.chat.postMessage({
@@ -329,9 +329,17 @@ app.post("/approval", async (req, res) => {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `*Approval required* for \`${tool}\`\n\`\`\`${argsPreview}\`\`\``,
+            text: `:lock: *Approval required* — \`${tool}\``,
           },
         },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `\`\`\`\n${argsPreview}\n\`\`\``,
+          },
+        },
+        { type: "divider" },
         {
           type: "actions",
           elements: [
