@@ -32,6 +32,7 @@ import {
   type SlackFileReadResult,
 } from "./slack.js";
 import { handleProgressEvent, onBotReply } from "./progress-manager.js";
+import { buildInlineApprovalBlocks, formatApprovalArgs } from "./approval.js";
 
 const log = createLogger("slack-mcp");
 
@@ -317,49 +318,16 @@ app.post("/approval", async (req, res) => {
   }
   try {
     const { channel, threadTs, actionId, tool, args, proxyName } = parsed.data;
-    const argsPreview = JSON.stringify(args, null, 2).slice(0, 500);
+    const argsJson = formatApprovalArgs(args);
     // Versioned button value: "v2:{actionId}:{upstreamName}" so gateway can route approval.
     const buttonValue = proxyName ? `v2:${actionId}:${proxyName}` : actionId;
     const result = await slackDeps.client.chat.postMessage({
       channel,
       thread_ts: threadTs,
       text: `Approval required for \`${tool}\``,
-      blocks: [
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `:lock: *Approval required* — \`${tool}\``,
-          },
-        },
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `\`\`\`\n${argsPreview}\n\`\`\``,
-          },
-        },
-        { type: "divider" },
-        {
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              text: { type: "plain_text", text: "Approve" },
-              style: "primary",
-              action_id: "approval_approve",
-              value: buttonValue,
-            },
-            {
-              type: "button",
-              text: { type: "plain_text", text: "Reject" },
-              style: "danger",
-              action_id: "approval_reject",
-              value: buttonValue,
-            },
-          ],
-        },
-      ],
+      // `expand` is newer than the current Slack type package, so keep the helper
+      // flexible and cast only at the API boundary.
+      blocks: buildInlineApprovalBlocks(tool, argsJson, buttonValue) as any,
     });
     logInfo(log, "approval_posted", { actionId, tool, channel, ts: result.ts });
     res.json({ ok: true, ts: result.ts });
