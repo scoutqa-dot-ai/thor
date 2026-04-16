@@ -255,7 +255,7 @@ Each integration has a policy config file (e.g., `proxy.atlassian.json`):
   "upstream": {
     "url": "https://mcp.atlassian.com/v1/mcp",
     "headers": {
-      "Authorization": "Basic ${ATLASSIAN_BASIC_AUTH}"
+      "Authorization": "${ATLASSIAN_AUTH}"
     }
   },
   "allow": ["get_issue", "list_issues", "list_projects"]

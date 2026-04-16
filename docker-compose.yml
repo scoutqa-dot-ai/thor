@@ -93,7 +93,7 @@ services:
     environment:
       - NODE_ENV=production
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
-      - ATLASSIAN_BASIC_AUTH=${ATLASSIAN_BASIC_AUTH}
+      - ATLASSIAN_AUTH=${ATLASSIAN_AUTH}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:

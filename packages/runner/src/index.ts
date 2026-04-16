@@ -226,6 +226,8 @@ const CMD_DEPTH: Record<string, number> = {
   npm: 2,
   pnpm: 2,
   bun: 2,
+  langfuse: 4,
+  metabase: 2,
 };
 
 /**

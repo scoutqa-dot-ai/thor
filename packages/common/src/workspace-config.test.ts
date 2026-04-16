@@ -76,14 +76,14 @@ describe("loadWorkspaceConfig", () => {
         atlassian: {
           upstream: {
             url: "https://mcp.atlassian.com/v1/mcp",
-            headers: { Authorization: "Basic ${ATLASSIAN_BASIC_AUTH}" },
+            headers: { Authorization: "${ATLASSIAN_AUTH}" },
           },
         },
       },
     });
     const config = loadWorkspaceConfig(path);
     expect(config.proxies!.atlassian.upstream.headers).toEqual({
-      Authorization: "Basic ${ATLASSIAN_BASIC_AUTH}",
+      Authorization: "${ATLASSIAN_AUTH}",
     });
   });
 
