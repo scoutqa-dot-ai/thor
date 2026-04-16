@@ -12,6 +12,7 @@
  */
 
 import { resolveOrg, getInstallationToken } from "./github-app-auth.js";
+import { formatAuthHelperError } from "./auth-helper-format.js";
 
 const TAG = "[thor-github-app]";
 
@@ -33,10 +34,10 @@ async function main(): Promise<void> {
     process.stdout.write(JSON.stringify(result));
   } catch (err) {
     // Log error to stderr for debugging, but don't fail the wrapper
-    process.stderr.write(`${TAG} ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`${formatAuthHelperError(err, TAG)}\n`);
   }
 }
 
 main().catch((err) => {
-  process.stderr.write(`${TAG} Unexpected error: ${err}\n`);
+  process.stderr.write(`${formatAuthHelperError(`Unexpected error: ${err}`, TAG)}\n`);
 });
