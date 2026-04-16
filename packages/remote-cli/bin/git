@@ -14,7 +14,7 @@ if [ ! -f /workspace/config.json ] || ! grep -q '"github_app"' /workspace/config
 fi
 
 # Resolve auth via the Node.js auth helper
-AUTH_JSON=$(node /app/packages/remote-cli/dist/auth-helper.js git "$@" 2>/dev/null) || true
+AUTH_JSON=$(node /app/packages/remote-cli/dist/auth-helper.js git "$@") || true
 
 if [ -n "$AUTH_JSON" ]; then
   TOKEN=$(echo "$AUTH_JSON" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
@@ -30,10 +30,8 @@ if [ -n "$AUTH_JSON" ]; then
     export GIT_CONFIG_KEY_0="credential.username"
     export GIT_CONFIG_VALUE_0="x-access-token"
 
+    trap 'rm -f "$ASKPASS_SCRIPT"' EXIT
     "$REAL_GIT" "$@"
-    EXIT_CODE=$?
-    rm -f "$ASKPASS_SCRIPT"
-    exit $EXIT_CODE
   fi
 fi
 

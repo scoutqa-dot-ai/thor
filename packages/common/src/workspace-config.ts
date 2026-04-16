@@ -23,7 +23,7 @@ const ProxyConfigSchema = z.object({
 
 const GitHubAppInstallationSchema = z.object({
   org: z.string(),
-  installation_id: z.number(),
+  installation_id: z.number().int().positive(),
   app_id: z.string().optional().default(""),
   private_key_path: z.string().optional().default(""),
   api_url: z.string().optional().default(""),

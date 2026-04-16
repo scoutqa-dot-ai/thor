@@ -236,12 +236,17 @@ export async function mintInstallationToken(
 
 // ── Disk cache ───────────────────────────────────────────────────────────────
 
+/** Sanitize org name for use as a filename (defense in depth). */
+function safeOrgName(org: string): string {
+  return org.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
 function cachePath(org: string): string {
-  return join(CACHE_DIR, `${org}.json`);
+  return join(CACHE_DIR, `${safeOrgName(org)}.json`);
 }
 
 function lockPath(org: string): string {
-  return join(CACHE_DIR, `${org}.lock`);
+  return join(CACHE_DIR, `${safeOrgName(org)}.lock`);
 }
 
 function ensureCacheDir(): void {

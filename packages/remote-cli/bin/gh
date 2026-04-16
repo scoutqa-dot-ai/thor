@@ -14,7 +14,7 @@ if [ ! -f /workspace/config.json ] || ! grep -q '"github_app"' /workspace/config
 fi
 
 # Resolve auth via the Node.js auth helper
-AUTH_JSON=$(node /app/packages/remote-cli/dist/auth-helper.js gh "$@" 2>/dev/null) || true
+AUTH_JSON=$(node /app/packages/remote-cli/dist/auth-helper.js gh "$@") || true
 
 if [ -n "$AUTH_JSON" ]; then
   TOKEN=$(echo "$AUTH_JSON" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
