@@ -1,0 +1,47 @@
+packages/remote-cli/package.json
+  7a428ea165d8a730 7
+docs/plan/2026041503_github-app-auth.md
+  7a428ea165d8a730 1,225-242
+packages/remote-cli/bin/git
+  7a428ea165d8a730 1-41
+packages/remote-cli/src/github-app-auth.ts
+  7a428ea165d8a730 1-354
+packages/remote-cli/tsup.config.ts
+  7a428ea165d8a730 1-15
+packages/remote-cli/bin/gh
+  7a428ea165d8a730 1-28
+packages/common/src/index.ts
+  7a428ea165d8a730 22-23
+Dockerfile
+  7a428ea165d8a730 92-95,97,99-100
+packages/remote-cli/src/github-app-auth.test.ts
+  7a428ea165d8a730 1-237
+packages/common/src/workspace-config.ts
+  7a428ea165d8a730 24-35,39,44-45
+packages/remote-cli/src/auth-helper.ts
+  7a428ea165d8a730 1-42
+.env.example
+  7a428ea165d8a730 40-41,44-49
+docker-compose.yml
+  7a428ea165d8a730 39-42,54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2e5822da73e2872b413bad27336b6da5993a4b52",
+  "prompts": {
+    "7a428ea165d8a730": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26570e18-e28d-4435-a091-955a06fe8959",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 792,
+      "total_deletions": 6,
+      "accepted_lines": 790,
+      "overriden_lines": 0
+    }
+  }
+}
