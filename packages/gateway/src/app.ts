@@ -420,17 +420,15 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           const channel = payload.channel?.id;
           const messageTs = payload.message?.ts;
 
-          // Button value formats:
-          //   v2:{actionId}:{upstreamName} — current
-          //   v1:{actionId}:{proxyPort}    — legacy fallback (keep until 2026-05-01)
+          // Button value format:
+          //   v2:{actionId}:{upstreamName}
           const parts = action.value.split(":");
           let actionId: string;
+          let upstreamName: string;
 
           if (parts[0] === "v2" && parts.length >= 3) {
             actionId = parts[1];
-          } else if (parts[0] === "v1" && parts.length >= 3) {
-            // TODO: Remove v1 support once all in-flight approvals have drained (safe after 2026-05-01)
-            actionId = parts[1];
+            upstreamName = parts[2];
           } else {
             logError(log, "approval_resolve_failed", "Unrecognized button value format", {
               value: action.value,
@@ -439,7 +437,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             return;
           }
 
-          logInfo(log, "approval_action", { actionId, decision, reviewer, remoteCliUrl });
+          logInfo(log, "approval_action", {
+            actionId,
+            upstreamName,
+            decision,
+            reviewer,
+            remoteCliUrl,
+          });
 
           // Respond immediately to Slack (must reply within 3s)
           res.status(200).json({ ok: true });
@@ -458,7 +462,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               await updateSlackMessage(channel, messageTs, text, slackMcpDeps);
             }
             if (!resolved) {
-              logError(log, "approval_resolve_failed", "Proxy returned error", { actionId });
+              logError(log, "approval_resolve_failed", "remote-cli returned error", { actionId });
             }
           })();
           return;

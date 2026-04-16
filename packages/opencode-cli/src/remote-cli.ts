@@ -28,6 +28,7 @@ if (!baseUrl) {
 
 const url = `${baseUrl}/exec/${endpoint}`;
 const cwd = process.cwd();
+const sessionDirectory = process.env.THOR_OPENCODE_DIRECTORY || cwd;
 const sessionId = process.env.THOR_OPENCODE_SESSION_ID || "";
 const callId = process.env.THOR_OPENCODE_CALL_ID || "";
 const nonRepoScopedEndpoints = new Set(["langfuse", "metabase", "approval"]);
@@ -40,7 +41,13 @@ try {
       ...(sessionId && { "x-thor-session-id": sessionId }),
       ...(callId && { "x-thor-call-id": callId }),
     },
-    body: JSON.stringify(nonRepoScopedEndpoints.has(endpoint) ? { args } : { args, cwd }),
+    body: JSON.stringify(
+      endpoint === "mcp"
+        ? { args, cwd, directory: sessionDirectory }
+        : nonRepoScopedEndpoints.has(endpoint)
+          ? { args }
+          : { args, cwd },
+    ),
   });
 
   const contentType = res.headers.get("content-type") || "";

@@ -41,7 +41,7 @@ async function post(
 async function testListUpstreams(): Promise<string> {
   console.log("\n── Test: POST /exec/mcp (list upstreams) ──");
 
-  const { status, data } = await post("/exec/mcp", { args: [], cwd: CWD });
+  const { status, data } = await post("/exec/mcp", { args: [], cwd: CWD, directory: CWD });
   const body = data as { stdout?: string };
   const parsed = JSON.parse(body.stdout || "{}") as {
     upstreams?: Array<{ name: string; toolCount: number; connected: boolean }>;
@@ -60,7 +60,11 @@ async function testListUpstreams(): Promise<string> {
 async function testListTools(upstream: string): Promise<string[]> {
   console.log(`\n── Test: POST /exec/mcp (${upstream} tools) ──`);
 
-  const { status, data } = await post("/exec/mcp", { args: [upstream], cwd: CWD });
+  const { status, data } = await post("/exec/mcp", {
+    args: [upstream],
+    cwd: CWD,
+    directory: CWD,
+  });
   const body = data as { stdout?: string };
   const tools = (body.stdout || "")
     .split("\n")
@@ -77,7 +81,11 @@ async function testListTools(upstream: string): Promise<string[]> {
 async function testToolHelp(upstream: string, tool: string): Promise<void> {
   console.log(`\n── Test: POST /exec/mcp (${upstream}/${tool} --help) ──`);
 
-  const { status, data } = await post("/exec/mcp", { args: [upstream, tool, "--help"], cwd: CWD });
+  const { status, data } = await post("/exec/mcp", {
+    args: [upstream, tool, "--help"],
+    cwd: CWD,
+    directory: CWD,
+  });
   const body = data as { stdout?: string };
   const parsed = JSON.parse(body.stdout || "{}") as { name?: string };
 

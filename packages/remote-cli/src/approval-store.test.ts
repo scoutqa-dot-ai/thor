@@ -9,7 +9,7 @@ let tempDir: string;
 
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "approval-test-"));
-  store = new ApprovalStore(tempDir);
+  store = new ApprovalStore(tempDir, "github");
 });
 
 afterEach(() => {
@@ -20,6 +20,7 @@ describe("ApprovalStore", () => {
   it("creates and retrieves an approval action", () => {
     const created = store.create("merge_pull_request", { pr: 42 });
 
+    expect(created.upstream).toBe("github");
     expect(store.get(created.id)).toEqual(created);
   });
 
@@ -33,20 +34,15 @@ describe("ApprovalStore", () => {
     expect(store.resolve(action.id, "rejected", "U999")).toBeUndefined();
   });
 
-  it("lists pending actions across primary and fallback directories", () => {
-    const fallbackDir = mkdtempSync(join(tmpdir(), "approval-fallback-"));
-    const storeWithFallback = new ApprovalStore(tempDir, [fallbackDir]);
-    const fallbackStore = new ApprovalStore(fallbackDir);
+  it("lists pending actions for the current upstream only", () => {
+    const pending = store.create("new_tool", {});
+    store.resolve(pending.id, "approved", "U1");
+    store.create("legacy_tool", {});
 
-    const primary = storeWithFallback.create("new_tool", {});
-    fallbackStore.create("legacy_tool", {});
-    store.resolve(primary.id, "approved", "U1");
+    const unresolved = store.listPending();
 
-    const pending = storeWithFallback.listPending();
-
-    expect(pending).toHaveLength(1);
-    expect(pending[0]?.tool).toBe("legacy_tool");
-
-    rmSync(fallbackDir, { recursive: true, force: true });
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0]?.tool).toBe("legacy_tool");
+    expect(unresolved[0]?.upstream).toBe("github");
   });
 });

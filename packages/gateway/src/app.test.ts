@@ -853,11 +853,9 @@ describe("gateway", () => {
     });
   });
 
-  it("resolves approval actions through remote-cli for both v2 and legacy v1 button values", async () => {
+  it("resolves approval actions through remote-cli for current v2 button values", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 })))
-      .mockResolvedValueOnce(new Response("ok"))
       .mockResolvedValueOnce(new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 })))
       .mockResolvedValueOnce(new Response("ok"));
 
@@ -871,13 +869,6 @@ describe("gateway", () => {
             channel: { id: "C123" },
             message: { ts: "1710000000.001" },
             actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
-          },
-          {
-            type: "block_actions",
-            user: { id: "U456" },
-            channel: { id: "C123" },
-            message: { ts: "1710000000.002" },
-            actions: [{ action_id: "approval_reject", value: "v1:act-2:3001" }],
           },
         ];
 
@@ -912,7 +903,7 @@ describe("gateway", () => {
     const execCalls = fetchImpl.mock.calls.filter(
       ([url]) => typeof url === "string" && url === "http://remote-cli.internal:3010/exec/mcp",
     );
-    expect(execCalls).toHaveLength(2);
+    expect(execCalls).toHaveLength(1);
     expect(execCalls[0]?.[1]).toMatchObject({
       method: "POST",
       headers: {
@@ -920,14 +911,6 @@ describe("gateway", () => {
         "x-thor-resolve-secret": "resolve-secret",
       },
       body: JSON.stringify({ args: ["resolve", "act-1", "approved", "U123"] }),
-    });
-    expect(execCalls[1]?.[1]).toMatchObject({
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-thor-resolve-secret": "resolve-secret",
-      },
-      body: JSON.stringify({ args: ["resolve", "act-2", "rejected", "U456"] }),
     });
   });
 });

@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 
 const ApprovalActionSchema = z.object({
   id: z.string(),
+  upstream: z.string(),
   status: z.enum(["pending", "approved", "rejected"]),
   tool: z.string(),
   args: z.record(z.string(), z.unknown()),
@@ -23,13 +24,14 @@ export type ApprovalAction = z.infer<typeof ApprovalActionSchema>;
 export class ApprovalStore {
   constructor(
     private readonly baseDir: string,
-    private readonly fallbackDirs: string[] = [],
+    private readonly upstream: string,
   ) {}
 
   create(tool: string, args: Record<string, unknown>): ApprovalAction {
     const now = new Date();
     const action: ApprovalAction = {
       id: randomUUID(),
+      upstream: this.upstream,
       status: "pending",
       tool,
       args,
@@ -41,13 +43,11 @@ export class ApprovalStore {
   }
 
   get(id: string): ApprovalAction | undefined {
-    for (const dir of [this.baseDir, ...this.fallbackDirs]) {
-      const dateDirs = this.listDateDirsIn(dir);
-      for (const dateDir of dateDirs) {
-        const filePath = join(dir, dateDir, `${id}.json`);
-        if (existsSync(filePath)) {
-          return ApprovalActionSchema.parse(JSON.parse(readFileSync(filePath, "utf-8")));
-        }
+    const dateDirs = this.listDateDirsIn(this.baseDir);
+    for (const dateDir of dateDirs) {
+      const filePath = join(this.baseDir, dateDir, `${id}.json`);
+      if (existsSync(filePath)) {
+        return ApprovalActionSchema.parse(JSON.parse(readFileSync(filePath, "utf-8")));
       }
     }
     return undefined;
@@ -77,25 +77,23 @@ export class ApprovalStore {
 
   listPending(): ApprovalAction[] {
     const pending: ApprovalAction[] = [];
-    for (const dir of [this.baseDir, ...this.fallbackDirs]) {
-      const dateDirs = this.listDateDirsIn(dir);
-      for (const dateDir of dateDirs) {
-        const dirPath = join(dir, dateDir);
-        let files: string[];
+    const dateDirs = this.listDateDirsIn(this.baseDir);
+    for (const dateDir of dateDirs) {
+      const dirPath = join(this.baseDir, dateDir);
+      let files: string[];
+      try {
+        files = readdirSync(dirPath).filter((file) => file.endsWith(".json"));
+      } catch {
+        continue;
+      }
+      for (const file of files) {
         try {
-          files = readdirSync(dirPath).filter((file) => file.endsWith(".json"));
+          const action = ApprovalActionSchema.parse(
+            JSON.parse(readFileSync(join(dirPath, file), "utf-8")),
+          );
+          if (action.status === "pending") pending.push(action);
         } catch {
-          continue;
-        }
-        for (const file of files) {
-          try {
-            const action = ApprovalActionSchema.parse(
-              JSON.parse(readFileSync(join(dirPath, file), "utf-8")),
-            );
-            if (action.status === "pending") pending.push(action);
-          } catch {
-            // Skip corrupt files.
-          }
+          // Skip corrupt files.
         }
       }
     }

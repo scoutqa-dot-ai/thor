@@ -45,6 +45,7 @@ export interface McpExecResult {
 
 export interface McpCommandContext {
   cwd?: string;
+  directory?: string;
   sessionId?: string;
   callId?: string;
   resolveSecret?: string;
@@ -144,7 +145,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   function getApprovalStore(name: string): ApprovalStore {
     const existing = approvalStores.get(name);
     if (existing) return existing;
-    const store = new ApprovalStore(`${approvalsDir}/${name}`, [approvalsDir]);
+    const store = new ApprovalStore(`${approvalsDir}/${name}`, name);
     approvalStores.set(name, store);
     return store;
   }
@@ -250,13 +251,15 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
   }
 
-  function getRepoFromCwd(cwd?: string): string | McpExecResult {
-    if (!cwd) {
-      return fail("Missing required field: cwd");
+  function getRepoFromDirectory(directory?: string): string | McpExecResult {
+    if (!directory) {
+      return fail("Missing required field: directory");
     }
-    const repo = extractRepoFromCwd(cwd);
+    const repo = extractRepoFromCwd(directory);
     if (!repo) {
-      return fail(`Cannot determine repo from directory: ${cwd}. Expected /workspace/repos/<repo>`);
+      return fail(
+        `Cannot determine repo from directory: ${directory}. Expected /workspace/repos/<repo> (worktrees are not allowed for MCP authz)`,
+      );
     }
     return repo;
   }
@@ -326,8 +329,8 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     );
   }
 
-  async function listUpstreams(cwd?: string): Promise<McpExecResult> {
-    const repo = getRepoFromCwd(cwd);
+  async function listUpstreams(directory?: string): Promise<McpExecResult> {
+    const repo = getRepoFromDirectory(directory);
     if (typeof repo !== "string") return repo;
 
     const allowed = getAllowedUpstreamsForRepo(repo);
@@ -609,10 +612,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
 
       if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-        return listUpstreams(context.cwd);
+        return listUpstreams(context.directory);
       }
 
-      const repo = getRepoFromCwd(context.cwd);
+      const repo = getRepoFromDirectory(context.directory);
       if (typeof repo !== "string") return repo;
 
       const upstreams = getAllowedUpstreamsForRepo(repo);
@@ -665,9 +668,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
       if (args[0] === "list") {
         const approvals = getConfiguredUpstreamNames().flatMap((upstreamName) =>
-          getApprovalStore(upstreamName)
-            .listPending()
-            .map((action) => ({ upstream: upstreamName, ...action })),
+          getApprovalStore(upstreamName).listPending(),
         );
         return ok(stringify({ approvals }));
       }

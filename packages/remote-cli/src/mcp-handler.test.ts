@@ -116,6 +116,7 @@ describe("remote-cli MCP endpoints", () => {
     const upstreams = await postJson("/exec/mcp", {
       args: [],
       cwd: "/workspace/repos/acme",
+      directory: "/workspace/repos/acme",
     });
     const upstreamBody = (await upstreams.json()) as { stdout: string };
 
@@ -127,6 +128,7 @@ describe("remote-cli MCP endpoints", () => {
     const listedTools = await postJson("/exec/mcp", {
       args: ["slack"],
       cwd: "/workspace/repos/acme",
+      directory: "/workspace/repos/acme",
     });
     const toolsBody = (await listedTools.json()) as { stdout: string };
 
@@ -135,7 +137,8 @@ describe("remote-cli MCP endpoints", () => {
 
     const call = await postJson("/exec/mcp", {
       args: ["slack", "listChannels", "{}"],
-      cwd: "/workspace/repos/acme",
+      cwd: "/workspace/worktrees/acme/feature-branch",
+      directory: "/workspace/repos/acme",
     });
     const callBody = (await call.json()) as {
       stdout: string;
@@ -160,10 +163,32 @@ describe("remote-cli MCP endpoints", () => {
     expect(healthBody.mcp.instances.slack).toEqual({ connected: true, tools: 3 });
   });
 
+  it("rejects worktree session directories for MCP authz", async () => {
+    const response = await postJson("/exec/mcp", {
+      args: [],
+      cwd: "/workspace/worktrees/acme/feature-branch",
+      directory: "/workspace/worktrees/acme/feature-branch",
+    });
+    const body = (await response.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      stdout: "",
+      stderr:
+        "Cannot determine repo from directory: /workspace/worktrees/acme/feature-branch. Expected /workspace/repos/<repo> (worktrees are not allowed for MCP authz)",
+      exitCode: 1,
+    });
+  });
+
   it("creates approvals, exposes them via approval commands, and blocks resolve without the secret", async () => {
     const pending = await postJson("/exec/mcp", {
       args: ["slack", "deleteMessage", '{"channel":"C1","ts":"123"}'],
       cwd: "/workspace/repos/acme",
+      directory: "/workspace/repos/acme",
     });
     const pendingBody = (await pending.json()) as { stdout: string };
 
@@ -181,6 +206,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(status.status).toBe(200);
     expect(JSON.parse(statusBody.stdout)).toMatchObject({
       id: actionId,
+      upstream: "slack",
       status: "pending",
       tool: "deleteMessage",
     });
