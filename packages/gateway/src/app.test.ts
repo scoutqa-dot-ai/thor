@@ -852,4 +852,82 @@ describe("gateway", () => {
       expect(fetchImpl).not.toHaveBeenCalled();
     });
   });
+
+  it("resolves approval actions through remote-cli for both v2 and legacy v1 button values", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 })))
+      .mockResolvedValueOnce(new Response("ok"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 })))
+      .mockResolvedValueOnce(new Response("ok"));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl) => {
+        const payloads = [
+          {
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.001" },
+            actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
+          },
+          {
+            type: "block_actions",
+            user: { id: "U456" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.002" },
+            actions: [{ action_id: "approval_reject", value: "v1:act-2:3001" }],
+          },
+        ];
+
+        for (const payloadData of payloads) {
+          const payload = encodeURIComponent(JSON.stringify(payloadData));
+          const body = `payload=${payload}`;
+          const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+          const response = await fetch(`${baseUrl}/slack/interactivity`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              "X-Slack-Request-Timestamp": timestamp,
+              "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        resolveSecret: "resolve-secret",
+      },
+    );
+
+    const execCalls = fetchImpl.mock.calls.filter(
+      ([url]) => typeof url === "string" && url === "http://remote-cli.internal:3010/exec/mcp",
+    );
+    expect(execCalls).toHaveLength(2);
+    expect(execCalls[0]?.[1]).toMatchObject({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-thor-resolve-secret": "resolve-secret",
+      },
+      body: JSON.stringify({ args: ["resolve", "act-1", "approved", "U123"] }),
+    });
+    expect(execCalls[1]?.[1]).toMatchObject({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-thor-resolve-secret": "resolve-secret",
+      },
+      body: JSON.stringify({ args: ["resolve", "act-2", "rejected", "U456"] }),
+    });
+  });
 });

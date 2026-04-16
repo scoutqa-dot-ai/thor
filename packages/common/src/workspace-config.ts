@@ -245,11 +245,11 @@ export function extractRepoFromCwd(cwd: string): string | undefined {
 }
 
 /**
- * Get the list of proxy names allowed for a repo.
+ * Get the list of upstream names allowed for a repo.
  * Returns undefined if the repo is not in config.
  * Returns empty array if repo exists but has no proxies field.
  */
-export function getRepoProxies(config: WorkspaceConfig, repoName: string): string[] | undefined {
+export function getRepoUpstreams(config: WorkspaceConfig, repoName: string): string[] | undefined {
   const repo = config.repos[repoName];
   if (!repo) return undefined;
   return repo.proxies ?? [];

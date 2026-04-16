@@ -4,7 +4,7 @@ import {
   createLogger,
   extractRepoFromCwd,
   formatThorMeta,
-  getRepoProxies,
+  getRepoUpstreams,
   interpolateHeaders,
   isAliasableMcpTool,
   logError,
@@ -263,7 +263,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   function getAllowedUpstreamsForRepo(repo: string): string[] | McpExecResult {
     const config = getConfig();
-    const allowed = getRepoProxies(config, repo);
+    const allowed = getRepoUpstreams(config, repo);
     if (allowed === undefined) {
       return fail(`Repo "${repo}" not found in config`);
     }

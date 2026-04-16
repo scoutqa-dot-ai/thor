@@ -14,7 +14,7 @@ import {
   WORKSPACE_CONFIG_PATH,
   interpolateHeaders,
   extractRepoFromCwd,
-  getRepoProxies,
+  getRepoUpstreams,
   isAliasableMcpTool,
   computeSlackAlias,
   formatThorMeta,
@@ -216,7 +216,7 @@ function checkRepoAccess(
   repo: string,
   upstreamName: string,
 ): boolean {
-  const allowed = getRepoProxies(config, repo);
+  const allowed = getRepoUpstreams(config, repo);
   if (allowed === undefined) {
     res.status(404).json({ error: `Repo "${repo}" not found in config` });
     return false;
@@ -236,7 +236,7 @@ app.get("/upstreams", (req, res) => {
   if (!repo) return;
 
   const config = getConfig();
-  const allowed = getRepoProxies(config, repo);
+  const allowed = getRepoUpstreams(config, repo);
   if (allowed === undefined) {
     res.status(404).json({ error: `Repo "${repo}" not found in config` });
     return;

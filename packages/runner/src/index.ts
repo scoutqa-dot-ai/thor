@@ -34,7 +34,7 @@ import {
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
   extractRepoFromCwd,
-  getRepoProxies,
+  getRepoUpstreams,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -96,7 +96,7 @@ function buildToolInstructions(directory: string): string | undefined {
     return undefined;
   }
 
-  const allowed = getRepoProxies(config, repo);
+  const allowed = getRepoUpstreams(config, repo);
   if (!allowed || allowed.length === 0) return undefined;
 
   const sections: string[] = [];
@@ -126,10 +126,8 @@ function buildToolInstructions(directory: string): string | undefined {
     "",
     ...sections,
     "",
-    "Usage: mcp <upstream> <tool> <<'EOF'",
-    '{"arg":"value"}',
-    "EOF",
-    "Always pass JSON via heredoc (<<'EOF') to avoid shell quoting issues.",
+    'Usage: mcp <upstream> <tool> \'{"arg":"value"}\'',
+    "Always pass a single JSON string argument.",
     "Run `mcp <upstream> <tool> --help` to see tool description and input schema.",
     "Run `approval status <id>` to check approval status.",
   ].join("\n");

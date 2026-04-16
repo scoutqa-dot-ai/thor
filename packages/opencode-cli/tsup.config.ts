@@ -3,7 +3,6 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: {
     "remote-cli": "src/remote-cli.ts",
-    "proxy-cli": "src/proxy-cli.ts",
   },
   format: "esm",
   target: "node22",
