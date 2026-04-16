@@ -198,13 +198,6 @@ export function getChannelRepoMap(config: WorkspaceConfig): Map<string, string> 
 }
 
 /**
- * Get proxy config by name, or undefined if not configured.
- */
-export function getProxyConfig(config: WorkspaceConfig, name: string): ProxyConfig | undefined {
-  return config.proxies?.[name];
-}
-
-/**
  * Interpolate ${ENV_VAR} references in a string.
  */
 export function interpolateEnv(value: string): string {

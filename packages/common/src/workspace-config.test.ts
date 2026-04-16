@@ -7,7 +7,6 @@ import {
   createConfigLoader,
   getAllowedChannelIds,
   getChannelRepoMap,
-  getProxyConfig,
   extractRepoFromCwd,
   getRepoUpstreams,
   interpolateEnv,
@@ -275,26 +274,6 @@ describe("getChannelRepoMap", () => {
     expect(map.get("C1")).toBe("repo-a");
     expect(map.get("C2")).toBe("repo-b");
     expect(map.get("C3")).toBe("repo-b");
-  });
-});
-
-describe("getProxyConfig", () => {
-  it("returns proxy config by name", () => {
-    const config = loadWorkspaceConfig(
-      writeConfig("config.json", {
-        repos: {},
-        proxies: {
-          slack: { upstream: { url: "http://slack:3003/mcp" }, allow: ["post_message"] },
-        },
-      }),
-    );
-    const proxy = getProxyConfig(config, "slack");
-    expect(proxy?.upstream.url).toBe("http://slack:3003/mcp");
-  });
-
-  it("returns undefined for unknown proxy", () => {
-    const config = loadWorkspaceConfig(writeConfig("config.json", { repos: {} }));
-    expect(getProxyConfig(config, "unknown")).toBeUndefined();
   });
 });
 

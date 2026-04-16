@@ -7,12 +7,12 @@ export {
   isAllowedDirectory,
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
-  getProxyConfig,
   extractRepoFromCwd,
   getRepoUpstreams,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";
+export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.js";
 export type {
   WorkspaceConfig,
   RepoConfig,
@@ -22,6 +22,7 @@ export type {
   GitHubAppInstallation,
   GitHubAppConfig,
 } from "./workspace-config.js";
+export type { ProxyName } from "./proxies.js";
 export { writeToolCallLog } from "./worklog.js";
 export type { ToolCallLogEntry } from "./worklog.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
