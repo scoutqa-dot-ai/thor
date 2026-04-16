@@ -33,6 +33,24 @@ describe("resolveOrgFromArgs", () => {
   it("returns undefined for -R with no slash", () => {
     expect(resolveOrgFromArgs(["-R", "just-a-name"])).toBeUndefined();
   });
+
+  it("extracts org from positional owner/repo (gh repo view)", () => {
+    expect(resolveOrgFromArgs(["repo", "view", "acme/web", "--json", "name"])).toBe("acme");
+  });
+
+  it("extracts org from HTTPS clone URL", () => {
+    expect(resolveOrgFromArgs(["clone", "https://github.com/acme/web.git", "/tmp/dest"])).toBe(
+      "acme",
+    );
+  });
+
+  it("extracts org from SSH clone URL", () => {
+    expect(resolveOrgFromArgs(["clone", "git@github.com:acme/web.git"])).toBe("acme");
+  });
+
+  it("prefers -R over positional arg", () => {
+    expect(resolveOrgFromArgs(["pr", "view", "-R", "acme/web", "other-org/repo"])).toBe("acme");
+  });
 });
 
 // ── Org resolution from remote URL ───────────────────────────────────────────

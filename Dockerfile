@@ -93,8 +93,9 @@ COPY packages/remote-cli/entrypoint.sh /entrypoint.sh
 COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git
 COPY packages/remote-cli/bin/gh /usr/local/lib/thor/bin/gh
 RUN chmod +x /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh
+RUN mkdir -p /var/lib/remote-cli/github-app/cache && chown -R thor:thor /var/lib/remote-cli
 USER thor
-RUN mkdir -p /workspace/repos /var/lib/remote-cli/github-app/cache
+RUN mkdir -p /workspace/repos
 WORKDIR /workspace/repos
 # Prepend Thor wrappers to PATH so they shadow /usr/bin/git and /usr/bin/gh
 ENV PATH="/usr/local/lib/thor/bin:$PATH"
