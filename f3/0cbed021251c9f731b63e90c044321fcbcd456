@@ -1,0 +1,27 @@
+docs/plan/2026041601_daytona-integration.md
+  c4dd5ec9c32542e1 305
+packages/remote-cli/src/sandbox.test.ts
+  c4dd5ec9c32542e1 197-198,202-210,288,398-399,403,466-467,469
+packages/remote-cli/src/sandbox.ts
+  c4dd5ec9c32542e1 53,394-397,404,417-418,459-461,464,476
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f30cbed021251c9f731b63e90c044321fcbcd456",
+  "prompts": {
+    "c4dd5ec9c32542e1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f1199e6-29d5-4dae-a6d6-1c866fc78dd5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 35,
+      "total_deletions": 107,
+      "accepted_lines": 35,
+      "overriden_lines": 0
+    }
+  }
+}
