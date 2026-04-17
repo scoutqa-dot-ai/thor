@@ -91,6 +91,14 @@ response_contains() {
   " 2>/dev/null || echo "no"
 }
 
+approval_tool_for_upstream() {
+  case "$1" in
+    atlassian) echo "createJiraIssue" ;;
+    posthog) echo "create-feature-flag" ;;
+    *) echo "" ;;
+  esac
+}
+
 # ── 1. Health checks ────────────────────────────────────────────────────────
 
 echo ""
@@ -198,53 +206,62 @@ APPROVAL_UPSTREAM=""
 APPROVAL_TOOL=""
 APPROVAL_DIR=""
 CONFIG_FILE="${HOST_WORKSPACE}/config.json"
+APPROVAL_DISCOVERY_DEBUG=""
+approval_health=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null || echo '{}')
 
-if [[ -f "$CONFIG_FILE" ]]; then
-  # Build a list of "repo:upstream" pairs — only connected upstreams with approve lists
-  repo_upstream_pairs=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null | pnpm --filter @thor/remote-cli exec tsx -e "
-    import { readFileSync } from 'node:fs';
-    import { PROXY_REGISTRY } from '../common/src/proxies.ts';
-    const health = JSON.parse(readFileSync(0,'utf8'));
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  APPROVAL_DISCOVERY_DEBUG="workspace config not found at $CONFIG_FILE"
+else
+  repo_upstream_pairs=$(CONFIG_FILE="$CONFIG_FILE" node -e "
+    const fs = require('fs');
+    const health = JSON.parse(fs.readFileSync(0, 'utf8'));
+    const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_FILE, 'utf8'));
     const connected = new Set(
       Object.entries(health.mcp?.instances || {})
-        .filter(([, info]) => info.connected)
+        .filter(([, info]) => info && info.connected)
         .map(([name]) => name)
     );
-    const cfg = JSON.parse(readFileSync('$CONFIG_FILE','utf8'));
-    const repos = cfg.repos || {};
-    for (const [repo, rcfg] of Object.entries(repos)) {
-      for (const p of (rcfg.proxies || [])) {
-        if (connected.has(p) && (PROXY_REGISTRY[p]?.approve || []).length > 0) {
-          console.log(repo + ':' + p);
+    for (const [repo, rcfg] of Object.entries(cfg.repos || {})) {
+      for (const upstream of (rcfg.proxies || [])) {
+        if (connected.has(upstream)) {
+          console.log(repo + ':' + upstream);
         }
       }
     }
-  " 2>/dev/null || echo "")
+  " <<<"$approval_health" 2>/dev/null || echo "")
 
-  for pair in $repo_upstream_pairs; do
-    repo_name="${pair%%:*}"
-    upstream_name="${pair##*:}"
-    test_dir="/workspace/repos/$repo_name"
-    host_dir="${HOST_WORKSPACE}/repos/$repo_name"
-    # Repo directory must exist on host (mounted into container)
-    if [[ ! -d "$host_dir" ]]; then
-      continue
-    fi
-    found_tool=$(pnpm --filter @thor/remote-cli exec tsx -e "
-      import { PROXY_REGISTRY } from '../common/src/proxies.ts';
-      console.log(PROXY_REGISTRY['$upstream_name']?.approve?.[0] || '');
-    " 2>/dev/null || echo "")
-    if [[ -n "$found_tool" ]]; then
-      APPROVAL_UPSTREAM="$upstream_name"
-      APPROVAL_TOOL="$found_tool"
-      APPROVAL_DIR="$test_dir"
-      break
-    fi
-  done
+  if [[ "$approval_health" != *'"status":"ok"'* ]]; then
+    APPROVAL_DISCOVERY_DEBUG="remote-cli health unavailable at $REMOTE_CLI_URL"
+  elif [[ -z "$repo_upstream_pairs" ]]; then
+    APPROVAL_DISCOVERY_DEBUG="No configured repo has a connected MCP upstream. Check $CONFIG_FILE and $REMOTE_CLI_URL/health."
+  else
+    while IFS= read -r pair; do
+      [[ -n "$pair" ]] || continue
+      repo_name="${pair%%:*}"
+      upstream_name="${pair##*:}"
+      test_dir="/workspace/repos/$repo_name"
+      host_dir="${HOST_WORKSPACE}/repos/$repo_name"
+      found_tool="$(approval_tool_for_upstream "$upstream_name")"
+      # Repo directory must exist on host (mounted into container)
+      if [[ ! -d "$host_dir" ]]; then
+        APPROVAL_DISCOVERY_DEBUG="${APPROVAL_DISCOVERY_DEBUG:+$APPROVAL_DISCOVERY_DEBUG; }missing host repo dir: $host_dir"
+        continue
+      fi
+      if [[ -n "$found_tool" ]]; then
+        APPROVAL_UPSTREAM="$upstream_name"
+        APPROVAL_TOOL="$found_tool"
+        APPROVAL_DIR="$test_dir"
+        break
+      fi
+      APPROVAL_DISCOVERY_DEBUG="${APPROVAL_DISCOVERY_DEBUG:+$APPROVAL_DISCOVERY_DEBUG; }upstream $upstream_name has no approval-required tool in e2e map"
+    done <<<"$repo_upstream_pairs"
+  fi
 fi
 
-if [[ -z "$APPROVAL_TOOL" || -z "$RESOLVE_SECRET" ]]; then
-  echo "  ⚠ No approval-required tools found — skipping approval flow tests"
+if [[ -z "$APPROVAL_TOOL" ]]; then
+  assert 'false' "approval flow: discovered an approval-required tool" "${APPROVAL_DISCOVERY_DEBUG:-approval tool discovery returned no match}"
+elif [[ -z "$RESOLVE_SECRET" ]]; then
+  assert 'false' "approval flow: RESOLVE_SECRET is available" "Set RESOLVE_SECRET or ensure docker exec thor-gateway-1 printenv RESOLVE_SECRET returns a value"
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
