@@ -1,0 +1,29 @@
+Dockerfile
+  b47a72529ab1d913 87-88
+packages/remote-cli/src/auth-helper.ts
+  b47a72529ab1d913 6-8,10-13,16,21-23,29-33,35-36,39-41,51-54
+packages/remote-cli/bin/git-askpass
+  b47a72529ab1d913 1-12
+packages/remote-cli/bin/git
+  b47a72529ab1d913 2-4,16,20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "9f53d1f3487c09c11962bc480147babebbb7f089",
+  "prompts": {
+    "b47a72529ab1d913": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b2d46d67-3938-4473-b9e4-6b6776eeb44c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 63,
+      "total_deletions": 47,
+      "accepted_lines": 48,
+      "overriden_lines": 0
+    }
+  }
+}
