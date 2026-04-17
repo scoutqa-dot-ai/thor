@@ -1,0 +1,23 @@
+docs/plan/2026041703_launchdarkly-cli.md
+  6dc76935cc78a4ab 8,12,14,19,23-24,29,32,38,46,54-69,72,74,78-105,112-114,120,122,126,128,134-135,141-142,145-151,153-155,157,164,170-186,190-196
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "334958e3db0c5859c98b1d47d9eb4309f9a63c05",
+  "prompts": {
+    "6dc76935cc78a4ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8ca9b9c6-68e7-40ee-a3c7-2650bf4c53fb",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 299,
+      "total_deletions": 103,
+      "accepted_lines": 272,
+      "overriden_lines": 0
+    }
+  }
+}
