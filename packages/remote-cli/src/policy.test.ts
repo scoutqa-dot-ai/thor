@@ -355,6 +355,8 @@ describe("validateLdcliArgs", () => {
       expect(validateLdcliArgs(["projects", "list"])).toBeNull();
       expect(validateLdcliArgs(["flags", "--help"])).toBeNull();
       expect(validateLdcliArgs(["flags", "list", "--project", "default", "--help"])).toBeNull();
+      expect(validateLdcliArgs(["flags", "list", "--help"])).toBeNull();
+      expect(validateLdcliArgs(["segments", "list", "-h"])).toBeNull();
     });
   });
 

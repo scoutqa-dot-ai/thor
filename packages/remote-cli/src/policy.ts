@@ -408,8 +408,9 @@ export function validateLdcliArgs(args: string[]): string | null {
     }
   }
 
+  const isHelpRequest = args.includes("--help") || args.includes("-h");
   if (
-    action !== "--help" &&
+    !isHelpRequest &&
     PROJECT_SCOPED_LDCLI_RESOURCES.has(resource) &&
     !hasOptionValue(args, "--project")
   ) {
