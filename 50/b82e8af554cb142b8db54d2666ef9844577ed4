@@ -1,0 +1,33 @@
+packages/remote-cli/src/index.test.ts
+  c4dd5ec9c32542e1 64
+docker/opencode/config/skills/sandbox/SKILL.md
+  c4dd5ec9c32542e1 27,29,50,79-82
+packages/remote-cli/src/sandbox.test.ts
+  c4dd5ec9c32542e1 6,45-62,97,139,162-169,173,179-182,189,195-213,217,223-226,233,239-243,245-246,257,284,307,339,359,367,374,378,381,406,413,415,422,427-428,433,435-436,438-453,459-470,472,474,486-487,507-509,528-529,543-544,557,568,584-585,622,637,648-649,672,706,736-737,756-758
+docs/plan/2026041601_daytona-integration.md
+  c4dd5ec9c32542e1 236-242,246-248,252-254,258,261,263-265,269-275
+packages/remote-cli/src/sandbox.ts
+  c4dd5ec9c32542e1 21,108,110-111,197-200,221-227,229-246,248-251,253-256,260,262-263,265-266,268-272,275,277,281-292,379-390,392-400,402-404,407,409-421
+packages/remote-cli/src/index.ts
+  c4dd5ec9c32542e1 229,234-235
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "50b82e8af554cb142b8db54d2666ef9844577ed4",
+  "prompts": {
+    "c4dd5ec9c32542e1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f1199e6-29d5-4dae-a6d6-1c866fc78dd5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 396,
+      "total_deletions": 287,
+      "accepted_lines": 289,
+      "overriden_lines": 0
+    }
+  }
+}
