@@ -1,0 +1,25 @@
+packages/opencode-cli/src/remote-cli.ts
+  c4dd5ec9c32542e1 38-39,56,60,63,67,72-90,114-121
+packages/remote-cli/src/index.ts
+  c4dd5ec9c32542e1 241-244
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5e3bcf7e80e0554e5fed9b64457863122350ef6b",
+  "prompts": {
+    "c4dd5ec9c32542e1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f1199e6-29d5-4dae-a6d6-1c866fc78dd5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 37,
+      "overriden_lines": 0
+    }
+  }
+}
