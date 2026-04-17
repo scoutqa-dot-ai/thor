@@ -17,6 +17,7 @@ import {
   validateCwd,
   validateGitArgs,
   validateGhArgs,
+  validateLdcliArgs,
   validateLangfuseArgs,
   validateMetabaseArgs,
   validateScoutqaArgs,
@@ -25,6 +26,7 @@ import {
 const log = createLogger("remote-cli");
 
 const PORT = parseInt(process.env.PORT || "3004", 10);
+const LDCLI_MAX_OUTPUT = 1024 * 1024;
 
 export interface RemoteCliAppConfig {
   getConfig?: ConfigLoader;
@@ -209,6 +211,40 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     }
   });
 
+  app.post("/exec/ldcli", async (req, res) => {
+    try {
+      const { args } = req.body ?? {};
+
+      const argsError = validateLdcliArgs(args);
+      if (argsError) {
+        res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
+        return;
+      }
+
+      const finalArgs = hasLdcliOutputOverride(args) ? args : [...args, "--output", "json"];
+
+      logInfo(log, "exec_ldcli", { args: finalArgs, ...thorIds(req) });
+      const result = await execCommand("ldcli", finalArgs, "/workspace", {
+        env: {
+          LD_ACCESS_TOKEN: process.env.LD_ACCESS_TOKEN,
+          LD_BASE_URI: process.env.LD_BASE_URI,
+          LD_PROJECT: process.env.LD_PROJECT,
+          LD_ENVIRONMENT: process.env.LD_ENVIRONMENT,
+        },
+        maxBuffer: LDCLI_MAX_OUTPUT,
+      });
+      res.json(result);
+    } catch (err) {
+      logError(
+        log,
+        "exec_ldcli_error",
+        err instanceof Error ? err.message : String(err),
+        thorIds(req),
+      );
+      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+    }
+  });
+
   app.post("/exec/metabase", async (req, res) => {
     try {
       const { args } = req.body ?? {};
@@ -303,6 +339,16 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     warmUp: () => mcpService.connectConfiguredUpstreams(),
     close: () => mcpService.closeAll(),
   };
+}
+
+function hasLdcliOutputOverride(args: string[]): boolean {
+  return args.some((arg, index) => {
+    if (arg === "--json" || arg.startsWith("--output=")) {
+      return true;
+    }
+
+    return arg === "--output" && Boolean(args[index + 1]);
+  });
 }
 
 export async function startRemoteCliServer(): Promise<void> {
