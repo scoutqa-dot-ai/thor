@@ -1,0 +1,35 @@
+docs/plan/2026041601_daytona-integration.md
+  c4dd5ec9c32542e1 303
+packages/remote-cli/src/sandbox.ts
+  c4dd5ec9c32542e1 24,94,123-124,141,222
+packages/remote-cli/src/index.ts
+  c4dd5ec9c32542e1 81-83
+packages/common/src/workspace-config.ts
+  c4dd5ec9c32542e1 36-39,44,51
+packages/common/src/workspace-config.test.ts
+  c4dd5ec9c32542e1 61-77
+packages/remote-cli/src/sandbox.test.ts
+  c4dd5ec9c32542e1 181,204-216
+docker/opencode/config/skills/sandbox/SKILL.md
+  c4dd5ec9c32542e1 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "c00697040053c1030ee7e8c609aaf6b9ff153464",
+  "prompts": {
+    "c4dd5ec9c32542e1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f1199e6-29d5-4dae-a6d6-1c866fc78dd5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 52,
+      "total_deletions": 2,
+      "accepted_lines": 50,
+      "overriden_lines": 0
+    }
+  }
+}
