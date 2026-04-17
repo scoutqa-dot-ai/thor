@@ -1,0 +1,23 @@
+docs/plan/2026041601_daytona-integration.md
+  c4dd5ec9c32542e1 102-103,106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ef95d2e47a9b1d89a107eaba2d8b5736945ec5f0",
+  "prompts": {
+    "c4dd5ec9c32542e1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f1199e6-29d5-4dae-a6d6-1c866fc78dd5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 1,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
