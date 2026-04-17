@@ -1,5 +1,3 @@
-<!-- /autoplan restore point: /Users/son.dao/.gstack/projects/scoutqa-dot-ai-thor/gh-app-token-cli-autoplan-restore-20260416-070954.md -->
-
 # GitHub App Auth via Thor `git` / `gh` Wrappers
 
 **Date**: 2026-04-15

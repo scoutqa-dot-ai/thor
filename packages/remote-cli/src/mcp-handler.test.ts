@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
@@ -12,17 +12,17 @@ import type { UpstreamConnection } from "./upstream.js";
 
 const tools: Tool[] = [
   {
-    name: "listChannels",
-    description: "List channels",
+    name: "getJiraIssue",
+    description: "Get a Jira issue",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
-    name: "deleteMessage",
-    description: "Delete a message",
+    name: "createJiraIssue",
+    description: "Create a Jira issue",
     inputSchema: {
       type: "object",
-      properties: { channel: { type: "string" }, ts: { type: "string" } },
-      required: ["channel", "ts"],
+      properties: { projectKey: { type: "string" }, summary: { type: "string" } },
+      required: ["projectKey", "summary"],
       additionalProperties: false,
     },
   },
@@ -38,26 +38,22 @@ describe("remote-cli MCP endpoints", () => {
   let server: Server;
   let baseUrl: string;
   let toolCalls: Array<{ name: string; arguments?: Record<string, unknown> }>;
+  let connectedUpstreams: string[];
   let closeRemoteCli: () => Promise<void>;
 
   const config: WorkspaceConfig = {
     repos: {
       acme: {
-        proxies: ["slack"],
-      },
-    },
-    proxies: {
-      slack: {
-        upstream: { url: "http://example.test/mcp" },
-        allow: ["listChannels"],
-        approve: ["deleteMessage"],
+        proxies: ["atlassian"],
       },
     },
   };
 
   beforeEach(async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
     approvalsDir = mkdtempSync(join(tmpdir(), "remote-cli-mcp-"));
     toolCalls = [];
+    connectedUpstreams = [];
     const getConfig = Object.assign(() => config, {
       invalidate: () => {},
     });
@@ -66,28 +62,38 @@ describe("remote-cli MCP endpoints", () => {
       getConfig,
       mcp: {
         approvalsDir,
+        isProduction: true,
         resolveSecret: "resolve-secret",
         writeToolCallLogFn: () => {},
-        connectUpstreamFn: async (): Promise<UpstreamConnection> => ({
-          tools,
-          client: {
-            callTool: async ({ name, arguments: args }) => {
-              toolCalls.push({ name, arguments: args });
-              if (name === "listChannels") {
-                return {
-                  content: [{ type: "text", text: "general\nengineering" }],
-                };
-              }
-              if (name === "deleteMessage") {
-                return {
-                  content: [{ type: "text", text: "deleted" }],
-                };
-              }
-              throw new Error(`Unexpected tool: ${name}`);
-            },
-            close: async () => {},
-          } as UpstreamConnection["client"],
-        }),
+        connectUpstreamFn: async (name: string): Promise<UpstreamConnection> => {
+          connectedUpstreams.push(name);
+          return {
+            tools,
+            client: {
+              callTool: async ({
+                name,
+                arguments: args,
+              }: {
+                name: string;
+                arguments?: Record<string, unknown>;
+              }) => {
+                toolCalls.push({ name, arguments: args });
+                if (name === "getJiraIssue") {
+                  return {
+                    content: [{ type: "text", text: "THOR-123" }],
+                  };
+                }
+                if (name === "createJiraIssue") {
+                  return {
+                    content: [{ type: "text", text: "created" }],
+                  };
+                }
+                throw new Error(`Unexpected tool: ${name}`);
+              },
+              close: async () => {},
+            } as unknown as UpstreamConnection["client"],
+          };
+        },
       },
     });
     closeRemoteCli = remoteCli.close;
@@ -110,6 +116,7 @@ describe("remote-cli MCP endpoints", () => {
     });
     await closeRemoteCli();
     rmSync(approvalsDir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
   });
 
   it("lists allowed upstreams and visible tools, then calls an allowed tool", async () => {
@@ -122,21 +129,21 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(upstreams.status).toBe(200);
     expect(JSON.parse(upstreamBody.stdout)).toEqual({
-      upstreams: [{ name: "slack", toolCount: 0, connected: false }],
+      upstreams: [{ name: "atlassian", toolCount: 0, connected: false }],
     });
 
     const listedTools = await postJson("/exec/mcp", {
-      args: ["slack"],
+      args: ["atlassian"],
       cwd: "/workspace/repos/acme",
       directory: "/workspace/repos/acme",
     });
     const toolsBody = (await listedTools.json()) as { stdout: string };
 
     expect(listedTools.status).toBe(200);
-    expect(toolsBody.stdout.trim().split("\n")).toEqual(["listChannels", "deleteMessage"]);
+    expect(toolsBody.stdout.trim().split("\n")).toEqual(["getJiraIssue", "createJiraIssue"]);
 
     const call = await postJson("/exec/mcp", {
-      args: ["slack", "listChannels", "{}"],
+      args: ["atlassian", "getJiraIssue", "{}"],
       cwd: "/workspace/worktrees/acme/feature-branch",
       directory: "/workspace/repos/acme",
     });
@@ -148,19 +155,53 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(call.status).toBe(200);
     expect(callBody).toMatchObject({
-      stdout: "general\nengineering",
+      stdout: "THOR-123",
       stderr: "",
       exitCode: 0,
     });
-    expect(toolCalls).toEqual([{ name: "listChannels", arguments: {} }]);
+    expect(toolCalls).toEqual([{ name: "getJiraIssue", arguments: {} }]);
 
     const health = await fetch(`${baseUrl}/health`);
     const healthBody = (await health.json()) as {
-      mcp: { instances: { slack: { connected: boolean; tools: number } } };
+      mcp: { configured: number; instances: { atlassian: { connected: boolean; tools: number } } };
     };
 
     expect(health.status).toBe(200);
-    expect(healthBody.mcp.instances.slack).toEqual({ connected: true, tools: 3 });
+    expect(healthBody.mcp.configured).toBe(1);
+    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 3 });
+  });
+
+  it("warms only upstreams enabled by repo config", async () => {
+    await closeRemoteCli();
+
+    const getConfig = Object.assign(() => config, {
+      invalidate: () => {},
+    });
+
+    const remoteCli = createRemoteCliApp({
+      getConfig,
+      mcp: {
+        approvalsDir,
+        isProduction: true,
+        resolveSecret: "resolve-secret",
+        writeToolCallLogFn: () => {},
+        connectUpstreamFn: async (name: string): Promise<UpstreamConnection> => {
+          connectedUpstreams.push(name);
+          return {
+            tools,
+            client: {
+              callTool: async () => ({ content: [] }),
+              close: async () => {},
+            } as unknown as UpstreamConnection["client"],
+          };
+        },
+      },
+    });
+
+    closeRemoteCli = remoteCli.close;
+    await remoteCli.warmUp();
+
+    expect(connectedUpstreams).toEqual(["atlassian"]);
   });
 
   it("rejects worktree session directories for MCP authz", async () => {
@@ -186,14 +227,14 @@ describe("remote-cli MCP endpoints", () => {
 
   it("creates approvals, exposes them via approval commands, and blocks resolve without the secret", async () => {
     const pending = await postJson("/exec/mcp", {
-      args: ["slack", "deleteMessage", '{"channel":"C1","ts":"123"}'],
+      args: ["atlassian", "createJiraIssue", '{"projectKey":"THOR","summary":"Fix it"}'],
       cwd: "/workspace/repos/acme",
       directory: "/workspace/repos/acme",
     });
     const pendingBody = (await pending.json()) as { stdout: string };
 
     expect(pending.status).toBe(200);
-    expect(pendingBody.stdout).toContain("Approval required for `deleteMessage`");
+    expect(pendingBody.stdout).toContain("Approval required for `createJiraIssue`");
     expect(toolCalls).toEqual([]);
 
     const actionId = pendingBody.stdout.match(/"actionId":"([^"]+)"/)?.[1];
@@ -206,16 +247,18 @@ describe("remote-cli MCP endpoints", () => {
     expect(status.status).toBe(200);
     expect(JSON.parse(statusBody.stdout)).toMatchObject({
       id: actionId,
-      upstream: "slack",
+      upstream: "atlassian",
       status: "pending",
-      tool: "deleteMessage",
+      tool: "createJiraIssue",
     });
 
     const list = await postJson("/exec/approval", { args: ["list"] });
     const listBody = (await list.json()) as { stdout: string };
     expect(list.status).toBe(200);
     expect(JSON.parse(listBody.stdout)).toMatchObject({
-      approvals: [expect.objectContaining({ id: actionId, upstream: "slack", status: "pending" })],
+      approvals: [
+        expect.objectContaining({ id: actionId, upstream: "atlassian", status: "pending" }),
+      ],
     });
 
     const deniedResolve = await postJson("/exec/mcp", {
@@ -245,11 +288,13 @@ describe("remote-cli MCP endpoints", () => {
     };
     expect(allowedResolve.status).toBe(200);
     expect(allowedBody).toMatchObject({
-      stdout: "deleted",
+      stdout: "created",
       stderr: "",
       exitCode: 0,
     });
-    expect(toolCalls).toEqual([{ name: "deleteMessage", arguments: { channel: "C1", ts: "123" } }]);
+    expect(toolCalls).toEqual([
+      { name: "createJiraIssue", arguments: { projectKey: "THOR", summary: "Fix it" } },
+    ]);
   });
 
   async function postJson(
