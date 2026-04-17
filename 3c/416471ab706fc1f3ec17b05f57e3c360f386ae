@@ -1,0 +1,31 @@
+README.md
+  b47a72529ab1d913 204
+packages/remote-cli/src/policy.ts
+  b47a72529ab1d913 110-116,119,121,250,270,275-284,292-313
+packages/remote-cli/src/sandbox.ts
+  b47a72529ab1d913 132,138-147,168
+packages/remote-cli/src/policy.test.ts
+  b47a72529ab1d913 76-87,144-159
+packages/remote-cli/src/sandbox.test.ts
+  b47a72529ab1d913 547-681
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3c416471ab706fc1f3ec17b05f57e3c360f386ae",
+  "prompts": {
+    "b47a72529ab1d913": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b2d46d67-3938-4473-b9e4-6b6776eeb44c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 276,
+      "total_deletions": 74,
+      "accepted_lines": 228,
+      "overriden_lines": 0
+    }
+  }
+}
