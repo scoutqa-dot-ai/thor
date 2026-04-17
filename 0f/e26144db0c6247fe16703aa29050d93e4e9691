@@ -1,0 +1,23 @@
+docker/opencode/config/skills/sandbox/SKILL.md
+  c4dd5ec9c32542e1 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "0fe26144db0c6247fe16703aa29050d93e4e9691",
+  "prompts": {
+    "c4dd5ec9c32542e1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f1199e6-29d5-4dae-a6d6-1c866fc78dd5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
