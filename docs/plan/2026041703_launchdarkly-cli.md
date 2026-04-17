@@ -38,8 +38,8 @@ OpenCode agent
 Add `POST /exec/ldcli` to the remote-cli service with a strict read-only policy.
 
 1. **Install `ldcli`** in the remote-cli Dockerfile target
-   - `npm install -g @launchdarkly/ldcli@<pinned-version>` in the remote-cli build stage
-   - Pinned version chosen at implementation time from the latest stable release
+   - `npm install -g @launchdarkly/ldcli@2.2.0` in the remote-cli build stage
+   - Pinned to the latest npm-published release available during implementation
    - Verify `ldcli --version` works
 
 2. **Add endpoint** in `packages/remote-cli/src/index.ts` (mirror the `/exec/langfuse` block, lines 184–210)
@@ -141,8 +141,8 @@ Add `POST /exec/ldcli` to the remote-cli service with a strict read-only policy.
    - CLI syntax: `ldcli <resource> <action> [options]`
    - Discovery: `ldcli <resource> --help` (the `ldcli resources` enumeration command is denied by policy — refer to this skill doc for the supported resource list)
    - Auth model: token is server-side; never pass `--access-token`
-   - Output: `--output json` is auto-appended; pipe into `jq` for filtering
-   - Scope: every resource call **requires** `--project <key>`; flag/segment lookups also typically need `--environment <key>`
+   - Output: `--output json` is auto-appended; inspect JSON fields directly
+   - Scope: scoped resource calls for `flags`, `environments`, `segments`, and `metrics` require `--project <key>`; flag/segment lookups also typically need `--environment <key>`
    - Cheat sheet (top read-only queries):
      - List flags in a project: `ldcli flags list --project default --limit 50`
      - Get one flag's full state: `ldcli flags get <flag-key> --project default --environment production`
@@ -166,24 +166,24 @@ Add `POST /exec/ldcli` to the remote-cli service with a strict read-only policy.
 
 ## Decision Log
 
-| #   | Decision                                                                                  | Reason                                                                                                                                                                          |
-| --- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Remote-CLI pattern, not MCP server                                                        | Consistent with `langfuse`/`metabase`/`gh`. MCP's main value is structured mutation tools; this plan has no mutations.                                                          |
-| 2   | Official `@launchdarkly/ldcli` (not custom REST client)                                   | Maintained by LD, covers every API resource, handles auth + JSON output. Same reasoning as `langfuse-cli`.                                                                      |
-| 3   | Strictly read-only policy                                                                 | Mutating LD state has real production blast radius. Land safe read access first; any mutation work gets its own plan with approval-flow integration.                            |
-| 4   | Use `ldcli` everywhere (wrapper name, endpoint name, env prefix `LD_*`, policy function)  | Consistency with the upstream binary and LD's own docs. Reduces translation cost when the agent reads LD docs vs. invokes the wrapper.                                          |
-| 5   | Drop `members`, `teams`, `config` from the resource allowlist                             | `members`/`teams` are PII without a current debugging need. `config` could leak the injected access-token surface even if the value itself is redacted; no read-only workflow needs it. |
-| 6   | `metrics` restricted to `list` only (no `get`)                                            | Listing alone covers the cross-reference workflow. Drop `get` until a concrete need appears — easier to widen than narrow.                                                      |
-| 7   | Drop `resources` (the LD discovery command)                                               | The skill doc and policy allowlist already enumerate every supported resource. Runtime enumeration would advertise resources the policy denies, which is misleading.            |
-| 8   | Mandatory `--project` scope for `flags`, `environments`, `segments`, `metrics`            | Forces the agent to be explicit, prevents accidental org-wide scans, and gives clearer audit logs.                                                                              |
-| 16  | Drop `audit-log` from the allowlist                                                       | No concrete read-only debugging workflow currently needs it; cross-referencing recent flag changes can be done via `flags list` ordering. Re-add later if a need appears.       |
-| 9   | Block `dev-server`, `login`, `setup`, `sourcemaps`                                        | Interactive / port-binding / write-only — none usable inside an automated container.                                                                                            |
-| 10  | Block `--access-token`, `--config`, `--data`, `--data-file`, `--output-file`, `--curl`    | Defense in depth. `--curl` is specifically denied because ldcli will print the access token in the rendered command.                                                            |
-| 11  | Always append `--output json`                                                             | Agent needs machine-readable output, mirrors langfuse `--json` precedent.                                                                                                       |
-| 12  | 1 MB output buffer for the ldcli endpoint                                                 | Flag lists in mature projects can run to hundreds of KB; default 256 KB risks silent truncation. Same as langfuse.                                                              |
-| 13  | Pin `@launchdarkly/ldcli` version                                                         | Prevent surprise breaking changes from unpinned global install. Same as `langfuse-cli@0.0.8`.                                                                                   |
-| 14  | Credentials only on remote-cli service                                                    | Same isolation pattern as `GH_TOKEN`, `LANGFUSE_*`, `METABASE_*` — agent container never sees the token.                                                                        |
-| 15  | Token requires only Reader role                                                           | Strictly read-only policy means a Reader token is sufficient and minimises blast radius if the env leaks.                                                                       |
+| #   | Decision                                                                                 | Reason                                                                                                                                                                                  |
+| --- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Remote-CLI pattern, not MCP server                                                       | Consistent with `langfuse`/`metabase`/`gh`. MCP's main value is structured mutation tools; this plan has no mutations.                                                                  |
+| 2   | Official `@launchdarkly/ldcli` (not custom REST client)                                  | Maintained by LD, covers every API resource, handles auth + JSON output. Same reasoning as `langfuse-cli`.                                                                              |
+| 3   | Strictly read-only policy                                                                | Mutating LD state has real production blast radius. Land safe read access first; any mutation work gets its own plan with approval-flow integration.                                    |
+| 4   | Use `ldcli` everywhere (wrapper name, endpoint name, env prefix `LD_*`, policy function) | Consistency with the upstream binary and LD's own docs. Reduces translation cost when the agent reads LD docs vs. invokes the wrapper.                                                  |
+| 5   | Drop `members`, `teams`, `config` from the resource allowlist                            | `members`/`teams` are PII without a current debugging need. `config` could leak the injected access-token surface even if the value itself is redacted; no read-only workflow needs it. |
+| 6   | `metrics` restricted to `list` only (no `get`)                                           | Listing alone covers the cross-reference workflow. Drop `get` until a concrete need appears — easier to widen than narrow.                                                              |
+| 7   | Drop `resources` (the LD discovery command)                                              | The skill doc and policy allowlist already enumerate every supported resource. Runtime enumeration would advertise resources the policy denies, which is misleading.                    |
+| 8   | Mandatory `--project` scope for `flags`, `environments`, `segments`, `metrics`           | Forces the agent to be explicit, prevents accidental org-wide scans, and gives clearer audit logs.                                                                                      |
+| 16  | Drop `audit-log` from the allowlist                                                      | No concrete read-only debugging workflow currently needs it; cross-referencing recent flag changes can be done via `flags list` ordering. Re-add later if a need appears.               |
+| 9   | Block `dev-server`, `login`, `setup`, `sourcemaps`                                       | Interactive / port-binding / write-only — none usable inside an automated container.                                                                                                    |
+| 10  | Block `--access-token`, `--config`, `--data`, `--data-file`, `--output-file`, `--curl`   | Defense in depth. `--curl` is specifically denied because ldcli will print the access token in the rendered command.                                                                    |
+| 11  | Always append `--output json`                                                            | Agent needs machine-readable output, mirrors langfuse `--json` precedent.                                                                                                               |
+| 12  | 1 MB output buffer for the ldcli endpoint                                                | Flag lists in mature projects can run to hundreds of KB; default 256 KB risks silent truncation. Same as langfuse.                                                                      |
+| 13  | Pin `@launchdarkly/ldcli` to `2.2.0`                                                     | Prevent surprise breaking changes from unpinned global install, and use the latest version actually published on npm during implementation.                                             |
+| 14  | Credentials only on remote-cli service                                                   | Same isolation pattern as `GH_TOKEN`, `LANGFUSE_*`, `METABASE_*` — agent container never sees the token.                                                                                |
+| 15  | Token requires only Reader role                                                          | Strictly read-only policy means a Reader token is sufficient and minimises blast radius if the env leaks.                                                                               |
 
 ## Out of Scope
 

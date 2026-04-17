@@ -16,7 +16,7 @@ flowchart LR
     F[Atlassian MCP]
     G[PostHog MCP]
     H[Grafana MCP]
-    I[Langfuse / Git / GH / Metabase]
+    I[Langfuse / Git / GH / Metabase / LaunchDarkly]
 
     C --> B
     B --> A
@@ -39,6 +39,7 @@ flowchart LR
 | Grafana MCP      | `remote-cli /exec/mcp`                       | Service account token   | Logs and observability             |
 | Slack MCP        | `remote-cli /exec/mcp` + `slack-mcp` service | Bot token               | Messaging + approval notifications |
 | Langfuse         | `remote-cli /exec/langfuse`                  | API key pair            | Read-only trace queries            |
+| LaunchDarkly     | `remote-cli /exec/ldcli`                     | Access token            | Read-only feature flag inspection  |
 | Metabase         | `remote-cli /exec/metabase`                  | API key                 | Read-only warehouse access         |
 
 ## MCP Policy Layer
