@@ -1,0 +1,25 @@
+packages/remote-cli/src/policy.ts
+  4495b342600b5113 110-121,149-155,157-160,164-166,168-171,173-174,176-179
+packages/remote-cli/src/policy.test.ts
+  4495b342600b5113 119-153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "70857f85f5904378649ccd019d7f8f1fb252cb17",
+  "prompts": {
+    "4495b342600b5113": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b45c4d29-bfa3-425b-b137-3f9397252ac7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Conductor <conductor@noreply>",
+      "messages": [],
+      "total_additions": 193,
+      "total_deletions": 116,
+      "accepted_lines": 87,
+      "overriden_lines": 0
+    }
+  }
+}
