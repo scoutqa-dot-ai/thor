@@ -360,7 +360,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       const result = await execInSandbox(sandbox.id, sandboxCommand);
       if (result.output) {
-        writeNdjson({ stream: result.exitCode === 0 ? "stdout" : "stderr", data: result.output });
+        writeNdjson({ stream: "stdout", data: result.output });
       }
       writeNdjson({ exitCode: result.exitCode });
       res.end();

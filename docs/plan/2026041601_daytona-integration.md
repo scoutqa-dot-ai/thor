@@ -68,10 +68,11 @@ sandbox --list                         # list session's sandboxes
 │          d. SDK: sandbox.fs.uploadFile(bundle)                 │
 │          e. sandbox: git init + bundle unbundle + reset SHA    │
 │    2. Preflight: verify clean worktree, resolve HEAD SHA       │
-│    3. Sync via bundle upload:                                  │
-│       a. git bundle create (delta: last-sha..HEAD) on host    │
-│       b. SDK: sandbox.fs.uploadFile(delta bundle)             │
-│       c. sandbox: git bundle unbundle + reset --hard SHA      │
+│    3. Sync via bundle upload (skip if SHA unchanged):          │
+│       a. Try delta: git bundle create (last-sha..HEAD)        │
+│       b. On failure: fallback to full bundle (HEAD)           │
+│       c. SDK: sandbox.fs.uploadFile(bundle)                   │
+│       d. sandbox: git bundle unbundle + reset --hard SHA      │
 │    4. SDK: sandbox.commands.run(command)                        │
 │    5. Stream stdout/stderr via NDJSON                          │
 │                                                                │
@@ -140,10 +141,11 @@ sandbox --list                         # list session's sandboxes
        g. On any failure: delete the sandbox, surface generic error (admin-only rich context in logs)
     2. Preflight: verify clean worktree (`git status --porcelain`), resolve HEAD SHA
     3. Sync via bundle upload (skip if SHA unchanged from `thor-sha` label):
-       a. `git bundle create /tmp/<id>.bundle <last-sha>..HEAD` on host (delta bundle)
-       b. SDK: `sandbox.fs.uploadFile('/tmp/<id>.bundle', '/tmp/sync.bundle')`
-       c. SDK: `sandbox.commands.exec('cd /workspace/repo && git bundle unbundle /tmp/sync.bundle && git reset --hard <sha> && rm /tmp/sync.bundle')`
-       d. Update `thor-sha` label to current HEAD
+       a. Try delta: `git bundle create /tmp/<id>.bundle <last-sha>..HEAD` on host
+       b. On failure (backward reset, unrelated branch): fallback to full `HEAD` bundle
+       c. SDK: `sandbox.fs.uploadFile('/tmp/<id>.bundle', '/tmp/sync.bundle')`
+       d. SDK: `sandbox.commands.exec('cd /workspace/repo && git bundle unbundle /tmp/sync.bundle && git reset --hard <sha> && rm /tmp/sync.bundle')`
+       e. Update `thor-sha` label to current HEAD
     4. Join args into command string, run via `sh -c` in sandbox
     5. Stream stdout/stderr via NDJSON
   - `create` (operator): same as auto-create above, without running a command. Returns sandbox ID.
@@ -155,7 +157,7 @@ sandbox --list                         # list session's sandboxes
   - **Stateless**: no in-memory maps. Sandbox lookup via Daytona labels (`thor-managed`, `thor-cwd`, `thor-branch`, `thor-sha`). Only `cwdLocks` (ephemeral mutex) kept in memory. Survives remote-cli restart.
   - **No git credentials in sandbox.** Code sync uses git bundle upload via `sandbox.fs.uploadFile()`. Sandbox never contacts origin.
   - `createSandbox(name, cwd, sha, labels): Promise<string>` — create sandbox, bundle full repo, upload, unbundle+reset
-  - `syncSandbox(id, cwd, lastSha, sha): Promise<void>` — bundle delta (`lastSha..HEAD`), upload, unbundle+reset. Skip if SHA unchanged.
+  - `syncSandbox(id, cwd, lastSha, sha): Promise<void>` — try delta bundle (`lastSha..HEAD`), fall back to full bundle on failure (handles backward reset, unrelated branch). Skip if SHA unchanged.
   - `bundleAndUpload(sandbox, cwd, range, sha): Promise<void>` — shared helper:
     1. `git bundle create /tmp/<id>.bundle <range>` on host
     2. `sandbox.fs.uploadFile('/tmp/<id>.bundle', '/tmp/sync.bundle')` — streaming, supports large repos
@@ -253,7 +255,7 @@ sandbox --list                         # list session's sandboxes
 | 2026-04-18 | Sandbox is primary execution path; local Node for lightweight tasks             | Most repos are Java — sandbox is the 80% case. Local Node still available for lightweight tasks (formatting, scripts) but skill doc teaches only `sandbox`. No language exceptions to learn.                                                                                                                                           |
 | 2026-04-18 | No session-end cleanup; rely on Daytona auto-stop                               | Agent may run long-running sandbox processes. Killing on session end would cut off streaming output. Daytona auto-stop (15 min idle) is sufficient. Cost of leaked sandbox: ~$0.01. Avoids complexity of session lifecycle hooks.                                                                                                      |
 | 2026-04-18 | Git bundle upload for sync, not scratch-push to origin                          | Daytona SDK has `sandbox.fs.uploadFile()` with streaming support. Bundle created on host, uploaded via SDK, unbundled in sandbox. Zero writes to origin, zero credentials in sandbox, no stale ref cleanup needed. Supersedes scratch-push + embedded-token-in-URL approach.                                                           |
-| 2026-04-18 | Delta bundles for subsequent syncs                                              | After initial full bundle, sync uses `git bundle create <last-sha>..HEAD` for delta only. `thor-sha` label on sandbox tracks last-synced SHA. Skip sync entirely if SHA unchanged. Keeps upload small for iterative edit-test cycles.                                                                                                  |
+| 2026-04-18 | Delta bundles with full-bundle fallback for subsequent syncs                    | Try delta bundle (`last-sha..HEAD`) first; on failure (backward reset, unrelated branch, empty range) fall back to full bundle (`HEAD`). `thor-sha` label tracks last-synced SHA. Skip sync entirely if SHA unchanged.                                                                                                                 |
 | 2026-04-18 | Sandbox has no git remotes                                                      | Bundle unbundle + reset creates a local repo with no origin configured. Sandbox cannot fetch/push anywhere. Eliminates credential stripping follow-up (P2) and the entire token-in-URL pattern. Strongest possible isolation.                                                                                                          |
 
 ## Exit Criteria

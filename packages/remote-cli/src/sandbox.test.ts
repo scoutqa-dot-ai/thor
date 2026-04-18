@@ -166,7 +166,7 @@ describe("/exec/sandbox", () => {
     const bundleCall = execCommandMock.mock.calls.find(
       (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "bundle",
     );
-    expect(bundleCall?.[1]?.[3]).toBe(`${OLD_SHA}..${HEAD_SHA}`);
+    expect(bundleCall?.[1]?.[3]).toBe(`${OLD_SHA}..HEAD`);
     expect(sandbox.labels[THOR_SHA_LABEL]).toBe(HEAD_SHA);
   });
 

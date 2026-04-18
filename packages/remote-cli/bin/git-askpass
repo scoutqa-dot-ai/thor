@@ -4,7 +4,7 @@
 # The Node helper resolves the org from that prompt and prints the token to
 # stdout. If GitHub App resolution yields nothing, fall back to GITHUB_PAT.
 
-TOKEN=$(node /app/packages/remote-cli/dist/auth-helper.js git-askpass "$1")
+TOKEN=$(node /app/packages/remote-cli/dist/auth-helper.js git-askpass "$1") || TOKEN=""
 if [ -n "$TOKEN" ]; then
   printf '%s' "$TOKEN"
 elif [ -n "$GITHUB_PAT" ]; then

@@ -86,9 +86,18 @@ export async function syncSandbox(
   }
 
   const sandbox = await getSandboxById(sandboxId);
-  const bundleRange = lastSha ? `${lastSha}..${currentSha}` : "HEAD";
 
-  await bundleAndUpload(sandbox, cwd, bundleRange, currentSha);
+  if (lastSha) {
+    try {
+      // Try delta bundle (works for forward commits on the same branch)
+      await bundleAndUpload(sandbox, cwd, `${lastSha}..HEAD`, currentSha);
+    } catch {
+      // Fall back to full bundle (handles backward reset, unrelated branch, empty range)
+      await bundleAndUpload(sandbox, cwd, "HEAD", currentSha);
+    }
+  } else {
+    await bundleAndUpload(sandbox, cwd, "HEAD", currentSha);
+  }
 
   await sandbox.setLabels({
     ...sandbox.labels,
@@ -122,7 +131,8 @@ export async function bundleAndUpload(
 
     const resetCmd = [
       "set -e",
-      `mkdir -p ${DAYTONA_REPO_DIR}`,
+      `sudo mkdir -p ${DAYTONA_REPO_DIR}`,
+      `sudo chown $(whoami) ${DAYTONA_REPO_DIR}`,
       `cd ${DAYTONA_REPO_DIR}`,
       "if [ ! -d .git ]; then git init; fi",
       `git bundle unbundle ${SANDBOX_SYNC_BUNDLE_PATH}`,
