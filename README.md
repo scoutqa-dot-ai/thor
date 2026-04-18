@@ -22,7 +22,6 @@ ingress -> gateway -> runner -> opencode
 | Service       | Port | Package            | Role                                       |
 | ------------- | ---- | ------------------ | ------------------------------------------ |
 | `cron`        | -    | `docker/cron`      | Scheduled prompts                          |
-| `data`        | 3080 | `docker/data`      | Optional credential-injecting HTTP proxy   |
 | `gateway`     | 3002 | `@thor/gateway`    | Slack webhook ingestion and batching       |
 | `remote-cli`  | 3004 | `@thor/remote-cli` | CLI + MCP policy gateway                   |
 | `grafana-mcp` | 8000 | Docker image       | Grafana MCP server                         |
@@ -75,7 +74,6 @@ Thor ships with generic defaults. A new deployment typically needs:
 | ----------------------------------- | -------- | ----------------------- | ---------------------------------------------------------- |
 | `ATLASSIAN_AUTH`                    | Yes      | `remote-cli`            | Atlassian MCP auth header value                            |
 | `CRON_SECRET`                       | Yes      | `gateway`, `cron`       | Shared secret for cron endpoint auth                       |
-| `DATA_ROUTES`                       | No       | `data`                  | Comma-separated list of credential-injecting proxy routes  |
 | `GIT_USER_EMAIL`                    | No       | `remote-cli`            | Git author email                                           |
 | `GIT_USER_NAME`                     | No       | `remote-cli`            | Git author name                                            |
 | `GITHUB_APP_ID`                     | No       | `remote-cli`            | GitHub App ID for GitHub App auth                          |
@@ -129,18 +127,36 @@ GitHub App installation entries live under `github_app.installations` in that co
 }
 ```
 
-If you have internal APIs that Thor should access with injected credentials, add routes to `.env`:
+## Adding Credential Rules
 
-```bash
-DATA_ROUTES=billing,analytics
-DATA_ROUTE_billing_UPSTREAM=https://billing.example.com/
-DATA_ROUTE_billing_KEY=sk-your-api-key
-DATA_ROUTE_billing_HEADER=X-Custom-Auth
-DATA_ROUTE_analytics_UPSTREAM=https://analytics.example.com/
-DATA_ROUTE_analytics_KEY=sk-your-other-key
+Thor routes all opencode outbound HTTPS through an mitmproxy forward proxy that injects credentials per host. To give opencode access to an internal API:
+
+1. Add a rule to `/workspace/config.json` (no container restart needed):
+
+```json
+{
+  "mitmproxy": [
+    {
+      "host": "api.example.com",
+      "headers": { "Authorization": "${EXAMPLE_API_KEY}" }
+    }
+  ]
+}
 ```
 
-The data container generates its nginx config from those vars at startup.
+2. Set the env var in `.env` and restart mitmproxy:
+
+```bash
+EXAMPLE_API_KEY=sk-your-api-key
+```
+
+```bash
+docker compose up -d --force-recreate mitmproxy
+```
+
+opencode can now call `https://api.example.com/...` directly — credentials are injected transparently. The LLM only ever sees the real upstream URL, not a proxy URL.
+
+Add `"readonly": true` to a rule to restrict the host to GET/HEAD (useful for read-only data sources).
 
 ## Operations Notes
 
@@ -198,8 +214,8 @@ thor/
 │   └── slack-mcp/
 ├── docker/
 │   ├── cron/
-│   ├── data/
 │   ├── ingress/
+│   ├── mitmproxy/
 │   └── opencode/
 ├── docs/
 ├── scripts/
