@@ -121,7 +121,11 @@ services:
     env_file:
       - .env
     volumes:
-      - ./docker-volumes/mitmproxy-ca:/etc/thor/mitmproxy:ro
+      # Mount cert and key as separate files so key.pem stays chmod 600 on the host.
+      # The entrypoint (running as root) concatenates them into /run/mitmproxy/ and
+      # drops to mitmproxy-svc via gosu — private key never touches a world-readable path.
+      - ./docker-volumes/mitmproxy-ca/cert.pem:/etc/thor/mitmproxy-ca/cert.pem:ro
+      - ./docker-volumes/mitmproxy-ca/key.pem:/etc/thor/mitmproxy-ca/key.pem:ro
       - ./docker-volumes/workspace:/workspace:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "-x", "http://localhost:8080", "http://__health.thor/"]

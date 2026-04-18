@@ -24,8 +24,12 @@ for arg in "$@"; do
   esac
 done
 
-if [ -f "$CA_DIR/mitmproxy-ca.pem" ] && [ "$FORCE" = "false" ]; then
+if [ -f "$CA_DIR/key.pem" ] && [ "$FORCE" = "false" ]; then
   echo "CA already exists at $CA_DIR."
+  # Apply correct permissions idempotently (safe upgrade path from older script versions).
+  chmod 600 "$CA_DIR/key.pem" 2>/dev/null || true
+  chmod 644 "$CA_DIR/cert.pem" 2>/dev/null || true
+  [ -f "$CA_DIR/public/cert.pem" ] && chmod 644 "$CA_DIR/public/cert.pem" 2>/dev/null || true
   echo "Run with --force to overwrite (rotation). Existing containers must be restarted after rotation."
   exit 0
 fi
@@ -43,22 +47,18 @@ openssl req -x509 \
   -out    "$CA_DIR/cert.pem" \
   -subj   "/CN=Thor mitmproxy CA/O=Thor/C=US"
 
-# mitmproxy expects cert+key concatenated in its confdir as mitmproxy-ca.pem
-cat "$CA_DIR/cert.pem" "$CA_DIR/key.pem" > "$CA_DIR/mitmproxy-ca.pem"
-
 # public/ contains only the cert — this is the only subdirectory mounted into
-# opencode. key.pem and mitmproxy-ca.pem never leave the parent directory.
+# opencode. key.pem never leaves the parent directory.
 mkdir -p "$CA_DIR/public"
 cp "$CA_DIR/cert.pem" "$CA_DIR/public/cert.pem"
 
-chmod 600 "$CA_DIR/key.pem" "$CA_DIR/mitmproxy-ca.pem"
+chmod 600 "$CA_DIR/key.pem"
 chmod 644 "$CA_DIR/cert.pem" "$CA_DIR/public/cert.pem"
 
 echo ""
 echo "CA written to $CA_DIR:"
 echo "  cert.pem         — public cert  (also at public/cert.pem)"
-echo "  key.pem          — private key  (mitmproxy only, never opencode)"
-echo "  mitmproxy-ca.pem — cert + key   (mitmproxy confdir format)"
+echo "  key.pem          — private key  (chmod 600; only the mitmproxy container reads it)"
 echo "  public/cert.pem  — public cert  (mounted read-only into opencode)"
 echo ""
 echo "Next steps:"
