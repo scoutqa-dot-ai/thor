@@ -238,7 +238,7 @@ describe("mitmproxy schema", () => {
   it("accepts a valid host_suffix rule", () => {
     const path = writeConfig("config.json", {
       repos: {},
-      mitmproxy: [{ host_suffix: ".acme.example" }],
+      mitmproxy: [{ host_suffix: ".acme.example", headers: { "X-Api-Key": "${KEY}" } }],
     });
     const config = loadWorkspaceConfig(path);
     expect(config.mitmproxy?.[0].host_suffix).toBe(".acme.example");
@@ -247,7 +247,9 @@ describe("mitmproxy schema", () => {
   it("accepts readonly flag", () => {
     const path = writeConfig("config.json", {
       repos: {},
-      mitmproxy: [{ host: "api.example.com", readonly: true }],
+      mitmproxy: [
+        { host: "api.example.com", headers: { Authorization: "${TOKEN}" }, readonly: true },
+      ],
     });
     const config = loadWorkspaceConfig(path);
     expect(config.mitmproxy?.[0].readonly).toBe(true);
@@ -256,7 +258,7 @@ describe("mitmproxy schema", () => {
   it("rejects rule with both host and host_suffix", () => {
     const path = writeConfig("config.json", {
       repos: {},
-      mitmproxy: [{ host: "a.com", host_suffix: ".a.com" }],
+      mitmproxy: [{ host: "a.com", host_suffix: ".a.com", headers: { X: "y" } }],
     });
     expect(() => loadWorkspaceConfig(path)).toThrow("Exactly one of");
   });
@@ -264,9 +266,25 @@ describe("mitmproxy schema", () => {
   it("rejects rule with neither host nor host_suffix", () => {
     const path = writeConfig("config.json", {
       repos: {},
-      mitmproxy: [{ headers: {} }],
+      mitmproxy: [{ headers: { X: "y" } }],
     });
     expect(() => loadWorkspaceConfig(path)).toThrow("Exactly one of");
+  });
+
+  it("rejects rule with empty headers (silent-allow foot-gun)", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [{ host: "api.example.com", headers: {} }],
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow("non-empty");
+  });
+
+  it("rejects rule missing headers entirely", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [{ host: "api.example.com" }],
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow();
   });
 
   it("rejects host_suffix without leading dot", () => {

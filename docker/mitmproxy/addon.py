@@ -28,6 +28,9 @@ _DEFAULT_CONFIG_PATH = "/workspace/config.json"
 
 _ruleset: Optional[RuleSet] = None
 _config_mtime: float = -1.0
+# Last reload error message (cleared on successful reload). Surfaced via /__health
+# so operators can detect a broken config edit without tailing logs.
+_last_config_error: Optional[str] = None
 
 
 # ── mitmproxy lifecycle hooks ────────────────────────────────────────────────
@@ -60,18 +63,23 @@ def _handle(flow: HTTPFlow) -> None:
     # Strip Proxy-Authorization before forwarding (AD12) — unconditional, before any branch
     flow.request.headers.pop("Proxy-Authorization", None)
 
-    # Health intercept — synthetic response, no upstream connection
+    # Health intercept — synthetic response, no upstream connection.
+    # Refresh the ruleset first so a broken config edit surfaces as degraded,
+    # rather than hiding behind a cached last-known-good.
     if host_raw == _HEALTH_HOST:
-        rs = _ruleset
-        status = 200 if rs is not None else 503
-        body = json.dumps(
-            {
-                "status": "ok" if rs is not None else "degraded",
-                "rules": len(rs.rules) if rs else 0,
-                "mtime": rs.mtime if rs else None,
-            }
+        rs = _refresh_ruleset()
+        degraded = rs is None or _last_config_error is not None
+        status = 503 if degraded else 200
+        body = {
+            "status": "degraded" if degraded else "ok",
+            "rules": len(rs.rules) if rs else 0,
+            "mtime": rs.mtime if rs else None,
+        }
+        if _last_config_error is not None:
+            body["config_error"] = _last_config_error
+        flow.response = http.Response.make(
+            status, json.dumps(body), {"content-type": "application/json"}
         )
-        flow.response = http.Response.make(status, body, {"content-type": "application/json"})
         return
 
     host = canonicalize_host(host_raw)
@@ -137,7 +145,7 @@ def response(flow: HTTPFlow) -> None:
 
 
 def _refresh_ruleset() -> Optional[RuleSet]:
-    global _ruleset, _config_mtime
+    global _ruleset, _config_mtime, _last_config_error
     try:
         path = ctx.options.config_path
         mtime = Path(path).stat().st_mtime
@@ -146,7 +154,9 @@ def _refresh_ruleset() -> Optional[RuleSet]:
             _ruleset = new_rs
             _config_mtime = mtime
             _apply_passthrough(new_rs.passthrough_hosts)
+        _last_config_error = None
     except Exception as exc:
+        _last_config_error = f"{type(exc).__name__}: {exc}"
         if _ruleset is not None:
             ctx.log.warn(f"thor-proxy: config reload failed (using last good): {exc}")
         else:
@@ -155,8 +165,13 @@ def _refresh_ruleset() -> Optional[RuleSet]:
 
 
 def _apply_passthrough(hosts: list[str]) -> None:
-    """Update mitmproxy ignore_hosts with anchored regex patterns for each host."""
-    ctx.options.ignore_hosts = [f"^{re.escape(h)}$" for h in hosts]
+    """Update mitmproxy ignore_hosts with anchored regex patterns for each host.
+
+    mitmproxy matches ignore_hosts against the CONNECT target (host:port) for
+    HTTPS, and against the Host header for HTTP. The optional port suffix lets
+    a bare host match both forms.
+    """
+    ctx.options.ignore_hosts = [f"^{re.escape(h)}(?::\\d+)?$" for h in hosts]
 
 
 def _make_error(status: int, code: str, host: str) -> http.Response:

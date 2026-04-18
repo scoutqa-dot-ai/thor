@@ -59,13 +59,18 @@ def find_rule(rules: list[Rule], host: str) -> Optional[Rule]:
 
 
 def interpolate(value: str) -> str:
-    """Expand ${VAR} references. Raises ValueError if any var is missing."""
+    """Expand ${VAR} references. Raises ValueError if any var is missing or
+    its value contains control characters that would allow header smuggling."""
 
     def _sub(m: re.Match) -> str:
         name = m.group(1)
         v = os.environ.get(name)
         if v is None:
             raise ValueError(f"environment variable {name!r} is not set")
+        if any(c in v for c in ("\r", "\n", "\x00")):
+            raise ValueError(
+                f"environment variable {name!r} contains control characters (CR/LF/NUL)"
+            )
         return v
 
     return _ENV_RE.sub(_sub, value)

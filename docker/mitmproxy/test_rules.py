@@ -106,6 +106,20 @@ class TestInterpolate(unittest.TestCase):
             interpolate("${_MISSING_VAR_12345}")
         self.assertIn("_MISSING_VAR_12345", str(ctx.exception))
 
+    def test_crlf_in_env_value_raises(self):
+        """CR/LF in env values must be rejected to prevent header smuggling.
+
+        (NUL can't be inserted into os.environ — Python rejects it at the C layer.)
+        """
+        for bad in ("secret\r\ninjected: header", "secret\nheader"):
+            os.environ["_CRLF_TEST"] = bad
+            try:
+                with self.assertRaises(ValueError) as ctx:
+                    interpolate("${_CRLF_TEST}")
+                self.assertIn("control", str(ctx.exception).lower())
+            finally:
+                del os.environ["_CRLF_TEST"]
+
 
 class TestLoadRuleset(unittest.TestCase):
     def _write(self, data: dict) -> str:
