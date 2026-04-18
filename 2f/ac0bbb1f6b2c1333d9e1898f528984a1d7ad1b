@@ -1,0 +1,25 @@
+scripts/mitmproxy-ca-init.sh
+  0bb589f49cb3ee76 49-53,55,59-60,62
+docker-compose.yml
+  0bb589f49cb3ee76 162-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2fac0bbb1f6b2c1333d9e1898f528984a1d7ad1b",
+  "prompts": {
+    "0bb589f49cb3ee76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5b47e21-ed90-47fd-92e4-35af18223e48",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 5,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
