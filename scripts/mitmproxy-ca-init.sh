@@ -34,6 +34,7 @@ mkdir -p "$CA_DIR"
 
 echo "Generating mitmproxy CA …"
 
+# 3650 days = 10 years; rotate with: ./scripts/mitmproxy-ca-init.sh --force
 openssl req -x509 \
   -newkey rsa:4096 \
   -days 3650 \

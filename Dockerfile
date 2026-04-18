@@ -60,6 +60,8 @@ CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
+# ca-certificates: provides system CA bundle for combined trust in entrypoint-wrap.sh
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN npm install -g opencode-ai@1.4.3
 # git/gh/scoutqa wrapper scripts — forward to remote-cli service over HTTP
 COPY --from=build /app/packages/opencode-cli/dist/remote-cli.mjs /usr/local/bin/remote-cli.mjs
@@ -79,6 +81,10 @@ COPY docker/opencode/bin/corepack /usr/local/bin/corepack
 # mcp/approval wrapper scripts — forward to remote-cli service over HTTP
 COPY docker/opencode/bin/mcp /usr/local/bin/mcp
 COPY docker/opencode/bin/approval /usr/local/bin/approval
+# mitmproxy proxy wiring: entrypoint validates CA + builds combined cert bundle
+COPY docker/opencode/entrypoint-wrap.sh /entrypoint-wrap.sh
+COPY docker/opencode/mitmproxy-init.js /etc/thor/mitmproxy-init.js
+RUN chmod +x /entrypoint-wrap.sh
 USER thor
 RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state
 ENV THOR_REMOTE_CLI_URL=http://remote-cli:3004
@@ -87,7 +93,8 @@ ENV THOR_REMOTE_CLI_URL=http://remote-cli:3004
 # https://github.com/sst/opencode/blob/main/packages/opencode/src/tool/registry.ts
 ENV OPENCODE_CLIENT=thor
 COPY --chown=thor:thor docker/opencode/config/ /home/thor/.config/opencode/
-ENTRYPOINT ["opencode"]
+# Entrypoint validates mitmproxy CA and wires combined cert bundle before exec'ing opencode
+ENTRYPOINT ["/entrypoint-wrap.sh", "opencode"]
 
 # mitmproxy target — CA mounted from host at runtime (never baked into the image).
 # Pin the minor version to avoid surprise API changes; update deliberately.
