@@ -222,6 +222,7 @@ sandbox --list                         # list session's sandboxes
 
 ### Follow-ups (post-launch)
 
+- [x] **P1 — Shell-quote args before joining.** `args.join(" ")` was lossy: `["mvn", "test", "hello world"]` became `mvn test hello world` (2 files, not 1). Fix: `args.map(a => shellQuote(a)).join(" ")` so it becomes `'mvn' 'test' 'hello world'`. Preserves arg boundaries while keeping `sh -lc` wrapper for login-shell environment (PATH, JAVA_HOME). Daytona's `executeCommand` runs a non-login shell (`GetShell()` returns bash/zsh without `-l`), so `sh -lc` is required to source profiles.
 - [ ] **P2 — Token cache invalidation on 401/403.** Currently tokens are cached for ~1hr with 5-min early refresh. A revoked token would fail until cache expires. (Host-side only — sandbox has no tokens.)
 - [ ] **P3 — Client disconnect → sandbox command cancellation.** If OpenCode kills the wrapper (SIGTERM), the HTTP request aborts but the sandbox command keeps running until Daytona auto-stop. Future: listen for `req.on("close")` and call SDK command cancel.
 - [ ] **P3 — Bundle size limits.** Git bundles for very large repos could be slow to create/upload. Monitor bundle sizes in production. If needed, implement shallow bundles (`--depth`) or file-level sync via `sandbox.fs.uploadFile()` for individual changed files.

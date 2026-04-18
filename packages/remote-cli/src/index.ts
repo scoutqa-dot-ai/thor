@@ -352,7 +352,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         await syncSandbox(sandbox.id, cwd, lastSyncedSha, currentSha);
       }
 
-      const command = args.join(" ");
+      const command = args.map((a: string) => shellQuote(a)).join(" ");
       const sandboxCommand = `sh -lc ${shellQuote(command)}`;
 
       res.setHeader("Content-Type", "application/x-ndjson");

@@ -699,7 +699,7 @@ else
     echo "  Creating sandbox and verifying initial bundle sync..."
     sbx_exec1_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"git rev-parse HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      -d "{\"mode\":\"exec\",\"args\":[\"git\",\"rev-parse\",\"HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
       2>/dev/null)
     sbx_exec1_exit=$(echo "$sbx_exec1_raw" | sandbox_exec_exit)
     sbx_exec1_sha=$(echo "$sbx_exec1_raw" | sandbox_exec_stdout | tr -d '[:space:]')
@@ -736,7 +736,7 @@ else
     echo "  Verifying delta bundle sync..."
     sbx_exec2_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"git rev-parse HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      -d "{\"mode\":\"exec\",\"args\":[\"git\",\"rev-parse\",\"HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
       2>/dev/null)
     sbx_exec2_exit=$(echo "$sbx_exec2_raw" | sandbox_exec_exit)
     sbx_exec2_sha=$(echo "$sbx_exec2_raw" | sandbox_exec_stdout | tr -d '[:space:]')
@@ -759,7 +759,7 @@ else
     echo "  Verifying backward sync..."
     sbx_exec3_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"git rev-parse HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      -d "{\"mode\":\"exec\",\"args\":[\"git\",\"rev-parse\",\"HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
       2>/dev/null)
     sbx_exec3_exit=$(echo "$sbx_exec3_raw" | sandbox_exec_exit)
     sbx_exec3_sha=$(echo "$sbx_exec3_raw" | sandbox_exec_stdout | tr -d '[:space:]')
@@ -788,7 +788,7 @@ else
     echo "  Verifying unrelated branch sync..."
     sbx_exec4_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"git rev-parse HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      -d "{\"mode\":\"exec\",\"args\":[\"git\",\"rev-parse\",\"HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
       2>/dev/null)
     sbx_exec4_exit=$(echo "$sbx_exec4_raw" | sandbox_exec_exit)
     sbx_exec4_sha=$(echo "$sbx_exec4_raw" | sandbox_exec_stdout | tr -d '[:space:]')
@@ -844,13 +844,9 @@ else
 
     # 8m. Failing command exit code propagation
     echo "  Testing failing command propagation..."
-    # Reset worktree to a clean state for this test
+    # Reset worktree to a clean state (may be on orphan branch from previous test)
     docker exec "$remote_cli_container" \
-      git -C "$SBX_WORKTREE_DIR" checkout -- . 2>/dev/null
-    docker exec "$remote_cli_container" \
-      git -C "$SBX_WORKTREE_DIR" clean -fd 2>/dev/null
-    docker exec "$remote_cli_container" \
-      git -C "$SBX_WORKTREE_DIR" reset --hard "$SBX_OLD_SHA" 2>/dev/null >/dev/null
+      git -C "$SBX_WORKTREE_DIR" checkout -B "$SBX_BRANCH" "$SBX_OLD_SHA" 2>/dev/null >/dev/null
     sbx_fail_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
       -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo FAIL_OUTPUT && exit 42\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
@@ -864,7 +860,25 @@ else
       "failing command output arrives on stdout" \
       "stdout='${sbx_fail_stdout:0:200}'"
 
-    # 8n. Sandbox disappears between execs (auto-recreate)
+    # 8n. Args with spaces are preserved (shell quoting)
+    echo "  Testing arg quoting preservation..."
+    sbx_quote_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"touch\",\"hello world.txt\",\"foo.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_quote_exit=$(echo "$sbx_quote_raw" | sandbox_exec_exit)
+    assert '[[ "$sbx_quote_exit" == "0" ]]' "touch with spaced filename succeeded" "exitCode='$sbx_quote_exit'"
+    # Count files: should be exactly 2 (not 3 from "hello" + "world.txt" + "foo.txt")
+    sbx_count_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"ls -1 'hello world.txt' foo.txt 2>/dev/null | wc -l\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_file_count=$(echo "$sbx_count_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+    assert '[[ "$sbx_file_count" == "2" ]]' \
+      "quoting preserved: 2 files created (not 3)" \
+      "file_count='$sbx_file_count'"
+
+    # 8o. Sandbox disappears between execs (auto-recreate)
     echo "  Testing auto-recreate after sandbox disappears..."
     # First, exec to ensure a sandbox exists
     sbx_pre_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
@@ -896,7 +910,7 @@ else
       -H 'Content-Type: application/json' \
       -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
 
-    # 8o. Two worktrees, two sandboxes (label isolation)
+    # 8p. Two worktrees, two sandboxes (label isolation)
     echo "  Testing two-worktree sandbox isolation..."
     SBX_BRANCH2="e2e-sandbox2-${SBX_TS}"
     SBX_WORKTREE_DIR2="/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH2}"
