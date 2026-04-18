@@ -255,7 +255,7 @@ sandbox --list                         # list session's sandboxes
 | 2026-04-18 | Sandbox is primary execution path; local Node for lightweight tasks             | Most repos are Java — sandbox is the 80% case. Local Node still available for lightweight tasks (formatting, scripts) but skill doc teaches only `sandbox`. No language exceptions to learn.                                                                                                                                           |
 | 2026-04-18 | No session-end cleanup; rely on Daytona auto-stop                               | Agent may run long-running sandbox processes. Killing on session end would cut off streaming output. Daytona auto-stop (15 min idle) is sufficient. Cost of leaked sandbox: ~$0.01. Avoids complexity of session lifecycle hooks.                                                                                                      |
 | 2026-04-18 | Git bundle upload for sync, not scratch-push to origin                          | Daytona SDK has `sandbox.fs.uploadFile()` with streaming support. Bundle created on host, uploaded via SDK, unbundled in sandbox. Zero writes to origin, zero credentials in sandbox, no stale ref cleanup needed. Supersedes scratch-push + embedded-token-in-URL approach.                                                           |
-| 2026-04-18 | Delta bundles with full-bundle fallback for subsequent syncs                    | Try delta bundle (`last-sha..HEAD`) first; on failure (backward reset, unrelated branch, empty range) fall back to full bundle (`HEAD`). `thor-sha` label tracks last-synced SHA. Skip sync entirely if SHA unchanged.                                                                                                                 |
+| 2026-04-18 | Delta bundles with full-bundle fallback for subsequent syncs                    | Try delta bundle (`last-sha..HEAD`) first; on failure (backward reset, unrelated branch, empty bundle) fall back to full bundle (`HEAD`). `thor-sha` label on sandbox tracks last-synced SHA. Skip sync entirely if SHA unchanged. Supersedes pure-delta approach which broke on backward resets (git refuses empty bundles).          |
 | 2026-04-18 | Sandbox has no git remotes                                                      | Bundle unbundle + reset creates a local repo with no origin configured. Sandbox cannot fetch/push anywhere. Eliminates credential stripping follow-up (P2) and the entire token-in-URL pattern. Strongest possible isolation.                                                                                                          |
 
 ## Exit Criteria
@@ -278,52 +278,59 @@ sandbox --list                         # list session's sandboxes
 
 ## Error & Rescue Registry
 
-| Codepath          | What Can Go Wrong                 | Rescued? | Rescue Action                                 | User Sees                                                                            |
-| ----------------- | --------------------------------- | -------- | --------------------------------------------- | ------------------------------------------------------------------------------------ |
-| auto-create       | Not in a worktree                 | Y        | 400                                           | "Must run from /workspace/worktrees/"                                                |
-| auto-create       | Daytona API unreachable           | Y        | 500                                           | "Sandbox service unavailable"                                                        |
-| auto-create       | Daytona auth failure              | Y        | 500                                           | "Sandbox auth failed, check DAYTONA_API_KEY"                                         |
-| auto-create       | Bundle create fails               | Y        | Delete sandbox, 500                           | "Failed to prepare code for sandbox"                                                 |
-| auto-create       | Bundle upload fails               | Y        | Delete sandbox, 500                           | "Failed to upload code to sandbox"                                                   |
-| auto-create       | Unbundle+reset fails              | Y        | Delete sandbox, 500                           | "Failed to initialize code in sandbox"                                               |
-| auto-create       | Create timeout                    | Y        | 500                                           | "Sandbox creation timed out"                                                         |
-| `sandbox <cmd>`   | No sandbox yet / gone on Daytona  | Y        | Auto-create from cwd (silent)                 | Stream command output normally                                                       |
-| `sandbox <cmd>`   | Worktree dirty (host preflight)   | Y        | 400                                           | "Worktree not clean. Commit your changes first (add generated files to .gitignore)." |
-| `sandbox <cmd>`   | Bundle create fails (delta)       | Y        | 500                                           | "Failed to prepare code sync"                                                        |
-| `sandbox <cmd>`   | Bundle upload fails               | Y        | 500                                           | "Failed to upload code to sandbox"                                                   |
-| `sandbox <cmd>`   | Unbundle+reset fails (sandbox)    | Y        | 500                                           | "Failed to sync code to sandbox"                                                     |
-| `sandbox <cmd>`   | Command fails (nonzero)           | Y        | Stream stderr                                 | Test failure output (normal)                                                         |
-| `sandbox <cmd>`   | Long-running command              | N/A      | No timeout imposed — OpenCode manages its own | Stream until done                                                                    |
-| `sandbox --stop`  | No sandbox tracked for cwd        | Y        | Silent no-op (idempotent)                     | Exit 0                                                                               |
-| `sandbox --stop`  | Delete fails                      | Y        | Log + ignore                                  | Exit 0                                                                               |
-| Daytona auto-stop | Sandbox leaked (no explicit stop) | Y        | Auto-delete after 15 min idle                 | Silent                                                                               |
+| Codepath          | What Can Go Wrong                 | Rescued? | Rescue Action                                  | User Sees                                                                            |
+| ----------------- | --------------------------------- | -------- | ---------------------------------------------- | ------------------------------------------------------------------------------------ |
+| auto-create       | Not in a worktree                 | Y        | 400                                            | "Must run from /workspace/worktrees/"                                                |
+| auto-create       | Daytona API unreachable           | Y        | 500                                            | "Sandbox service unavailable"                                                        |
+| auto-create       | Daytona auth failure              | Y        | 500                                            | "Sandbox auth failed, check DAYTONA_API_KEY"                                         |
+| auto-create       | Bundle create fails               | Y        | Delete sandbox, 500                            | "Failed to prepare code for sandbox"                                                 |
+| auto-create       | Bundle upload fails               | Y        | Delete sandbox, 500                            | "Failed to upload code to sandbox"                                                   |
+| auto-create       | Unbundle+reset fails              | Y        | Delete sandbox, 500                            | "Failed to initialize code in sandbox"                                               |
+| auto-create       | Create timeout                    | Y        | 500                                            | "Sandbox creation timed out"                                                         |
+| `sandbox <cmd>`   | No sandbox yet / gone on Daytona  | Y        | Auto-create from cwd (silent)                  | Stream command output normally                                                       |
+| `sandbox <cmd>`   | Worktree dirty (host preflight)   | Y        | 400                                            | "Worktree not clean. Commit your changes first (add generated files to .gitignore)." |
+| `sandbox <cmd>`   | Bundle create fails (delta)       | Y        | Fallback to full bundle; 500 only if both fail | "Failed to prepare code sync"                                                        |
+| `sandbox <cmd>`   | Bundle upload fails               | Y        | 500                                            | "Failed to upload code to sandbox"                                                   |
+| `sandbox <cmd>`   | Unbundle+reset fails (sandbox)    | Y        | 500                                            | "Failed to sync code to sandbox"                                                     |
+| `sandbox <cmd>`   | Command fails (nonzero)           | Y        | Stream stderr                                  | Test failure output (normal)                                                         |
+| `sandbox <cmd>`   | Long-running command              | N/A      | No timeout imposed — OpenCode manages its own  | Stream until done                                                                    |
+| `sandbox --stop`  | No sandbox tracked for cwd        | Y        | Silent no-op (idempotent)                      | Exit 0                                                                               |
+| `sandbox --stop`  | Delete fails                      | Y        | Log + ignore                                   | Exit 0                                                                               |
+| Daytona auto-stop | Sandbox leaked (no explicit stop) | Y        | Auto-delete after 15 min idle                  | Silent                                                                               |
 
 ## Decision Audit Trail
 
 > Historical record from /autoplan reviews. Kept for traceability.
 
-| #   | Phase  | Decision                                                 | Classification | Principle | Rationale                                      | Rejected                    |
-| --- | ------ | -------------------------------------------------------- | -------------- | --------- | ---------------------------------------------- | --------------------------- |
-| 1   | CEO    | Daytona over alternatives                                | User Decision  | —         | Cloud needed, CLI+SDK fits                     | E2B, DinD, Sidecar, Direct  |
-| 2   | CEO    | Skill named "sandbox"                                    | User Feedback  | P5        | Daytona is implementation detail               | "daytona" skill             |
-| 3   | Eng    | High-level sandbox command only                          | User Decision  | P5        | One command, no orchestration by agent         | Raw daytona CLI             |
-| 5   | Eng    | Kill worktree streamer (Phase 3/4)                       | User Decision  | P3        | Git clone works, code is committed             | HMAC/tar/ingress            |
-| 6   | Eng    | NDJSON streaming for exec                                | Mechanical     | P1        | Runs exceed 60s buffered timeout               | Buffered exec               |
-| 7   | Eng    | Session cleanup via onSessionEnd()                       | Mechanical     | P1        | Existing hook, reliable cleanup point          | Manual cleanup              |
-| 8   | DX     | Sandbox skill with examples                              | Mechanical     | P2        | Agent needs to know when/how to use            | No skill file               |
-| 9   | DX     | Pin @daytona/sdk version                                 | Mechanical     | P5        | Reproducible builds                            | Latest                      |
-| 10  | DX     | Define base snapshot contract                            | Taste          | P1        | Agent needs runtimes pre-installed             | Defer                       |
-| 13  | Eng-v2 | Explicit trust boundary: code goes to Daytona Cloud      | Mechanical     | P5        | Codex: current model keeps code local          | Implicit                    |
-| 17  | Eng-v2 | Add tests for unconfigured API key, special branch chars | Mechanical     | P2        | Claude: missing test cases                     | Skip                        |
-| 18  | CEO-v2 | SDK spike before full implementation                     | Taste          | P6        | Claude: SDK behavior is biggest risk           | Skip spike                  |
-| 19  | CEO-v2 | Exec timeout: 5 min may be too short                     | Taste          | P3        | Claude flagged, but configurable later         | Longer default              |
-| 20  | DX-v3  | Flatten CLI to `sandbox <cmd> [args...]`                 | User Decision  | P5        | Zero cognitive load; no quoting needed         | Subcommand-based CLI        |
-| 21  | DX-v3  | Operator flags (`--create/--stop/--list`)                | User Decision  | P5        | Keep lifecycle out of agent's view             | Teach all commands to agent |
-| 22  | Eng-v3 | Sandbox primary; local Node for lightweight only         | User Decision  | P1        | Most repos Java; no language exceptions taught | Everything through sandbox  |
-| 23  | Eng-v3 | No session-end cleanup; Daytona auto-stop only           | User Decision  | P3        | Long-running processes; ~$0.01 leak cost       | Session-end hook            |
-| 24  | Eng-v3 | Git bundle upload via SDK, not scratch-push to origin    | User Decision  | P1        | Zero origin writes; zero sandbox credentials   | Scratch-push + token-in-URL |
-| 25  | Eng-v3 | Delta bundles + thor-sha label for incremental sync      | Mechanical     | P1        | Small uploads for edit-test cycles             | Full bundle every time      |
-| 26  | Eng-v3 | Sandbox has no git remotes (bundle-only init)            | Mechanical     | P1        | Strongest isolation; no credential surface     | Clone from origin           |
+| #   | Phase  | Decision                                                 | Classification | Principle | Rationale                                                    | Rejected                            |
+| --- | ------ | -------------------------------------------------------- | -------------- | --------- | ------------------------------------------------------------ | ----------------------------------- |
+| 1   | CEO    | Daytona over alternatives                                | User Decision  | —         | Cloud needed, CLI+SDK fits                                   | E2B, DinD, Sidecar, Direct          |
+| 2   | CEO    | Skill named "sandbox"                                    | User Feedback  | P5        | Daytona is implementation detail                             | "daytona" skill                     |
+| 3   | Eng    | High-level sandbox command only                          | User Decision  | P5        | One command, no orchestration by agent                       | Raw daytona CLI                     |
+| 5   | Eng    | Kill worktree streamer (Phase 3/4)                       | User Decision  | P3        | Git clone works, code is committed                           | HMAC/tar/ingress                    |
+| 6   | Eng    | NDJSON streaming for exec                                | Mechanical     | P1        | Runs exceed 60s buffered timeout                             | Buffered exec                       |
+| 7   | Eng    | Session cleanup via onSessionEnd()                       | Mechanical     | P1        | Existing hook, reliable cleanup point                        | Manual cleanup                      |
+| 8   | DX     | Sandbox skill with examples                              | Mechanical     | P2        | Agent needs to know when/how to use                          | No skill file                       |
+| 9   | DX     | Pin @daytona/sdk version                                 | Mechanical     | P5        | Reproducible builds                                          | Latest                              |
+| 10  | DX     | Define base snapshot contract                            | Taste          | P1        | Agent needs runtimes pre-installed                           | Defer                               |
+| 13  | Eng-v2 | Explicit trust boundary: code goes to Daytona Cloud      | Mechanical     | P5        | Codex: current model keeps code local                        | Implicit                            |
+| 17  | Eng-v2 | Add tests for unconfigured API key, special branch chars | Mechanical     | P2        | Claude: missing test cases                                   | Skip                                |
+| 18  | CEO-v2 | SDK spike before full implementation                     | Taste          | P6        | Claude: SDK behavior is biggest risk                         | Skip spike                          |
+| 19  | CEO-v2 | Exec timeout: 5 min may be too short                     | Taste          | P3        | Claude flagged, but configurable later                       | Longer default                      |
+| 20  | DX-v3  | Flatten CLI to `sandbox <cmd> [args...]`                 | User Decision  | P5        | Zero cognitive load; no quoting needed                       | Subcommand-based CLI                |
+| 21  | DX-v3  | Operator flags (`--create/--stop/--list`)                | User Decision  | P5        | Keep lifecycle out of agent's view                           | Teach all commands to agent         |
+| 22  | Eng-v3 | Sandbox primary; local Node for lightweight only         | User Decision  | P1        | Most repos Java; no language exceptions taught               | Everything through sandbox          |
+| 23  | Eng-v3 | No session-end cleanup; Daytona auto-stop only           | User Decision  | P3        | Long-running processes; ~$0.01 leak cost                     | Session-end hook                    |
+| 24  | Eng-v3 | Git bundle upload via SDK, not scratch-push to origin    | User Decision  | P1        | Zero origin writes; zero sandbox credentials                 | Scratch-push + token-in-URL         |
+| 25  | Eng-v3 | Delta bundles + thor-sha label for incremental sync      | Mechanical     | P1        | Small uploads for edit-test cycles                           | Full bundle every time              |
+| 26  | Eng-v3 | Sandbox has no git remotes (bundle-only init)            | Mechanical     | P1        | Strongest isolation; no credential surface                   | Clone from origin                   |
+| 27  | Eng-v4 | `sudo mkdir` for /workspace in Daytona sandbox           | Bug fix        | P1        | Default sandbox user cannot create dirs at /                 | Use home dir (breaks path symmetry) |
+| 28  | Eng-v4 | Sandbox wrapper reads THOR_REMOTE_CLI_URL env var        | Bug fix        | P1        | Hardcoded localhost:3004 fails in container                  | —                                   |
+| 29  | Eng-v4 | Sandbox wrapper COPY'd into Dockerfile                   | Bug fix        | P1        | Missing from image, agent got "command not found"            | —                                   |
+| 30  | Eng-v4 | Delta bundle uses `OLD..HEAD` not `OLD..SHA`             | Bug fix        | P1        | Bare SHAs produce empty bundles in git                       | —                                   |
+| 31  | Eng-v4 | Delta-with-fallback replaces three sync strategies       | Simplification | P3        | One try/catch vs merge-base + reset + delta                  | Three separate code paths           |
+| 32  | Eng-v4 | Route sandbox output to stdout regardless of exit code   | Bug fix        | P1        | Daytona merges streams; exit-based routing loses test output | —                                   |
+| 33  | Eng-v4 | git-askpass clears TOKEN on node crash                   | Bug fix        | P5        | Partial stdout from crashed node becomes garbage password    | —                                   |
 
 ## GSTACK REVIEW REPORT
 
