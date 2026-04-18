@@ -1,0 +1,23 @@
+docs/plan/2026041706_mitmproxy-outbound.md
+  4120fe7166848d4b 2,70,74-79,91-92,99-102,112,133-134,137-190,200,202-226,228-247,249,255,257-259,271-272,278,293-294,302-305,332,357,365,367-368,375-387,398-403,429,437-453,567-581
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4f39d1c0849e497d81262c4cbb7667450567ef71",
+  "prompts": {
+    "4120fe7166848d4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "367dc352-29e4-41d8-84c8-592ed04738eb",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 657,
+      "total_deletions": 175,
+      "accepted_lines": 515,
+      "overriden_lines": 0
+    }
+  }
+}
