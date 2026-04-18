@@ -127,6 +127,9 @@ assert '[[ "$remote_cli_health" == *"ok"* ]]' "remote-cli is healthy" "got: $rem
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
 assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy" "got: $runner_health"
 
+gateway_health=$(curl -sf "$GATEWAY_URL/health" 2>/dev/null || echo '{}')
+assert '[[ "$gateway_health" == *"ok"* ]]' "Gateway is healthy (deep check)" "got: $gateway_health"
+
 # ── 2. Remote-cli git/gh auth ────────────────────────────────────────────────
 
 echo ""
@@ -470,7 +473,366 @@ else
   fi
 fi
 
-# ── 6. Alias-based session matching via gateway ──────────────────────────────
+# ── 6. Git/GH policy enforcement ─────────────────────────────────────────────
+#
+# Validates that remote-cli blocks disallowed git/gh commands at the policy
+# layer. These are direct HTTP calls — no LLM round-trip needed.
+
+echo ""
+echo "=== Git/GH Policy Enforcement ==="
+
+POLICY_CWD="${POLICY_CWD:-/workspace/repos/${ALIAS_REPO:-acme-multi-hyphen-repo}}"
+
+# 6a. git checkout should be blocked
+checkout_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"checkout\",\"main\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+checkout_exit=$(json_field "$checkout_raw" "exitCode")
+checkout_stderr=$(json_field "$checkout_raw" "stderr")
+assert '[[ "$checkout_exit" == "1" ]]' "git checkout is blocked" "exitCode='$checkout_exit'"
+assert '[[ "$checkout_stderr" == *"not allowed"* ]]' "git checkout error mentions not allowed" "stderr='${checkout_stderr:0:200}'"
+
+# 6b. git switch should be blocked
+switch_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"switch\",\"main\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+switch_exit=$(json_field "$switch_raw" "exitCode")
+assert '[[ "$switch_exit" == "1" ]]' "git switch is blocked" "exitCode='$switch_exit'"
+
+# 6c. Leading flags should be blocked
+flag_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"-c\",\"user.name=x\",\"status\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+flag_exit=$(json_field "$flag_raw" "exitCode")
+flag_stderr=$(json_field "$flag_raw" "stderr")
+assert '[[ "$flag_exit" == "1" ]]' "git leading flags are blocked" "exitCode='$flag_exit'"
+assert '[[ "$flag_stderr" == *"leading flags"* ]]' "leading flags error is descriptive" "stderr='${flag_stderr:0:200}'"
+
+# 6d. git push to non-origin remote should be blocked
+push_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"push\",\"upstream\",\"main\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+push_exit=$(json_field "$push_raw" "exitCode")
+push_stderr=$(json_field "$push_raw" "stderr")
+assert '[[ "$push_exit" == "1" ]]' "git push to non-origin is blocked" "exitCode='$push_exit'"
+assert '[[ "$push_stderr" == *"origin"* ]]' "push error mentions origin restriction" "stderr='${push_stderr:0:200}'"
+
+# 6e. cwd outside /workspace should be blocked
+cwd_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"status\"],\"cwd\":\"/tmp/evil\"}" \
+  2>/dev/null || echo '{}')
+cwd_exit=$(json_field "$cwd_raw" "exitCode")
+assert '[[ "$cwd_exit" == "1" ]]' "git cwd outside /workspace is blocked" "exitCode='$cwd_exit'"
+
+# 6f. gh api should be blocked
+gh_api_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"api\",\"repos\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+gh_api_exit=$(json_field "$gh_api_raw" "exitCode")
+gh_api_stderr=$(json_field "$gh_api_raw" "stderr")
+assert '[[ "$gh_api_exit" == "1" ]]' "gh api is blocked" "exitCode='$gh_api_exit'"
+assert '[[ "$gh_api_stderr" == *"not allowed"* ]]' "gh api error mentions not allowed" "stderr='${gh_api_stderr:0:200}'"
+
+# 6g. gh pr checkout should be blocked
+gh_prco_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"pr\",\"checkout\",\"1\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+gh_prco_exit=$(json_field "$gh_prco_raw" "exitCode")
+assert '[[ "$gh_prco_exit" == "1" ]]' "gh pr checkout is blocked" "exitCode='$gh_prco_exit'"
+
+# 6h. Allowed read commands should succeed
+status_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"status\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+status_exit=$(json_field "$status_raw" "exitCode")
+assert '[[ "$status_exit" == "0" ]]' "git status (allowed) succeeds" "exitCode='$status_exit'"
+
+# ── 7. Busy session + interrupt ──────────────────────────────────────────────
+#
+# Tests that a busy session returns { busy: true } without interrupt,
+# and that interrupt=true aborts the busy session and executes the new prompt.
+
+echo ""
+echo "=== Busy Session + Interrupt ==="
+
+BUSY_CORR_KEY="e2e-busy-$(date +%s)"
+BUSY_PHRASE="BUSY$(date +%s | tail -c 6)"
+
+# 7a. Start a long-running trigger (sleep prompt) in the background
+echo "  Sending trigger #1 (long-running prompt to occupy session)..."
+curl -sf -X POST "$RUNNER_URL/trigger" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"Run a bash command: sleep 30. Then say DONE.\",\"correlationKey\":\"$BUSY_CORR_KEY\",\"directory\":\"$SESSION_DIR\"}" \
+  --max-time 10 2>/dev/null >/dev/null &
+BUSY_BG_PID=$!
+sleep 5
+
+# 7b. Send a non-interrupt trigger — should get { busy: true }
+echo "  Sending trigger #2 (non-interrupt, expecting busy)..."
+busy_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"Say hello.\",\"correlationKey\":\"$BUSY_CORR_KEY\",\"directory\":\"$SESSION_DIR\"}" \
+  --max-time 30 2>/dev/null || echo '{}')
+busy_val=$(json_field "$busy_raw" "busy")
+assert '[[ "$busy_val" == "true" ]]' "Non-interrupt trigger returns busy" "response: ${busy_raw:0:200}"
+
+# 7c. Send an interrupt trigger — should abort and execute
+echo "  Sending trigger #3 (interrupt=true, expecting execution)..."
+interrupt_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"Our secret word is $BUSY_PHRASE. Confirm by repeating it back.\",\"correlationKey\":\"$BUSY_CORR_KEY\",\"interrupt\":true,\"directory\":\"$SESSION_DIR\"}" \
+  --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+interrupt_trigger=$(echo "$interrupt_raw" | parse_done)
+
+interrupt_session=$(json_field "$interrupt_trigger" "sessionId")
+interrupt_status=$(json_field "$interrupt_trigger" "status")
+interrupt_response=$(json_field "$interrupt_trigger" "response")
+interrupt_has_phrase=$(response_contains "$interrupt_trigger" "$BUSY_PHRASE")
+
+assert '[[ -n "$interrupt_session" ]]' "Interrupt trigger: got a session ID" "sessionId='$interrupt_session'"
+assert '[[ "$interrupt_status" == "completed" ]]' "Interrupt trigger: completed successfully" "status='$interrupt_status'"
+assert '[[ "$interrupt_has_phrase" == "yes" ]]' "Interrupt trigger: agent confirmed the phrase" "response: ${interrupt_response:0:200}"
+
+# Clean up background curl
+kill "$BUSY_BG_PID" 2>/dev/null || true
+wait "$BUSY_BG_PID" 2>/dev/null || true
+
+# ── 8. Sandbox lifecycle + git bundle sync ───────────────────────────────────
+#
+# Tests the full sandbox lifecycle via direct remote-cli calls (no LLM):
+#   1. List → empty
+#   2. Create worktree at old commit, exec → initial bundle sync
+#   3. Verify sandbox has correct SHA
+#   4. Fast-forward worktree to recent commit, exec → delta bundle sync
+#   5. Verify sandbox updated to new SHA
+#   6. Reset worktree backward to old commit, exec → backward sync (no bundle)
+#   7. Verify sandbox reverted to old SHA
+#   8. Stop → cleanup
+#   9. List → empty again
+
+echo ""
+echo "=== Sandbox Lifecycle + Git Bundle Sync ==="
+
+# Parse NDJSON sandbox exec response: extract stdout data and exitCode
+sandbox_exec_stdout() {
+  node -e "
+    const lines = require('fs').readFileSync(0,'utf8').trim().split('\n');
+    let out = '';
+    for (const line of lines) {
+      try {
+        const d = JSON.parse(line);
+        if (d.stream === 'stdout' && typeof d.data === 'string') out += d.data;
+      } catch {}
+    }
+    process.stdout.write(out);
+  " 2>/dev/null
+}
+
+sandbox_exec_exit() {
+  node -e "
+    const lines = require('fs').readFileSync(0,'utf8').trim().split('\n');
+    let code = '';
+    for (const line of lines) {
+      try {
+        const d = JSON.parse(line);
+        if (typeof d.exitCode === 'number') code = String(d.exitCode);
+      } catch {}
+    }
+    console.log(code);
+  " 2>/dev/null
+}
+
+# Use the thor clone from section 2 (REMOTE_CLI_GIT_REPO_DIR)
+SBX_REPO_DIR="$REMOTE_CLI_GIT_REPO_DIR"
+SBX_HOST_REPO_DIR="$HOST_REMOTE_CLI_GIT_REPO_DIR"
+
+# Pick an old commit (first commit) and a recent one
+SBX_OLD_SHA=$(docker exec "$remote_cli_container" \
+  git -C "$SBX_REPO_DIR" rev-list --reverse HEAD 2>/dev/null | head -1)
+SBX_NEW_SHA=$(docker exec "$remote_cli_container" \
+  git -C "$SBX_REPO_DIR" rev-parse HEAD 2>/dev/null)
+
+SBX_TS=$(date +%s)
+SBX_BRANCH="e2e-sandbox-${SBX_TS}"
+SBX_WORKTREE_DIR="/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH}"
+SBX_HOST_WORKTREE_DIR="${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH}"
+
+if [[ -z "$SBX_OLD_SHA" || -z "$SBX_NEW_SHA" || -z "$remote_cli_container" ]]; then
+  echo "  ⚠ Prerequisites missing (thor clone or container) — skipping sandbox tests"
+elif [[ "$SBX_OLD_SHA" == "$SBX_NEW_SHA" ]]; then
+  echo "  ⚠ Repo has only one commit — skipping sandbox tests"
+else
+  # 8a. List sandboxes — should be empty (or at least none for our worktree)
+  sbx_list_before=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+    -H 'Content-Type: application/json' \
+    -d '{"mode":"list"}' 2>/dev/null)
+  sbx_list_before_exit=$(json_field "$sbx_list_before" "exitCode")
+  assert '[[ "$sbx_list_before_exit" == "0" ]]' "sandbox list succeeds" "exitCode='$sbx_list_before_exit'"
+
+  # 8b. Create worktree at old commit
+  mkdir -p "$(dirname "$SBX_HOST_WORKTREE_DIR")"
+  docker exec "$remote_cli_container" \
+    git -C "$SBX_REPO_DIR" worktree add -b "$SBX_BRANCH" "$SBX_WORKTREE_DIR" "$SBX_OLD_SHA" 2>/dev/null
+  worktree_created=$?
+
+  if [[ $worktree_created -ne 0 ]]; then
+    assert 'false' "sandbox worktree created at old commit" "git worktree add failed"
+  else
+    assert 'true' "sandbox worktree created at old commit ($SBX_OLD_SHA)" ""
+
+    # Verify local HEAD matches old SHA
+    local_sha=$(docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" rev-parse HEAD 2>/dev/null)
+    assert '[[ "$local_sha" == "$SBX_OLD_SHA" ]]' \
+      "worktree HEAD is old commit" \
+      "expected='${SBX_OLD_SHA:0:12}', got='${local_sha:0:12}'"
+
+    # 8c. Exec in sandbox — initial bundle sync, verify SHA inside sandbox
+    echo "  Creating sandbox and verifying initial bundle sync..."
+    sbx_exec1_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"git rev-parse HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_exec1_exit=$(echo "$sbx_exec1_raw" | sandbox_exec_exit)
+    sbx_exec1_sha=$(echo "$sbx_exec1_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+
+    assert '[[ "$sbx_exec1_exit" == "0" ]]' "sandbox exec (initial sync) succeeded" "exitCode='$sbx_exec1_exit'"
+    assert '[[ "$sbx_exec1_sha" == "$SBX_OLD_SHA" ]]' \
+      "sandbox has correct SHA after initial bundle" \
+      "expected='${SBX_OLD_SHA:0:12}', got='${sbx_exec1_sha:0:12}'"
+
+    # 8d. List sandboxes — should show our sandbox
+    sbx_list_mid=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d '{"mode":"list"}' 2>/dev/null)
+    sbx_list_mid_has_cwd=$(echo "$sbx_list_mid" | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+      const list = JSON.parse(d.stdout || '[]');
+      console.log(list.some(s => s.cwd === '$SBX_WORKTREE_DIR') ? 'yes' : 'no');
+    " 2>/dev/null || echo "no")
+    assert '[[ "$sbx_list_mid_has_cwd" == "yes" ]]' \
+      "sandbox list includes our worktree" \
+      "cwd=$SBX_WORKTREE_DIR"
+
+    # 8e. Fast-forward worktree to recent commit
+    echo "  Fast-forwarding worktree to recent commit for delta sync..."
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" reset --hard "$SBX_NEW_SHA" 2>/dev/null >/dev/null
+    updated_sha=$(docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" rev-parse HEAD 2>/dev/null)
+    assert '[[ "$updated_sha" == "$SBX_NEW_SHA" ]]' \
+      "worktree fast-forwarded to recent commit" \
+      "expected='${SBX_NEW_SHA:0:12}', got='${updated_sha:0:12}'"
+
+    # 8f. Exec again — delta bundle sync, verify new SHA in sandbox
+    echo "  Verifying delta bundle sync..."
+    sbx_exec2_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"git rev-parse HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_exec2_exit=$(echo "$sbx_exec2_raw" | sandbox_exec_exit)
+    sbx_exec2_sha=$(echo "$sbx_exec2_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+
+    assert '[[ "$sbx_exec2_exit" == "0" ]]' "sandbox exec (delta sync) succeeded" "exitCode='$sbx_exec2_exit'"
+    assert '[[ "$sbx_exec2_sha" == "$SBX_NEW_SHA" ]]' \
+      "sandbox has correct SHA after delta bundle" \
+      "expected='${SBX_NEW_SHA:0:12}', got='${sbx_exec2_sha:0:12}'"
+
+    # 8g. Reset worktree backward to old commit, verify sandbox handles it
+    echo "  Resetting worktree backward to old commit..."
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" reset --hard "$SBX_OLD_SHA" 2>/dev/null >/dev/null
+    backward_sha=$(docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" rev-parse HEAD 2>/dev/null)
+    assert '[[ "$backward_sha" == "$SBX_OLD_SHA" ]]' \
+      "worktree reset backward to old commit" \
+      "expected='${SBX_OLD_SHA:0:12}', got='${backward_sha:0:12}'"
+
+    echo "  Verifying backward sync..."
+    sbx_exec3_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"git rev-parse HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_exec3_exit=$(echo "$sbx_exec3_raw" | sandbox_exec_exit)
+    sbx_exec3_sha=$(echo "$sbx_exec3_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+
+    assert '[[ "$sbx_exec3_exit" == "0" ]]' "sandbox exec (backward sync) succeeded" "exitCode='$sbx_exec3_exit'"
+    assert '[[ "$sbx_exec3_sha" == "$SBX_OLD_SHA" ]]' \
+      "sandbox has correct SHA after backward reset" \
+      "expected='${SBX_OLD_SHA:0:12}', got='${sbx_exec3_sha:0:12}'"
+
+    # 8i. Switch worktree to an unrelated orphan branch, verify sandbox syncs
+    echo "  Creating orphan branch and switching worktree..."
+    docker exec "$remote_cli_container" sh -c "
+      cd $SBX_WORKTREE_DIR &&
+      git checkout --orphan e2e-orphan-${SBX_TS} &&
+      git rm -rf . >/dev/null 2>&1 &&
+      echo 'orphan-content' > orphan.txt &&
+      git add orphan.txt &&
+      git commit -m 'orphan commit' --allow-empty
+    " 2>/dev/null >/dev/null
+    orphan_sha=$(docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" rev-parse HEAD 2>/dev/null)
+    assert '[[ -n "$orphan_sha" && "$orphan_sha" != "$SBX_OLD_SHA" && "$orphan_sha" != "$SBX_NEW_SHA" ]]' \
+      "worktree switched to unrelated orphan branch" \
+      "orphan_sha='${orphan_sha:0:12}'"
+
+    echo "  Verifying unrelated branch sync..."
+    sbx_exec4_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"git rev-parse HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_exec4_exit=$(echo "$sbx_exec4_raw" | sandbox_exec_exit)
+    sbx_exec4_sha=$(echo "$sbx_exec4_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+
+    assert '[[ "$sbx_exec4_exit" == "0" ]]' "sandbox exec (unrelated branch sync) succeeded" "exitCode='$sbx_exec4_exit'"
+    assert '[[ "$sbx_exec4_sha" == "$orphan_sha" ]]' \
+      "sandbox has correct SHA after unrelated branch sync" \
+      "expected='${orphan_sha:0:12}', got='${sbx_exec4_sha:0:12}'"
+
+    # 8j. Stop sandbox
+    echo "  Cleaning up sandbox..."
+    sbx_stop_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null)
+    sbx_stop_exit=$(json_field "$sbx_stop_raw" "exitCode")
+    assert '[[ "$sbx_stop_exit" == "0" ]]' "sandbox stop succeeded" "exitCode='$sbx_stop_exit'"
+
+    # 8k. List sandboxes — ours should be gone (retry for Daytona API eventual consistency)
+    sbx_list_after_has_cwd="yes"
+    for _sbx_retry in 1 2 3; do
+      sbx_list_after=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d '{"mode":"list"}' 2>/dev/null)
+      sbx_list_after_has_cwd=$(echo "$sbx_list_after" | node -e "
+        const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+        const list = JSON.parse(d.stdout || '[]');
+        console.log(list.some(s => s.cwd === '$SBX_WORKTREE_DIR') ? 'yes' : 'no');
+      " 2>/dev/null || echo "yes")
+      [[ "$sbx_list_after_has_cwd" == "no" ]] && break
+      sleep 2
+    done
+    assert '[[ "$sbx_list_after_has_cwd" == "no" ]]' \
+      "sandbox removed after stop" \
+      "still found in list"
+  fi
+
+  # Clean up worktree
+  docker exec "$remote_cli_container" \
+    git -C "$SBX_REPO_DIR" worktree remove --force "$SBX_WORKTREE_DIR" 2>/dev/null || true
+  docker exec "$remote_cli_container" \
+    git -C "$SBX_REPO_DIR" branch -D "$SBX_BRANCH" 2>/dev/null || true
+fi
+
+# ── 9. Alias-based session matching via gateway ──────────────────────────────
 #
 # Test flow:
 #   1. Trigger #1 (runner): agent runs git worktree add → alias registered
