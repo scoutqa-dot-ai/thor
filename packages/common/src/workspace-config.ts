@@ -27,11 +27,15 @@ const MitmproxyRuleSchema = z
   .object({
     host: z.string().optional(),
     host_suffix: z.string().startsWith(".").optional(),
-    headers: z.record(z.string(), z.string()).optional().default({}),
+    headers: z.record(z.string(), z.string()),
     readonly: z.boolean().optional().default(false),
   })
   .refine((r) => (r.host !== undefined) !== (r.host_suffix !== undefined), {
     message: "Exactly one of 'host' or 'host_suffix' must be specified, not both and not neither",
+  })
+  .refine((r) => Object.keys(r.headers).length > 0, {
+    message:
+      "'headers' must be a non-empty object. An empty headers map would silently allow a host through without credential injection. Use 'mitmproxy_passthrough' for no-injection passthrough, or add at least one header.",
   });
 
 export const WorkspaceConfigSchema = z

@@ -69,6 +69,10 @@ COPY docker/opencode/bin/approval /usr/local/bin/approval
 COPY docker/opencode/entrypoint-wrap.sh /entrypoint-wrap.sh
 COPY docker/opencode/mitmproxy-init.js /etc/thor/mitmproxy-init.js
 RUN chmod +x /entrypoint-wrap.sh
+# Verify the preload's only dependency actually resolves from the install.
+# This fails the build loudly if undici is missing from the opencode-ai package tree,
+# rather than silently at first fetch() call inside the container.
+RUN node --require /etc/thor/mitmproxy-init.js -e "console.log('[thor] mitmproxy-init preload OK')"
 USER thor
 RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state
 ENV THOR_REMOTE_CLI_URL=http://remote-cli:3004

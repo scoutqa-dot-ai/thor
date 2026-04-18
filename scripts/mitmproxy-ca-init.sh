@@ -12,6 +12,9 @@
 #   docker compose up -d --force-recreate mitmproxy opencode
 
 set -euo pipefail
+# Restrict file creation to owner-only so the CA private key is never
+# world-readable between `openssl` creating it and the later `chmod 600`.
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CA_DIR="${SCRIPT_DIR}/../docker-volumes/mitmproxy-ca"
