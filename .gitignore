@@ -23,6 +23,6 @@ test.sh
 
 # Thor
 /docker-volumes/
-# CA private key must never be committed — regenerate with scripts/mitmproxy-ca-init.sh
+# CA files must never be committed — regenerate with scripts/mitmproxy-ca-init.sh
 /docker-volumes/mitmproxy-ca/
 docker/mitmproxy/__pycache__/

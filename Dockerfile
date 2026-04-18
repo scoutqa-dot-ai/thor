@@ -84,11 +84,15 @@ ENTRYPOINT ["/entrypoint-wrap.sh", "opencode"]
 # Pin the minor version to avoid surprise API changes; update deliberately.
 FROM mitmproxy/mitmproxy:10.4.2 AS mitmproxy
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+# gosu: privilege-drop helper used by entrypoint.sh (root reads key, gosu execs as mitmproxy-svc)
+RUN apt-get update && apt-get install -y --no-install-recommends curl gosu && rm -rf /var/lib/apt/lists/*
 COPY docker/mitmproxy/rules.py   /etc/mitmproxy/rules.py
 COPY docker/mitmproxy/addon.py   /etc/mitmproxy/addon.py
 COPY docker/mitmproxy/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+# The base image's "mitmproxy" username maps to uid 0 (root), so create a real service account.
+# Entrypoint starts as root to read key.pem, then gosu drops to mitmproxy-svc before exec.
+RUN groupadd -g 1002 mitmproxy-svc && useradd -r -u 1002 -g 1002 -M mitmproxy-svc
 ENTRYPOINT ["/entrypoint.sh"]
 
 FROM build AS remote-cli
