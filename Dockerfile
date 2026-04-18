@@ -83,7 +83,8 @@ COPY packages/remote-cli/entrypoint.sh /entrypoint.sh
 # Thor git/gh wrappers for GitHub App auth
 COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git
 COPY packages/remote-cli/bin/gh /usr/local/lib/thor/bin/gh
-RUN chmod +x /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh
+COPY packages/remote-cli/bin/git-askpass /usr/local/lib/thor/bin/git-askpass
+RUN chmod +x /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh /usr/local/lib/thor/bin/git-askpass
 RUN mkdir -p /var/lib/remote-cli/github-app/cache && chown -R thor:thor /var/lib/remote-cli
 USER thor
 RUN mkdir -p /workspace/repos

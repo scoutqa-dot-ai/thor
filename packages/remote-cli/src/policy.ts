@@ -96,8 +96,6 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "pull",
   "push",
   "remote",
-  // config (read-only use; write is harmless to local .git/config)
-  "config",
   // misc
   "version",
 ]);
@@ -107,49 +105,34 @@ export function validateGitArgs(args: string[]): string | null {
     return "args must be a non-empty array";
   }
 
-  // Find the subcommand (skip flags like -C, -c, --git-dir etc.)
-  const subcommand = findGitSubcommand(args);
-  if (!subcommand) {
-    return "no git subcommand found";
+  const first = args[0];
+  if (first.startsWith("-")) {
+    return `"git ${first}" is not allowed — leading flags are not permitted; start with a bare subcommand`;
   }
 
-  if (!ALLOWED_GIT_SUBCOMMANDS.has(subcommand.toLowerCase())) {
+  const subcommand = first.toLowerCase();
+  if (!ALLOWED_GIT_SUBCOMMANDS.has(subcommand)) {
+    if (subcommand === "checkout" || subcommand === "switch") {
+      return `"git ${subcommand}" is not allowed — use 'git worktree add <path> <ref>' to work on another branch without leaving this worktree`;
+    }
     return `"git ${subcommand}" is not allowed`;
   }
 
   // Restrict worktree add paths to /workspace/worktrees/
-  if (subcommand.toLowerCase() === "worktree") {
+  if (subcommand === "worktree") {
     return validateGitWorktree(args);
   }
 
   // Restrict remote to read-only sub-subcommands
-  if (subcommand.toLowerCase() === "remote") {
+  if (subcommand === "remote") {
     return validateGitRemote(args);
   }
 
   // Restrict push to origin only (block pushing to arbitrary remotes/URLs)
-  if (subcommand.toLowerCase() === "push") {
+  if (subcommand === "push") {
     return validateGitPush(args);
   }
 
-  return null;
-}
-
-function findGitSubcommand(args: string[]): string | null {
-  // Flags that consume the next argument
-  const flagsWithValue = new Set(["-C", "-c", "--git-dir", "--work-tree"]);
-
-  let i = 0;
-  while (i < args.length) {
-    const arg = args[i];
-    if (flagsWithValue.has(arg)) {
-      i += 2; // skip flag + value
-    } else if (arg.startsWith("-")) {
-      i += 1; // skip standalone flag
-    } else {
-      return arg; // first non-flag is the subcommand
-    }
-  }
   return null;
 }
 
@@ -218,32 +201,78 @@ function validateGitRemote(args: string[]): string | null {
 
 // ── git push policy ────────────────────────────────────────────────────────
 
+const ALLOWED_PUSH_FLAGS: ReadonlySet<string> = new Set([
+  "--no-verify",
+  "--dry-run",
+  "-n",
+  "--verbose",
+  "-v",
+  "--quiet",
+  "-q",
+]);
+
+const PUSH_FLAGS_ALLOWING_INLINE_VALUE: ReadonlySet<string> = new Set(["--force-with-lease"]);
+
 function validateGitPush(args: string[]): string | null {
   const pushIdx = args.indexOf("push");
 
-  // Find the first positional arg after "push" (the remote name or URL)
   let i = pushIdx + 1;
+  let sawRemote = false;
   while (i < args.length) {
     const arg = args[i];
-    // Skip flags; --set-upstream/-u consume no extra arg
-    if (arg === "--force" || arg === "-f" || arg === "--force-with-lease") {
+
+    const eqIdx = arg.indexOf("=");
+    const flagName = eqIdx >= 0 ? arg.slice(0, eqIdx) : arg;
+
+    if (ALLOWED_PUSH_FLAGS.has(arg)) {
       i += 1;
-    } else if (arg === "-u" || arg === "--set-upstream") {
-      i += 1;
-    } else if (arg === "--delete" || arg === "-d") {
+    } else if (PUSH_FLAGS_ALLOWING_INLINE_VALUE.has(flagName)) {
       i += 1;
     } else if (arg.startsWith("-")) {
-      i += 1;
-    } else {
+      return `"git push ${arg}" is not allowed — unrecognized flag`;
+    } else if (!sawRemote) {
       // First positional arg = remote
       if (arg !== "origin") {
         return `"git push ${arg}" is not allowed — only pushing to "origin" is permitted`;
       }
-      return null;
+      sawRemote = true;
+      i += 1;
+    } else {
+      const refspecError = validatePushRefspec(arg);
+      if (refspecError) return refspecError;
+      i += 1;
     }
   }
 
   // No remote specified — defaults to origin, which is fine
+  return null;
+}
+
+function validatePushRefspec(refspec: string): string | null {
+  if (refspec.startsWith("+")) {
+    return `"git push ${refspec}" is not allowed — leading "+" force-updates via refspec; use --force-with-lease`;
+  }
+
+  const colonIdx = refspec.indexOf(":");
+  if (colonIdx < 0) {
+    return null;
+  }
+
+  const src = refspec.slice(0, colonIdx);
+  const dst = refspec.slice(colonIdx + 1);
+
+  if (src !== "HEAD") {
+    return `"git push ${refspec}" is not allowed — mapped refspec source must be "HEAD"`;
+  }
+
+  if (!dst.startsWith("refs/heads/") || dst.length <= "refs/heads/".length) {
+    return `"git push ${refspec}" is not allowed — mapped refspec destination must be "refs/heads/<branch>"`;
+  }
+
+  if (dst.includes(":")) {
+    return `"git push ${refspec}" is not allowed — mapped refspec destination must not contain ":"`;
+  }
+
   return null;
 }
 
@@ -465,6 +494,9 @@ export function validateGhArgs(args: string[]): string | null {
 
   const key = `${group} ${subcommand}`;
   if (!ALLOWED_GH_COMMANDS.has(key)) {
+    if (key === "pr checkout") {
+      return `"gh ${key}" is not allowed — use 'git fetch origin pull/<N>/head:pr-<N>' then 'git worktree add <path> pr-<N>' to inspect a PR without leaving this worktree`;
+    }
     return `"gh ${key}" is not allowed`;
   }
 

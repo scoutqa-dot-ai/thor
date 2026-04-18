@@ -68,13 +68,15 @@ describe("validateGitArgs", () => {
       expect(validateGitArgs(["init"])).not.toBeNull();
     });
 
-    it("blocks clone even with flags before it", () => {
-      expect(validateGitArgs(["-C", "/tmp", "clone", "https://github.com/foo/bar"])).not.toBeNull();
+    it("blocks leading git flags before the subcommand", () => {
+      expect(validateGitArgs(["-C", "/tmp", "status"])).not.toBeNull();
+      expect(validateGitArgs(["-c", "credential.helper=!evil", "push", "origin"])).not.toBeNull();
+      expect(validateGitArgs(["--exec-path=/tmp/evil", "status"])).not.toBeNull();
     });
 
-    it("blocks checkout and switch (agent stays on assigned branch)", () => {
-      expect(validateGitArgs(["checkout", "main"])).not.toBeNull();
-      expect(validateGitArgs(["switch", "feature"])).not.toBeNull();
+    it("blocks checkout and switch with a git worktree hint", () => {
+      expect(validateGitArgs(["checkout", "main"])).toContain("git worktree add");
+      expect(validateGitArgs(["switch", "feature"])).toContain("git worktree add");
     });
 
     it("blocks worktree add outside /workspace/worktrees/", () => {
@@ -107,6 +109,47 @@ describe("validateGitArgs", () => {
       expect(validateGitArgs(["push", "evil", "main"])).not.toBeNull();
       expect(validateGitArgs(["push", "https://evil.com/repo.git", "main"])).not.toBeNull();
       expect(validateGitArgs(["push", "upstream", "main"])).not.toBeNull();
+    });
+
+    it("blocks security-sensitive push flags", () => {
+      expect(validateGitArgs(["push", "--receive-pack=evil", "origin"])).not.toBeNull();
+      expect(validateGitArgs(["push", "--repo=https://evil.com", "origin"])).not.toBeNull();
+      expect(validateGitArgs(["push", "--exec=evil", "origin"])).not.toBeNull();
+    });
+
+    it("rejects unknown push flags but keeps known safe ones working", () => {
+      expect(validateGitArgs(["push", "--some-unknown-flag", "origin"])).not.toBeNull();
+      expect(validateGitArgs(["push", "--no-verify", "origin", "main"])).toBeNull();
+      expect(validateGitArgs(["push", "--force-with-lease", "origin", "main"])).toBeNull();
+    });
+
+    it("allows --force-with-lease with an inline value", () => {
+      expect(
+        validateGitArgs(["push", "--force-with-lease=main:abc123", "origin", "main"]),
+      ).toBeNull();
+    });
+
+    it("blocks previously-allowed push flags now removed from the surface", () => {
+      expect(validateGitArgs(["push", "--force", "origin", "main"])).not.toBeNull();
+      expect(validateGitArgs(["push", "-f", "origin", "main"])).not.toBeNull();
+      expect(validateGitArgs(["push", "-u", "origin", "feat/x"])).not.toBeNull();
+      expect(validateGitArgs(["push", "--set-upstream", "origin", "feat/x"])).not.toBeNull();
+      expect(validateGitArgs(["push", "--delete", "origin", "feat/x"])).not.toBeNull();
+      expect(validateGitArgs(["push", "-d", "origin", "feat/x"])).not.toBeNull();
+    });
+
+    it("allows explicit HEAD refspecs and blocks dangerous mapped refspecs", () => {
+      expect(validateGitArgs(["push", "origin", "HEAD:refs/heads/feat/auth"])).toBeNull();
+      expect(validateGitArgs(["push", "origin", "+HEAD:refs/heads/main"])).not.toBeNull();
+      expect(validateGitArgs(["push", "origin", "main:refs/heads/other"])).not.toBeNull();
+      expect(validateGitArgs(["push", "origin", "HEAD:refs/tags/v1"])).not.toBeNull();
+      expect(validateGitArgs(["push", "origin", ":main"])).not.toBeNull();
+      expect(validateGitArgs(["push", "origin", "HEAD:refs/heads/foo:bar"])).not.toBeNull();
+    });
+
+    it("blocks git config entirely", () => {
+      expect(validateGitArgs(["config", "--get", "user.name"])).not.toBeNull();
+      expect(validateGitArgs(["config", "user.name", "Thor"])).not.toBeNull();
     });
 
     it("blocks arbitrary commands", () => {
@@ -159,6 +202,12 @@ describe("validateGhArgs", () => {
 
     it("blocks secret commands", () => {
       expect(validateGhArgs(["secret", "set", "FOO"])).not.toBeNull();
+    });
+
+    it("blocks gh pr checkout with a git worktree hint", () => {
+      const err = validateGhArgs(["pr", "checkout", "2984"]);
+      expect(err).toContain("git worktree add");
+      expect(err).toContain("pull/<N>/head");
     });
   });
 
