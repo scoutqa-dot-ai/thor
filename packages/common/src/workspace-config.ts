@@ -23,10 +23,23 @@ const GitHubAppConfigSchema = z.object({
   installations: z.array(GitHubAppInstallationSchema),
 });
 
+const MitmproxyRuleSchema = z
+  .object({
+    host: z.string().optional(),
+    host_suffix: z.string().startsWith(".").optional(),
+    headers: z.record(z.string(), z.string()).optional().default({}),
+    readonly: z.boolean().optional().default(false),
+  })
+  .refine((r) => (r.host !== undefined) !== (r.host_suffix !== undefined), {
+    message: "Exactly one of 'host' or 'host_suffix' must be specified, not both and not neither",
+  });
+
 export const WorkspaceConfigSchema = z
   .object({
     repos: z.record(z.string(), RepoConfigSchema),
     github_app: GitHubAppConfigSchema.optional(),
+    mitmproxy: z.array(MitmproxyRuleSchema).optional(),
+    mitmproxy_passthrough: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -34,6 +47,7 @@ export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;
 export type GitHubAppInstallation = z.infer<typeof GitHubAppInstallationSchema>;
 export type GitHubAppConfig = z.infer<typeof GitHubAppConfigSchema>;
+export type MitmproxyRule = z.infer<typeof MitmproxyRuleSchema>;
 
 export interface ProxyUpstream {
   url: string;
