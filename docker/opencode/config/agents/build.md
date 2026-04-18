@@ -41,7 +41,7 @@ You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh`
 
 **Important:** `npm`, `npx`, `pnpm`, `pnpx`, and `corepack` are redirected to the cloud sandbox automatically. When you run `npm install` or `npx prettier`, it executes in the sandbox where the full toolchain is installed. Use `sandbox` explicitly for other runtimes (Java, Python, etc.). If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
 
-A credential-injecting reverse proxy is available at `http://data/` — auth headers are injected automatically. Check memory files for available routes and API schemas.
+Outbound HTTPS requests are automatically routed through an mitmproxy forward proxy that injects credentials per host. No special URL is needed — call the real upstream URL directly (e.g. `https://api.example.com/...`). Available credential rules are configured in `/workspace/config.json#mitmproxy`.
 
 ### MCP tools
 
