@@ -1,0 +1,27 @@
+packages/remote-cli/package.json
+  29d5067be01d7a88 14
+docker-compose.yml
+  29d5067be01d7a88 54-55
+.env.example
+  29d5067be01d7a88 70-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e580730ffda4e21ac734f49a107b6ab14cad6b17",
+  "prompts": {
+    "29d5067be01d7a88": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee293578-b7f1-4ccb-9a94-145cee97bc50",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 0,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
