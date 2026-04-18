@@ -23,6 +23,14 @@ mkdir -p "${HOST_WORKSPACE}/repos/e2e-test"
 MEMORY_DIR="${MEMORY_DIR:-${HOST_WORKSPACE}/memory}"
 CRON_SECRET="${CRON_SECRET:-$(docker exec thor-cron-1 printenv CRON_SECRET 2>/dev/null)}"
 RESOLVE_SECRET="${RESOLVE_SECRET:-$(docker exec thor-gateway-1 printenv RESOLVE_SECRET 2>/dev/null)}"
+REMOTE_CLI_GIT_REPO_URL="${REMOTE_CLI_GIT_REPO_URL:-https://github.com/scoutqa-dot-ai/thor}"
+REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-scoutqa-dot-ai-thor-e2e}"
+REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
+HOST_REMOTE_CLI_GIT_REPO_DIR="${HOST_REMOTE_CLI_GIT_REPO_DIR:-${HOST_WORKSPACE}/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
+REMOTE_CLI_AUTH_TS="${REMOTE_CLI_AUTH_TS:-$(date +%s)}"
+REMOTE_CLI_WORKTREE_BRANCH="${REMOTE_CLI_WORKTREE_BRANCH:-e2e-remote-cli-${REMOTE_CLI_AUTH_TS}}"
+REMOTE_CLI_WORKTREE_DIR="${REMOTE_CLI_WORKTREE_DIR:-/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
+HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
 
 passed=0
 failed=0
@@ -91,6 +99,15 @@ response_contains() {
   " 2>/dev/null || echo "no"
 }
 
+resolve_remote_cli_container() {
+  if [[ -n "${REMOTE_CLI_CONTAINER:-}" ]]; then
+    echo "$REMOTE_CLI_CONTAINER"
+    return 0
+  fi
+
+  docker ps --filter label=com.docker.compose.service=remote-cli --format '{{.Names}}' 2>/dev/null | head -n 1
+}
+
 approval_tool_for_upstream() {
   case "$1" in
     atlassian) echo "createJiraIssue" ;;
@@ -110,7 +127,83 @@ assert '[[ "$remote_cli_health" == *"ok"* ]]' "remote-cli is healthy" "got: $rem
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
 assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy" "got: $runner_health"
 
-# ── 2. Session resume via correlation key ────────────────────────────────────
+# ── 2. Remote-cli git/gh auth ────────────────────────────────────────────────
+
+echo ""
+echo "=== Remote-CLI Git/GH Auth ==="
+
+remote_cli_container=$(resolve_remote_cli_container)
+
+if [[ -z "$remote_cli_container" ]]; then
+  assert 'false' "remote-cli container is discoverable for docker exec" \
+    "Set REMOTE_CLI_CONTAINER or ensure the remote-cli compose service is running"
+else
+  rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR" "$HOST_REMOTE_CLI_WORKTREE_DIR"
+  mkdir -p "$(dirname "$HOST_REMOTE_CLI_GIT_REPO_DIR")" "$(dirname "$HOST_REMOTE_CLI_WORKTREE_DIR")"
+
+  echo "  Cloning $REMOTE_CLI_GIT_REPO_URL inside $remote_cli_container..."
+  clone_output=$(docker exec "$remote_cli_container" \
+    git clone "$REMOTE_CLI_GIT_REPO_URL" "$REMOTE_CLI_GIT_REPO_DIR" 2>&1 || true)
+  clone_origin=$(docker exec "$remote_cli_container" \
+    git -C "$REMOTE_CLI_GIT_REPO_DIR" remote get-url origin 2>/dev/null || echo "")
+
+  assert '[[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" ]]' \
+    "docker exec in remote-cli cloned the GitHub repo" \
+    "output: ${clone_output:0:300}"
+  assert '[[ "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]' \
+    "cloned repo origin matches expected URL" \
+    "origin='$clone_origin'"
+
+  if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" && "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]; then
+    REMOTE_CLI_GH_CORR_KEY="e2e-remote-cli-gh-${REMOTE_CLI_AUTH_TS}"
+    echo "  Sending trigger #1 (asking agent to run gh pr list)..."
+    gh_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+      -H 'Content-Type: application/json' \
+      -d "{\"prompt\":\"Run: gh pr list --limit 5\\nIf the command succeeds, reply with GH_PR_LIST_OK on the first line, then summarize the result in one short sentence. If the command fails, reply with GH_PR_LIST_FAILED on the first line and include the error.\",\"correlationKey\":\"$REMOTE_CLI_GH_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+      --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+    gh_trigger=$(echo "$gh_trigger_raw" | parse_done)
+
+    gh_session=$(json_field "$gh_trigger" "sessionId")
+    gh_status=$(json_field "$gh_trigger" "status")
+    gh_response_text=$(json_field "$gh_trigger" "response")
+    gh_response_ok=$(response_contains "$gh_trigger" "GH_PR_LIST_OK")
+
+    assert '[[ -n "$gh_session" ]]' "GH auth trigger: got a session ID" "sessionId='$gh_session'"
+    assert '[[ "$gh_status" == "completed" ]]' "GH auth trigger: completed successfully" "status='$gh_status'"
+    assert '[[ "$gh_response_ok" == "yes" ]]' \
+      "GH auth trigger: agent successfully listed PRs" \
+      "response: ${gh_response_text:0:300}"
+
+    REMOTE_CLI_WORKTREE_CORR_KEY="e2e-remote-cli-worktree-${REMOTE_CLI_AUTH_TS}"
+    echo "  Sending trigger #2 (asking agent to create a worktree)..."
+    worktree_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+      -H 'Content-Type: application/json' \
+      -d "{\"prompt\":\"Run: git worktree add -b $REMOTE_CLI_WORKTREE_BRANCH $REMOTE_CLI_WORKTREE_DIR HEAD\\nIf the command succeeds, reply with GIT_WORKTREE_OK on the first line, then mention the branch name. If the command fails, reply with GIT_WORKTREE_FAILED on the first line and include the error.\",\"correlationKey\":\"$REMOTE_CLI_WORKTREE_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+      --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+    worktree_trigger=$(echo "$worktree_trigger_raw" | parse_done)
+
+    worktree_session=$(json_field "$worktree_trigger" "sessionId")
+    worktree_status=$(json_field "$worktree_trigger" "status")
+    worktree_response_text=$(json_field "$worktree_trigger" "response")
+    worktree_response_ok=$(response_contains "$worktree_trigger" "GIT_WORKTREE_OK")
+    worktree_list=$(docker exec "$remote_cli_container" \
+      git -C "$REMOTE_CLI_GIT_REPO_DIR" worktree list 2>/dev/null || echo "")
+
+    assert '[[ -n "$worktree_session" ]]' "Worktree trigger: got a session ID" "sessionId='$worktree_session'"
+    assert '[[ "$worktree_status" == "completed" ]]' "Worktree trigger: completed successfully" "status='$worktree_status'"
+    assert '[[ "$worktree_response_ok" == "yes" ]]' \
+      "Worktree trigger: agent created the worktree" \
+      "response: ${worktree_response_text:0:300}"
+    assert '[[ -d "$HOST_REMOTE_CLI_WORKTREE_DIR" ]]' \
+      "Worktree trigger: worktree path exists on disk" \
+      "expected path: $HOST_REMOTE_CLI_WORKTREE_DIR"
+    assert '[[ "$worktree_list" == *"$REMOTE_CLI_WORKTREE_DIR"* ]]' \
+      "Worktree trigger: cloned repo registers the new worktree" \
+      "worktree list: ${worktree_list:0:300}"
+  fi
+fi
+
+# ── 3. Session resume via correlation key ────────────────────────────────────
 
 echo ""
 echo "=== Session Resume ==="
@@ -154,7 +247,7 @@ assert '[[ "$session2" == "$session1" ]]' "Trigger #2: reused the SAME session I
 assert '[[ "$resumed2" == "true" ]]' "Trigger #2: was a resumed session" "resumed='$resumed2'"
 assert '[[ "$response2_has_phrase" == "yes" ]]' "Trigger #2: agent recalled the phrase ($PHRASE)" "response: ${response2_text:0:200}"
 
-# ── 3. Cross-session memory ──────────────────────────────────────────────────
+# ── 4. Cross-session memory ──────────────────────────────────────────────────
 
 # Clean up stale memory files from prior runs
 rm -f "$MEMORY_DIR/ALWAYS.md" "$MEMORY_DIR/README.md"
@@ -196,7 +289,7 @@ response_b_text=$(json_field "$trigger_b" "response")
 assert '[[ "$resumed_b" == "false" ]]' "Trigger B: was NOT a resumed session (different corr key)" "resumed='$resumed_b'"
 assert '[[ "$response_b_has_phrase" == "yes" ]]' "Trigger B: agent recalled cross-session memory phrase ($MEMORY_PHRASE)" "response: ${response_b_text:0:200}"
 
-# ── 4. Approval Flow ────────────────────────────────────────────────────────
+# ── 5. Approval Flow ────────────────────────────────────────────────────────
 
 echo ""
 echo "=== Approval Flow ==="
@@ -377,7 +470,7 @@ else
   fi
 fi
 
-# ── 5. Alias-based session matching via gateway ──────────────────────────────
+# ── 6. Alias-based session matching via gateway ──────────────────────────────
 #
 # Test flow:
 #   1. Trigger #1 (runner): agent runs git worktree add → alias registered
@@ -498,6 +591,7 @@ echo ""
 
 # Clean up e2e test directory and per-repo memory (only if we created the default one)
 [[ "$SESSION_DIR" == "/workspace/repos/e2e-test" ]] && rm -rf "${HOST_WORKSPACE}/repos/e2e-test" "${MEMORY_DIR}/e2e-test"
+rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR" "$HOST_REMOTE_CLI_GIT_REPO_DIR"
 
 if [[ $failed -gt 0 ]]; then
   echo "FAIL"
