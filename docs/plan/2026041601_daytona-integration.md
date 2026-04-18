@@ -62,16 +62,18 @@ sandbox --list                         # list session's sandboxes
 │    1. daytona.list({thor-managed, thor-cwd}) → find sandbox    │
 │       └─ auto-create if missing/gone:                          │
 │          a. Parse cwd → repo name, branch, worktree path       │
-│          b. Resolve remote URL from /workspace/repos/<repo>    │
-│          c. SDK: daytona.create({ ephemeral, autoStop: 15 })   │
+│          b. SDK: daytona.create({ ephemeral, autoStop: 15 })   │
 │             └─ labels: thor-managed, thor-cwd, thor-branch     │
-│          d. Clone default branch, fetch+reset to SHA           │
+│          c. git bundle create (full) on host                   │
+│          d. SDK: sandbox.fs.uploadFile(bundle)                 │
+│          e. sandbox: git init + bundle unbundle + reset SHA    │
 │    2. Preflight: verify clean worktree, resolve HEAD SHA       │
-│    3. ensureShaOnOrigin: scratch-push to thor-sandbox/<id>     │
-│    4. Mint GitHub App token (REQUIRED, no PAT fallback)        │
-│    5. Fetch ref + reset to SHA in sandbox (token in URL)       │
-│    6. SDK: sandbox.commands.run(command)                        │
-│    7. Stream stdout/stderr via NDJSON                          │
+│    3. Sync via bundle upload:                                  │
+│       a. git bundle create (delta: last-sha..HEAD) on host    │
+│       b. SDK: sandbox.fs.uploadFile(delta bundle)             │
+│       c. sandbox: git bundle unbundle + reset --hard SHA      │
+│    4. SDK: sandbox.commands.run(command)                        │
+│    5. Stream stdout/stderr via NDJSON                          │
 │                                                                │
 │  --stop: daytona.list → sandbox.delete() (no-op if none)       │
 │  --list: daytona.list({thor-managed}) for this session         │
@@ -80,15 +82,15 @@ sandbox --list                         # list session's sandboxes
 └────────────────────────────────────────────────────────────────┘
                             │
                             ▼
-              Daytona Cloud (isolated, no stored credentials)
+              Daytona Cloud (isolated, no git credentials, no origin access)
 ```
 
 **Key security properties:**
 
-1. The sandbox never has persistent git credentials. Token is embedded in the fetch URL transiently (~1hr TTL GitHub App token). Running `env` inside the sandbox won't reveal them.
-2. **Sandbox requires GitHub App auth. PAT is never used.** The blast radius of a leaked PAT (long-lived, broadly scoped) is unacceptable for a third-party cloud sandbox. Remote-cli calls `parseOrgFromRemoteUrl(remoteUrl)` → `getInstallationToken(org)` from `github-app-auth.ts`. If no installation is configured for the org, `sandbox create` fails fast with a clear error. GitHub App tokens are ~1 hr TTL, scoped to one installation, and show up in GitHub's audit log with the app identity.
-3. Remote URL is resolved from `/workspace/repos/<repo>/.git/config` — this path is read-only to the agent, so it's effectively admin-owned. HTTPS is enforced at resolution time. Agent cannot redirect clones via `git config` in its worktree.
-4. Private source code IS cloned to Daytona Cloud. This is an explicit trust boundary change. Acceptable because: Daytona sandboxes are ephemeral, auto-deleted, and the same code is already on GitHub. For self-hosted Daytona, code stays on your infra.
+1. **Sandbox has zero git credentials.** Code arrives via git bundle uploaded through the Daytona SDK — the sandbox never contacts origin, never has tokens, never has remote URLs. Running `env`, `cat .git/config`, or inspecting the filesystem reveals nothing.
+2. **No writes to origin for sync.** Previous design pushed scratch refs (`refs/heads/thor-sandbox/*`) on every sync. Bundle upload eliminates all writes to the remote repo. No stale refs, no cleanup job.
+3. **GitHub App auth still required on the host** for repos where the host itself needs to push/fetch (e.g., `git push` from worktree). But sandbox sync is entirely local: host creates bundle → SDK uploads → sandbox unbundles. No credentials cross the trust boundary.
+4. Private source code IS uploaded to Daytona Cloud via the SDK. This is an explicit trust boundary change. Acceptable because: Daytona sandboxes are ephemeral, auto-deleted, and the same code is already on GitHub. For self-hosted Daytona, code stays on your infra.
 
 **Key DX properties:**
 
@@ -131,35 +133,39 @@ sandbox --list                         # list session's sandboxes
     1. `daytona.list({thor-managed, thor-cwd})` to find sandbox; auto-create from cwd if missing/gone:
        a. Parse `cwd` → repo name, worktree path
        b. `git rev-parse --abbrev-ref HEAD` in cwd → branch (for sandbox naming only)
-       c. Resolve remote URL from `/workspace/repos/<repo>` (NOT from agent's `.git/config`)
-       d. Resolve git credentials: GitHub App token via `github-app-auth.getInstallationToken(org)`. No PAT fallback.
-       e. SDK: `daytona.create({ ephemeral: true, autoStopInterval: 15, name, labels: {thor-managed, thor-cwd, thor-branch} })`
-       f. Clone default branch, fetch+reset to SHA
+       c. SDK: `daytona.create({ ephemeral: true, autoStopInterval: 15, name, labels: {thor-managed, thor-cwd, thor-branch, thor-sha: <HEAD>} })`
+       d. `git bundle create /tmp/<id>.bundle HEAD` on host (full bundle for initial sync)
+       e. SDK: `sandbox.fs.uploadFile('/tmp/<id>.bundle', '/tmp/sync.bundle')`
+       f. SDK: `sandbox.commands.exec('git init /workspace/repo && cd /workspace/repo && git bundle unbundle /tmp/sync.bundle && git reset --hard <sha> && rm /tmp/sync.bundle')`
        g. On any failure: delete the sandbox, surface generic error (admin-only rich context in logs)
     2. Preflight: verify clean worktree (`git status --porcelain`), resolve HEAD SHA
-    3. ensureShaOnOrigin: always push HEAD to `refs/heads/thor-sandbox/<sandboxId>`
-    4. Mint token, embed in fetch URL, `git fetch <authed-url> refs/heads/thor-sandbox/<id> && git reset --hard <sha>` in sandbox
-    5. Join args into command string, run via `sh -c` in sandbox
-    6. Stream stdout/stderr via NDJSON
+    3. Sync via bundle upload (skip if SHA unchanged from `thor-sha` label):
+       a. `git bundle create /tmp/<id>.bundle <last-sha>..HEAD` on host (delta bundle)
+       b. SDK: `sandbox.fs.uploadFile('/tmp/<id>.bundle', '/tmp/sync.bundle')`
+       c. SDK: `sandbox.commands.exec('cd /workspace/repo && git bundle unbundle /tmp/sync.bundle && git reset --hard <sha> && rm /tmp/sync.bundle')`
+       d. Update `thor-sha` label to current HEAD
+    4. Join args into command string, run via `sh -c` in sandbox
+    5. Stream stdout/stderr via NDJSON
   - `create` (operator): same as auto-create above, without running a command. Returns sandbox ID.
   - `stop` (operator): `daytona.list({thor-managed, thor-cwd})` → `sandbox.delete()`. No-op if none.
   - `list` (operator): `daytona.list({thor-managed})` for this session.
   - NDJSON streaming for exec. Buffered JSON for operator modes.
 - [ ] Implement `packages/remote-cli/src/sandbox.ts` module:
   - All operations use `@daytona/sdk`. No CLI binary needed.
-  - **Stateless**: no in-memory maps. Sandbox lookup via Daytona labels (`thor-managed`, `thor-cwd`, `thor-branch`). Only `cwdLocks` (ephemeral mutex) kept in memory. Survives remote-cli restart.
-  - Git credentials resolved via `resolveGitCredentials(remoteUrl)`:
-    1. `parseOrgFromRemoteUrl(remoteUrl)` → org (from `github-app-auth.ts`)
-    2. `getInstallationToken(org)` → short-lived GitHub App token
-    3. Return `["x-access-token", token]`
-    4. **No PAT fallback.** If org cannot be resolved, no installation is configured, or token minting fails, throw `SandboxUserError("Sandbox requires GitHub App auth for <org>. Configure github_app.installations in workspace config.")`
-  - Remote URL resolution: `resolveRemoteUrl(repoName)` → `git remote get-url origin` in `/workspace/repos/<repo>`. Enforce HTTPS; reject non-HTTPS URLs.
-  - `createSandbox(name, remoteUrl, sha, labels): Promise<string>` — create, scratch-push, clone default branch, fetch+reset SHA
-  - `syncSandbox(id, remoteUrl, sha): Promise<void>` — scratch-push, fetch ref+reset SHA in sandbox
+  - **Stateless**: no in-memory maps. Sandbox lookup via Daytona labels (`thor-managed`, `thor-cwd`, `thor-branch`, `thor-sha`). Only `cwdLocks` (ephemeral mutex) kept in memory. Survives remote-cli restart.
+  - **No git credentials in sandbox.** Code sync uses git bundle upload via `sandbox.fs.uploadFile()`. Sandbox never contacts origin.
+  - `createSandbox(name, cwd, sha, labels): Promise<string>` — create sandbox, bundle full repo, upload, unbundle+reset
+  - `syncSandbox(id, cwd, lastSha, sha): Promise<void>` — bundle delta (`lastSha..HEAD`), upload, unbundle+reset. Skip if SHA unchanged.
+  - `bundleAndUpload(sandbox, cwd, range, sha): Promise<void>` — shared helper:
+    1. `git bundle create /tmp/<id>.bundle <range>` on host
+    2. `sandbox.fs.uploadFile('/tmp/<id>.bundle', '/tmp/sync.bundle')` — streaming, supports large repos
+    3. `sandbox.commands.exec('cd /workspace/repo && git bundle unbundle /tmp/sync.bundle && git reset --hard <sha> && rm /tmp/sync.bundle')`
+    4. Clean up local temp file
   - `execInSandbox(id, command, callbacks): Promise<number>` — `sandbox.commands.exec(command)` + log streaming for real-time output. Command is passed to `sh -c`.
   - `deleteSandbox(id): Promise<void>` — `sandbox.delete()`
   - `findSandboxForCwd(cwd): Promise<string | null>` — `daytona.list({thor-managed, thor-cwd=cwd})`
   - `listSandboxes(): Promise<SandboxInfo[]>` — `daytona.list({thor-managed})`
+  - `getLastSyncedSha(sandbox): string | null` — read `thor-sha` label from sandbox metadata
   - Snapshot: launch from `daytona-medium` by default; admin-overridable via `sandbox.snapshot` workspace config key.
 
 ### Phase 3: Agent Skill + Documentation
@@ -186,8 +192,8 @@ sandbox --list                         # list session's sandboxes
 ### Phase 4: Tests
 
 - [ ] Unit tests for sandbox orchestration in `packages/remote-cli/src/sandbox.test.ts`:
-  - `create`: happy path (create + clone), repo not found, API unreachable, auth failure, GitHub App installation missing, token mint fails
-  - `exec`: happy path (scratch-push + fetch+reset + exec + stream), worktree dirty, command fails (nonzero), auto-create on missing sandbox
+  - `create`: happy path (create + bundle upload + unbundle), API unreachable, auth failure, bundle create fails, upload fails, unbundle fails
+  - `exec`: happy path (delta bundle + upload + unbundle + exec + stream), worktree dirty, command fails (nonzero), auto-create on missing sandbox, SHA unchanged (skip sync)
   - `stop`: happy path, sandbox not found (no-op)
   - `list`: happy path, empty list
   - Unconfigured: `DAYTONA_API_KEY` empty → clear error on `create`
@@ -200,22 +206,23 @@ sandbox --list                         # list session's sandboxes
   - `--list` returns filtered sandboxes
   - No args (empty command) returns 400
 - [ ] Security test:
-  - Token NOT visible via `sandbox env | grep -i token`
+  - No tokens visible via `sandbox env | grep -i token`
+  - No remote URLs in sandbox `.git/config` (bundle-based init, no origin configured)
+  - `sandbox git remote -v` returns empty (no remotes)
 
 ### Phase 5: Validation
 
 - [ ] End-to-end: `sandbox pytest -v` → results streamed (auto-creates on first call)
-- [ ] Verify credentials are NOT visible inside sandbox (`sandbox env | grep -i token`)
+- [ ] Verify no credentials or remotes inside sandbox (`sandbox env | grep -i token`, `sandbox git remote -v`)
 - [ ] Verify `sandbox --create` fails fast with a clear error when GitHub App installation is not configured for the org
 - [ ] Verify auto-sync: edit in worktree, commit, `sandbox pytest -v` picks up changes
 - [ ] Verify auto-stop: idle sandbox is cleaned up by Daytona after 15 min
 
 ### Follow-ups (post-launch)
 
-- [ ] **P1 — Daily cleanup of `refs/heads/thor-sandbox/*`** on origin whose sandbox no longer exists in Daytona. Every live sandbox owns one scratch ref (overwritten in place), but deleted sandboxes leave stale refs. A scheduled job should: list live Daytona sandboxes with `thor-managed` label, list refs under `thor-sandbox/` on each repo's origin, and delete refs for non-live sandboxes. Belt-and-suspenders: also delete refs older than 7 days.
-- [ ] **P2 — Strip credentials from sandbox `.git/config` after clone/pull.** Token is embedded in the fetch URL; if Daytona persists it in `.git/config`, a subsequent `cat .git/config` would reveal it. Post-clone cleanup step.
-- [ ] **P2 — Token cache invalidation on 401/403.** Currently tokens are cached for ~1hr with 5-min early refresh. A revoked token would fail until cache expires.
+- [ ] **P2 — Token cache invalidation on 401/403.** Currently tokens are cached for ~1hr with 5-min early refresh. A revoked token would fail until cache expires. (Host-side only — sandbox has no tokens.)
 - [ ] **P3 — Client disconnect → sandbox command cancellation.** If OpenCode kills the wrapper (SIGTERM), the HTTP request aborts but the sandbox command keeps running until Daytona auto-stop. Future: listen for `req.on("close")` and call SDK command cancel.
+- [ ] **P3 — Bundle size limits.** Git bundles for very large repos could be slow to create/upload. Monitor bundle sizes in production. If needed, implement shallow bundles (`--depth`) or file-level sync via `sandbox.fs.uploadFile()` for individual changed files.
 
 ## Decision Log
 
@@ -250,6 +257,9 @@ sandbox --list                         # list session's sandboxes
 | 2026-04-18 | Operator flags (`--create`, `--stop`, `--list`) instead of subcommands          | Agent never sees lifecycle commands. Operators can troubleshoot without teaching the agent. Flags detected by wrapper before arg joining.                                                                                                                                                                                                                                  |
 | 2026-04-18 | Sandbox is primary execution path; local Node for lightweight tasks             | Most repos are Java — sandbox is the 80% case. Local Node still available for lightweight tasks (formatting, scripts) but skill doc teaches only `sandbox`. No language exceptions to learn.                                                                                                                                                                               |
 | 2026-04-18 | No session-end cleanup; rely on Daytona auto-stop                               | Agent may run long-running sandbox processes. Killing on session end would cut off streaming output. Daytona auto-stop (15 min idle) is sufficient. Cost of leaked sandbox: ~$0.01. Avoids complexity of session lifecycle hooks.                                                                                                                                          |
+| 2026-04-18 | Git bundle upload for sync, not scratch-push to origin                          | Daytona SDK has `sandbox.fs.uploadFile()` with streaming support. Bundle created on host, uploaded via SDK, unbundled in sandbox. Zero writes to origin, zero credentials in sandbox, no stale ref cleanup needed. Supersedes scratch-push + embedded-token-in-URL approach.                                                                                               |
+| 2026-04-18 | Delta bundles for subsequent syncs                                              | After initial full bundle, sync uses `git bundle create <last-sha>..HEAD` for delta only. `thor-sha` label on sandbox tracks last-synced SHA. Skip sync entirely if SHA unchanged. Keeps upload small for iterative edit-test cycles.                                                                                                                                      |
+| 2026-04-18 | Sandbox has no git remotes                                                      | Bundle unbundle + reset creates a local repo with no origin configured. Sandbox cannot fetch/push anywhere. Eliminates credential stripping follow-up (P2) and the entire token-in-URL pattern. Strongest possible isolation.                                                                                                                                              |
 
 ## Exit Criteria
 
@@ -257,10 +267,9 @@ sandbox --list                         # list session's sandboxes
 - Agent only needs one command — no lifecycle management, no IDs, no quoting.
 - Operator flags (`--create`, `--stop`, `--list`) available for troubleshooting.
 - Sandbox auto-creates on first run, auto-syncs committed code, auto-stops after 15 min idle.
-- Code cloned into sandbox without credentials being stored in sandbox env.
-- Require GitHub App installation for the org; fail fast with clear error if missing. PAT is never used.
+- Code synced to sandbox via git bundle upload — no credentials in sandbox, no writes to origin.
 - Test output streamed back to agent via NDJSON.
-- Git credentials NOT visible via `env` inside sandbox.
+- Sandbox has no git remotes, no tokens, no credentials of any kind.
 - Sandbox is the primary execution path. Local Node available for lightweight tasks but not called out in skill doc.
 
 ## Out of Scope
@@ -279,13 +288,15 @@ sandbox --list                         # list session's sandboxes
 | auto-create       | Daytona auth failure              | Y        | 500                                           | "Sandbox auth failed, check DAYTONA_API_KEY"                                                          |
 | auto-create       | GitHub App installation missing   | Y        | 400                                           | "Sandbox requires GitHub App auth for <org>. Configure github_app.installations in workspace config." |
 | auto-create       | GitHub App token mint fails       | Y        | 500                                           | "Failed to mint GitHub App token for <org>"                                                           |
-| auto-create       | Clone fails (bad repo/branch)     | Y        | Delete sandbox, 400                           | "Failed to clone <repo>@<branch>"                                                                     |
+| auto-create       | Bundle create fails               | Y        | Delete sandbox, 500                           | "Failed to prepare code for sandbox"                                                                  |
+| auto-create       | Bundle upload fails               | Y        | Delete sandbox, 500                           | "Failed to upload code to sandbox"                                                                    |
+| auto-create       | Unbundle+reset fails              | Y        | Delete sandbox, 500                           | "Failed to initialize code in sandbox"                                                                |
 | auto-create       | Create timeout                    | Y        | 500                                           | "Sandbox creation timed out"                                                                          |
 | `sandbox <cmd>`   | No sandbox yet / gone on Daytona  | Y        | Auto-create from cwd (silent)                 | Stream command output normally                                                                        |
 | `sandbox <cmd>`   | Worktree dirty (host preflight)   | Y        | 400                                           | "Worktree not clean. Commit your changes first (add generated files to .gitignore)."                  |
-| `sandbox <cmd>`   | Scratch-push fails                | Y        | 500                                           | "Failed to sync code to origin"                                                                       |
-| `sandbox <cmd>`   | GitHub App token mint fails       | Y        | 500                                           | "Failed to mint GitHub App token for <org>"                                                           |
-| `sandbox <cmd>`   | Fetch+reset fails (sandbox)       | Y        | 500                                           | "Failed to sync code to sandbox"                                                                      |
+| `sandbox <cmd>`   | Bundle create fails (delta)       | Y        | 500                                           | "Failed to prepare code sync"                                                                         |
+| `sandbox <cmd>`   | Bundle upload fails               | Y        | 500                                           | "Failed to upload code to sandbox"                                                                    |
+| `sandbox <cmd>`   | Unbundle+reset fails (sandbox)    | Y        | 500                                           | "Failed to sync code to sandbox"                                                                      |
 | `sandbox <cmd>`   | Command fails (nonzero)           | Y        | Stream stderr                                 | Test failure output (normal)                                                                          |
 | `sandbox <cmd>`   | Long-running command              | N/A      | No timeout imposed — OpenCode manages its own | Stream until done                                                                                     |
 | `sandbox --stop`  | No sandbox tracked for cwd        | Y        | Silent no-op (idempotent)                     | Exit 0                                                                                                |
@@ -321,6 +332,9 @@ sandbox --list                         # list session's sandboxes
 | 21  | DX-v3  | Operator flags (`--create/--stop/--list`)                | User Decision  | P5        | Keep lifecycle out of agent's view             | Teach all commands to agent     |
 | 22  | Eng-v3 | Sandbox primary; local Node for lightweight only         | User Decision  | P1        | Most repos Java; no language exceptions taught | Everything through sandbox      |
 | 23  | Eng-v3 | No session-end cleanup; Daytona auto-stop only           | User Decision  | P3        | Long-running processes; ~$0.01 leak cost       | Session-end hook                |
+| 24  | Eng-v3 | Git bundle upload via SDK, not scratch-push to origin    | User Decision  | P1        | Zero origin writes; zero sandbox credentials   | Scratch-push + token-in-URL     |
+| 25  | Eng-v3 | Delta bundles + thor-sha label for incremental sync      | Mechanical     | P1        | Small uploads for edit-test cycles             | Full bundle every time          |
+| 26  | Eng-v3 | Sandbox has no git remotes (bundle-only init)            | Mechanical     | P1        | Strongest isolation; no credential surface     | Clone from origin               |
 
 ## GSTACK REVIEW REPORT
 
