@@ -1,0 +1,45 @@
+packages/common/src/workspace-config.ts
+  0bb589f49cb3ee76 26-36,41-42,50
+scripts/mitmproxy-ca-init.sh
+  0bb589f49cb3ee76 1-58
+docs/examples/workspace-config.example.json
+  0bb589f49cb3ee76 25-40
+.env.example
+  0bb589f49cb3ee76 7-9,11-18
+docker/mitmproxy/rules.py
+  0bb589f49cb3ee76 1-105
+.gitignore
+  0bb589f49cb3ee76 26-27
+packages/common/src/workspace-config.test.ts
+  0bb589f49cb3ee76 227-297
+docker/mitmproxy/addon.py
+  0bb589f49cb3ee76 1-190
+docker/mitmproxy/entrypoint.sh
+  0bb589f49cb3ee76 1-17
+docker-compose.yml
+  0bb589f49cb3ee76 98,101,104,107-109,111,113,140
+Dockerfile
+  0bb589f49cb3ee76 76-86
+docker/mitmproxy/test_rules.py
+  0bb589f49cb3ee76 1-206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b5cbd1ca00f7ca7826f6de26d67092638c3d4974",
+  "prompts": {
+    "0bb589f49cb3ee76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5b47e21-ed90-47fd-92e4-35af18223e48",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 718,
+      "total_deletions": 28,
+      "accepted_lines": 710,
+      "overriden_lines": 0
+    }
+  }
+}
