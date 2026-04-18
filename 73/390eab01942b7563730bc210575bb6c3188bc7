@@ -1,0 +1,31 @@
+packages/remote-cli/bin/git-askpass
+  29d5067be01d7a88 7
+packages/remote-cli/src/sandbox.ts
+  29d5067be01d7a88 90-100,134-135
+docs/plan/2026041601_daytona-integration.md
+  29d5067be01d7a88 71-75,144-148,160,258
+packages/remote-cli/src/index.ts
+  29d5067be01d7a88 363
+packages/remote-cli/src/sandbox.test.ts
+  29d5067be01d7a88 169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "73390eab01942b7563730bc210575bb6c3188bc7",
+  "prompts": {
+    "29d5067be01d7a88": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee293578-b7f1-4ccb-9a94-145cee97bc50",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 28,
+      "total_deletions": 16,
+      "accepted_lines": 28,
+      "overriden_lines": 0
+    }
+  }
+}
