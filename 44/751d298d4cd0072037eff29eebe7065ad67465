@@ -1,0 +1,27 @@
+scripts/test-e2e.sh
+  e0445e6c5e7d0782 702,739,762,791,847,849,863-881,913
+packages/remote-cli/src/index.ts
+  e0445e6c5e7d0782 355
+docs/plan/2026041601_daytona-integration.md
+  e0445e6c5e7d0782 225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "44751d298d4cd0072037eff29eebe7065ad67465",
+  "prompts": {
+    "e0445e6c5e7d0782": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "efc67c3b-27cb-4c15-8059-eb856b5f135a",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 28,
+      "total_deletions": 13,
+      "accepted_lines": 28,
+      "overriden_lines": 0
+    }
+  }
+}
