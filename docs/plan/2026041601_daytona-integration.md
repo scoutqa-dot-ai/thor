@@ -20,16 +20,35 @@ Thor's AI agent runs in a Node.js container. It can't run Python tests, compile 
 
 ## Architecture
 
-Four commands. Must be run from a worktree (`cwd` provides repo, branch, path). Remote-cli orchestrates everything server-side. Git credentials never enter the sandbox environment.
+One agent-facing command: `sandbox <cmd> [args...]`. Run from a worktree. Remote-cli handles sandbox lifecycle (create, sync, cleanup) transparently. Operator flags (`--create`, `--stop`, `--list`) exist for troubleshooting but are not taught to the agent.
+
+**Agent interface:**
+
+```
+sandbox pytest -v --tb=short           # auto-creates, syncs, runs, streams
+sandbox pip install -r requirements.txt && pytest
+sandbox make build                     # shell metacharacters work (sh -c)
+```
+
+No quoting, no subcommands, no IDs. The wrapper joins all args into a single command string and sends it to remote-cli. Node/TypeScript runs locally (the container already isolates it); sandbox is for non-Node languages.
+
+**Operator interface (not in skill doc):**
+
+```
+sandbox --create                       # pre-warm a sandbox for this worktree
+sandbox --stop                         # tear down sandbox for this worktree
+sandbox --list                         # list session's sandboxes
+```
+
+**Lifecycle**: sandbox auto-creates on first run, auto-syncs on every run, auto-stops via Daytona idle timeout (15 min). No explicit cleanup by agent or operator required.
 
 ```
 ┌─ Agent (in /workspace/worktrees/myrepo/feat/auth) ───────────┐
 │                                                               │
-│  sandbox exec "pytest -v"            → streamed test output   │
-│  sandbox exec "flake8 ."             → reuses same sandbox    │
-│  sandbox stop                        → cleanup                │
+│  sandbox pytest -v --tb=short        → streamed test output   │
+│  sandbox flake8 .                    → reuses same sandbox    │
 │                                                               │
-│  (all commands keyed by cwd; no id to track)                  │
+│  (all commands keyed by cwd; no id, no lifecycle to manage)   │
 └───────────────────────────┬───────────────────────────────────┘
                             │ POST /exec/sandbox { args, cwd }
                             ▼
@@ -38,36 +57,24 @@ Four commands. Must be run from a worktree (`cwd` provides repo, branch, path). 
 │  All operations via @daytona/sdk. No CLI binary.               │
 │  Sandbox lookup via Daytona labels (no in-memory map).         │
 │                                                                │
-│  sandbox create (derives everything from cwd):                 │
-│    1. Preflight: verify clean worktree, resolve HEAD SHA       │
-│    2. Parse cwd → repo name, branch, worktree path             │
-│    3. Resolve remote URL from /workspace/repos/<repo>          │
-│       (read-only to agent; HTTPS enforced)                     │
-│    4. SDK: daytona.create({ ephemeral, autoStop: 15, name })   │
-│       └─ name = sanitized worktree path (repo-branch)          │
-│       └─ labels: thor-managed, thor-cwd, thor-branch           │
-│    5. ensureShaOnOrigin: always scratch-push HEAD to            │
-│       refs/heads/thor-sandbox/<id>                              │
-│    6. Mint GitHub App token (REQUIRED, no PAT fallback)        │
-│    7. Clone default branch, then fetch+reset to exact SHA      │
-│       └─ token embedded in fetch URL (transient, ~1hr TTL)     │
-│    8. Return sandbox ID                                        │
-│                                                                │
-│  sandbox exec "<command>" (keyed by cwd):                      │
-│    1. daytona.list({thor-managed, thor-cwd}) to find sandbox   │
-│       └─ auto-create if missing/gone                           │
-│    2. Preflight: clean tree, resolve HEAD SHA                  │
+│  On every request:                                             │
+│    1. daytona.list({thor-managed, thor-cwd}) → find sandbox    │
+│       └─ auto-create if missing/gone:                          │
+│          a. Parse cwd → repo name, branch, worktree path       │
+│          b. Resolve remote URL from /workspace/repos/<repo>    │
+│          c. SDK: daytona.create({ ephemeral, autoStop: 15 })   │
+│             └─ labels: thor-managed, thor-cwd, thor-branch     │
+│          d. Clone default branch, fetch+reset to SHA           │
+│    2. Preflight: verify clean worktree, resolve HEAD SHA       │
 │    3. ensureShaOnOrigin: scratch-push to thor-sandbox/<id>     │
-│    4. Mint token, fetch ref + reset to SHA in sandbox          │
-│    5. SDK: sandbox.commands.run(command)                        │
-│    6. Stream stdout/stderr via NDJSON                          │
+│    4. Mint GitHub App token (REQUIRED, no PAT fallback)        │
+│    5. Fetch ref + reset to SHA in sandbox (token in URL)       │
+│    6. SDK: sandbox.commands.run(command)                        │
+│    7. Stream stdout/stderr via NDJSON                          │
 │                                                                │
-│  sandbox stop (keyed by cwd):                                  │
-│    1. daytona.list({thor-managed, thor-cwd}) to find sandbox   │
-│    2. SDK: sandbox.delete() (idempotent; no-op if none)        │
-│                                                                │
-│  sandbox list:                                                 │
-│    1. SDK: daytona.list({thor-managed}) for this session       │
+│  --stop: daytona.list → sandbox.delete() (no-op if none)       │
+│  --list: daytona.list({thor-managed}) for this session         │
+│  --create: same as auto-create above, without running command  │
 │                                                                │
 └────────────────────────────────────────────────────────────────┘
                             │
@@ -82,7 +89,12 @@ Four commands. Must be run from a worktree (`cwd` provides repo, branch, path). 
 3. Remote URL is resolved from `/workspace/repos/<repo>/.git/config` — this path is read-only to the agent, so it's effectively admin-owned. HTTPS is enforced at resolution time. Agent cannot redirect clones via `git config` in its worktree.
 4. Private source code IS cloned to Daytona Cloud. This is an explicit trust boundary change. Acceptable because: Daytona sandboxes are ephemeral, auto-deleted, and the same code is already on GitHub. For self-hosted Daytona, code stays on your infra.
 
-**Key DX property:** Zero-argument `create` — cwd tells remote-cli everything. `exec` auto-syncs code (push + pull) before running. Agent just edits, commits, runs.
+**Key DX properties:**
+
+- **Zero cognitive load for agent**: one command (`sandbox <cmd>`), no lifecycle to manage, no IDs to track.
+- **Node stays local**: the container already isolates Node. `npm test`, `vitest`, `tsc` run directly against the worktree with zero latency. Sandbox is only for non-Node languages where the container lacks runtimes.
+- **No quoting**: `sandbox pytest -v --tb=short` — wrapper joins args into a single string, sandbox runs via `sh -c`. Shell metacharacters (`&&`, `|`, `;`) work naturally.
+- **Auto-everything**: auto-create on first run, auto-sync committed code before each run, auto-stop after 15 min idle.
 
 ## Phases
 
@@ -103,37 +115,35 @@ Four commands. Must be run from a worktree (`cwd` provides repo, branch, path). 
 
 - [ ] Create `docker/opencode/bin/sandbox` wrapper script.
   - Must be run from a worktree (`cwd` sent to remote-cli, like git/gh).
-  - Usage:
-    - `sandbox create` → optional pre-warm; derives repo/branch/remote from cwd, prints sandbox ID
-    - `sandbox exec "<command>"` → auto-creates sandbox if needed, syncs code by SHA, streams output
-    - `sandbox stop` → stops the sandbox tracked for this cwd (silent no-op if none)
-    - `sandbox list` → lists session's sandboxes (introspection)
+  - Default mode (no flags): join all args into a command string, send to remote-cli for exec.
+    - `sandbox pytest -v --tb=short` → sends `{ "args": ["pytest", "-v", "--tb=short"], "cwd": "..." }`
+    - Remote-cli joins args with spaces, runs via `sh -c` in the sandbox.
+  - Operator flags (not taught to agent):
+    - `sandbox --create` → pre-warm sandbox for this worktree
+    - `sandbox --stop` → tear down sandbox for this worktree
+    - `sandbox --list` → list session's sandboxes
+  - Flags are detected by the wrapper before arg joining. If first arg starts with `--`, route to operator mode.
 - [ ] Implement `POST /exec/sandbox` endpoint in `packages/remote-cli/src/index.ts`.
-  - Body: `{ "args": ["create"|"exec"|"stop"|"list", ...], "cwd": "/workspace/worktrees/..." }`
+  - Body: `{ "args": [...], "cwd": "/workspace/worktrees/...", "mode": "exec"|"create"|"stop"|"list" }`
   - `sandbox` is repo-scoped (`cwd` is validated + required, like git/gh).
-  - `create` (no args, everything from cwd):
-    1. Preflight: verify clean worktree (`git status --porcelain`), resolve HEAD SHA
-    2. Parse `cwd` → repo name, worktree path
-    3. `git rev-parse --abbrev-ref HEAD` in cwd → branch (for sandbox naming only)
-    4. Resolve remote URL from `/workspace/repos/<repo>` (NOT from agent's `.git/config`)
-    5. Resolve git credentials: GitHub App token via `github-app-auth.getInstallationToken(org)`. No PAT fallback — fail fast if missing.
-    6. SDK: `daytona.create({ ephemeral: true, autoStopInterval: 15, name, labels: {thor-managed, thor-cwd, thor-branch} })`
-    7. ensureShaOnOrigin: always push HEAD to `refs/heads/thor-sandbox/<sandboxId>`
-    8. Clone default branch, then `git fetch <authed-url> refs/heads/thor-sandbox/<id> && git reset --hard <sha>`
-    9. On any failure: delete the sandbox, surface generic error (admin-only rich context in logs)
-    10. Return `{ sandboxId: "<id>" }`
-  - `exec "<command>"` (keyed by cwd):
-    1. `daytona.list({thor-managed, thor-cwd})` to find sandbox; auto-create from cwd if missing/gone
-    2. Preflight: clean tree, resolve HEAD SHA
-    3. ensureShaOnOrigin: scratch-push to `refs/heads/thor-sandbox/<id>`
+  - `exec` (default mode — the only mode the agent uses):
+    1. `daytona.list({thor-managed, thor-cwd})` to find sandbox; auto-create from cwd if missing/gone:
+       a. Parse `cwd` → repo name, worktree path
+       b. `git rev-parse --abbrev-ref HEAD` in cwd → branch (for sandbox naming only)
+       c. Resolve remote URL from `/workspace/repos/<repo>` (NOT from agent's `.git/config`)
+       d. Resolve git credentials: GitHub App token via `github-app-auth.getInstallationToken(org)`. No PAT fallback.
+       e. SDK: `daytona.create({ ephemeral: true, autoStopInterval: 15, name, labels: {thor-managed, thor-cwd, thor-branch} })`
+       f. Clone default branch, fetch+reset to SHA
+       g. On any failure: delete the sandbox, surface generic error (admin-only rich context in logs)
+    2. Preflight: verify clean worktree (`git status --porcelain`), resolve HEAD SHA
+    3. ensureShaOnOrigin: always push HEAD to `refs/heads/thor-sandbox/<sandboxId>`
     4. Mint token, embed in fetch URL, `git fetch <authed-url> refs/heads/thor-sandbox/<id> && git reset --hard <sha>` in sandbox
-    5. SDK: `sandbox.commands.run(command)` — streamed via NDJSON
-  - `stop` (keyed by cwd):
-    1. `daytona.list({thor-managed, thor-cwd})` to find sandbox; no-op if none
-    2. SDK: `sandbox.delete()`
-  - `list`:
-    1. SDK: `daytona.list({thor-managed})` for this session
-  - Use NDJSON streaming for `exec` subcommand. Buffered JSON for others.
+    5. Join args into command string, run via `sh -c` in sandbox
+    6. Stream stdout/stderr via NDJSON
+  - `create` (operator): same as auto-create above, without running a command. Returns sandbox ID.
+  - `stop` (operator): `daytona.list({thor-managed, thor-cwd})` → `sandbox.delete()`. No-op if none.
+  - `list` (operator): `daytona.list({thor-managed})` for this session.
+  - NDJSON streaming for exec. Buffered JSON for operator modes.
 - [ ] Implement `packages/remote-cli/src/sandbox.ts` module:
   - All operations use `@daytona/sdk`. No CLI binary needed.
   - **Stateless**: no in-memory maps. Sandbox lookup via Daytona labels (`thor-managed`, `thor-cwd`, `thor-branch`). Only `cwdLocks` (ephemeral mutex) kept in memory. Survives remote-cli restart.
@@ -145,7 +155,7 @@ Four commands. Must be run from a worktree (`cwd` provides repo, branch, path). 
   - Remote URL resolution: `resolveRemoteUrl(repoName)` → `git remote get-url origin` in `/workspace/repos/<repo>`. Enforce HTTPS; reject non-HTTPS URLs.
   - `createSandbox(name, remoteUrl, sha, labels): Promise<string>` — create, scratch-push, clone default branch, fetch+reset SHA
   - `syncSandbox(id, remoteUrl, sha): Promise<void>` — scratch-push, fetch ref+reset SHA in sandbox
-  - `execInSandbox(id, command, callbacks): Promise<number>` — `sandbox.commands.exec(command)` + log streaming for real-time output
+  - `execInSandbox(id, command, callbacks): Promise<number>` — `sandbox.commands.exec(command)` + log streaming for real-time output. Command is passed to `sh -c`.
   - `deleteSandbox(id): Promise<void>` — `sandbox.delete()`
   - `findSandboxForCwd(cwd): Promise<string | null>` — `daytona.list({thor-managed, thor-cwd=cwd})`
   - `listSandboxes(): Promise<SandboxInfo[]>` — `daytona.list({thor-managed})`
@@ -154,19 +164,18 @@ Four commands. Must be run from a worktree (`cwd` provides repo, branch, path). 
 ### Phase 3: Agent Skill + Documentation
 
 - [ ] Create `docker/opencode/config/skills/sandbox/SKILL.md`:
-  - When to use: running Python/Java/etc. tests, compiling code, executing non-Node scripts
-  - Commands: `sandbox create`, `sandbox exec`, `sandbox stop`, `sandbox list`
+  - One rule: "Use `sandbox` to run non-Node code (Python, Java, Go, etc.) in a cloud sandbox. For Node/TypeScript, run commands directly."
   - Workflow example:
     ```
     cd /workspace/worktrees/myrepo/feat/auth
-    sandbox exec "pip install -r requirements.txt && pytest -v"   # auto-creates, syncs, runs
+    sandbox pip install -r requirements.txt && pytest -v   # auto-creates, syncs, runs
     # fix test, commit...
-    sandbox exec "pytest -v"    # auto-syncs code, reuses sandbox
-    sandbox stop                # cleanup (or let auto-stop handle it)
+    sandbox pytest -v              # auto-syncs code, reuses sandbox
     ```
-  - Note: `exec` auto-syncs (scratch-pushes local commits + fetches in sandbox by SHA)
+  - Note: sandbox auto-creates on first run, auto-syncs committed code, auto-stops when idle
   - Note: sandbox has internet access for `pip install`, `npm install`, etc.
-  - Note: worktree must be clean (committed) before exec
+  - Note: worktree must be clean (committed) before running
+  - Note: no quoting needed — just write the command naturally
   - Common errors and fixes
 - [ ] Update README.md to list `sandbox` in available agent tools.
 - [ ] Define base snapshot/image contract (which runtimes pre-installed).
@@ -182,21 +191,20 @@ Four commands. Must be run from a worktree (`cwd` provides repo, branch, path). 
   - Branch names with special chars (slashes, dots) → sanitized sandbox name
   - Label-based lookup: finds sandbox by `thor-cwd` label, returns null when none match
 - [ ] Integration test for `/exec/sandbox` endpoint:
-  - `create` returns sandbox ID
-  - `exec` returns NDJSON stream
-  - `stop` returns success
-  - `list` returns filtered sandboxes
-  - Invalid args (missing command) returns 400
-  - Invalid subcommand returns 400
+  - Default mode (exec) returns NDJSON stream
+  - `--create` returns sandbox ID
+  - `--stop` returns success
+  - `--list` returns filtered sandboxes
+  - No args (empty command) returns 400
 - [ ] Security test:
-  - Token NOT visible via `sandbox exec "env | grep -i token"`
+  - Token NOT visible via `sandbox env | grep -i token`
 
 ### Phase 5: Validation
 
-- [ ] End-to-end: `sandbox exec "pytest -v"` → results streamed (auto-creates on first call)
-- [ ] Verify credentials are NOT visible inside sandbox (`sandbox exec "env | grep -i token"`)
-- [ ] Verify `sandbox create` fails fast with a clear error when GitHub App installation is not configured for the org
-- [ ] Verify auto-sync: edit in worktree, commit, `sandbox exec` picks up changes
+- [ ] End-to-end: `sandbox pytest -v` → results streamed (auto-creates on first call)
+- [ ] Verify credentials are NOT visible inside sandbox (`sandbox env | grep -i token`)
+- [ ] Verify `sandbox --create` fails fast with a clear error when GitHub App installation is not configured for the org
+- [ ] Verify auto-sync: edit in worktree, commit, `sandbox pytest -v` picks up changes
 - [ ] Verify auto-stop: idle sandbox is cleaned up by Daytona after 15 min
 
 ### Follow-ups (post-launch)
@@ -235,16 +243,22 @@ Four commands. Must be run from a worktree (`cwd` provides repo, branch, path). 
 | 2026-04-17 | Auth delivery via GIT_ASKPASS callback (host-side git ops)                      | Host-side git commands (scratch-push) use `GIT_ASKPASS` → `bin/git-askpass` → `auth-helper.ts` to mint tokens on demand. Token never lives in an env var. Sandbox-side uses embedded URL token instead (different trust boundary).                                                                                                                                         |
 | 2026-04-17 | Block `git config` entirely in policy                                           | Earlier plan had a config-key allowlist. Now fully blocked — agent cannot rewrite remotes or credential helpers. Simpler, more secure.                                                                                                                                                                                                                                     |
 | 2026-04-17 | Generic errors to agent, detailed logs for admins                               | Sandbox errors from Daytona SDK can leak internal details. Agent sees generic "Sandbox service error"; admins see full context in logs. No redactor needed.                                                                                                                                                                                                                |
+| 2026-04-18 | Flatten CLI: `sandbox <cmd> [args...]`, no subcommands for agent                | Minimize agent cognitive load. No quoting (`sandbox pytest -v` not `sandbox exec "pytest -v"`). Wrapper joins args, sandbox runs via `sh -c`. One command to learn, zero lifecycle management.                                                                                                                                                                             |
+| 2026-04-18 | Operator flags (`--create`, `--stop`, `--list`) instead of subcommands          | Agent never sees lifecycle commands. Operators can troubleshoot without teaching the agent. Flags detected by wrapper before arg joining.                                                                                                                                                                                                                                  |
+| 2026-04-18 | Node/TypeScript stays local, sandbox for non-Node only                          | Container already isolates Node. Local execution gives zero-latency edit→test loop (no commit→push→sync cycle). Sandbox adds 5-10s per iteration — unacceptable for the 80% case. One simple rule: "use `sandbox` for non-Node code."                                                                                                                                      |
+| 2026-04-18 | No session-end cleanup; rely on Daytona auto-stop                               | Agent may run long-running sandbox processes. Killing on session end would cut off streaming output. Daytona auto-stop (15 min idle) is sufficient. Cost of leaked sandbox: ~$0.01. Avoids complexity of session lifecycle hooks.                                                                                                                                          |
 
 ## Exit Criteria
 
-- `sandbox create/exec/stop/list` commands available in OpenCode environment.
+- `sandbox <cmd> [args...]` runs non-Node commands in a cloud sandbox from any worktree.
+- Agent only needs one command — no lifecycle management, no IDs, no quoting.
+- Operator flags (`--create`, `--stop`, `--list`) available for troubleshooting.
+- Sandbox auto-creates on first run, auto-syncs committed code, auto-stops after 15 min idle.
 - Code cloned into sandbox without credentials being stored in sandbox env.
-- Require GitHub App installation for the org; fail fast with clear error if missing. PAT is never used for sandbox git ops.
-- `sandbox exec` auto-syncs (scratch-push + fetch by ref) before running command.
+- Require GitHub App installation for the org; fail fast with clear error if missing. PAT is never used.
 - Test output streamed back to agent via NDJSON.
-- Daytona auto-stop cleans up idle sandboxes (15 min).
 - Git credentials NOT visible via `env` inside sandbox.
+- Node/TypeScript continues to run locally (no sandbox needed).
 
 ## Out of Scope
 
@@ -255,27 +269,25 @@ Four commands. Must be run from a worktree (`cwd` provides repo, branch, path). 
 
 ## Error & Rescue Registry
 
-| Method/Codepath   | What Can Go Wrong                    | Rescued? | Rescue Action                                 | User Sees                                                                                             |
-| ----------------- | ------------------------------------ | -------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `sandbox create`  | Not in a worktree                    | Y        | 400                                           | "Must run from /workspace/worktrees/"                                                                 |
-| `sandbox create`  | Daytona API unreachable              | Y        | 500                                           | "Sandbox service unavailable"                                                                         |
-| `sandbox create`  | Daytona auth failure                 | Y        | 500                                           | "Sandbox auth failed, check DAYTONA_API_KEY"                                                          |
-| `sandbox create`  | GitHub App installation missing      | Y        | 400                                           | "Sandbox requires GitHub App auth for <org>. Configure github_app.installations in workspace config." |
-| `sandbox create`  | GitHub App token mint fails          | Y        | 500                                           | "Failed to mint GitHub App token for <org>"                                                           |
-| `sandbox create`  | Clone fails (bad repo/branch)        | Y        | Delete sandbox, 400                           | "Failed to clone <repo>@<branch>"                                                                     |
-| `sandbox create`  | Worktree dirty (host preflight)      | Y        | 400                                           | "Worktree not clean. Commit your changes first (add generated files to .gitignore)."                  |
-| `sandbox create`  | Scratch-push fails                   | Y        | Delete sandbox, 400                           | "Failed to push code to origin. Check repository permissions."                                        |
-| `sandbox create`  | Create timeout                       | Y        | 500                                           | "Sandbox creation timed out"                                                                          |
-| `sandbox exec`    | No sandbox for cwd / gone on Daytona | Y        | Auto-create from cwd (silent)                 | Stream command output normally                                                                        |
-| `sandbox exec`    | Worktree dirty (host preflight)      | Y        | 400                                           | (same hint as create)                                                                                 |
-| `sandbox exec`    | Scratch-push fails                   | Y        | 500                                           | "Failed to sync code to origin"                                                                       |
-| `sandbox exec`    | GitHub App token mint fails          | Y        | 500                                           | "Failed to mint GitHub App token for <org>"                                                           |
-| `sandbox exec`    | Fetch+reset fails (sandbox)          | Y        | 500                                           | "Failed to sync code to sandbox"                                                                      |
-| `sandbox exec`    | Command fails (nonzero)              | Y        | Stream stderr                                 | Test failure output (normal)                                                                          |
-| `sandbox exec`    | Long-running command                 | N/A      | No timeout imposed — OpenCode manages its own | Stream until done                                                                                     |
-| `sandbox stop`    | No sandbox tracked for cwd           | Y        | Silent no-op (idempotent)                     | Exit 0                                                                                                |
-| `sandbox stop`    | Delete fails                         | Y        | Log + ignore                                  | Exit 0                                                                                                |
-| Daytona auto-stop | Sandbox leaked (no explicit stop)    | Y        | Auto-delete after 15 min idle                 | Silent                                                                                                |
+| Codepath          | What Can Go Wrong                 | Rescued? | Rescue Action                                 | User Sees                                                                                             |
+| ----------------- | --------------------------------- | -------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| auto-create       | Not in a worktree                 | Y        | 400                                           | "Must run from /workspace/worktrees/"                                                                 |
+| auto-create       | Daytona API unreachable           | Y        | 500                                           | "Sandbox service unavailable"                                                                         |
+| auto-create       | Daytona auth failure              | Y        | 500                                           | "Sandbox auth failed, check DAYTONA_API_KEY"                                                          |
+| auto-create       | GitHub App installation missing   | Y        | 400                                           | "Sandbox requires GitHub App auth for <org>. Configure github_app.installations in workspace config." |
+| auto-create       | GitHub App token mint fails       | Y        | 500                                           | "Failed to mint GitHub App token for <org>"                                                           |
+| auto-create       | Clone fails (bad repo/branch)     | Y        | Delete sandbox, 400                           | "Failed to clone <repo>@<branch>"                                                                     |
+| auto-create       | Create timeout                    | Y        | 500                                           | "Sandbox creation timed out"                                                                          |
+| `sandbox <cmd>`   | No sandbox yet / gone on Daytona  | Y        | Auto-create from cwd (silent)                 | Stream command output normally                                                                        |
+| `sandbox <cmd>`   | Worktree dirty (host preflight)   | Y        | 400                                           | "Worktree not clean. Commit your changes first (add generated files to .gitignore)."                  |
+| `sandbox <cmd>`   | Scratch-push fails                | Y        | 500                                           | "Failed to sync code to origin"                                                                       |
+| `sandbox <cmd>`   | GitHub App token mint fails       | Y        | 500                                           | "Failed to mint GitHub App token for <org>"                                                           |
+| `sandbox <cmd>`   | Fetch+reset fails (sandbox)       | Y        | 500                                           | "Failed to sync code to sandbox"                                                                      |
+| `sandbox <cmd>`   | Command fails (nonzero)           | Y        | Stream stderr                                 | Test failure output (normal)                                                                          |
+| `sandbox <cmd>`   | Long-running command              | N/A      | No timeout imposed — OpenCode manages its own | Stream until done                                                                                     |
+| `sandbox --stop`  | No sandbox tracked for cwd        | Y        | Silent no-op (idempotent)                     | Exit 0                                                                                                |
+| `sandbox --stop`  | Delete fails                      | Y        | Log + ignore                                  | Exit 0                                                                                                |
+| Daytona auto-stop | Sandbox leaked (no explicit stop) | Y        | Auto-delete after 15 min idle                 | Silent                                                                                                |
 
 ## Decision Audit Trail
 
@@ -302,6 +314,10 @@ Four commands. Must be run from a worktree (`cwd` provides repo, branch, path). 
 | 17  | Eng-v2 | Add tests for unconfigured API key, special branch chars | Mechanical     | P2        | Claude: missing test cases                     | Skip                            |
 | 18  | CEO-v2 | SDK spike before full implementation                     | Taste          | P6        | Claude: SDK behavior is biggest risk           | Skip spike                      |
 | 19  | CEO-v2 | Exec timeout: 5 min may be too short                     | Taste          | P3        | Claude flagged, but configurable later         | Longer default                  |
+| 20  | DX-v3  | Flatten CLI to `sandbox <cmd> [args...]`                 | User Decision  | P5        | Zero cognitive load; no quoting needed         | Subcommand-based CLI            |
+| 21  | DX-v3  | Operator flags (`--create/--stop/--list`)                | User Decision  | P5        | Keep lifecycle out of agent's view             | Teach all commands to agent     |
+| 22  | Eng-v3 | Node stays local, sandbox for non-Node only              | User Decision  | P1        | Container isolates Node; 5-10s sync tax bad    | Everything through sandbox      |
+| 23  | Eng-v3 | No session-end cleanup; Daytona auto-stop only           | User Decision  | P3        | Long-running processes; ~$0.01 leak cost       | Session-end hook                |
 
 ## GSTACK REVIEW REPORT
 
