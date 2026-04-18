@@ -25,4 +25,4 @@ test.sh
 /docker-volumes/
 # CA private key must never be committed — regenerate with scripts/mitmproxy-ca-init.sh
 /docker-volumes/mitmproxy-ca/
-__pycache__/
+docker/mitmproxy/__pycache__/

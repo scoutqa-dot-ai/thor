@@ -57,17 +57,21 @@ def request(flow: HTTPFlow) -> None:
 def _handle(flow: HTTPFlow) -> None:
     host_raw = flow.request.pretty_host
 
+    # Strip Proxy-Authorization before forwarding (AD12) — unconditional, before any branch
+    flow.request.headers.pop("Proxy-Authorization", None)
+
     # Health intercept — synthetic response, no upstream connection
     if host_raw == _HEALTH_HOST:
         rs = _ruleset
+        status = 200 if rs is not None else 503
         body = json.dumps(
             {
-                "status": "ok",
+                "status": "ok" if rs is not None else "degraded",
                 "rules": len(rs.rules) if rs else 0,
                 "mtime": rs.mtime if rs else None,
             }
         )
-        flow.response = http.Response.make(200, body, {"content-type": "application/json"})
+        flow.response = http.Response.make(status, body, {"content-type": "application/json"})
         return
 
     host = canonicalize_host(host_raw)
@@ -75,9 +79,6 @@ def _handle(flow: HTTPFlow) -> None:
         flow.response = _make_error(403, "host_denied", host_raw)
         _log(flow.request.method, host_raw, None, "deny:ipv6")
         return
-
-    # Strip Proxy-Authorization before forwarding (AD12)
-    flow.request.headers.pop("Proxy-Authorization", None)
 
     rs = _refresh_ruleset()
     if rs is None:
@@ -165,6 +166,7 @@ def _make_error(status: int, code: str, host: str) -> http.Response:
         "readonly_violation": "Host is configured read-only; use GET or HEAD",
         "malformed_rule": "Fix the mitmproxy rule syntax in config.json",
         "config_unavailable": "Ensure config.json is mounted at /workspace/config.json",
+        "internal_error": "Check mitmproxy container logs for a traceback",
     }
     body = json.dumps(
         {

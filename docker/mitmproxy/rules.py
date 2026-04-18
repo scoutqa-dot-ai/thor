@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -77,7 +77,9 @@ def load_ruleset(config_path: str) -> RuleSet:
     mtime = p.stat().st_mtime
     data = json.loads(p.read_text())
 
-    raw_rules = data.get("mitmproxy", [])
+    raw_rules = data.get("mitmproxy") or []
+    if not isinstance(raw_rules, list):
+        raise ValueError(f"config.json 'mitmproxy' must be a list, got {type(raw_rules).__name__}")
     rules: list[Rule] = []
     for entry in raw_rules:
         h = entry.get("host")
@@ -99,7 +101,11 @@ def load_ruleset(config_path: str) -> RuleSet:
             )
         )
 
-    extra_pt = data.get("mitmproxy_passthrough", [])
-    passthrough = list(DEFAULT_PASSTHROUGH) + [str(x) for x in extra_pt]
+    extra_pt = data.get("mitmproxy_passthrough") or []
+    if not isinstance(extra_pt, list):
+        raise ValueError(f"config.json 'mitmproxy_passthrough' must be a list, got {type(extra_pt).__name__}")
+    passthrough = list(DEFAULT_PASSTHROUGH) + [
+        h for h in (canonicalize_host(str(x)) for x in extra_pt) if h is not None
+    ]
 
     return RuleSet(rules=rules, passthrough_hosts=passthrough, mtime=mtime)

@@ -24,6 +24,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - inside
+      - outside
 
   remote-cli:
     build:
@@ -66,6 +69,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - inside
+      - outside
 
   grafana-mcp:
     image: grafana/mcp-grafana:0.11.3
@@ -94,6 +100,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - inside
+      - outside
 
   mitmproxy:
     build:
@@ -112,6 +121,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - inside
+      - outside
 
   opencode:
     build:
@@ -127,6 +139,19 @@ services:
       - "127.0.0.1:4096:4096"
     working_dir: /workspace
     command: ["serve", "--port", "4096", "--hostname", "0.0.0.0"]
+    environment:
+      # Proxy all outbound HTTPS through mitmproxy for credential injection.
+      # NO_PROXY lists in-cluster services that must not route through the proxy.
+      - HTTP_PROXY=http://mitmproxy:8080
+      - HTTPS_PROXY=http://mitmproxy:8080
+      - NO_PROXY=localhost,127.0.0.1,remote-cli,slack-mcp,grafana-mcp,opencode,gateway,runner
+      # Node.js: preload sets EnvHttpProxyAgent so built-in fetch honors HTTP_PROXY.
+      - NODE_OPTIONS=--require /etc/thor/mitmproxy-init.js
+      # Extra CA for Node.js (system bundle + mitmproxy CA handled in entrypoint-wrap.sh).
+      - NODE_EXTRA_CA_CERTS=/etc/thor/ca/cert.pem
+      # Non-Node clients (Python, git) use the env vars set by entrypoint-wrap.sh.
+      - REQUESTS_CA_BUNDLE=/etc/thor/ca/cert.pem
+      - GIT_SSL_CAINFO=/etc/thor/ca/cert.pem
     volumes:
       - ./docker-volumes/opencode:/home/thor/.local/share/opencode
       - ./docker-volumes/workspace/memory:/workspace/memory
@@ -134,6 +159,8 @@ services:
       - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
       - ./docker-volumes/workspace/cron:/workspace/cron
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
+      # mitmproxy CA: cert.pem trusted at runtime by entrypoint-wrap.sh
+      - ./docker-volumes/mitmproxy-ca:/etc/thor/ca:ro
     depends_on:
       remote-cli:
         condition: service_healthy
@@ -150,6 +177,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    # opencode is on `inside` only — the only egress path is through mitmproxy.
+    networks:
+      - inside
 
   runner:
     build:
@@ -166,6 +196,9 @@ services:
     depends_on:
       opencode:
         condition: service_healthy
+    networks:
+      - inside
+      - outside
 
   gateway:
     build:
@@ -199,6 +232,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - outside
 
   cron:
     build:
@@ -213,6 +248,8 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+    networks:
+      - outside
 
   vouch:
     image: quay.io/vouch/vouch-proxy:0.45.1
@@ -239,6 +276,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - outside
 
   ingress:
     build:
@@ -253,3 +292,15 @@ services:
         condition: service_healthy
       vouch:
         condition: service_healthy
+    # ingress must reach opencode (inside) and vouch/gateway (outside)
+    networks:
+      - inside
+      - outside
+
+# Two networks enforce opencode's egress policy:
+#   inside (internal: true) — no external egress; opencode lives here only
+#   outside (default)       — internet-capable; mitmproxy bridges the two
+networks:
+  inside:
+    internal: true
+  outside: {}
