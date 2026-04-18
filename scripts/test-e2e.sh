@@ -823,6 +823,141 @@ else
     assert '[[ "$sbx_list_after_has_cwd" == "no" ]]' \
       "sandbox removed after stop" \
       "still found in list"
+
+    # 8l. Dirty worktree rejection
+    echo "  Testing dirty worktree rejection..."
+    docker exec "$remote_cli_container" sh -c \
+      "echo 'dirty' >> $SBX_WORKTREE_DIR/dirty-file.txt" 2>/dev/null
+    sbx_dirty_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"echo\",\"should-not-run\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_dirty_exit=$(json_field "$sbx_dirty_raw" "exitCode")
+    sbx_dirty_stderr=$(json_field "$sbx_dirty_raw" "stderr")
+    assert '[[ "$sbx_dirty_exit" == "1" ]]' "dirty worktree is rejected" "exitCode='$sbx_dirty_exit'"
+    assert '[[ "$sbx_dirty_stderr" == *"not clean"* ]]' \
+      "dirty worktree error mentions 'not clean'" \
+      "stderr='${sbx_dirty_stderr:0:200}'"
+    # Clean up dirty file
+    docker exec "$remote_cli_container" \
+      rm -f "$SBX_WORKTREE_DIR/dirty-file.txt" 2>/dev/null
+
+    # 8m. Failing command exit code propagation
+    echo "  Testing failing command propagation..."
+    # Reset worktree to a clean state for this test
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" checkout -- . 2>/dev/null
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" clean -fd 2>/dev/null
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" reset --hard "$SBX_OLD_SHA" 2>/dev/null >/dev/null
+    sbx_fail_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo FAIL_OUTPUT && exit 42\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_fail_exit=$(echo "$sbx_fail_raw" | sandbox_exec_exit)
+    sbx_fail_stdout=$(echo "$sbx_fail_raw" | sandbox_exec_stdout)
+    assert '[[ "$sbx_fail_exit" == "42" ]]' \
+      "failing command exit code propagates" \
+      "exitCode='$sbx_fail_exit'"
+    assert '[[ "$sbx_fail_stdout" == *"FAIL_OUTPUT"* ]]' \
+      "failing command output arrives on stdout" \
+      "stdout='${sbx_fail_stdout:0:200}'"
+
+    # 8n. Sandbox disappears between execs (auto-recreate)
+    echo "  Testing auto-recreate after sandbox disappears..."
+    # First, exec to ensure a sandbox exists
+    sbx_pre_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"echo\",\"pre-disappear\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_pre_exit=$(echo "$sbx_pre_raw" | sandbox_exec_exit)
+    assert '[[ "$sbx_pre_exit" == "0" ]]' "pre-disappear exec succeeded" "exitCode='$sbx_pre_exit'"
+    # Stop the sandbox behind the scenes (simulates Daytona auto-stop)
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
+    sleep 2
+    # Exec again — should auto-recreate
+    sbx_recreate_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"echo\",\"post-recreate\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_recreate_exit=$(echo "$sbx_recreate_raw" | sandbox_exec_exit)
+    sbx_recreate_stdout=$(echo "$sbx_recreate_raw" | sandbox_exec_stdout)
+    assert '[[ "$sbx_recreate_exit" == "0" ]]' \
+      "auto-recreate after disappear succeeded" \
+      "exitCode='$sbx_recreate_exit'"
+    assert '[[ "$sbx_recreate_stdout" == *"post-recreate"* ]]' \
+      "auto-recreated sandbox runs command correctly" \
+      "stdout='${sbx_recreate_stdout:0:200}'"
+    # Stop for cleanup
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
+
+    # 8o. Two worktrees, two sandboxes (label isolation)
+    echo "  Testing two-worktree sandbox isolation..."
+    SBX_BRANCH2="e2e-sandbox2-${SBX_TS}"
+    SBX_WORKTREE_DIR2="/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH2}"
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_REPO_DIR" worktree add -b "$SBX_BRANCH2" "$SBX_WORKTREE_DIR2" "$SBX_NEW_SHA" 2>/dev/null
+    worktree2_created=$?
+
+    if [[ $worktree2_created -eq 0 ]]; then
+      # Exec on worktree 1 (old SHA)
+      sbx_iso1_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d "{\"mode\":\"exec\",\"args\":[\"git\",\"rev-parse\",\"HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+        2>/dev/null)
+      sbx_iso1_sha=$(echo "$sbx_iso1_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+
+      # Exec on worktree 2 (new SHA)
+      sbx_iso2_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d "{\"mode\":\"exec\",\"args\":[\"git\",\"rev-parse\",\"HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR2\"}" \
+        2>/dev/null)
+      sbx_iso2_sha=$(echo "$sbx_iso2_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+
+      assert '[[ "$sbx_iso1_sha" == "$SBX_OLD_SHA" ]]' \
+        "worktree 1 sandbox has correct SHA" \
+        "expected='${SBX_OLD_SHA:0:12}', got='${sbx_iso1_sha:0:12}'"
+      assert '[[ "$sbx_iso2_sha" == "$SBX_NEW_SHA" ]]' \
+        "worktree 2 sandbox has correct SHA (isolated)" \
+        "expected='${SBX_NEW_SHA:0:12}', got='${sbx_iso2_sha:0:12}'"
+
+      # Verify list shows both
+      sbx_list_both=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d '{"mode":"list"}' 2>/dev/null)
+      sbx_list_both_count=$(echo "$sbx_list_both" | node -e "
+        const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+        const list = JSON.parse(d.stdout || '[]');
+        const ours = list.filter(s =>
+          s.cwd === '$SBX_WORKTREE_DIR' || s.cwd === '$SBX_WORKTREE_DIR2'
+        );
+        console.log(ours.length);
+      " 2>/dev/null || echo "0")
+      assert '[[ "$sbx_list_both_count" == "2" ]]' \
+        "list shows both sandboxes" \
+        "count='$sbx_list_both_count'"
+
+      # Stop both
+      curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
+      curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR2\"}" 2>/dev/null >/dev/null
+
+      # Clean up worktree 2
+      docker exec "$remote_cli_container" \
+        git -C "$SBX_REPO_DIR" worktree remove --force "$SBX_WORKTREE_DIR2" 2>/dev/null || true
+      docker exec "$remote_cli_container" \
+        git -C "$SBX_REPO_DIR" branch -D "$SBX_BRANCH2" 2>/dev/null || true
+    else
+      assert 'false' "second worktree created for isolation test" "git worktree add failed"
+    fi
   fi
 
   # Clean up worktree
