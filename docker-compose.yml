@@ -166,8 +166,8 @@ services:
       - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
       - ./docker-volumes/workspace/cron:/workspace/cron
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
-      # mitmproxy CA: cert.pem trusted at runtime by entrypoint-wrap.sh
-      - ./docker-volumes/mitmproxy-ca:/etc/thor/ca:ro
+      # mitmproxy CA: public cert only — key.pem never enters opencode container
+      - ./docker-volumes/mitmproxy-ca/public:/etc/thor/ca:ro
     depends_on:
       remote-cli:
         condition: service_healthy
