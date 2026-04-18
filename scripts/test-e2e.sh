@@ -127,6 +127,9 @@ assert '[[ "$remote_cli_health" == *"ok"* ]]' "remote-cli is healthy" "got: $rem
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
 assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy" "got: $runner_health"
 
+gateway_health=$(curl -sf "$GATEWAY_URL/health" 2>/dev/null || echo '{}')
+assert '[[ "$gateway_health" == *"ok"* ]]' "Gateway is healthy (deep check)" "got: $gateway_health"
+
 # ── 2. Remote-cli git/gh auth ────────────────────────────────────────────────
 
 echo ""
@@ -470,7 +473,139 @@ else
   fi
 fi
 
-# ── 6. Alias-based session matching via gateway ──────────────────────────────
+# ── 6. Git/GH policy enforcement ─────────────────────────────────────────────
+#
+# Validates that remote-cli blocks disallowed git/gh commands at the policy
+# layer. These are direct HTTP calls — no LLM round-trip needed.
+
+echo ""
+echo "=== Git/GH Policy Enforcement ==="
+
+POLICY_CWD="${POLICY_CWD:-/workspace/repos/${ALIAS_REPO:-acme-multi-hyphen-repo}}"
+
+# 6a. git checkout should be blocked
+checkout_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"checkout\",\"main\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+checkout_exit=$(json_field "$checkout_raw" "exitCode")
+checkout_stderr=$(json_field "$checkout_raw" "stderr")
+assert '[[ "$checkout_exit" == "1" ]]' "git checkout is blocked" "exitCode='$checkout_exit'"
+assert '[[ "$checkout_stderr" == *"not allowed"* ]]' "git checkout error mentions not allowed" "stderr='${checkout_stderr:0:200}'"
+
+# 6b. git switch should be blocked
+switch_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"switch\",\"main\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+switch_exit=$(json_field "$switch_raw" "exitCode")
+assert '[[ "$switch_exit" == "1" ]]' "git switch is blocked" "exitCode='$switch_exit'"
+
+# 6c. Leading flags should be blocked
+flag_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"-c\",\"user.name=x\",\"status\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+flag_exit=$(json_field "$flag_raw" "exitCode")
+flag_stderr=$(json_field "$flag_raw" "stderr")
+assert '[[ "$flag_exit" == "1" ]]' "git leading flags are blocked" "exitCode='$flag_exit'"
+assert '[[ "$flag_stderr" == *"leading flags"* ]]' "leading flags error is descriptive" "stderr='${flag_stderr:0:200}'"
+
+# 6d. git push to non-origin remote should be blocked
+push_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"push\",\"upstream\",\"main\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+push_exit=$(json_field "$push_raw" "exitCode")
+push_stderr=$(json_field "$push_raw" "stderr")
+assert '[[ "$push_exit" == "1" ]]' "git push to non-origin is blocked" "exitCode='$push_exit'"
+assert '[[ "$push_stderr" == *"origin"* ]]' "push error mentions origin restriction" "stderr='${push_stderr:0:200}'"
+
+# 6e. cwd outside /workspace should be blocked
+cwd_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"status\"],\"cwd\":\"/tmp/evil\"}" \
+  2>/dev/null || echo '{}')
+cwd_exit=$(json_field "$cwd_raw" "exitCode")
+assert '[[ "$cwd_exit" == "1" ]]' "git cwd outside /workspace is blocked" "exitCode='$cwd_exit'"
+
+# 6f. gh api should be blocked
+gh_api_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"api\",\"repos\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+gh_api_exit=$(json_field "$gh_api_raw" "exitCode")
+gh_api_stderr=$(json_field "$gh_api_raw" "stderr")
+assert '[[ "$gh_api_exit" == "1" ]]' "gh api is blocked" "exitCode='$gh_api_exit'"
+assert '[[ "$gh_api_stderr" == *"not allowed"* ]]' "gh api error mentions not allowed" "stderr='${gh_api_stderr:0:200}'"
+
+# 6g. gh pr checkout should be blocked
+gh_prco_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"pr\",\"checkout\",\"1\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+gh_prco_exit=$(json_field "$gh_prco_raw" "exitCode")
+assert '[[ "$gh_prco_exit" == "1" ]]' "gh pr checkout is blocked" "exitCode='$gh_prco_exit'"
+
+# 6h. Allowed read commands should succeed
+status_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"status\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+status_exit=$(json_field "$status_raw" "exitCode")
+assert '[[ "$status_exit" == "0" ]]' "git status (allowed) succeeds" "exitCode='$status_exit'"
+
+# ── 7. Busy session + interrupt ──────────────────────────────────────────────
+#
+# Tests that a busy session returns { busy: true } without interrupt,
+# and that interrupt=true aborts the busy session and executes the new prompt.
+
+echo ""
+echo "=== Busy Session + Interrupt ==="
+
+BUSY_CORR_KEY="e2e-busy-$(date +%s)"
+BUSY_PHRASE="BUSY$(date +%s | tail -c 6)"
+
+# 7a. Start a long-running trigger (sleep prompt) in the background
+echo "  Sending trigger #1 (long-running prompt to occupy session)..."
+curl -sf -X POST "$RUNNER_URL/trigger" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"Run a bash command: sleep 30. Then say DONE.\",\"correlationKey\":\"$BUSY_CORR_KEY\",\"directory\":\"$SESSION_DIR\"}" \
+  --max-time 10 2>/dev/null >/dev/null &
+BUSY_BG_PID=$!
+sleep 5
+
+# 7b. Send a non-interrupt trigger — should get { busy: true }
+echo "  Sending trigger #2 (non-interrupt, expecting busy)..."
+busy_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"Say hello.\",\"correlationKey\":\"$BUSY_CORR_KEY\",\"directory\":\"$SESSION_DIR\"}" \
+  --max-time 30 2>/dev/null || echo '{}')
+busy_val=$(json_field "$busy_raw" "busy")
+assert '[[ "$busy_val" == "true" ]]' "Non-interrupt trigger returns busy" "response: ${busy_raw:0:200}"
+
+# 7c. Send an interrupt trigger — should abort and execute
+echo "  Sending trigger #3 (interrupt=true, expecting execution)..."
+interrupt_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"Our secret word is $BUSY_PHRASE. Confirm by repeating it back.\",\"correlationKey\":\"$BUSY_CORR_KEY\",\"interrupt\":true,\"directory\":\"$SESSION_DIR\"}" \
+  --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+interrupt_trigger=$(echo "$interrupt_raw" | parse_done)
+
+interrupt_session=$(json_field "$interrupt_trigger" "sessionId")
+interrupt_status=$(json_field "$interrupt_trigger" "status")
+interrupt_response=$(json_field "$interrupt_trigger" "response")
+interrupt_has_phrase=$(response_contains "$interrupt_trigger" "$BUSY_PHRASE")
+
+assert '[[ -n "$interrupt_session" ]]' "Interrupt trigger: got a session ID" "sessionId='$interrupt_session'"
+assert '[[ "$interrupt_status" == "completed" ]]' "Interrupt trigger: completed successfully" "status='$interrupt_status'"
+assert '[[ "$interrupt_has_phrase" == "yes" ]]' "Interrupt trigger: agent confirmed the phrase" "response: ${interrupt_response:0:200}"
+
+# Clean up background curl
+kill "$BUSY_BG_PID" 2>/dev/null || true
+wait "$BUSY_BG_PID" 2>/dev/null || true
+
+# ── 8. Alias-based session matching via gateway ──────────────────────────────
 #
 # Test flow:
 #   1. Trigger #1 (runner): agent runs git worktree add → alias registered
