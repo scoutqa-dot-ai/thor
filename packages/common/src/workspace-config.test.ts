@@ -224,6 +224,77 @@ describe("extractRepoFromCwd", () => {
   });
 });
 
+describe("mitmproxy schema", () => {
+  it("accepts a valid host rule", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [{ host: "api.example.com", headers: { Authorization: "${TOKEN}" } }],
+    });
+    const config = loadWorkspaceConfig(path);
+    expect(config.mitmproxy?.[0].host).toBe("api.example.com");
+    expect(config.mitmproxy?.[0].headers).toEqual({ Authorization: "${TOKEN}" });
+  });
+
+  it("accepts a valid host_suffix rule", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [{ host_suffix: ".acme.example" }],
+    });
+    const config = loadWorkspaceConfig(path);
+    expect(config.mitmproxy?.[0].host_suffix).toBe(".acme.example");
+  });
+
+  it("accepts readonly flag", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [{ host: "api.example.com", readonly: true }],
+    });
+    const config = loadWorkspaceConfig(path);
+    expect(config.mitmproxy?.[0].readonly).toBe(true);
+  });
+
+  it("rejects rule with both host and host_suffix", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [{ host: "a.com", host_suffix: ".a.com" }],
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow("Exactly one of");
+  });
+
+  it("rejects rule with neither host nor host_suffix", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [{ headers: {} }],
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow("Exactly one of");
+  });
+
+  it("rejects host_suffix without leading dot", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [{ host_suffix: "example.com" }],
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow();
+  });
+
+  it("accepts mitmproxy_passthrough list", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy_passthrough: ["custom.llm.provider"],
+    });
+    const config = loadWorkspaceConfig(path);
+    expect(config.mitmproxy_passthrough).toEqual(["custom.llm.provider"]);
+  });
+
+  it("does not break existing configs without mitmproxy block", () => {
+    const path = writeConfig("config.json", {
+      repos: { "my-repo": { channels: ["C1"] } },
+    });
+    const config = loadWorkspaceConfig(path);
+    expect(config.mitmproxy).toBeUndefined();
+  });
+});
+
 describe("getRepoUpstreams", () => {
   it("returns proxies array for a configured repo", () => {
     const config = loadWorkspaceConfig(

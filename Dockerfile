@@ -89,6 +89,17 @@ ENV OPENCODE_CLIENT=thor
 COPY --chown=thor:thor docker/opencode/config/ /home/thor/.config/opencode/
 ENTRYPOINT ["opencode"]
 
+# mitmproxy target — CA mounted from host at runtime (never baked into the image).
+# Pin the minor version to avoid surprise API changes; update deliberately.
+FROM mitmproxy/mitmproxy:10.4.2 AS mitmproxy
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+COPY docker/mitmproxy/rules.py   /etc/mitmproxy/rules.py
+COPY docker/mitmproxy/addon.py   /etc/mitmproxy/addon.py
+COPY docker/mitmproxy/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+
 FROM build AS remote-cli
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl openssh-client && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \

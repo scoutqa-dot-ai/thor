@@ -22,5 +22,20 @@
         "api_url": ""
       }
     ]
-  }
+  },
+  "mitmproxy": [
+    {
+      "host": "api.atlassian.com",
+      "headers": { "Authorization": "${ATLASSIAN_AUTH}" }
+    },
+    {
+      "host_suffix": ".acme.example",
+      "headers": { "X-API-Key": "${ACME_API_KEY}" }
+    },
+    {
+      "host": "us.posthog.com",
+      "headers": { "Authorization": "Bearer ${POSTHOG_API_KEY}" },
+      "readonly": true
+    }
+  ]
 }
