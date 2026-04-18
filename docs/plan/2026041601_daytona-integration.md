@@ -8,7 +8,7 @@ Provide cloud sandboxes to Thor's AI agent (OpenCode) for running Python/Java/et
 
 ### The Actual Problem
 
-Thor's AI agent runs in a Node.js container. It can't run Python tests, compile Java, or execute non-Node code. Server resources are limited, so sandboxes must run in the cloud.
+Thor's AI agent runs in a Node.js container. Most managed repos are Java — the agent can't compile, test, or lint them locally. Server resources are limited, so sandboxes must run in the cloud. Sandbox is the agent's primary execution path for project commands.
 
 ### Options Evaluated
 
@@ -25,12 +25,13 @@ One agent-facing command: `sandbox <cmd> [args...]`. Run from a worktree. Remote
 **Agent interface:**
 
 ```
-sandbox pytest -v --tb=short           # auto-creates, syncs, runs, streams
-sandbox pip install -r requirements.txt && pytest
+sandbox mvn test -pl module-auth       # Java (most common case)
+sandbox ./gradlew build
+sandbox pytest -v --tb=short
 sandbox make build                     # shell metacharacters work (sh -c)
 ```
 
-No quoting, no subcommands, no IDs. The wrapper joins all args into a single command string and sends it to remote-cli. Node/TypeScript runs locally (the container already isolates it); sandbox is for non-Node languages.
+No quoting, no subcommands, no IDs. The wrapper joins all args into a single command string and sends it to remote-cli. This is the agent's primary execution path — most repos are Java. Local Node is still available for lightweight tasks (formatting, linting, scripts) but the skill doc doesn't carve out exceptions.
 
 **Operator interface (not in skill doc):**
 
@@ -92,8 +93,8 @@ sandbox --list                         # list session's sandboxes
 **Key DX properties:**
 
 - **Zero cognitive load for agent**: one command (`sandbox <cmd>`), no lifecycle to manage, no IDs to track.
-- **Node stays local**: the container already isolates Node. `npm test`, `vitest`, `tsc` run directly against the worktree with zero latency. Sandbox is only for non-Node languages where the container lacks runtimes.
-- **No quoting**: `sandbox pytest -v --tb=short` — wrapper joins args into a single string, sandbox runs via `sh -c`. Shell metacharacters (`&&`, `|`, `;`) work naturally.
+- **Sandbox is the primary path**: most repos are Java. The agent uses `sandbox` for builds, tests, lints — the majority of its work. Local Node still available for lightweight tasks but not called out as an exception.
+- **No quoting**: `sandbox mvn test` — wrapper joins args into a single string, sandbox runs via `sh -c`. Shell metacharacters (`&&`, `|`, `;`) work naturally.
 - **Auto-everything**: auto-create on first run, auto-sync committed code before each run, auto-stop after 15 min idle.
 
 ## Phases
@@ -164,13 +165,15 @@ sandbox --list                         # list session's sandboxes
 ### Phase 3: Agent Skill + Documentation
 
 - [ ] Create `docker/opencode/config/skills/sandbox/SKILL.md`:
-  - One rule: "Use `sandbox` to run non-Node code (Python, Java, Go, etc.) in a cloud sandbox. For Node/TypeScript, run commands directly."
+  - One rule: "Use `sandbox` to run project commands (build, test, lint)."
+  - No language exceptions — skill doc doesn't mention Node/local.
   - Workflow example:
     ```
     cd /workspace/worktrees/myrepo/feat/auth
-    sandbox pip install -r requirements.txt && pytest -v   # auto-creates, syncs, runs
+    sandbox mvn test -pl module-auth       # auto-creates, syncs, runs
     # fix test, commit...
-    sandbox pytest -v              # auto-syncs code, reuses sandbox
+    sandbox mvn test -pl module-auth       # auto-syncs code, reuses sandbox
+    sandbox ./gradlew spotlessCheck        # lint
     ```
   - Note: sandbox auto-creates on first run, auto-syncs committed code, auto-stops when idle
   - Note: sandbox has internet access for `pip install`, `npm install`, etc.
@@ -245,7 +248,7 @@ sandbox --list                         # list session's sandboxes
 | 2026-04-17 | Generic errors to agent, detailed logs for admins                               | Sandbox errors from Daytona SDK can leak internal details. Agent sees generic "Sandbox service error"; admins see full context in logs. No redactor needed.                                                                                                                                                                                                                |
 | 2026-04-18 | Flatten CLI: `sandbox <cmd> [args...]`, no subcommands for agent                | Minimize agent cognitive load. No quoting (`sandbox pytest -v` not `sandbox exec "pytest -v"`). Wrapper joins args, sandbox runs via `sh -c`. One command to learn, zero lifecycle management.                                                                                                                                                                             |
 | 2026-04-18 | Operator flags (`--create`, `--stop`, `--list`) instead of subcommands          | Agent never sees lifecycle commands. Operators can troubleshoot without teaching the agent. Flags detected by wrapper before arg joining.                                                                                                                                                                                                                                  |
-| 2026-04-18 | Node/TypeScript stays local, sandbox for non-Node only                          | Container already isolates Node. Local execution gives zero-latency edit→test loop (no commit→push→sync cycle). Sandbox adds 5-10s per iteration — unacceptable for the 80% case. One simple rule: "use `sandbox` for non-Node code."                                                                                                                                      |
+| 2026-04-18 | Sandbox is primary execution path; local Node for lightweight tasks             | Most repos are Java — sandbox is the 80% case. Local Node still available for lightweight tasks (formatting, scripts) but skill doc teaches only `sandbox`. No language exceptions to learn.                                                                                                                                                                               |
 | 2026-04-18 | No session-end cleanup; rely on Daytona auto-stop                               | Agent may run long-running sandbox processes. Killing on session end would cut off streaming output. Daytona auto-stop (15 min idle) is sufficient. Cost of leaked sandbox: ~$0.01. Avoids complexity of session lifecycle hooks.                                                                                                                                          |
 
 ## Exit Criteria
@@ -258,7 +261,7 @@ sandbox --list                         # list session's sandboxes
 - Require GitHub App installation for the org; fail fast with clear error if missing. PAT is never used.
 - Test output streamed back to agent via NDJSON.
 - Git credentials NOT visible via `env` inside sandbox.
-- Node/TypeScript continues to run locally (no sandbox needed).
+- Sandbox is the primary execution path. Local Node available for lightweight tasks but not called out in skill doc.
 
 ## Out of Scope
 
@@ -316,7 +319,7 @@ sandbox --list                         # list session's sandboxes
 | 19  | CEO-v2 | Exec timeout: 5 min may be too short                     | Taste          | P3        | Claude flagged, but configurable later         | Longer default                  |
 | 20  | DX-v3  | Flatten CLI to `sandbox <cmd> [args...]`                 | User Decision  | P5        | Zero cognitive load; no quoting needed         | Subcommand-based CLI            |
 | 21  | DX-v3  | Operator flags (`--create/--stop/--list`)                | User Decision  | P5        | Keep lifecycle out of agent's view             | Teach all commands to agent     |
-| 22  | Eng-v3 | Node stays local, sandbox for non-Node only              | User Decision  | P1        | Container isolates Node; 5-10s sync tax bad    | Everything through sandbox      |
+| 22  | Eng-v3 | Sandbox primary; local Node for lightweight only         | User Decision  | P1        | Most repos Java; no language exceptions taught | Everything through sandbox      |
 | 23  | Eng-v3 | No session-end cleanup; Daytona auto-stop only           | User Decision  | P3        | Long-running processes; ~$0.01 leak cost       | Session-end hook                |
 
 ## GSTACK REVIEW REPORT
