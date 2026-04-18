@@ -5,7 +5,7 @@ exec node - "$@" <<'NODE'
 const args = process.argv.slice(2);
 const first = args[0] || "";
 const cwd = process.cwd();
-const baseUrl = "http://localhost:3004";
+const baseUrl = process.env.THOR_REMOTE_CLI_URL || "http://localhost:3004";
 
 let mode = "exec";
 let payloadArgs = args;
