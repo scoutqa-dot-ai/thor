@@ -46,14 +46,20 @@ openssl req -x509 \
 # mitmproxy expects cert+key concatenated in its confdir as mitmproxy-ca.pem
 cat "$CA_DIR/cert.pem" "$CA_DIR/key.pem" > "$CA_DIR/mitmproxy-ca.pem"
 
+# public/ contains only the cert — this is the only subdirectory mounted into
+# opencode. key.pem and mitmproxy-ca.pem never leave the parent directory.
+mkdir -p "$CA_DIR/public"
+cp "$CA_DIR/cert.pem" "$CA_DIR/public/cert.pem"
+
 chmod 600 "$CA_DIR/key.pem" "$CA_DIR/mitmproxy-ca.pem"
-chmod 644 "$CA_DIR/cert.pem"
+chmod 644 "$CA_DIR/cert.pem" "$CA_DIR/public/cert.pem"
 
 echo ""
 echo "CA written to $CA_DIR:"
-echo "  cert.pem         — public cert  (mounted into opencode for OS trust)"
-echo "  key.pem          — private key  (mounted into mitmproxy for signing)"
+echo "  cert.pem         — public cert  (also at public/cert.pem)"
+echo "  key.pem          — private key  (mitmproxy only, never opencode)"
 echo "  mitmproxy-ca.pem — cert + key   (mitmproxy confdir format)"
+echo "  public/cert.pem  — public cert  (mounted read-only into opencode)"
 echo ""
 echo "Next steps:"
 echo "  docker compose up -d mitmproxy"
