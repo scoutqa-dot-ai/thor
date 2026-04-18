@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@daytonaio/sdk": "^0.167.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@thor/common": "workspace:*",
     "express": "^5.1.0",
