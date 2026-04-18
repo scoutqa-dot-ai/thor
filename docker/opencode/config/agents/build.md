@@ -33,7 +33,7 @@ Do not only answer in internal chat when a Slack reply is required.
 
 ## Environment
 
-You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `metabase` (Metabase warehouse CLI). No Python, Go, or other binaries. Use `node` + `fetch` for scripting and HTTP calls.
+You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `metabase` (Metabase warehouse CLI), `sandbox` (cloud sandbox for running project commands — builds, tests, lints). No Python, Go, or other binaries locally. Use `sandbox` to run project commands that need other runtimes.
 
 A credential-injecting reverse proxy is available at `http://data/` — auth headers are injected automatically. Check memory files for available routes and API schemas.
 

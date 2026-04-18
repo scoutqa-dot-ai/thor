@@ -14,7 +14,7 @@ ingress -> gateway -> runner -> opencode
 
 - `gateway` accepts Slack and cron events, batches them, and forwards them to the runner.
 - `runner` manages OpenCode session continuity and streams progress back out.
-- `remote-cli` exposes `POST /exec/*` endpoints for git, gh, scoutqa, langfuse, metabase, MCP tool calls, and approval status/resolution.
+- `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, langfuse, metabase, MCP tool calls, and approval status/resolution.
 - `slack-mcp` owns Slack API access for progress updates and approval notifications.
 
 ## Services
