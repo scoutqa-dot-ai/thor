@@ -36,7 +36,7 @@ No quoting needed. Shell metacharacters (`&&`, `|`, `;`) work naturally.
 3. The command runs inside the sandbox and output streams back in real time
 4. Sandbox auto-stops after 15 minutes idle
 
-**Important:** commit your changes before running. The sandbox syncs from git, not the filesystem. If the worktree is dirty (uncommitted changes), the command will fail with a hint to commit first.
+**Uncommitted changes are synced automatically.** The sandbox creates a temporary commit, syncs it, then undoes the commit locally. Your working tree is unchanged. No need to commit before running.
 
 ---
 
@@ -45,8 +45,8 @@ No quoting needed. Shell metacharacters (`&&`, `|`, `;`) work naturally.
 ```bash
 cd /workspace/worktrees/myrepo/feat/auth
 sandbox mvn test -pl module-auth       # auto-creates sandbox, syncs, runs
-# edit code, commit...
-sandbox mvn test -pl module-auth       # syncs new commits, reuses sandbox
+# edit code (no need to commit)...
+sandbox mvn test -pl module-auth       # syncs uncommitted changes, reuses sandbox
 sandbox ./gradlew spotlessCheck        # same sandbox, different command
 ```
 
@@ -54,13 +54,12 @@ sandbox ./gradlew spotlessCheck        # same sandbox, different command
 
 ## Errors
 
-| Error                         | Cause               | Fix                                        |
-| ----------------------------- | ------------------- | ------------------------------------------ |
-| "Worktree not clean"          | Uncommitted changes | `git add` + `git commit` your changes      |
-| "Sandbox service unavailable" | Daytona API down    | Retry in a few minutes                     |
-| "Sandbox auth failed"         | Missing API key     | Check DAYTONA_API_KEY configuration        |
-| "Sandbox creation timed out"  | Slow provisioning   | Retry; sandbox will be created fresh       |
-| Nonzero exit code             | Command failed      | Normal test/build failure; read the output |
+| Error                         | Cause             | Fix                                        |
+| ----------------------------- | ----------------- | ------------------------------------------ |
+| "Sandbox service unavailable" | Daytona API down  | Retry in a few minutes                     |
+| "Sandbox auth failed"         | Missing API key   | Check DAYTONA_API_KEY configuration        |
+| "Sandbox creation timed out"  | Slow provisioning | Retry; sandbox will be created fresh       |
+| Nonzero exit code             | Command failed    | Normal test/build failure; read the output |
 
 ---
 

@@ -824,20 +824,32 @@ else
       "sandbox removed after stop" \
       "still found in list"
 
-    # 8l. Dirty worktree rejection
-    echo "  Testing dirty worktree rejection..."
+    # 8l. Dirty worktree auto-stash (uncommitted changes synced to sandbox)
+    echo "  Testing dirty worktree auto-stash..."
     docker exec "$remote_cli_container" sh -c \
-      "echo 'dirty' >> $SBX_WORKTREE_DIR/dirty-file.txt" 2>/dev/null
+      "echo 'dirty-content-e2e' > $SBX_WORKTREE_DIR/dirty-file.txt" 2>/dev/null
     sbx_dirty_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"echo\",\"should-not-run\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      -d "{\"mode\":\"exec\",\"args\":[\"cat\",\"dirty-file.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
       2>/dev/null)
-    sbx_dirty_exit=$(json_field "$sbx_dirty_raw" "exitCode")
-    sbx_dirty_stderr=$(json_field "$sbx_dirty_raw" "stderr")
-    assert '[[ "$sbx_dirty_exit" == "1" ]]' "dirty worktree is rejected" "exitCode='$sbx_dirty_exit'"
-    assert '[[ "$sbx_dirty_stderr" == *"not clean"* ]]' \
-      "dirty worktree error mentions 'not clean'" \
-      "stderr='${sbx_dirty_stderr:0:200}'"
+    sbx_dirty_exit=$(echo "$sbx_dirty_raw" | sandbox_exec_exit)
+    sbx_dirty_stdout=$(echo "$sbx_dirty_raw" | sandbox_exec_stdout)
+    assert '[[ "$sbx_dirty_exit" == "0" ]]' "dirty worktree exec succeeded (auto-stash)" "exitCode='$sbx_dirty_exit'"
+    assert '[[ "$sbx_dirty_stdout" == *"dirty-content-e2e"* ]]' \
+      "sandbox received uncommitted file content" \
+      "stdout='${sbx_dirty_stdout:0:200}'"
+    # Verify local worktree still has the dirty file (temp commit undone)
+    dirty_file_exists=$(docker exec "$remote_cli_container" \
+      test -f "$SBX_WORKTREE_DIR/dirty-file.txt" && echo "yes" || echo "no")
+    assert '[[ "$dirty_file_exists" == "yes" ]]' \
+      "local dirty file preserved after auto-stash" \
+      "file exists: $dirty_file_exists"
+    # Verify no temp commit left in local history
+    local_head_msg=$(docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" log -1 --format=%s 2>/dev/null)
+    assert '[[ "$local_head_msg" != "thor-sandbox-wip" ]]' \
+      "temp commit undone in local history" \
+      "HEAD message: '$local_head_msg'"
     # Clean up dirty file
     docker exec "$remote_cli_container" \
       rm -f "$SBX_WORKTREE_DIR/dirty-file.txt" 2>/dev/null

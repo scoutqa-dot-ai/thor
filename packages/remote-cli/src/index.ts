@@ -287,6 +287,8 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
+      // Auto-stash: if worktree is dirty, create a temp commit so the
+      // sandbox gets uncommitted changes. Undo after sync via finally.
       const gitStatus = await execCommand("git", ["status", "--porcelain"], cwd);
       if ((gitStatus.exitCode ?? 0) !== 0) {
         throw new SandboxError(
@@ -294,76 +296,107 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           `git status failed: ${gitStatus.stderr || gitStatus.stdout}`,
         );
       }
-      if (gitStatus.stdout.trim().length > 0) {
-        res.status(400).json({
-          stdout: "",
-          stderr:
-            "Worktree not clean. Commit your changes first (add generated files to .gitignore).",
-          exitCode: 1,
-        });
-        return;
-      }
+      const isDirty = gitStatus.stdout.trim().length > 0;
+      let madeTemp = false;
 
-      const gitSha = await execCommand("git", ["rev-parse", "HEAD"], cwd);
-      if ((gitSha.exitCode ?? 0) !== 0) {
-        throw new SandboxError(
-          "Failed to resolve worktree HEAD",
-          `git rev-parse HEAD failed: ${gitSha.stderr || gitSha.stdout}`,
-        );
-      }
-      const currentSha = gitSha.stdout.trim();
-      if (!currentSha) {
-        throw new SandboxError(
-          "Failed to resolve worktree HEAD",
-          "git rev-parse HEAD returned empty SHA",
-        );
-      }
-
-      let sandbox = await findSandboxForCwd(cwd);
-
-      if (!sandbox) {
-        const gitBranch = await execCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd);
-        if ((gitBranch.exitCode ?? 0) !== 0) {
+      if (isDirty) {
+        const addResult = await execCommand("git", ["add", "-A"], cwd);
+        if ((addResult.exitCode ?? 0) !== 0) {
           throw new SandboxError(
-            "Failed to resolve worktree branch",
-            `git rev-parse --abbrev-ref HEAD failed: ${gitBranch.stderr || gitBranch.stdout}`,
+            "Failed to stage changes for sandbox sync",
+            `git add -A failed: ${addResult.stderr || addResult.stdout}`,
           );
         }
-        const branch = gitBranch.stdout.trim() || "detached";
-
-        const labels = {
-          [THOR_MANAGED_LABEL]: "true",
-          [THOR_CWD_LABEL]: cwd,
-          [THOR_BRANCH_LABEL]: branch,
-          [THOR_SHA_LABEL]: currentSha,
-        };
-
-        sandbox = await createSandbox(buildSandboxName(cwd, branch), cwd, currentSha, labels);
+        const commitResult = await execCommand(
+          "git",
+          ["commit", "--no-verify", "-m", "thor-sandbox-wip"],
+          cwd,
+        );
+        if ((commitResult.exitCode ?? 0) !== 0) {
+          // Unstage so the worktree is back to its original state
+          await execCommand("git", ["reset", "HEAD"], cwd);
+          throw new SandboxError(
+            "Failed to create temp commit for sandbox sync",
+            `git commit failed: ${commitResult.stderr || commitResult.stdout}`,
+          );
+        }
+        madeTemp = true;
       }
 
-      if (mode === "create") {
-        res.json({ stdout: `${sandbox.id}\n`, stderr: "", exitCode: 0 });
-        return;
+      try {
+        const gitSha = await execCommand("git", ["rev-parse", "HEAD"], cwd);
+        if ((gitSha.exitCode ?? 0) !== 0) {
+          throw new SandboxError(
+            "Failed to resolve worktree HEAD",
+            `git rev-parse HEAD failed: ${gitSha.stderr || gitSha.stdout}`,
+          );
+        }
+        const currentSha = gitSha.stdout.trim();
+        if (!currentSha) {
+          throw new SandboxError(
+            "Failed to resolve worktree HEAD",
+            "git rev-parse HEAD returned empty SHA",
+          );
+        }
+
+        let sandbox = await findSandboxForCwd(cwd);
+
+        if (!sandbox) {
+          const gitBranch = await execCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd);
+          if ((gitBranch.exitCode ?? 0) !== 0) {
+            throw new SandboxError(
+              "Failed to resolve worktree branch",
+              `git rev-parse --abbrev-ref HEAD failed: ${gitBranch.stderr || gitBranch.stdout}`,
+            );
+          }
+          const branch = gitBranch.stdout.trim() || "detached";
+
+          const labels = {
+            [THOR_MANAGED_LABEL]: "true",
+            [THOR_CWD_LABEL]: cwd,
+            [THOR_BRANCH_LABEL]: branch,
+            [THOR_SHA_LABEL]: currentSha,
+          };
+
+          sandbox = await createSandbox(buildSandboxName(cwd, branch), cwd, currentSha, labels);
+        }
+
+        if (mode === "create") {
+          res.json({ stdout: `${sandbox.id}\n`, stderr: "", exitCode: 0 });
+          return;
+        }
+
+        // Sync only if sandbox already existed (create already synced to HEAD)
+        const lastSyncedSha = getLastSyncedSha(sandbox);
+        if (lastSyncedSha !== currentSha) {
+          await syncSandbox(sandbox.id, cwd, lastSyncedSha, currentSha);
+        }
+
+        const command = args.map((a: string) => shellQuote(a)).join(" ");
+        const sandboxCommand = `sh -lc ${shellQuote(command)}`;
+
+        res.setHeader("Content-Type", "application/x-ndjson");
+        res.setHeader("Transfer-Encoding", "chunked");
+
+        const result = await execInSandbox(sandbox.id, sandboxCommand);
+        if (result.output) {
+          writeNdjson({ stream: "stdout", data: result.output });
+        }
+        writeNdjson({ exitCode: result.exitCode });
+        res.end();
+      } finally {
+        if (madeTemp) {
+          const resetResult = await execCommand("git", ["reset", "--mixed", "HEAD~1"], cwd);
+          if ((resetResult.exitCode ?? 0) !== 0) {
+            logError(
+              log,
+              "sandbox_temp_reset_failed",
+              `git reset --mixed HEAD~1 failed: ${resetResult.stderr || resetResult.stdout}`,
+              thorIds(req),
+            );
+          }
+        }
       }
-
-      // Sync only if sandbox already existed (create already synced to HEAD)
-      const lastSyncedSha = getLastSyncedSha(sandbox);
-      if (lastSyncedSha !== currentSha) {
-        await syncSandbox(sandbox.id, cwd, lastSyncedSha, currentSha);
-      }
-
-      const command = args.map((a: string) => shellQuote(a)).join(" ");
-      const sandboxCommand = `sh -lc ${shellQuote(command)}`;
-
-      res.setHeader("Content-Type", "application/x-ndjson");
-      res.setHeader("Transfer-Encoding", "chunked");
-
-      const result = await execInSandbox(sandbox.id, sandboxCommand);
-      if (result.output) {
-        writeNdjson({ stream: "stdout", data: result.output });
-      }
-      writeNdjson({ exitCode: result.exitCode });
-      res.end();
     } catch (err) {
       const error =
         err instanceof SandboxError ? err : new SandboxError("Sandbox service error", String(err));

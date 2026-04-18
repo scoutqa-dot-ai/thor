@@ -170,7 +170,7 @@ describe("/exec/sandbox", () => {
     expect(sandbox.labels[THOR_SHA_LABEL]).toBe(HEAD_SHA);
   });
 
-  it("rejects exec when worktree is dirty", async () => {
+  it("auto-stashes dirty worktree and undoes temp commit", async () => {
     configureGitExec({ dirty: true, headSha: HEAD_SHA, branch: "feat/sandbox" });
 
     const response = await postJson("/exec/sandbox", {
@@ -178,15 +178,25 @@ describe("/exec/sandbox", () => {
       cwd: CWD,
     });
 
-    const body = (await response.json()) as { stderr: string; exitCode: number };
-    expect(response.status).toBe(400);
-    expect(body.exitCode).toBe(1);
-    expect(body.stderr).toContain("Worktree not clean");
+    expect(response.status).toBe(200);
+    const events = await readNdjson(response);
+    expect(events).toEqual([{ stream: "stdout", data: "sandbox run output\n" }, { exitCode: 0 }]);
 
-    const bundleCalls = execCommandMock.mock.calls.filter(
-      (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "bundle",
+    // Verify temp commit flow: add, commit, then reset after sync
+    const addCall = execCommandMock.mock.calls.find(
+      (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "add",
     );
-    expect(bundleCalls).toHaveLength(0);
+    expect(addCall?.[1]).toEqual(["add", "-A"]);
+
+    const commitCall = execCommandMock.mock.calls.find(
+      (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "commit",
+    );
+    expect(commitCall?.[1]).toContain("thor-sandbox-wip");
+
+    const resetCall = execCommandMock.mock.calls.find(
+      (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "reset",
+    );
+    expect(resetCall?.[1]).toEqual(["reset", "--mixed", "HEAD~1"]);
   });
 
   it("skips sync when SHA is unchanged", async () => {

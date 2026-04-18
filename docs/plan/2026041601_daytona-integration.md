@@ -223,6 +223,8 @@ sandbox --list                         # list session's sandboxes
 ### Follow-ups (post-launch)
 
 - [x] **P1 — Shell-quote args before joining.** `args.join(" ")` was lossy: `["mvn", "test", "hello world"]` became `mvn test hello world` (2 files, not 1). Fix: `args.map(a => shellQuote(a)).join(" ")` so it becomes `'mvn' 'test' 'hello world'`. Preserves arg boundaries while keeping `sh -lc` wrapper for login-shell environment (PATH, JAVA_HOME). Daytona's `executeCommand` runs a non-login shell (`GetShell()` returns bash/zsh without `-l`), so `sh -lc` is required to source profiles.
+- [x] **P1 — Auto-stash dirty changes into sandbox.** Agent no longer needs `git commit` before every `sandbox` call. On dirty worktree: `git add -A` + temp commit (`thor-sandbox-wip`), sync, then `git reset --mixed HEAD~1` in finally block. If commit fails after staging, `git reset HEAD` restores original staging state. Reset failures are logged. Known limitations: concurrent requests to the same worktree are not serialized (P3 follow-up); delta sync falls back to full bundle after a dirty sync because the temp commit SHA is orphaned (P2 follow-up).
+- [ ] **P2 — Delta sync after dirty auto-stash.** After a temp commit is reset, the sandbox label holds an orphaned SHA. Next sync's delta bundle (`orphan..HEAD`) fails and falls back to full bundle. Fix: store original (pre-temp) SHA in label, or clear label to force full sync explicitly. Low impact for small repos; matters for large ones.
 - [ ] **P2 — Token cache invalidation on 401/403.** Currently tokens are cached for ~1hr with 5-min early refresh. A revoked token would fail until cache expires. (Host-side only — sandbox has no tokens.)
 - [ ] **P3 — Client disconnect → sandbox command cancellation.** If OpenCode kills the wrapper (SIGTERM), the HTTP request aborts but the sandbox command keeps running until Daytona auto-stop. Future: listen for `req.on("close")` and call SDK command cancel.
 - [ ] **P3 — Bundle size limits.** Git bundles for very large repos could be slow to create/upload. Monitor bundle sizes in production. If needed, implement shallow bundles (`--depth`) or file-level sync via `sandbox.fs.uploadFile()` for individual changed files.
@@ -279,25 +281,25 @@ sandbox --list                         # list session's sandboxes
 
 ## Error & Rescue Registry
 
-| Codepath          | What Can Go Wrong                 | Rescued? | Rescue Action                                  | User Sees                                                                            |
-| ----------------- | --------------------------------- | -------- | ---------------------------------------------- | ------------------------------------------------------------------------------------ |
-| auto-create       | Not in a worktree                 | Y        | 400                                            | "Must run from /workspace/worktrees/"                                                |
-| auto-create       | Daytona API unreachable           | Y        | 500                                            | "Sandbox service unavailable"                                                        |
-| auto-create       | Daytona auth failure              | Y        | 500                                            | "Sandbox auth failed, check DAYTONA_API_KEY"                                         |
-| auto-create       | Bundle create fails               | Y        | Delete sandbox, 500                            | "Failed to prepare code for sandbox"                                                 |
-| auto-create       | Bundle upload fails               | Y        | Delete sandbox, 500                            | "Failed to upload code to sandbox"                                                   |
-| auto-create       | Unbundle+reset fails              | Y        | Delete sandbox, 500                            | "Failed to initialize code in sandbox"                                               |
-| auto-create       | Create timeout                    | Y        | 500                                            | "Sandbox creation timed out"                                                         |
-| `sandbox <cmd>`   | No sandbox yet / gone on Daytona  | Y        | Auto-create from cwd (silent)                  | Stream command output normally                                                       |
-| `sandbox <cmd>`   | Worktree dirty (host preflight)   | Y        | 400                                            | "Worktree not clean. Commit your changes first (add generated files to .gitignore)." |
-| `sandbox <cmd>`   | Bundle create fails (delta)       | Y        | Fallback to full bundle; 500 only if both fail | "Failed to prepare code sync"                                                        |
-| `sandbox <cmd>`   | Bundle upload fails               | Y        | 500                                            | "Failed to upload code to sandbox"                                                   |
-| `sandbox <cmd>`   | Unbundle+reset fails (sandbox)    | Y        | 500                                            | "Failed to sync code to sandbox"                                                     |
-| `sandbox <cmd>`   | Command fails (nonzero)           | Y        | Stream stderr                                  | Test failure output (normal)                                                         |
-| `sandbox <cmd>`   | Long-running command              | N/A      | No timeout imposed — OpenCode manages its own  | Stream until done                                                                    |
-| `sandbox --stop`  | No sandbox tracked for cwd        | Y        | Silent no-op (idempotent)                      | Exit 0                                                                               |
-| `sandbox --stop`  | Delete fails                      | Y        | Log + ignore                                   | Exit 0                                                                               |
-| Daytona auto-stop | Sandbox leaked (no explicit stop) | Y        | Auto-delete after 15 min idle                  | Silent                                                                               |
+| Codepath          | What Can Go Wrong                 | Rescued? | Rescue Action                                  | User Sees                                      |
+| ----------------- | --------------------------------- | -------- | ---------------------------------------------- | ---------------------------------------------- |
+| auto-create       | Not in a worktree                 | Y        | 400                                            | "Must run from /workspace/worktrees/"          |
+| auto-create       | Daytona API unreachable           | Y        | 500                                            | "Sandbox service unavailable"                  |
+| auto-create       | Daytona auth failure              | Y        | 500                                            | "Sandbox auth failed, check DAYTONA_API_KEY"   |
+| auto-create       | Bundle create fails               | Y        | Delete sandbox, 500                            | "Failed to prepare code for sandbox"           |
+| auto-create       | Bundle upload fails               | Y        | Delete sandbox, 500                            | "Failed to upload code to sandbox"             |
+| auto-create       | Unbundle+reset fails              | Y        | Delete sandbox, 500                            | "Failed to initialize code in sandbox"         |
+| auto-create       | Create timeout                    | Y        | 500                                            | "Sandbox creation timed out"                   |
+| `sandbox <cmd>`   | No sandbox yet / gone on Daytona  | Y        | Auto-create from cwd (silent)                  | Stream command output normally                 |
+| `sandbox <cmd>`   | Worktree dirty (host preflight)   | Y        | Auto-stash: temp commit, sync, undo            | Transparent — sandbox gets uncommitted changes |
+| `sandbox <cmd>`   | Bundle create fails (delta)       | Y        | Fallback to full bundle; 500 only if both fail | "Failed to prepare code sync"                  |
+| `sandbox <cmd>`   | Bundle upload fails               | Y        | 500                                            | "Failed to upload code to sandbox"             |
+| `sandbox <cmd>`   | Unbundle+reset fails (sandbox)    | Y        | 500                                            | "Failed to sync code to sandbox"               |
+| `sandbox <cmd>`   | Command fails (nonzero)           | Y        | Stream stderr                                  | Test failure output (normal)                   |
+| `sandbox <cmd>`   | Long-running command              | N/A      | No timeout imposed — OpenCode manages its own  | Stream until done                              |
+| `sandbox --stop`  | No sandbox tracked for cwd        | Y        | Silent no-op (idempotent)                      | Exit 0                                         |
+| `sandbox --stop`  | Delete fails                      | Y        | Log + ignore                                   | Exit 0                                         |
+| Daytona auto-stop | Sandbox leaked (no explicit stop) | Y        | Auto-delete after 15 min idle                  | Silent                                         |
 
 ## Decision Audit Trail
 
