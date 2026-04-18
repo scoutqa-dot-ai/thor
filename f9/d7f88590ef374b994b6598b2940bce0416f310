@@ -1,0 +1,29 @@
+docker/opencode/config/skills/sandbox/SKILL.md
+  7342d0e966b4f647 39,48-49
+packages/remote-cli/src/sandbox.test.ts
+  7342d0e966b4f647 173,181-183,185-187,189-197,199
+scripts/test-e2e.sh
+  7342d0e966b4f647 827-828,830,833,835-852
+packages/remote-cli/src/index.ts
+  7342d0e966b4f647 290-291,299-300,302-304,306-307,310-313,315-321,324-326,328-333,335-336,340,342-347,350,352-356,359-360,362-365,370-371,373,375-376,381-387
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f9d7f88590ef374b994b6598b2940bce0416f310",
+  "prompts": {
+    "7342d0e966b4f647": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1e32a3fb-d650-49f5-bb76-4bb5979a7ac3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 124,
+      "total_deletions": 80,
+      "accepted_lines": 111,
+      "overriden_lines": 0
+    }
+  }
+}
