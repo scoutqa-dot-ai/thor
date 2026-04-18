@@ -1,0 +1,27 @@
+docs/plan/2026041802_quick-wins-batch3.md
+  7342d0e966b4f647 1-59
+docs/plan/2026041802_quick-wins-batch2.md
+  7342d0e966b4f647 1-51
+docs/plan/2026041802_quick-wins-batch1.md
+  7342d0e966b4f647 1-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4ce7d843a38ab1522212b50e136bda5ee13df302",
+  "prompts": {
+    "7342d0e966b4f647": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1e32a3fb-d650-49f5-bb76-4bb5979a7ac3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 152,
+      "total_deletions": 0,
+      "accepted_lines": 152,
+      "overriden_lines": 0
+    }
+  }
+}
