@@ -1,0 +1,260 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { rm } from "node:fs/promises";
+import { Daytona, type Sandbox } from "@daytonaio/sdk";
+import { execCommand } from "./exec.js";
+
+const DAYTONA_DEFAULT_API_URL = "https://app.daytona.io/api";
+const DAYTONA_DEFAULT_SNAPSHOT = "daytona-medium";
+const DAYTONA_REPO_DIR = "/workspace/repo";
+const SANDBOX_SYNC_BUNDLE_PATH = "/tmp/sync.bundle";
+
+export const THOR_MANAGED_LABEL = "thor-managed";
+export const THOR_CWD_LABEL = "thor-cwd";
+export const THOR_BRANCH_LABEL = "thor-branch";
+export const THOR_SHA_LABEL = "thor-sha";
+
+let daytonaSingleton: Daytona | null = null;
+
+export class SandboxError extends Error {
+  constructor(
+    public readonly userMessage: string,
+    public readonly adminDetail: string,
+    options?: { cause?: unknown },
+  ) {
+    super(adminDetail, options);
+    this.name = "SandboxError";
+  }
+}
+
+export function getDaytona(): Daytona {
+  if (daytonaSingleton) {
+    return daytonaSingleton;
+  }
+
+  const apiKey = process.env.DAYTONA_API_KEY;
+  if (!apiKey) {
+    throw new SandboxError(
+      "Sandbox auth failed, check DAYTONA_API_KEY",
+      "DAYTONA_API_KEY is not configured",
+    );
+  }
+
+  daytonaSingleton = new Daytona({
+    apiKey,
+    apiUrl: process.env.DAYTONA_API_URL || DAYTONA_DEFAULT_API_URL,
+  });
+  return daytonaSingleton;
+}
+
+export async function createSandbox(
+  name: string,
+  cwd: string,
+  sha: string,
+  labels: Record<string, string>,
+): Promise<Sandbox> {
+  let sandbox: Sandbox | null = null;
+  try {
+    sandbox = await getDaytona().create({
+      name,
+      snapshot: process.env.DAYTONA_SNAPSHOT || DAYTONA_DEFAULT_SNAPSHOT,
+      ephemeral: true,
+      autoStopInterval: 15,
+      labels,
+    });
+
+    await bundleAndUpload(sandbox, cwd, "HEAD", sha);
+
+    return sandbox;
+  } catch (err) {
+    if (sandbox) {
+      await safeDeleteSandbox(sandbox);
+    }
+    throw toSandboxError(err, "Failed to initialize code in sandbox");
+  }
+}
+
+export async function syncSandbox(
+  sandboxId: string,
+  cwd: string,
+  lastSha: string | null,
+  currentSha: string,
+): Promise<void> {
+  if (lastSha === currentSha) {
+    return;
+  }
+
+  const sandbox = await getSandboxById(sandboxId);
+  const bundleRange = lastSha ? `${lastSha}..${currentSha}` : "HEAD";
+
+  await bundleAndUpload(sandbox, cwd, bundleRange, currentSha);
+
+  await sandbox.setLabels({
+    ...sandbox.labels,
+    [THOR_SHA_LABEL]: currentSha,
+  });
+}
+
+export async function bundleAndUpload(
+  sandbox: Sandbox,
+  cwd: string,
+  bundleRange: string,
+  targetSha: string,
+): Promise<void> {
+  const localBundlePath = join(tmpdir(), `thor-${sandbox.id}-${randomUUID()}.bundle`);
+
+  try {
+    const bundleResult = await execCommand(
+      "git",
+      ["bundle", "create", localBundlePath, bundleRange],
+      cwd,
+    );
+
+    if ((bundleResult.exitCode ?? 0) !== 0) {
+      throw new SandboxError(
+        "Failed to prepare code sync",
+        `git bundle create failed: ${bundleResult.stderr || bundleResult.stdout}`,
+      );
+    }
+
+    await sandbox.fs.uploadFile(localBundlePath, SANDBOX_SYNC_BUNDLE_PATH);
+
+    const resetCmd = [
+      "set -e",
+      `mkdir -p ${DAYTONA_REPO_DIR}`,
+      `cd ${DAYTONA_REPO_DIR}`,
+      "if [ ! -d .git ]; then git init; fi",
+      `git bundle unbundle ${SANDBOX_SYNC_BUNDLE_PATH}`,
+      `git reset --hard ${shellQuote(targetSha)}`,
+      `rm -f ${SANDBOX_SYNC_BUNDLE_PATH}`,
+    ].join(" && ");
+
+    const execResult = await sandbox.process.executeCommand(resetCmd);
+    if (execResult.exitCode !== 0) {
+      throw new SandboxError(
+        "Failed to sync code to sandbox",
+        `sandbox unbundle/reset failed: ${execResult.result}`,
+      );
+    }
+  } catch (err) {
+    throw toSandboxError(err, "Failed to upload code to sandbox");
+  } finally {
+    await rm(localBundlePath, { force: true }).catch(() => {});
+  }
+}
+
+export async function execInSandbox(
+  sandboxId: string,
+  command: string,
+): Promise<{ exitCode: number; output: string }> {
+  const sandbox = await getSandboxById(sandboxId);
+  const execResult = await sandbox.process.executeCommand(command, DAYTONA_REPO_DIR);
+
+  return {
+    exitCode: execResult.exitCode,
+    output: execResult.result || "",
+  };
+}
+
+export async function deleteSandbox(sandboxId: string): Promise<void> {
+  try {
+    const sandbox = await getDaytona().get(sandboxId);
+    await sandbox.delete();
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      return;
+    }
+    throw toSandboxError(err, "Sandbox service error");
+  }
+}
+
+export async function findSandboxForCwd(cwd: string): Promise<Sandbox | null> {
+  const sandboxes = await listSandboxesByLabels({
+    [THOR_MANAGED_LABEL]: "true",
+    [THOR_CWD_LABEL]: cwd,
+  });
+
+  return sandboxes[0] || null;
+}
+
+export async function listSandboxes(): Promise<Sandbox[]> {
+  return listSandboxesByLabels({ [THOR_MANAGED_LABEL]: "true" });
+}
+
+export function getLastSyncedSha(sandbox: Sandbox): string | null {
+  const sha = sandbox.labels?.[THOR_SHA_LABEL];
+  return sha || null;
+}
+
+async function listSandboxesByLabels(labels: Record<string, string>): Promise<Sandbox[]> {
+  try {
+    const page = await getDaytona().list(labels, 1, 100);
+    return page.items || [];
+  } catch (err) {
+    throw toSandboxError(err, "Sandbox service unavailable");
+  }
+}
+
+async function getSandboxById(sandboxId: string): Promise<Sandbox> {
+  try {
+    return await getDaytona().get(sandboxId);
+  } catch (err) {
+    throw toSandboxError(err, "Sandbox service unavailable");
+  }
+}
+
+async function safeDeleteSandbox(sandbox: Sandbox): Promise<void> {
+  try {
+    await sandbox.delete();
+  } catch {
+    // Best effort cleanup
+  }
+}
+
+function toSandboxError(err: unknown, fallbackUserMessage: string): SandboxError {
+  if (err instanceof SandboxError) {
+    return err;
+  }
+
+  const adminDetail = err instanceof Error ? err.message : String(err);
+  const lower = adminDetail.toLowerCase();
+
+  if (lower.includes("auth") || lower.includes("401") || lower.includes("403")) {
+    return new SandboxError(
+      "Sandbox auth failed, check DAYTONA_API_KEY",
+      adminDetail,
+      err instanceof Error ? { cause: err } : undefined,
+    );
+  }
+
+  if (lower.includes("timeout")) {
+    return new SandboxError(
+      "Sandbox creation timed out",
+      adminDetail,
+      err instanceof Error ? { cause: err } : undefined,
+    );
+  }
+
+  return new SandboxError(
+    fallbackUserMessage,
+    adminDetail,
+    err instanceof Error ? { cause: err } : undefined,
+  );
+}
+
+function isNotFoundError(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const message = err.message.toLowerCase();
+  return message.includes("not found") || message.includes("404");
+}
+
+export function shellQuote(value: string): string {
+  return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
+export function __resetDaytonaForTests(): void {
+  daytonaSingleton = null;
+}
