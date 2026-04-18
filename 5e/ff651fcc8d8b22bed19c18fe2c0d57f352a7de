@@ -1,0 +1,39 @@
+docker/opencode/mitmproxy-init.js
+  0bb589f49cb3ee76 1-9
+docker/mitmproxy/test_addon.py
+  0bb589f49cb3ee76 1-248
+scripts/mitmproxy-ca-init.sh
+  0bb589f49cb3ee76 37
+docker/mitmproxy/addon.py
+  0bb589f49cb3ee76 60-62,66,69,74,169
+docker/mitmproxy/rules.py
+  0bb589f49cb3ee76 80-82,104-106,108
+docker/opencode/entrypoint-wrap.sh
+  0bb589f49cb3ee76 1-32
+Dockerfile
+  0bb589f49cb3ee76 55-56,68-71,80-81
+.gitignore
+  0bb589f49cb3ee76 28
+docker-compose.yml
+  0bb589f49cb3ee76 27-29,72-74,103-105,124-126,142-154,162-163,180-182,199-201,235-236,251-252,279-280,295-306
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5eff651fcc8d8b22bed19c18fe2c0d57f352a7de",
+  "prompts": {
+    "0bb589f49cb3ee76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5b47e21-ed90-47fd-92e4-35af18223e48",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 371,
+      "total_deletions": 15,
+      "accepted_lines": 365,
+      "overriden_lines": 0
+    }
+  }
+}
