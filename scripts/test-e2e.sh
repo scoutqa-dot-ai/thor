@@ -825,8 +825,8 @@ else
       "sandbox removed after stop" \
       "still found in list"
 
-    # 8l. Dirty worktree auto-stash (uncommitted changes synced to sandbox)
-    echo "  Testing dirty worktree auto-stash..."
+    # 8l. Dirty worktree overlay (uncommitted changes synced to sandbox via SDK upload)
+    echo "  Testing dirty worktree overlay..."
     docker exec "$remote_cli_container" sh -c \
       "echo 'dirty-content-e2e' > $SBX_WORKTREE_DIR/dirty-file.txt" 2>/dev/null
     sbx_dirty_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
@@ -835,25 +835,92 @@ else
       2>/dev/null)
     sbx_dirty_exit=$(echo "$sbx_dirty_raw" | sandbox_exec_exit)
     sbx_dirty_stdout=$(echo "$sbx_dirty_raw" | sandbox_exec_stdout)
-    assert '[[ "$sbx_dirty_exit" == "0" ]]' "dirty worktree exec succeeded (auto-stash)" "exitCode='$sbx_dirty_exit'"
+    assert '[[ "$sbx_dirty_exit" == "0" ]]' "dirty worktree exec succeeded (overlay)" "exitCode='$sbx_dirty_exit'"
     assert '[[ "$sbx_dirty_stdout" == *"dirty-content-e2e"* ]]' \
       "sandbox received uncommitted file content" \
       "stdout='${sbx_dirty_stdout:0:200}'"
-    # Verify local worktree still has the dirty file (temp commit undone)
+    # Verify local worktree is untouched (no git history manipulation)
     dirty_file_exists=$(docker exec "$remote_cli_container" \
       test -f "$SBX_WORKTREE_DIR/dirty-file.txt" && echo "yes" || echo "no")
     assert '[[ "$dirty_file_exists" == "yes" ]]' \
-      "local dirty file preserved after auto-stash" \
+      "local dirty file preserved after overlay" \
       "file exists: $dirty_file_exists"
-    # Verify no temp commit left in local history
+    # Verify git history is untouched (no temp commits)
     local_head_msg=$(docker exec "$remote_cli_container" \
       git -C "$SBX_WORKTREE_DIR" log -1 --format=%s 2>/dev/null)
     assert '[[ "$local_head_msg" != "thor-sandbox-wip" ]]' \
-      "temp commit undone in local history" \
+      "no temp commit in local history" \
       "HEAD message: '$local_head_msg'"
     # Clean up dirty file
     docker exec "$remote_cli_container" \
       rm -f "$SBX_WORKTREE_DIR/dirty-file.txt" 2>/dev/null
+
+    # 8l-2. Pull sandbox changes back to local worktree
+    echo "  Testing pull sandbox changes to local worktree..."
+    # Run a command that creates a new file and a nested subdir inside the sandbox
+    sbx_pull_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo pull-content-e2e > sandbox-created.txt && mkdir -p subdir && echo nested-e2e > subdir/nested.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_pull_exit=$(echo "$sbx_pull_raw" | sandbox_exec_exit)
+    assert '[[ "$sbx_pull_exit" == "0" ]]' "sandbox create-file command succeeded" "exitCode='$sbx_pull_exit'"
+    # Verify the files appeared in the local worktree
+    pull_content=$(docker exec "$remote_cli_container" \
+      cat "$SBX_WORKTREE_DIR/sandbox-created.txt" 2>/dev/null || echo "")
+    assert '[[ "$pull_content" == *"pull-content-e2e"* ]]' \
+      "sandbox-created file pulled to local worktree" \
+      "content='${pull_content:0:200}'"
+    pull_nested=$(docker exec "$remote_cli_container" \
+      cat "$SBX_WORKTREE_DIR/subdir/nested.txt" 2>/dev/null || echo "")
+    assert '[[ "$pull_nested" == *"nested-e2e"* ]]' \
+      "nested file in new subdir pulled to local worktree" \
+      "content='${pull_nested:0:200}'"
+    # Clean up pulled files
+    docker exec "$remote_cli_container" \
+      rm -rf "$SBX_WORKTREE_DIR/sandbox-created.txt" "$SBX_WORKTREE_DIR/subdir" 2>/dev/null
+
+    # 8l-3. Realistic pull: mangle package.json, run prettier in sandbox, verify formatted result pulled back
+    echo "  Testing realistic pull: format mangled package.json in sandbox..."
+    # Switch worktree to latest commit (which has package.json with prettier)
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" checkout -B "$SBX_BRANCH" "$SBX_NEW_SHA" 2>/dev/null >/dev/null
+    # Save original package.json content
+    original_pkg=$(docker exec "$remote_cli_container" \
+      cat "$SBX_WORKTREE_DIR/package.json" 2>/dev/null)
+    # Mangle: add a new field with bad formatting (single-line JSON blob)
+    # This ensures the formatted result differs from the committed version,
+    # so git status inside the sandbox sees it as modified and pull brings it back.
+    docker exec -w "$SBX_WORKTREE_DIR" "$remote_cli_container" \
+      node -e 'const p=JSON.parse(require("fs").readFileSync("package.json","utf8"));p.e2eMarker="FORMATTED_E2E";require("fs").writeFileSync("package.json",JSON.stringify(p))' 2>/dev/null
+    mangled_pkg=$(docker exec "$remote_cli_container" \
+      cat "$SBX_WORKTREE_DIR/package.json" 2>/dev/null)
+    mangled_lines=$(echo "$mangled_pkg" | wc -l | tr -d ' ')
+    assert '[[ "$mangled_lines" == "1" ]]' \
+      "package.json mangled to single line with e2eMarker" \
+      "lines='$mangled_lines'"
+    # Run prettier in sandbox (overlay pushes mangled file, exec formats, pull brings it back)
+    sbx_fmt_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"npx -y prettier@3 --write package.json\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_fmt_exit=$(echo "$sbx_fmt_raw" | sandbox_exec_exit)
+    assert '[[ "$sbx_fmt_exit" == "0" ]]' \
+      "npx prettier succeeded in sandbox" \
+      "exitCode='$sbx_fmt_exit'"
+    # Verify the local package.json is now properly formatted (multi-line, not mangled)
+    formatted_pkg=$(docker exec "$remote_cli_container" \
+      cat "$SBX_WORKTREE_DIR/package.json" 2>/dev/null)
+    formatted_lines=$(echo "$formatted_pkg" | wc -l | tr -d ' ')
+    assert '[[ "$formatted_lines" -gt 5 ]]' \
+      "formatted package.json pulled back (multi-line)" \
+      "lines='$formatted_lines'"
+    # Verify the e2eMarker survived the round-trip (proves it's not just the original)
+    assert '[[ "$formatted_pkg" == *"FORMATTED_E2E"* ]]' \
+      "formatted package.json contains e2eMarker (not just original)" \
+      "content='${formatted_pkg:0:300}'"
+    # Restore original package.json
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" checkout -- package.json 2>/dev/null
 
     # 8m. Failing command exit code propagation
     echo "  Testing failing command propagation..."
@@ -1105,7 +1172,7 @@ else
 
   # 8t. Parallel exec on same worktree (cwd-level lock + concurrent streaming)
   echo "  Testing parallel sandbox exec on same worktree..."
-  # Create a dirty file so both requests exercise the auto-stash path
+  # Create a dirty file so both requests exercise the overlay path
   docker exec "$remote_cli_container" sh -c \
     "echo 'parallel-e2e' > $SBX_WORKTREE_DIR/parallel-test.txt" 2>/dev/null
 
@@ -1113,7 +1180,7 @@ else
   # Each command prints a start timestamp, sleeps 3s, then prints an end
   # timestamp. On the host side we verify the time ranges overlap —
   # proving both commands ran concurrently in the sandbox (the lock
-  # serializes git stash, not the exec itself).
+  # serializes overlay sync, not the exec itself).
   sbx_par1_file=$(mktemp)
   sbx_par2_file=$(mktemp)
   curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
@@ -1157,11 +1224,11 @@ else
       "A=[$par_start_a..$par_end_a] B=[$par_start_b..$par_end_b]"
   fi
 
-  # Verify local worktree is not corrupted (no orphaned temp commit)
+  # Verify local worktree is clean (no git history manipulation)
   local_head_parallel=$(docker exec "$remote_cli_container" \
     git -C "$SBX_WORKTREE_DIR" log -1 --format=%s 2>/dev/null)
   assert '[[ "$local_head_parallel" != "thor-sandbox-wip" ]]' \
-    "no orphaned temp commit after parallel exec" \
+    "no temp commits in local history after parallel exec" \
     "HEAD message: '$local_head_parallel'"
 
   # Clean up dirty file and stop sandbox

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { rm } from "node:fs/promises";
-import { Daytona, type Sandbox } from "@daytonaio/sdk";
+import { join, dirname } from "node:path";
+import { rm, unlink, mkdir } from "node:fs/promises";
+import { Daytona, type FileUpload, type Sandbox } from "@daytonaio/sdk";
 import { execCommand } from "./exec.js";
 
 export interface ExecStreamCallbacks {
@@ -123,6 +123,134 @@ export async function syncSandbox(
     ...sandbox.labels,
     [THOR_SHA_LABEL]: currentSha,
   });
+}
+
+const DIRTY_FILE_LIMIT = 100;
+
+export interface OverlayResult {
+  pushed: string[];
+  deleted: string[];
+  skipped: boolean;
+}
+
+/**
+ * Parse `git status --porcelain -uall` output into upload/delete lists.
+ */
+function parseGitStatus(stdout: string): { uploads: string[]; deletes: string[] } {
+  const lines = stdout.split("\n").filter((l) => l.length > 0);
+  const uploads: string[] = [];
+  const deletes: string[] = [];
+
+  for (const line of lines) {
+    const statusCode = line.substring(0, 2);
+    const pathPart = line.substring(3);
+    const filePath = pathPart.includes(" -> ") ? pathPart.split(" -> ")[1] : pathPart;
+
+    if (statusCode[1] === "D" || (statusCode[0] === "D" && statusCode[1] === " ")) {
+      deletes.push(filePath);
+    } else {
+      uploads.push(filePath);
+    }
+  }
+
+  return { uploads, deletes };
+}
+
+/**
+ * Uploads modified/added files and deletes removed files in the sandbox
+ * to match the local worktree's uncommitted state. Returns the set of
+ * files touched so pullSandboxChanges can skip them.
+ */
+export async function overlayDirtyFiles(sandboxId: string, cwd: string): Promise<OverlayResult> {
+  const gitStatus = await execCommand("git", ["status", "--porcelain", "-uall"], cwd);
+  if ((gitStatus.exitCode ?? 0) !== 0) {
+    throw new SandboxError(
+      "Failed to inspect worktree state",
+      `git status failed: ${gitStatus.stderr || gitStatus.stdout}`,
+    );
+  }
+
+  const { uploads, deletes } = parseGitStatus(gitStatus.stdout);
+  const total = uploads.length + deletes.length;
+
+  if (total === 0) return { pushed: [], deleted: [], skipped: false };
+
+  if (total > DIRTY_FILE_LIMIT) {
+    return { pushed: [], deleted: [], skipped: true };
+  }
+
+  const sandbox = await getSandboxById(sandboxId);
+
+  if (uploads.length > 0) {
+    const fileUploads: FileUpload[] = uploads.map((f) => ({
+      source: join(cwd, f),
+      destination: join(DAYTONA_REPO_DIR, f),
+    }));
+    await sandbox.fs.uploadFiles(fileUploads);
+  }
+
+  for (const filePath of deletes) {
+    await sandbox.fs.deleteFile(join(DAYTONA_REPO_DIR, filePath)).catch(() => {});
+  }
+
+  return { pushed: uploads, deleted: deletes, skipped: false };
+}
+
+/**
+ * Pulls changes made inside the sandbox back to the local worktree.
+ * Downloads all files that differ from the sandbox's committed HEAD —
+ * this includes both overlay files modified by the exec (e.g. prettier
+ * reformatting a pushed file) and new files the exec created.
+ */
+export async function pullSandboxChanges(
+  sandboxId: string,
+  cwd: string,
+): Promise<{ pulled: string[]; deleted: string[]; skipped: boolean }> {
+  const sandbox = await getSandboxById(sandboxId);
+
+  const statusResult = await sandbox.process.executeCommand(
+    `cd ${shellQuote(DAYTONA_REPO_DIR)} && git status --porcelain -uall`,
+  );
+  if (statusResult.exitCode !== 0) {
+    return { pulled: [], deleted: [], skipped: false };
+  }
+
+  const { uploads: downloads, deletes: localDeletes } = parseGitStatus(statusResult.result || "");
+  const total = downloads.length + localDeletes.length;
+
+  if (total === 0) return { pulled: [], deleted: [], skipped: false };
+
+  if (total > DIRTY_FILE_LIMIT) {
+    return { pulled: [], deleted: [], skipped: true };
+  }
+
+  // Validate paths — no escapes outside cwd
+  const allPaths = [...downloads, ...localDeletes];
+  for (const f of allPaths) {
+    if (f.includes("..") || f.startsWith("/")) {
+      return { pulled: [], deleted: [], skipped: true };
+    }
+  }
+
+  if (downloads.length > 0) {
+    const dirs = new Set(downloads.map((f) => dirname(join(cwd, f))));
+    for (const dir of dirs) {
+      await mkdir(dir, { recursive: true }).catch(() => {});
+    }
+
+    await sandbox.fs.downloadFiles(
+      downloads.map((f) => ({
+        source: join(DAYTONA_REPO_DIR, f),
+        destination: join(cwd, f),
+      })),
+    );
+  }
+
+  for (const filePath of localDeletes) {
+    await unlink(join(cwd, filePath)).catch(() => {});
+  }
+
+  return { pulled: downloads, deleted: localDeletes, skipped: false };
 }
 
 async function bundleAndUpload(

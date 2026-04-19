@@ -20,6 +20,8 @@ import {
   findSandboxForCwd,
   getLastSyncedSha,
   listSandboxes,
+  overlayDirtyFiles,
+  pullSandboxChanges,
   SandboxError,
   shellQuote,
   syncSandbox,
@@ -101,11 +103,11 @@ async function prepareSandbox(
   mode: "exec" | "create",
   args: string[],
 ): Promise<PreparedSandbox> {
-  // Lock per-cwd: serializes auto-stash + sync so parallel requests
-  // on the same worktree don't corrupt git state. Lock is released
-  // before streaming exec so parallel commands run concurrently.
+  // Lock per-cwd: prevents duplicate sandbox creation (TOCTOU in
+  // ensureSandbox) and conflicting syncs on the same worktree.
+  // Released before streaming exec so commands run concurrently.
   return withCwdLock(cwd, async () => {
-    const currentSha = await stashAndResolveHead(cwd);
+    const currentSha = await resolveHead(cwd);
     const sandbox = await ensureSandbox(cwd, currentSha);
 
     if (mode === "create") {
@@ -117,70 +119,41 @@ async function prepareSandbox(
       await syncSandbox(sandbox.id, cwd, lastSyncedSha, currentSha);
     }
 
+    const overlay = await overlayDirtyFiles(sandbox.id, cwd);
+    if (overlay.skipped) {
+      logInfo(log, "sandbox_overlay_skipped", {
+        reason: "too many dirty files (>100)",
+        cwd,
+      });
+    } else if (overlay.pushed.length > 0 || overlay.deleted.length > 0) {
+      logInfo(log, "sandbox_overlay_push", {
+        pushed: overlay.pushed,
+        deleted: overlay.deleted,
+        cwd,
+      });
+    }
+
     const command = args.map((a: string) => shellQuote(a)).join(" ");
     return { sandboxId: sandbox.id, command: `bash -lc ${shellQuote(command)}` };
   });
 }
 
-async function stashAndResolveHead(cwd: string): Promise<string> {
-  const gitStatus = await execCommand("git", ["status", "--porcelain"], cwd);
-  if ((gitStatus.exitCode ?? 0) !== 0) {
+async function resolveHead(cwd: string): Promise<string> {
+  const gitSha = await execCommand("git", ["rev-parse", "HEAD"], cwd);
+  if ((gitSha.exitCode ?? 0) !== 0) {
     throw new SandboxError(
-      "Failed to inspect worktree state",
-      `git status failed: ${gitStatus.stderr || gitStatus.stdout}`,
+      "Failed to resolve worktree HEAD",
+      `git rev-parse HEAD failed: ${gitSha.stderr || gitSha.stdout}`,
     );
   }
-
-  const isDirty = gitStatus.stdout.trim().length > 0;
-  if (isDirty) {
-    const addResult = await execCommand("git", ["add", "-A"], cwd);
-    if ((addResult.exitCode ?? 0) !== 0) {
-      throw new SandboxError(
-        "Failed to stage changes for sandbox sync",
-        `git add -A failed: ${addResult.stderr || addResult.stdout}`,
-      );
-    }
-    const commitResult = await execCommand(
-      "git",
-      ["commit", "--no-verify", "-m", "thor-sandbox-wip"],
-      cwd,
+  const sha = gitSha.stdout.trim();
+  if (!sha) {
+    throw new SandboxError(
+      "Failed to resolve worktree HEAD",
+      "git rev-parse HEAD returned empty SHA",
     );
-    if ((commitResult.exitCode ?? 0) !== 0) {
-      await execCommand("git", ["reset", "HEAD"], cwd);
-      throw new SandboxError(
-        "Failed to create temp commit for sandbox sync",
-        `git commit failed: ${commitResult.stderr || commitResult.stdout}`,
-      );
-    }
   }
-
-  try {
-    const gitSha = await execCommand("git", ["rev-parse", "HEAD"], cwd);
-    if ((gitSha.exitCode ?? 0) !== 0) {
-      throw new SandboxError(
-        "Failed to resolve worktree HEAD",
-        `git rev-parse HEAD failed: ${gitSha.stderr || gitSha.stdout}`,
-      );
-    }
-    const sha = gitSha.stdout.trim();
-    if (!sha) {
-      throw new SandboxError(
-        "Failed to resolve worktree HEAD",
-        "git rev-parse HEAD returned empty SHA",
-      );
-    }
-    return sha;
-  } finally {
-    if (isDirty) {
-      const resetResult = await execCommand("git", ["reset", "--mixed", "HEAD~1"], cwd);
-      if ((resetResult.exitCode ?? 0) !== 0) {
-        throw new SandboxError(
-          "Failed to undo temp commit — worktree may have a stale commit",
-          `git reset --mixed HEAD~1 failed: ${resetResult.stderr || resetResult.stdout}`,
-        );
-      }
-    }
-  }
+  return sha;
 }
 
 async function ensureSandbox(cwd: string, currentSha: string) {
@@ -419,6 +392,31 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         onStdout: (chunk) => writeNdjson({ stream: "stdout", data: chunk }),
         onStderr: (chunk) => writeNdjson({ stream: "stderr", data: chunk }),
       });
+
+      // Pull changes made inside the sandbox back to the local worktree
+      try {
+        const pull = await withCwdLock(cwd, () => pullSandboxChanges(result.sandboxId, cwd));
+        if (pull.skipped) {
+          logInfo(log, "sandbox_pull_skipped", {
+            reason: "too many changed files (>100) or unsafe paths",
+            cwd,
+          });
+        } else if (pull.pulled.length > 0 || pull.deleted.length > 0) {
+          logInfo(log, "sandbox_pull", {
+            pulled: pull.pulled,
+            deleted: pull.deleted,
+            cwd,
+          });
+        }
+      } catch (pullErr) {
+        logError(
+          log,
+          "sandbox_pull_error",
+          pullErr instanceof Error ? pullErr.message : String(pullErr),
+          thorIds(req),
+        );
+      }
+
       writeNdjson({ exitCode });
       res.end();
     } catch (err) {

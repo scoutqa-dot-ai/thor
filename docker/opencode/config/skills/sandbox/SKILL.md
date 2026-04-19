@@ -36,7 +36,7 @@ No quoting needed. Shell metacharacters (`&&`, `|`, `;`) work naturally.
 3. The command runs inside the sandbox and output streams back in real time
 4. Sandbox auto-stops after 15 minutes idle
 
-**Uncommitted changes are synced automatically.** The sandbox creates a temporary commit, syncs it, then undoes the commit locally. Your working tree is unchanged. No need to commit before running.
+**Sync is bidirectional.** Before exec, uncommitted local changes are uploaded to the sandbox. After exec, any files the command created or modified are pulled back to your worktree. No need to commit before running. Sync is skipped if more than 100 files are dirty.
 
 ---
 
