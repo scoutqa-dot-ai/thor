@@ -1,0 +1,62 @@
+docs/plan/2026041601_daytona-integration.md
+  b63812519d209f90 140,147,164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "40508e9972bbdab915710e2a31a07f31c329e825",
+  "prompts": {
+    "266dcbb114a867bc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a6304da4-a9f3-4fed-aa74-20772272c417",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    },
+    "29d5067be01d7a88": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee293578-b7f1-4ccb-9a94-145cee97bc50",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 135,
+      "total_deletions": 0,
+      "accepted_lines": 149,
+      "overriden_lines": 0
+    },
+    "b63812519d209f90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "106bc794-6f79-4eb0-ba48-2df4d5c0b6ab",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 15,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    },
+    "e0445e6c5e7d0782": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "efc67c3b-27cb-4c15-8059-eb856b5f135a",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 141,
+      "total_deletions": 85,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
