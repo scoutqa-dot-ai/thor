@@ -373,7 +373,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           }
 
           const command = args.map((a: string) => shellQuote(a)).join(" ");
-          return { sandbox: sbx, sandboxCommand: `sh -lc ${shellQuote(command)}` };
+          return { sandbox: sbx, sandboxCommand: `bash -lc ${shellQuote(command)}` };
         } finally {
           if (madeTemp) {
             const resetResult = await execCommand("git", ["reset", "--mixed", "HEAD~1"], cwd);

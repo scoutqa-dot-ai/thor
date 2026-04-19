@@ -895,7 +895,99 @@ else
       "output delivered as multiple NDJSON events (streaming, not buffered)" \
       "event_count='$sbx_stream_event_count'"
 
-    # 8o. Args with spaces are preserved (shell quoting)
+    # 8o. Toolchain: verify pre-installed runtimes are available via bash -lc
+    echo "  Testing sandbox toolchain (Node, Java, Python, Maven, Gradle)..."
+    sbx_tc_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"node --version && java --version 2>&1 | head -1 && python3 --version && mvn --version 2>&1 | head -1 && gradle --version 2>&1 | grep Gradle\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_tc_exit=$(echo "$sbx_tc_raw" | sandbox_exec_exit)
+    sbx_tc_stdout=$(echo "$sbx_tc_raw" | sandbox_exec_stdout)
+    assert '[[ "$sbx_tc_exit" == "0" ]]' "toolchain commands all succeeded" "exitCode='$sbx_tc_exit'"
+    assert '[[ "$sbx_tc_stdout" == *"v22."* ]]' \
+      "Node 22 available (default)" "stdout='${sbx_tc_stdout:0:300}'"
+    assert '[[ "$sbx_tc_stdout" == *"21.0"* ]]' \
+      "Java 21 available (default)" "stdout='${sbx_tc_stdout:0:300}'"
+    assert '[[ "$sbx_tc_stdout" == *"3.12"* ]]' \
+      "Python 3.12 available (default)" "stdout='${sbx_tc_stdout:0:300}'"
+    assert '[[ "$sbx_tc_stdout" == *"Maven"* ]]' \
+      "Maven available" "stdout='${sbx_tc_stdout:0:300}'"
+    assert '[[ "$sbx_tc_stdout" == *"Gradle"* ]]' \
+      "Gradle available" "stdout='${sbx_tc_stdout:0:300}'"
+
+    # 8p. Version switching: set non-default version, verify it persists
+    echo "  Testing version switching persistence across sandbox calls..."
+
+    # Node: switch default to 20, verify next call uses it
+    sbx_nvm_set=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"nvm\",\"alias\",\"default\",\"20\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_nvm_set_exit=$(echo "$sbx_nvm_set" | sandbox_exec_exit)
+    assert '[[ "$sbx_nvm_set_exit" == "0" ]]' "nvm alias default 20 succeeded" "exitCode='$sbx_nvm_set_exit'"
+
+    sbx_nvm_check=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"node\",\"--version\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_nvm_ver=$(echo "$sbx_nvm_check" | sandbox_exec_stdout | tr -d '[:space:]')
+    assert '[[ "$sbx_nvm_ver" == v20.* ]]' \
+      "Node version persisted to 20 across calls" \
+      "got='$sbx_nvm_ver'"
+
+    # Restore Node default to 22
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"nvm\",\"alias\",\"default\",\"22\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null >/dev/null
+
+    # Java: switch default to 17, verify next call uses it
+    sbx_sdk_set=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sdk\",\"default\",\"java\",\"17.0.15-tem\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_sdk_set_exit=$(echo "$sbx_sdk_set" | sandbox_exec_exit)
+    assert '[[ "$sbx_sdk_set_exit" == "0" ]]' "sdk default java 17 succeeded" "exitCode='$sbx_sdk_set_exit'"
+
+    sbx_sdk_check=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"java\",\"--version\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_sdk_ver=$(echo "$sbx_sdk_check" | sandbox_exec_stdout | head -1)
+    assert '[[ "$sbx_sdk_ver" == *"17.0"* ]]' \
+      "Java version persisted to 17 across calls" \
+      "got='$sbx_sdk_ver'"
+
+    # Restore Java default to 21
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sdk\",\"default\",\"java\",\"21.0.7-tem\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null >/dev/null
+
+    # Python: switch global to 3.11, verify next call uses it
+    sbx_py_set=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"pyenv\",\"global\",\"3.11\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_py_set_exit=$(echo "$sbx_py_set" | sandbox_exec_exit)
+    assert '[[ "$sbx_py_set_exit" == "0" ]]' "pyenv global 3.11 succeeded" "exitCode='$sbx_py_set_exit'"
+
+    sbx_py_check=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"python3\",\"--version\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_py_ver=$(echo "$sbx_py_check" | sandbox_exec_stdout | tr -d '[:space:]')
+    assert '[[ "$sbx_py_ver" == *"3.11"* ]]' \
+      "Python version persisted to 3.11 across calls" \
+      "got='$sbx_py_ver'"
+
+    # Restore Python default to 3.12
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"pyenv\",\"global\",\"3.12\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null >/dev/null
+
+    # 8q. Args with spaces are preserved (shell quoting)
     echo "  Testing arg quoting preservation..."
     sbx_quote_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
@@ -913,7 +1005,7 @@ else
       "quoting preserved: 2 files created (not 3)" \
       "file_count='$sbx_file_count'"
 
-    # 8p. Sandbox disappears between execs (auto-recreate)
+    # 8r. Sandbox disappears between execs (auto-recreate)
     echo "  Testing auto-recreate after sandbox disappears..."
     # First, exec to ensure a sandbox exists
     sbx_pre_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
@@ -945,7 +1037,7 @@ else
       -H 'Content-Type: application/json' \
       -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
 
-    # 8q. Two worktrees, two sandboxes (label isolation)
+    # 8s. Two worktrees, two sandboxes (label isolation)
     echo "  Testing two-worktree sandbox isolation..."
     SBX_BRANCH2="e2e-sandbox2-${SBX_TS}"
     SBX_WORKTREE_DIR2="/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH2}"
@@ -1009,7 +1101,7 @@ else
     fi
   fi
 
-  # 8r. Parallel exec on same worktree (cwd-level lock + concurrent streaming)
+  # 8t. Parallel exec on same worktree (cwd-level lock + concurrent streaming)
   echo "  Testing parallel sandbox exec on same worktree..."
   # Create a dirty file so both requests exercise the auto-stash path
   docker exec "$remote_cli_container" sh -c \

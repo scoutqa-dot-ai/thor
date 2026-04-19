@@ -63,9 +63,35 @@ sandbox ./gradlew spotlessCheck        # same sandbox, different command
 
 ---
 
+## Pre-installed runtimes
+
+The sandbox comes with version managers and common runtimes ready to use:
+
+- **Node**: 22 (default), 20, 24 via nvm. pnpm available via corepack.
+- **Java**: 21 (default), 17 (Temurin) via SDKMAN. Maven and Gradle included.
+- **Python**: 3.12 (default), 3.11, 3.13 via pyenv. `uv` available for fast installs.
+
+To use a non-default version for one command, chain it:
+
+```bash
+sandbox nvm use 20 '&&' npm test
+sandbox sdk use java 17.0.15-tem '&&' mvn test
+```
+
+To change the default permanently (persists across sandbox calls):
+
+```bash
+sandbox nvm alias default 20
+sandbox sdk default java 17.0.15-tem
+sandbox pyenv global 3.11
+```
+
+---
+
 ## Notes
 
 - Sandbox has internet access (`pip install`, `npm install`, `apt-get` all work)
 - First run is slower (sandbox creation + full code sync)
 - Subsequent runs reuse the sandbox and sync only new commits
 - Sandbox stops automatically after 15 minutes of inactivity
+- Multiple `sandbox` commands on the same worktree can run in parallel
