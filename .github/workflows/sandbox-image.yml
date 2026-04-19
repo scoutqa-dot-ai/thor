@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "docker/sandbox/**"
+      - "scripts/create-snapshot.ts"
       - ".github/workflows/sandbox-image.yml"
   workflow_dispatch:
 
