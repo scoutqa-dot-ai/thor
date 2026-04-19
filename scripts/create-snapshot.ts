@@ -30,7 +30,7 @@ const { values: args } = parseArgs({
     name: { type: "string", default: DEFAULT_NAME },
     cpu: { type: "string", default: "2" },
     mem: { type: "string", default: "4" },
-    disk: { type: "string", default: "20" },
+    disk: { type: "string", default: "10" },
   },
 });
 
