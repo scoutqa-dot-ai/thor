@@ -66,11 +66,20 @@ async function create() {
   console.log(`Resources: ${args.cpu} CPU, ${args.mem} GiB RAM, ${args.disk} GiB disk`);
   console.log();
 
-  // Delete existing snapshot with the same name
+  // Delete existing snapshot with the same name, wait for removal
   try {
     const existing = await daytona.snapshot.get(name);
     console.log(`Snapshot "${name}" already exists (state: ${existing.state}). Deleting...`);
     await daytona.snapshot.delete(existing);
+    // Daytona delete is eventual — poll until the name is free
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 2_000));
+      try {
+        await daytona.snapshot.get(name);
+      } catch {
+        break; // gone
+      }
+    }
     console.log("Deleted.\n");
   } catch {
     // Not found — will create fresh
