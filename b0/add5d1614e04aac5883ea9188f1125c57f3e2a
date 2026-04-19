@@ -1,0 +1,37 @@
+docker-compose.yml
+  eedbb11222070cae 60
+.github/workflows/sandbox-image.yml
+  eedbb11222070cae 1,10-13,15,21,23,25-27,29-37,39,41-46
+scripts/test-dind-compose.ts
+  eedbb11222070cae 46
+packages/remote-cli/src/sandbox.ts
+  eedbb11222070cae 14
+docs/daytona.md
+  eedbb11222070cae 1-100
+docs/plan/2026041601_daytona-integration.md
+  eedbb11222070cae 171,229,344
+.env.example
+  eedbb11222070cae 79,82
+docker/sandbox/Dockerfile
+  eedbb11222070cae 1,6-8,10-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b0add5d1614e04aac5883ea9188f1125c57f3e2a",
+  "prompts": {
+    "eedbb11222070cae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f3c636ad-520e-455e-99ea-3b55e71c8458",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 146,
+      "total_deletions": 26,
+      "accepted_lines": 144,
+      "overriden_lines": 0
+    }
+  }
+}
