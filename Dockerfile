@@ -61,6 +61,12 @@ COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
 COPY docker/opencode/bin/langfuse /usr/local/bin/langfuse
 COPY docker/opencode/bin/metabase /usr/local/bin/metabase
 COPY docker/opencode/bin/sandbox /usr/local/bin/sandbox
+# npm/npx/pnpm wrappers — redirect to sandbox so code runs in the cloud
+COPY docker/opencode/bin/npm /usr/local/bin/npm
+COPY docker/opencode/bin/npx /usr/local/bin/npx
+COPY docker/opencode/bin/pnpm /usr/local/bin/pnpm
+COPY docker/opencode/bin/pnpx /usr/local/bin/pnpx
+COPY docker/opencode/bin/corepack /usr/local/bin/corepack
 # mcp/approval wrapper scripts — forward to remote-cli service over HTTP
 COPY docker/opencode/bin/mcp /usr/local/bin/mcp
 COPY docker/opencode/bin/approval /usr/local/bin/approval

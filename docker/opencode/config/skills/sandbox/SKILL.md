@@ -98,3 +98,6 @@ sandbox pyenv global 3.11
 - Subsequent runs reuse the sandbox and sync only new commits
 - Sandbox stops automatically after 15 minutes of inactivity
 - Multiple `sandbox` commands on the same worktree can run in parallel
+- `npm`, `npx`, `pnpm`, `pnpx`, and `corepack` are automatically redirected to the sandbox — no need to prefix with `sandbox`
+- `git` is blocked inside the sandbox — git state is not synced back, so use `git` directly instead
+- Pull only happens on successful exec (exit code 0) — failed commands do not sync partial artifacts back

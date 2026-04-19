@@ -344,6 +344,18 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           });
           return;
         }
+
+        // Block git — sandbox doesn't sync git state back, so
+        // commits/branches made there would be silently lost.
+        if (args[0] === "git") {
+          res.status(400).json({
+            stdout: "",
+            stderr:
+              "git commands cannot run in the sandbox — changes to git history are not synced back. Use the git command directly instead.",
+            exitCode: 1,
+          });
+          return;
+        }
       }
 
       logInfo(log, "exec_sandbox", {

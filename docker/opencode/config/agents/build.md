@@ -33,7 +33,9 @@ Do not only answer in internal chat when a Slack reply is required.
 
 ## Environment
 
-You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `metabase` (Metabase warehouse CLI), `sandbox` (cloud sandbox for running project commands — builds, tests, lints). No Python, Go, or other binaries locally. Use `sandbox` to run project commands that need other runtimes.
+You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `metabase` (Metabase warehouse CLI), `sandbox` (cloud sandbox for running project commands — builds, tests, lints). No Python, Go, or other binaries locally.
+
+**Important:** `npm`, `npx`, `pnpm`, and `corepack` are redirected to the cloud sandbox automatically. When you run `npm install` or `npx prettier`, it executes in the sandbox where the full toolchain is installed. Use `sandbox` explicitly for other runtimes (Java, Python, etc.) or when you need to chain commands.
 
 A credential-injecting reverse proxy is available at `http://data/` — auth headers are injected automatically. Check memory files for available routes and API schemas.
 
