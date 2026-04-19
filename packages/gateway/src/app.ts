@@ -328,8 +328,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         payload: event,
         receivedAt: new Date().toISOString(),
         sourceTs: parseSlackTs(event.ts),
-        readyAt: Date.now() + shortDelay,
-        delayMs: shortDelay,
+        readyAt: Date.now(),
+        delayMs: 0,
         interrupt: true,
       });
       return;

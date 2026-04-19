@@ -11,7 +11,7 @@ import type {
   ToolStateCompleted,
   ToolStateError,
 } from "@opencode-ai/sdk";
-import { EventBusRegistry } from "./event-bus.js";
+import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
 import { readFileSync } from "node:fs";
 import {
   createLogger,
@@ -34,10 +34,10 @@ import {
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
   extractRepoFromCwd,
-  getRepoUpstreams,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
+import { buildToolInstructions } from "./tool-instructions.js";
 
 const log = createLogger("runner");
 
@@ -81,56 +81,12 @@ function readRepoMemory(directory: string): string | undefined {
   return readMemoryFile(`${MEMORY_DIR}/${repo}/README.md`);
 }
 
-/**
- * Build tool instructions block for a session based on the repo's configured upstreams.
- * Renders entirely from workspace config — no proxy dependency.
- */
-function buildToolInstructions(directory: string): string | undefined {
-  const repo = extractRepoFromCwd(directory);
-  if (!repo) return undefined;
-
-  let config;
+function getToolInstructions(directory: string): string | undefined {
   try {
-    config = getWorkspaceConfig();
+    return buildToolInstructions(getWorkspaceConfig(), directory);
   } catch {
     return undefined;
   }
-
-  const allowed = getRepoUpstreams(config, repo);
-  if (!allowed || allowed.length === 0) return undefined;
-
-  const sections: string[] = [];
-
-  for (const upstreamName of allowed) {
-    const proxyDef = config.proxies?.[upstreamName];
-    if (!proxyDef) continue;
-
-    const allow = proxyDef.allow ?? [];
-    const approve = proxyDef.approve ?? [];
-
-    if (allow.length > 0) {
-      sections.push(`## ${upstreamName} (allow)`);
-      for (const name of allow) sections.push(`- ${name}`);
-    }
-
-    if (approve.length > 0) {
-      sections.push(`## ${upstreamName} (approve — requires human approval)`);
-      for (const name of approve) sections.push(`- ${name}`);
-    }
-  }
-
-  if (sections.length === 0) return undefined;
-
-  return [
-    "[Available MCP tools — use the `mcp` CLI to call these]",
-    "",
-    ...sections,
-    "",
-    'Usage: mcp <upstream> <tool> \'{"arg":"value"}\'',
-    "Always pass a single JSON string argument.",
-    "Run `mcp <upstream> <tool> --help` to see tool description and input schema.",
-    "Run `approval status <id>` to check approval status.",
-  ].join("\n");
 }
 
 async function fetchOpencode(path: string): Promise<Response> {
@@ -442,22 +398,7 @@ app.post("/trigger", async (req, res) => {
         await client.session.abort({ path: { id: sessionId } });
 
         const abortSub = await eventBuses.subscribe(sessionDirectory, [sessionId]);
-
-        // Wait for session.idle with a hard timeout via Promise.race.
-        // The previous `for await` approach only checked the deadline when a
-        // new SSE event arrived — if the stream went quiet after abort, the
-        // deadline was never evaluated and the handler hung for minutes.
-        const waitForIdle = (async () => {
-          for await (const event of abortSub) {
-            if (event.type === "session.idle") return true;
-          }
-          return false;
-        })();
-
-        const aborted = await Promise.race([
-          waitForIdle,
-          new Promise<false>((resolve) => setTimeout(() => resolve(false), ABORT_TIMEOUT)),
-        ]);
+        const aborted = await waitForSessionSettled(abortSub, ABORT_TIMEOUT);
         abortSub.close();
 
         if (!aborted) {
@@ -517,7 +458,7 @@ app.post("/trigger", async (req, res) => {
       }
 
       // Tool instructions: inject MCP tool list from config
-      const toolInstructions = buildToolInstructions(sessionDirectory);
+      const toolInstructions = getToolInstructions(sessionDirectory);
       if (toolInstructions) {
         prompt = `${toolInstructions}\n\n${prompt}`;
         logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });

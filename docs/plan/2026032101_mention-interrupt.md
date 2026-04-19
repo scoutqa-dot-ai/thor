@@ -14,7 +14,7 @@
 
 | Source                                          | Interrupt | Delay   |
 | ----------------------------------------------- | --------- | ------- | ----------------------------------------------------------------- |
-| Slack `app_mention`                             | true      | 3s      |
+| Slack `app_mention`                             | true      | 0s      |
 | Slack `message` (engaged — Thor replied before) | false     | 3s      |
 | ~~Slack `message` (not engaged)~~               | ~~false~~ | ~~60s~~ | **Obsolete** — dropped since `2026041301_slack-drop-unengaged.md` |
 | GitHub with `@GIT_USER_NAME` in body            | true      | 3s      |
@@ -29,11 +29,11 @@ Default for new sources: `interrupt: false`. The runner treats unset interrupt a
 
 ### S1: Mention while idle
 
-Mention enqueued with `interrupt: true`, 3s delay. After 3s, queue fires → runner creates/resumes session → processes prompt.
+Mention enqueued with `interrupt: true`, 0s delay. Queue fires immediately → runner creates/resumes session → processes prompt.
 
 ### S2: Mention while session is running (same thread)
 
-Mention enqueued with `interrupt: true`, 3s delay. After 3s, queue fires → runner sees busy session → aborts → waits for idle → sends new prompt.
+Mention enqueued with `interrupt: true`, 0s delay. Queue fires immediately → runner sees busy session → aborts → waits for idle → sends new prompt.
 
 ### S3: Non-mention while session is running (same thread)
 
@@ -49,7 +49,7 @@ Mention enqueued with `interrupt: true`, 3s delay. After 3s, queue fires → run
 
 ### S5: Multiple rapid mentions (same thread)
 
-Mention at T+0 (readyAt=T+3). Mention at T+1 (readyAt=T+4). Queue uses `max(readyAt)` of interrupt events = T+4. Both fire together at T+4. Sliding debounce window.
+Mentions fire immediately (0s delay). Each mention fires as soon as the per-key lock is free. The runner aborts the in-flight session for each new mention; opencode's abort handling collapses rapid-fire aborts into the terminal state the runner waits on before sending the next prompt. No gateway-side debounce window.
 
 ### S6: Non-mention pending, then mention arrives (same thread)
 
@@ -103,6 +103,6 @@ Different correlation keys. Independent per-key locks. No cross-key blocking.
 | D3  | Fix at both layers (gateway + runner)                          | Remove `hasRunnerSession` so non-mentions get 60s delay. Runner also checks interrupt flag as defense in depth.                                                                                                    |
 | D4  | At-least-once via ack callback                                 | Don't delete files until runner accepts. Crash or busy → files stay for retry. Duplicates are fine (opencode handles them).                                                                                        |
 | D5  | `interrupt` defaults to false (safe by default)                | New sources should not interrupt. Only Slack mentions and GitHub @mentions set `interrupt: true`.                                                                                                                  |
-| D6  | Standardize delays: interrupt=3s, non-interrupt=60s            | Consistent across all sources. Interrupt events debounce briefly then fire. Non-interrupt events wait hoping someone else handles it.                                                                              |
+| D6  | Standardize delays: interrupt=0s, non-interrupt=60s            | Interrupt events fire immediately (users expect instant response when they @mention). Non-interrupt events wait, hoping someone else handles it.                                                                   |
 | D7  | Engaged-thread heuristic for Slack (3s if Thor replied before) | If Thor has `slack_post_message` in worklog notes → user expects Thor to stay responsive. Uses short delay without interrupt.                                                                                      |
 | D8  | Defer similar heuristic for GitHub                             | GitHub interactions go through `bash` (gh CLI), so the tool name is too generic to reliably detect engagement. Revisit when we have a clearer signal (e.g. dedicated GitHub MCP tools or richer worklog metadata). |

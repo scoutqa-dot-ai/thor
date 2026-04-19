@@ -3,13 +3,16 @@ import {
   computeSlackAlias,
   createLogger,
   extractRepoFromCwd,
+  getProxyConfig,
   formatThorMeta,
+  isProxyName,
   getRepoUpstreams,
   interpolateHeaders,
   isAliasableMcpTool,
   logError,
   logInfo,
   logWarn,
+  PROXY_NAMES,
   type ConfigLoader,
   type ProxyConfig,
   type WorkspaceConfig,
@@ -138,7 +141,15 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   }
 
   function getConfiguredUpstreamNames(): string[] {
-    return Object.keys(getConfig().proxies ?? {});
+    const enabled = new Set<string>();
+    for (const repo of Object.values(getConfig().repos)) {
+      for (const upstreamName of repo.proxies ?? []) {
+        if (isProxyName(upstreamName)) {
+          enabled.add(upstreamName);
+        }
+      }
+    }
+    return PROXY_NAMES.filter((name) => enabled.has(name));
   }
 
   function getApprovalStore(name: string): ApprovalStore {
@@ -226,8 +237,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   }
 
   async function getInstance(name: string): Promise<ProxyInstance | undefined> {
-    const config = getConfig();
-    const proxyDef = config.proxies?.[name];
+    const proxyDef = getProxyConfig(name);
     if (!proxyDef) {
       instances.delete(name);
       return undefined;
@@ -269,14 +279,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (allowed === undefined) {
       return fail(`Repo "${repo}" not found in config`);
     }
-    return allowed.filter((name) => config.proxies?.[name]);
+    return allowed.filter(isProxyName);
   }
 
   async function listVisibleTools(
     upstreamName: string,
     repo: string,
   ): Promise<ToolInfo[] | McpExecResult> {
-    const config = getConfig();
     const allowed = getAllowedUpstreamsForRepo(repo);
     if (!Array.isArray(allowed)) return allowed;
     if (!allowed.includes(upstreamName)) {
@@ -290,7 +299,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return fail(`Unknown upstream "${upstreamName}".`);
     }
 
-    const proxyDef = config.proxies?.[upstreamName];
+    const proxyDef = getProxyConfig(upstreamName);
     const allow = proxyDef?.allow ?? [];
     const approve = proxyDef?.approve ?? [];
 

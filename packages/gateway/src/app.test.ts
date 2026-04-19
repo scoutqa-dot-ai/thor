@@ -708,6 +708,52 @@ describe("gateway", () => {
     });
   });
 
+  it("app_mention fires immediately ignoring shortDelayMs (interrupt shouldn't wait)", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    // Use a large shortDelayMs — mention should still fire immediately.
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const body = JSON.stringify({
+          type: "event_callback",
+          event_id: "EvFast",
+          team_id: "T123",
+          event: {
+            type: "app_mention",
+            user: "U123",
+            text: "<@U999> stop what you're doing",
+            ts: "1710000000.001",
+            channel: "C123",
+          },
+        });
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+        expect(response.status).toBe(200);
+
+        await queue.flush();
+
+        const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
+        expect(triggerCall).toBeDefined();
+        const triggerBody = JSON.parse(String(triggerCall![1]?.body));
+        expect(triggerBody.interrupt).toBe(true);
+      },
+      { shortDelayMs: 60_000 },
+    );
+  });
+
   it("processes two messages sent at different times as separate triggers", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
 

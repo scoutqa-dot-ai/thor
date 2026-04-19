@@ -1,0 +1,12 @@
+#!/bin/sh
+# GIT_ASKPASS helper. Git invokes this with a prompt like:
+#   Password for 'https://x-access-token@github.com/org/repo':
+# The Node helper resolves the org from that prompt and prints the token to
+# stdout. If GitHub App resolution yields nothing, fall back to GITHUB_PAT.
+
+TOKEN=$(node /app/packages/remote-cli/dist/auth-helper.js git-askpass "$1")
+if [ -n "$TOKEN" ]; then
+  printf '%s' "$TOKEN"
+elif [ -n "$GITHUB_PAT" ]; then
+  printf '%s' "$GITHUB_PAT"
+fi
