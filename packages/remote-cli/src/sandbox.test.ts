@@ -9,7 +9,14 @@ interface FakeSandbox {
   name: string;
   labels: Record<string, string>;
   fs: { uploadFile: ReturnType<typeof vi.fn> };
-  process: { executeCommand: ReturnType<typeof vi.fn> };
+  process: {
+    executeCommand: ReturnType<typeof vi.fn>;
+    createSession: ReturnType<typeof vi.fn>;
+    executeSessionCommand: ReturnType<typeof vi.fn>;
+    getSessionCommandLogs: ReturnType<typeof vi.fn>;
+    getSessionCommand: ReturnType<typeof vi.fn>;
+    deleteSession: ReturnType<typeof vi.fn>;
+  };
   setLabels: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
 }
@@ -250,6 +257,121 @@ describe("/exec/sandbox", () => {
     expect(bundleCall?.[1]?.[3]).toBe("HEAD");
   });
 
+  it("streams multiple chunks as separate NDJSON events", async () => {
+    const sandbox = makeSandbox("sbx-1", "thor-acme", {
+      [THOR_MANAGED_LABEL]: "true",
+      [THOR_CWD_LABEL]: CWD,
+      [THOR_BRANCH_LABEL]: "feat/sandbox",
+      [THOR_SHA_LABEL]: HEAD_SHA,
+    });
+
+    // Override mock to emit multiple chunks on both streams
+    sandbox.process.getSessionCommandLogs.mockImplementation(
+      async (
+        _sessionId: string,
+        _commandId: string,
+        onStdout?: (chunk: string) => void,
+        onStderr?: (chunk: string) => void,
+      ) => {
+        if (onStdout && onStderr) {
+          onStdout("[INFO] Compiling...\n");
+          onStderr("WARNING: deprecated API\n");
+          onStdout("[INFO] Tests run: 42, Failures: 0\n");
+        }
+      },
+    );
+
+    daytonaState.sandboxes.set(sandbox.id, sandbox);
+
+    const response = await postJson("/exec/sandbox", {
+      args: ["mvn", "test"],
+      cwd: CWD,
+    });
+
+    expect(response.status).toBe(200);
+    const events = await readNdjson(response);
+    expect(events).toEqual([
+      { stream: "stdout", data: "[INFO] Compiling...\n" },
+      { stream: "stderr", data: "WARNING: deprecated API\n" },
+      { stream: "stdout", data: "[INFO] Tests run: 42, Failures: 0\n" },
+      { exitCode: 0 },
+    ]);
+  });
+
+  it("streams output and propagates nonzero exit code", async () => {
+    const sandbox = makeSandbox("sbx-1", "thor-acme", {
+      [THOR_MANAGED_LABEL]: "true",
+      [THOR_CWD_LABEL]: CWD,
+      [THOR_BRANCH_LABEL]: "feat/sandbox",
+      [THOR_SHA_LABEL]: HEAD_SHA,
+    });
+
+    sandbox.process.getSessionCommandLogs.mockImplementation(
+      async (
+        _sessionId: string,
+        _commandId: string,
+        onStdout?: (chunk: string) => void,
+        onStderr?: (chunk: string) => void,
+      ) => {
+        if (onStdout && onStderr) {
+          onStdout("FAIL src/app.test.ts\n");
+          onStderr("Error: expected 1 to equal 2\n");
+        }
+      },
+    );
+
+    sandbox.process.getSessionCommand.mockResolvedValue({
+      id: "cmd-1",
+      command: "",
+      exitCode: 1,
+    });
+
+    daytonaState.sandboxes.set(sandbox.id, sandbox);
+
+    const response = await postJson("/exec/sandbox", {
+      args: ["npm", "test"],
+      cwd: CWD,
+    });
+
+    expect(response.status).toBe(200);
+    const events = await readNdjson(response);
+    expect(events).toEqual([
+      { stream: "stdout", data: "FAIL src/app.test.ts\n" },
+      { stream: "stderr", data: "Error: expected 1 to equal 2\n" },
+      { exitCode: 1 },
+    ]);
+  });
+
+  it("cleans up session and streams error when streaming fails", async () => {
+    const sandbox = makeSandbox("sbx-1", "thor-acme", {
+      [THOR_MANAGED_LABEL]: "true",
+      [THOR_CWD_LABEL]: CWD,
+      [THOR_BRANCH_LABEL]: "feat/sandbox",
+      [THOR_SHA_LABEL]: HEAD_SHA,
+    });
+
+    sandbox.process.getSessionCommandLogs.mockRejectedValue(new Error("WebSocket closed"));
+
+    daytonaState.sandboxes.set(sandbox.id, sandbox);
+
+    const response = await postJson("/exec/sandbox", {
+      args: ["mvn", "test"],
+      cwd: CWD,
+    });
+
+    // Headers already flushed before streaming starts, so status is 200
+    // and error is delivered as NDJSON events
+    expect(response.status).toBe(200);
+    const events = await readNdjson(response);
+    expect(events).toEqual([
+      { stream: "stderr", data: "Sandbox service error\n" },
+      { exitCode: 1 },
+    ]);
+
+    // Session should still be cleaned up despite the error
+    expect(sandbox.process.deleteSession).toHaveBeenCalledTimes(1);
+  });
+
   it("treats stop as no-op when sandbox does not exist", async () => {
     const response = await postJson("/exec/sandbox", {
       mode: "stop",
@@ -305,6 +427,7 @@ function configureGitExec(options: { dirty: boolean; headSha: string; branch: st
 }
 
 function makeSandbox(id: string, name: string, labels: Record<string, string>): FakeSandbox {
+  let cmdCounter = 0;
   const sandbox: FakeSandbox = {
     id,
     name,
@@ -319,6 +442,29 @@ function makeSandbox(id: string, name: string, labels: Record<string, string>): 
         }
         return { exitCode: 0, result: "sandbox run output\n" };
       }),
+      createSession: vi.fn(async () => {}),
+      executeSessionCommand: vi.fn(async () => {
+        const cmdId = `cmd-${++cmdCounter}`;
+        return { cmdId };
+      }),
+      getSessionCommandLogs: vi.fn(
+        async (
+          _sessionId: string,
+          _commandId: string,
+          onStdout?: (chunk: string) => void,
+          _onStderr?: (chunk: string) => void,
+        ) => {
+          if (onStdout) {
+            onStdout("sandbox run output\n");
+          }
+        },
+      ),
+      getSessionCommand: vi.fn(async () => ({
+        id: `cmd-${cmdCounter}`,
+        command: "",
+        exitCode: 0,
+      })),
+      deleteSession: vi.fn(async () => {}),
     },
     setLabels: vi.fn(async (nextLabels: Record<string, string>) => {
       sandbox.labels = { ...nextLabels };

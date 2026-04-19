@@ -16,7 +16,7 @@ import { listSchemas, listTables, getColumns, executeQuery } from "./metabase.js
 import {
   createSandbox,
   deleteSandbox,
-  execInSandbox,
+  execInSandboxStream,
   findSandboxForCwd,
   getLastSyncedSha,
   listSandboxes,
@@ -377,12 +377,13 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
         res.setHeader("Content-Type", "application/x-ndjson");
         res.setHeader("Transfer-Encoding", "chunked");
+        res.flushHeaders();
 
-        const result = await execInSandbox(sandbox.id, sandboxCommand);
-        if (result.output) {
-          writeNdjson({ stream: "stdout", data: result.output });
-        }
-        writeNdjson({ exitCode: result.exitCode });
+        const exitCode = await execInSandboxStream(sandbox.id, sandboxCommand, {
+          onStdout: (chunk) => writeNdjson({ stream: "stdout", data: chunk }),
+          onStderr: (chunk) => writeNdjson({ stream: "stderr", data: chunk }),
+        });
+        writeNdjson({ exitCode });
         res.end();
       } finally {
         if (madeTemp) {

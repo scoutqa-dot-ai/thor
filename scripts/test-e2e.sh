@@ -872,7 +872,30 @@ else
       "failing command output arrives on stdout" \
       "stdout='${sbx_fail_stdout:0:200}'"
 
-    # 8n. Args with spaces are preserved (shell quoting)
+    # 8n. Streaming: multi-line delayed output produces multiple NDJSON events
+    echo "  Testing NDJSON streaming (multiple events, not buffered)..."
+    sbx_stream_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo STREAM_A; sleep 1; echo STREAM_B; sleep 1; echo STREAM_C\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_stream_exit=$(echo "$sbx_stream_raw" | sandbox_exec_exit)
+    sbx_stream_stdout=$(echo "$sbx_stream_raw" | sandbox_exec_stdout)
+    sbx_stream_event_count=$(echo "$sbx_stream_raw" | node -e "
+      const lines = require('fs').readFileSync(0,'utf8').trim().split('\n');
+      const stdoutEvents = lines.filter(l => {
+        try { const d = JSON.parse(l); return d.stream === 'stdout'; } catch { return false; }
+      });
+      console.log(stdoutEvents.length);
+    " 2>/dev/null || echo "0")
+    assert '[[ "$sbx_stream_exit" == "0" ]]' "streaming command succeeded" "exitCode='$sbx_stream_exit'"
+    assert '[[ "$sbx_stream_stdout" == *"STREAM_A"* && "$sbx_stream_stdout" == *"STREAM_C"* ]]' \
+      "streaming output contains all lines" \
+      "stdout='${sbx_stream_stdout:0:200}'"
+    assert '[[ "$sbx_stream_event_count" -gt 1 ]]' \
+      "output delivered as multiple NDJSON events (streaming, not buffered)" \
+      "event_count='$sbx_stream_event_count'"
+
+    # 8o. Args with spaces are preserved (shell quoting)
     echo "  Testing arg quoting preservation..."
     sbx_quote_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
@@ -890,7 +913,7 @@ else
       "quoting preserved: 2 files created (not 3)" \
       "file_count='$sbx_file_count'"
 
-    # 8o. Sandbox disappears between execs (auto-recreate)
+    # 8p. Sandbox disappears between execs (auto-recreate)
     echo "  Testing auto-recreate after sandbox disappears..."
     # First, exec to ensure a sandbox exists
     sbx_pre_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
@@ -922,7 +945,7 @@ else
       -H 'Content-Type: application/json' \
       -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
 
-    # 8p. Two worktrees, two sandboxes (label isolation)
+    # 8q. Two worktrees, two sandboxes (label isolation)
     echo "  Testing two-worktree sandbox isolation..."
     SBX_BRANCH2="e2e-sandbox2-${SBX_TS}"
     SBX_WORKTREE_DIR2="/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH2}"

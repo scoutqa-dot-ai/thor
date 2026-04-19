@@ -5,6 +5,11 @@ import { rm } from "node:fs/promises";
 import { Daytona, type Sandbox } from "@daytonaio/sdk";
 import { execCommand } from "./exec.js";
 
+export interface ExecStreamCallbacks {
+  onStdout: (chunk: string) => void;
+  onStderr: (chunk: string) => void;
+}
+
 const DAYTONA_DEFAULT_API_URL = "https://app.daytona.io/api";
 const DAYTONA_DEFAULT_SNAPSHOT = "daytona-medium";
 const DAYTONA_REPO_DIR = "/workspace/repo";
@@ -165,6 +170,40 @@ export async function execInSandbox(
     exitCode: execResult.exitCode,
     output: execResult.result || "",
   };
+}
+
+export async function execInSandboxStream(
+  sandboxId: string,
+  command: string,
+  callbacks: ExecStreamCallbacks,
+): Promise<number> {
+  const sandbox = await getSandboxById(sandboxId);
+  const sessionId = `thor-exec-${randomUUID()}`;
+
+  try {
+    await sandbox.process.createSession(sessionId);
+
+    const response = await sandbox.process.executeSessionCommand(sessionId, {
+      command: `cd ${DAYTONA_REPO_DIR} && ${command}`,
+      runAsync: true,
+    });
+
+    const cmdId = response.cmdId;
+
+    // Stream logs until the command completes
+    await sandbox.process.getSessionCommandLogs(
+      sessionId,
+      cmdId,
+      callbacks.onStdout,
+      callbacks.onStderr,
+    );
+
+    // Retrieve exit code after streaming finishes
+    const cmd = await sandbox.process.getSessionCommand(sessionId, cmdId);
+    return cmd.exitCode ?? 1;
+  } finally {
+    await sandbox.process.deleteSession(sessionId).catch(() => {});
+  }
 }
 
 export async function deleteSandbox(sandboxId: string): Promise<void> {
