@@ -75,7 +75,7 @@ RUN bash -c '. "$NVM_DIR/nvm.sh" \
 
 ENV SDKMAN_DIR=/home/thor/.sdkman
 
-RUN curl -fsSL https://get.sdkman.io | bash
+RUN curl -fsSL https://get.sdkman.io?rcupdate=false | bash
 
 # Preinstall common JDK versions (21 = default, 17 = still active)
 RUN bash -c '. "$SDKMAN_DIR/bin/sdkman-init.sh" \
@@ -88,7 +88,7 @@ RUN bash -c '. "$SDKMAN_DIR/bin/sdkman-init.sh" \
 ENV PYENV_ROOT=/home/thor/.pyenv
 ENV PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"
 
-RUN curl -fsSL https://pyenv.run | bash
+RUN curl -fsSL https://pyenv.run | PYENV_GIT_TAG=v2.5.4 bash
 
 # Preinstall common Python versions (3.12 = default, 3.11 = active, 3.13 = emerging)
 RUN bash -c 'export PATH="$PYENV_ROOT/bin:$PATH" && eval "$(pyenv init -)" \
@@ -96,9 +96,12 @@ RUN bash -c 'export PATH="$PYENV_ROOT/bin:$PATH" && eval "$(pyenv init -)" \
     && pyenv global 3.12'
 
 # uv (fast Python package manager)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN curl -LsSf https://astral.sh/uv/0.7.2/install.sh | sh
 
 # ── Shell profile (activate version managers in login shells) ──────────────
+# Write to .profile so `bash -lc` (non-interactive login shell) loads them.
+# Ubuntu's .bashrc exits early for non-interactive shells, so appending there
+# alone is not enough. .profile is always read by login shells.
 
 RUN { \
       echo ''; \
@@ -117,7 +120,7 @@ RUN { \
       echo ''; \
       echo '# uv'; \
       echo '[ -s "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"'; \
-    } >> /home/thor/.bashrc
+    } >> /home/thor/.profile
 
 # ── Workspace setup ────────────────────────────────────────────────────────
 

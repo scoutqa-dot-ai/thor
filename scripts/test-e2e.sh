@@ -141,7 +141,8 @@ if [[ -z "$remote_cli_container" ]]; then
   assert 'false' "remote-cli container is discoverable for docker exec" \
     "Set REMOTE_CLI_CONTAINER or ensure the remote-cli compose service is running"
 else
-  rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR" "$HOST_REMOTE_CLI_WORKTREE_DIR"
+  [[ -n "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+  [[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
   mkdir -p "$(dirname "$HOST_REMOTE_CLI_GIT_REPO_DIR")" "$(dirname "$HOST_REMOTE_CLI_WORKTREE_DIR")"
 
   echo "  Cloning $REMOTE_CLI_GIT_REPO_URL inside $remote_cli_container..."
@@ -1190,7 +1191,7 @@ echo "=== Alias-based Session Matching ==="
 ALIAS_TS=$(date +%s)
 ALIAS_BRANCH="e2e-alias-${ALIAS_TS}"
 CORR_KEY_ALIAS="e2e-alias-session-${ALIAS_TS}"
-ALIAS_PHRASE="ALIAS$(echo $ALIAS_TS | tail -c 6)"
+ALIAS_PHRASE="ALIAS$(echo "${ALIAS_TS}" | tail -c 6)"
 ALIAS_REPO="${ALIAS_REPO:-acme-multi-hyphen-repo}"
 ALIAS_DIR="/workspace/repos/$ALIAS_REPO"
 ALIAS_WORKTREE="/workspace/worktrees/$ALIAS_REPO/$ALIAS_BRANCH"
@@ -1296,8 +1297,9 @@ echo "  $passed passed, $failed failed"
 echo ""
 
 # Clean up e2e test directory and per-repo memory (only if we created the default one)
-[[ "$SESSION_DIR" == "/workspace/repos/e2e-test" ]] && rm -rf "${HOST_WORKSPACE}/repos/e2e-test" "${MEMORY_DIR}/e2e-test"
-rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR" "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+[[ "$SESSION_DIR" == "/workspace/repos/e2e-test" && -n "$HOST_WORKSPACE" ]] && rm -rf "${HOST_WORKSPACE}/repos/e2e-test" "${MEMORY_DIR}/e2e-test"
+[[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
+[[ -n "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
 
 if [[ $failed -gt 0 ]]; then
   echo "FAIL"

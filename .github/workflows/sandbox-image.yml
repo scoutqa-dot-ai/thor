@@ -28,4 +28,4 @@ jobs:
       - name: Create Daytona snapshot from Dockerfile
         env:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY_FULL_ACCESS }}
-        run: pnpm -F remote-cli exec tsx "$GITHUB_WORKSPACE/scripts/create-snapshot.ts"
+        run: pnpm -F remote-cli exec tsx "$GITHUB_WORKSPACE/scripts/create-snapshot.ts" --dockerfile docker/sandbox/Dockerfile

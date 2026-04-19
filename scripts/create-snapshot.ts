@@ -56,10 +56,10 @@ async function list() {
 }
 
 async function create() {
-  const name = args.name!;
+  const name = args.name ?? DEFAULT_NAME;
   const imageSource = args.image
     ? `registry: ${args.image}`
-    : `Dockerfile: ${resolve(REPO_ROOT, args.dockerfile!)}`;
+    : `Dockerfile: ${resolve(REPO_ROOT, args.dockerfile ?? DEFAULT_DOCKERFILE)}`;
 
   console.log(`Source:    ${imageSource}`);
   console.log(`Snapshot:  ${name}`);
@@ -87,7 +87,7 @@ async function create() {
 
   const image = args.image
     ? args.image
-    : Image.fromDockerfile(resolve(REPO_ROOT, args.dockerfile!));
+    : Image.fromDockerfile(resolve(REPO_ROOT, args.dockerfile ?? DEFAULT_DOCKERFILE));
 
   console.log("Creating snapshot (this may take 10-15 minutes)...\n");
 

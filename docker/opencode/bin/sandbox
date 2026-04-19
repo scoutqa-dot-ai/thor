@@ -41,7 +41,18 @@ const res = await fetch(`${baseUrl}/exec/sandbox`, {
   body: JSON.stringify({ mode, args: payloadArgs, cwd }),
 });
 
+if (!res.ok && !res.headers.get("content-type")?.includes("json")) {
+  const text = await res.text();
+  process.stderr.write(text || `sandbox: HTTP ${res.status}\n`);
+  process.exit(1);
+}
+
 const contentType = res.headers.get("content-type") || "";
+
+function handleNdjsonMsg(msg) {
+  if (msg.stream === "stdout" && typeof msg.data === "string") process.stdout.write(msg.data);
+  if (msg.stream === "stderr" && typeof msg.data === "string") process.stderr.write(msg.data);
+}
 
 if (contentType.includes("application/x-ndjson")) {
   let exitCode = 1;
@@ -55,18 +66,24 @@ if (contentType.includes("application/x-ndjson")) {
 
     for (const line of lines) {
       if (!line) continue;
-      const msg = JSON.parse(line);
-      if (msg.stream === "stdout" && typeof msg.data === "string") process.stdout.write(msg.data);
-      if (msg.stream === "stderr" && typeof msg.data === "string") process.stderr.write(msg.data);
-      if (typeof msg.exitCode === "number") exitCode = msg.exitCode;
+      try {
+        const msg = JSON.parse(line);
+        handleNdjsonMsg(msg);
+        if (typeof msg.exitCode === "number") exitCode = msg.exitCode;
+      } catch {
+        process.stderr.write(line + "\n");
+      }
     }
   }
 
   if (buffer.trim()) {
-    const msg = JSON.parse(buffer);
-    if (msg.stream === "stdout" && typeof msg.data === "string") process.stdout.write(msg.data);
-    if (msg.stream === "stderr" && typeof msg.data === "string") process.stderr.write(msg.data);
-    if (typeof msg.exitCode === "number") exitCode = msg.exitCode;
+    try {
+      const msg = JSON.parse(buffer);
+      handleNdjsonMsg(msg);
+      if (typeof msg.exitCode === "number") exitCode = msg.exitCode;
+    } catch {
+      process.stderr.write(buffer + "\n");
+    }
   }
 
   process.exit(exitCode);

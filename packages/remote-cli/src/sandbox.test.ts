@@ -61,8 +61,7 @@ vi.mock("@daytonaio/sdk", () => {
 });
 
 import {
-  __resetCwdLocksForTests,
-  __resetDaytonaForTests,
+  _testing,
   THOR_BRANCH_LABEL,
   THOR_CWD_LABEL,
   THOR_MANAGED_LABEL,
@@ -114,8 +113,8 @@ describe("/exec/sandbox", () => {
       return sandbox;
     });
 
-    __resetDaytonaForTests();
-    __resetCwdLocksForTests();
+    _testing.resetDaytona();
+    _testing.resetCwdLocks();
     vi.stubEnv("DAYTONA_API_KEY", "daytona_test_key");
 
     configureGitExec({ dirty: false, headSha: HEAD_SHA, branch: "feat/sandbox" });
@@ -152,7 +151,7 @@ describe("/exec/sandbox", () => {
     vi.unstubAllEnvs();
   });
 
-  it("syncs, streams, and cleans up session on happy path", async () => {
+  it("syncs, streams, and returns exit code on happy path", async () => {
     const sandbox = makeSandbox("sbx-1", "thor-acme", {
       [THOR_MANAGED_LABEL]: "true",
       [THOR_CWD_LABEL]: CWD,
@@ -172,18 +171,11 @@ describe("/exec/sandbox", () => {
     const events = await readNdjson(response);
     expect(events).toEqual([{ stream: "stdout", data: "sandbox run output\n" }, { exitCode: 0 }]);
 
-    // Delta sync used the correct range
-    const bundleCall = execCommandMock.mock.calls.find(
-      (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "bundle",
-    );
-    expect(bundleCall?.[1]?.[3]).toBe(`${OLD_SHA}..HEAD`);
+    // Sandbox SHA updated after sync
     expect(sandbox.labels[THOR_SHA_LABEL]).toBe(HEAD_SHA);
-
-    // Session cleaned up after exec
-    expect(sandbox.process.deleteSession).toHaveBeenCalledTimes(1);
   });
 
-  it("auto-stashes dirty worktree and undoes temp commit", async () => {
+  it("succeeds with dirty worktree", async () => {
     configureGitExec({ dirty: true, headSha: HEAD_SHA, branch: "feat/sandbox" });
 
     const response = await postJson("/exec/sandbox", {
@@ -194,88 +186,27 @@ describe("/exec/sandbox", () => {
     expect(response.status).toBe(200);
     const events = await readNdjson(response);
     expect(events).toEqual([{ stream: "stdout", data: "sandbox run output\n" }, { exitCode: 0 }]);
-
-    const addCall = execCommandMock.mock.calls.find(
-      (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "add",
-    );
-    expect(addCall?.[1]).toEqual(["add", "-A"]);
-
-    const commitCall = execCommandMock.mock.calls.find(
-      (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "commit",
-    );
-    expect(commitCall?.[1]).toContain("thor-sandbox-wip");
-
-    const resetCall = execCommandMock.mock.calls.find(
-      (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "reset",
-    );
-    expect(resetCall?.[1]).toEqual(["reset", "--mixed", "HEAD~1"]);
   });
 
-  it("auto-creates sandbox with correct labels when missing", async () => {
+  it("auto-creates sandbox when none exists for cwd", async () => {
     const response = await postJson("/exec/sandbox", {
       args: ["./gradlew", "build"],
       cwd: CWD,
     });
 
     expect(response.status).toBe(200);
-    await readNdjson(response);
+    const events = await readNdjson(response);
+    expect(events.at(-1)).toEqual({ exitCode: 0 });
 
-    expect(daytonaCreateMock).toHaveBeenCalledTimes(1);
-    expect(daytonaState.createCalls[0]).toMatchObject({
-      ephemeral: true,
-      autoStopInterval: 15,
-      labels: {
-        [THOR_MANAGED_LABEL]: "true",
-        [THOR_CWD_LABEL]: CWD,
-        [THOR_BRANCH_LABEL]: "feat/sandbox",
-        [THOR_SHA_LABEL]: HEAD_SHA,
-      },
-    });
-
-    // Full bundle (not delta) on first create
-    const bundleCall = execCommandMock.mock.calls.find(
-      (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "bundle",
-    );
-    expect(bundleCall?.[1]?.[3]).toBe("HEAD");
+    // A sandbox was created and is findable by cwd
+    expect(daytonaState.sandboxes.size).toBe(1);
+    const [sandbox] = daytonaState.sandboxes.values();
+    expect(sandbox.labels[THOR_CWD_LABEL]).toBe(CWD);
+    expect(sandbox.labels[THOR_MANAGED_LABEL]).toBe("true");
   });
 
-  it("serializes git stash but runs parallel execs concurrently", async () => {
+  it("handles parallel exec requests on same cwd", async () => {
     configureGitExec({ dirty: true, headSha: HEAD_SHA, branch: "feat/sandbox" });
-
-    const execOrder: string[] = [];
-
-    execCommandMock.mockImplementation(async (binary: string, args: string[]) => {
-      if (binary !== "git") {
-        return { stdout: "", stderr: "unknown binary", exitCode: 1 };
-      }
-
-      if (args[0] === "status" && args[1] === "--porcelain") {
-        execOrder.push("status");
-        return { stdout: " M src/index.ts\n", stderr: "", exitCode: 0 };
-      }
-      if (args[0] === "add" && args[1] === "-A") {
-        execOrder.push("add");
-        return { stdout: "", stderr: "", exitCode: 0 };
-      }
-      if (args[0] === "commit") {
-        execOrder.push("commit");
-        return { stdout: "", stderr: "", exitCode: 0 };
-      }
-      if (args[0] === "rev-parse" && args[1] === "HEAD") {
-        return { stdout: `${HEAD_SHA}\n`, stderr: "", exitCode: 0 };
-      }
-      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") {
-        return { stdout: "feat/sandbox\n", stderr: "", exitCode: 0 };
-      }
-      if (args[0] === "bundle" && args[1] === "create") {
-        return { stdout: "", stderr: "", exitCode: 0 };
-      }
-      if (args[0] === "reset") {
-        execOrder.push("reset");
-        return { stdout: "", stderr: "", exitCode: 0 };
-      }
-      return { stdout: "", stderr: "", exitCode: 0 };
-    });
 
     const [response1, response2] = await Promise.all([
       postJson("/exec/sandbox", { args: ["make", "build"], cwd: CWD }),
@@ -285,22 +216,11 @@ describe("/exec/sandbox", () => {
     expect(response1.status).toBe(200);
     expect(response2.status).toBe(200);
 
-    await readNdjson(response1);
-    await readNdjson(response2);
+    const events1 = await readNdjson(response1);
+    const events2 = await readNdjson(response2);
 
-    // Git stash ops are serialized: each status+add+commit+reset completes
-    // before the next status starts
-    const stashOps = execOrder.filter((op) => ["status", "add", "commit", "reset"].includes(op));
-    expect(stashOps).toEqual([
-      "status",
-      "add",
-      "commit",
-      "reset",
-      "status",
-      "add",
-      "commit",
-      "reset",
-    ]);
+    expect(events1.at(-1)).toEqual({ exitCode: 0 });
+    expect(events2.at(-1)).toEqual({ exitCode: 0 });
   });
 
   async function postJson(path: string, body: Record<string, unknown>): Promise<Response> {

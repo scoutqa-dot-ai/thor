@@ -25,16 +25,16 @@ const cwdLocks = new Map<string, Promise<void>>();
 
 export function withCwdLock<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
   const prev = cwdLocks.get(cwd) ?? Promise.resolve();
-  const result = prev.then(() => fn());
-  const completion = result.then(
+  const next = prev.then(() => fn());
+  const guard = next.then(
     () => {},
     () => {},
   );
-  cwdLocks.set(cwd, completion);
-  completion.then(() => {
-    if (cwdLocks.get(cwd) === completion) cwdLocks.delete(cwd);
+  cwdLocks.set(cwd, guard);
+  void guard.finally(() => {
+    if (cwdLocks.get(cwd) === guard) cwdLocks.delete(cwd);
   });
-  return result;
+  return next;
 }
 
 export class SandboxError extends Error {
@@ -149,15 +149,17 @@ async function bundleAndUpload(
 
     await sandbox.fs.uploadFile(localBundlePath, SANDBOX_SYNC_BUNDLE_PATH);
 
+    const repoDir = shellQuote(DAYTONA_REPO_DIR);
+    const bundlePath = shellQuote(SANDBOX_SYNC_BUNDLE_PATH);
     const resetCmd = [
       "set -e",
-      `sudo mkdir -p ${DAYTONA_REPO_DIR}`,
-      `sudo chown $(whoami) ${DAYTONA_REPO_DIR}`,
-      `cd ${DAYTONA_REPO_DIR}`,
+      `sudo mkdir -p ${repoDir}`,
+      `sudo chown $(whoami) ${repoDir}`,
+      `cd ${repoDir}`,
       "if [ ! -d .git ]; then git init; fi",
-      `git bundle unbundle ${SANDBOX_SYNC_BUNDLE_PATH}`,
+      `git bundle unbundle ${bundlePath}`,
       `git reset --hard ${shellQuote(targetSha)}`,
-      `rm -f ${SANDBOX_SYNC_BUNDLE_PATH}`,
+      `rm -f ${bundlePath}`,
     ].join(" && ");
 
     const execResult = await sandbox.process.executeCommand(resetCmd);
@@ -186,7 +188,7 @@ export async function execInSandboxStream(
     await sandbox.process.createSession(sessionId);
 
     const response = await sandbox.process.executeSessionCommand(sessionId, {
-      command: `cd ${DAYTONA_REPO_DIR} && ${command}`,
+      command: `cd ${shellQuote(DAYTONA_REPO_DIR)} && ${command}`,
       runAsync: true,
     });
 
@@ -306,10 +308,11 @@ export function shellQuote(value: string): string {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
-export function __resetDaytonaForTests(): void {
-  daytonaSingleton = null;
-}
-
-export function __resetCwdLocksForTests(): void {
-  cwdLocks.clear();
-}
+export const _testing = {
+  resetDaytona(): void {
+    daytonaSingleton = null;
+  },
+  resetCwdLocks(): void {
+    cwdLocks.clear();
+  },
+};
