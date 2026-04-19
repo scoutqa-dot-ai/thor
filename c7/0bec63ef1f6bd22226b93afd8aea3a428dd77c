@@ -1,0 +1,27 @@
+docker/sandbox-dind/Dockerfile
+  b63812519d209f90 64-68
+scripts/test-dind-compose.ts
+  b63812519d209f90 1-144
+scripts/bench-snapshot-create.ts
+  b63812519d209f90 1-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "c70bec63ef1f6bd22226b93afd8aea3a428dd77c",
+  "prompts": {
+    "b63812519d209f90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "106bc794-6f79-4eb0-ba48-2df4d5c0b6ab",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 243,
+      "total_deletions": 33,
+      "accepted_lines": 212,
+      "overriden_lines": 0
+    }
+  }
+}
