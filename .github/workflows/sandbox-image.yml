@@ -67,7 +67,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Create Daytona snapshot
+      - name: Create Daytona snapshot from Dockerfile
         env:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY_FULL_ACCESS }}
-        run: pnpm -F remote-cli exec tsx "$GITHUB_WORKSPACE/scripts/create-snapshot.ts" --image "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-$(echo $GITHUB_SHA | cut -c1-7)"
+        run: pnpm -F remote-cli exec tsx "$GITHUB_WORKSPACE/scripts/create-snapshot.ts"
