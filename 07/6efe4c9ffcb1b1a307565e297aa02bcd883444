@@ -1,0 +1,31 @@
+docker/sandbox/Dockerfile
+  b2d7ae0fd98c0126 3-4,59-66
+scripts/test-sandbox-image.sh
+  b2d7ae0fd98c0126 147-161
+scripts/create-snapshot.ts
+  b2d7ae0fd98c0126 31-33
+docker/opencode/config/skills/sandbox/SKILL.md
+  b2d7ae0fd98c0126 73
+scripts/test-dind-compose.ts
+  b2d7ae0fd98c0126 1-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "076efe4c9ffcb1b1a307565e297aa02bcd883444",
+  "prompts": {
+    "b2d7ae0fd98c0126": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ab312efe-9551-43da-877e-be7f702f019f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 201,
+      "total_deletions": 24,
+      "accepted_lines": 189,
+      "overriden_lines": 0
+    }
+  }
+}
