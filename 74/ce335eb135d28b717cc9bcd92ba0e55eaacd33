@@ -1,0 +1,29 @@
+docker/opencode/config/skills/launchdarkly/SKILL.md
+  5a062329494c983f 109
+docs/plan/2026041703_launchdarkly-cli.md
+  5a062329494c983f 31,118
+packages/remote-cli/src/index.ts
+  5a062329494c983f 226
+packages/remote-cli/src/exec.ts
+  5a062329494c983f 16-18,23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "74ce335eb135d28b717cc9bcd92ba0e55eaacd33",
+  "prompts": {
+    "5a062329494c983f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "efdd3cd0-e508-4211-8df4-5d22b6ca48bb",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Conductor <conductor@noreply>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 129,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
