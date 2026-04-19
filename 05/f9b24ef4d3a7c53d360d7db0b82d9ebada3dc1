@@ -1,0 +1,39 @@
+packages/remote-cli/src/sandbox.ts
+  b63812519d209f90 28-29,33-35,37,152-153,156-158,160,162,191,311-312,314-315,317-318
+packages/remote-cli/src/sandbox.test.ts
+  b63812519d209f90 64,116-117,154,174,178,191,198-199,201-205,208,219-220,222-223
+packages/remote-cli/src/index.ts
+  b63812519d209f90 94-208,406,409,418
+docker/opencode/bin/sandbox
+  b63812519d209f90 44-49,52-56,69,71-75,80,82-86
+docker/sandbox/Dockerfile
+  b63812519d209f90 78,91,99,102-104,123
+scripts/create-snapshot.ts
+  b63812519d209f90 59,62,90
+scripts/test-sandbox-image.sh
+  b63812519d209f90 1-173
+.github/workflows/sandbox-image.yml
+  b63812519d209f90 31
+scripts/test-e2e.sh
+  b63812519d209f90 144-145,1194,1300-1302
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "05f9b24ef4d3a7c53d360d7db0b82d9ebada3dc1",
+  "prompts": {
+    "b63812519d209f90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "106bc794-6f79-4eb0-ba48-2df4d5c0b6ab",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 379,
+      "total_deletions": 245,
+      "accepted_lines": 370,
+      "overriden_lines": 0
+    }
+  }
+}
