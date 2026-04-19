@@ -48,7 +48,7 @@ export class SandboxError extends Error {
   }
 }
 
-export function getDaytona(): Daytona {
+function getDaytona(): Daytona {
   if (daytonaSingleton) {
     return daytonaSingleton;
   }
@@ -125,7 +125,7 @@ export async function syncSandbox(
   });
 }
 
-export async function bundleAndUpload(
+async function bundleAndUpload(
   sandbox: Sandbox,
   cwd: string,
   bundleRange: string,
@@ -172,19 +172,6 @@ export async function bundleAndUpload(
   } finally {
     await rm(localBundlePath, { force: true }).catch(() => {});
   }
-}
-
-export async function execInSandbox(
-  sandboxId: string,
-  command: string,
-): Promise<{ exitCode: number; output: string }> {
-  const sandbox = await getSandboxById(sandboxId);
-  const execResult = await sandbox.process.executeCommand(command, DAYTONA_REPO_DIR);
-
-  return {
-    exitCode: execResult.exitCode,
-    output: execResult.result || "",
-  };
 }
 
 export async function execInSandboxStream(
