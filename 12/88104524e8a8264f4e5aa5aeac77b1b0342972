@@ -1,0 +1,31 @@
+.github/workflows/sandbox-image.yml
+  b63812519d209f90 31
+docker/sandbox/Dockerfile
+  b63812519d209f90 3-4,59-66
+scripts/test-sandbox-image.sh
+  b63812519d209f90 147-161
+docker/opencode/config/skills/sandbox/SKILL.md
+  b63812519d209f90 73
+scripts/test-dind-compose.ts
+  b63812519d209f90 46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1288104524e8a8264f4e5aa5aeac77b1b0342972",
+  "prompts": {
+    "b63812519d209f90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "106bc794-6f79-4eb0-ba48-2df4d5c0b6ab",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 29,
+      "total_deletions": 6,
+      "accepted_lines": 28,
+      "overriden_lines": 0
+    }
+  }
+}
