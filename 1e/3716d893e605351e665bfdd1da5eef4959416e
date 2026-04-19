@@ -1,0 +1,25 @@
+docker/sandbox/Dockerfile
+  3db1fdfa235ea448 1-129
+.github/workflows/sandbox-image.yml
+  3db1fdfa235ea448 1-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1e3716d893e605351e665bfdd1da5eef4959416e",
+  "prompts": {
+    "3db1fdfa235ea448": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "401c832f-8a86-4664-8b25-12c10c211d3b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 289,
+      "total_deletions": 110,
+      "accepted_lines": 179,
+      "overriden_lines": 0
+    }
+  }
+}
