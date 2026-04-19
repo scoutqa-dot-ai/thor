@@ -1,0 +1,35 @@
+docker/opencode/bin/corepack
+  b2d7ae0fd98c0126 1-2
+docker/opencode/bin/npx
+  b2d7ae0fd98c0126 1-2
+Dockerfile
+  b2d7ae0fd98c0126 64-69
+docker/opencode/bin/pnpx
+  b2d7ae0fd98c0126 1-2
+packages/remote-cli/src/index.ts
+  b2d7ae0fd98c0126 347-358
+docker/opencode/bin/npm
+  b2d7ae0fd98c0126 1-2
+docker/opencode/bin/pnpm
+  b2d7ae0fd98c0126 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1e35b5410292f89db53e3005baf5980ff23bf541",
+  "prompts": {
+    "b2d7ae0fd98c0126": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ab312efe-9551-43da-877e-be7f702f019f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 50,
+      "total_deletions": 22,
+      "accepted_lines": 28,
+      "overriden_lines": 0
+    }
+  }
+}
