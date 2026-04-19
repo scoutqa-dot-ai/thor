@@ -1,12 +1,14 @@
-# Daytona sandbox snapshot for Thor.
+# Daytona sandbox image for Thor.
 #
 # Polyglot image with version managers: nvm (Node), SDKMAN (Java), pyenv (Python),
 # plus Docker CE for running containers (docker compose, testcontainers, etc.).
 #
-# Build:
-#   docker build -t thor-sandbox-base docker/sandbox
+# Published to ghcr.io/scoutqa-dot-ai/thor-sandbox via .github/workflows/sandbox-image.yml.
+# An admin then creates a Daytona snapshot from the published image and sets
+# DAYTONA_SNAPSHOT to the snapshot name.
 #
-# Register with Daytona, then set DAYTONA_SNAPSHOT to the snapshot ID.
+# Local build:
+#   docker build -t thor-sandbox docker/sandbox
 
 FROM ubuntu:24.04
 

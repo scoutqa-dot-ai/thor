@@ -43,7 +43,7 @@ async function main() {
   console.log("=== Creating DinD sandbox ===");
   const t0 = Date.now();
   const sandbox = await d.create({
-    snapshot: "thor-sandbox-base",
+    snapshot: process.env.DAYTONA_SNAPSHOT || "daytona-medium",
     ephemeral: true,
     autoStopInterval: 15,
     labels: { test: "dind-compose" },
