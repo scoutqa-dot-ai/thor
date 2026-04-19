@@ -1,0 +1,31 @@
+name: Build sandbox snapshot
+
+on:
+  push:
+    paths:
+      - "docker/sandbox/**"
+      - "scripts/create-snapshot.ts"
+      - ".github/workflows/sandbox-image.yml"
+  workflow_dispatch:
+
+jobs:
+  create-snapshot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create Daytona snapshot from Dockerfile
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY_FULL_ACCESS }}
+        run: pnpm -F remote-cli exec tsx "$GITHUB_WORKSPACE/scripts/create-snapshot.ts"

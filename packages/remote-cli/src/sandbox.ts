@@ -11,7 +11,7 @@ export interface ExecStreamCallbacks {
 }
 
 const DAYTONA_DEFAULT_API_URL = "https://app.daytona.io/api";
-const DAYTONA_DEFAULT_SNAPSHOT = "daytona-medium";
+const DAYTONA_DEFAULT_SNAPSHOT = "thor-sandbox-base";
 const DAYTONA_REPO_DIR = "/workspace/repo";
 const SANDBOX_SYNC_BUNDLE_PATH = "/tmp/sync.bundle";
 
