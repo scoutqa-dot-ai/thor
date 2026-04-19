@@ -136,7 +136,8 @@ export interface OverlayResult {
 /**
  * Parse `git status --porcelain -z` (NUL-delimited) output into upload/delete lists.
  * NUL format avoids quoting issues with special characters in filenames.
- * For renames/copies, the old path goes to deletes and the new path to uploads.
+ * For renames, the old path goes to deletes and the new path to uploads.
+ * For copies, only the new path is uploaded.
  */
 function parseGitStatus(stdout: string): { uploads: string[]; deletes: string[] } {
   const entries = stdout.split("\0").filter((e) => e.length > 0);
@@ -148,15 +149,18 @@ function parseGitStatus(stdout: string): { uploads: string[]; deletes: string[] 
     const entry = entries[i];
     const statusCode = entry.substring(0, 2);
     const filePath = entry.substring(3);
+    const isRename = statusCode.includes("R");
+    const isCopy = statusCode.includes("C");
 
     if (statusCode[1] === "D" || (statusCode[0] === "D" && statusCode[1] === " ")) {
       deletes.push(filePath);
-    } else if (statusCode[0] === "R" || statusCode[0] === "C") {
-      // Rename/copy: current entry has old path, next entry has new path
-      deletes.push(filePath);
+    } else if (isRename || isCopy) {
+      // In porcelain -z format, the current path is the target/new path and the
+      // following NUL-delimited entry is the source/original path.
+      uploads.push(filePath);
       i++;
-      if (i < entries.length) {
-        uploads.push(entries[i]);
+      if (isRename && i < entries.length) {
+        deletes.push(entries[i]);
       }
     } else {
       uploads.push(filePath);
@@ -496,6 +500,7 @@ export function shellQuote(value: string): string {
 }
 
 export const _testing = {
+  parseGitStatus,
   resetDaytona(): void {
     daytonaSingleton = null;
   },

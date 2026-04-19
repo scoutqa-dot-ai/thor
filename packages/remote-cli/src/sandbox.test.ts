@@ -8,7 +8,12 @@ interface FakeSandbox {
   id: string;
   name: string;
   labels: Record<string, string>;
-  fs: { uploadFile: ReturnType<typeof vi.fn> };
+  fs: {
+    uploadFile: ReturnType<typeof vi.fn>;
+    uploadFiles: ReturnType<typeof vi.fn>;
+    downloadFiles: ReturnType<typeof vi.fn>;
+    deleteFile: ReturnType<typeof vi.fn>;
+  };
   process: {
     executeCommand: ReturnType<typeof vi.fn>;
     createSession: ReturnType<typeof vi.fn>;
@@ -234,6 +239,22 @@ describe("/exec/sandbox", () => {
   }
 });
 
+describe("parseGitStatus", () => {
+  it("treats rename entries as upload target plus delete source in -z format", () => {
+    expect(_testing.parseGitStatus("R  new-name.txt\0old-name.txt\0")).toEqual({
+      uploads: ["new-name.txt"],
+      deletes: ["old-name.txt"],
+    });
+  });
+
+  it("treats copy entries as upload-only in -z format", () => {
+    expect(_testing.parseGitStatus("C  copy.txt\0source.txt\0")).toEqual({
+      uploads: ["copy.txt"],
+      deletes: [],
+    });
+  });
+});
+
 function configureGitExec(options: { dirty: boolean; headSha: string; branch: string }): void {
   execCommandMock.mockImplementation(async (binary: string, args: string[]) => {
     if (binary !== "git") {
@@ -272,6 +293,9 @@ function makeSandbox(id: string, name: string, labels: Record<string, string>): 
     labels: { ...labels },
     fs: {
       uploadFile: vi.fn(async () => {}),
+      uploadFiles: vi.fn(async () => {}),
+      downloadFiles: vi.fn(async () => {}),
+      deleteFile: vi.fn(async () => {}),
     },
     process: {
       executeCommand: vi.fn(async (command: string) => {
