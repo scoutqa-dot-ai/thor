@@ -28,8 +28,8 @@ const { values: args } = parseArgs({
     image: { type: "string" },
     dockerfile: { type: "string", default: DEFAULT_DOCKERFILE },
     name: { type: "string", default: DEFAULT_NAME },
-    cpu: { type: "string", default: "2" },
-    mem: { type: "string", default: "4" },
+    cpu: { type: "string", default: "4" },
+    mem: { type: "string", default: "8" },
     disk: { type: "string", default: "10" },
   },
 });

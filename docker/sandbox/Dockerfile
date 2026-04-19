@@ -1,7 +1,7 @@
-# Daytona sandbox base snapshot for Thor.
+# Daytona sandbox snapshot for Thor.
 #
-# Polyglot image with version managers: nvm (Node), SDKMAN (Java), pyenv (Python).
-# Based on Ubuntu 24.04 for broad Debian/Ubuntu package compatibility.
+# Polyglot image with version managers: nvm (Node), SDKMAN (Java), pyenv (Python),
+# plus Docker CE for running containers (docker compose, testcontainers, etc.).
 #
 # Build:
 #   docker build -t thor-sandbox-base docker/sandbox
@@ -55,6 +55,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tk-dev \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/fdfind /usr/local/bin/fd
+
+# ── Docker CE ──────────────────────────────────────────────────────────────
+
+RUN apt-get update && apt-get install -y --no-install-recommends sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://get.docker.com | VERSION=28.3.3 sh - \
+    && usermod -aG docker thor \
+    && echo "thor ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/thor
 
 # ── nvm + Node versions ────────────────────────────────────────────────────
 

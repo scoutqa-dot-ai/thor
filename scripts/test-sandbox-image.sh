@@ -144,7 +144,21 @@ assert '[[ "$pyenv_switch" == *"3.11"* ]]' "pyenv shell 3.11 switches to 3.11" "
 uv_version=$(run uv --version)
 assert '[[ "$uv_version" == *"uv"* ]]' "uv installed" "got: $uv_version"
 
-# ── 7. Workspace / git init ───────────────────────────────────────────────
+# ── 7. Docker ─────────────────────────────────────────────────────────────
+
+echo ""
+echo "=== Docker ==="
+
+docker_version=$(run docker --version)
+assert '[[ "$docker_version" == *"Docker"* ]]' "Docker CLI installed" "got: $docker_version"
+
+docker_compose_version=$(run 'docker compose version --short')
+assert '[[ -n "$docker_compose_version" ]]' "Docker Compose available" "got: $docker_compose_version"
+
+sudo_check=$(run 'sudo whoami')
+assert '[[ "$sudo_check" == "root" ]]' "sudo works (passwordless)" "got: $sudo_check"
+
+# ── 8. Workspace / git init ───────────────────────────────────────────────
 
 echo ""
 echo "=== Workspace ==="

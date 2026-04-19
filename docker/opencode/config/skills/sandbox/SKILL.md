@@ -70,6 +70,7 @@ The sandbox comes with version managers and common runtimes ready to use:
 - **Node**: 22 (default), 20, 24 via nvm. pnpm available via corepack.
 - **Java**: 21 (default), 17 (Temurin) via SDKMAN. Maven and Gradle included.
 - **Python**: 3.12 (default), 3.11, 3.13 via pyenv. `uv` available for fast installs.
+- **Docker**: Docker CE with docker compose. Start the daemon with `sudo dockerd &` before use.
 
 To use a non-default version for one command, chain it:
 
