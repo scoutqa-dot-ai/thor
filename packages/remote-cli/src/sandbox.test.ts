@@ -228,6 +228,41 @@ describe("/exec/sandbox", () => {
     expect(events2.at(-1)).toEqual({ exitCode: 0 });
   });
 
+  it("reports pullback failures as exec failures", async () => {
+    const sandbox = makeSandbox("sbx-1", "thor-acme", {
+      [THOR_MANAGED_LABEL]: "true",
+      [THOR_CWD_LABEL]: CWD,
+      [THOR_BRANCH_LABEL]: "feat/sandbox",
+      [THOR_SHA_LABEL]: HEAD_SHA,
+    });
+    sandbox.process.executeCommand.mockImplementation(async (command: string) => {
+      if (command.includes("git bundle unbundle")) {
+        return { exitCode: 0, result: "" };
+      }
+      if (command.includes("git status --porcelain -uall -z")) {
+        return { exitCode: 1, result: "status failed" };
+      }
+      return { exitCode: 0, result: "sandbox run output\n" };
+    });
+    daytonaState.sandboxes.set(sandbox.id, sandbox);
+
+    const response = await postJson("/exec/sandbox", {
+      args: ["pytest", "-q"],
+      cwd: CWD,
+    });
+
+    expect(response.status).toBe(200);
+    const events = await readNdjson(response);
+    expect(events).toEqual([
+      { stream: "stdout", data: "sandbox run output\n" },
+      {
+        stream: "stderr",
+        data: "Failed to read sandbox state after exec. No files were pulled back.\n",
+      },
+      { exitCode: 1 },
+    ]);
+  });
+
   async function postJson(path: string, body: Record<string, unknown>): Promise<Response> {
     return fetch(`${baseUrl}${path}`, {
       method: "POST",
@@ -300,6 +335,12 @@ function makeSandbox(id: string, name: string, labels: Record<string, string>): 
     process: {
       executeCommand: vi.fn(async (command: string) => {
         if (command.includes("git bundle unbundle")) {
+          return { exitCode: 0, result: "" };
+        }
+        if (command.includes("git status --porcelain -uall -z")) {
+          return { exitCode: 0, result: "" };
+        }
+        if (command.includes("stat -c")) {
           return { exitCode: 0, result: "" };
         }
         return { exitCode: 0, result: "sandbox run output\n" };

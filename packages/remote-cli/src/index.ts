@@ -401,6 +401,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         onStdout: (chunk) => writeNdjson({ stream: "stdout", data: chunk }),
         onStderr: (chunk) => writeNdjson({ stream: "stderr", data: chunk }),
       });
+      let finalExitCode = exitCode;
 
       // Pull changes back only on success — failed commands may leave partial artifacts
       if (exitCode === 0) {
@@ -414,16 +415,20 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
             });
           }
         } catch (pullErr) {
-          logError(
-            log,
-            "sandbox_pull_error",
-            pullErr instanceof Error ? pullErr.message : String(pullErr),
-            thorIds(req),
-          );
+          const error =
+            pullErr instanceof SandboxError
+              ? pullErr
+              : new SandboxError(
+                  "Failed to pull sandbox changes back to the worktree",
+                  String(pullErr),
+                );
+          logError(log, "sandbox_pull_error", error.adminDetail, thorIds(req));
+          writeNdjson({ stream: "stderr", data: `${error.userMessage}\n` });
+          finalExitCode = 1;
         }
       }
 
-      writeNdjson({ exitCode });
+      writeNdjson({ exitCode: finalExitCode });
       res.end();
     } catch (err) {
       const error =
