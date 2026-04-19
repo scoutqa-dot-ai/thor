@@ -1,0 +1,25 @@
+scripts/test-e2e.sh
+  b63812519d209f90 1042
+packages/remote-cli/src/sandbox.ts
+  b63812519d209f90 156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "43c570ea57410798ba30aaaaa6c856281fd642a3",
+  "prompts": {
+    "b63812519d209f90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "106bc794-6f79-4eb0-ba48-2df4d5c0b6ab",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
