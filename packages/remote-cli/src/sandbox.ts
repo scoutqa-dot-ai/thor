@@ -153,8 +153,7 @@ async function bundleAndUpload(
     const bundlePath = shellQuote(SANDBOX_SYNC_BUNDLE_PATH);
     const resetCmd = [
       "set -e",
-      `sudo mkdir -p ${repoDir}`,
-      `sudo chown $(whoami) ${repoDir}`,
+      `mkdir -p ${repoDir}`,
       `cd ${repoDir}`,
       "if [ ! -d .git ]; then git init; fi",
       `git bundle unbundle ${bundlePath}`,

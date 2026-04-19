@@ -1039,6 +1039,7 @@ else
       -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
 
     # 8s. Two worktrees, two sandboxes (label isolation)
+    sleep 3  # allow Daytona to fully clean up previous sandbox
     echo "  Testing two-worktree sandbox isolation..."
     SBX_BRANCH2="e2e-sandbox2-${SBX_TS}"
     SBX_WORKTREE_DIR2="/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH2}"
