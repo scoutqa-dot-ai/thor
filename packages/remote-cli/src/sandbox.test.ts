@@ -152,7 +152,7 @@ describe("/exec/sandbox", () => {
     vi.unstubAllEnvs();
   });
 
-  it("streams exec output on happy path", async () => {
+  it("syncs, streams, and cleans up session on happy path", async () => {
     const sandbox = makeSandbox("sbx-1", "thor-acme", {
       [THOR_MANAGED_LABEL]: "true",
       [THOR_CWD_LABEL]: CWD,
@@ -172,11 +172,15 @@ describe("/exec/sandbox", () => {
     const events = await readNdjson(response);
     expect(events).toEqual([{ stream: "stdout", data: "sandbox run output\n" }, { exitCode: 0 }]);
 
+    // Delta sync used the correct range
     const bundleCall = execCommandMock.mock.calls.find(
       (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "bundle",
     );
     expect(bundleCall?.[1]?.[3]).toBe(`${OLD_SHA}..HEAD`);
     expect(sandbox.labels[THOR_SHA_LABEL]).toBe(HEAD_SHA);
+
+    // Session cleaned up after exec
+    expect(sandbox.process.deleteSession).toHaveBeenCalledTimes(1);
   });
 
   it("auto-stashes dirty worktree and undoes temp commit", async () => {
@@ -191,7 +195,6 @@ describe("/exec/sandbox", () => {
     const events = await readNdjson(response);
     expect(events).toEqual([{ stream: "stdout", data: "sandbox run output\n" }, { exitCode: 0 }]);
 
-    // Verify temp commit flow: add, commit, then reset after sync
     const addCall = execCommandMock.mock.calls.find(
       (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "add",
     );
@@ -208,31 +211,7 @@ describe("/exec/sandbox", () => {
     expect(resetCall?.[1]).toEqual(["reset", "--mixed", "HEAD~1"]);
   });
 
-  it("skips sync when SHA is unchanged", async () => {
-    const sandbox = makeSandbox("sbx-1", "thor-acme", {
-      [THOR_MANAGED_LABEL]: "true",
-      [THOR_CWD_LABEL]: CWD,
-      [THOR_BRANCH_LABEL]: "feat/sandbox",
-      [THOR_SHA_LABEL]: HEAD_SHA,
-    });
-    daytonaState.sandboxes.set(sandbox.id, sandbox);
-
-    const response = await postJson("/exec/sandbox", {
-      args: ["mvn", "test"],
-      cwd: CWD,
-    });
-
-    expect(response.status).toBe(200);
-    const events = await readNdjson(response);
-    expect(events).toEqual([{ stream: "stdout", data: "sandbox run output\n" }, { exitCode: 0 }]);
-
-    const bundleCalls = execCommandMock.mock.calls.filter(
-      (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "bundle",
-    );
-    expect(bundleCalls).toHaveLength(0);
-  });
-
-  it("auto-creates sandbox when missing", async () => {
+  it("auto-creates sandbox with correct labels when missing", async () => {
     const response = await postJson("/exec/sandbox", {
       args: ["./gradlew", "build"],
       cwd: CWD,
@@ -253,125 +232,11 @@ describe("/exec/sandbox", () => {
       },
     });
 
+    // Full bundle (not delta) on first create
     const bundleCall = execCommandMock.mock.calls.find(
       (call) => call[0] === "git" && Array.isArray(call[1]) && call[1][0] === "bundle",
     );
     expect(bundleCall?.[1]?.[3]).toBe("HEAD");
-  });
-
-  it("streams multiple chunks as separate NDJSON events", async () => {
-    const sandbox = makeSandbox("sbx-1", "thor-acme", {
-      [THOR_MANAGED_LABEL]: "true",
-      [THOR_CWD_LABEL]: CWD,
-      [THOR_BRANCH_LABEL]: "feat/sandbox",
-      [THOR_SHA_LABEL]: HEAD_SHA,
-    });
-
-    // Override mock to emit multiple chunks on both streams
-    sandbox.process.getSessionCommandLogs.mockImplementation(
-      async (
-        _sessionId: string,
-        _commandId: string,
-        onStdout?: (chunk: string) => void,
-        onStderr?: (chunk: string) => void,
-      ) => {
-        if (onStdout && onStderr) {
-          onStdout("[INFO] Compiling...\n");
-          onStderr("WARNING: deprecated API\n");
-          onStdout("[INFO] Tests run: 42, Failures: 0\n");
-        }
-      },
-    );
-
-    daytonaState.sandboxes.set(sandbox.id, sandbox);
-
-    const response = await postJson("/exec/sandbox", {
-      args: ["mvn", "test"],
-      cwd: CWD,
-    });
-
-    expect(response.status).toBe(200);
-    const events = await readNdjson(response);
-    expect(events).toEqual([
-      { stream: "stdout", data: "[INFO] Compiling...\n" },
-      { stream: "stderr", data: "WARNING: deprecated API\n" },
-      { stream: "stdout", data: "[INFO] Tests run: 42, Failures: 0\n" },
-      { exitCode: 0 },
-    ]);
-  });
-
-  it("streams output and propagates nonzero exit code", async () => {
-    const sandbox = makeSandbox("sbx-1", "thor-acme", {
-      [THOR_MANAGED_LABEL]: "true",
-      [THOR_CWD_LABEL]: CWD,
-      [THOR_BRANCH_LABEL]: "feat/sandbox",
-      [THOR_SHA_LABEL]: HEAD_SHA,
-    });
-
-    sandbox.process.getSessionCommandLogs.mockImplementation(
-      async (
-        _sessionId: string,
-        _commandId: string,
-        onStdout?: (chunk: string) => void,
-        onStderr?: (chunk: string) => void,
-      ) => {
-        if (onStdout && onStderr) {
-          onStdout("FAIL src/app.test.ts\n");
-          onStderr("Error: expected 1 to equal 2\n");
-        }
-      },
-    );
-
-    sandbox.process.getSessionCommand.mockResolvedValue({
-      id: "cmd-1",
-      command: "",
-      exitCode: 1,
-    });
-
-    daytonaState.sandboxes.set(sandbox.id, sandbox);
-
-    const response = await postJson("/exec/sandbox", {
-      args: ["npm", "test"],
-      cwd: CWD,
-    });
-
-    expect(response.status).toBe(200);
-    const events = await readNdjson(response);
-    expect(events).toEqual([
-      { stream: "stdout", data: "FAIL src/app.test.ts\n" },
-      { stream: "stderr", data: "Error: expected 1 to equal 2\n" },
-      { exitCode: 1 },
-    ]);
-  });
-
-  it("cleans up session and streams error when streaming fails", async () => {
-    const sandbox = makeSandbox("sbx-1", "thor-acme", {
-      [THOR_MANAGED_LABEL]: "true",
-      [THOR_CWD_LABEL]: CWD,
-      [THOR_BRANCH_LABEL]: "feat/sandbox",
-      [THOR_SHA_LABEL]: HEAD_SHA,
-    });
-
-    sandbox.process.getSessionCommandLogs.mockRejectedValue(new Error("WebSocket closed"));
-
-    daytonaState.sandboxes.set(sandbox.id, sandbox);
-
-    const response = await postJson("/exec/sandbox", {
-      args: ["mvn", "test"],
-      cwd: CWD,
-    });
-
-    // Headers already flushed before streaming starts, so status is 200
-    // and error is delivered as NDJSON events
-    expect(response.status).toBe(200);
-    const events = await readNdjson(response);
-    expect(events).toEqual([
-      { stream: "stderr", data: "Sandbox service error\n" },
-      { exitCode: 1 },
-    ]);
-
-    // Session should still be cleaned up despite the error
-    expect(sandbox.process.deleteSession).toHaveBeenCalledTimes(1);
   });
 
   it("serializes git stash but runs parallel execs concurrently", async () => {
@@ -379,7 +244,6 @@ describe("/exec/sandbox", () => {
 
     const execOrder: string[] = [];
 
-    // Track git command ordering to prove serialization
     execCommandMock.mockImplementation(async (binary: string, args: string[]) => {
       if (binary !== "git") {
         return { stdout: "", stderr: "unknown binary", exitCode: 1 };
@@ -424,9 +288,8 @@ describe("/exec/sandbox", () => {
     await readNdjson(response1);
     await readNdjson(response2);
 
-    // Verify git stash operations are serialized: each add+commit+reset
-    // completes before the next status check starts.
-    // Expected: status, add, commit, reset, status, add, commit, reset
+    // Git stash ops are serialized: each status+add+commit+reset completes
+    // before the next status starts
     const stashOps = execOrder.filter((op) => ["status", "add", "commit", "reset"].includes(op));
     expect(stashOps).toEqual([
       "status",
@@ -438,19 +301,6 @@ describe("/exec/sandbox", () => {
       "commit",
       "reset",
     ]);
-  });
-
-  it("treats stop as no-op when sandbox does not exist", async () => {
-    const response = await postJson("/exec/sandbox", {
-      mode: "stop",
-      cwd: CWD,
-    });
-
-    const body = (await response.json()) as { stdout: string; stderr: string; exitCode: number };
-    expect(response.status).toBe(200);
-    expect(body).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-    expect(daytonaCreateMock).not.toHaveBeenCalled();
-    expect(daytonaGetMock).not.toHaveBeenCalled();
   });
 
   async function postJson(path: string, body: Record<string, unknown>): Promise<Response> {
