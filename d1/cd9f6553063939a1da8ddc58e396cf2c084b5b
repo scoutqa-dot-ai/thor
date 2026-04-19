@@ -1,0 +1,25 @@
+.github/workflows/sandbox-dind-image.yml
+  b63812519d209f90 1-31
+docker/sandbox-dind/Dockerfile
+  b63812519d209f90 1-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d1cd9f6553063939a1da8ddc58e396cf2c084b5b",
+  "prompts": {
+    "b63812519d209f90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "106bc794-6f79-4eb0-ba48-2df4d5c0b6ab",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 171,
+      "total_deletions": 0,
+      "accepted_lines": 171,
+      "overriden_lines": 0
+    }
+  }
+}
