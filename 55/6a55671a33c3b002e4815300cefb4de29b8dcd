@@ -1,0 +1,23 @@
+.github/workflows/sandbox-image.yml
+  3db1fdfa235ea448 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "556a55671a33c3b002e4815300cefb4de29b8dcd",
+  "prompts": {
+    "3db1fdfa235ea448": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "401c832f-8a86-4664-8b25-12c10c211d3b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 43,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
