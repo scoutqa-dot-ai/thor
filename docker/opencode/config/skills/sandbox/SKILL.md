@@ -21,11 +21,17 @@ Examples:
 sandbox mvn test -pl module-auth
 sandbox ./gradlew build
 sandbox pytest -v --tb=short
-sandbox make build && make test
+sandbox sh -lc 'make build && make test'
 sandbox npm test
 ```
 
-No quoting needed. Shell metacharacters (`&&`, `|`, `;`) work naturally.
+For a single command, write it naturally: `sandbox mvn test -pl module-auth`.
+For shell chaining, pipelines, or redirects, wrap the command explicitly:
+
+```bash
+sandbox sh -lc 'make build && make test'
+sandbox sh -lc 'pytest -q | tail -20'
+```
 
 ---
 
@@ -75,8 +81,8 @@ The sandbox comes with version managers and common runtimes ready to use:
 To use a non-default version for one command, chain it:
 
 ```bash
-sandbox nvm use 20 '&&' npm test
-sandbox sdk use java 17.0.15-tem '&&' mvn test
+sandbox sh -lc 'source "$HOME/.nvm/nvm.sh" && nvm use 20 && npm test'
+sandbox sh -lc 'source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk use java 17.0.15-tem && mvn test'
 ```
 
 To change the default permanently (persists across sandbox calls):
