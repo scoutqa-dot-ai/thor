@@ -1,0 +1,23 @@
+scripts/create-snapshot.ts
+  3db1fdfa235ea448 1-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ff926fd4bd32025b13421f727295f3245e937e70",
+  "prompts": {
+    "3db1fdfa235ea448": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "401c832f-8a86-4664-8b25-12c10c211d3b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 193,
+      "total_deletions": 48,
+      "accepted_lines": 145,
+      "overriden_lines": 0
+    }
+  }
+}
