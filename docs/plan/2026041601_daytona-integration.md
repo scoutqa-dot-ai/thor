@@ -137,14 +137,14 @@ sandbox --list                         # list session's sandboxes
        c. SDK: `daytona.create({ ephemeral: true, autoStopInterval: 15, name, labels: {thor-managed, thor-cwd, thor-branch, thor-sha: <HEAD>} })`
        d. `git bundle create /tmp/<id>.bundle HEAD` on host (full bundle — no credentials needed)
        e. SDK: `sandbox.fs.uploadFile('/tmp/<id>.bundle', '/tmp/sync.bundle')`
-       f. SDK: `sandbox.commands.exec('git init /workspace/repo && cd /workspace/repo && git bundle unbundle /tmp/sync.bundle && git reset --hard <sha> && rm /tmp/sync.bundle')`
+       f. SDK: `sandbox.commands.exec('git init /workspace/sandbox && cd /workspace/sandbox && git bundle unbundle /tmp/sync.bundle && git reset --hard <sha> && rm /tmp/sync.bundle')`
        g. On any failure: delete the sandbox, surface generic error (admin-only rich context in logs)
     2. Preflight: verify clean worktree (`git status --porcelain`), resolve HEAD SHA
     3. Sync via bundle upload (skip if SHA unchanged from `thor-sha` label):
        a. Try delta: `git bundle create /tmp/<id>.bundle <last-sha>..HEAD` on host
        b. On failure (backward reset, unrelated branch): fallback to full `HEAD` bundle
        c. SDK: `sandbox.fs.uploadFile('/tmp/<id>.bundle', '/tmp/sync.bundle')`
-       d. SDK: `sandbox.commands.exec('cd /workspace/repo && git bundle unbundle /tmp/sync.bundle && git reset --hard <sha> && rm /tmp/sync.bundle')`
+       d. SDK: `sandbox.commands.exec('cd /workspace/sandbox && git bundle unbundle /tmp/sync.bundle && git reset --hard <sha> && rm /tmp/sync.bundle')`
        e. Update `thor-sha` label to current HEAD
     4. Join args into command string, run via `sh -c` in sandbox
     5. Stream stdout/stderr via NDJSON
@@ -161,7 +161,7 @@ sandbox --list                         # list session's sandboxes
   - `bundleAndUpload(sandbox, cwd, range, sha): Promise<void>` — shared helper:
     1. `git bundle create /tmp/<id>.bundle <range>` on host
     2. `sandbox.fs.uploadFile('/tmp/<id>.bundle', '/tmp/sync.bundle')` — streaming, supports large repos
-    3. `sandbox.commands.exec('cd /workspace/repo && git bundle unbundle /tmp/sync.bundle && git reset --hard <sha> && rm /tmp/sync.bundle')`
+    3. `sandbox.commands.exec('cd /workspace/sandbox && git bundle unbundle /tmp/sync.bundle && git reset --hard <sha> && rm /tmp/sync.bundle')`
     4. Clean up local temp file
   - `execInSandbox(id, command, callbacks): Promise<number>` — `sandbox.commands.exec(command)` + log streaming for real-time output. Command is passed to `sh -c`.
   - `deleteSandbox(id): Promise<void>` — `sandbox.delete()`

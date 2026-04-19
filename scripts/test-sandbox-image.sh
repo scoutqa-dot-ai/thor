@@ -75,8 +75,8 @@ assert '[[ "$whoami_out" == "thor" ]]' "Runs as thor user" "got: $whoami_out"
 id_out=$(run id -u)
 assert '[[ "$id_out" == "1001" ]]' "UID is 1001" "got: $id_out"
 
-workspace_owner=$(run stat -c %U /workspace/repo)
-assert '[[ "$workspace_owner" == "thor" ]]' "/workspace/repo owned by thor" "got: $workspace_owner"
+workspace_owner=$(run stat -c %U /workspace/sandbox)
+assert '[[ "$workspace_owner" == "thor" ]]' "/workspace/sandbox owned by thor" "got: $workspace_owner"
 
 # ── 3. Core tools ─────────────────────────────────────────────────────────
 
@@ -149,13 +149,13 @@ assert '[[ "$uv_version" == *"uv"* ]]' "uv installed" "got: $uv_version"
 echo ""
 echo "=== Workspace ==="
 
-run 'cd /workspace/repo && git init && git config user.email "test@test.com" && git config user.name "test" && echo "hello" > test.txt && git add . && git commit -m "init"' >/dev/null 2>&1
-commit_sha=$(run 'cd /workspace/repo && git rev-parse HEAD')
+run 'cd /workspace/sandbox && git init && git config user.email "test@test.com" && git config user.name "test" && echo "hello" > test.txt && git add . && git commit -m "init"' >/dev/null 2>&1
+commit_sha=$(run 'cd /workspace/sandbox && git rev-parse HEAD')
 assert '[[ ${#commit_sha} -eq 40 ]]' "Can init repo, commit, and resolve HEAD" "sha: $commit_sha"
 
-run 'cd /workspace/repo && echo "console.log(1)" > index.js && node index.js' >/dev/null 2>&1
-node_run=$(run 'cd /workspace/repo && node index.js')
-assert '[[ "$node_run" == "1" ]]' "Can run Node script in /workspace/repo" "got: $node_run"
+run 'cd /workspace/sandbox && echo "console.log(1)" > index.js && node index.js' >/dev/null 2>&1
+node_run=$(run 'cd /workspace/sandbox && node index.js')
+assert '[[ "$node_run" == "1" ]]' "Can run Node script in /workspace/sandbox" "got: $node_run"
 
 # ── Results ────────────────────────────────────────────────────────────────
 

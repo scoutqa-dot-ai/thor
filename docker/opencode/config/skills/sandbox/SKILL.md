@@ -90,6 +90,8 @@ sandbox pyenv global 3.11
 
 ## Notes
 
+- Each worktree gets its own isolated sandbox — switching worktrees creates a separate sandbox
+- Code is synced to `/workspace/sandbox` inside the sandbox — paths in error output will show this prefix
 - Sandbox has internet access (`pip install`, `npm install`, `apt-get` all work)
 - First run is slower (sandbox creation + full code sync)
 - Subsequent runs reuse the sandbox and sync only new commits

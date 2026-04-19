@@ -125,8 +125,8 @@ RUN { \
 # ── Workspace setup ────────────────────────────────────────────────────────
 
 USER root
-RUN mkdir -p /workspace/repo && chown -R thor:thor /workspace
+RUN mkdir -p /workspace/sandbox && chown -R thor:thor /workspace
 RUN git config --system init.defaultBranch main
 
 USER thor
-WORKDIR /workspace/repo
+WORKDIR /workspace/sandbox
