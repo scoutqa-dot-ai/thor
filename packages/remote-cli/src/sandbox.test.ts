@@ -61,6 +61,7 @@ vi.mock("@daytonaio/sdk", () => {
 });
 
 import {
+  __resetCwdLocksForTests,
   __resetDaytonaForTests,
   THOR_BRANCH_LABEL,
   THOR_CWD_LABEL,
@@ -114,6 +115,7 @@ describe("/exec/sandbox", () => {
     });
 
     __resetDaytonaForTests();
+    __resetCwdLocksForTests();
     vi.stubEnv("DAYTONA_API_KEY", "daytona_test_key");
 
     configureGitExec({ dirty: false, headSha: HEAD_SHA, branch: "feat/sandbox" });
@@ -370,6 +372,72 @@ describe("/exec/sandbox", () => {
 
     // Session should still be cleaned up despite the error
     expect(sandbox.process.deleteSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("serializes git stash but runs parallel execs concurrently", async () => {
+    configureGitExec({ dirty: true, headSha: HEAD_SHA, branch: "feat/sandbox" });
+
+    const execOrder: string[] = [];
+
+    // Track git command ordering to prove serialization
+    execCommandMock.mockImplementation(async (binary: string, args: string[]) => {
+      if (binary !== "git") {
+        return { stdout: "", stderr: "unknown binary", exitCode: 1 };
+      }
+
+      if (args[0] === "status" && args[1] === "--porcelain") {
+        execOrder.push("status");
+        return { stdout: " M src/index.ts\n", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "add" && args[1] === "-A") {
+        execOrder.push("add");
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "commit") {
+        execOrder.push("commit");
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "rev-parse" && args[1] === "HEAD") {
+        return { stdout: `${HEAD_SHA}\n`, stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") {
+        return { stdout: "feat/sandbox\n", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "bundle" && args[1] === "create") {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "reset") {
+        execOrder.push("reset");
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+
+    const [response1, response2] = await Promise.all([
+      postJson("/exec/sandbox", { args: ["make", "build"], cwd: CWD }),
+      postJson("/exec/sandbox", { args: ["make", "test"], cwd: CWD }),
+    ]);
+
+    expect(response1.status).toBe(200);
+    expect(response2.status).toBe(200);
+
+    await readNdjson(response1);
+    await readNdjson(response2);
+
+    // Verify git stash operations are serialized: each add+commit+reset
+    // completes before the next status check starts.
+    // Expected: status, add, commit, reset, status, add, commit, reset
+    const stashOps = execOrder.filter((op) => ["status", "add", "commit", "reset"].includes(op));
+    expect(stashOps).toEqual([
+      "status",
+      "add",
+      "commit",
+      "reset",
+      "status",
+      "add",
+      "commit",
+      "reset",
+    ]);
   });
 
   it("treats stop as no-op when sandbox does not exist", async () => {

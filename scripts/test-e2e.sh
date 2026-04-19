@@ -1009,6 +1009,74 @@ else
     fi
   fi
 
+  # 8r. Parallel exec on same worktree (cwd-level lock + concurrent streaming)
+  echo "  Testing parallel sandbox exec on same worktree..."
+  # Create a dirty file so both requests exercise the auto-stash path
+  docker exec "$remote_cli_container" sh -c \
+    "echo 'parallel-e2e' > $SBX_WORKTREE_DIR/parallel-test.txt" 2>/dev/null
+
+  # Fire two sandbox exec requests in parallel.
+  # Each command prints a start timestamp, sleeps 3s, then prints an end
+  # timestamp. On the host side we verify the time ranges overlap —
+  # proving both commands ran concurrently in the sandbox (the lock
+  # serializes git stash, not the exec itself).
+  sbx_par1_file=$(mktemp)
+  sbx_par2_file=$(mktemp)
+  curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+    -H 'Content-Type: application/json' \
+    -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo START_A \$(date +%s); sleep 3; echo END_A \$(date +%s)\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+    2>/dev/null > "$sbx_par1_file" &
+  par1_pid=$!
+  curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+    -H 'Content-Type: application/json' \
+    -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo START_B \$(date +%s); sleep 3; echo END_B \$(date +%s)\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+    2>/dev/null > "$sbx_par2_file" &
+  par2_pid=$!
+  wait "$par1_pid" "$par2_pid" 2>/dev/null
+
+  sbx_par1_exit=$(cat "$sbx_par1_file" | sandbox_exec_exit)
+  sbx_par1_stdout=$(cat "$sbx_par1_file" | sandbox_exec_stdout)
+  sbx_par2_exit=$(cat "$sbx_par2_file" | sandbox_exec_exit)
+  sbx_par2_stdout=$(cat "$sbx_par2_file" | sandbox_exec_stdout)
+  rm -f "$sbx_par1_file" "$sbx_par2_file"
+
+  assert '[[ "$sbx_par1_exit" == "0" ]]' "parallel exec #1 succeeded" "exitCode='$sbx_par1_exit'"
+  assert '[[ "$sbx_par2_exit" == "0" ]]' "parallel exec #2 succeeded" "exitCode='$sbx_par2_exit'"
+  assert '[[ "$sbx_par1_stdout" == *"START_A"* ]]' \
+    "parallel exec #1 output correct" "stdout='${sbx_par1_stdout:0:200}'"
+  assert '[[ "$sbx_par2_stdout" == *"START_B"* ]]' \
+    "parallel exec #2 output correct" "stdout='${sbx_par2_stdout:0:200}'"
+
+  # Verify time ranges overlap: A started before B ended, and B started before A ended.
+  # This proves both commands were running concurrently in the sandbox.
+  par_start_a=$(echo "$sbx_par1_stdout" | grep -o 'START_A [0-9]*' | awk '{print $2}')
+  par_end_a=$(echo "$sbx_par1_stdout" | grep -o 'END_A [0-9]*' | awk '{print $2}')
+  par_start_b=$(echo "$sbx_par2_stdout" | grep -o 'START_B [0-9]*' | awk '{print $2}')
+  par_end_b=$(echo "$sbx_par2_stdout" | grep -o 'END_B [0-9]*' | awk '{print $2}')
+  assert '[[ -n "$par_start_a" && -n "$par_end_a" && -n "$par_start_b" && -n "$par_end_b" ]]' \
+    "parallel exec: all timestamps captured" \
+    "start_a=$par_start_a end_a=$par_end_a start_b=$par_start_b end_b=$par_end_b"
+  # Overlap: A starts before B ends AND B starts before A ends
+  if [[ -n "$par_start_a" && -n "$par_end_a" && -n "$par_start_b" && -n "$par_end_b" ]]; then
+    assert '[[ "$par_start_a" -le "$par_end_b" && "$par_start_b" -le "$par_end_a" ]]' \
+      "parallel exec: time ranges overlap (commands ran concurrently)" \
+      "A=[$par_start_a..$par_end_a] B=[$par_start_b..$par_end_b]"
+  fi
+
+  # Verify local worktree is not corrupted (no orphaned temp commit)
+  local_head_parallel=$(docker exec "$remote_cli_container" \
+    git -C "$SBX_WORKTREE_DIR" log -1 --format=%s 2>/dev/null)
+  assert '[[ "$local_head_parallel" != "thor-sandbox-wip" ]]' \
+    "no orphaned temp commit after parallel exec" \
+    "HEAD message: '$local_head_parallel'"
+
+  # Clean up dirty file and stop sandbox
+  docker exec "$remote_cli_container" \
+    rm -f "$SBX_WORKTREE_DIR/parallel-test.txt" 2>/dev/null
+  curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+    -H 'Content-Type: application/json' \
+    -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
+
   # Clean up worktree
   docker exec "$remote_cli_container" \
     git -C "$SBX_REPO_DIR" worktree remove --force "$SBX_WORKTREE_DIR" 2>/dev/null || true

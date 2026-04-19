@@ -21,6 +21,21 @@ export const THOR_BRANCH_LABEL = "thor-branch";
 export const THOR_SHA_LABEL = "thor-sha";
 
 let daytonaSingleton: Daytona | null = null;
+const cwdLocks = new Map<string, Promise<void>>();
+
+export function withCwdLock<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
+  const prev = cwdLocks.get(cwd) ?? Promise.resolve();
+  const result = prev.then(() => fn());
+  const completion = result.then(
+    () => {},
+    () => {},
+  );
+  cwdLocks.set(cwd, completion);
+  completion.then(() => {
+    if (cwdLocks.get(cwd) === completion) cwdLocks.delete(cwd);
+  });
+  return result;
+}
 
 export class SandboxError extends Error {
   constructor(
@@ -306,4 +321,8 @@ export function shellQuote(value: string): string {
 
 export function __resetDaytonaForTests(): void {
   daytonaSingleton = null;
+}
+
+export function __resetCwdLocksForTests(): void {
+  cwdLocks.clear();
 }
