@@ -1,0 +1,25 @@
+packages/remote-cli/src/index.ts
+  266dcbb114a867bc 376
+docker/opencode/config/skills/sandbox/SKILL.md
+  266dcbb114a867bc 74,77-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b480f2b36642a25d89061f9422e99212edd5a309",
+  "prompts": {
+    "266dcbb114a867bc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a6304da4-a9f3-4fed-aa74-20772272c417",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 4,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}
