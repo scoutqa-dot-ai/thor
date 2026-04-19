@@ -120,12 +120,7 @@ async function prepareSandbox(
     }
 
     const overlay = await overlayDirtyFiles(sandbox.id, cwd);
-    if (overlay.skipped) {
-      logInfo(log, "sandbox_overlay_skipped", {
-        reason: "too many dirty files (>100)",
-        cwd,
-      });
-    } else if (overlay.pushed.length > 0 || overlay.deleted.length > 0) {
+    if (overlay.pushed.length > 0 || overlay.deleted.length > 0) {
       logInfo(log, "sandbox_overlay_push", {
         pushed: overlay.pushed,
         deleted: overlay.deleted,
@@ -395,7 +390,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      // Streaming exec runs outside the lock — parallel commands are OK
+      // Streaming exec runs outside the lock — parallel commands are OK.
+      // Known limitation: parallel execs share one sandbox filesystem, so
+      // concurrent writes to the same file produce last-writer-wins pull results.
       res.setHeader("Content-Type", "application/x-ndjson");
       res.setHeader("Transfer-Encoding", "chunked");
       res.flushHeaders();
@@ -405,28 +402,25 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         onStderr: (chunk) => writeNdjson({ stream: "stderr", data: chunk }),
       });
 
-      // Pull changes made inside the sandbox back to the local worktree
-      try {
-        const pull = await withCwdLock(cwd, () => pullSandboxChanges(result.sandboxId, cwd));
-        if (pull.skipped) {
-          logInfo(log, "sandbox_pull_skipped", {
-            reason: "too many changed files (>100) or unsafe paths",
-            cwd,
-          });
-        } else if (pull.pulled.length > 0 || pull.deleted.length > 0) {
-          logInfo(log, "sandbox_pull", {
-            pulled: pull.pulled,
-            deleted: pull.deleted,
-            cwd,
-          });
+      // Pull changes back only on success — failed commands may leave partial artifacts
+      if (exitCode === 0) {
+        try {
+          const pull = await withCwdLock(cwd, () => pullSandboxChanges(result.sandboxId, cwd));
+          if (pull.pulled.length > 0 || pull.deleted.length > 0) {
+            logInfo(log, "sandbox_pull", {
+              pulled: pull.pulled,
+              deleted: pull.deleted,
+              cwd,
+            });
+          }
+        } catch (pullErr) {
+          logError(
+            log,
+            "sandbox_pull_error",
+            pullErr instanceof Error ? pullErr.message : String(pullErr),
+            thorIds(req),
+          );
         }
-      } catch (pullErr) {
-        logError(
-          log,
-          "sandbox_pull_error",
-          pullErr instanceof Error ? pullErr.message : String(pullErr),
-          thorIds(req),
-        );
       }
 
       writeNdjson({ exitCode });

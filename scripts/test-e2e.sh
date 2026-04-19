@@ -1140,12 +1140,12 @@ else
   sbx_par2_file=$(mktemp)
   curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
     -H 'Content-Type: application/json' \
-    -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo START_A \$(date +%s); sleep 3; echo END_A \$(date +%s)\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+    -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo START_A \$(date +%s); sleep 10; echo END_A \$(date +%s)\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
     2>/dev/null > "$sbx_par1_file" &
   par1_pid=$!
   curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
     -H 'Content-Type: application/json' \
-    -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo START_B \$(date +%s); sleep 3; echo END_B \$(date +%s)\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+    -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo START_B \$(date +%s); sleep 10; echo END_B \$(date +%s)\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
     2>/dev/null > "$sbx_par2_file" &
   par2_pid=$!
   wait "$par1_pid" "$par2_pid" 2>/dev/null

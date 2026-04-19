@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { rm, unlink, mkdir } from "node:fs/promises";
+import { join, dirname, resolve, sep } from "node:path";
+import { rm, unlink, mkdir, stat } from "node:fs/promises";
 import { Daytona, type FileUpload, type Sandbox } from "@daytonaio/sdk";
 import { execCommand } from "./exec.js";
 
@@ -125,32 +125,43 @@ export async function syncSandbox(
   });
 }
 
-const DIRTY_FILE_LIMIT = 100;
+export const DIRTY_FILE_LIMIT = 100;
+export const FILE_SIZE_LIMIT = 100 * 1024 * 1024; // 100 MB
 
 export interface OverlayResult {
   pushed: string[];
   deleted: string[];
-  skipped: boolean;
 }
 
 /**
- * Parse `git status --porcelain -uall` output into upload/delete lists.
+ * Parse `git status --porcelain -z` (NUL-delimited) output into upload/delete lists.
+ * NUL format avoids quoting issues with special characters in filenames.
+ * For renames/copies, the old path goes to deletes and the new path to uploads.
  */
 function parseGitStatus(stdout: string): { uploads: string[]; deletes: string[] } {
-  const lines = stdout.split("\n").filter((l) => l.length > 0);
+  const entries = stdout.split("\0").filter((e) => e.length > 0);
   const uploads: string[] = [];
   const deletes: string[] = [];
 
-  for (const line of lines) {
-    const statusCode = line.substring(0, 2);
-    const pathPart = line.substring(3);
-    const filePath = pathPart.includes(" -> ") ? pathPart.split(" -> ")[1] : pathPart;
+  let i = 0;
+  while (i < entries.length) {
+    const entry = entries[i];
+    const statusCode = entry.substring(0, 2);
+    const filePath = entry.substring(3);
 
     if (statusCode[1] === "D" || (statusCode[0] === "D" && statusCode[1] === " ")) {
       deletes.push(filePath);
+    } else if (statusCode[0] === "R" || statusCode[0] === "C") {
+      // Rename/copy: current entry has old path, next entry has new path
+      deletes.push(filePath);
+      i++;
+      if (i < entries.length) {
+        uploads.push(entries[i]);
+      }
     } else {
       uploads.push(filePath);
     }
+    i++;
   }
 
   return { uploads, deletes };
@@ -162,7 +173,7 @@ function parseGitStatus(stdout: string): { uploads: string[]; deletes: string[] 
  * files touched so pullSandboxChanges can skip them.
  */
 export async function overlayDirtyFiles(sandboxId: string, cwd: string): Promise<OverlayResult> {
-  const gitStatus = await execCommand("git", ["status", "--porcelain", "-uall"], cwd);
+  const gitStatus = await execCommand("git", ["status", "--porcelain", "-uall", "-z"], cwd);
   if ((gitStatus.exitCode ?? 0) !== 0) {
     throw new SandboxError(
       "Failed to inspect worktree state",
@@ -173,10 +184,29 @@ export async function overlayDirtyFiles(sandboxId: string, cwd: string): Promise
   const { uploads, deletes } = parseGitStatus(gitStatus.stdout);
   const total = uploads.length + deletes.length;
 
-  if (total === 0) return { pushed: [], deleted: [], skipped: false };
+  if (total === 0) return { pushed: [], deleted: [] };
 
   if (total > DIRTY_FILE_LIMIT) {
-    return { pushed: [], deleted: [], skipped: true };
+    throw new SandboxError(
+      `${total} dirty files exceeds the ${DIRTY_FILE_LIMIT}-file sync limit. ` +
+        `Commit or stash your changes (git stash), add unneeded files to .gitignore, ` +
+        `or clean up the worktree before running sandbox commands.`,
+      `overlay rejected: ${total} dirty files (limit ${DIRTY_FILE_LIMIT})`,
+    );
+  }
+
+  // Reject files exceeding size limit
+  for (const f of uploads) {
+    const fileStat = await stat(join(cwd, f)).catch(() => null);
+    if (fileStat && fileStat.size > FILE_SIZE_LIMIT) {
+      const sizeMB = Math.round(fileStat.size / 1024 / 1024);
+      throw new SandboxError(
+        `File "${f}" is ${sizeMB} MB, exceeding the 100 MB sync limit. ` +
+          `Commit it first (git add "${f}" && git commit), add it to .gitignore, ` +
+          `or remove it from the worktree.`,
+        `overlay rejected: ${f} is ${fileStat.size} bytes (limit ${FILE_SIZE_LIMIT})`,
+      );
+    }
   }
 
   const sandbox = await getSandboxById(sandboxId);
@@ -193,7 +223,7 @@ export async function overlayDirtyFiles(sandboxId: string, cwd: string): Promise
     await sandbox.fs.deleteFile(join(DAYTONA_REPO_DIR, filePath)).catch(() => {});
   }
 
-  return { pushed: uploads, deleted: deletes, skipped: false };
+  return { pushed: uploads, deleted: deletes };
 }
 
 /**
@@ -205,34 +235,64 @@ export async function overlayDirtyFiles(sandboxId: string, cwd: string): Promise
 export async function pullSandboxChanges(
   sandboxId: string,
   cwd: string,
-): Promise<{ pulled: string[]; deleted: string[]; skipped: boolean }> {
+): Promise<{ pulled: string[]; deleted: string[] }> {
   const sandbox = await getSandboxById(sandboxId);
 
   const statusResult = await sandbox.process.executeCommand(
-    `cd ${shellQuote(DAYTONA_REPO_DIR)} && git status --porcelain -uall`,
+    `cd ${shellQuote(DAYTONA_REPO_DIR)} && git status --porcelain -uall -z`,
   );
   if (statusResult.exitCode !== 0) {
-    return { pulled: [], deleted: [], skipped: false };
+    throw new SandboxError(
+      "Failed to read sandbox state after exec. No files were pulled back.",
+      `sandbox git status failed: ${statusResult.result || "unknown error"}`,
+    );
   }
 
   const { uploads: downloads, deletes: localDeletes } = parseGitStatus(statusResult.result || "");
   const total = downloads.length + localDeletes.length;
 
-  if (total === 0) return { pulled: [], deleted: [], skipped: false };
+  if (total === 0) return { pulled: [], deleted: [] };
 
   if (total > DIRTY_FILE_LIMIT) {
-    return { pulled: [], deleted: [], skipped: true };
+    throw new SandboxError(
+      `Sandbox has ${total} changed files, exceeding the ${DIRTY_FILE_LIMIT}-file sync limit. ` +
+        `Add build artifacts to .gitignore or clean up before the command exits.`,
+      `pull rejected: ${total} changed files (limit ${DIRTY_FILE_LIMIT})`,
+    );
   }
 
-  // Validate paths — no escapes outside cwd
+  // Validate paths — canonical prefix check to prevent traversal
+  const resolvedCwd = resolve(cwd);
+  const cwdPrefix = resolvedCwd + sep;
   const allPaths = [...downloads, ...localDeletes];
   for (const f of allPaths) {
-    if (f.includes("..") || f.startsWith("/")) {
-      return { pulled: [], deleted: [], skipped: true };
+    if (!resolve(cwd, f).startsWith(cwdPrefix)) {
+      throw new SandboxError(
+        `Sandbox produced a file path that escapes the worktree ("${f}"). Pull aborted.`,
+        `pull rejected: path traversal detected in "${f}"`,
+      );
     }
   }
 
   if (downloads.length > 0) {
+    // Check file sizes inside the sandbox before downloading
+    const sizeCheck = await sandbox.process.executeCommand(
+      `cd ${shellQuote(DAYTONA_REPO_DIR)} && stat -c '%s %n' ${downloads.map((f) => shellQuote(f)).join(" ")} 2>/dev/null`,
+    );
+    if (sizeCheck.exitCode === 0 && sizeCheck.result) {
+      for (const line of sizeCheck.result.split("\n")) {
+        const match = line.match(/^(\d+)\s+(.+)$/);
+        if (match && Number(match[1]) > FILE_SIZE_LIMIT) {
+          const sizeMB = Math.round(Number(match[1]) / 1024 / 1024);
+          throw new SandboxError(
+            `Sandbox file "${match[2]}" is ${sizeMB} MB, exceeding the 100 MB sync limit. ` +
+              `Add it to .gitignore or delete it before the command exits.`,
+            `pull rejected: ${match[2]} is ${match[1]} bytes (limit ${FILE_SIZE_LIMIT})`,
+          );
+        }
+      }
+    }
+
     const dirs = new Set(downloads.map((f) => dirname(join(cwd, f))));
     for (const dir of dirs) {
       await mkdir(dir, { recursive: true }).catch(() => {});
@@ -250,7 +310,7 @@ export async function pullSandboxChanges(
     await unlink(join(cwd, filePath)).catch(() => {});
   }
 
-  return { pulled: downloads, deleted: localDeletes, skipped: false };
+  return { pulled: downloads, deleted: localDeletes };
 }
 
 async function bundleAndUpload(
