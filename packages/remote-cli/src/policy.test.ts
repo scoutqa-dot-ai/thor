@@ -3,6 +3,7 @@ import {
   validateCwd,
   validateGitArgs,
   validateGhArgs,
+  validateLdcliArgs,
   validateLangfuseArgs,
   validateMetabaseArgs,
 } from "./policy.js";
@@ -367,6 +368,133 @@ describe("validateLangfuseArgs", () => {
 
     it("rejects resource with no action", () => {
       expect(validateLangfuseArgs(["api", "traces"])).not.toBeNull();
+    });
+  });
+});
+
+// ── launchdarkly policy ────────────────────────────────────────────────────
+
+describe("validateLdcliArgs", () => {
+  describe("allowed commands", () => {
+    it("allows list/get/help for approved resources", () => {
+      expect(validateLdcliArgs(["flags", "list", "--project", "default"])).toBeNull();
+      expect(
+        validateLdcliArgs([
+          "flags",
+          "get",
+          "my-flag",
+          "--project",
+          "default",
+          "--environment",
+          "production",
+        ]),
+      ).toBeNull();
+      expect(validateLdcliArgs(["environments", "list", "--project", "default"])).toBeNull();
+      expect(
+        validateLdcliArgs([
+          "segments",
+          "list",
+          "--project",
+          "default",
+          "--environment",
+          "production",
+        ]),
+      ).toBeNull();
+      expect(validateLdcliArgs(["metrics", "list", "--project", "default"])).toBeNull();
+      expect(validateLdcliArgs(["projects", "list"])).toBeNull();
+      expect(validateLdcliArgs(["flags", "--help"])).toBeNull();
+      expect(validateLdcliArgs(["flags", "list", "--project", "default", "--help"])).toBeNull();
+      expect(validateLdcliArgs(["flags", "list", "--help"])).toBeNull();
+      expect(validateLdcliArgs(["segments", "list", "-h"])).toBeNull();
+    });
+  });
+
+  describe("blocked commands", () => {
+    it("blocks mutating actions", () => {
+      expect(validateLdcliArgs(["flags", "create", "--project", "default"])).not.toBeNull();
+      expect(
+        validateLdcliArgs(["flags", "update", "my-flag", "--project", "default"]),
+      ).not.toBeNull();
+      expect(
+        validateLdcliArgs(["flags", "delete", "my-flag", "--project", "default"]),
+      ).not.toBeNull();
+      expect(
+        validateLdcliArgs(["flags", "toggle", "my-flag", "--project", "default"]),
+      ).not.toBeNull();
+      expect(
+        validateLdcliArgs(["flags", "replace", "my-flag", "--project", "default"]),
+      ).not.toBeNull();
+    });
+
+    it("blocks unsupported resources", () => {
+      expect(validateLdcliArgs(["members", "list"])).not.toBeNull();
+      expect(validateLdcliArgs(["teams", "list"])).not.toBeNull();
+      expect(validateLdcliArgs(["config", "--list"])).not.toBeNull();
+      expect(validateLdcliArgs(["config", "--set", "project", "default"])).not.toBeNull();
+      expect(validateLdcliArgs(["dev-server"])).not.toBeNull();
+      expect(validateLdcliArgs(["login"])).not.toBeNull();
+      expect(validateLdcliArgs(["setup"])).not.toBeNull();
+      expect(validateLdcliArgs(["sourcemaps", "upload"])).not.toBeNull();
+      expect(validateLdcliArgs(["resources"])).not.toBeNull();
+      expect(validateLdcliArgs(["audit-log", "list", "--project", "default"])).not.toBeNull();
+      expect(validateLdcliArgs(["experiments", "list", "--project", "default"])).not.toBeNull();
+      expect(validateLdcliArgs(["releases", "list", "--project", "default"])).not.toBeNull();
+    });
+
+    it("blocks metrics get", () => {
+      expect(
+        validateLdcliArgs(["metrics", "get", "my-metric", "--project", "default"]),
+      ).not.toBeNull();
+    });
+
+    it("requires project scope for scoped resources", () => {
+      expect(validateLdcliArgs(["flags", "list"])).not.toBeNull();
+      expect(validateLdcliArgs(["environments", "list"])).not.toBeNull();
+      expect(validateLdcliArgs(["segments", "list", "--environment", "production"])).not.toBeNull();
+      expect(validateLdcliArgs(["metrics", "list"])).not.toBeNull();
+      expect(validateLdcliArgs(["flags", "list", "--project"])).not.toBeNull();
+      expect(validateLdcliArgs(["flags", "list", "--project="])).not.toBeNull();
+    });
+
+    it("blocks dangerous flags", () => {
+      expect(
+        validateLdcliArgs(["flags", "list", "--project", "default", "--access-token", "leaked"]),
+      ).not.toBeNull();
+      expect(
+        validateLdcliArgs([
+          "flags",
+          "get",
+          "my-flag",
+          "--project",
+          "default",
+          "--data",
+          '{"on":true}',
+        ]),
+      ).not.toBeNull();
+      expect(
+        validateLdcliArgs(["flags", "list", "--project", "default", "--output-file", "/tmp/x"]),
+      ).not.toBeNull();
+      expect(validateLdcliArgs(["flags", "list", "--project", "default", "--curl"])).not.toBeNull();
+      expect(
+        validateLdcliArgs(["flags", "list", "--project", "default", "--config", "/tmp/evil.yml"]),
+      ).not.toBeNull();
+      expect(
+        validateLdcliArgs(["flags", "list", "--project", "default", "--output-file=/tmp/x"]),
+      ).not.toBeNull();
+    });
+  });
+
+  describe("edge cases", () => {
+    it("rejects empty args", () => {
+      expect(validateLdcliArgs([])).not.toBeNull();
+    });
+
+    it("rejects non-array", () => {
+      expect(validateLdcliArgs("flags" as unknown as string[])).not.toBeNull();
+    });
+
+    it("rejects missing action", () => {
+      expect(validateLdcliArgs(["flags"])).not.toBeNull();
     });
   });
 });

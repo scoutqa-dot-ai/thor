@@ -2,7 +2,7 @@
  * Shared HTTP client for git/gh/scoutqa wrapper scripts.
  *
  * Usage: node remote-cli.mjs <endpoint> <arg1> <arg2> ...
- *   endpoint: "git", "gh", "scoutqa", "langfuse", "metabase", "mcp", or "approval"
+ *   endpoint: "git", "gh", "scoutqa", "langfuse", "ldcli", "metabase", "mcp", or "approval"
  *
  * Env:
  *   THOR_REMOTE_CLI_URL — base URL of the remote-cli service (e.g. http://remote-cli:3004)
@@ -17,7 +17,7 @@ const [endpoint, ...args] = process.argv.slice(2);
 
 if (!endpoint) {
   process.stderr.write(
-    "Usage: remote-cli.mjs <git|gh|scoutqa|langfuse|metabase|mcp|approval> [args...]\n",
+    "Usage: remote-cli.mjs <git|gh|scoutqa|langfuse|ldcli|metabase|mcp|approval> [args...]\n",
   );
   process.exit(1);
 }
@@ -33,7 +33,7 @@ const cwd = process.cwd();
 const sessionDirectory = process.env.THOR_OPENCODE_DIRECTORY || cwd;
 const sessionId = process.env.THOR_OPENCODE_SESSION_ID || "";
 const callId = process.env.THOR_OPENCODE_CALL_ID || "";
-const nonRepoScopedEndpoints = new Set(["langfuse", "metabase", "approval"]);
+const nonRepoScopedEndpoints = new Set(["langfuse", "ldcli", "metabase", "approval"]);
 
 try {
   const res = await fetch(url, {

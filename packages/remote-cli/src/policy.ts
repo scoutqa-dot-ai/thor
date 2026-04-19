@@ -379,6 +379,91 @@ export function validateLangfuseArgs(args: string[]): string | null {
   return null;
 }
 
+// ── launchdarkly policy ────────────────────────────────────────────────────
+
+const ALLOWED_LDCLI_RESOURCES: ReadonlySet<string> = new Set([
+  "flags",
+  "environments",
+  "projects",
+  "segments",
+  "metrics",
+]);
+
+const ALLOWED_LDCLI_ACTIONS: ReadonlySet<string> = new Set(["list", "get", "--help"]);
+
+const PROJECT_SCOPED_LDCLI_RESOURCES: ReadonlySet<string> = new Set([
+  "flags",
+  "environments",
+  "segments",
+  "metrics",
+]);
+
+const DENIED_LDCLI_FLAGS: ReadonlySet<string> = new Set([
+  "--access-token",
+  "--config",
+  "--data",
+  "--data-file",
+  "--output-file",
+  "--curl",
+]);
+
+export function validateLdcliArgs(args: string[]): string | null {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "args must be a non-empty array";
+  }
+
+  const resource = args[0];
+  if (!ALLOWED_LDCLI_RESOURCES.has(resource)) {
+    return `"ldcli ${resource}" is not allowed`;
+  }
+
+  if (args.length < 2) {
+    return `"ldcli ${resource}" requires an action (list, get, or --help)`;
+  }
+
+  const action = args[1];
+  if (!ALLOWED_LDCLI_ACTIONS.has(action)) {
+    return `"ldcli ${resource} ${action}" is not allowed — only list, get, and --help are permitted`;
+  }
+
+  if (resource === "metrics" && action === "get") {
+    return '"ldcli metrics get" is not allowed — only "ldcli metrics list" is permitted';
+  }
+
+  for (const arg of args) {
+    const flag = arg.split("=")[0];
+    if (DENIED_LDCLI_FLAGS.has(flag)) {
+      return `flag "${flag}" is not allowed`;
+    }
+  }
+
+  const isHelpRequest = args.includes("--help") || args.includes("-h");
+  if (
+    !isHelpRequest &&
+    PROJECT_SCOPED_LDCLI_RESOURCES.has(resource) &&
+    !hasOptionValue(args, "--project")
+  ) {
+    return `"ldcli ${resource} ${action}" requires "--project <key>"`;
+  }
+
+  return null;
+}
+
+function hasOptionValue(args: string[], option: string): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === option) {
+      return Boolean(args[i + 1] && !args[i + 1].startsWith("-"));
+    }
+
+    if (arg.startsWith(`${option}=`)) {
+      return arg.slice(option.length + 1).length > 0;
+    }
+  }
+
+  return false;
+}
+
 // ── metabase policy ────────────────────────────────────────────────────────
 
 const ALLOWED_METABASE_SUBCOMMANDS: ReadonlySet<string> = new Set([
