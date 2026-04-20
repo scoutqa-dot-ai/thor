@@ -112,23 +112,33 @@ RUN curl -LsSf https://astral.sh/uv/0.7.2/install.sh | sh
 # Write to .profile so `bash -lc` (non-interactive login shell) loads them.
 # Ubuntu's .bashrc exits early for non-interactive shells, so appending there
 # alone is not enough. .profile is always read by login shells.
+#
+# nvm, SDKMAN, and pyenv init scripts use bash-specific syntax (source, [[,
+# arrays). Guard them with a BASH_VERSION check so `sh -lc` (dash) skips
+# them instead of failing with syntax errors.
 
 RUN { \
       echo ''; \
-      echo '# nvm'; \
-      echo 'export NVM_DIR="$HOME/.nvm"'; \
-      echo '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"'; \
+      echo '# nvm (bash-only: nvm.sh uses bash syntax)'; \
+      echo 'if [ -n "$BASH_VERSION" ]; then'; \
+      echo '  export NVM_DIR="$HOME/.nvm"'; \
+      echo '  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"'; \
+      echo 'fi'; \
       echo ''; \
-      echo '# SDKMAN'; \
-      echo 'export SDKMAN_DIR="$HOME/.sdkman"'; \
-      echo '[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ] && . "$SDKMAN_DIR/bin/sdkman-init.sh"'; \
+      echo '# SDKMAN (bash-only: sdkman-init.sh uses bash syntax)'; \
+      echo 'if [ -n "$BASH_VERSION" ]; then'; \
+      echo '  export SDKMAN_DIR="$HOME/.sdkman"'; \
+      echo '  [ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ] && . "$SDKMAN_DIR/bin/sdkman-init.sh"'; \
+      echo 'fi'; \
       echo ''; \
-      echo '# pyenv'; \
-      echo 'export PYENV_ROOT="$HOME/.pyenv"'; \
-      echo 'export PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"'; \
-      echo 'eval "$(pyenv init -)"'; \
+      echo '# pyenv (bash-only: pyenv init outputs bash syntax)'; \
+      echo 'if [ -n "$BASH_VERSION" ]; then'; \
+      echo '  export PYENV_ROOT="$HOME/.pyenv"'; \
+      echo '  export PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"'; \
+      echo '  eval "$(pyenv init -)"'; \
+      echo 'fi'; \
       echo ''; \
-      echo '# uv'; \
+      echo '# uv (POSIX-compatible)'; \
       echo '[ -s "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"'; \
     } >> /home/thor/.profile
 

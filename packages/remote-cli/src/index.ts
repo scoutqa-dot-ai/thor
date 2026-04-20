@@ -357,6 +357,29 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           });
           return;
         }
+
+        // Block sh — the sandbox CLI already wraps commands with `bash -lc`,
+        // so `sandbox sh -lc '...'` creates a double shell invocation where
+        // dash (Ubuntu's /bin/sh) fails on bash-only init scripts in .profile.
+        if (args[0] === "sh") {
+          res.status(400).json({
+            stdout: "",
+            stderr: [
+              "sh is not allowed in the sandbox.",
+              "",
+              "Every sandbox command already runs inside `bash -lc`, which sources .profile",
+              "(nvm, SDKMAN, pyenv). Using `sh` spawns dash, which cannot parse those scripts.",
+              "",
+              "Instead:",
+              "  Single command:   sandbox mvn test -pl module-auth",
+              "  Shell chaining:   sandbox bash -c 'mvn clean && mvn test'",
+              "  Pipelines:        sandbox bash -c 'pytest -q | tail -20'",
+              "  Version switch:   sandbox sdk default java 17.0.15-tem   (then: sandbox mvn test)",
+            ].join("\n"),
+            exitCode: 1,
+          });
+          return;
+        }
       }
 
       logInfo(log, "exec_sandbox", {

@@ -28,10 +28,10 @@ One agent-facing command: `sandbox <cmd> [args...]`. Run from a worktree. Remote
 sandbox mvn test -pl module-auth       # Java (most common case)
 sandbox ./gradlew build
 sandbox pytest -v --tb=short
-sandbox sh -lc 'make build && make test'
+sandbox bash -c 'make build && make test'
 ```
 
-No IDs to track. For a single command, use `sandbox <command> [args...]`. For shell chaining, pipelines, or redirects, wrap the command explicitly with `sandbox sh -lc '...'`. This is the agent's primary execution path — most repos are Java. Local Node is still available for lightweight tasks (formatting, linting, scripts) but the skill doc doesn't carve out exceptions.
+No IDs to track. For a single command, use `sandbox <command> [args...]`. For shell chaining, pipelines, or redirects, wrap the command explicitly with `sandbox bash -c '...'`. This is the agent's primary execution path — most repos are Java. Local Node is still available for lightweight tasks (formatting, linting, scripts) but the skill doc doesn't carve out exceptions.
 
 **Operator interface (not in skill doc):**
 
@@ -97,7 +97,7 @@ sandbox --list                         # list session's sandboxes
 
 - **Zero cognitive load for agent**: one command (`sandbox <cmd>`), no lifecycle to manage, no IDs to track.
 - **Sandbox is the primary path**: most repos are Java. The agent uses `sandbox` for builds, tests, lints — the majority of its work. Local Node still available for lightweight tasks but not called out as an exception.
-- **Simple default**: `sandbox mvn test` works directly for single commands. For shell chaining, pipelines, or redirects, use `sandbox sh -lc 'cmd1 && cmd2'`.
+- **Simple default**: `sandbox mvn test` works directly for single commands. For shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
 - **Auto-everything**: auto-create on first run, auto-sync committed code before each run, auto-stop after 15 min idle.
 
 ## Phases
