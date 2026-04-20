@@ -1,13 +1,21 @@
 import express, { type Express, type Request, type Response } from "express";
-import { readFileSync, writeFileSync, renameSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, statSync, appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createLogger, logError, logInfo, validateWorkspaceConfig } from "@thor/common";
+import {
+  createLogger,
+  logError,
+  logInfo,
+  logWarn,
+  validateWorkspaceConfig,
+  type WorkspaceConfig,
+} from "@thor/common";
 import { renderConfigPage, renderStatusFragment, type Issue } from "./views.js";
 
 const log = createLogger("admin");
 
 export interface AdminAppConfig {
   configPath: string;
+  auditLogPath: string;
 }
 
 export function createAdminApp(cfg: AdminAppConfig): Express {
@@ -55,8 +63,9 @@ export function createAdminApp(cfg: AdminAppConfig): Express {
       return;
     }
 
+    const serialized = JSON.stringify(result.data, null, 2) + "\n";
     try {
-      atomicWrite(cfg.configPath, JSON.stringify(result.data, null, 2) + "\n");
+      atomicWrite(cfg.configPath, serialized);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logError(log, "config_write_failed", { error: msg, user });
@@ -66,6 +75,13 @@ export function createAdminApp(cfg: AdminAppConfig): Express {
 
     const savedAt = new Date().toISOString();
     logInfo(log, "config_saved", { user, savedAt });
+    appendAudit(cfg.auditLogPath, {
+      ts: savedAt,
+      user,
+      event: "config_saved",
+      bytes: Buffer.byteLength(serialized, "utf-8"),
+      config: result.data,
+    });
 
     if (isHtmx) {
       res
@@ -103,6 +119,29 @@ function atomicWrite(path: string, data: string): void {
   const tmp = join(dirname(path), `.config.json.${process.pid}.${Date.now()}.tmp`);
   writeFileSync(tmp, data, { encoding: "utf-8", mode: 0o644 });
   renameSync(tmp, path);
+}
+
+interface AuditEntry {
+  ts: string;
+  user: string | null;
+  event: "config_saved";
+  bytes: number;
+  config: WorkspaceConfig;
+}
+
+function appendAudit(path: string, entry: AuditEntry): void {
+  try {
+    appendFileSync(path, JSON.stringify(entry) + "\n", { encoding: "utf-8", mode: 0o644 });
+  } catch (err) {
+    // Non-fatal: the primary config write already succeeded. We must not
+    // fail the HTTP response after the rename, since the new config is
+    // already live for every other service.
+    logWarn(log, "audit_append_failed", {
+      path,
+      user: entry.user,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 function respondError(
