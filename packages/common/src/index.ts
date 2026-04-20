@@ -1,6 +1,7 @@
 export {
   WorkspaceConfigSchema,
   loadWorkspaceConfig,
+  validateWorkspaceConfig,
   getAllowedChannelIds,
   getChannelRepoMap,
   resolveRepoDirectory,
@@ -21,6 +22,8 @@ export type {
   ConfigLoader,
   GitHubAppInstallation,
   GitHubAppConfig,
+  ValidationIssue,
+  ValidationResult,
 } from "./workspace-config.js";
 export type { ProxyName } from "./proxies.js";
 export { writeToolCallLog } from "./worklog.js";

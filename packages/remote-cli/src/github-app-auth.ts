@@ -48,10 +48,12 @@ interface CachedToken {
 
 /**
  * Extract org from command args.
- * Checks: -R owner/repo, --repo=owner/repo, and positional owner/repo arguments.
+ * Only checks the explicit -R / --repo flag; everything else falls through
+ * to resolveOrgFromRemote(cwd).  The previous "second pass" that scanned
+ * positional args for owner/repo patterns was fragile — flag values like
+ * --body content could be mis-identified as an org.
  */
 export function resolveOrgFromArgs(args: string[]): string | undefined {
-  // First pass: explicit -R / --repo flags (highest priority)
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "-R" && i + 1 < args.length) {
       const ownerRepo = args[i + 1];
@@ -62,19 +64,6 @@ export function resolveOrgFromArgs(args: string[]): string | undefined {
       const ownerRepo = args[i].slice("--repo=".length);
       const slash = ownerRepo.indexOf("/");
       if (slash > 0) return ownerRepo.slice(0, slash);
-    }
-  }
-
-  // Second pass: positional owner/repo or URL arguments
-  for (const arg of args) {
-    if (arg.startsWith("-")) continue;
-    // Git/GitHub URLs (clone, remote add, etc.)
-    const urlOrg = parseOrgFromRemoteUrl(arg);
-    if (urlOrg) return urlOrg;
-    // Bare owner/repo (gh repo view owner/repo)
-    const slash = arg.indexOf("/");
-    if (slash > 0 && slash < arg.length - 1 && !arg.includes("://") && !arg.includes("@")) {
-      return arg.slice(0, slash);
     }
   }
 

@@ -61,7 +61,7 @@ Tighten `validateGitPush` so it uses an explicit allowlist instead of permissive
 
 - Block security-sensitive flags such as `--receive-pack`, `--exec`, and `--repo`
 - Reject unknown push flags instead of silently skipping them
-- Keep only a minimal reviewed flag set, including `--no-verify`, `--dry-run`, and `--force-with-lease`
+- Keep only a minimal reviewed flag set, including `-u`/`--set-upstream`, `--no-verify`, `--dry-run`, and `--force-with-lease`
 - Validate mapped refspecs so force-update refspecs, delete refspecs, and non-branch destinations are rejected
 
 **Exit criteria:**

@@ -202,6 +202,8 @@ function validateGitRemote(args: string[]): string | null {
 // ── git push policy ────────────────────────────────────────────────────────
 
 const ALLOWED_PUSH_FLAGS: ReadonlySet<string> = new Set([
+  "-u",
+  "--set-upstream",
   "--no-verify",
   "--dry-run",
   "-n",

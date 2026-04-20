@@ -214,6 +214,24 @@ services:
       gateway:
         condition: service_healthy
 
+  admin:
+    build:
+      context: .
+      target: admin
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3005:3005"
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./docker-volumes/workspace:/workspace
+    healthcheck:
+      test:
+        ["CMD", "node", "-e", "fetch('http://localhost:3005/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   vouch:
     image: quay.io/vouch/vouch-proxy:0.45.1
     restart: unless-stopped
@@ -250,6 +268,8 @@ services:
       gateway:
         condition: service_healthy
       opencode:
+        condition: service_healthy
+      admin:
         condition: service_healthy
       vouch:
         condition: service_healthy
