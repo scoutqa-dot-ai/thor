@@ -1,0 +1,25 @@
+docs/plan/2026041705_git-policy-auth-hardening.md
+  318fab0d1af2220a 64
+README.md
+  318fab0d1af2220a 132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b33a532b974527be54b0fdccfd3cdd5d0979c76d",
+  "prompts": {
+    "318fab0d1af2220a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5cb13fa1-00b2-441b-8490-3beafce1a8fd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
