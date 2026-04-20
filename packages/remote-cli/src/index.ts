@@ -1,4 +1,5 @@
 import express, { type Express } from "express";
+import { access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
   computeGitAlias,
@@ -104,17 +105,45 @@ interface PreparedSandbox {
   command: string;
 }
 
+async function resolveWorktreeRoot(cwd: string): Promise<{ root: string; subpath: string }> {
+  // The cwd may be a subdirectory that only exists inside the sandbox
+  // (e.g. node_modules/, build/). Find the deepest existing ancestor
+  // to run git from — access() is a single syscall per level, no process spawn.
+  let gitCwd = cwd;
+  while (gitCwd.length > "/workspace/worktrees".length) {
+    try {
+      await access(gitCwd);
+      break;
+    } catch {
+      gitCwd = gitCwd.slice(0, gitCwd.lastIndexOf("/")) || "/";
+    }
+  }
+
+  const result = await execCommand("git", ["rev-parse", "--show-toplevel"], gitCwd);
+  if ((result.exitCode ?? 0) !== 0 || !result.stdout.trim()) {
+    throw new SandboxError(
+      "Failed to resolve worktree root",
+      `git rev-parse --show-toplevel failed for ${cwd}`,
+    );
+  }
+  const root = result.stdout.trim();
+  const subpath = cwd.startsWith(root + "/") ? cwd.slice(root.length + 1) : "";
+  return { root, subpath };
+}
+
 async function prepareSandbox(
   cwd: string,
   mode: "exec" | "create",
   args: string[],
 ): Promise<PreparedSandbox> {
-  // Lock per-cwd: prevents duplicate sandbox creation (TOCTOU in
+  const { root: worktreeRoot, subpath } = await resolveWorktreeRoot(cwd);
+
+  // Lock per-worktree: prevents duplicate sandbox creation (TOCTOU in
   // ensureSandbox) and conflicting syncs on the same worktree.
   // Released before streaming exec so commands run concurrently.
-  return withCwdLock(cwd, async () => {
-    const currentSha = await resolveHead(cwd);
-    const sandbox = await ensureSandbox(cwd, currentSha);
+  return withCwdLock(worktreeRoot, async () => {
+    const currentSha = await resolveHead(worktreeRoot);
+    const sandbox = await ensureSandbox(worktreeRoot, currentSha);
 
     if (mode === "create") {
       return { sandboxId: sandbox.id, command: "" };
@@ -122,20 +151,44 @@ async function prepareSandbox(
 
     const lastSyncedSha = getLastSyncedSha(sandbox);
     if (lastSyncedSha !== currentSha) {
-      await syncSandbox(sandbox.id, cwd, lastSyncedSha, currentSha);
+      await syncSandbox(sandbox.id, worktreeRoot, lastSyncedSha, currentSha);
     }
 
-    const overlay = await overlayDirtyFiles(sandbox.id, cwd);
+    const overlay = await overlayDirtyFiles(sandbox.id, worktreeRoot);
     if (overlay.pushed.length > 0 || overlay.deleted.length > 0) {
       logInfo(log, "sandbox_overlay_push", {
         pushed: overlay.pushed,
         deleted: overlay.deleted,
-        cwd,
+        cwd: worktreeRoot,
       });
     }
 
+    // If cwd is a subdirectory of the worktree root, prepend a cd into
+    // the matching subpath inside the sandbox so the command runs in the
+    // right directory (e.g. cwd=.../tree/packages/foo → cd packages/foo).
+    const cdPrefix = subpath ? `cd ${shellQuote(subpath)} && ` : "";
+
+    // Unwrap shell wrappers: when args are ["sh"|"bash", "-c"|"-lc", "..."],
+    // pass the inner command directly to the outer login shell instead of
+    // nesting a child shell. This avoids the function-inheritance trap where
+    // nvm/sdk/pyenv (bash functions loaded by .profile) are not available
+    // in a child bash -c process.
+    if (
+      (args[0] === "sh" || args[0] === "bash") &&
+      (args[1] === "-c" || args[1] === "-lc") &&
+      args.length === 3
+    ) {
+      return {
+        sandboxId: sandbox.id,
+        command: `bash -lc ${shellQuote(cdPrefix + args[2])}`,
+      };
+    }
+
     const command = args.map((a: string) => shellQuote(a)).join(" ");
-    return { sandboxId: sandbox.id, command: `bash -lc ${shellQuote(command)}` };
+    return {
+      sandboxId: sandbox.id,
+      command: `bash -lc ${shellQuote(cdPrefix + command)}`,
+    };
   });
 }
 
@@ -358,27 +411,20 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           return;
         }
 
-        // Block sh — the sandbox CLI already wraps commands with `bash -lc`,
-        // so `sandbox sh -lc '...'` creates a double shell invocation where
-        // dash (Ubuntu's /bin/sh) fails on bash-only init scripts in .profile.
-        if (args[0] === "sh") {
-          res.status(400).json({
-            stdout: "",
-            stderr: [
-              "sh is not allowed in the sandbox.",
-              "",
-              "Every sandbox command already runs inside `bash -lc`, which sources .profile",
-              "(nvm, SDKMAN, pyenv). Using `sh` spawns dash, which cannot parse those scripts.",
-              "",
-              "Instead:",
-              "  Single command:   sandbox mvn test -pl module-auth",
-              "  Shell chaining:   sandbox bash -c 'mvn clean && mvn test'",
-              "  Pipelines:        sandbox bash -c 'pytest -q | tail -20'",
-              "  Version switch:   sandbox sdk default java 17.0.15-tem   (then: sandbox mvn test)",
-            ].join("\n"),
-            exitCode: 1,
-          });
-          return;
+        // Allow sh/bash only in the exact form: ["sh"|"bash", "-c"|"-lc", "<command>"].
+        // prepareSandbox unwraps this into the outer login shell. Any other
+        // form (extra flags, missing -c, bare sh/bash) would nest a child
+        // shell that can't parse .profile or would hang on interactive mode.
+        if (args[0] === "sh" || args[0] === "bash") {
+          const isUnwrappable = (args[1] === "-c" || args[1] === "-lc") && args.length === 3;
+          if (!isUnwrappable) {
+            res.status(400).json({
+              stdout: "",
+              stderr: `Invalid shell invocation. Use: sandbox ${args[0]} -c '<command>'`,
+              exitCode: 1,
+            });
+            return;
+          }
         }
       }
 
@@ -402,8 +448,12 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
+      // Resolve the worktree root for all sandbox operations — cwd may
+      // be a subdirectory (e.g. /workspace/worktrees/repo/branch/sub/path).
+      const { root: worktreeRoot } = await resolveWorktreeRoot(cwd);
+
       if (mode === "stop") {
-        const sandbox = await findSandboxForCwd(cwd);
+        const sandbox = await findSandboxForCwd(worktreeRoot);
         if (sandbox) {
           await deleteSandbox(sandbox.id);
         }
@@ -434,12 +484,14 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       // Pull changes back only on success — failed commands may leave partial artifacts
       if (exitCode === 0) {
         try {
-          const pull = await withCwdLock(cwd, () => pullSandboxChanges(result.sandboxId, cwd));
+          const pull = await withCwdLock(worktreeRoot, () =>
+            pullSandboxChanges(result.sandboxId, worktreeRoot),
+          );
           if (pull.pulled.length > 0 || pull.deleted.length > 0) {
             logInfo(log, "sandbox_pull", {
               pulled: pull.pulled,
               deleted: pull.deleted,
-              cwd,
+              cwd: worktreeRoot,
             });
           }
         } catch (pullErr) {
