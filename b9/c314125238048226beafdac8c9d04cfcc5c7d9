@@ -1,0 +1,29 @@
+docs/examples/workspace-config.example.json
+  c8c4790c5d1ac492 25-35
+packages/common/src/workspace-config.ts
+  c8c4790c5d1ac492 27
+packages/common/src/workspace-config.test.ts
+  c8c4790c5d1ac492 334-341
+docker/data/entrypoint.sh
+  c8c4790c5d1ac492 15-18,24,43-84,86-88,93,109-125,127-130,132,134-135,137-139,146,155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b9c314125238048226beafdac8c9d04cfcc5c7d9",
+  "prompts": {
+    "c8c4790c5d1ac492": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c17887b4-3b70-4ce4-9e6d-8e7108f079e2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 105,
+      "total_deletions": 70,
+      "accepted_lines": 101,
+      "overriden_lines": 0
+    }
+  }
+}
