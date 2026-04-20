@@ -21,6 +21,7 @@ COPY packages/runner/package.json packages/runner/
 COPY packages/slack-mcp/package.json packages/slack-mcp/
 COPY packages/remote-cli/package.json packages/remote-cli/
 COPY packages/opencode-cli/package.json packages/opencode-cli/
+COPY packages/admin/package.json packages/admin/
 RUN pnpm install --frozen-lockfile
 
 # --- Build all packages ---
@@ -36,6 +37,13 @@ WORKDIR /workspace
 ENV PORT=3002
 EXPOSE 3002
 CMD ["node", "/app/packages/gateway/dist/index.js"]
+
+FROM build AS admin
+USER thor
+WORKDIR /workspace
+ENV PORT=3005
+EXPOSE 3005
+CMD ["node", "/app/packages/admin/dist/index.js"]
 
 FROM build AS runner
 USER thor
