@@ -78,17 +78,16 @@ The sandbox comes with version managers and common runtimes ready to use:
 - **Python**: 3.12 (default), 3.11, 3.13 via pyenv. `uv` available for fast installs.
 - **Docker**: Docker CE with docker compose. Start the daemon with `sudo dockerd &` before use.
 
-To use a non-default version, set it before running your command. The change persists across sandbox calls, so you only need to set it once:
+To use a non-default version, either set it permanently or inline it with your command:
 
 ```bash
-sandbox sdk default java 17.0.15-tem    # switch Java to 17
-sandbox mvn test                         # uses Java 17
+# Permanent (persists across sandbox calls, only need to set once)
+sandbox sdk default java 17.0.15-tem
+sandbox mvn test
 
-sandbox nvm alias default 20             # switch Node to 20
-sandbox npm test                         # uses Node 20
-
-sandbox pyenv global 3.11                # switch Python to 3.11
-sandbox pytest -v                        # uses Python 3.11
+# Inline (one-off version switch + command)
+sandbox bash -c 'sdk use java 17.0.15-tem && mvn test'
+sandbox bash -c 'nvm use 20 && npm test'
 ```
 
 ---

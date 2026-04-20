@@ -134,6 +134,19 @@ async function prepareSandbox(
       });
     }
 
+    // Unwrap shell wrappers: when args are ["sh"|"bash", "-c"|"-lc", "..."],
+    // pass the inner command directly to the outer login shell instead of
+    // nesting a child shell. This avoids the function-inheritance trap where
+    // nvm/sdk/pyenv (bash functions loaded by .profile) are not available
+    // in a child bash -c process.
+    if (
+      (args[0] === "sh" || args[0] === "bash") &&
+      (args[1] === "-c" || args[1] === "-lc") &&
+      args.length === 3
+    ) {
+      return { sandboxId: sandbox.id, command: `bash -lc ${shellQuote(args[2])}` };
+    }
+
     const command = args.map((a: string) => shellQuote(a)).join(" ");
     return { sandboxId: sandbox.id, command: `bash -lc ${shellQuote(command)}` };
   });
@@ -358,27 +371,20 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           return;
         }
 
-        // Block sh — the sandbox CLI already wraps commands with `bash -lc`,
-        // so `sandbox sh -lc '...'` creates a double shell invocation where
-        // dash (Ubuntu's /bin/sh) fails on bash-only init scripts in .profile.
-        if (args[0] === "sh") {
-          res.status(400).json({
-            stdout: "",
-            stderr: [
-              "sh is not allowed in the sandbox.",
-              "",
-              "Every sandbox command already runs inside `bash -lc`, which sources .profile",
-              "(nvm, SDKMAN, pyenv). Using `sh` spawns dash, which cannot parse those scripts.",
-              "",
-              "Instead:",
-              "  Single command:   sandbox mvn test -pl module-auth",
-              "  Shell chaining:   sandbox bash -c 'mvn clean && mvn test'",
-              "  Pipelines:        sandbox bash -c 'pytest -q | tail -20'",
-              "  Version switch:   sandbox sdk default java 17.0.15-tem   (then: sandbox mvn test)",
-            ].join("\n"),
-            exitCode: 1,
-          });
-          return;
+        // Allow sh/bash only in the exact form: ["sh"|"bash", "-c"|"-lc", "<command>"].
+        // prepareSandbox unwraps this into the outer login shell. Any other
+        // form (extra flags, missing -c, bare sh/bash) would nest a child
+        // shell that can't parse .profile or would hang on interactive mode.
+        if (args[0] === "sh" || args[0] === "bash") {
+          const isUnwrappable = (args[1] === "-c" || args[1] === "-lc") && args.length === 3;
+          if (!isUnwrappable) {
+            res.status(400).json({
+              stdout: "",
+              stderr: `Invalid shell invocation. Use: sandbox ${args[0]} -c '<command>'`,
+              exitCode: 1,
+            });
+            return;
+          }
         }
       }
 

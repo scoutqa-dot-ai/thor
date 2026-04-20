@@ -253,6 +253,99 @@ describe("/exec/sandbox", () => {
       body: JSON.stringify(body),
     });
   }
+
+  function getExecutedCommand(): string {
+    const sandbox = Array.from(daytonaState.sandboxes.values())[0];
+    const call = sandbox.process.executeSessionCommand.mock.calls[0];
+    return call[1].command as string;
+  }
+
+  describe("shell unwrap", () => {
+    it("unwraps bash -c into outer login shell", async () => {
+      const response = await postJson("/exec/sandbox", {
+        args: ["bash", "-c", "sdk use java 17 && mvn test"],
+        cwd: CWD,
+      });
+
+      expect(response.status).toBe(200);
+      const cmd = getExecutedCommand();
+      expect(cmd).toContain("bash -lc");
+      expect(cmd).toContain("sdk use java 17 && mvn test");
+      expect(cmd).not.toContain("'bash'");
+    });
+
+    it("unwraps sh -lc into outer login shell", async () => {
+      const response = await postJson("/exec/sandbox", {
+        args: ["sh", "-lc", "make build && make test"],
+        cwd: CWD,
+      });
+
+      expect(response.status).toBe(200);
+      const cmd = getExecutedCommand();
+      expect(cmd).toContain("bash -lc");
+      expect(cmd).toContain("make build && make test");
+      expect(cmd).not.toContain("'sh'");
+    });
+
+    it("unwraps sh -c into outer login shell", async () => {
+      const response = await postJson("/exec/sandbox", {
+        args: ["sh", "-c", "pytest -q | tail -20"],
+        cwd: CWD,
+      });
+
+      expect(response.status).toBe(200);
+      const cmd = getExecutedCommand();
+      expect(cmd).toContain("bash -lc");
+      expect(cmd).toContain("pytest -q | tail -20");
+      expect(cmd).not.toContain("'sh'");
+    });
+  });
+
+  describe("shell validation", () => {
+    it("blocks bare sh/bash with no -c flag", async () => {
+      const response = await postJson("/exec/sandbox", {
+        args: ["bash"],
+        cwd: CWD,
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { stderr: string };
+      expect(body.stderr).toContain("sandbox bash -c");
+    });
+
+    it("blocks sh with extra flags", async () => {
+      const response = await postJson("/exec/sandbox", {
+        args: ["sh", "-e", "-c", "make test"],
+        cwd: CWD,
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { stderr: string };
+      expect(body.stderr).toContain("sandbox sh -c");
+    });
+
+    it("blocks sh with a script file argument", async () => {
+      const response = await postJson("/exec/sandbox", {
+        args: ["sh", "script.sh"],
+        cwd: CWD,
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { stderr: string };
+      expect(body.stderr).toContain("sandbox sh -c");
+    });
+
+    it("blocks bash -c with extra positional args", async () => {
+      const response = await postJson("/exec/sandbox", {
+        args: ["bash", "-c", "echo hello", "arg0"],
+        cwd: CWD,
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { stderr: string };
+      expect(body.stderr).toContain("sandbox bash -c");
+    });
+  });
 });
 
 describe("parseGitStatus", () => {
