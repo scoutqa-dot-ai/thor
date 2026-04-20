@@ -357,6 +357,7 @@ const ALLOWED_METABASE_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "tables",
   "columns",
   "query",
+  "question",
 ]);
 
 export function validateMetabaseArgs(args: string[]): string | null {
@@ -366,7 +367,7 @@ export function validateMetabaseArgs(args: string[]): string | null {
 
   const subcommand = args[0];
   if (!ALLOWED_METABASE_SUBCOMMANDS.has(subcommand)) {
-    return `"metabase ${subcommand}" is not allowed — valid subcommands: schemas, tables, columns, query`;
+    return `"metabase ${subcommand}" is not allowed — valid subcommands: schemas, tables, columns, query, question`;
   }
 
   const allowedSchemas = getMetabaseAllowedSchemas();
@@ -397,6 +398,15 @@ export function validateMetabaseArgs(args: string[]): string | null {
 
   if (subcommand === "query") {
     if (args.length !== 2) return '"metabase query" requires exactly 1 argument: <sql>';
+    return null;
+  }
+
+  if (subcommand === "question") {
+    if (args.length !== 2) return '"metabase question" requires exactly 1 argument: <question-id>';
+    // Accept "7751" or "7751-daily-log-web-pages-paths" (URL slug form)
+    const id = parseInt(args[1], 10);
+    if (isNaN(id) || id <= 0)
+      return `"${args[1]}" is not a valid question ID (expected a positive integer or URL slug)`;
     return null;
   }
 

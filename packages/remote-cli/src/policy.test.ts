@@ -410,4 +410,25 @@ describe("validateMetabaseArgs", () => {
       expect(validateMetabaseArgs(["query", "DELETE FROM bar"])).toBeNull();
     });
   });
+
+  describe("question", () => {
+    it("requires exactly 1 argument", () => {
+      expect(validateMetabaseArgs(["question"])).not.toBeNull();
+      expect(validateMetabaseArgs(["question", "7751", "extra"])).not.toBeNull();
+    });
+
+    it("accepts numeric ID", () => {
+      expect(validateMetabaseArgs(["question", "7751"])).toBeNull();
+    });
+
+    it("accepts URL slug form", () => {
+      expect(validateMetabaseArgs(["question", "7751-daily-log-web-pages-paths"])).toBeNull();
+    });
+
+    it("rejects non-numeric ID", () => {
+      expect(validateMetabaseArgs(["question", "abc"])).not.toBeNull();
+      expect(validateMetabaseArgs(["question", "0"])).not.toBeNull();
+      expect(validateMetabaseArgs(["question", "-1"])).not.toBeNull();
+    });
+  });
 });

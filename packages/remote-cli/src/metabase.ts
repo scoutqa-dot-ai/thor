@@ -87,6 +87,13 @@ export interface QueryResult {
   row_count: number;
 }
 
+export interface QuestionInfo {
+  id: number;
+  name: string;
+  description: string | null;
+  sql: string;
+}
+
 /**
  * List schemas, filtered by METABASE_ALLOWED_SCHEMAS.
  */
@@ -155,6 +162,36 @@ export async function executeQuery(sql: string): Promise<QueryResult> {
     columns: result.data.cols.map((c) => c.name),
     rows: result.data.rows,
     row_count: result.row_count,
+  };
+}
+
+/**
+ * Fetch the native SQL from a saved Metabase question (card).
+ * Accepts a question ID parsed from a numeric string or URL slug like "7751-daily-log-web-pages-paths".
+ */
+export async function getQuestion(questionId: number): Promise<QuestionInfo> {
+  const card = await mbGet<{
+    id: number;
+    name: string;
+    description: string | null;
+    dataset_query: {
+      type: string;
+      native?: { query: string };
+    };
+  }>(`/api/card/${questionId}`);
+
+  if (card.dataset_query.type !== "native" || !card.dataset_query.native?.query) {
+    throw new Error(
+      `Question ${questionId} is not a native SQL question (type: ${card.dataset_query.type}). ` +
+        `Only native SQL questions are supported.`,
+    );
+  }
+
+  return {
+    id: card.id,
+    name: card.name,
+    description: card.description,
+    sql: card.dataset_query.native.query,
   };
 }
 

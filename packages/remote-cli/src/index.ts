@@ -9,7 +9,7 @@ import {
   validateLangfuseArgs,
   validateMetabaseArgs,
 } from "./policy.js";
-import { listSchemas, listTables, getColumns, executeQuery } from "./metabase.js";
+import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.js";
 
 const log = createLogger("remote-cli");
 
@@ -227,6 +227,11 @@ app.post("/exec/metabase", async (req, res) => {
       case "query":
         result = await executeQuery(args[1]);
         break;
+      case "question": {
+        const id = parseInt(args[1], 10);
+        result = await getQuestion(id);
+        break;
+      }
     }
 
     res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
