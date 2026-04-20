@@ -1,0 +1,25 @@
+docker/ingress/static/favicon-v3.svg
+  bc3e8c126fd9d341 1-9
+docker/ingress/static/NOTICE
+  bc3e8c126fd9d341 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "7ad3b153c7965fd19b8f5285877844d66489ecbd",
+  "prompts": {
+    "bc3e8c126fd9d341": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74685d3c-84fb-4a57-bf6e-adcb34abd2d6",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 21,
+      "total_deletions": 0,
+      "accepted_lines": 21,
+      "overriden_lines": 0
+    }
+  }
+}
