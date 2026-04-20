@@ -94,8 +94,8 @@ export function renderConfigPage(props: PageProps): string {
         hx-post="/admin/config"
         hx-target="#status"
         hx-swap="outerHTML"
-        hx-on::before-request="document.getElementById('config').value = window.__cm.state.doc.toString()">
-    <textarea id="config" name="config" style="display:none">${esc(props.raw)}</textarea>
+        hx-vals='js:{config: window.__cm.state.doc.toString()}'>
+    <textarea id="config-initial" style="display:none">${esc(props.raw)}</textarea>
     <div id="editor"></div>
     <div class="actions">
       <button type="submit">Save</button>
@@ -108,7 +108,7 @@ export function renderConfigPage(props: PageProps): string {
   import {EditorView, basicSetup} from "https://esm.sh/codemirror@6.0.1";
   import {json, jsonParseLinter} from "https://esm.sh/@codemirror/lang-json@6.0.1";
   import {linter, lintGutter} from "https://esm.sh/@codemirror/lint@6.8.4";
-  const src = document.getElementById("config");
+  const src = document.getElementById("config-initial");
   const view = new EditorView({
     doc: src.value,
     extensions: [basicSetup, json(), lintGutter(), linter(jsonParseLinter())],
