@@ -116,95 +116,133 @@ approval_tool_for_upstream() {
   esac
 }
 
-# ── 1. Health checks ────────────────────────────────────────────────────────
+# ── Prerequisites ──────────────────────────────────────────────────────────
+#
+# Fail early if the environment isn't ready. Every section below depends on
+# healthy services and a discoverable remote-cli container.
 
 echo ""
-echo "=== Health Checks ==="
+echo "=== Prerequisites ==="
 
+remote_cli_container=$(resolve_remote_cli_container)
 remote_cli_health=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$remote_cli_health" == *"ok"* ]]' "remote-cli is healthy" "got: $remote_cli_health"
-
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy" "got: $runner_health"
-
 gateway_health=$(curl -sf "$GATEWAY_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$gateway_health" == *"ok"* ]]' "Gateway is healthy (deep check)" "got: $gateway_health"
+
+preflight_ok=true
+
+if [[ -z "$remote_cli_container" ]]; then
+  echo "  ✗ remote-cli container not found (set REMOTE_CLI_CONTAINER or start the compose service)"
+  preflight_ok=false
+else
+  echo "  ✓ remote-cli container: $remote_cli_container"
+fi
+
+if [[ "$remote_cli_health" == *"ok"* ]]; then
+  echo "  ✓ remote-cli is healthy"
+else
+  echo "  ✗ remote-cli is not healthy at $REMOTE_CLI_URL"
+  preflight_ok=false
+fi
+
+if [[ "$runner_health" == *"ok"* ]]; then
+  echo "  ✓ runner is healthy"
+else
+  echo "  ✗ runner is not healthy at $RUNNER_URL"
+  preflight_ok=false
+fi
+
+if [[ "$gateway_health" == *"ok"* ]]; then
+  echo "  ✓ gateway is healthy"
+else
+  echo "  ✗ gateway is not healthy at $GATEWAY_URL"
+  preflight_ok=false
+fi
+
+if [[ -n "$remote_cli_container" ]]; then
+  DAYTONA_SNAPSHOT=$(docker exec "$remote_cli_container" printenv DAYTONA_SNAPSHOT 2>/dev/null || true)
+  if [[ -n "$DAYTONA_SNAPSHOT" ]]; then
+    echo "  ✓ DAYTONA_SNAPSHOT: $DAYTONA_SNAPSHOT"
+  else
+    echo "  ✗ DAYTONA_SNAPSHOT is not set in remote-cli (sandbox tests will fail)"
+    preflight_ok=false
+  fi
+fi
+
+if [[ "$preflight_ok" != "true" ]]; then
+  echo ""
+  echo "FAIL — prerequisites not met"
+  exit 1
+fi
 
 # ── 2. Remote-cli git/gh auth ────────────────────────────────────────────────
 
 echo ""
 echo "=== Remote-CLI Git/GH Auth ==="
 
-remote_cli_container=$(resolve_remote_cli_container)
+[[ -n "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+[[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
+mkdir -p "$(dirname "$HOST_REMOTE_CLI_GIT_REPO_DIR")" "$(dirname "$HOST_REMOTE_CLI_WORKTREE_DIR")"
 
-if [[ -z "$remote_cli_container" ]]; then
-  assert 'false' "remote-cli container is discoverable for docker exec" \
-    "Set REMOTE_CLI_CONTAINER or ensure the remote-cli compose service is running"
-else
-  [[ -n "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
-  [[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
-  mkdir -p "$(dirname "$HOST_REMOTE_CLI_GIT_REPO_DIR")" "$(dirname "$HOST_REMOTE_CLI_WORKTREE_DIR")"
+echo "  Cloning $REMOTE_CLI_GIT_REPO_URL inside $remote_cli_container..."
+clone_output=$(docker exec "$remote_cli_container" \
+  git clone "$REMOTE_CLI_GIT_REPO_URL" "$REMOTE_CLI_GIT_REPO_DIR" 2>&1 || true)
+clone_origin=$(docker exec "$remote_cli_container" \
+  git -C "$REMOTE_CLI_GIT_REPO_DIR" remote get-url origin 2>/dev/null || echo "")
 
-  echo "  Cloning $REMOTE_CLI_GIT_REPO_URL inside $remote_cli_container..."
-  clone_output=$(docker exec "$remote_cli_container" \
-    git clone "$REMOTE_CLI_GIT_REPO_URL" "$REMOTE_CLI_GIT_REPO_DIR" 2>&1 || true)
-  clone_origin=$(docker exec "$remote_cli_container" \
-    git -C "$REMOTE_CLI_GIT_REPO_DIR" remote get-url origin 2>/dev/null || echo "")
+assert '[[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" ]]' \
+  "docker exec in remote-cli cloned the GitHub repo" \
+  "output: ${clone_output:0:300}"
+assert '[[ "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]' \
+  "cloned repo origin matches expected URL" \
+  "origin='$clone_origin'"
 
-  assert '[[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" ]]' \
-    "docker exec in remote-cli cloned the GitHub repo" \
-    "output: ${clone_output:0:300}"
-  assert '[[ "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]' \
-    "cloned repo origin matches expected URL" \
-    "origin='$clone_origin'"
+if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" && "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]; then
+  REMOTE_CLI_GH_CORR_KEY="e2e-remote-cli-gh-${REMOTE_CLI_AUTH_TS}"
+  echo "  Sending trigger #1 (asking agent to run gh pr list)..."
+  gh_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+    -H 'Content-Type: application/json' \
+    -d "{\"prompt\":\"Run: gh pr list --limit 5\\nIf the command succeeds, reply with GH_PR_LIST_OK on the first line, then summarize the result in one short sentence. If the command fails, reply with GH_PR_LIST_FAILED on the first line and include the error.\",\"correlationKey\":\"$REMOTE_CLI_GH_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+    --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+  gh_trigger=$(echo "$gh_trigger_raw" | parse_done)
 
-  if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" && "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]; then
-    REMOTE_CLI_GH_CORR_KEY="e2e-remote-cli-gh-${REMOTE_CLI_AUTH_TS}"
-    echo "  Sending trigger #1 (asking agent to run gh pr list)..."
-    gh_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
-      -H 'Content-Type: application/json' \
-      -d "{\"prompt\":\"Run: gh pr list --limit 5\\nIf the command succeeds, reply with GH_PR_LIST_OK on the first line, then summarize the result in one short sentence. If the command fails, reply with GH_PR_LIST_FAILED on the first line and include the error.\",\"correlationKey\":\"$REMOTE_CLI_GH_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
-      --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
-    gh_trigger=$(echo "$gh_trigger_raw" | parse_done)
+  gh_session=$(json_field "$gh_trigger" "sessionId")
+  gh_status=$(json_field "$gh_trigger" "status")
+  gh_response_text=$(json_field "$gh_trigger" "response")
+  gh_response_ok=$(response_contains "$gh_trigger" "GH_PR_LIST_OK")
 
-    gh_session=$(json_field "$gh_trigger" "sessionId")
-    gh_status=$(json_field "$gh_trigger" "status")
-    gh_response_text=$(json_field "$gh_trigger" "response")
-    gh_response_ok=$(response_contains "$gh_trigger" "GH_PR_LIST_OK")
+  assert '[[ -n "$gh_session" ]]' "GH auth trigger: got a session ID" "sessionId='$gh_session'"
+  assert '[[ "$gh_status" == "completed" ]]' "GH auth trigger: completed successfully" "status='$gh_status'"
+  assert '[[ "$gh_response_ok" == "yes" ]]' \
+    "GH auth trigger: agent successfully listed PRs" \
+    "response: ${gh_response_text:0:300}"
 
-    assert '[[ -n "$gh_session" ]]' "GH auth trigger: got a session ID" "sessionId='$gh_session'"
-    assert '[[ "$gh_status" == "completed" ]]' "GH auth trigger: completed successfully" "status='$gh_status'"
-    assert '[[ "$gh_response_ok" == "yes" ]]' \
-      "GH auth trigger: agent successfully listed PRs" \
-      "response: ${gh_response_text:0:300}"
+  REMOTE_CLI_WORKTREE_CORR_KEY="e2e-remote-cli-worktree-${REMOTE_CLI_AUTH_TS}"
+  echo "  Sending trigger #2 (asking agent to create a worktree)..."
+  worktree_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+    -H 'Content-Type: application/json' \
+    -d "{\"prompt\":\"Run: git worktree add -b $REMOTE_CLI_WORKTREE_BRANCH $REMOTE_CLI_WORKTREE_DIR HEAD\\nIf the command succeeds, reply with GIT_WORKTREE_OK on the first line, then mention the branch name. If the command fails, reply with GIT_WORKTREE_FAILED on the first line and include the error.\",\"correlationKey\":\"$REMOTE_CLI_WORKTREE_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+    --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+  worktree_trigger=$(echo "$worktree_trigger_raw" | parse_done)
 
-    REMOTE_CLI_WORKTREE_CORR_KEY="e2e-remote-cli-worktree-${REMOTE_CLI_AUTH_TS}"
-    echo "  Sending trigger #2 (asking agent to create a worktree)..."
-    worktree_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
-      -H 'Content-Type: application/json' \
-      -d "{\"prompt\":\"Run: git worktree add -b $REMOTE_CLI_WORKTREE_BRANCH $REMOTE_CLI_WORKTREE_DIR HEAD\\nIf the command succeeds, reply with GIT_WORKTREE_OK on the first line, then mention the branch name. If the command fails, reply with GIT_WORKTREE_FAILED on the first line and include the error.\",\"correlationKey\":\"$REMOTE_CLI_WORKTREE_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
-      --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
-    worktree_trigger=$(echo "$worktree_trigger_raw" | parse_done)
+  worktree_session=$(json_field "$worktree_trigger" "sessionId")
+  worktree_status=$(json_field "$worktree_trigger" "status")
+  worktree_response_text=$(json_field "$worktree_trigger" "response")
+  worktree_response_ok=$(response_contains "$worktree_trigger" "GIT_WORKTREE_OK")
+  worktree_list=$(docker exec "$remote_cli_container" \
+    git -C "$REMOTE_CLI_GIT_REPO_DIR" worktree list 2>/dev/null || echo "")
 
-    worktree_session=$(json_field "$worktree_trigger" "sessionId")
-    worktree_status=$(json_field "$worktree_trigger" "status")
-    worktree_response_text=$(json_field "$worktree_trigger" "response")
-    worktree_response_ok=$(response_contains "$worktree_trigger" "GIT_WORKTREE_OK")
-    worktree_list=$(docker exec "$remote_cli_container" \
-      git -C "$REMOTE_CLI_GIT_REPO_DIR" worktree list 2>/dev/null || echo "")
-
-    assert '[[ -n "$worktree_session" ]]' "Worktree trigger: got a session ID" "sessionId='$worktree_session'"
-    assert '[[ "$worktree_status" == "completed" ]]' "Worktree trigger: completed successfully" "status='$worktree_status'"
-    assert '[[ "$worktree_response_ok" == "yes" ]]' \
-      "Worktree trigger: agent created the worktree" \
-      "response: ${worktree_response_text:0:300}"
-    assert '[[ -d "$HOST_REMOTE_CLI_WORKTREE_DIR" ]]' \
-      "Worktree trigger: worktree path exists on disk" \
-      "expected path: $HOST_REMOTE_CLI_WORKTREE_DIR"
-    assert '[[ "$worktree_list" == *"$REMOTE_CLI_WORKTREE_DIR"* ]]' \
-      "Worktree trigger: cloned repo registers the new worktree" \
-      "worktree list: ${worktree_list:0:300}"
-  fi
+  assert '[[ -n "$worktree_session" ]]' "Worktree trigger: got a session ID" "sessionId='$worktree_session'"
+  assert '[[ "$worktree_status" == "completed" ]]' "Worktree trigger: completed successfully" "status='$worktree_status'"
+  assert '[[ "$worktree_response_ok" == "yes" ]]' \
+    "Worktree trigger: agent created the worktree" \
+    "response: ${worktree_response_text:0:300}"
+  assert '[[ -d "$HOST_REMOTE_CLI_WORKTREE_DIR" ]]' \
+    "Worktree trigger: worktree path exists on disk" \
+    "expected path: $HOST_REMOTE_CLI_WORKTREE_DIR"
+  assert '[[ "$worktree_list" == *"$REMOTE_CLI_WORKTREE_DIR"* ]]' \
+    "Worktree trigger: cloned repo registers the new worktree" \
+    "worktree list: ${worktree_list:0:300}"
 fi
 
 # ── 3. Session resume via correlation key ────────────────────────────────────
@@ -655,19 +693,20 @@ sandbox_exec_exit() {
 SBX_REPO_DIR="$REMOTE_CLI_GIT_REPO_DIR"
 SBX_HOST_REPO_DIR="$HOST_REMOTE_CLI_GIT_REPO_DIR"
 
-# Pick an old commit (first commit) and a recent one
+# Pick an old commit (first commit) and a recent one.
+# These can fail if the section 2 clone didn't succeed — || true lets the guard below handle it.
 SBX_OLD_SHA=$(docker exec "$remote_cli_container" \
-  git -C "$SBX_REPO_DIR" rev-list --reverse HEAD 2>/dev/null | head -1)
+  git -C "$SBX_REPO_DIR" rev-list --reverse HEAD 2>/dev/null | head -1) || true
 SBX_NEW_SHA=$(docker exec "$remote_cli_container" \
-  git -C "$SBX_REPO_DIR" rev-parse HEAD 2>/dev/null)
+  git -C "$SBX_REPO_DIR" rev-parse HEAD 2>/dev/null) || true
 
 SBX_TS=$(date +%s)
 SBX_BRANCH="e2e-sandbox-${SBX_TS}"
 SBX_WORKTREE_DIR="/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH}"
 SBX_HOST_WORKTREE_DIR="${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH}"
 
-if [[ -z "$SBX_OLD_SHA" || -z "$SBX_NEW_SHA" || -z "$remote_cli_container" ]]; then
-  echo "  ⚠ Prerequisites missing (thor clone or container) — skipping sandbox tests"
+if [[ -z "$SBX_OLD_SHA" || -z "$SBX_NEW_SHA" ]]; then
+  echo "  ⚠ Prerequisites missing (section 2 clone may have failed) — skipping sandbox tests"
 elif [[ "$SBX_OLD_SHA" == "$SBX_NEW_SHA" ]]; then
   echo "  ⚠ Repo has only one commit — skipping sandbox tests"
 else

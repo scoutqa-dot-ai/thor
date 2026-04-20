@@ -350,6 +350,7 @@ async function bundleAndUpload(
       "if [ ! -d .git ]; then git init; fi",
       `git bundle unbundle ${bundlePath}`,
       `git reset --hard ${shellQuote(targetSha)}`,
+      `git checkout --detach`,
       `rm -f ${bundlePath}`,
     ].join(" && ");
 
