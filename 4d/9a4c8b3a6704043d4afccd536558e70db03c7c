@@ -1,0 +1,23 @@
+packages/admin/src/views.ts
+  70714d4e7bae0af8 97-98,111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4d9a4c8b3a6704043d4afccd536558e70db03c7c",
+  "prompts": {
+    "70714d4e7bae0af8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ccf85719-d301-4c3f-b7da-dee11714cd98",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 105,
+      "total_deletions": 24,
+      "accepted_lines": 96,
+      "overriden_lines": 0
+    }
+  }
+}
