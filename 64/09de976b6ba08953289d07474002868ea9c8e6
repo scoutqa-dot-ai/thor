@@ -1,0 +1,23 @@
+docs/plan/2026041901_deps-cache-proxy.md
+  1b7f9fa1bc046ccc 1-1099
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "6409de976b6ba08953289d07474002868ea9c8e6",
+  "prompts": {
+    "1b7f9fa1bc046ccc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "79082954-c59e-435a-bf43-eb4f299ba4c2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Conductor <conductor@noreply>",
+      "messages": [],
+      "total_additions": 1108,
+      "total_deletions": 9,
+      "accepted_lines": 1099,
+      "overriden_lines": 0
+    }
+  }
+}
