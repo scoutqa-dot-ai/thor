@@ -26,7 +26,6 @@ import {
   shellQuote,
   syncSandbox,
   withCwdLock,
-  THOR_BRANCH_LABEL,
   THOR_CWD_LABEL,
   THOR_MANAGED_LABEL,
   THOR_SHA_LABEL,
@@ -85,9 +84,14 @@ function parseSandboxMode(input: unknown): SandboxMode | null {
   return null;
 }
 
-function buildSandboxName(cwd: string, branch: string): string {
-  const repoSegment = cwd.split("/")[3] || "repo";
-  const slug = `${repoSegment}-${branch}`
+function buildSandboxName(cwd: string): string {
+  // Use the full cwd path (unique per worktree) to avoid name collisions.
+  // e.g. /workspace/worktrees/katalon-g5/fix-bug → thor-katalon-g5-fix-bug
+  const segments = cwd.split("/").filter(Boolean);
+  // Take the last two path segments for a readable name
+  const slug = segments
+    .slice(-2)
+    .join("-")
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
@@ -157,23 +161,13 @@ async function ensureSandbox(cwd: string, currentSha: string) {
   const existing = await findSandboxForCwd(cwd);
   if (existing) return existing;
 
-  const gitBranch = await execCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd);
-  if ((gitBranch.exitCode ?? 0) !== 0) {
-    throw new SandboxError(
-      "Failed to resolve worktree branch",
-      `git rev-parse --abbrev-ref HEAD failed: ${gitBranch.stderr || gitBranch.stdout}`,
-    );
-  }
-  const branch = gitBranch.stdout.trim() || "detached";
-
   const labels = {
     [THOR_MANAGED_LABEL]: "true",
     [THOR_CWD_LABEL]: cwd,
-    [THOR_BRANCH_LABEL]: branch,
     [THOR_SHA_LABEL]: currentSha,
   };
 
-  return createSandbox(buildSandboxName(cwd, branch), cwd, currentSha, labels);
+  return createSandbox(buildSandboxName(cwd), cwd, currentSha, labels);
 }
 
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
@@ -326,6 +320,16 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           res.status(400).json({ stdout: "", stderr: cwdError, exitCode: 1 });
           return;
         }
+
+        if (!cwd.startsWith("/workspace/worktrees/")) {
+          res.status(400).json({
+            stdout: "",
+            stderr:
+              "Sandbox requires a worktree. Create one first with: git worktree add -b <branch> /workspace/worktrees/<repo>/<branch> HEAD",
+            exitCode: 1,
+          });
+          return;
+        }
       }
 
       if (mode === "exec") {
@@ -353,6 +357,29 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           });
           return;
         }
+
+        // Block sh — the sandbox CLI already wraps commands with `bash -lc`,
+        // so `sandbox sh -lc '...'` creates a double shell invocation where
+        // dash (Ubuntu's /bin/sh) fails on bash-only init scripts in .profile.
+        if (args[0] === "sh") {
+          res.status(400).json({
+            stdout: "",
+            stderr: [
+              "sh is not allowed in the sandbox.",
+              "",
+              "Every sandbox command already runs inside `bash -lc`, which sources .profile",
+              "(nvm, SDKMAN, pyenv). Using `sh` spawns dash, which cannot parse those scripts.",
+              "",
+              "Instead:",
+              "  Single command:   sandbox mvn test -pl module-auth",
+              "  Shell chaining:   sandbox bash -c 'mvn clean && mvn test'",
+              "  Pipelines:        sandbox bash -c 'pytest -q | tail -20'",
+              "  Version switch:   sandbox sdk default java 17.0.15-tem   (then: sandbox mvn test)",
+            ].join("\n"),
+            exitCode: 1,
+          });
+          return;
+        }
       }
 
       logInfo(log, "exec_sandbox", {
@@ -368,7 +395,6 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           id: sandbox.id,
           name: sandbox.name,
           cwd: sandbox.labels?.[THOR_CWD_LABEL] || "",
-          branch: sandbox.labels?.[THOR_BRANCH_LABEL] || "",
           sha: sandbox.labels?.[THOR_SHA_LABEL] || "",
         }));
 

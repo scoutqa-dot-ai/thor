@@ -21,7 +21,7 @@ Examples:
 sandbox mvn test -pl module-auth
 sandbox ./gradlew build
 sandbox pytest -v --tb=short
-sandbox sh -lc 'make build && make test'
+sandbox bash -c 'make build && make test'
 sandbox npm test
 ```
 
@@ -29,8 +29,8 @@ For a single command, write it naturally: `sandbox mvn test -pl module-auth`.
 For shell chaining, pipelines, or redirects, wrap the command explicitly:
 
 ```bash
-sandbox sh -lc 'make build && make test'
-sandbox sh -lc 'pytest -q | tail -20'
+sandbox bash -c 'make build && make test'
+sandbox bash -c 'pytest -q | tail -20'
 ```
 
 ---
@@ -78,19 +78,17 @@ The sandbox comes with version managers and common runtimes ready to use:
 - **Python**: 3.12 (default), 3.11, 3.13 via pyenv. `uv` available for fast installs.
 - **Docker**: Docker CE with docker compose. Start the daemon with `sudo dockerd &` before use.
 
-To use a non-default version for one command, chain it:
+To use a non-default version, set it before running your command. The change persists across sandbox calls, so you only need to set it once:
 
 ```bash
-sandbox sh -lc 'source "$HOME/.nvm/nvm.sh" && nvm use 20 && npm test'
-sandbox sh -lc 'source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk use java 17.0.15-tem && mvn test'
-```
+sandbox sdk default java 17.0.15-tem    # switch Java to 17
+sandbox mvn test                         # uses Java 17
 
-To change the default permanently (persists across sandbox calls):
+sandbox nvm alias default 20             # switch Node to 20
+sandbox npm test                         # uses Node 20
 
-```bash
-sandbox nvm alias default 20
-sandbox sdk default java 17.0.15-tem
-sandbox pyenv global 3.11
+sandbox pyenv global 3.11                # switch Python to 3.11
+sandbox pytest -v                        # uses Python 3.11
 ```
 
 ---
