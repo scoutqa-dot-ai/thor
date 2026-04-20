@@ -46,6 +46,83 @@ export interface ProxyConfig {
   approve: string[];
 }
 
+// --- Validator ---
+
+export interface ValidationIssue {
+  path: string;
+  message: string;
+}
+
+export type ValidationResult =
+  | { ok: true; data: WorkspaceConfig }
+  | { ok: false; issues: ValidationIssue[] };
+
+/**
+ * Validate an already-parsed config object. Aggregates all issues
+ * (schema, duplicate channels, unknown proxies) before returning.
+ */
+export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    Object.prototype.hasOwnProperty.call(parsed, "proxies")
+  ) {
+    return {
+      ok: false,
+      issues: [
+        {
+          path: "proxies",
+          message:
+            'Top-level "proxies" has moved to code (packages/common/src/proxies.ts). Remove it from config.json.',
+        },
+      ],
+    };
+  }
+
+  const result = WorkspaceConfigSchema.safeParse(parsed);
+  if (!result.success) {
+    return {
+      ok: false,
+      issues: result.error.issues.map((i) => ({
+        path: i.path.length > 0 ? i.path.join(".") : "(root)",
+        message: i.message,
+      })),
+    };
+  }
+
+  const issues: ValidationIssue[] = [];
+
+  const seen = new Map<string, string>(); // channel → repo
+  for (const [repo, config] of Object.entries(result.data.repos)) {
+    for (const channel of config.channels ?? []) {
+      const existing = seen.get(channel);
+      if (existing) {
+        issues.push({
+          path: `repos.${repo}.channels`,
+          message: `Duplicate channel ID "${channel}" — already mapped to repo "${existing}"`,
+        });
+      } else {
+        seen.set(channel, repo);
+      }
+    }
+  }
+
+  const proxyNames = new Set<string>(PROXY_NAMES);
+  for (const [repo, repoConfig] of Object.entries(result.data.repos)) {
+    for (const proxyRef of repoConfig.proxies ?? []) {
+      if (!proxyNames.has(proxyRef)) {
+        issues.push({
+          path: `repos.${repo}.proxies`,
+          message: `Unknown proxy "${proxyRef}". Available proxies: ${PROXY_NAMES.join(", ")}`,
+        });
+      }
+    }
+  }
+
+  if (issues.length > 0) return { ok: false, issues };
+  return { ok: true, data: result.data };
+}
+
 // --- Loader ---
 
 const REPOS_PREFIX = "/workspace/repos";
@@ -73,51 +150,11 @@ export function loadWorkspaceConfig(path: string): WorkspaceConfig {
     );
   }
 
-  if (
-    parsed &&
-    typeof parsed === "object" &&
-    Object.prototype.hasOwnProperty.call(parsed, "proxies")
-  ) {
-    throw new Error(
-      'Top-level "proxies" has moved to code (packages/common/src/proxies.ts). Remove it from config.json.',
-    );
+  const result = validateWorkspaceConfig(parsed);
+  if (!result.ok) {
+    const lines = result.issues.map((i) => `  - ${i.path}: ${i.message}`);
+    throw new Error(`Invalid workspace config at ${path}:\n${lines.join("\n")}`);
   }
-
-  const result = WorkspaceConfigSchema.safeParse(parsed);
-  if (!result.success) {
-    const issues = result.error.issues.map((i) => {
-      const issuePath = i.path.length > 0 ? i.path.join(".") : "(root)";
-      return `  - ${issuePath}: ${i.message}`;
-    });
-    throw new Error(`Invalid workspace config at ${path}:\n${issues.join("\n")}`);
-  }
-
-  // Detect duplicate channel IDs across repos
-  const seen = new Map<string, string>(); // channel → repo
-  for (const [repo, config] of Object.entries(result.data.repos)) {
-    for (const channel of config.channels ?? []) {
-      const existing = seen.get(channel);
-      if (existing) {
-        throw new Error(
-          `Duplicate channel ID "${channel}" in workspace config: mapped to both "${existing}" and "${repo}"`,
-        );
-      }
-      seen.set(channel, repo);
-    }
-  }
-
-  // Validate repo.proxies entries reference hardcoded registry names.
-  const proxyNames = new Set<string>(PROXY_NAMES);
-  for (const [repo, repoConfig] of Object.entries(result.data.repos)) {
-    for (const proxyRef of repoConfig.proxies ?? []) {
-      if (!proxyNames.has(proxyRef)) {
-        throw new Error(
-          `Repo "${repo}" references unknown proxy "${proxyRef}" in workspace config. Available proxies: ${PROXY_NAMES.join(", ")}`,
-        );
-      }
-    }
-  }
-
   return result.data;
 }
 
