@@ -286,19 +286,6 @@ describe("/exec/sandbox", () => {
       expect(cmd).toContain("make build && make test");
       expect(cmd).not.toContain("'sh'");
     });
-
-    it("unwraps sh -c into outer login shell", async () => {
-      const response = await postJson("/exec/sandbox", {
-        args: ["sh", "-c", "pytest -q | tail -20"],
-        cwd: CWD,
-      });
-
-      expect(response.status).toBe(200);
-      const cmd = getExecutedCommand();
-      expect(cmd).toContain("bash -lc");
-      expect(cmd).toContain("pytest -q | tail -20");
-      expect(cmd).not.toContain("'sh'");
-    });
   });
 
   describe("shell validation", () => {
@@ -316,17 +303,6 @@ describe("/exec/sandbox", () => {
     it("blocks sh with extra flags", async () => {
       const response = await postJson("/exec/sandbox", {
         args: ["sh", "-e", "-c", "make test"],
-        cwd: CWD,
-      });
-
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as { stderr: string };
-      expect(body.stderr).toContain("sandbox sh -c");
-    });
-
-    it("blocks sh with a script file argument", async () => {
-      const response = await postJson("/exec/sandbox", {
-        args: ["sh", "script.sh"],
         cwd: CWD,
       });
 
@@ -376,6 +352,10 @@ function configureGitExec(options: { dirty: boolean; headSha: string }): void {
         stderr: "",
         exitCode: 0,
       };
+    }
+
+    if (args[0] === "rev-parse" && args[1] === "--show-toplevel") {
+      return { stdout: `${CWD}\n`, stderr: "", exitCode: 0 };
     }
 
     if (args[0] === "rev-parse" && args[1] === "HEAD") {

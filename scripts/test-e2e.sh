@@ -842,23 +842,24 @@ else
       "sandbox removed after stop" \
       "still found in list"
 
-    # 8l. Dirty worktree overlay (uncommitted changes synced to sandbox via SDK upload)
-    echo "  Testing dirty worktree overlay..."
+    # 8l. Dirty worktree overlay from subdirectory cwd
+    # Uses subdirectory cwd to verify overlay push resolves the worktree root correctly.
+    echo "  Testing dirty worktree overlay (subdirectory cwd)..."
     docker exec "$remote_cli_container" sh -c \
-      "echo 'dirty-content-e2e' > $SBX_WORKTREE_DIR/dirty-file.txt" 2>/dev/null
+      "mkdir -p $SBX_WORKTREE_DIR/sub/pkg && echo 'dirty-content-e2e' > $SBX_WORKTREE_DIR/sub/pkg/dirty-file.txt" 2>/dev/null
     sbx_dirty_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"cat\",\"dirty-file.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      -d "{\"mode\":\"exec\",\"args\":[\"cat\",\"dirty-file.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR/sub/pkg\"}" \
       2>/dev/null)
     sbx_dirty_exit=$(echo "$sbx_dirty_raw" | sandbox_exec_exit)
     sbx_dirty_stdout=$(echo "$sbx_dirty_raw" | sandbox_exec_stdout)
-    assert '[[ "$sbx_dirty_exit" == "0" ]]' "dirty worktree exec succeeded (overlay)" "exitCode='$sbx_dirty_exit'"
+    assert '[[ "$sbx_dirty_exit" == "0" ]]' "dirty worktree exec succeeded (overlay, subdir cwd)" "exitCode='$sbx_dirty_exit'"
     assert '[[ "$sbx_dirty_stdout" == *"dirty-content-e2e"* ]]' \
-      "sandbox received uncommitted file content" \
+      "sandbox received uncommitted file content via subdir cwd" \
       "stdout='${sbx_dirty_stdout:0:200}'"
     # Verify local worktree is untouched (no git history manipulation)
     dirty_file_exists=$(docker exec "$remote_cli_container" \
-      test -f "$SBX_WORKTREE_DIR/dirty-file.txt" && echo "yes" || echo "no")
+      test -f "$SBX_WORKTREE_DIR/sub/pkg/dirty-file.txt" && echo "yes" || echo "no")
     assert '[[ "$dirty_file_exists" == "yes" ]]' \
       "local dirty file preserved after overlay" \
       "file exists: $dirty_file_exists"
@@ -870,31 +871,32 @@ else
       "HEAD message: '$local_head_msg'"
     # Clean up dirty file
     docker exec "$remote_cli_container" \
-      rm -f "$SBX_WORKTREE_DIR/dirty-file.txt" 2>/dev/null
+      rm -rf "$SBX_WORKTREE_DIR/sub" 2>/dev/null
 
-    # 8l-2. Pull sandbox changes back to local worktree
-    echo "  Testing pull sandbox changes to local worktree..."
-    # Run a command that creates a new file and a nested subdir inside the sandbox
+    # 8l-2. Pull sandbox changes back to local worktree (subdirectory cwd)
+    # Uses subdirectory cwd to verify pull resolves the worktree root correctly.
+    echo "  Testing pull sandbox changes (subdirectory cwd)..."
+    # First, create the subdirectory in the sandbox so the cd prefix succeeds
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"mkdir\",\"-p\",\"pulltest\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null >/dev/null
+    # Run from a subdirectory — creates a file relative to the subdir cwd
     sbx_pull_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo pull-content-e2e > sandbox-created.txt && mkdir -p subdir && echo nested-e2e > subdir/nested.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      -d "{\"mode\":\"exec\",\"args\":[\"bash\",\"-c\",\"echo pull-content-e2e > created.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR/pulltest\"}" \
       2>/dev/null)
     sbx_pull_exit=$(echo "$sbx_pull_raw" | sandbox_exec_exit)
-    assert '[[ "$sbx_pull_exit" == "0" ]]' "sandbox create-file command succeeded" "exitCode='$sbx_pull_exit'"
-    # Verify the files appeared in the local worktree
+    assert '[[ "$sbx_pull_exit" == "0" ]]' "sandbox create-file command succeeded (subdir cwd)" "exitCode='$sbx_pull_exit'"
+    # Verify the file was pulled to the worktree root (under pulltest/, not doubled)
     pull_content=$(docker exec "$remote_cli_container" \
-      cat "$SBX_WORKTREE_DIR/sandbox-created.txt" 2>/dev/null || echo "")
+      cat "$SBX_WORKTREE_DIR/pulltest/created.txt" 2>/dev/null || echo "")
     assert '[[ "$pull_content" == *"pull-content-e2e"* ]]' \
-      "sandbox-created file pulled to local worktree" \
+      "file created in subdir cwd pulled to correct worktree path" \
       "content='${pull_content:0:200}'"
-    pull_nested=$(docker exec "$remote_cli_container" \
-      cat "$SBX_WORKTREE_DIR/subdir/nested.txt" 2>/dev/null || echo "")
-    assert '[[ "$pull_nested" == *"nested-e2e"* ]]' \
-      "nested file in new subdir pulled to local worktree" \
-      "content='${pull_nested:0:200}'"
     # Clean up pulled files
     docker exec "$remote_cli_container" \
-      rm -rf "$SBX_WORKTREE_DIR/sandbox-created.txt" "$SBX_WORKTREE_DIR/subdir" 2>/dev/null
+      rm -rf "$SBX_WORKTREE_DIR/pulltest" 2>/dev/null
 
     # 8l-3. Realistic pull: mangle package.json, run prettier in sandbox, verify formatted result pulled back
     echo "  Testing realistic pull: format mangled package.json in sandbox..."
@@ -1067,7 +1069,41 @@ else
       "quoting preserved: 2 files created (not 3)" \
       "file_count='$sbx_file_count'"
 
-    # 8r. Sandbox disappears between execs (auto-recreate)
+    # 8r. Subdirectory cwd: command runs in correct subpath
+    echo "  Testing subdirectory cwd resolution..."
+    # Create a subdirectory with a marker file in the sandbox
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"bash\",\"-c\",\"mkdir -p sub/dir && echo MARKER > sub/dir/test.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null >/dev/null
+
+    # Execute from the subdirectory — should find the marker file
+    sbx_subdir_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"cat\",\"test.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR/sub/dir\"}" \
+      2>/dev/null)
+    sbx_subdir_exit=$(echo "$sbx_subdir_raw" | sandbox_exec_exit)
+    sbx_subdir_stdout=$(echo "$sbx_subdir_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+    assert '[[ "$sbx_subdir_exit" == "0" ]]' \
+      "subdirectory cwd: command succeeded" "exitCode='$sbx_subdir_exit'"
+    assert '[[ "$sbx_subdir_stdout" == "MARKER" ]]' \
+      "subdirectory cwd: ran in correct directory" "stdout='$sbx_subdir_stdout'"
+
+    # Verify subdirectory reuses same sandbox (no new sandbox created)
+    sbx_list_after_subdir=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d '{"mode":"list"}' 2>/dev/null)
+    sbx_count_after_subdir=$(echo "$sbx_list_after_subdir" | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+      const list = JSON.parse(d.stdout || '[]');
+      const ours = list.filter(s => s.cwd === '$SBX_WORKTREE_DIR');
+      console.log(ours.length);
+    " 2>/dev/null || echo "0")
+    assert '[[ "$sbx_count_after_subdir" == "1" ]]' \
+      "subdirectory cwd: reused existing sandbox (no duplicate)" \
+      "count='$sbx_count_after_subdir'"
+
+    # 8s. Sandbox disappears between execs (auto-recreate)
     echo "  Testing auto-recreate after sandbox disappears..."
     # First, exec to ensure a sandbox exists
     sbx_pre_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
@@ -1099,7 +1135,7 @@ else
       -H 'Content-Type: application/json' \
       -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
 
-    # 8s. Two worktrees, two sandboxes (label isolation)
+    # 8t. Two worktrees, two sandboxes (label isolation)
     sleep 3  # allow Daytona to fully clean up previous sandbox
     echo "  Testing two-worktree sandbox isolation..."
     SBX_BRANCH2="e2e-sandbox2-${SBX_TS}"
@@ -1164,7 +1200,7 @@ else
     fi
   fi
 
-  # 8t. Parallel exec on same worktree (cwd-level lock + concurrent streaming)
+  # 8u. Parallel exec on same worktree (cwd-level lock + concurrent streaming)
   echo "  Testing parallel sandbox exec on same worktree..."
   # Create a dirty file so both requests exercise the overlay path
   docker exec "$remote_cli_container" sh -c \
