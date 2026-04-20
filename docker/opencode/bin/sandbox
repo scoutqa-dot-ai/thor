@@ -1,0 +1,113 @@
+#!/bin/sh
+set -eu
+
+exec node - "$@" <<'NODE'
+const args = process.argv.slice(2);
+const first = args[0] || "";
+const cwd = process.cwd();
+const baseUrl = process.env.THOR_REMOTE_CLI_URL || "http://localhost:3004";
+
+let mode = "exec";
+let payloadArgs = args;
+
+if (first.startsWith("--")) {
+  if (first === "--create") mode = "create";
+  else if (first === "--stop") mode = "stop";
+  else if (first === "--list") mode = "list";
+  else {
+    process.stderr.write(`Unknown sandbox flag: ${first}\n`);
+    process.exit(1);
+  }
+  payloadArgs = [];
+}
+
+if (mode === "exec" && payloadArgs.length === 0) {
+  process.stderr.write("Usage: sandbox <command> [args...]\n");
+  process.exit(1);
+}
+
+const sessionId = process.env.THOR_OPENCODE_SESSION_ID || "";
+const callId = process.env.THOR_OPENCODE_CALL_ID || "";
+
+const headers = {
+  "Content-Type": "application/json",
+  ...(sessionId ? { "x-thor-session-id": sessionId } : {}),
+  ...(callId ? { "x-thor-call-id": callId } : {}),
+};
+
+const res = await fetch(`${baseUrl}/exec/sandbox`, {
+  method: "POST",
+  headers,
+  body: JSON.stringify({ mode, args: payloadArgs, cwd }),
+});
+
+if (!res.ok && !res.headers.get("content-type")?.includes("json")) {
+  const text = await res.text();
+  process.stderr.write(text || `sandbox: HTTP ${res.status}\n`);
+  process.exit(1);
+}
+
+const contentType = res.headers.get("content-type") || "";
+
+function handleNdjsonMsg(msg) {
+  if (msg.stream === "stdout" && typeof msg.data === "string") process.stdout.write(msg.data);
+  if (msg.stream === "stderr" && typeof msg.data === "string") process.stderr.write(msg.data);
+}
+
+if (contentType.includes("application/x-ndjson")) {
+  let exitCode = 1;
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  for await (const chunk of res.body || []) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line) continue;
+      try {
+        const msg = JSON.parse(line);
+        handleNdjsonMsg(msg);
+        if (typeof msg.exitCode === "number") exitCode = msg.exitCode;
+      } catch {
+        process.stderr.write(line + "\n");
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    try {
+      const msg = JSON.parse(buffer);
+      handleNdjsonMsg(msg);
+      if (typeof msg.exitCode === "number") exitCode = msg.exitCode;
+    } catch {
+      process.stderr.write(buffer + "\n");
+    }
+  }
+
+  process.exit(exitCode);
+}
+
+const rawBody = await res.text();
+let body = null;
+try {
+  body = rawBody ? JSON.parse(rawBody) : null;
+} catch {
+  if (rawBody) process.stderr.write(rawBody + (rawBody.endsWith("\n") ? "" : "\n"));
+  process.exit(res.ok ? 0 : 1);
+}
+
+if (body && typeof body === "object") {
+  const stdout = typeof body.stdout === "string" ? body.stdout : "";
+  const stderr = typeof body.stderr === "string" ? body.stderr : "";
+  const exitCode = typeof body.exitCode === "number" ? body.exitCode : res.ok ? 0 : 1;
+
+  if (stdout) process.stdout.write(stdout);
+  if (stderr) process.stderr.write(stderr);
+  process.exit(exitCode);
+}
+
+if (rawBody) process.stdout.write(rawBody);
+process.exit(res.ok ? 0 : 1);
+NODE
