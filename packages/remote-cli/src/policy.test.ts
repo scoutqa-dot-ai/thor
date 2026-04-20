@@ -130,11 +130,14 @@ describe("validateGitArgs", () => {
       ).toBeNull();
     });
 
+    it("allows -u / --set-upstream to set upstream tracking", () => {
+      expect(validateGitArgs(["push", "-u", "origin", "feat/x"])).toBeNull();
+      expect(validateGitArgs(["push", "--set-upstream", "origin", "feat/x"])).toBeNull();
+    });
+
     it("blocks previously-allowed push flags now removed from the surface", () => {
       expect(validateGitArgs(["push", "--force", "origin", "main"])).not.toBeNull();
       expect(validateGitArgs(["push", "-f", "origin", "main"])).not.toBeNull();
-      expect(validateGitArgs(["push", "-u", "origin", "feat/x"])).not.toBeNull();
-      expect(validateGitArgs(["push", "--set-upstream", "origin", "feat/x"])).not.toBeNull();
       expect(validateGitArgs(["push", "--delete", "origin", "feat/x"])).not.toBeNull();
       expect(validateGitArgs(["push", "-d", "origin", "feat/x"])).not.toBeNull();
     });
