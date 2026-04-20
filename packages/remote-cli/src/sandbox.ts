@@ -17,7 +17,6 @@ const SANDBOX_SYNC_BUNDLE_PATH = "/tmp/sync.bundle";
 
 export const THOR_MANAGED_LABEL = "thor-managed";
 export const THOR_CWD_LABEL = "thor-cwd";
-export const THOR_BRANCH_LABEL = "thor-branch";
 export const THOR_SHA_LABEL = "thor-sha";
 
 let daytonaSingleton: Daytona | null = null;

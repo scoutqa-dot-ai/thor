@@ -65,13 +65,7 @@ vi.mock("@daytonaio/sdk", () => {
   };
 });
 
-import {
-  _testing,
-  THOR_BRANCH_LABEL,
-  THOR_CWD_LABEL,
-  THOR_MANAGED_LABEL,
-  THOR_SHA_LABEL,
-} from "./sandbox.js";
+import { _testing, THOR_CWD_LABEL, THOR_MANAGED_LABEL, THOR_SHA_LABEL } from "./sandbox.js";
 import { createRemoteCliApp } from "./index.js";
 
 const CWD = "/workspace/worktrees/acme/feat-sandbox";
@@ -122,7 +116,7 @@ describe("/exec/sandbox", () => {
     _testing.resetCwdLocks();
     vi.stubEnv("DAYTONA_API_KEY", "daytona_test_key");
 
-    configureGitExec({ dirty: false, headSha: HEAD_SHA, branch: "feat/sandbox" });
+    configureGitExec({ dirty: false, headSha: HEAD_SHA });
 
     const config = Object.assign(
       () =>
@@ -160,7 +154,7 @@ describe("/exec/sandbox", () => {
     const sandbox = makeSandbox("sbx-1", "thor-acme", {
       [THOR_MANAGED_LABEL]: "true",
       [THOR_CWD_LABEL]: CWD,
-      [THOR_BRANCH_LABEL]: "feat/sandbox",
+
       [THOR_SHA_LABEL]: OLD_SHA,
     });
     daytonaState.sandboxes.set(sandbox.id, sandbox);
@@ -178,19 +172,6 @@ describe("/exec/sandbox", () => {
 
     // Sandbox SHA updated after sync
     expect(sandbox.labels[THOR_SHA_LABEL]).toBe(HEAD_SHA);
-  });
-
-  it("succeeds with dirty worktree", async () => {
-    configureGitExec({ dirty: true, headSha: HEAD_SHA, branch: "feat/sandbox" });
-
-    const response = await postJson("/exec/sandbox", {
-      args: ["npm", "test"],
-      cwd: CWD,
-    });
-
-    expect(response.status).toBe(200);
-    const events = await readNdjson(response);
-    expect(events).toEqual([{ stream: "stdout", data: "sandbox run output\n" }, { exitCode: 0 }]);
   });
 
   it("auto-creates sandbox when none exists for cwd", async () => {
@@ -211,7 +192,7 @@ describe("/exec/sandbox", () => {
   });
 
   it("handles parallel exec requests on same cwd", async () => {
-    configureGitExec({ dirty: true, headSha: HEAD_SHA, branch: "feat/sandbox" });
+    configureGitExec({ dirty: true, headSha: HEAD_SHA });
 
     const [response1, response2] = await Promise.all([
       postJson("/exec/sandbox", { args: ["make", "build"], cwd: CWD }),
@@ -232,7 +213,7 @@ describe("/exec/sandbox", () => {
     const sandbox = makeSandbox("sbx-1", "thor-acme", {
       [THOR_MANAGED_LABEL]: "true",
       [THOR_CWD_LABEL]: CWD,
-      [THOR_BRANCH_LABEL]: "feat/sandbox",
+
       [THOR_SHA_LABEL]: HEAD_SHA,
     });
     sandbox.process.executeCommand.mockImplementation(async (command: string) => {
@@ -290,7 +271,7 @@ describe("parseGitStatus", () => {
   });
 });
 
-function configureGitExec(options: { dirty: boolean; headSha: string; branch: string }): void {
+function configureGitExec(options: { dirty: boolean; headSha: string }): void {
   execCommandMock.mockImplementation(async (binary: string, args: string[]) => {
     if (binary !== "git") {
       return { stdout: "", stderr: "unknown binary", exitCode: 1 };
@@ -306,10 +287,6 @@ function configureGitExec(options: { dirty: boolean; headSha: string; branch: st
 
     if (args[0] === "rev-parse" && args[1] === "HEAD") {
       return { stdout: `${options.headSha}\n`, stderr: "", exitCode: 0 };
-    }
-
-    if (args[0] === "rev-parse" && args[1] === "--abbrev-ref" && args[2] === "HEAD") {
-      return { stdout: `${options.branch}\n`, stderr: "", exitCode: 0 };
     }
 
     if (args[0] === "bundle" && args[1] === "create") {
