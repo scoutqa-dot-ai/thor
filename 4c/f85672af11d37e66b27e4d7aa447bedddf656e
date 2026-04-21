@@ -1,0 +1,23 @@
+docs/plan/2026042101_slack-mcp-expansion.md
+  912f7904e30aed9a 1-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4cf85672af11d37e66b27e4d7aa447bedddf656e",
+  "prompts": {
+    "912f7904e30aed9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4366e723-a95d-4730-94f0-954f1c39b4bb",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 92,
+      "total_deletions": 0,
+      "accepted_lines": 92,
+      "overriden_lines": 0
+    }
+  }
+}
