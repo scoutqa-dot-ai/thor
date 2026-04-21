@@ -1,0 +1,25 @@
+docker/sandbox/Dockerfile
+  bd066bdd0ec4461f 213-215,218-220
+docker/sandbox/entrypoint.sh
+  bd066bdd0ec4461f 1-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "9fd9db583b8c0e5abf73bd60880d17ceab186cb5",
+  "prompts": {
+    "bd066bdd0ec4461f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1af2e37d-e5e7-4ac4-bed4-3b6efd59aab5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Conductor <conductor@noreply>",
+      "messages": [],
+      "total_additions": 64,
+      "total_deletions": 10,
+      "accepted_lines": 54,
+      "overriden_lines": 0
+    }
+  }
+}
