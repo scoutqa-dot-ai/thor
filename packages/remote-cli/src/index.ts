@@ -9,6 +9,7 @@ import {
   logError,
   logInfo,
   type ConfigLoader,
+  type ExecStreamEvent,
   WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
@@ -64,6 +65,23 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
     ...(sessionId && { sessionId }),
     ...(callId && { callId }),
   };
+}
+
+/**
+ * Run `fn` while a heartbeat keeps the NDJSON response stream alive.
+ * Sends a typed heartbeat chunk every 30s to prevent idle-connection
+ * timeouts; the heartbeat is always cleared on exit.
+ */
+async function withNdjsonHeartbeat<T>(
+  write: (chunk: ExecStreamEvent) => void,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const id = setInterval(() => write({ type: "heartbeat" }), 30_000);
+  try {
+    return await fn();
+  } finally {
+    clearInterval(id);
+  }
 }
 
 function parseArgs(body: unknown): string[] | undefined {
@@ -322,16 +340,17 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.setHeader("Content-Type", "application/x-ndjson");
       res.setHeader("Transfer-Encoding", "chunked");
 
-      const write = (obj: Record<string, unknown>) => {
-        res.write(JSON.stringify(obj) + "\n");
+      const write = (chunk: ExecStreamEvent) => {
+        res.write(JSON.stringify(chunk) + "\n");
       };
 
-      const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
-        onStdout: (data) => write({ stream: "stdout", data }),
-        onStderr: (data) => write({ stream: "stderr", data }),
+      await withNdjsonHeartbeat(write, async () => {
+        const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
+          onStdout: (data) => write({ type: "stdout", data }),
+          onStderr: (data) => write({ type: "stderr", data }),
+        });
+        write({ type: "exit", exitCode });
       });
-
-      write({ exitCode });
       res.end();
     } catch (err) {
       logError(
@@ -343,15 +362,15 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       if (!res.headersSent) {
         res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
       } else {
-        res.write(JSON.stringify({ exitCode: 1 }) + "\n");
+        res.write(JSON.stringify({ type: "exit", exitCode: 1 } satisfies ExecStreamEvent) + "\n");
         res.end();
       }
     }
   });
 
   app.post("/exec/sandbox", async (req, res) => {
-    const writeNdjson = (obj: Record<string, unknown>) => {
-      res.write(JSON.stringify(obj) + "\n");
+    const writeNdjson = (chunk: ExecStreamEvent) => {
+      res.write(JSON.stringify(chunk) + "\n");
     };
 
     try {
@@ -475,40 +494,42 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.setHeader("Transfer-Encoding", "chunked");
       res.flushHeaders();
 
-      const exitCode = await execInSandboxStream(result.sandboxId, result.command, {
-        onStdout: (chunk) => writeNdjson({ stream: "stdout", data: chunk }),
-        onStderr: (chunk) => writeNdjson({ stream: "stderr", data: chunk }),
-      });
-      let finalExitCode = exitCode;
+      await withNdjsonHeartbeat(writeNdjson, async () => {
+        const exitCode = await execInSandboxStream(result.sandboxId, result.command, {
+          onStdout: (chunk) => writeNdjson({ type: "stdout", data: chunk }),
+          onStderr: (chunk) => writeNdjson({ type: "stderr", data: chunk }),
+        });
+        let finalExitCode = exitCode;
 
-      // Pull changes back only on success — failed commands may leave partial artifacts
-      if (exitCode === 0) {
-        try {
-          const pull = await withCwdLock(worktreeRoot, () =>
-            pullSandboxChanges(result.sandboxId, worktreeRoot),
-          );
-          if (pull.pulled.length > 0 || pull.deleted.length > 0) {
-            logInfo(log, "sandbox_pull", {
-              pulled: pull.pulled,
-              deleted: pull.deleted,
-              cwd: worktreeRoot,
-            });
+        // Pull changes back only on success — failed commands may leave partial artifacts
+        if (exitCode === 0) {
+          try {
+            const pull = await withCwdLock(worktreeRoot, () =>
+              pullSandboxChanges(result.sandboxId, worktreeRoot),
+            );
+            if (pull.pulled.length > 0 || pull.deleted.length > 0) {
+              logInfo(log, "sandbox_pull", {
+                pulled: pull.pulled,
+                deleted: pull.deleted,
+                cwd: worktreeRoot,
+              });
+            }
+          } catch (pullErr) {
+            const error =
+              pullErr instanceof SandboxError
+                ? pullErr
+                : new SandboxError(
+                    "Failed to pull sandbox changes back to the worktree",
+                    String(pullErr),
+                  );
+            logError(log, "sandbox_pull_error", error.adminDetail, thorIds(req));
+            writeNdjson({ type: "stderr", data: `${error.userMessage}\n` });
+            finalExitCode = 1;
           }
-        } catch (pullErr) {
-          const error =
-            pullErr instanceof SandboxError
-              ? pullErr
-              : new SandboxError(
-                  "Failed to pull sandbox changes back to the worktree",
-                  String(pullErr),
-                );
-          logError(log, "sandbox_pull_error", error.adminDetail, thorIds(req));
-          writeNdjson({ stream: "stderr", data: `${error.userMessage}\n` });
-          finalExitCode = 1;
         }
-      }
 
-      writeNdjson({ exitCode: finalExitCode });
+        writeNdjson({ type: "exit", exitCode: finalExitCode });
+      });
       res.end();
     } catch (err) {
       const error =
@@ -518,8 +539,8 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       if (!res.headersSent) {
         res.status(500).json({ stdout: "", stderr: error.userMessage, exitCode: 1 });
       } else {
-        writeNdjson({ stream: "stderr", data: `${error.userMessage}\n` });
-        writeNdjson({ exitCode: 1 });
+        writeNdjson({ type: "stderr", data: `${error.userMessage}\n` });
+        writeNdjson({ type: "exit", exitCode: 1 });
         res.end();
       }
     }
