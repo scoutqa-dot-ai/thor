@@ -63,8 +63,8 @@ export type {
   ThorMetaAlias,
   ThorMetaApproval,
 } from "./notes.js";
-export { ExecResultSchema, NdjsonChunkSchema } from "./exec-result.js";
-export type { ExecResult, NdjsonChunk } from "./exec-result.js";
+export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
+export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,

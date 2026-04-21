@@ -130,6 +130,7 @@ async function consumeNdjsonStream(
     try {
       const parsed = ProgressEventSchema.safeParse(JSON.parse(line));
       if (!parsed.success) continue;
+      if (parsed.data.type === "heartbeat") continue;
 
       logInfo(log, "progress_relay", {
         channel,

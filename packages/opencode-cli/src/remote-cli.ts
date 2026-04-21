@@ -11,7 +11,7 @@
  * scoutqa endpoint streams NDJSON: { stream, data } chunks + { exitCode } final line
  */
 
-import { ExecResultSchema, NdjsonChunkSchema } from "@thor/common";
+import { ExecResultSchema, ExecStreamEventSchema, type ExecStreamEvent } from "@thor/common";
 
 const [endpoint, ...args] = process.argv.slice(2);
 
@@ -60,24 +60,34 @@ try {
     const decoder = new TextDecoder();
     let buffer = "";
 
+    const handleEvent = (msg: ExecStreamEvent) => {
+      switch (msg.type) {
+        case "stdout":
+          process.stdout.write(msg.data);
+          break;
+        case "stderr":
+          process.stderr.write(msg.data);
+          break;
+        case "exit":
+          exitCode = msg.exitCode;
+          break;
+        case "heartbeat":
+          break;
+      }
+    };
+
     for await (const chunk of res.body!) {
       buffer += decoder.decode(chunk as Uint8Array, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop()!; // keep incomplete line in buffer
       for (const line of lines) {
         if (!line) continue;
-        const msg = NdjsonChunkSchema.parse(JSON.parse(line));
-        if ("stream" in msg && msg.stream === "stdout") process.stdout.write(msg.data);
-        else if ("stream" in msg && msg.stream === "stderr") process.stderr.write(msg.data);
-        if ("exitCode" in msg) exitCode = msg.exitCode;
+        handleEvent(ExecStreamEventSchema.parse(JSON.parse(line)));
       }
     }
     // flush remaining buffer
     if (buffer.trim()) {
-      const msg = NdjsonChunkSchema.parse(JSON.parse(buffer));
-      if ("stream" in msg && msg.stream === "stdout") process.stdout.write(msg.data);
-      else if ("stream" in msg && msg.stream === "stderr") process.stderr.write(msg.data);
-      if ("exitCode" in msg) exitCode = msg.exitCode;
+      handleEvent(ExecStreamEventSchema.parse(JSON.parse(buffer)));
     }
     process.exit(exitCode);
   }

@@ -168,7 +168,10 @@ describe("/exec/sandbox", () => {
     expect(response.headers.get("content-type")).toContain("application/x-ndjson");
 
     const events = await readNdjson(response);
-    expect(events).toEqual([{ stream: "stdout", data: "sandbox run output\n" }, { exitCode: 0 }]);
+    expect(events).toEqual([
+      { type: "stdout", data: "sandbox run output\n" },
+      { type: "exit", exitCode: 0 },
+    ]);
 
     // Sandbox SHA updated after sync
     expect(sandbox.labels[THOR_SHA_LABEL]).toBe(HEAD_SHA);
@@ -182,7 +185,7 @@ describe("/exec/sandbox", () => {
 
     expect(response.status).toBe(200);
     const events = await readNdjson(response);
-    expect(events.at(-1)).toEqual({ exitCode: 0 });
+    expect(events.at(-1)).toEqual({ type: "exit", exitCode: 0 });
 
     // A sandbox was created and is findable by cwd
     expect(daytonaState.sandboxes.size).toBe(1);
@@ -205,8 +208,8 @@ describe("/exec/sandbox", () => {
     const events1 = await readNdjson(response1);
     const events2 = await readNdjson(response2);
 
-    expect(events1.at(-1)).toEqual({ exitCode: 0 });
-    expect(events2.at(-1)).toEqual({ exitCode: 0 });
+    expect(events1.at(-1)).toEqual({ type: "exit", exitCode: 0 });
+    expect(events2.at(-1)).toEqual({ type: "exit", exitCode: 0 });
   });
 
   it("reports pullback failures as exec failures", async () => {
@@ -235,12 +238,12 @@ describe("/exec/sandbox", () => {
     expect(response.status).toBe(200);
     const events = await readNdjson(response);
     expect(events).toEqual([
-      { stream: "stdout", data: "sandbox run output\n" },
+      { type: "stdout", data: "sandbox run output\n" },
       {
-        stream: "stderr",
+        type: "stderr",
         data: "Failed to read sandbox state after exec. No files were pulled back.\n",
       },
-      { exitCode: 1 },
+      { type: "exit", exitCode: 1 },
     ]);
   });
 

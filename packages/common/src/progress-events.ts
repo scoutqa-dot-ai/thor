@@ -42,6 +42,10 @@ export const ProgressApprovalRequiredSchema = z.object({
   proxyName: z.string().optional(),
 });
 
+export const ProgressHeartbeatSchema = z.object({
+  type: z.literal("heartbeat"),
+});
+
 // --- Discriminated union ---
 
 export const ProgressEventSchema = z.discriminatedUnion("type", [
@@ -50,6 +54,7 @@ export const ProgressEventSchema = z.discriminatedUnion("type", [
   ProgressDoneSchema,
   ProgressErrorSchema,
   ProgressApprovalRequiredSchema,
+  ProgressHeartbeatSchema,
 ]);
 
 // --- REST endpoint request schemas ---

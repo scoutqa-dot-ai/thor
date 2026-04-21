@@ -542,118 +542,120 @@ app.post("/trigger", async (req, res) => {
     // Track child session IDs for progress forwarding.
     const childSessionIds = new Set<string>();
 
-    for await (const event of subscription) {
-      if (finished) break;
+    await withNdjsonHeartbeat(emit, async () => {
+      for await (const event of subscription) {
+        if (finished) break;
 
-      const isParent = isSessionEvent(event, sessionId);
+        const isParent = isSessionEvent(event, sessionId);
 
-      // Forward tool progress from child sessions so
-      // Slack progress isn't silent while a task runs.
-      if (!isParent) {
-        if (
-          event.type === "message.part.updated" &&
-          childSessionIds.has(event.properties.part.sessionID)
-        ) {
-          const part = event.properties.part;
-          if (part.type === "tool") {
-            const toolPart = part as ToolPart;
-            const status = toolPart.state.status;
-            if (status === "completed" || status === "error") {
-              const displayName = toolDisplayName(toolPart);
-              emit({ type: "tool", tool: displayName, status });
-            }
-          }
-        }
-        continue;
-      }
-
-      if (event.type === "message.part.updated") {
-        const part = event.properties.part;
-        seq++;
-
-        // Stdout logging (selective)
-        logPartToStdout(sessionId, part);
-
-        // Accumulate data for response regardless of filtering
-        if (part.type === "text") {
-          const textPart = part as TextPart;
-          collectedTextParts.push(textPart.text);
-          lastMessageId = textPart.messageID;
-        } else if (part.type === "tool") {
-          const toolPart = part as ToolPart;
-          const status = toolPart.state.status;
-
-          // Discover child sessions when a task tool starts running.
-          if (toolPart.tool === "task" && status === "running") {
-            client.session
-              .children({ path: { id: sessionId } })
-              .then((resp) => {
-                if (resp.data) {
-                  for (const child of resp.data) {
-                    childSessionIds.add(child.id);
-                    subscription.addSessionId(child.id);
-                  }
-                }
-              })
-              .catch(() => {});
-          }
-
-          if (status === "completed" || status === "error") {
-            const displayName = toolDisplayName(toolPart);
-            collectedToolCalls.push({ tool: displayName, state: status });
-            emit({ type: "tool", tool: displayName, status });
-
-            // Detect approval-required tool results and emit approval event.
-            if (status === "completed") {
-              const completed = toolPart.state as ToolStateCompleted;
-              const approval = parseApprovalResult(
-                completed.output,
-                toolPart.tool,
-                (completed.input as Record<string, unknown>) ?? {},
-              );
-              if (approval) {
-                emit(approval);
+        // Forward tool progress from child sessions so
+        // Slack progress isn't silent while a task runs.
+        if (!isParent) {
+          if (
+            event.type === "message.part.updated" &&
+            childSessionIds.has(event.properties.part.sessionID)
+          ) {
+            const part = event.properties.part;
+            if (part.type === "tool") {
+              const toolPart = part as ToolPart;
+              const status = toolPart.state.status;
+              if (status === "completed" || status === "error") {
+                const displayName = toolDisplayName(toolPart);
+                emit({ type: "tool", tool: displayName, status });
               }
             }
-
-            // Collect input/output for aliasable tools
-            if (status === "completed" && isAliasableTool(toolPart.tool)) {
-              const completed = toolPart.state as ToolStateCompleted;
-              collectedArtifacts.push({
-                tool: toolPart.tool,
-                input: completed.input as Record<string, unknown>,
-                output: typeof completed.output === "string" ? completed.output : "",
-              });
-            }
           }
-          lastMessageId = toolPart.messageID;
-        } else if (part.type === "step-finish") {
-          const stepFinish = part as StepFinishPart;
-          totalCost += stepFinish.cost;
-          totalTokens.input += stepFinish.tokens.input;
-          totalTokens.output += stepFinish.tokens.output;
-          totalTokens.reasoning += stepFinish.tokens.reasoning;
-          totalTokens.cache.read += stepFinish.tokens.cache.read;
-          totalTokens.cache.write += stepFinish.tokens.cache.write;
-          lastMessageId = stepFinish.messageID;
+          continue;
         }
-      } else if (event.type === "session.error") {
-        const errorProps = event.properties;
-        sessionError =
-          errorProps.error && "data" in errorProps.error
-            ? (errorProps.error.data as { message?: string }).message || errorProps.error.name
-            : "Unknown error";
-        logError(log, "session_error", sessionError, {
-          sessionId,
-          errorDetail: JSON.stringify(errorProps.error),
-        });
-        finished = true;
-        break;
-      } else if (event.type === "session.idle") {
-        finished = true;
-        break;
+
+        if (event.type === "message.part.updated") {
+          const part = event.properties.part;
+          seq++;
+
+          // Stdout logging (selective)
+          logPartToStdout(sessionId, part);
+
+          // Accumulate data for response regardless of filtering
+          if (part.type === "text") {
+            const textPart = part as TextPart;
+            collectedTextParts.push(textPart.text);
+            lastMessageId = textPart.messageID;
+          } else if (part.type === "tool") {
+            const toolPart = part as ToolPart;
+            const status = toolPart.state.status;
+
+            // Discover child sessions when a task tool starts running.
+            if (toolPart.tool === "task" && status === "running") {
+              client.session
+                .children({ path: { id: sessionId } })
+                .then((resp) => {
+                  if (resp.data) {
+                    for (const child of resp.data) {
+                      childSessionIds.add(child.id);
+                      subscription.addSessionId(child.id);
+                    }
+                  }
+                })
+                .catch(() => {});
+            }
+
+            if (status === "completed" || status === "error") {
+              const displayName = toolDisplayName(toolPart);
+              collectedToolCalls.push({ tool: displayName, state: status });
+              emit({ type: "tool", tool: displayName, status });
+
+              // Detect approval-required tool results and emit approval event.
+              if (status === "completed") {
+                const completed = toolPart.state as ToolStateCompleted;
+                const approval = parseApprovalResult(
+                  completed.output,
+                  toolPart.tool,
+                  (completed.input as Record<string, unknown>) ?? {},
+                );
+                if (approval) {
+                  emit(approval);
+                }
+              }
+
+              // Collect input/output for aliasable tools
+              if (status === "completed" && isAliasableTool(toolPart.tool)) {
+                const completed = toolPart.state as ToolStateCompleted;
+                collectedArtifacts.push({
+                  tool: toolPart.tool,
+                  input: completed.input as Record<string, unknown>,
+                  output: typeof completed.output === "string" ? completed.output : "",
+                });
+              }
+            }
+            lastMessageId = toolPart.messageID;
+          } else if (part.type === "step-finish") {
+            const stepFinish = part as StepFinishPart;
+            totalCost += stepFinish.cost;
+            totalTokens.input += stepFinish.tokens.input;
+            totalTokens.output += stepFinish.tokens.output;
+            totalTokens.reasoning += stepFinish.tokens.reasoning;
+            totalTokens.cache.read += stepFinish.tokens.cache.read;
+            totalTokens.cache.write += stepFinish.tokens.cache.write;
+            lastMessageId = stepFinish.messageID;
+          }
+        } else if (event.type === "session.error") {
+          const errorProps = event.properties;
+          sessionError =
+            errorProps.error && "data" in errorProps.error
+              ? (errorProps.error.data as { message?: string }).message || errorProps.error.name
+              : "Unknown error";
+          logError(log, "session_error", sessionError, {
+            sessionId,
+            errorDetail: JSON.stringify(errorProps.error),
+          });
+          finished = true;
+          break;
+        } else if (event.type === "session.idle") {
+          finished = true;
+          break;
+        }
       }
-    }
+    });
     subscription.close();
 
     const durationMs = Date.now() - promptStart;
@@ -733,6 +735,23 @@ app.post("/trigger", async (req, res) => {
 });
 
 // --- Helpers ---
+
+/**
+ * Run `fn` while a heartbeat keeps the NDJSON response stream alive.
+ * Sends a typed heartbeat event every 30s to prevent idle-connection
+ * timeouts; the heartbeat is always cleared on exit.
+ */
+async function withNdjsonHeartbeat<T>(
+  emit: (event: ProgressEvent) => void,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const id = setInterval(() => emit({ type: "heartbeat" }), 30_000);
+  try {
+    return await fn();
+  } finally {
+    clearInterval(id);
+  }
+}
 
 /**
  * Check if an SSE event belongs to a specific session.
