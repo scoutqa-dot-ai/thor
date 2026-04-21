@@ -668,7 +668,7 @@ sandbox_exec_stdout() {
     for (const line of lines) {
       try {
         const d = JSON.parse(line);
-        if (d.stream === 'stdout' && typeof d.data === 'string') out += d.data;
+        if (d.type === 'stdout' && typeof d.data === 'string') out += d.data;
       } catch {}
     }
     process.stdout.write(out);
@@ -1008,7 +1008,7 @@ else
     # Java: switch default to 17, verify next call uses it
     sbx_sdk_set=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"sdk\",\"default\",\"java\",\"17.0.15-tem\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      -d "{\"mode\":\"exec\",\"args\":[\"sdk\",\"default\",\"java\",\"17.0.18-tem\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
       2>/dev/null)
     sbx_sdk_set_exit=$(echo "$sbx_sdk_set" | sandbox_exec_exit)
     assert '[[ "$sbx_sdk_set_exit" == "0" ]]' "sdk default java 17 succeeded" "exitCode='$sbx_sdk_set_exit'"
@@ -1025,7 +1025,7 @@ else
     # Restore Java default to 21
     curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"sdk\",\"default\",\"java\",\"21.0.7-tem\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      -d "{\"mode\":\"exec\",\"args\":[\"sdk\",\"default\",\"java\",\"21.0.10-tem\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
       2>/dev/null >/dev/null
 
     # Python: switch global to 3.11, verify next call uses it
