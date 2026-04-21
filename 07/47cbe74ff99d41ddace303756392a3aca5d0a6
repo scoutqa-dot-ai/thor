@@ -1,0 +1,37 @@
+packages/common/src/exec-result.ts
+  42ae4dc44c99d27c 11-16,18
+packages/remote-cli/src/index.ts
+  42ae4dc44c99d27c 12,70-86,343-344,347-350,352,365,372-373,497-500,516,526,531-532,542-543
+packages/remote-cli/src/sandbox.test.ts
+  42ae4dc44c99d27c 171,243
+packages/common/src/progress-events.ts
+  42ae4dc44c99d27c 45-48,57
+packages/common/src/index.ts
+  42ae4dc44c99d27c 66-67
+packages/opencode-cli/src/remote-cli.ts
+  42ae4dc44c99d27c 14,63-71,78
+packages/gateway/src/service.ts
+  42ae4dc44c99d27c 133
+packages/runner/src/index.ts
+  42ae4dc44c99d27c 545,548,550,558-564,570-571,573-577,583,586-587,591-597,601,604,607-616,628,630-631,636-639,641-651,658,740-755
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "0747cbe74ff99d41ddace303756392a3aca5d0a6",
+  "prompts": {
+    "42ae4dc44c99d27c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8b7b74e-21fa-4bcb-b7c6-40d48e8cfbef",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 288,
+      "total_deletions": 238,
+      "accepted_lines": 148,
+      "overriden_lines": 0
+    }
+  }
+}
