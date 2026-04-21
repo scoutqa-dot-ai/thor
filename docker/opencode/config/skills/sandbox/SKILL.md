@@ -5,7 +5,7 @@ description: Run project commands (build, test, lint) in a cloud sandbox with fu
 
 ## When to use
 
-Use `sandbox` to run project commands: builds, tests, lints, and anything that needs runtimes not available locally (Java, Python, Go, etc.). The sandbox auto-creates on first use, syncs your committed code, and stops automatically when idle.
+Use `sandbox` to run project commands: builds, tests, lints, and anything that needs runtimes not available locally (Java, Python, etc.). The sandbox auto-creates on first use, syncs your committed code, and stops automatically when idle.
 
 ---
 
@@ -20,7 +20,6 @@ Examples:
 ```bash
 sandbox mvn test -pl module-auth
 sandbox ./gradlew build
-sandbox pytest -v --tb=short
 sandbox bash -c 'make build && make test'
 sandbox npm test
 ```
@@ -30,7 +29,7 @@ For shell chaining, pipelines, or redirects, wrap the command explicitly:
 
 ```bash
 sandbox bash -c 'make build && make test'
-sandbox bash -c 'pytest -q | tail -20'
+sandbox bash -c 'npm run build && npm test'
 ```
 
 ---
@@ -75,18 +74,18 @@ The sandbox comes with version managers and common runtimes ready to use:
 
 - **Node**: 22 (default), 20, 24 via nvm. pnpm available via corepack.
 - **Java**: 21 (default), 17 (Temurin) via SDKMAN. Maven and Gradle included.
-- **Python**: 3.12 (default), 3.11, 3.13 via pyenv. `uv` available for fast installs.
+- **Python**: 3.12 (default), 3.11, 3.13, 3.14 via pyenv. `uv` available for fast installs.
 - **Docker**: Docker CE with docker compose. Start the daemon with `sudo dockerd &` before use.
 
 To use a non-default version, either set it permanently or inline it with your command:
 
 ```bash
 # Permanent (persists across sandbox calls, only need to set once)
-sandbox sdk default java 17.0.15-tem
+sandbox sdk default java 17.0.18-tem
 sandbox mvn test
 
 # Inline (one-off version switch + command)
-sandbox bash -c 'sdk use java 17.0.15-tem && mvn test'
+sandbox bash -c 'sdk use java 17.0.18-tem && mvn test'
 sandbox bash -c 'nvm use 20 && npm test'
 ```
 
@@ -96,7 +95,6 @@ sandbox bash -c 'nvm use 20 && npm test'
 
 - Each worktree gets its own isolated sandbox — switching worktrees creates a separate sandbox
 - Code is synced to `/workspace/sandbox` inside the sandbox — paths in error output will show this prefix
-- Sandbox has internet access (`pip install`, `npm install`, `apt-get` all work)
 - First run is slower (sandbox creation + full code sync)
 - Subsequent runs reuse the sandbox and sync only new commits
 - Sandbox stops automatically after 15 minutes of inactivity

@@ -1,14 +1,10 @@
 /**
- * Shared HTTP client for git/gh/scoutqa wrapper scripts.
+ * Shared HTTP client for remote-cli wrapper scripts.
  *
- * Usage: node remote-cli.mjs <endpoint> <arg1> <arg2> ...
- *   endpoint: "git", "gh", "scoutqa", "langfuse", "ldcli", "metabase", "mcp", or "approval"
+ * Usage: node remote-cli.mjs <endpoint> [args...]
  *
  * Env:
- *   THOR_REMOTE_CLI_URL — base URL of the remote-cli service (e.g. http://remote-cli:3004)
- *
- * git/gh endpoints return buffered JSON: { stdout, stderr, exitCode }
- * scoutqa endpoint streams NDJSON: { stream, data } chunks + { exitCode } final line
+ *   THOR_REMOTE_CLI_URL — base URL of the remote-cli service
  */
 
 import { ExecResultSchema, ExecStreamEventSchema, type ExecStreamEvent } from "@thor/common";
@@ -16,9 +12,7 @@ import { ExecResultSchema, ExecStreamEventSchema, type ExecStreamEvent } from "@
 const [endpoint, ...args] = process.argv.slice(2);
 
 if (!endpoint) {
-  process.stderr.write(
-    "Usage: remote-cli.mjs <git|gh|scoutqa|langfuse|ldcli|metabase|mcp|approval> [args...]\n",
-  );
+  process.stderr.write("Usage: remote-cli.mjs <endpoint> [args...]\n");
   process.exit(1);
 }
 
@@ -33,7 +27,7 @@ const cwd = process.cwd();
 const sessionDirectory = process.env.THOR_OPENCODE_DIRECTORY || cwd;
 const sessionId = process.env.THOR_OPENCODE_SESSION_ID || "";
 const callId = process.env.THOR_OPENCODE_CALL_ID || "";
-const nonRepoScopedEndpoints = new Set(["langfuse", "ldcli", "metabase", "approval"]);
+const body: Record<string, unknown> = { args, cwd, directory: sessionDirectory };
 
 try {
   const res = await fetch(url, {
@@ -43,13 +37,7 @@ try {
       ...(sessionId && { "x-thor-session-id": sessionId }),
       ...(callId && { "x-thor-call-id": callId }),
     },
-    body: JSON.stringify(
-      endpoint === "mcp"
-        ? { args, cwd, directory: sessionDirectory }
-        : nonRepoScopedEndpoints.has(endpoint)
-          ? { args }
-          : { args, cwd },
-    ),
+    body: JSON.stringify(body),
   });
 
   const contentType = res.headers.get("content-type") || "";
@@ -94,10 +82,10 @@ try {
 
   // Buffered JSON response (git/gh)
   if (!res.ok && contentType.includes("application/json")) {
-    const body = ExecResultSchema.parse(await res.json());
-    if (body.stderr) process.stderr.write(body.stderr);
-    if (body.stdout) process.stdout.write(body.stdout);
-    process.exit(body.exitCode ?? 1);
+    const result = ExecResultSchema.parse(await res.json());
+    if (result.stderr) process.stderr.write(result.stderr);
+    if (result.stdout) process.stdout.write(result.stdout);
+    process.exit(result.exitCode ?? 1);
   }
 
   if (!res.ok) {
@@ -105,11 +93,11 @@ try {
     process.exit(1);
   }
 
-  const body = ExecResultSchema.parse(await res.json());
-  if (body.stdout) process.stdout.write(body.stdout);
-  if (body.stderr) process.stderr.write(body.stderr);
+  const result = ExecResultSchema.parse(await res.json());
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
 
-  process.exit(body.exitCode ?? 0);
+  process.exit(result.exitCode ?? 0);
 } catch (err) {
   process.stderr.write(`Failed to reach remote-cli: ${(err as Error).message}\n`);
   process.exit(1);
