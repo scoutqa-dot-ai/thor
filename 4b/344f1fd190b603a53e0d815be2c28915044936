@@ -1,0 +1,29 @@
+packages/slack-mcp/src/tool-schemas.ts
+  912f7904e30aed9a 1-72
+scripts/test-e2e.sh
+  912f7904e30aed9a 20-25,168-175,192-357
+packages/slack-mcp/src/index.ts
+  912f7904e30aed9a 3-4,33,39-47,76,81,86,92,94-98,107,136,138-141,149-150,157-158,164-205,355-357,359,374-376
+packages/slack-mcp/src/slack.ts
+  912f7904e30aed9a 2,104-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4b344f1fd190b603a53e0d815be2c28915044936",
+  "prompts": {
+    "912f7904e30aed9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4366e723-a95d-4730-94f0-954f1c39b4bb",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 782,
+      "total_deletions": 356,
+      "accepted_lines": 507,
+      "overriden_lines": 0
+    }
+  }
+}
