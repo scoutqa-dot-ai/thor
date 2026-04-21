@@ -1,0 +1,27 @@
+packages/opencode-cli/src/remote-cli.ts
+  40f4536e3c834e72 2,4,87-88,98,100
+scripts/test-e2e.sh
+  40f4536e3c834e72 1011,1028
+docker/opencode/bin/sandbox
+  40f4536e3c834e72 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e640fa62914cfce47f97ea61c3389d2e25ce759d",
+  "prompts": {
+    "40f4536e3c834e72": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a47e9ade-f395-471f-9205-598241127026",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 62,
+      "total_deletions": 173,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}
