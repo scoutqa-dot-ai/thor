@@ -5,6 +5,12 @@
 # Logs:    docker compose logs -f
 # Stop:    docker compose down
 
+# Single source of truth for the two in-cluster subnets. Referenced below by
+# both the network IPAM config AND the mitmproxy service's environment, so
+# iptables RETURN rules can't drift out of sync with Docker's allocation.
+x-inside-cidr: &inside-cidr "172.30.0.0/24"
+x-outside-cidr: &outside-cidr "172.31.0.0/24"
+
 services:
   slack-mcp:
     build:
@@ -116,10 +122,24 @@ services:
       context: .
       target: mitmproxy
     restart: unless-stopped
+    # opencode shares this netns (see opencode service) so:
+    #   • opencode's port 4096 is published from here
+    #   • 3080 exposes the transparent listener for debug/health from the host
     ports:
+      - "127.0.0.1:4096:4096"
       - "127.0.0.1:3080:8080"
     env_file:
       - .env
+    environment:
+      # CIDRs are pinned via YAML anchors so the iptables RETURN rules match
+      # Docker's IPAM allocation exactly. entrypoint.sh fails loud if unset.
+      THOR_INSIDE_CIDR: *inside-cidr
+      THOR_OUTSIDE_CIDR: *outside-cidr
+    # NET_ADMIN is required to install iptables REDIRECT rules in the shared netns.
+    # The rules only go into effect once (at entrypoint); mitmdump itself runs as
+    # uid 1002 and cannot modify netfilter state after the drop.
+    cap_add:
+      - NET_ADMIN
     volumes:
       # Mount cert and key as separate files so key.pem stays chmod 600 on the host.
       # The entrypoint (running as root) concatenates them into /run/mitmproxy/ and
@@ -127,14 +147,28 @@ services:
       - ./docker-volumes/mitmproxy-ca/cert.pem:/etc/thor/mitmproxy-ca/cert.pem:ro
       - ./docker-volumes/mitmproxy-ca/key.pem:/etc/thor/mitmproxy-ca/key.pem:ro
       - ./docker-volumes/workspace:/workspace:ro
+    # Healthcheck exercises the full transparent path: curl resolves __health.thor
+    # to a bogus external IP, the REDIRECT rule catches it and rewrites to :8080,
+    # and the addon's health intercept matches the Host header and answers 200.
+    # If iptables setup or mitmdump is broken, this fails — caught by depends_on.
     healthcheck:
-      test: ["CMD", "curl", "-sf", "-x", "http://localhost:8080", "http://__health.thor/"]
+      test:
+        [
+          "CMD",
+          "curl",
+          "-sf",
+          "-m",
+          "3",
+          "--resolve",
+          "__health.thor:80:10.254.254.254",
+          "http://__health.thor/",
+        ]
       interval: 5s
       timeout: 5s
       retries: 10
     networks:
-      - inside
-      - outside
+      inside: {}
+      outside: {}
 
   opencode:
     build:
@@ -146,21 +180,13 @@ services:
         limits:
           memory: ${OPENCODE_MEMORY_LIMIT:-4g}
           cpus: "${OPENCODE_CPU_LIMIT:-3}"
-    ports:
-      - "127.0.0.1:4096:4096"
     working_dir: /workspace
     command: ["serve", "--port", "4096", "--hostname", "0.0.0.0"]
     environment:
-      # Proxy all outbound HTTPS through mitmproxy for credential injection.
-      # NO_PROXY lists in-cluster services that must not route through the proxy.
-      - HTTP_PROXY=http://mitmproxy:8080
-      - HTTPS_PROXY=http://mitmproxy:8080
-      - NO_PROXY=localhost,127.0.0.1,remote-cli,slack-mcp,grafana-mcp,opencode,gateway,runner
-      # Node.js: preload sets EnvHttpProxyAgent so built-in fetch honors HTTP_PROXY.
-      - NODE_OPTIONS=--require /etc/thor/mitmproxy-init.js
-      # Extra CA for Node.js (system bundle + mitmproxy CA handled in entrypoint-wrap.sh).
+      # Combined CA bundle (system roots + mitmproxy CA) is assembled by
+      # entrypoint-wrap.sh. These point Node / Python / git at the mitmproxy CA
+      # so MITM'd TLS handshakes verify.
       - NODE_EXTRA_CA_CERTS=/etc/thor/ca/cert.pem
-      # Non-Node clients (Python, git) use the env vars set by entrypoint-wrap.sh.
       - REQUESTS_CA_BUNDLE=/etc/thor/ca/cert.pem
       - GIT_SSL_CAINFO=/etc/thor/ca/cert.pem
     volumes:
@@ -188,9 +214,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    # opencode is on `inside` only — the only egress path is through mitmproxy.
-    networks:
-      - inside
+    # Shared netns with mitmproxy: all outbound TCP :80/:443 is REDIRECTed to
+    # mitmproxy's transparent listener by iptables, regardless of env vars.
+    # `networks:` and `ports:` cannot coexist with network_mode — both live on
+    # the mitmproxy service instead.
+    network_mode: "service:mitmproxy"
 
   runner:
     build:
@@ -330,10 +358,17 @@ services:
       - inside
       - outside
 
-# Two networks enforce opencode's egress policy:
-#   inside (internal: true) — no external egress; opencode lives here only
-#   outside (default)       — internet-capable; mitmproxy bridges the two
+# Two networks still exist for topology clarity, but opencode's egress policy
+# is enforced by iptables in the shared netns — not by `internal: true`.
+# Subnets are pinned via the x-inside-cidr / x-outside-cidr anchors at the top
+# of this file and passed to mitmproxy's entrypoint as env vars, so the
+# iptables RETURN rules can't drift from Docker's actual allocation.
 networks:
   inside:
-    internal: true
-  outside: {}
+    ipam:
+      config:
+        - subnet: *inside-cidr
+  outside:
+    ipam:
+      config:
+        - subnet: *outside-cidr

@@ -2,6 +2,50 @@
 
 # mitmproxy Outbound Credentials — 2026-04-17-06
 
+> **Implementation update — 2026-04-22.** The shipped architecture diverges
+> from the original HTTP_PROXY-based design below. Read this section first;
+> treat the rest of the document as historical planning context.
+>
+> **What changed vs. the plan:**
+>
+> - **Transparent mode, not regular mode.** `mitmdump --mode transparent@8080`.
+>   No `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` env vars anywhere — routing
+>   is enforced by iptables REDIRECT in the kernel, not by convention.
+> - **Shared network namespace.** opencode uses
+>   `network_mode: "service:mitmproxy"` in compose. It has no network of its
+>   own — it shares mitmproxy's netns. That's what lets iptables REDIRECT in
+>   mitmproxy's netns catch opencode's outbound TCP :80/:443.
+> - **`internal: true` dropped.** The `inside` network is no longer internal —
+>   opencode needs reachability to LLM providers, which are CONNECT-passthrough
+>   hosts. The firewall is iptables, not Docker's network isolation.
+> - **iptables rules (mitmproxy entrypoint, running as root):**
+>   - `RETURN` for `--uid-owner 1002` (mitmdump's own upstream connections —
+>     prevents loopback deadlock).
+>   - `RETURN` for `127.0.0.0/8`, `THOR_INSIDE_CIDR`, `THOR_OUTSIDE_CIDR`
+>     (in-cluster traffic skips REDIRECT).
+>   - `REDIRECT --to-ports 8080` for `tcp dpt:80` and `tcp dpt:443`.
+>   - CIDRs are pinned via YAML anchors (`x-inside-cidr`, `x-outside-cidr`)
+>     in `docker-compose.yml` and passed as env to the entrypoint. The
+>     entrypoint fails loud if either is unset — no silent drift.
+> - **Privilege drop via gosu.** Entrypoint starts as root (needs NET_ADMIN
+>   for iptables + read access to key.pem), then `gosu mitmproxy-svc` (uid 1002) to exec mitmdump. `NET_ADMIN` is added via `cap_add` in compose.
+> - **No Node preload.** `docker/opencode/mitmproxy-init.js` is deleted.
+>   `undici.EnvHttpProxyAgent` is unnecessary when there's no proxy env var
+>   to honor — the kernel redirects.
+> - **Combined CA bundle at entrypoint.** `docker/opencode/entrypoint-wrap.sh`
+>   concatenates the system CA bundle with the mitmproxy CA into
+>   `/tmp/thor-ca-bundle.crt` and exports `CURL_CA_BUNDLE`, `SSL_CERT_FILE`,
+>   `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`. Passthrough hosts (LLM providers)
+>   need real upstream cert verification; MITM'd hosts need the mitmproxy CA.
+>   Node uses `NODE_EXTRA_CA_CERTS` separately via compose env.
+> - **Healthcheck reshaped.** `curl --resolve __health.thor:80:10.254.254.254`
+>   so the REDIRECT rule catches a realistic outbound and the addon's Host
+>   header intercept answers 200.
+>
+> Why: the HTTP_PROXY approach was bypassable by an adversarial LLM that
+> unset the env var. iptables in a shared netns with drop-privileges makes
+> the proxy the only egress — no escape hatch.
+>
 > **Supersedes `docs/plan/2026031101_data-proxy.md`.**
 >
 > Replace the `data` nginx container (URL-rewriting reverse proxy) with a
@@ -319,15 +363,12 @@ injection from `config.json`. opencode wiring not yet required.
 - Add `ca-gen` and `mitmproxy` build targets to root `Dockerfile` (see
   "Target shape" above). Delete `docker/data/Dockerfile`.
 - Create `docker/mitmproxy/` with:
-  - `addon.py`:
-    - `load(loader)`: declare `config_path` option (default
-      `/workspace/config.json`).
-    - `request(flow)`: `__health` short-circuits to 200; otherwise re-read
-      config via `_load_rules()` (mtime cache); find first matching rule by
-      `host` or `host_suffix`; if `readonly` and method not in
-      `{GET, HEAD, OPTIONS}` → 405; for each header, expand `${ENV}` → 502 if
-      missing; set `flow.request.headers[name] = value`.
-    - Structured log line on every request: `{ts, host, method, path, status,
+  - `addon.py`: - `load(loader)`: declare `config_path` option (default
+    `/workspace/config.json`). - `request(flow)`: `__health` short-circuits to 200; otherwise re-read
+    config via `_load_rules()` (mtime cache); find first matching rule by
+    `host` or `host_suffix`; if `readonly` and method not in
+    `{GET, HEAD, OPTIONS}` → 405; for each header, expand `${ENV}` → 502 if
+    missing; set `flow.request.headers[name] = value`. - Structured log line on every request: `{ts, host, method, path, status,
 rule_matched}`. JSON to stdout for fluent collection later.
   - `entrypoint.sh`: launch `mitmdump -s /etc/mitmproxy/addon.py --mode
 regular@8080 --set confdir=/etc/thor/mitmproxy --set
@@ -395,7 +436,7 @@ mitmproxy and pick up the injected headers automatically.
   - `curl https://api.atlassian.com/oauth/me` works (no manual `-x` flag,
     no `-H Authorization`).
   - `node -e "const r = await fetch('https://api.atlassian.com/oauth/me');
- console.log(r.status)"` works.
+console.log(r.status)"` works.
   - `curl http://remote-cli:3004/health` does **not** route through
     mitmproxy (NO_PROXY honored — confirm via mitmproxy log absence).
   - **Direct egress is blocked**: with `HTTP_PROXY` temporarily unset,

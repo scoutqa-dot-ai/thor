@@ -81,14 +81,12 @@ COPY docker/opencode/bin/corepack /usr/local/bin/corepack
 # mcp/approval wrapper scripts — forward to remote-cli service over HTTP
 COPY docker/opencode/bin/mcp /usr/local/bin/mcp
 COPY docker/opencode/bin/approval /usr/local/bin/approval
-# mitmproxy proxy wiring: entrypoint validates CA + builds combined cert bundle
+# Entrypoint wires the combined CA bundle (system roots + mitmproxy CA) into
+# CURL_CA_BUNDLE / REQUESTS_CA_BUNDLE / GIT_SSL_CAINFO so clients trust the
+# MITM'd upstreams. Proxy routing is enforced by iptables REDIRECT in the
+# shared netns (see docker/mitmproxy/entrypoint.sh) — no HTTP_PROXY env vars.
 COPY docker/opencode/entrypoint-wrap.sh /entrypoint-wrap.sh
-COPY docker/opencode/mitmproxy-init.js /etc/thor/mitmproxy-init.js
 RUN chmod +x /entrypoint-wrap.sh
-# Verify the preload's only dependency actually resolves from the install.
-# This fails the build loudly if undici is missing from the opencode-ai package tree,
-# rather than silently at first fetch() call inside the container.
-RUN node --require /etc/thor/mitmproxy-init.js -e "console.log('[thor] mitmproxy-init preload OK')"
 USER thor
 RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state
 ENV THOR_REMOTE_CLI_URL=http://remote-cli:3004
@@ -104,8 +102,9 @@ ENTRYPOINT ["/entrypoint-wrap.sh", "opencode"]
 # Pin the minor version to avoid surprise API changes; update deliberately.
 FROM mitmproxy/mitmproxy:10.4.2 AS mitmproxy
 USER root
-# gosu: privilege-drop helper used by entrypoint.sh (root reads key, gosu execs as mitmproxy-svc)
-RUN apt-get update && apt-get install -y --no-install-recommends curl gosu && rm -rf /var/lib/apt/lists/*
+# gosu: privilege-drop helper used by entrypoint.sh (root reads key, gosu execs as mitmproxy-svc).
+# iptables: entrypoint installs REDIRECT rules for transparent proxying in the shared netns.
+RUN apt-get update && apt-get install -y --no-install-recommends curl gosu iptables && rm -rf /var/lib/apt/lists/*
 COPY docker/mitmproxy/rules.py   /etc/mitmproxy/rules.py
 COPY docker/mitmproxy/addon.py   /etc/mitmproxy/addon.py
 COPY docker/mitmproxy/entrypoint.sh /entrypoint.sh
