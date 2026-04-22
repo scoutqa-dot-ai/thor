@@ -1,0 +1,29 @@
+README.md
+  158db3119079a62b 135-144
+docs/plan/2026042201_mitmproxy-default-rules.md
+  158db3119079a62b 1-138
+docker/mitmproxy/rules.py
+  158db3119079a62b 16-25,89-116,126-128
+docker/mitmproxy/test_rules.py
+  158db3119079a62b 15,132,135-139,142-164,175,251-252,271-272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "00ab2788198cc36d8ccfc45bfb89b2e0c590c4c7",
+  "prompts": {
+    "158db3119079a62b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "101990b2-0faa-4d3e-bbac-97ee1f306e68",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 226,
+      "total_deletions": 39,
+      "accepted_lines": 225,
+      "overriden_lines": 0
+    }
+  }
+}
