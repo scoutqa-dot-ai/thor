@@ -35,21 +35,30 @@ ingress -> gateway -> runner -> opencode
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and fill in the required secrets.
-2. Start the stack:
+2. Initialize the mitmproxy CA on the host:
+
+```bash
+./scripts/mitmproxy-ca-init.sh
+```
+
+This keeps the private key on the host and only exposes the public trust bundle
+inside `opencode`.
+
+3. Start the stack:
 
 ```bash
 docker compose up --build -d
 curl http://localhost:8080/health
 ```
 
-3. Clone repos into the shared workspace from the `remote-cli` container:
+4. Clone repos into the shared workspace from the `remote-cli` container:
 
 ```bash
 docker compose exec remote-cli \
   git clone https://github.com/your-org/your-repo.git /workspace/repos/your-repo
 ```
 
-4. Configure `/workspace/config.json` with repo-to-upstream access rules.
+5. Configure `/workspace/config.json` with repo-to-upstream access rules.
 
 Example:
 

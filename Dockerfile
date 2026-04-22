@@ -62,7 +62,7 @@ CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
 FROM base AS opencode
 RUN npm install -g opencode-ai@1.4.3
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl wget && rm -rf /var/lib/apt/lists/*
-RUN printf '\nca_certificate = /etc/thor/mitmproxy-ca.pem\n' >> /etc/wgetrc
+RUN printf '\nca_certificate = /etc/thor/mitmproxy-public/mitmproxy-ca.pem\n' >> /etc/wgetrc
 # git/gh/scoutqa wrapper scripts — forward to remote-cli service over HTTP
 COPY --from=build /app/packages/opencode-cli/dist/remote-cli.mjs /usr/local/bin/remote-cli.mjs
 COPY docker/opencode/bin/git /usr/local/bin/git

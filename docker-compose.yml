@@ -116,8 +116,7 @@ services:
       - .env
     volumes:
       - ./docker-volumes/workspace:/workspace:ro
-      - ./docker-volumes/mitmproxy/mitmproxy-ca-key.pem:/etc/thor/mitmproxy/ca-key.pem:ro
-      - ./docker-volumes/mitmproxy/mitmproxy-ca-cert.pem:/etc/thor/mitmproxy/ca-cert.pem:ro
+      - ./docker-volumes/mitmproxy:/etc/thor/mitmproxy:ro
     healthcheck:
       test:
         [
@@ -152,9 +151,9 @@ services:
       - HTTPS_PROXY=http://mitmproxy:8080
       - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,slack-mcp,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
       - NODE_OPTIONS=--use-env-proxy
-      - NODE_EXTRA_CA_CERTS=/etc/thor/mitmproxy-ca.pem
-      - CURL_CA_BUNDLE=/etc/thor/mitmproxy-ca.pem
-      - SSL_CERT_FILE=/etc/thor/mitmproxy-ca.pem
+      - NODE_EXTRA_CA_CERTS=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      - CURL_CA_BUNDLE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      - SSL_CERT_FILE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
     volumes:
       - ./docker-volumes/opencode:/home/thor/.local/share/opencode
       - ./docker-volumes/workspace/memory:/workspace/memory
@@ -163,7 +162,7 @@ services:
       - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
       - ./docker-volumes/workspace/cron:/workspace/cron
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
-      - ./docker-volumes/mitmproxy/mitmproxy-ca.pem:/etc/thor/mitmproxy-ca.pem:ro
+      - ./docker-volumes/mitmproxy/public:/etc/thor/mitmproxy-public:ro
     depends_on:
       remote-cli:
         condition: service_healthy

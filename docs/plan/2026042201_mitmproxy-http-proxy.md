@@ -119,7 +119,7 @@ Set:
 
 ```yaml
 NODE_OPTIONS: --use-env-proxy
-NODE_EXTRA_CA_CERTS: /etc/thor/mitmproxy-ca.pem
+NODE_EXTRA_CA_CERTS: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
 ```
 
 This keeps built-in Node `fetch()` on real upstream URLs while routing through
@@ -236,7 +236,8 @@ Likely files to create or change:
 
 **Exit criteria:**
 
-- `docker compose up -d mitmproxy` starts cleanly on host port `3080`.
+- `./scripts/mitmproxy-ca-init.sh && docker compose up -d mitmproxy` starts
+  cleanly on host port `3080`.
 - `docker compose config` contains no `data` service and no `DATA_ROUTE*`
   environment wiring.
 - `curl -x http://localhost:3080 http://__health.thor/` returns the synthetic
@@ -369,6 +370,8 @@ Expected:
 | D18 | Mount `/workspace/config.json` read-only into `opencode`                             | The agent should be able to inspect custom proxy rules without being able to edit deployment config in-place.                                                  |
 | D19 | Explicitly scope Node support to built-in `fetch()` only                             | The plan should not imply support for scripts that import the standalone `undici` package directly.                                                            |
 | D20 | Interpolate `${ENV}` in mitmproxy from the proxy container env only                  | Keeps Phase 1 simple: use compose `env_file: .env` + explicit proxy envs, without introducing a second config/secret distribution system.                      |
+| D21 | Split CA mounts into a private mitmproxy dir and a public-only opencode dir          | Fixes Docker's missing-file bind-mount footgun while keeping the CA private key unreadable from `opencode`.                                                    |
+| D22 | Exit mitmproxy if the host-generated CA is missing                                   | Prevents the proxy from booting with a container-local CA that `opencode` does not trust, which would make HTTPS behavior depend on startup order.             |
 
 ## Open questions
 
