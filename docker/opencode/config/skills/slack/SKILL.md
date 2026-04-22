@@ -32,6 +32,25 @@ Slack writes. Switch to JSON only when the payload becomes structured, such as
 For file uploads, prefer `slack-upload` over manually calling Slack's
 multi-step upload endpoints.
 
+## Temporary files
+
+`/tmp` is the default location for all temporary Slack artifacts, including:
+
+- downloaded files
+- exported thread JSON
+- generated reports intended only for inspection or upload
+
+Do not save these files in `/workspace/repos` or `/workspace/worktrees` unless
+the user explicitly asks to keep a persistent copy.
+
+Decision rule:
+
+- if the file is only needed for immediate upload, inspection, or short-term
+  processing, save it to `/tmp/<filename>`
+- if the user asks to keep it, then save it in a persistent workspace path
+
+Do not use relative paths like `./report.txt` for temporary Slack artifacts.
+
 ## Core workflow
 
 ### 1. Resolve the reply target
@@ -76,8 +95,8 @@ curl -sS --get https://slack.com/api/files.info \
 ```
 
 When the response includes `url_private` or `url_private_download`, fetch that
-URL directly. Auth is injected for `.slack.com` too. Use `/tmp` for temporary
-downloads instead of assuming the current directory is writable.
+URL directly. Auth is injected for `.slack.com` too. Always download temporary
+Slack files to `/tmp/<filename>`.
 
 ```bash
 curl -sS -o /tmp/slack-file.bin 'https://files.slack.com/files-pri/T123-F123/download/example'
@@ -114,6 +133,8 @@ EOF
 ### 5. Upload a file
 
 Use the helper instead of re-creating Slack's external upload flow inline.
+Generate the file in `/tmp/<filename>` first unless the user explicitly asks to
+keep it.
 
 ```bash
 slack-upload /tmp/report.txt \
@@ -143,7 +164,9 @@ Common failures to report as-is:
 - Use real Slack URLs. Do not route Slack work through `mcp slack`.
 - Use `slack-upload` for uploads; it wraps `files.getUploadURLExternal`,
   the raw upload, and `files.completeUploadExternal`.
-- Use `/tmp/...` for downloaded or generated files before re-uploading them.
+- `/tmp` is the default location for temporary Slack artifacts. Treat
+  `/workspace/worktrees` as persistent storage and use it only when
+  persistence is explicitly requested.
 - The gateway may give the agent Slack context, but the agent still has to post
   the actual reply itself.
 - Slack Web API reads and writes still depend on the bot token's scopes and
