@@ -1,0 +1,31 @@
+Dockerfile
+  158db3119079a62b 84-87,105-107
+docs/plan/2026041706_mitmproxy-outbound.md
+  158db3119079a62b 5-48
+README.md
+  158db3119079a62b 134
+docker/mitmproxy/entrypoint.sh
+  158db3119079a62b 2-9,16-17,19,35-65,68
+docker-compose.yml
+  158db3119079a62b 8-13,125-127,129,133-142,150-153,160-164,170-171,186-188,217-221,361-365,368-374
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ca6990496a1c2f8355ae3b1939136a0875dd0219",
+  "prompts": {
+    "158db3119079a62b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "101990b2-0faa-4d3e-bbac-97ee1f306e68",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 163,
+      "total_deletions": 45,
+      "accepted_lines": 147,
+      "overriden_lines": 0
+    }
+  }
+}
