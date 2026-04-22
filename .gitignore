@@ -23,3 +23,7 @@ test.sh
 
 # Thor
 /docker-volumes/
+
+# Python
+__pycache__/
+*.pyc

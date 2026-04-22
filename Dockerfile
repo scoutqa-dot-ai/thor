@@ -61,6 +61,7 @@ CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
 RUN npm install -g opencode-ai@1.4.3
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl jq ripgrep && rm -rf /var/lib/apt/lists/*
 # git/gh/scoutqa wrapper scripts — forward to remote-cli service over HTTP
 COPY --from=build /app/packages/opencode-cli/dist/remote-cli.mjs /usr/local/bin/remote-cli.mjs
 COPY docker/opencode/bin/git /usr/local/bin/git
@@ -79,6 +80,7 @@ COPY docker/opencode/bin/corepack /usr/local/bin/corepack
 # mcp/approval wrapper scripts — forward to remote-cli service over HTTP
 COPY docker/opencode/bin/mcp /usr/local/bin/mcp
 COPY docker/opencode/bin/approval /usr/local/bin/approval
+COPY docker/opencode/bin/slack-upload /usr/local/bin/slack-upload
 USER thor
 RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state
 ENV THOR_REMOTE_CLI_URL=http://remote-cli:3004
@@ -111,3 +113,11 @@ ENV PORT=3004
 EXPOSE 3004
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "/app/packages/remote-cli/dist/index.js"]
+
+FROM python:3.12-slim AS mitmproxy
+RUN pip install --no-cache-dir mitmproxy==11.0.2
+COPY docker/mitmproxy/ /opt/thor/mitmproxy/
+RUN chmod +x /opt/thor/mitmproxy/entrypoint.sh
+WORKDIR /opt/thor/mitmproxy
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["/opt/thor/mitmproxy/entrypoint.sh"]
