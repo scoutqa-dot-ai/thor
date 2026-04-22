@@ -95,6 +95,19 @@ opencode -> HTTP(S)_PROXY -> mitmproxy -> upstream
 Custom credential rules and passthrough hosts live in
 `/workspace/config.json` under `mitmproxy[]` and `mitmproxy_passthrough[]`.
 Keep secrets in `.env` only, then reference them in config via `${ENV_VAR}`.
+Rules can match either an exact `host` or a `host_suffix`, and can optionally
+add `path_prefix` when one domain needs different headers by URL prefix.
+
+Built-in defaults are intentionally narrow:
+
+- Atlassian: injected auth for `api.atlassian.com` and `*.atlassian.net`,
+  both read-only by default
+- Atlassian media redirects: `api.media.atlassian.com` passthrough
+- Slack API: injected auth only for `chat.postMessage`, thread/history reads,
+  `files.info`, and the upload setup/complete endpoints on `slack.com/api/...`
+- Slack files: read-only downloads on `files.slack.com/files-pri/...` and
+  upload flow support on `files.slack.com/upload/v1/...`
+- OpenAI and ChatGPT domains: passthrough only
 
 ## Deployment Configuration
 
@@ -167,6 +180,7 @@ define rules in `/workspace/config.json` and keep only secret values in `.env`:
   "mitmproxy": [
     {
       "host": "billing.example.com",
+      "path_prefix": "/v1/",
       "headers": { "X-Custom-Auth": "${BILLING_API_KEY}" }
     },
     {
@@ -181,6 +195,7 @@ define rules in `/workspace/config.json` and keep only secret values in `.env`:
 
 mitmproxy evaluates user rules first, then built-in defaults. OpenAI and
 ChatGPT domains are already allowed as passthrough by default.
+Rules match by exact host or suffix first, then by optional `path_prefix`.
 
 ## Operations Notes
 

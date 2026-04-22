@@ -27,6 +27,7 @@ const MitmproxyRuleSchema = z
   .object({
     host: z.string().min(1).optional(),
     host_suffix: z.string().min(2).startsWith(".").optional(),
+    path_prefix: z.string().min(1).startsWith("/").optional(),
     headers: z
       .record(z.string(), z.string())
       .refine(

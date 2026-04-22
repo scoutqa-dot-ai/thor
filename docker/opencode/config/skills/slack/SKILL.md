@@ -21,7 +21,7 @@ and write Slack through the proxy.
 Talk to Slack through real upstream URLs:
 
 - `https://slack.com/api/...`
-- `https://files.slack.com/...`
+- `https://files.slack.com/files-pri/...`
 
 Authentication is injected by `mitmproxy`. Do not pass `Authorization`
 manually and do not look for a separate Slack MCP tool.
@@ -95,8 +95,8 @@ curl -sS --get https://slack.com/api/files.info \
 ```
 
 When the response includes `url_private` or `url_private_download`, fetch that
-URL directly. Auth is injected for `.slack.com` too. Always download temporary
-Slack files to `/tmp/<filename>`.
+URL directly. Auth is injected for the supported `files.slack.com` paths.
+Always download temporary Slack files to `/tmp/<filename>`.
 
 ```bash
 curl -sS -o /tmp/slack-file.bin 'https://files.slack.com/files-pri/T123-F123/download/example'
@@ -163,7 +163,8 @@ Common failures to report as-is:
 - `thread_ts` should be the parent message timestamp for the thread.
 - Use real Slack URLs. Do not route Slack work through `mcp slack`.
 - Use `slack-upload` for uploads; it wraps `files.getUploadURLExternal`,
-  the raw upload, and `files.completeUploadExternal`.
+  the raw `files.slack.com/upload/v1/...` upload, and
+  `files.completeUploadExternal`.
 - `/tmp` is the default location for temporary Slack artifacts. Treat
   `/workspace/worktrees` as persistent storage and use it only when
   persistence is explicitly requested.

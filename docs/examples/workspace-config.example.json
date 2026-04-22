@@ -26,6 +26,7 @@
   "mitmproxy": [
     {
       "host": "billing.example.com",
+      "path_prefix": "/v1/",
       "headers": {
         "X-Custom-Auth": "${BILLING_API_KEY}"
       }
