@@ -195,6 +195,7 @@ Likely files to create or change:
 - `docker/mitmproxy/test_rules.py`
 - `docker/mitmproxy/test_addon.py`
 - `docker/opencode/config/agents/build.md`
+- `docker/opencode/bin/slack-upload`
 - `docker/data/Dockerfile` (delete)
 - `docker/data/entrypoint.sh` (delete)
 - `packages/common/src/workspace-config.ts`
@@ -256,6 +257,8 @@ Likely files to create or change:
   - `CURL_CA_BUNDLE`
   - `SSL_CERT_FILE`
 - Mount `/workspace/config.json` into `opencode` as read-only.
+- Add a `slack-upload` helper in the `opencode` image for one-command Slack
+  file uploads.
 - Add baked-in default rules for:
   - `api.atlassian.com`
   - `.atlassian.net`
@@ -283,6 +286,7 @@ Likely files to create or change:
   passthrough and is not denied by host policy
 - `curl http://remote-cli:3004/health` bypasses the proxy via `NO_PROXY`
 - inside `opencode`, `/workspace/config.json` is readable and mounted read-only
+- inside `opencode`, `slack-upload --help` is available
 
 ### Phase 3 — Docs and operator workflow
 
@@ -295,6 +299,11 @@ Likely files to create or change:
   - use real upstream URLs
   - proxying is explicit via env vars
   - available custom credential rules live in `/workspace/config.json`
+  - include one simple Slack `chat.postMessage` example and defer deeper Slack
+    workflow details to the Slack skill
+- Rewrite the Slack skill to use real Slack Web API URLs over `mitmproxy`
+  instead of `mcp slack` tool calls.
+- Teach the Slack skill to use `slack-upload` for file uploads.
 - Remove all operator docs and examples for `http://data/...`.
 - Remove `DATA_ROUTES` / `DATA_ROUTE_*` documentation from `.env.example`.
 
@@ -303,6 +312,11 @@ Likely files to create or change:
 - README clearly explains `opencode -> mitmproxy -> upstream`
 - docs mention `curl` and built-in Node `fetch()` support explicitly
 - docs make clear that Node support means built-in `fetch()`
+- the Slack skill uses real `slack.com` / `files.slack.com` URLs and contains
+  no `mcp slack` examples, with URL-encoded `curl` examples for simple writes
+  and `slack-upload` for file uploads
+- `build.md` contains one simple Slack post example and points to the Slack
+  skill for the rest
 - docs do not describe transparent routing or firewall-style enforcement
 - no current docs tell operators to use `http://data/...`
 - `.env.example` contains no `DATA_ROUTES` examples
@@ -337,30 +351,32 @@ Expected:
 
 ## Decision log
 
-| #   | Decision                                                                             | Rationale                                                                                                                                                      |
-| --- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | Use `mitmproxy` over Squid or a custom proxy                                         | mitmproxy already gives TLS interception plus a small Python addon surface for header mutation.                                                                |
-| D2  | Use `mitmdump`, not the interactive UI                                               | Headless container runtime is the target.                                                                                                                      |
-| D3  | Keep config in `/workspace/config.json`, secrets in env, interpolate at request time | Matches existing Thor config patterns and keeps secrets out of the workspace file.                                                                             |
-| D4  | Hot reload via file `mtime`, not process restart                                     | Rule edits should apply on the next request without bouncing the container.                                                                                    |
-| D5  | Match hosts by `host` or `host_suffix`, not regex                                    | Exact and suffix matching cover the expected cases without making rule syntax hard to reason about.                                                            |
-| D6  | Fail closed on missing env vars                                                      | Silent unauthenticated fallback is the wrong failure mode.                                                                                                     |
-| D7  | Keep deny-by-default host policy                                                     | Unknown hosts should be rejected unless explicitly injected or passed through.                                                                                 |
-| D8  | Use both lowercase and uppercase proxy env vars                                      | Different HTTP clients do not all consult the same proxy env var spellings.                                                                                    |
-| D9  | Use Node 22 native env-proxy support                                                 | The current `node:22-slim` image already supports built-in `fetch()` proxying via `--use-env-proxy`, which removes an unnecessary dependency and preload file. |
-| D10 | Bake in Atlassian and Slack defaults                                                 | Those integrations are core Thor dependencies and should work without per-install copy-paste.                                                                  |
-| D11 | User rules come before defaults                                                      | Operators need an escape hatch for host-specific overrides.                                                                                                    |
-| D12 | Generate the CA on the host and mount it into containers                             | Keeps the private key out of image layers and keeps rotation simple.                                                                                           |
-| D13 | Do not log request or response bodies                                                | Bodies may contain credentials, prompts, PII, or large payloads.                                                                                               |
-| D14 | Limit env vars exposed to mitmproxy                                                  | The proxy should only receive the secrets it actually needs for interpolation.                                                                                 |
-| D15 | Pass through OpenAI and ChatGPT domains by default                                   | The OpenCode runtime itself depends on those hosts, so proxy enablement in `opencode` must not break model traffic.                                            |
-| D16 | Remove the legacy `data` container instead of running both systems in parallel       | Sharing host port `3080` and teaching two URL shapes would create avoidable operator confusion and migration bugs.                                             |
-| D17 | Install `curl` in `opencode`                                                         | The target operator workflow and smoke tests depend on a simple shell HTTP client being present in the container.                                              |
-| D18 | Mount `/workspace/config.json` read-only into `opencode`                             | The agent should be able to inspect custom proxy rules without being able to edit deployment config in-place.                                                  |
-| D19 | Explicitly scope Node support to built-in `fetch()` only                             |                                                                                                                                                                |
-| D20 | Interpolate `${ENV}` in mitmproxy from the proxy container env only                  | Keeps Phase 1 simple: use compose `env_file: .env` + explicit proxy envs, without introducing a second config/secret distribution system.                      |
-| D21 | Split CA mounts into a private mitmproxy dir and a public-only opencode dir          | Fixes Docker's missing-file bind-mount footgun while keeping the CA private key unreadable from `opencode`.                                                    |
-| D22 | Exit mitmproxy if the host-generated CA is missing                                   | Prevents the proxy from booting with a container-local CA that `opencode` does not trust, which would make HTTPS behavior depend on startup order.             |
+| #   | Decision                                                                               | Rationale                                                                                                                                                      |
+| --- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Use `mitmproxy` over Squid or a custom proxy                                           | mitmproxy already gives TLS interception plus a small Python addon surface for header mutation.                                                                |
+| D2  | Use `mitmdump`, not the interactive UI                                                 | Headless container runtime is the target.                                                                                                                      |
+| D3  | Keep config in `/workspace/config.json`, secrets in env, interpolate at request time   | Matches existing Thor config patterns and keeps secrets out of the workspace file.                                                                             |
+| D4  | Hot reload via file `mtime`, not process restart                                       | Rule edits should apply on the next request without bouncing the container.                                                                                    |
+| D5  | Match hosts by `host` or `host_suffix`, not regex                                      | Exact and suffix matching cover the expected cases without making rule syntax hard to reason about.                                                            |
+| D6  | Fail closed on missing env vars                                                        | Silent unauthenticated fallback is the wrong failure mode.                                                                                                     |
+| D7  | Keep deny-by-default host policy                                                       | Unknown hosts should be rejected unless explicitly injected or passed through.                                                                                 |
+| D8  | Use both lowercase and uppercase proxy env vars                                        | Different HTTP clients do not all consult the same proxy env var spellings.                                                                                    |
+| D9  | Use Node 22 native env-proxy support                                                   | The current `node:22-slim` image already supports built-in `fetch()` proxying via `--use-env-proxy`, which removes an unnecessary dependency and preload file. |
+| D10 | Bake in Atlassian and Slack defaults                                                   | Those integrations are core Thor dependencies and should work without per-install copy-paste.                                                                  |
+| D11 | User rules come before defaults                                                        | Operators need an escape hatch for host-specific overrides.                                                                                                    |
+| D12 | Keep general communication policy in `build.md`; keep channel skills transport-focused | Future channels such as Telegram should reuse one policy surface while each skill only documents channel-specific APIs and mechanics.                          |
+| D13 | Generate the CA on the host and mount it into containers                               | Keeps the private key out of image layers and keeps rotation simple.                                                                                           |
+| D14 | Do not log request or response bodies                                                  | Bodies may contain credentials, prompts, PII, or large payloads.                                                                                               |
+| D15 | Limit env vars exposed to mitmproxy                                                    | The proxy should only receive the secrets it actually needs for interpolation.                                                                                 |
+| D16 | Pass through OpenAI and ChatGPT domains by default                                     | The OpenCode runtime itself depends on those hosts, so proxy enablement in `opencode` must not break model traffic.                                            |
+| D17 | Remove the legacy `data` container instead of running both systems in parallel         | Sharing host port `3080` and teaching two URL shapes would create avoidable operator confusion and migration bugs.                                             |
+| D18 | Install `curl` in `opencode`                                                           | The target operator workflow and smoke tests depend on a simple shell HTTP client being present in the container.                                              |
+| D19 | Mount `/workspace/config.json` read-only into `opencode`                               | The agent should be able to inspect custom proxy rules without being able to edit deployment config in-place.                                                  |
+| D20 | Explicitly scope Node support to built-in `fetch()` only                               |                                                                                                                                                                |
+| D21 | Interpolate `${ENV}` in mitmproxy from the proxy container env only                    | Keeps Phase 1 simple: use compose `env_file: .env` + explicit proxy envs, without introducing a second config/secret distribution system.                      |
+| D22 | Split CA mounts into a private mitmproxy dir and a public-only opencode dir            | Fixes Docker's missing-file bind-mount footgun while keeping the CA private key unreadable from `opencode`.                                                    |
+| D23 | Exit mitmproxy if the host-generated CA is missing                                     | Prevents the proxy from booting with a container-local CA that `opencode` does not trust, which would make HTTPS behavior depend on startup order.             |
+| D24 | Add a `slack-upload` helper instead of teaching the raw Slack upload sequence inline   | Slack file uploads are a three-step flow that an LLM can easily mangle; a helper keeps the agent-facing workflow to one command.                               |
 
 ## Open questions
 
