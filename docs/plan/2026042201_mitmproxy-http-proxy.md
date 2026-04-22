@@ -368,6 +368,7 @@ Expected:
 | D17 | Install `curl` and `wget` in `opencode`                                              | The target operator workflow and smoke tests depend on those clients being present in the container.                                                           |
 | D18 | Mount `/workspace/config.json` read-only into `opencode`                             | The agent should be able to inspect custom proxy rules without being able to edit deployment config in-place.                                                  |
 | D19 | Explicitly scope Node support to built-in `fetch()` only                             | The plan should not imply support for scripts that import the standalone `undici` package directly.                                                            |
+| D20 | Interpolate `${ENV}` in mitmproxy from the proxy container env only                  | Keeps Phase 1 simple: use compose `env_file: .env` + explicit proxy envs, without introducing a second config/secret distribution system.                      |
 
 ## Open questions
 

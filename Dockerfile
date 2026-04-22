@@ -111,3 +111,11 @@ ENV PORT=3004
 EXPOSE 3004
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "/app/packages/remote-cli/dist/index.js"]
+
+FROM python:3.12-slim AS mitmproxy
+RUN pip install --no-cache-dir mitmproxy==11.0.2
+COPY docker/mitmproxy/ /opt/thor/mitmproxy/
+RUN chmod +x /opt/thor/mitmproxy/entrypoint.sh
+WORKDIR /opt/thor/mitmproxy
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["/opt/thor/mitmproxy/entrypoint.sh"]

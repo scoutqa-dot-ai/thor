@@ -102,16 +102,25 @@ services:
       timeout: 3s
       retries: 10
 
-  data:
+  mitmproxy:
     build:
-      context: ./docker/data
+      context: .
+      target: mitmproxy
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3080:80"
+      - "127.0.0.1:3080:8080"
     env_file:
       - .env
+    volumes:
+      - ./docker-volumes/workspace:/workspace:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost/health"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; opener=urllib.request.build_opener(urllib.request.ProxyHandler({'http':'http://localhost:8080'})); r=opener.open('http://__health.thor/', timeout=2); sys.exit(0 if r.status == 200 else 1)",
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -140,7 +149,7 @@ services:
     depends_on:
       remote-cli:
         condition: service_healthy
-      data:
+      mitmproxy:
         condition: service_healthy
     healthcheck:
       test:

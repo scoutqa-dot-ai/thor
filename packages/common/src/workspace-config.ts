@@ -23,10 +23,44 @@ const GitHubAppConfigSchema = z.object({
   installations: z.array(GitHubAppInstallationSchema),
 });
 
+const MitmproxyRuleSchema = z
+  .object({
+    host: z.string().min(1).optional(),
+    host_suffix: z.string().min(2).startsWith(".").optional(),
+    headers: z
+      .record(z.string(), z.string())
+      .refine(
+        (headers) => Object.keys(headers).length > 0,
+        '"headers" must contain at least one entry',
+      ),
+    readonly: z.boolean().optional().default(false),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const hasHost = typeof value.host === "string";
+    const hasHostSuffix = typeof value.host_suffix === "string";
+    if (hasHost === hasHostSuffix) {
+      ctx.addIssue({
+        code: "custom",
+        message: 'Exactly one of "host" or "host_suffix" is required',
+        path: ["host"],
+      });
+    }
+  });
+
+const MitmproxyPassthroughHostSchema = z.string().refine((value) => {
+  if (value.startsWith(".")) {
+    return value.length > 1;
+  }
+  return !value.includes("/") && !value.includes(":") && value.length > 0;
+}, "Passthrough entries must be an exact host or a suffix starting with '.'");
+
 export const WorkspaceConfigSchema = z
   .object({
     repos: z.record(z.string(), RepoConfigSchema),
     github_app: GitHubAppConfigSchema.optional(),
+    mitmproxy: z.array(MitmproxyRuleSchema).optional(),
+    mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
   })
   .strict();
 
