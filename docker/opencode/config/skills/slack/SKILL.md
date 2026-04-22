@@ -95,6 +95,22 @@ curl -sS -X POST https://slack.com/api/chat.postMessage \
   --data-urlencode 'text=Root cause looks like a missing env var in the worker deploy. I confirmed the crash started after the 14:10 rollout. Next step: redeploy with FOO_API_KEY restored.'
 ```
 
+For multiline text, send real newline characters. Do not write literal `\n`
+inside single quotes, or Slack will receive backslash-n text.
+
+```bash
+curl -sS -X POST https://slack.com/api/chat.postMessage \
+  -H 'content-type: application/x-www-form-urlencoded' \
+  --data-urlencode 'channel=C123' \
+  --data-urlencode 'thread_ts=1710000000.001' \
+  --data-urlencode "$(cat <<'EOF'
+text=Good news: the AI did not crash.
+
+The suite still has 0 test cases, so create_manual_ai_session had nothing to run.
+EOF
+)"
+```
+
 ### 5. Upload a file
 
 Use the helper instead of re-creating Slack's external upload flow inline.
