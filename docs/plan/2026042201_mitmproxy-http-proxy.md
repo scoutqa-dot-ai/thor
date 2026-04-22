@@ -404,6 +404,7 @@ Expected:
 | D29 | Install `jq` in `opencode` explicitly                                                  | Agent-side JSON inspection is a common shell workflow, and shipping `jq` avoids ad hoc parsing or runtime download attempts.                                    |
 | D30 | Add optional `path_prefix` to mitmproxy inject rules                                   | Some deployments need different injected credentials on the same host; a prefix is enough without introducing regex or a larger rule language.                  |
 | D31 | Narrow built-in Slack proxy rules to the opencode Slack workflow surface               | Allow only the Slack API methods needed over the mitmproxy path; update, delete, and reaction actions stay on the gateway/`slack-mcp` path instead.             |
+| D32 | Use `mktemp`/`mktemp -d` under `/tmp` for temporary Slack artifacts                    | It is more reliable than fixed temp paths, avoids collisions when multiple agents run in parallel, and still preserves meaningful filenames when needed.        |
 
 ## Open questions
 
