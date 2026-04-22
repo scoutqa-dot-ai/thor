@@ -60,10 +60,12 @@ BUILTIN_RULES = [
     InjectRule(
         host="api.atlassian.com",
         headers={"Authorization": "${ATLASSIAN_AUTH}"},
+        readonly=True,
     ),
     InjectRule(
         host_suffix=".atlassian.net",
         headers={"Authorization": "${ATLASSIAN_AUTH}"},
+        readonly=True,
     ),
     InjectRule(
         host="slack.com",

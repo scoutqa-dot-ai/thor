@@ -126,8 +126,8 @@ Node-based proxy call.
 
 The proxy image ships with these default injection rules:
 
-- `api.atlassian.com` -> `Authorization: ${ATLASSIAN_AUTH}`
-- `.atlassian.net` -> `Authorization: ${ATLASSIAN_AUTH}`
+- `api.atlassian.com` -> `Authorization: ${ATLASSIAN_AUTH}` (`readonly: true`)
+- `.atlassian.net` -> `Authorization: ${ATLASSIAN_AUTH}` (`readonly: true`)
 - `slack.com` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
 - `.slack.com` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
 
@@ -387,7 +387,8 @@ Expected:
 | D25 | Install `ripgrep` in `opencode` explicitly                                             | The agent guidance already prefers `rg` for code search, so the container should provide it directly instead of relying on upstream runtime behavior.           |
 | D26 | Suppress only `UNDICI-EHPA` instead of all Node warnings                               | `--use-env-proxy` emits an experimental warning on every Node proxy call; `--disable-warning=UNDICI-EHPA` removes the noise without hiding unrelated warnings.  |
 | D27 | Allow `api.media.atlassian.com` as built-in passthrough                                | Jira attachment-content requests can redirect there; the media URL should be reachable without widening Atlassian host access beyond the exact redirect target. |
-| D28 | Install `jq` in `opencode` explicitly                                                  | Agent-side JSON inspection is a common shell workflow, and shipping `jq` avoids ad hoc parsing or runtime download attempts.                                    |
+| D28 | Make the built-in Atlassian proxy rules readonly                                       | The baked-in Atlassian path is intended for read access from `opencode`; write operations should continue to go through explicit MCP or user-configured rules.  |
+| D29 | Install `jq` in `opencode` explicitly                                                  | Agent-side JSON inspection is a common shell workflow, and shipping `jq` avoids ad hoc parsing or runtime download attempts.                                    |
 
 ## Open questions
 

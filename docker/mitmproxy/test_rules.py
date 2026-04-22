@@ -71,13 +71,17 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     assert atlassian.action == "inject"
     assert atlassian.rule is not None
     assert atlassian.rule.headers["Authorization"] == "${ATLASSIAN_AUTH}"
+    assert atlassian.rule.readonly is True
 
     slack = ruleset.classify("slack.com")
     assert slack.action == "inject"
     assert slack.rule is not None
     assert slack.rule.headers["Authorization"] == "Bearer ${SLACK_BOT_TOKEN}"
 
-    assert ruleset.classify("foo.atlassian.net").action == "inject"
+    atlassian_site = ruleset.classify("foo.atlassian.net")
+    assert atlassian_site.action == "inject"
+    assert atlassian_site.rule is not None
+    assert atlassian_site.rule.readonly is True
     assert ruleset.classify("files.slack.com").action == "inject"
 
 
