@@ -61,7 +61,7 @@ CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
 RUN npm install -g opencode-ai@1.4.3
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ripgrep && rm -rf /var/lib/apt/lists/*
 # git/gh/scoutqa wrapper scripts — forward to remote-cli service over HTTP
 COPY --from=build /app/packages/opencode-cli/dist/remote-cli.mjs /usr/local/bin/remote-cli.mjs
 COPY docker/opencode/bin/git /usr/local/bin/git

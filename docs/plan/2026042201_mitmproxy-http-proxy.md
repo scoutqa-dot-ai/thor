@@ -249,6 +249,7 @@ Likely files to create or change:
 **Tasks:**
 
 - Install `curl` in the `opencode` image.
+- Install `ripgrep` in the `opencode` image.
 - Add lowercase and uppercase proxy env vars to the `opencode` service.
 - Add a concrete `NO_PROXY` list for in-cluster services.
 - Set `NODE_OPTIONS=--use-env-proxy`.
@@ -286,6 +287,7 @@ Likely files to create or change:
   passthrough and is not denied by host policy
 - `curl http://remote-cli:3004/health` bypasses the proxy via `NO_PROXY`
 - inside `opencode`, `/workspace/config.json` is readable and mounted read-only
+- inside `opencode`, `rg --version` works
 - inside `opencode`, `slack-upload --help` is available
 
 ### Phase 3 — Docs and operator workflow
@@ -377,6 +379,7 @@ Expected:
 | D22 | Split CA mounts into a private mitmproxy dir and a public-only opencode dir            | Fixes Docker's missing-file bind-mount footgun while keeping the CA private key unreadable from `opencode`.                                                    |
 | D23 | Exit mitmproxy if the host-generated CA is missing                                     | Prevents the proxy from booting with a container-local CA that `opencode` does not trust, which would make HTTPS behavior depend on startup order.             |
 | D24 | Add a `slack-upload` helper instead of teaching the raw Slack upload sequence inline   | Slack file uploads are a three-step flow that an LLM can easily mangle; a helper keeps the agent-facing workflow to one command.                               |
+| D25 | Install `ripgrep` in `opencode` explicitly                                             | The agent guidance already prefers `rg` for code search, so the container should provide it directly instead of relying on upstream runtime behavior.          |
 
 ## Open questions
 
