@@ -12,6 +12,7 @@ from rules import (
     interpolate,
     load_ruleset,
     DEFAULT_PASSTHROUGH,
+    DEFAULT_RULES,
 )
 
 
@@ -128,11 +129,39 @@ class TestLoadRuleset(unittest.TestCase):
         f.close()
         return f.name
 
-    def test_empty_mitmproxy_block(self):
+    def test_empty_mitmproxy_block_installs_defaults(self):
         path = self._write({"repos": {}})
         rs = load_ruleset(path)
-        self.assertEqual(rs.rules, [])
+        # User rules empty → default rules are the only rules present.
+        self.assertEqual(len(rs.rules), len(DEFAULT_RULES))
+        self.assertIsNotNone(find_rule(rs.rules, "api.atlassian.com"))
+        self.assertIsNotNone(find_rule(rs.rules, "acme.atlassian.net"))
+        self.assertIsNotNone(find_rule(rs.rules, "files.slack.com"))
         self.assertEqual(rs.passthrough_hosts, DEFAULT_PASSTHROUGH)
+
+    def test_user_rule_overrides_default(self):
+        path = self._write(
+            {
+                "mitmproxy": [
+                    {
+                        "host": "api.atlassian.com",
+                        "headers": {"Authorization": "Bearer override"},
+                    }
+                ]
+            }
+        )
+        rs = load_ruleset(path)
+        matched = find_rule(rs.rules, "api.atlassian.com")
+        self.assertIsNotNone(matched)
+        # First-match-wins: user rule comes before the default for the same host.
+        self.assertEqual(matched.headers, {"Authorization": "Bearer override"})
+
+    def test_slack_files_cdn_not_covered_by_default(self):
+        # Signed URLs authenticate via query string; don't inject a bogus header.
+        path = self._write({"repos": {}})
+        rs = load_ruleset(path)
+        self.assertIsNone(find_rule(rs.rules, "slack-files.com"))
+        self.assertIsNone(find_rule(rs.rules, "files.slack-files.com"))
 
     def test_host_rule(self):
         path = self._write(
@@ -143,7 +172,7 @@ class TestLoadRuleset(unittest.TestCase):
             }
         )
         rs = load_ruleset(path)
-        self.assertEqual(len(rs.rules), 1)
+        # User rule comes first; defaults appended after.
         self.assertEqual(rs.rules[0].host, "api.example.com")
         self.assertEqual(rs.rules[0].headers, {"Authorization": "${TOKEN}"})
         self.assertFalse(rs.rules[0].readonly)
@@ -219,7 +248,8 @@ class TestLoadRuleset(unittest.TestCase):
             {"mitmproxy": [{"host": "api.example.com", "headers": {"Authorization": "${TOKEN}"}}]}
         )
         rs1 = load_ruleset(path)
-        self.assertEqual(len(rs1.rules), 1)
+        user_count_1 = len(rs1.rules) - len(DEFAULT_RULES)
+        self.assertEqual(user_count_1, 1)
 
         # Overwrite with a different config
         with open(path, "w") as f:
@@ -238,7 +268,8 @@ class TestLoadRuleset(unittest.TestCase):
         os.utime(path, None)
 
         rs2 = load_ruleset(path)
-        self.assertEqual(len(rs2.rules), 2)
+        user_count_2 = len(rs2.rules) - len(DEFAULT_RULES)
+        self.assertEqual(user_count_2, 2)
 
     def test_config_disappearance_raises(self):
         """load_ruleset raises if file disappears."""

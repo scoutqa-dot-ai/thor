@@ -25,10 +25,6 @@
   },
   "mitmproxy": [
     {
-      "host": "api.atlassian.com",
-      "headers": { "Authorization": "${ATLASSIAN_AUTH}" }
-    },
-    {
       "host_suffix": ".acme.example",
       "headers": { "X-API-Key": "${ACME_API_KEY}" }
     },

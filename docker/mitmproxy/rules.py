@@ -13,6 +13,16 @@ DEFAULT_PASSTHROUGH: list[str] = [
     "api.openai.com",
 ]
 
+# Rules baked into the image: every Thor install already requires these env
+# vars, so we inject the corresponding auth header by default. User rules in
+# config.json come first in the combined list and win on first-match, so
+# operators can still override any default (e.g. to point at a second tenant).
+DEFAULT_RULES: list[dict] = [
+    {"host": "api.atlassian.com", "headers": {"Authorization": "${ATLASSIAN_AUTH}"}},
+    {"host_suffix": ".atlassian.net", "headers": {"Authorization": "${ATLASSIAN_AUTH}"}},
+    {"host_suffix": ".slack.com", "headers": {"Authorization": "Bearer ${SLACK_BOT_TOKEN}"}},
+]
+
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _IPV6_RE = re.compile(r"^\[")
 
@@ -76,6 +86,34 @@ def interpolate(value: str) -> str:
     return _ENV_RE.sub(_sub, value)
 
 
+def _build_rule(entry: dict) -> Rule:
+    h = entry.get("host")
+    hs = entry.get("host_suffix")
+    has_host = h is not None and h != ""
+    has_suffix = hs is not None and hs != ""
+    if has_host == has_suffix:
+        raise ValueError(
+            f"Each mitmproxy rule must have exactly one of 'host' or 'host_suffix': {entry!r}"
+        )
+    if has_suffix and not hs.startswith("."):
+        raise ValueError(f"host_suffix must start with '.': {hs!r}")
+    headers = entry.get("headers")
+    if not isinstance(headers, dict) or len(headers) == 0:
+        raise ValueError(
+            f"Each mitmproxy rule must include a non-empty 'headers' object: {entry!r}"
+        )
+    if any(not isinstance(name, str) or not isinstance(value, str) for name, value in headers.items()):
+        raise ValueError(
+            f"Each mitmproxy rule 'headers' entry must map strings to strings: {entry!r}"
+        )
+    return Rule(
+        host=h if has_host else None,
+        host_suffix=hs if has_suffix else None,
+        headers=dict(headers),
+        readonly=bool(entry.get("readonly", False)),
+    )
+
+
 def load_ruleset(config_path: str) -> RuleSet:
     """Parse config.json into a RuleSet. Raises on IO/JSON/validation errors."""
     p = Path(config_path)
@@ -85,35 +123,9 @@ def load_ruleset(config_path: str) -> RuleSet:
     raw_rules = data.get("mitmproxy") or []
     if not isinstance(raw_rules, list):
         raise ValueError(f"config.json 'mitmproxy' must be a list, got {type(raw_rules).__name__}")
-    rules: list[Rule] = []
-    for entry in raw_rules:
-        h = entry.get("host")
-        hs = entry.get("host_suffix")
-        has_host = h is not None and h != ""
-        has_suffix = hs is not None and hs != ""
-        if has_host == has_suffix:
-            raise ValueError(
-                f"Each mitmproxy rule must have exactly one of 'host' or 'host_suffix': {entry!r}"
-            )
-        if has_suffix and not hs.startswith("."):
-            raise ValueError(f"host_suffix must start with '.': {hs!r}")
-        headers = entry.get("headers")
-        if not isinstance(headers, dict) or len(headers) == 0:
-            raise ValueError(
-                f"Each mitmproxy rule must include a non-empty 'headers' object: {entry!r}"
-            )
-        if any(not isinstance(name, str) or not isinstance(value, str) for name, value in headers.items()):
-            raise ValueError(
-                f"Each mitmproxy rule 'headers' entry must map strings to strings: {entry!r}"
-            )
-        rules.append(
-            Rule(
-                host=h if has_host else None,
-                host_suffix=hs if has_suffix else None,
-                headers=dict(headers),
-                readonly=bool(entry.get("readonly", False)),
-            )
-        )
+    # User rules first (first-match-wins), then baked-in defaults as a fallback.
+    rules: list[Rule] = [_build_rule(entry) for entry in raw_rules]
+    rules.extend(_build_rule(entry) for entry in DEFAULT_RULES)
 
     extra_pt = data.get("mitmproxy_passthrough") or []
     if not isinstance(extra_pt, list):

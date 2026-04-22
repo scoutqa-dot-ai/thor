@@ -131,7 +131,17 @@ When `github_app.installations` is present, the `git` wrapper resolves installat
 
 ## Adding Credential Rules
 
-Thor transparently routes all opencode outbound HTTP/HTTPS through mitmproxy (shared network namespace + iptables REDIRECT — no proxy env vars, no escape hatch) and injects credentials per host. To give opencode access to an internal API:
+Thor transparently routes all opencode outbound HTTP/HTTPS through mitmproxy (shared network namespace + iptables REDIRECT — no proxy env vars, no escape hatch) and injects credentials per host.
+
+**Built-in rules** (injected automatically, no config needed):
+
+| Host pattern        | Header                                   | Source env        |
+| ------------------- | ---------------------------------------- | ----------------- |
+| `api.atlassian.com` | `Authorization: $ATLASSIAN_AUTH`         | `ATLASSIAN_AUTH`  |
+| `*.atlassian.net`   | `Authorization: $ATLASSIAN_AUTH`         | `ATLASSIAN_AUTH`  |
+| `*.slack.com`       | `Authorization: Bearer $SLACK_BOT_TOKEN` | `SLACK_BOT_TOKEN` |
+
+To give opencode access to an additional internal API:
 
 1. Add a rule to `/workspace/config.json` (no container restart needed):
 
