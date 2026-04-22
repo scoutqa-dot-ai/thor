@@ -250,6 +250,7 @@ Likely files to create or change:
 **Tasks:**
 
 - Install `curl` in the `opencode` image.
+- Install `jq` in the `opencode` image.
 - Install `ripgrep` in the `opencode` image.
 - Add lowercase and uppercase proxy env vars to the `opencode` service.
 - Add a concrete `NO_PROXY` list for in-cluster services.
@@ -290,6 +291,7 @@ Likely files to create or change:
   passthrough and is not denied by host policy
 - `curl http://remote-cli:3004/health` bypasses the proxy via `NO_PROXY`
 - inside `opencode`, `/workspace/config.json` is readable and mounted read-only
+- inside `opencode`, `jq --version` works
 - inside `opencode`, `rg --version` works
 - inside `opencode`, `slack-upload --help` is available
 
@@ -385,6 +387,7 @@ Expected:
 | D25 | Install `ripgrep` in `opencode` explicitly                                             | The agent guidance already prefers `rg` for code search, so the container should provide it directly instead of relying on upstream runtime behavior.           |
 | D26 | Suppress only `UNDICI-EHPA` instead of all Node warnings                               | `--use-env-proxy` emits an experimental warning on every Node proxy call; `--disable-warning=UNDICI-EHPA` removes the noise without hiding unrelated warnings.  |
 | D27 | Allow `api.media.atlassian.com` as built-in passthrough                                | Jira attachment-content requests can redirect there; the media URL should be reachable without widening Atlassian host access beyond the exact redirect target. |
+| D28 | Install `jq` in `opencode` explicitly                                                  | Agent-side JSON inspection is a common shell workflow, and shipping `jq` avoids ad hoc parsing or runtime download attempts.                                    |
 
 ## Open questions
 
