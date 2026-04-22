@@ -1,0 +1,23 @@
+docker/sandbox/Dockerfile
+  b9d14e0f9af5417b 17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f6bba8fa1966e4f297774a7ea4d355075506c612",
+  "prompts": {
+    "b9d14e0f9af5417b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7c9d4c0d-5d3c-40a4-b8db-adc4137a1c6e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Conductor <conductor@noreply>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
