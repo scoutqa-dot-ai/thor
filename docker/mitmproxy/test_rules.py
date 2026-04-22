@@ -108,6 +108,7 @@ def test_slack_files_domain_not_covered_by_builtin_slack_rules() -> None:
 def test_openai_and_chatgpt_are_passthrough_by_default() -> None:
     ruleset = parse_ruleset({"repos": {}})
 
+    assert ruleset.classify("api.media.atlassian.com").action == "passthrough"
     assert ruleset.classify("openai.com").action == "passthrough"
     assert ruleset.classify("api.openai.com").action == "passthrough"
     assert ruleset.classify("chatgpt.com").action == "passthrough"

@@ -76,6 +76,7 @@ BUILTIN_RULES = [
 ]
 
 BUILTIN_PASSTHROUGH = [
+    "api.media.atlassian.com",
     "openai.com",
     ".openai.com",
     "chatgpt.com",
