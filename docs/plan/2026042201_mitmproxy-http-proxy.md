@@ -114,12 +114,13 @@ Use Node 22's native proxy support in the existing `node:22-slim` base image.
 Set:
 
 ```yaml
-NODE_OPTIONS: --use-env-proxy
+NODE_OPTIONS: --use-env-proxy --disable-warning=UNDICI-EHPA
 NODE_EXTRA_CA_CERTS: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
 ```
 
 This keeps built-in Node `fetch()` on real upstream URLs while routing through
-the proxy.
+the proxy, without printing the experimental `UNDICI-EHPA` warning on every
+Node-based proxy call.
 
 ### Built-in defaults
 
@@ -253,6 +254,7 @@ Likely files to create or change:
 - Add lowercase and uppercase proxy env vars to the `opencode` service.
 - Add a concrete `NO_PROXY` list for in-cluster services.
 - Set `NODE_OPTIONS=--use-env-proxy`.
+- Add `--disable-warning=UNDICI-EHPA` to `NODE_OPTIONS`.
 - Mount the generated CA PEM into `opencode` and wire:
   - `NODE_EXTRA_CA_CERTS`
   - `CURL_CA_BUNDLE`
@@ -380,6 +382,7 @@ Expected:
 | D23 | Exit mitmproxy if the host-generated CA is missing                                     | Prevents the proxy from booting with a container-local CA that `opencode` does not trust, which would make HTTPS behavior depend on startup order.             |
 | D24 | Add a `slack-upload` helper instead of teaching the raw Slack upload sequence inline   | Slack file uploads are a three-step flow that an LLM can easily mangle; a helper keeps the agent-facing workflow to one command.                               |
 | D25 | Install `ripgrep` in `opencode` explicitly                                             | The agent guidance already prefers `rg` for code search, so the container should provide it directly instead of relying on upstream runtime behavior.          |
+| D26 | Suppress only `UNDICI-EHPA` instead of all Node warnings                               | `--use-env-proxy` emits an experimental warning on every Node proxy call; `--disable-warning=UNDICI-EHPA` removes the noise without hiding unrelated warnings. |
 
 ## Open questions
 

@@ -150,7 +150,7 @@ services:
       - HTTP_PROXY=http://mitmproxy:8080
       - HTTPS_PROXY=http://mitmproxy:8080
       - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,slack-mcp,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
-      - NODE_OPTIONS=--use-env-proxy
+      - NODE_OPTIONS=--use-env-proxy --disable-warning=UNDICI-EHPA
       - NODE_EXTRA_CA_CERTS=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
       - CURL_CA_BUNDLE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
       - SSL_CERT_FILE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
