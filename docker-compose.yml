@@ -107,12 +107,17 @@ services:
       context: .
       target: mitmproxy
     restart: unless-stopped
+    environment:
+      - ATLASSIAN_AUTH=${ATLASSIAN_AUTH:-}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
     ports:
       - "127.0.0.1:3080:8080"
     env_file:
       - .env
     volumes:
       - ./docker-volumes/workspace:/workspace:ro
+      - ./docker-volumes/mitmproxy/mitmproxy-ca-key.pem:/etc/thor/mitmproxy/ca-key.pem:ro
+      - ./docker-volumes/mitmproxy/mitmproxy-ca-cert.pem:/etc/thor/mitmproxy/ca-cert.pem:ro
     healthcheck:
       test:
         [
@@ -139,13 +144,26 @@ services:
       - "127.0.0.1:4096:4096"
     working_dir: /workspace
     command: ["serve", "--port", "4096", "--hostname", "0.0.0.0"]
+    environment:
+      - http_proxy=http://mitmproxy:8080
+      - https_proxy=http://mitmproxy:8080
+      - no_proxy=localhost,127.0.0.1,::1,remote-cli,gateway,runner,slack-mcp,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - HTTP_PROXY=http://mitmproxy:8080
+      - HTTPS_PROXY=http://mitmproxy:8080
+      - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,slack-mcp,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - NODE_OPTIONS=--use-env-proxy
+      - NODE_EXTRA_CA_CERTS=/etc/thor/mitmproxy-ca.pem
+      - CURL_CA_BUNDLE=/etc/thor/mitmproxy-ca.pem
+      - SSL_CERT_FILE=/etc/thor/mitmproxy-ca.pem
     volumes:
       - ./docker-volumes/opencode:/home/thor/.local/share/opencode
       - ./docker-volumes/workspace/memory:/workspace/memory
+      - ./docker-volumes/workspace/config.json:/workspace/config.json:ro
       - ./docker-volumes/workspace/repos:/workspace/repos:ro
       - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
       - ./docker-volumes/workspace/cron:/workspace/cron
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
+      - ./docker-volumes/mitmproxy/mitmproxy-ca.pem:/etc/thor/mitmproxy-ca.pem:ro
     depends_on:
       remote-cli:
         condition: service_healthy

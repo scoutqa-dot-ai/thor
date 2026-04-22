@@ -64,6 +64,72 @@ def test_readonly_flag_and_deny_by_default() -> None:
     assert ruleset.classify("unknown.example.com").action == "deny"
 
 
+def test_builtins_apply_when_user_rules_empty() -> None:
+    ruleset = parse_ruleset({"repos": {}})
+
+    atlassian = ruleset.classify("api.atlassian.com")
+    assert atlassian.action == "inject"
+    assert atlassian.rule is not None
+    assert atlassian.rule.headers["Authorization"] == "${ATLASSIAN_AUTH}"
+
+    slack = ruleset.classify("slack.com")
+    assert slack.action == "inject"
+    assert slack.rule is not None
+    assert slack.rule.headers["Authorization"] == "Bearer ${SLACK_BOT_TOKEN}"
+
+    assert ruleset.classify("foo.atlassian.net").action == "inject"
+    assert ruleset.classify("files.slack.com").action == "inject"
+
+
+def test_user_rule_override_wins_over_builtin() -> None:
+    ruleset = parse_ruleset(
+        {
+            "mitmproxy": [
+                {
+                    "host": "slack.com",
+                    "headers": {"Authorization": "Bearer ${CUSTOM_SLACK_TOKEN}"},
+                }
+            ]
+        }
+    )
+
+    decision = ruleset.classify("slack.com")
+    assert decision.action == "inject"
+    assert decision.rule is not None
+    assert decision.rule.headers["Authorization"] == "Bearer ${CUSTOM_SLACK_TOKEN}"
+
+
+def test_slack_files_domain_not_covered_by_builtin_slack_rules() -> None:
+    ruleset = parse_ruleset({"repos": {}})
+
+    assert ruleset.classify("slack-files.com").action == "deny"
+
+
+def test_openai_and_chatgpt_are_passthrough_by_default() -> None:
+    ruleset = parse_ruleset({"repos": {}})
+
+    assert ruleset.classify("openai.com").action == "passthrough"
+    assert ruleset.classify("api.openai.com").action == "passthrough"
+    assert ruleset.classify("chatgpt.com").action == "passthrough"
+    assert ruleset.classify("chat.openai.com").action == "passthrough"
+
+
+def test_user_passthrough_entries_are_ordered_before_builtins() -> None:
+    ruleset = parse_ruleset(
+        {
+            "mitmproxy_passthrough": ["api.openai.com"],
+        }
+    )
+
+    assert ruleset.passthrough[:5] == [
+        "api.openai.com",
+        "openai.com",
+        ".openai.com",
+        "chatgpt.com",
+        ".chatgpt.com",
+    ]
+
+
 def test_invalid_host_suffix_and_readonly_type_are_rejected() -> None:
     try:
         parse_ruleset(

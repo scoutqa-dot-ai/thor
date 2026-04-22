@@ -100,6 +100,20 @@ def test_missing_env_fails_closed_with_502(tmp_path) -> None:
     assert _status_code(flow.response) == 502
 
 
+def test_builtin_missing_env_fails_closed_with_502(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
+
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    addon = ThorMitmAddon(str(config))
+
+    flow = FakeFlow(request=FakeRequest(host="slack.com"))
+    addon.request(flow)
+
+    assert flow.response is not None
+    assert _status_code(flow.response) == 502
+
+
 def test_readonly_rule_blocks_non_read_method(tmp_path) -> None:
     config = tmp_path / "config.json"
     config.write_text(

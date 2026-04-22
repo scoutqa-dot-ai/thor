@@ -56,7 +56,34 @@ class RuleSet:
         return PolicyDecision(action="deny")
 
 
-EMPTY_RULESET = RuleSet(rules=[], passthrough=[])
+BUILTIN_RULES = [
+    InjectRule(
+        host="api.atlassian.com",
+        headers={"Authorization": "${ATLASSIAN_AUTH}"},
+    ),
+    InjectRule(
+        host_suffix=".atlassian.net",
+        headers={"Authorization": "${ATLASSIAN_AUTH}"},
+    ),
+    InjectRule(
+        host="slack.com",
+        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+    ),
+    InjectRule(
+        host_suffix=".slack.com",
+        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+    ),
+]
+
+BUILTIN_PASSTHROUGH = [
+    "openai.com",
+    ".openai.com",
+    "chatgpt.com",
+    ".chatgpt.com",
+]
+
+
+EMPTY_RULESET = RuleSet(rules=BUILTIN_RULES.copy(), passthrough=BUILTIN_PASSTHROUGH.copy())
 
 
 def normalize_host(host: str) -> str:
@@ -164,7 +191,10 @@ def parse_ruleset(config: object) -> RuleSet:
                 )
             passthrough.append(normalize_host(raw))
 
-    return RuleSet(rules=rules, passthrough=passthrough)
+    merged_rules = rules + BUILTIN_RULES
+    merged_passthrough = passthrough + BUILTIN_PASSTHROUGH
+
+    return RuleSet(rules=merged_rules, passthrough=merged_passthrough)
 
 
 class RuleStore:
