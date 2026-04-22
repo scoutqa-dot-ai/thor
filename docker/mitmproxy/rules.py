@@ -97,11 +97,20 @@ def load_ruleset(config_path: str) -> RuleSet:
             )
         if has_suffix and not hs.startswith("."):
             raise ValueError(f"host_suffix must start with '.': {hs!r}")
+        headers = entry.get("headers")
+        if not isinstance(headers, dict) or len(headers) == 0:
+            raise ValueError(
+                f"Each mitmproxy rule must include a non-empty 'headers' object: {entry!r}"
+            )
+        if any(not isinstance(name, str) or not isinstance(value, str) for name, value in headers.items()):
+            raise ValueError(
+                f"Each mitmproxy rule 'headers' entry must map strings to strings: {entry!r}"
+            )
         rules.append(
             Rule(
                 host=h if has_host else None,
                 host_suffix=hs if has_suffix else None,
-                headers=dict(entry.get("headers", {})),
+                headers=dict(headers),
                 readonly=bool(entry.get("readonly", False)),
             )
         )

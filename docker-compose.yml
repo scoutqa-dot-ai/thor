@@ -279,6 +279,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - outside
 
   vouch:
     image: quay.io/vouch/vouch-proxy:0.45.1

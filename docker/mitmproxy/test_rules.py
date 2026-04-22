@@ -149,12 +149,24 @@ class TestLoadRuleset(unittest.TestCase):
         self.assertFalse(rs.rules[0].readonly)
 
     def test_host_suffix_rule(self):
-        path = self._write({"mitmproxy": [{"host_suffix": ".acme.example"}]})
+        path = self._write(
+            {"mitmproxy": [{"host_suffix": ".acme.example", "headers": {"X-Api-Key": "${TOKEN}"}}]}
+        )
         rs = load_ruleset(path)
         self.assertEqual(rs.rules[0].host_suffix, ".acme.example")
 
     def test_readonly_flag(self):
-        path = self._write({"mitmproxy": [{"host": "api.example.com", "readonly": True}]})
+        path = self._write(
+            {
+                "mitmproxy": [
+                    {
+                        "host": "api.example.com",
+                        "headers": {"Authorization": "${TOKEN}"},
+                        "readonly": True,
+                    }
+                ]
+            }
+        )
         rs = load_ruleset(path)
         self.assertTrue(rs.rules[0].readonly)
 
@@ -171,7 +183,17 @@ class TestLoadRuleset(unittest.TestCase):
             load_ruleset(path)
 
     def test_suffix_without_leading_dot_raises(self):
-        path = self._write({"mitmproxy": [{"host_suffix": "example.com"}]})
+        path = self._write({"mitmproxy": [{"host_suffix": "example.com", "headers": {"X": "y"}}]})
+        with self.assertRaises(ValueError):
+            load_ruleset(path)
+
+    def test_missing_headers_raises(self):
+        path = self._write({"mitmproxy": [{"host": "api.example.com"}]})
+        with self.assertRaises(ValueError):
+            load_ruleset(path)
+
+    def test_empty_headers_raises(self):
+        path = self._write({"mitmproxy": [{"host": "api.example.com", "headers": {}}]})
         with self.assertRaises(ValueError):
             load_ruleset(path)
 
@@ -193,14 +215,22 @@ class TestLoadRuleset(unittest.TestCase):
 
     def test_hot_reload(self):
         """Editing config is reflected on next load_ruleset call (mtime changes)."""
-        path = self._write({"mitmproxy": [{"host": "api.example.com"}]})
+        path = self._write(
+            {"mitmproxy": [{"host": "api.example.com", "headers": {"Authorization": "${TOKEN}"}}]}
+        )
         rs1 = load_ruleset(path)
         self.assertEqual(len(rs1.rules), 1)
 
         # Overwrite with a different config
         with open(path, "w") as f:
             json.dump(
-                {"mitmproxy": [{"host": "api.example.com"}, {"host": "api.other.com"}]}, f
+                {
+                    "mitmproxy": [
+                        {"host": "api.example.com", "headers": {"Authorization": "${TOKEN}"}},
+                        {"host": "api.other.com", "headers": {"X-Api-Key": "${OTHER_TOKEN}"}},
+                    ]
+                },
+                f,
             )
         # Force mtime to differ (filesystem may have 1s resolution)
         import time
