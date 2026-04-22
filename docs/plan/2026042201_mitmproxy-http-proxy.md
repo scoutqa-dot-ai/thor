@@ -51,7 +51,7 @@ This is an HTTP-layer policy component, not a full network sandbox.
 - proxy env vars in `opencode` for `curl` and built-in Node `fetch`
 - Node 22 native proxy support so built-in `fetch` honors proxy env vars
   reliably
-- per-host credential injection from `/workspace/config.json#mitmproxy[]`
+- per-host or host+path credential injection from `/workspace/config.json#mitmproxy[]`
 - optional passthrough host list from `/workspace/config.json#mitmproxy_passthrough[]`
 - baked-in Atlassian + Slack default rules
 - baked-in OpenAI + ChatGPT passthrough defaults
@@ -79,7 +79,7 @@ This is an HTTP-layer policy component, not a full network sandbox.
 
 1. A tool inside `opencode` calls the real upstream URL.
 2. The client reads proxy env vars and connects to `http://mitmproxy:8080`.
-3. mitmproxy classifies the destination host:
+3. mitmproxy classifies the destination host and path:
    - inject headers
    - passthrough
    - deny
@@ -128,11 +128,18 @@ The proxy image ships with these default injection rules:
 
 - `api.atlassian.com` -> `Authorization: ${ATLASSIAN_AUTH}` (`readonly: true`)
 - `.atlassian.net` -> `Authorization: ${ATLASSIAN_AUTH}` (`readonly: true`)
-- `slack.com` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
-- `.slack.com` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
+- `slack.com/api/chat.postMessage` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
+- `slack.com/api/conversations.replies` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
+- `slack.com/api/conversations.history` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
+- `slack.com/api/files.info` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
+- `slack.com/api/files.getUploadURLExternal` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
+- `slack.com/api/files.completeUploadExternal` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
+- `files.slack.com/upload/v1/...` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
+- `files.slack.com/files-pri/...` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}` (`readonly: true`)
 
 The proxy image also ships with these default passthrough hosts:
 
+- `api.media.atlassian.com`
 - `openai.com`
 - `.openai.com`
 - `chatgpt.com`
@@ -150,6 +157,7 @@ built-in passthrough list.
   "mitmproxy": [
     {
       "host": "api.example.com",
+      "path_prefix": "/v1/",
       "headers": { "Authorization": "${EXAMPLE_API_KEY}" }
     },
     {
@@ -165,6 +173,7 @@ built-in passthrough list.
 Rule semantics:
 
 - exactly one of `host` or `host_suffix`
+- optional `path_prefix` narrows a rule to one URL prefix on the matched host
 - first match wins
 - `readonly: true` allows `GET`, `HEAD`, `OPTIONS`
 - `${ENV}` interpolation happens at request time
@@ -219,6 +228,7 @@ Likely files to create or change:
   - `entrypoint.sh`
 - Add `mitmproxy[]` and `mitmproxy_passthrough[]` to the workspace config
   schema in `packages/common/src/workspace-config.ts`.
+- Support optional `path_prefix` matching on inject rules.
 - Delete the `data` service from `docker-compose.yml`.
 - Delete `docker/data/`.
 - Rebind host port `3080` to `mitmproxy:8080`.
@@ -226,6 +236,7 @@ Likely files to create or change:
 - Add unit tests for:
   - host matching
   - suffix matching
+  - path-prefix matching
   - `${ENV}` interpolation
   - readonly behavior
   - deny-by-default behavior
@@ -266,8 +277,9 @@ Likely files to create or change:
 - Add baked-in default rules for:
   - `api.atlassian.com`
   - `.atlassian.net`
-  - `slack.com`
-  - `.slack.com`
+  - the supported Slack Web API paths on `slack.com`
+  - `files.slack.com/upload/v1/...`
+  - `files.slack.com/files-pri/...`
 - Add baked-in default passthrough for:
   - `api.media.atlassian.com`
   - `openai.com`
@@ -279,6 +291,7 @@ Likely files to create or change:
   - defaults applied when `mitmproxy[]` is empty
   - user override wins
   - `slack-files.com` is not covered
+  - path-scoped rules match by host + path prefix
   - OpenAI / ChatGPT domains passthrough by default
 
 **Exit criteria:**
@@ -342,7 +355,7 @@ From inside `opencode`:
 
 ```bash
 curl https://api.atlassian.com/oauth/me
-node -e 'fetch("https://slack.com/api/auth.test").then(async r => console.log(r.status, await r.text()))'
+node -e 'fetch("https://slack.com/api/conversations.history?channel=C123&limit=1").then(async r => console.log(r.status, await r.text()))'
 curl -I https://api.openai.com
 curl http://remote-cli:3004/health
 ```
@@ -389,6 +402,8 @@ Expected:
 | D27 | Allow `api.media.atlassian.com` as built-in passthrough                                | Jira attachment-content requests can redirect there; the media URL should be reachable without widening Atlassian host access beyond the exact redirect target. |
 | D28 | Make the built-in Atlassian proxy rules readonly                                       | The baked-in Atlassian path is intended for read access from `opencode`; write operations should continue to go through explicit MCP or user-configured rules.  |
 | D29 | Install `jq` in `opencode` explicitly                                                  | Agent-side JSON inspection is a common shell workflow, and shipping `jq` avoids ad hoc parsing or runtime download attempts.                                    |
+| D30 | Add optional `path_prefix` to mitmproxy inject rules                                   | Some deployments need different injected credentials on the same host; a prefix is enough without introducing regex or a larger rule language.                  |
+| D31 | Narrow built-in Slack proxy rules to the opencode Slack workflow surface               | Allow only the Slack API methods needed over the mitmproxy path; update, delete, and reaction actions stay on the gateway/`slack-mcp` path instead.             |
 
 ## Open questions
 

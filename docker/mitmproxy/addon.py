@@ -19,7 +19,13 @@ except Exception:  # pragma: no cover - test fallback when mitmproxy isn't insta
 
     http = _FallbackHTTP()  # type: ignore[assignment]
 
-from rules import MissingEnvVarError, RuleStore, is_readonly_method, resolve_headers
+from rules import (
+    MissingEnvVarError,
+    RuleStore,
+    is_readonly_method,
+    normalize_path,
+    resolve_headers,
+)
 
 HEALTH_HOST = "__health.thor"
 
@@ -44,22 +50,22 @@ class ThorMitmAddon:
         if host == HEALTH_HOST:
             return
 
-        decision = self._store.get().classify(host)
-        if decision.action == "deny":
+        if not self._store.get().allows_host(host):
             flow.response = _response(403, f"thor proxy denied host: {host}")
 
     def request(self, flow: Any) -> None:
         request = flow.request
         host = getattr(request, "pretty_host", None) or request.host
+        path = normalize_path(getattr(request, "path", "/"))
 
         if host == HEALTH_HOST:
             flow.response = _response(200, "ok")
             return
 
-        decision = self._store.get().classify(host)
+        decision = self._store.get().classify(host, path)
 
         if decision.action == "deny":
-            flow.response = _response(403, f"thor proxy denied host: {host}")
+            flow.response = _response(403, f"thor proxy denied host/path: {host}{path}")
             return
 
         if decision.action == "passthrough":

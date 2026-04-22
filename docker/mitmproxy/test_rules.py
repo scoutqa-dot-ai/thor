@@ -15,10 +15,12 @@ def test_exact_and_suffix_matching() -> None:
             "mitmproxy": [
                 {
                     "host": "api.example.com",
+                    "path_prefix": "/v1/",
                     "headers": {"Authorization": "Bearer ${TOKEN}"},
                 },
                 {
                     "host_suffix": ".example.internal",
+                    "path_prefix": "/readonly/",
                     "headers": {"X-API-Key": "${INTERNAL}"},
                     "readonly": True,
                 },
@@ -27,8 +29,10 @@ def test_exact_and_suffix_matching() -> None:
         }
     )
 
-    assert ruleset.classify("api.example.com").action == "inject"
-    assert ruleset.classify("service.example.internal").action == "inject"
+    assert ruleset.classify("api.example.com", "/v1/users").action == "inject"
+    assert ruleset.classify("service.example.internal", "/readonly/health").action == "inject"
+    assert ruleset.classify("api.example.com", "/v2/users").action == "deny"
+    assert ruleset.classify("service.example.internal", "/write").action == "deny"
     assert ruleset.classify("api.openai.com").action == "passthrough"
     assert ruleset.classify("foo.openai.com").action == "passthrough"
 
@@ -57,7 +61,7 @@ def test_readonly_flag_and_deny_by_default() -> None:
         }
     )
 
-    decision = ruleset.classify("readonly.example.com")
+    decision = ruleset.classify("readonly.example.com", "/")
     assert decision.action == "inject"
     assert decision.rule is not None
     assert decision.rule.readonly is True
@@ -73,16 +77,34 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     assert atlassian.rule.headers["Authorization"] == "${ATLASSIAN_AUTH}"
     assert atlassian.rule.readonly is True
 
-    slack = ruleset.classify("slack.com")
-    assert slack.action == "inject"
-    assert slack.rule is not None
-    assert slack.rule.headers["Authorization"] == "Bearer ${SLACK_BOT_TOKEN}"
+    slack_post = ruleset.classify("slack.com", "/api/chat.postMessage")
+    assert slack_post.action == "inject"
+    assert slack_post.rule is not None
+    assert slack_post.rule.headers["Authorization"] == "Bearer ${SLACK_BOT_TOKEN}"
+
+    slack_history = ruleset.classify("slack.com", "/api/conversations.history")
+    assert slack_history.action == "inject"
+
+    slack_update = ruleset.classify("slack.com", "/api/chat.update")
+    assert slack_update.action == "deny"
+
+    slack_unknown = ruleset.classify("slack.com", "/api/users.list")
+    assert slack_unknown.action == "deny"
 
     atlassian_site = ruleset.classify("foo.atlassian.net")
     assert atlassian_site.action == "inject"
     assert atlassian_site.rule is not None
     assert atlassian_site.rule.readonly is True
-    assert ruleset.classify("files.slack.com").action == "inject"
+
+    slack_upload = ruleset.classify("files.slack.com", "/upload/v1/abc123")
+    assert slack_upload.action == "inject"
+    assert slack_upload.rule is not None
+    assert slack_upload.rule.readonly is False
+
+    slack_file = ruleset.classify("files.slack.com", "/files-pri/T1-F1/download/report.txt")
+    assert slack_file.action == "inject"
+    assert slack_file.rule is not None
+    assert slack_file.rule.readonly is True
 
 
 def test_user_rule_override_wins_over_builtin() -> None:
@@ -97,7 +119,7 @@ def test_user_rule_override_wins_over_builtin() -> None:
         }
     )
 
-    decision = ruleset.classify("slack.com")
+    decision = ruleset.classify("slack.com", "/api/users.list")
     assert decision.action == "inject"
     assert decision.rule is not None
     assert decision.rule.headers["Authorization"] == "Bearer ${CUSTOM_SLACK_TOKEN}"
@@ -126,8 +148,9 @@ def test_user_passthrough_entries_are_ordered_before_builtins() -> None:
         }
     )
 
-    assert ruleset.passthrough[:5] == [
+    assert ruleset.passthrough[:6] == [
         "api.openai.com",
+        "api.media.atlassian.com",
         "openai.com",
         ".openai.com",
         "chatgpt.com",
@@ -150,6 +173,22 @@ def test_invalid_host_suffix_and_readonly_type_are_rejected() -> None:
         raise AssertionError("expected invalid host_suffix to raise")
     except ValueError as exc:
         assert "host_suffix must start with '.'" in str(exc)
+
+    try:
+        parse_ruleset(
+            {
+                "mitmproxy": [
+                    {
+                        "host": "api.example.com",
+                        "path_prefix": "v1",
+                        "headers": {"Authorization": "Bearer ${TOKEN}"},
+                    }
+                ]
+            }
+        )
+        raise AssertionError("expected invalid path_prefix to raise")
+    except ValueError as exc:
+        assert "path_prefix must start with '/'" in str(exc)
 
     try:
         parse_ruleset(

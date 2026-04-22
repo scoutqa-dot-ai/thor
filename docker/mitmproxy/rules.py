@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urlsplit
 
 ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
 READONLY_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -21,14 +22,22 @@ class InjectRule:
     readonly: bool = False
     host: str | None = None
     host_suffix: str | None = None
+    path_prefix: str | None = None
 
-    def matches(self, host: str) -> bool:
+    def matches_host(self, host: str) -> bool:
         host = normalize_host(host)
         if self.host is not None:
             return host == normalize_host(self.host)
         if self.host_suffix is not None:
             return host.endswith(self.host_suffix.lower())
         return False
+
+    def matches(self, host: str, path: str = "/") -> bool:
+        if not self.matches_host(host):
+            return False
+        if self.path_prefix is None:
+            return True
+        return normalize_path(path).startswith(self.path_prefix)
 
 
 @dataclass(frozen=True)
@@ -42,10 +51,10 @@ class RuleSet:
     rules: list[InjectRule]
     passthrough: list[str]
 
-    def classify(self, host: str) -> PolicyDecision:
+    def classify(self, host: str, path: str = "/") -> PolicyDecision:
         host = normalize_host(host)
         for rule in self.rules:
-            if rule.matches(host):
+            if rule.matches(host, path):
                 return PolicyDecision(action="inject", rule=rule)
         for entry in self.passthrough:
             if entry.startswith("."):
@@ -54,6 +63,19 @@ class RuleSet:
             elif host == normalize_host(entry):
                 return PolicyDecision(action="passthrough")
         return PolicyDecision(action="deny")
+
+    def allows_host(self, host: str) -> bool:
+        host = normalize_host(host)
+        for rule in self.rules:
+            if rule.matches_host(host):
+                return True
+        for entry in self.passthrough:
+            if entry.startswith("."):
+                if host.endswith(entry.lower()):
+                    return True
+            elif host == normalize_host(entry):
+                return True
+        return False
 
 
 BUILTIN_RULES = [
@@ -70,10 +92,43 @@ BUILTIN_RULES = [
     InjectRule(
         host="slack.com",
         headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+        path_prefix="/api/chat.postMessage",
     ),
     InjectRule(
-        host_suffix=".slack.com",
+        host="slack.com",
         headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+        path_prefix="/api/conversations.replies",
+    ),
+    InjectRule(
+        host="slack.com",
+        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+        path_prefix="/api/conversations.history",
+    ),
+    InjectRule(
+        host="slack.com",
+        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+        path_prefix="/api/files.info",
+    ),
+    InjectRule(
+        host="slack.com",
+        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+        path_prefix="/api/files.getUploadURLExternal",
+    ),
+    InjectRule(
+        host="slack.com",
+        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+        path_prefix="/api/files.completeUploadExternal",
+    ),
+    InjectRule(
+        host="files.slack.com",
+        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+        path_prefix="/upload/v1/",
+    ),
+    InjectRule(
+        host="files.slack.com",
+        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+        path_prefix="/files-pri/",
+        readonly=True,
     ),
 ]
 
@@ -101,6 +156,24 @@ def normalize_host(host: str) -> str:
     if host.endswith("."):
         host = host[:-1]
     return host
+
+
+def normalize_path(path: str) -> str:
+    path = path.strip()
+    if not path:
+        return "/"
+
+    if "://" in path:
+        split = urlsplit(path)
+        path = split.path or "/"
+
+    if "?" in path:
+        path = path.split("?", 1)[0]
+
+    if not path.startswith("/"):
+        path = "/" + path
+
+    return path
 
 
 def is_readonly_method(method: str) -> bool:
@@ -148,6 +221,7 @@ def parse_ruleset(config: object) -> RuleSet:
 
         host = raw.get("host")
         host_suffix = raw.get("host_suffix")
+        path_prefix = raw.get("path_prefix")
         has_host = isinstance(host, str) and len(host) > 0
         has_suffix = isinstance(host_suffix, str) and len(host_suffix) > 0
         if has_host == has_suffix:
@@ -158,6 +232,11 @@ def parse_ruleset(config: object) -> RuleSet:
             raise ValueError(
                 f"mitmproxy[{idx}].host_suffix must start with '.'"
             )
+        if path_prefix is not None:
+            if not isinstance(path_prefix, str) or not path_prefix.startswith("/"):
+                raise ValueError(
+                    f"mitmproxy[{idx}].path_prefix must start with '/'"
+                )
 
         headers = raw.get("headers")
         if not isinstance(headers, dict) or not headers:
@@ -176,6 +255,7 @@ def parse_ruleset(config: object) -> RuleSet:
             readonly=readonly,
             host=normalize_host(host) if has_host else None,
             host_suffix=host_suffix.lower() if has_suffix else None,
+            path_prefix=normalize_path(path_prefix) if isinstance(path_prefix, str) else None,
         )
         rules.append(rule)
 
