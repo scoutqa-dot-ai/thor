@@ -102,16 +102,29 @@ services:
       timeout: 3s
       retries: 10
 
-  data:
+  mitmproxy:
     build:
-      context: ./docker/data
+      context: .
+      target: mitmproxy
     restart: unless-stopped
+    environment:
+      - ATLASSIAN_AUTH=${ATLASSIAN_AUTH:-}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
     ports:
-      - "127.0.0.1:3080:80"
+      - "127.0.0.1:3080:8080"
     env_file:
       - .env
+    volumes:
+      - ./docker-volumes/workspace:/workspace:ro
+      - ./docker-volumes/mitmproxy:/etc/thor/mitmproxy:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost/health"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; opener=urllib.request.build_opener(urllib.request.ProxyHandler({'http':'http://localhost:8080'})); r=opener.open('http://__health.thor/', timeout=2); sys.exit(0 if r.status == 200 else 1)",
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -130,17 +143,30 @@ services:
       - "127.0.0.1:4096:4096"
     working_dir: /workspace
     command: ["serve", "--port", "4096", "--hostname", "0.0.0.0"]
+    environment:
+      - http_proxy=http://mitmproxy:8080
+      - https_proxy=http://mitmproxy:8080
+      - no_proxy=localhost,127.0.0.1,::1,remote-cli,gateway,runner,slack-mcp,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - HTTP_PROXY=http://mitmproxy:8080
+      - HTTPS_PROXY=http://mitmproxy:8080
+      - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,slack-mcp,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - NODE_OPTIONS=--use-env-proxy --disable-warning=UNDICI-EHPA
+      - NODE_EXTRA_CA_CERTS=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      - CURL_CA_BUNDLE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      - SSL_CERT_FILE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
     volumes:
       - ./docker-volumes/opencode:/home/thor/.local/share/opencode
       - ./docker-volumes/workspace/memory:/workspace/memory
+      - ./docker-volumes/workspace/config.json:/workspace/config.json:ro
       - ./docker-volumes/workspace/repos:/workspace/repos:ro
       - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
       - ./docker-volumes/workspace/cron:/workspace/cron
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
+      - ./docker-volumes/mitmproxy/public:/etc/thor/mitmproxy-public:ro
     depends_on:
       remote-cli:
         condition: service_healthy
-      data:
+      mitmproxy:
         condition: service_healthy
     healthcheck:
       test:
