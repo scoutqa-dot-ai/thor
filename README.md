@@ -86,9 +86,7 @@ opencode -> HTTP(S)_PROXY -> mitmproxy -> upstream
 
 - `opencode` sets both lowercase and uppercase proxy env vars (`http_proxy`,
   `https_proxy`, `HTTP_PROXY`, `HTTPS_PROXY`, with matching `NO_PROXY` forms).
-- Supported outbound clients in this workflow are `curl`, `wget`, and Node 22
-  built-in `fetch()`.
-- Standalone `undici` imports are not covered by this workflow.
+- Supported outbound clients in this workflow are `curl` and built-in `fetch()`.
 - This is env-proxy routing, not transparent interception or firewall-style
   egress enforcement.
 - OpenAI and ChatGPT domains are passthrough by default (no injected

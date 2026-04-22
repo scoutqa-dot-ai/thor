@@ -4,7 +4,7 @@
 explicit HTTP proxy:
 
 ```
-opencode (curl / wget / node)
+opencode (curl / node)
   -> HTTP(S)_PROXY
   -> mitmproxy
   -> real upstream URL
@@ -16,8 +16,7 @@ Primary targets:
 - Slack works out of the box
 - OpenAI and ChatGPT domains pass through by default
 - custom host rules come from `/workspace/config.json`
-- supported clients inside opencode are `curl`, `wget`, and built-in Node
-  `fetch`
+- supported clients inside opencode are `curl` and built-in Node `fetch`
 - the legacy `data` container is removed completely
 
 ## Workflow
@@ -49,7 +48,7 @@ This is an HTTP-layer policy component, not a full network sandbox.
 **In scope:**
 
 - `mitmdump --mode regular@8080` as an explicit forward proxy
-- proxy env vars in `opencode` for `curl`, `wget`, and built-in Node `fetch`
+- proxy env vars in `opencode` for `curl` and built-in Node `fetch`
 - Node 22 native proxy support so built-in `fetch` honors proxy env vars
   reliably
 - per-host credential injection from `/workspace/config.json#mitmproxy[]`
@@ -57,8 +56,8 @@ This is an HTTP-layer policy component, not a full network sandbox.
 - baked-in Atlassian + Slack default rules
 - baked-in OpenAI + ChatGPT passthrough defaults
 - deny-by-default behavior for unknown hosts
-- CA generation plus explicit CA env wiring for `curl`, `wget`, and Node
-- installing `curl` and `wget` in the `opencode` image
+- CA generation plus explicit CA env wiring for `curl` and Node
+- installing `curl` in the `opencode` image
 - mounting `/workspace/config.json` read-only into `opencode`
 - deleting the existing `data` reverse-proxy container and its config surface
 - unit tests for rules, addon behavior, and workspace config schema
@@ -104,12 +103,9 @@ This is required because different tools honor different spellings.
 Covered clients for this plan:
 
 - `curl`
-- `wget`
 - built-in Node `fetch()`
 
 Not covered by this plan:
-
-- scripts that import the standalone `undici` package directly
 
 ### Node support
 
@@ -123,7 +119,7 @@ NODE_EXTRA_CA_CERTS: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
 ```
 
 This keeps built-in Node `fetch()` on real upstream URLs while routing through
-the proxy. No `undici` preload file is required.
+the proxy.
 
 ### Built-in defaults
 
@@ -251,7 +247,7 @@ Likely files to create or change:
 
 **Tasks:**
 
-- Install `curl` and `wget` in the `opencode` image.
+- Install `curl` in the `opencode` image.
 - Add lowercase and uppercase proxy env vars to the `opencode` service.
 - Add a concrete `NO_PROXY` list for in-cluster services.
 - Set `NODE_OPTIONS=--use-env-proxy`.
@@ -281,17 +277,12 @@ Likely files to create or change:
 
 - inside `opencode`, `curl https://api.atlassian.com/oauth/me` works with no
   explicit `-x`
-- inside `opencode`, `wget -O- https://slack.com/api/auth.test` works with no
-  explicit proxy flags
 - inside `opencode`, `node -e 'fetch(...)'` succeeds through mitmproxy using
   Node's built-in env-proxy support
 - inside `opencode`, `curl -I https://api.openai.com` reaches upstream through
   passthrough and is not denied by host policy
 - `curl http://remote-cli:3004/health` bypasses the proxy via `NO_PROXY`
-- inside `opencode`, `/workspace/config.json` is readable and mounted
-  read-only
-- docs and tests do not claim support for scripts that import standalone
-  `undici`
+- inside `opencode`, `/workspace/config.json` is readable and mounted read-only
 
 ### Phase 3 — Docs and operator workflow
 
@@ -310,9 +301,8 @@ Likely files to create or change:
 **Exit criteria:**
 
 - README clearly explains `opencode -> mitmproxy -> upstream`
-- docs mention `curl`, `wget`, and built-in Node `fetch()` support explicitly
-- docs make clear that Node support means built-in `fetch()`, not arbitrary
-  standalone `undici` clients
+- docs mention `curl` and built-in Node `fetch()` support explicitly
+- docs make clear that Node support means built-in `fetch()`
 - docs do not describe transparent routing or firewall-style enforcement
 - no current docs tell operators to use `http://data/...`
 - `.env.example` contains no `DATA_ROUTES` examples
@@ -331,7 +321,6 @@ From inside `opencode`:
 
 ```bash
 curl https://api.atlassian.com/oauth/me
-wget -O- https://slack.com/api/auth.test
 node -e 'fetch("https://slack.com/api/auth.test").then(async r => console.log(r.status, await r.text()))'
 curl -I https://api.openai.com
 curl http://remote-cli:3004/health
@@ -357,8 +346,8 @@ Expected:
 | D5  | Match hosts by `host` or `host_suffix`, not regex                                    | Exact and suffix matching cover the expected cases without making rule syntax hard to reason about.                                                            |
 | D6  | Fail closed on missing env vars                                                      | Silent unauthenticated fallback is the wrong failure mode.                                                                                                     |
 | D7  | Keep deny-by-default host policy                                                     | Unknown hosts should be rejected unless explicitly injected or passed through.                                                                                 |
-| D8  | Use both lowercase and uppercase proxy env vars                                      | `curl`, `wget`, and built-in Node `fetch()` do not all consult the same spellings.                                                                             |
-| D9  | Use Node 22 native env-proxy support instead of an `undici` preload                  | The current `node:22-slim` image already supports built-in `fetch()` proxying via `--use-env-proxy`, which removes an unnecessary dependency and preload file. |
+| D8  | Use both lowercase and uppercase proxy env vars                                      | Different HTTP clients do not all consult the same proxy env var spellings.                                                                                    |
+| D9  | Use Node 22 native env-proxy support                                                 | The current `node:22-slim` image already supports built-in `fetch()` proxying via `--use-env-proxy`, which removes an unnecessary dependency and preload file. |
 | D10 | Bake in Atlassian and Slack defaults                                                 | Those integrations are core Thor dependencies and should work without per-install copy-paste.                                                                  |
 | D11 | User rules come before defaults                                                      | Operators need an escape hatch for host-specific overrides.                                                                                                    |
 | D12 | Generate the CA on the host and mount it into containers                             | Keeps the private key out of image layers and keeps rotation simple.                                                                                           |
@@ -366,9 +355,9 @@ Expected:
 | D14 | Limit env vars exposed to mitmproxy                                                  | The proxy should only receive the secrets it actually needs for interpolation.                                                                                 |
 | D15 | Pass through OpenAI and ChatGPT domains by default                                   | The OpenCode runtime itself depends on those hosts, so proxy enablement in `opencode` must not break model traffic.                                            |
 | D16 | Remove the legacy `data` container instead of running both systems in parallel       | Sharing host port `3080` and teaching two URL shapes would create avoidable operator confusion and migration bugs.                                             |
-| D17 | Install `curl` and `wget` in `opencode`                                              | The target operator workflow and smoke tests depend on those clients being present in the container.                                                           |
+| D17 | Install `curl` in `opencode`                                                         | The target operator workflow and smoke tests depend on a simple shell HTTP client being present in the container.                                              |
 | D18 | Mount `/workspace/config.json` read-only into `opencode`                             | The agent should be able to inspect custom proxy rules without being able to edit deployment config in-place.                                                  |
-| D19 | Explicitly scope Node support to built-in `fetch()` only                             | The plan should not imply support for scripts that import the standalone `undici` package directly.                                                            |
+| D19 | Explicitly scope Node support to built-in `fetch()` only                             |                                                                                                                                                                |
 | D20 | Interpolate `${ENV}` in mitmproxy from the proxy container env only                  | Keeps Phase 1 simple: use compose `env_file: .env` + explicit proxy envs, without introducing a second config/secret distribution system.                      |
 | D21 | Split CA mounts into a private mitmproxy dir and a public-only opencode dir          | Fixes Docker's missing-file bind-mount footgun while keeping the CA private key unreadable from `opencode`.                                                    |
 | D22 | Exit mitmproxy if the host-generated CA is missing                                   | Prevents the proxy from booting with a container-local CA that `opencode` does not trust, which would make HTTPS behavior depend on startup order.             |
