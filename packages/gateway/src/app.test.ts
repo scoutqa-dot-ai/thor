@@ -1063,45 +1063,51 @@ describe("gateway", () => {
     });
   });
 
-  it("resolves approval actions through remote-cli for current v2 button values", async () => {
+  it("resolves approval actions through remote-cli for legacy v2 button values", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 })))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({ status: "approved", tool: "deploy", upstream: "slack" }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
 
     await withServer(
       fetchImpl,
-      async (baseUrl) => {
-        const payloads = [
-          {
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
             type: "block_actions",
             user: { id: "U123" },
             channel: { id: "C123" },
-            message: { ts: "1710000000.001" },
+            message: { ts: "1710000000.001", thread_ts: "1710000000.001" },
             actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
           },
-        ];
+          body,
+        });
 
-        for (const payloadData of payloads) {
-          const payload = encodeURIComponent(JSON.stringify(payloadData));
-          const body = `payload=${payload}`;
-          const timestamp = `${Math.floor(Date.now() / 1000)}`;
-
-          const response = await fetch(`${baseUrl}/slack/interactivity`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-              "X-Slack-Request-Timestamp": timestamp,
-              "X-Slack-Signature": sign(body, "signing-secret", timestamp),
-            },
-            body,
-          });
-
-          expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true });
-        }
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
 
         await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
       },
       {
         remoteCliHost: "remote-cli.internal",
@@ -1110,11 +1116,10 @@ describe("gateway", () => {
       },
     );
 
-    const execCalls = fetchImpl.mock.calls.filter(
+    const execCall = fetchImpl.mock.calls.find(
       ([url]) => typeof url === "string" && url === "http://remote-cli.internal:3010/exec/mcp",
     );
-    expect(execCalls).toHaveLength(1);
-    expect(execCalls[0]?.[1]).toMatchObject({
+    expect(execCall?.[1]).toMatchObject({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1122,5 +1127,154 @@ describe("gateway", () => {
       },
       body: JSON.stringify({ args: ["resolve", "act-1", "approved", "U123"] }),
     });
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeDefined();
+    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.correlationKey).toBe("slack:thread:1710000000.001");
+    expect(runnerBody.interrupt).toBe(false);
+  });
+
+  it("retries queued approval outcome re-entry when runner is busy", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({
+              status: "approved",
+              tool: "merge_pull_request",
+              upstream: "github",
+              reason: "ship it",
+            }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ busy: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100", thread_ts: "1710000000.001" },
+            actions: [
+              {
+                action_id: "approval_approve",
+                value: "v3:act-1:github:1710000000.001",
+              },
+            ],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        await queue.flush();
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        resolveSecret: "resolve-secret",
+      },
+    );
+
+    const runnerCalls = fetchImpl.mock.calls.filter(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCalls).toHaveLength(2);
+
+    const firstBody = JSON.parse(String(runnerCalls[0]?.[1]?.body));
+    expect(firstBody.interrupt).toBe(false);
+    expect(firstBody.correlationKey).toBe("slack:thread:1710000000.001");
+    expect(firstBody.prompt).toContain("human approved action `act-1`");
+    expect(firstBody.prompt).toContain("continue the workflow");
+  });
+
+  it("fails closed for v2 approval buttons when thread context is missing", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({ status: "approved", tool: "deploy", upstream: "slack" }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100" },
+            actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        resolveSecret: "resolve-secret",
+      },
+    );
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeUndefined();
   });
 });

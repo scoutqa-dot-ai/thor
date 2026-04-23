@@ -159,7 +159,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     expect(slackUrls).toContain("https://slack.com/api/chat.delete");
   });
 
-  it("posts approval_required events with v2 button payload format", async () => {
+  it("posts approval_required events with v3 button payload format", async () => {
     const lines = [
       JSON.stringify({
         type: "approval_required",
@@ -192,7 +192,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     const approveButton = body.blocks[3].elements.find(
       (el: { action_id: string }) => el.action_id === "approval_approve",
     );
-    expect(approveButton.value).toBe("v2:act-1:github");
+    expect(approveButton.value).toBe("v3:act-1:github:1710000000.001");
   });
 
   it("skips invalid NDJSON lines without crashing", async () => {
@@ -435,5 +435,111 @@ describe("triggerRunnerCron", () => {
 
     expect(result.busy).toBe(false);
     expect(onAccepted).toHaveBeenCalled();
+  });
+});
+
+describe("approval outcome prompts", () => {
+  it("builds approved and rejected re-entry guidance", async () => {
+    const { buildApprovalOutcomePrompt } = await import("./service.js");
+    const prompt = buildApprovalOutcomePrompt([
+      {
+        actionId: "act-1",
+        decision: "approved",
+        reviewer: "U123",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        upstreamName: "github",
+        tool: "merge_pull_request",
+      },
+      {
+        actionId: "act-2",
+        decision: "rejected",
+        reviewer: "U456",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        upstreamName: "github",
+        tool: "close_issue",
+        resolutionSummary: "missing approval reason",
+      },
+    ]);
+
+    expect(prompt).toContain("human approved action `act-1`");
+    expect(prompt).toContain("continue the workflow");
+    expect(prompt).toContain("human rejected action `act-2`");
+    expect(prompt).toContain("do not retry the same write blindly");
+    expect(prompt).toContain("Resolution summary: missing approval reason");
+  });
+
+  it("includes approval guidance when slack events and approval outcomes share a batch", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ busy: true }));
+    const { triggerRunnerSlack } = await import("./service.js");
+
+    const result = await triggerRunnerSlack(
+      [
+        {
+          channel: "C123",
+          ts: "1710000000.001",
+          text: "continue",
+          user: "U123",
+          type: "message",
+          thread_ts: "1710000000.001",
+        },
+      ],
+      "slack:thread:1710000000.001",
+      { runnerUrl: "http://runner:3000", fetchImpl },
+      { botToken: "xoxb-test", fetchImpl: vi.fn(), slackApiBaseUrl: "https://slack.com/api" },
+      false,
+      undefined,
+      new Map([["C123", "my-repo"]]),
+      undefined,
+      [
+        {
+          actionId: "act-1",
+          decision: "approved",
+          reviewer: "U123",
+          channel: "C123",
+          threadTs: "1710000000.001",
+          upstreamName: "github",
+          tool: "merge_pull_request",
+        },
+      ],
+    );
+
+    expect(result.busy).toBe(true);
+    const req = fetchImpl.mock.calls[0]?.[1] as { body: string };
+    const body = JSON.parse(req.body);
+    expect(body.prompt).toContain("Slack event:");
+    expect(body.prompt).toContain("human approved action `act-1`");
+    expect(body.prompt).toContain("continue the workflow");
+  });
+});
+
+describe("triggerRunnerApprovalOutcomes", () => {
+  it("returns busy when runner reports busy", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ busy: true }));
+    const { triggerRunnerApprovalOutcomes } = await import("./service.js");
+
+    const result = await triggerRunnerApprovalOutcomes(
+      [
+        {
+          actionId: "act-1",
+          decision: "approved",
+          reviewer: "U123",
+          channel: "C123",
+          threadTs: "1710000000.001",
+        },
+      ],
+      "slack:thread:1710000000.001",
+      { runnerUrl: "http://runner:3000", fetchImpl },
+      false,
+      undefined,
+      new Map([["C123", "my-repo"]]),
+    );
+
+    expect(result.busy).toBe(true);
+    const req = fetchImpl.mock.calls[0]?.[1] as { body: string };
+    const body = JSON.parse(req.body);
+    expect(body.interrupt).toBe(false);
+    expect(body.correlationKey).toBe("slack:thread:1710000000.001");
   });
 });
