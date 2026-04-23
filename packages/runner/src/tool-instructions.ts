@@ -12,36 +12,60 @@ export function buildToolInstructions(
   const repo = extractRepoFromCwd(directory);
   if (!repo) return undefined;
 
-  const allowed = getRepoUpstreams(config, repo);
-  if (!allowed || allowed.length === 0) return undefined;
+  const repoConfig = config.repos[repo];
+  if (!repoConfig) return undefined;
 
-  const sections: string[] = [];
+  const hasSlackChannels = (repoConfig.channels?.length ?? 0) > 0;
+
+  const allowed = getRepoUpstreams(config, repo);
+  if (!allowed) return undefined;
+
+  const mcpSections: string[] = [];
 
   for (const upstreamName of allowed) {
     const proxyDef = getProxyConfig(upstreamName);
     if (!proxyDef) continue;
 
     if (proxyDef.allow.length > 0) {
-      sections.push(`## ${upstreamName} (allow)`);
-      for (const name of proxyDef.allow) sections.push(`- ${name}`);
+      mcpSections.push(`## ${upstreamName} (allow)`);
+      for (const name of proxyDef.allow) mcpSections.push(`- ${name}`);
     }
 
     if (proxyDef.approve.length > 0) {
-      sections.push(`## ${upstreamName} (approve — requires human approval)`);
-      for (const name of proxyDef.approve) sections.push(`- ${name}`);
+      mcpSections.push(`## ${upstreamName} (approve — requires human approval)`);
+      for (const name of proxyDef.approve) mcpSections.push(`- ${name}`);
     }
   }
 
-  if (sections.length === 0) return undefined;
+  const blocks: string[] = [];
 
-  return [
-    "[Available MCP tools — use the `mcp` CLI to call these]",
-    "",
-    ...sections,
-    "",
-    'Usage: mcp <upstream> <tool> \'{"arg":"value"}\'',
-    "Always pass a single JSON string argument.",
-    "Run `mcp <upstream> <tool> --help` to see tool description and input schema.",
-    "Run `approval status <id>` to check approval status.",
-  ].join("\n");
+  if (mcpSections.length > 0) {
+    blocks.push(
+      [
+        "[Available MCP tools — use the `mcp` CLI to call these]",
+        "",
+        ...mcpSections,
+        "",
+        'Usage: mcp <upstream> <tool> \'{"arg":"value"}\'',
+        "Always pass a single JSON string argument.",
+        "Run `mcp <upstream> <tool> --help` to see tool description and input schema.",
+        "Run `approval status <id>` to check approval status.",
+      ].join("\n"),
+    );
+  }
+
+  if (hasSlackChannels) {
+    blocks.push(
+      [
+        "[Slack capability]",
+        "This repo is mapped to Slack channels.",
+        "Use the Slack skill and real Slack Web API URLs over mitmproxy (do not use `mcp slack`).",
+        "Use `slack-post-message` for `https://slack.com/api/chat.postMessage` writes.",
+        "Use direct `curl`/`fetch` to Slack read APIs (for example `conversations.replies` or `conversations.history`).",
+      ].join("\n"),
+    );
+  }
+
+  if (blocks.length === 0) return undefined;
+  return blocks.join("\n\n");
 }

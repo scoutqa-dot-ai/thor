@@ -1,6 +1,6 @@
 import type { ProxyConfig } from "./workspace-config.js";
 
-export const PROXY_NAMES = ["atlassian", "grafana", "posthog", "slack"] as const;
+export const PROXY_NAMES = ["atlassian", "grafana", "posthog"] as const;
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
 
@@ -99,11 +99,6 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
       "insight-update",
       "event-definition-update",
     ],
-  },
-  slack: {
-    upstream: { url: "http://slack-mcp:3003/mcp" },
-    allow: ["post_message", "read_thread", "get_channel_history", "get_slack_file"],
-    approve: [],
   },
 };
 
