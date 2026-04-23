@@ -1,6 +1,6 @@
 # Thor
 
-An event-driven AI team member that watches Slack and scheduled jobs, resumes OpenCode sessions through the runner, and reaches external systems through `remote-cli` and `slack-mcp`.
+An event-driven AI team member that watches Slack and scheduled jobs, resumes OpenCode sessions through the runner, and reaches external systems through `remote-cli` plus direct Slack Web API access.
 
 ## Architecture
 
@@ -8,14 +8,12 @@ An event-driven AI team member that watches Slack and scheduled jobs, resumes Op
 ingress -> gateway -> runner -> opencode
                            \
                             -> remote-cli -> MCP upstreams / CLI integrations
-                             \
-                              -> slack-mcp
 ```
 
 - `gateway` accepts Slack and cron events, batches them, and forwards them to the runner.
 - `runner` manages OpenCode session continuity and streams progress back out.
 - `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, langfuse, metabase, MCP tool calls, and approval status/resolution.
-- `slack-mcp` owns Slack API access for progress updates and approval notifications.
+- Slack API calls are split between `gateway` (system-side side effects like progress/reactions/approvals) and OpenCode tools over mitmproxy (agent-driven reads/writes).
 
 ## Services
 
@@ -29,7 +27,6 @@ ingress -> gateway -> runner -> opencode
 | `ingress`     | 8080 | `docker/ingress`   | Reverse proxy + Vouch integration          |
 | `opencode`    | 4096 | Docker image       | Headless agent runtime                     |
 | `runner`      | 3000 | `@thor/runner`     | Session lifecycle + NDJSON progress stream |
-| `slack-mcp`   | 3003 | `@thor/slack-mcp`  | Slack MCP server and progress lifecycle    |
 | `vouch`       | 9090 | Docker image       | OAuth/SSO proxy                            |
 
 ## Quick Start
@@ -67,7 +64,7 @@ Example:
   "repos": {
     "your-repo": {
       "channels": ["C12345678"],
-      "proxies": ["slack", "atlassian", "grafana"]
+      "proxies": ["atlassian", "grafana"]
     }
   }
 }
@@ -138,7 +135,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `POSTHOG_API_KEY`                   | Yes      | `remote-cli`              | PostHog MCP auth                                                    |
 | `RESOLVE_SECRET`                    | Yes      | `remote-cli`, `gateway`   | Secret-gates approval resolution                                    |
 | `SESSION_CWD`                       | No       | `runner`                  | Working directory for new sessions                                  |
-| `SLACK_BOT_TOKEN`                   | Yes      | `slack-mcp`, `mitmproxy`  | Slack bot token and mitmproxy default injection                     |
+| `SLACK_BOT_TOKEN`                   | Yes      | `gateway`, `mitmproxy`    | Slack bot token for gateway API calls and mitmproxy default injection |
 | `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                 | Bot user ID used to ignore our own messages                         |
 | `SLACK_SIGNING_SECRET`              | Yes      | `gateway`                 | Slack webhook verification                                          |
 | `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | `gateway`                 | Signature timestamp tolerance                                       |
@@ -218,7 +215,7 @@ Rules match by exact host or suffix first, then by optional `path_prefix`.
 | `METABASE_API_KEY`              | No       | `remote-cli`              | Metabase access                       |
 | `POSTHOG_API_KEY`               | Yes      | `remote-cli`              | PostHog MCP auth                      |
 | `RESOLVE_SECRET`                | Yes      | `remote-cli`, `gateway`   | Secret-gates approval resolution      |
-| `SLACK_BOT_TOKEN`               | Yes      | `slack-mcp`, `mitmproxy`  | Slack bot token + proxy injection     |
+| `SLACK_BOT_TOKEN`               | Yes      | `gateway`, `mitmproxy`    | Slack bot token + proxy injection     |
 | `SLACK_BOT_USER_ID`             | Yes      | `gateway`                 | Used to ignore our own Slack messages |
 | `SLACK_SIGNING_SECRET`          | Yes      | `gateway`                 | Slack webhook verification            |
 
@@ -251,7 +248,7 @@ thor/
 │   ├── opencode-cli/
 │   ├── remote-cli/
 │   ├── runner/
-│   └── slack-mcp/
+│   └── admin/
 ├── docker/
 │   ├── cron/
 │   ├── mitmproxy/
