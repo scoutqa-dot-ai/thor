@@ -513,7 +513,7 @@ describe("alias extraction", () => {
       const aliases = extractAliases([
         {
           tool: "bash",
-          input: { command: "mcp slack post_message ..." },
+          input: { command: "slack-post-message --channel C123 --text hello" },
           output: `posted\n[thor:meta] ${meta}\n`,
         },
       ]);

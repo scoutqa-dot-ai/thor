@@ -26,12 +26,14 @@ Talk to Slack through real upstream URLs:
 Authentication is injected by `mitmproxy`. Do not pass `Authorization`
 manually and do not look for a separate Slack MCP tool.
 
-The default tool for this skill is `curl`. Prefer URL-encoded form for simple
-Slack writes. Switch to JSON only when the payload becomes structured, such as
-`blocks` or `attachments`.
-For any multiline Slack message, or whenever quoting feels fragile, write the
-message body to a unique temp file under `/tmp` and send it with
-`--data-urlencode "text@$TEXT_FILE"`.
+For message posts, use `slack-post-message` instead of raw `curl`. It forwards
+the OpenCode context headers required by the proxy and emits `[thor:meta]`
+thread aliases on `stderr` so Thor keeps Slack thread continuity in notes.
+
+The default tool for this skill is `curl` for Slack reads. Use
+`slack-post-message` for Slack message writes. For any multiline Slack message,
+or whenever quoting feels fragile, write the message body to a unique temp file
+under `/tmp` and send it with `--text-file "$TEXT_FILE"`.
 For file uploads, prefer `slack-upload` over manually calling Slack's
 multi-step upload endpoints.
 
@@ -117,11 +119,10 @@ curl -sS -o "$DOWNLOAD_FILE" \
 For a short single-line reply, inline text is fine:
 
 ```bash
-curl -sS -X POST https://slack.com/api/chat.postMessage \
-  -H 'content-type: application/x-www-form-urlencoded' \
-  --data-urlencode 'channel=C123' \
-  --data-urlencode 'thread_ts=1710000000.001' \
-  --data-urlencode 'text=Root cause looks like a missing env var in the worker deploy. I confirmed the crash started after the 14:10 rollout. Next step: redeploy with FOO_API_KEY restored.'
+slack-post-message \
+  --channel C123 \
+  --thread-ts 1710000000.001 \
+  --text 'Root cause looks like a missing env var in the worker deploy. I confirmed the crash started after the 14:10 rollout. Next step: redeploy with FOO_API_KEY restored.'
 ```
 
 For any multiline reply, use a unique temp file. This is the default when the
@@ -136,11 +137,10 @@ Good news: the AI did not crash.
 The suite still has 0 test cases, so create_manual_ai_session had nothing to run.
 EOF
 
-curl -sS -X POST https://slack.com/api/chat.postMessage \
-  -H 'content-type: application/x-www-form-urlencoded' \
-  --data-urlencode 'channel=C123' \
-  --data-urlencode 'thread_ts=1710000000.001' \
-  --data-urlencode "text@$TEXT_FILE"
+slack-post-message \
+  --channel C123 \
+  --thread-ts 1710000000.001 \
+  --text-file "$TEXT_FILE"
 ```
 
 ### 5. Upload a file
@@ -185,8 +185,10 @@ Common failures to report as-is:
 - Tool inputs use Slack IDs such as `C...` and `F...`, not channel names.
 - `thread_ts` should be the parent message timestamp for the thread.
 - Use real Slack URLs. Do not route Slack work through `mcp slack`.
+- Use `slack-post-message` for `chat.postMessage`; raw `curl` is still fine for
+  Slack reads.
 - Do not send multiline Slack text as an inline shell string. Default to a
-  unique temp file under `/tmp` plus `--data-urlencode "text@$TEXT_FILE"`.
+  unique temp file under `/tmp` plus `--text-file "$TEXT_FILE"`.
 - Do not use literal `\n` inside single-quoted `text=...` arguments.
 - Do not use shared temp paths. Default to `mktemp` under `/tmp`; use
   `mktemp -d` when you need a stable filename inside a unique temp directory.
