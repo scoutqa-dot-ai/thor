@@ -368,7 +368,7 @@ class ProgressSession {
       this.recentMemory = this.recentMemory.slice(-4);
     }
 
-    if (this.thresholdMet && Date.now() - this.lastUpdateTime >= UPDATE_INTERVAL_MS) {
+    if (this.thresholdMet) {
       await this.flush();
     }
   }
@@ -381,7 +381,7 @@ class ProgressSession {
       this.recentDelegates = this.recentDelegates.slice(-4);
     }
 
-    if (this.thresholdMet && Date.now() - this.lastUpdateTime >= UPDATE_INTERVAL_MS) {
+    if (this.thresholdMet) {
       await this.flush();
     }
   }
@@ -515,9 +515,7 @@ export async function handleProgressEvent(
     ...(event.type === "memory"
       ? { action: event.action, path: event.path, source: event.source }
       : {}),
-    ...(event.type === "delegate"
-      ? { agent: event.agent, description: event.description }
-      : {}),
+    ...(event.type === "delegate" ? { agent: event.agent, description: event.description } : {}),
     ...(event.type === "done" ? { status: event.status } : {}),
     hasSession: activeSessions.has(key),
     ts: Date.now(),
@@ -545,7 +543,10 @@ export async function handleProgressEvent(
       await session.onMemory({ action: event.action, path: event.path, source: event.source });
       break;
     case "delegate":
-      await session.onDelegate({ agent: event.agent, ...(event.description ? { description: event.description } : {}) });
+      await session.onDelegate({
+        agent: event.agent,
+        ...(event.description ? { description: event.description } : {}),
+      });
       break;
     case "done":
       await session.finish(event.status === "completed" ? "completed" : "error", event.error);

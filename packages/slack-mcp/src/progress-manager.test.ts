@@ -290,6 +290,46 @@ describe("ProgressManager", () => {
     expect(chat(deps).postMessage).not.toHaveBeenCalled();
   });
 
+  it("updates immediately when memory/delegate context arrives after threshold is reached", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+    expect(chat(deps).update).not.toHaveBeenCalled();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/README.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    expect(chat(deps).update).toHaveBeenCalledOnce();
+    expect((chat(deps).update.mock.calls[0][0] as { text: string }).text).toContain(
+      "memory: README.md",
+    );
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "delegate",
+        agent: "coding-agent",
+      },
+      deps,
+      "",
+    );
+    expect(chat(deps).update).toHaveBeenCalledTimes(2);
+    expect((chat(deps).update.mock.calls[1][0] as { text: string }).text).toContain(
+      "agents: coding-agent",
+    );
+  });
+
   it("throttles updates to 10s intervals", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
