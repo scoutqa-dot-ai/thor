@@ -1,11 +1,10 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   resolveOrgFromArgs,
   parseOrgFromRemoteUrl,
-  findInstallation,
   resolveInstallation,
   generateAppJWT,
 } from "./github-app-auth.js";
@@ -20,6 +19,10 @@ describe("resolveOrgFromArgs", () => {
 
   it("extracts org from --repo=owner/repo", () => {
     expect(resolveOrgFromArgs(["pr", "view", "--repo=acme/web"])).toBe("acme");
+  });
+
+  it("extracts org from --repo owner/repo", () => {
+    expect(resolveOrgFromArgs(["pr", "view", "--repo", "acme/web"])).toBe("acme");
   });
 
   it("returns undefined when no -R flag", () => {
@@ -64,12 +67,37 @@ describe("parseOrgFromRemoteUrl", () => {
     expect(parseOrgFromRemoteUrl("git@github.com:acme/web")).toBe("acme");
   });
 
-  it("parses GitHub Enterprise HTTPS remote", () => {
-    expect(parseOrgFromRemoteUrl("https://github.example.com/acme/web.git")).toBe("acme");
+  it("parses GitHub Enterprise HTTPS remote when host is derived from GITHUB_API_URL", () => {
+    const prev = process.env.GITHUB_API_URL;
+    process.env.GITHUB_API_URL = "https://api.github.example.com";
+    try {
+      expect(parseOrgFromRemoteUrl("https://github.example.com/acme/web.git")).toBe("acme");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.GITHUB_API_URL;
+      } else {
+        process.env.GITHUB_API_URL = prev;
+      }
+    }
   });
 
-  it("parses GitHub Enterprise SSH remote", () => {
-    expect(parseOrgFromRemoteUrl("git@github.example.com:acme/web.git")).toBe("acme");
+  it("parses GitHub Enterprise SSH remote when host is derived from GITHUB_API_URL", () => {
+    const prev = process.env.GITHUB_API_URL;
+    process.env.GITHUB_API_URL = "https://ghe.example.com/api/v3";
+    try {
+      expect(parseOrgFromRemoteUrl("git@ghe.example.com:acme/web.git")).toBe("acme");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.GITHUB_API_URL;
+      } else {
+        process.env.GITHUB_API_URL = prev;
+      }
+    }
+  });
+
+  it("rejects non-GitHub hosts", () => {
+    expect(parseOrgFromRemoteUrl("https://evil.example.com/acme/web.git")).toBeUndefined();
+    expect(parseOrgFromRemoteUrl("git@evil.example.com:acme/web.git")).toBeUndefined();
   });
 
   it("returns undefined for unparseable URL", () => {

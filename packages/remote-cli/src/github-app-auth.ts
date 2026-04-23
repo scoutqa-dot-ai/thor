@@ -24,6 +24,7 @@ const GITHUB_APP_DIR = process.env.GITHUB_APP_DIR ?? "/var/lib/remote-cli/github
 const DEFAULT_PRIVATE_KEY_PATH = join(GITHUB_APP_DIR, "private-key.pem");
 const CACHE_DIR = join(GITHUB_APP_DIR, "cache");
 const DEFAULT_API_URL = "https://api.github.com";
+const DEFAULT_GITHUB_HOST = "github.com";
 
 /** Refresh token when less than this many seconds remain. */
 const EARLY_REFRESH_SECONDS = 300; // 5 minutes
@@ -60,6 +61,11 @@ export function resolveOrgFromArgs(args: string[]): string | undefined {
       const slash = ownerRepo.indexOf("/");
       if (slash > 0) return ownerRepo.slice(0, slash);
     }
+    if (args[i] === "--repo" && i + 1 < args.length) {
+      const ownerRepo = args[i + 1];
+      const slash = ownerRepo.indexOf("/");
+      if (slash > 0) return ownerRepo.slice(0, slash);
+    }
     if (args[i]?.startsWith("--repo=")) {
       const ownerRepo = args[i].slice("--repo=".length);
       const slash = ownerRepo.indexOf("/");
@@ -92,13 +98,22 @@ export function resolveOrgFromRemote(cwd: string): string | undefined {
  * Parse the org (owner) from a GitHub remote URL.
  */
 export function parseOrgFromRemoteUrl(url: string): string | undefined {
+  const allowedHosts = deriveAllowedGitHosts();
+
   // SSH: git@github.com:org/repo.git
-  const sshMatch = url.match(/^git@[^:]+:([^/]+)\//);
-  if (sshMatch) return sshMatch[1];
+  const sshMatch = url.match(/^git@([^:]+):([^/]+)\//);
+  if (sshMatch) {
+    const host = normalizeHost(sshMatch[1]);
+    if (!allowedHosts.has(host)) return undefined;
+    return sshMatch[2];
+  }
 
   // HTTPS: https://github.com/org/repo or https://github.com/org/repo.git
   try {
     const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return undefined;
+    const host = normalizeHost(parsed.hostname);
+    if (!allowedHosts.has(host)) return undefined;
     const parts = parsed.pathname.split("/").filter(Boolean);
     if (parts.length >= 2) return parts[0];
   } catch {
@@ -106,6 +121,48 @@ export function parseOrgFromRemoteUrl(url: string): string | undefined {
   }
 
   return undefined;
+}
+
+function normalizeHost(host: string): string {
+  return host.trim().toLowerCase();
+}
+
+function deriveAllowedGitHosts(): Set<string> {
+  const hosts = new Set<string>([DEFAULT_GITHUB_HOST]);
+
+  addGitHostsFromApiUrl(process.env.GITHUB_API_URL, hosts);
+
+  try {
+    const config = loadWorkspaceConfig(WORKSPACE_CONFIG_PATH);
+    for (const installation of config.github_app?.installations ?? []) {
+      addGitHostsFromApiUrl(installation.api_url, hosts);
+    }
+  } catch {
+    // Ignore config load errors here and fall back to default host allowlist.
+  }
+
+  return hosts;
+}
+
+function addGitHostsFromApiUrl(apiUrl: string | undefined, hosts: Set<string>): void {
+  if (!apiUrl) return;
+  try {
+    const parsed = new URL(apiUrl);
+    const host = normalizeHost(parsed.hostname);
+    if (!host) return;
+    hosts.add(host);
+
+    // Common API host forms:
+    // - api.github.com -> github.com
+    // - api.<ghe-host> -> <ghe-host>
+    if (host === "api.github.com") {
+      hosts.add(DEFAULT_GITHUB_HOST);
+    } else if (host.startsWith("api.")) {
+      hosts.add(host.slice("api.".length));
+    }
+  } catch {
+    // Ignore invalid URLs.
+  }
 }
 
 /**

@@ -213,22 +213,18 @@ const ALLOWED_PUSH_FLAGS: ReadonlySet<string> = new Set([
   "-q",
 ]);
 
-const PUSH_FLAGS_ALLOWING_INLINE_VALUE: ReadonlySet<string> = new Set(["--force-with-lease"]);
+const PROTECTED_PUSH_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
 
 function validateGitPush(args: string[]): string | null {
   const pushIdx = args.indexOf("push");
 
   let i = pushIdx + 1;
   let sawRemote = false;
+  let sawRefspec = false;
   while (i < args.length) {
     const arg = args[i];
 
-    const eqIdx = arg.indexOf("=");
-    const flagName = eqIdx >= 0 ? arg.slice(0, eqIdx) : arg;
-
     if (ALLOWED_PUSH_FLAGS.has(arg)) {
-      i += 1;
-    } else if (PUSH_FLAGS_ALLOWING_INLINE_VALUE.has(flagName)) {
       i += 1;
     } else if (arg.startsWith("-")) {
       return `"git push ${arg}" is not allowed — unrecognized flag`;
@@ -242,21 +238,40 @@ function validateGitPush(args: string[]): string | null {
     } else {
       const refspecError = validatePushRefspec(arg);
       if (refspecError) return refspecError;
+      sawRefspec = true;
       i += 1;
     }
   }
 
-  // No remote specified — defaults to origin, which is fine
+  if (!sawRemote) {
+    return '"git push" is not allowed — must explicitly specify remote "origin"';
+  }
+
+  if (!sawRefspec) {
+    return '"git push origin" is not allowed — must include an explicit branch or refspec';
+  }
+
   return null;
 }
 
 function validatePushRefspec(refspec: string): string | null {
   if (refspec.startsWith("+")) {
-    return `"git push ${refspec}" is not allowed — leading "+" force-updates via refspec; use --force-with-lease`;
+    return `"git push ${refspec}" is not allowed — leading "+" force-updates via refspec are blocked`;
   }
 
   const colonIdx = refspec.indexOf(":");
   if (colonIdx < 0) {
+    if (refspec === "HEAD") {
+      return `"git push ${refspec}" is not allowed — refspec must target an explicit destination branch`;
+    }
+
+    const branch = refspec.startsWith("refs/heads/")
+      ? refspec.slice("refs/heads/".length)
+      : refspec;
+    if (PROTECTED_PUSH_BRANCHES.has(branch)) {
+      return `"git push ${refspec}" is not allowed — pushing to protected branch "${branch}" is blocked`;
+    }
+
     return null;
   }
 
@@ -273,6 +288,11 @@ function validatePushRefspec(refspec: string): string | null {
 
   if (dst.includes(":")) {
     return `"git push ${refspec}" is not allowed — mapped refspec destination must not contain ":"`;
+  }
+
+  const dstBranch = dst.slice("refs/heads/".length);
+  if (PROTECTED_PUSH_BRANCHES.has(dstBranch)) {
+    return `"git push ${refspec}" is not allowed — pushing to protected branch "${dstBranch}" is blocked`;
   }
 
   return null;
@@ -541,20 +561,15 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "pr status",
   "pr checks",
   "pr create",
-  "pr edit",
   "pr comment",
-  "pr ready",
   "pr review",
   "issue view",
   "issue list",
   "issue comment",
   "repo view",
-  "run cancel",
   "run list",
-  "run rerun",
   "run view",
   "workflow list",
-  "workflow run",
   "workflow view",
   "label list",
   "release list",
@@ -587,5 +602,257 @@ export function validateGhArgs(args: string[]): string | null {
     return `"gh ${key}" is not allowed`;
   }
 
+  if (key === "pr create") {
+    return validateGhPrCreateArgs(args);
+  }
+
+  if (key === "pr comment" || key === "issue comment") {
+    return validateGhAppendOnlyCommentArgs(args, key);
+  }
+
+  if (key === "pr review") {
+    return validateGhPrReviewArgs(args);
+  }
+
   return null;
+}
+
+function validateGhPrCreateArgs(args: string[]): string | null {
+  const key = "pr create";
+  const allowedFlagsWithValue: ReadonlySet<string> = new Set([
+    "-t",
+    "--title",
+    "-b",
+    "--body",
+    "-B",
+    "--base",
+    "-H",
+    "--head",
+  ]);
+
+  const allowedBooleanFlags: ReadonlySet<string> = new Set(["--draft"]);
+
+  const blockedFlags: ReadonlySet<string> = new Set([
+    "-e",
+    "--editor",
+    "-w",
+    "--web",
+    "-F",
+    "--body-file",
+  ]);
+
+  let hasTitle = false;
+  let hasBody = false;
+
+  for (let i = 2; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg.startsWith("-")) {
+      continue;
+    }
+
+    const eqIdx = arg.indexOf("=");
+    const flag = eqIdx >= 0 ? arg.slice(0, eqIdx) : arg;
+
+    if (blockedFlags.has(flag)) {
+      return `"gh ${key} ${flag}" is not allowed — interactive and file-based modes are blocked`;
+    }
+
+    if (allowedBooleanFlags.has(flag)) {
+      continue;
+    }
+
+    if (!allowedFlagsWithValue.has(flag)) {
+      return `"gh ${key} ${arg}" is not allowed — only --title/--body with optional --base/--head/--draft are permitted`;
+    }
+
+    if (flag === "-t" || flag === "--title") {
+      hasTitle = true;
+    }
+    if (flag === "-b" || flag === "--body") {
+      hasBody = true;
+    }
+
+    if (eqIdx < 0) {
+      if (i + 1 >= args.length) {
+        return `"gh ${key} ${flag}" requires a value`;
+      }
+      i += 1;
+    }
+  }
+
+  if (!hasTitle || !hasBody) {
+    return '"gh pr create" requires both --title and --body';
+  }
+
+  return null;
+}
+
+function validateGhAppendOnlyCommentArgs(args: string[], key: string): string | null {
+  const allowedFlagsWithValue: ReadonlySet<string> = new Set(["-b", "--body"]);
+
+  const blockedMutationFlags: ReadonlySet<string> = new Set([
+    "--edit-last",
+    "--delete-last",
+    "--create-if-none",
+    "--yes",
+    "-e",
+    "--editor",
+    "-w",
+    "--web",
+    "-F",
+    "--body-file",
+  ]);
+
+  let hasBody = false;
+  const selectors: string[] = [];
+
+  for (let i = 2; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg.startsWith("-")) {
+      selectors.push(arg);
+      continue;
+    }
+
+    const eqIdx = arg.indexOf("=");
+    const flag = eqIdx >= 0 ? arg.slice(0, eqIdx) : arg;
+
+    if (blockedMutationFlags.has(flag)) {
+      return `"gh ${key} ${flag}" is not allowed — append-only comment creation only`;
+    }
+
+    if (!allowedFlagsWithValue.has(flag)) {
+      return `"gh ${key} ${arg}" is not allowed — only --body is permitted`;
+    }
+
+    if (flag === "-b" || flag === "--body") {
+      hasBody = true;
+    }
+
+    if (eqIdx < 0) {
+      if (i + 1 >= args.length) {
+        return `"gh ${key} ${flag}" requires a value`;
+      }
+      i += 1;
+    }
+  }
+
+  if (!hasBody) {
+    return `"gh ${key}" requires --body`;
+  }
+
+  if (key === "pr comment") {
+    return validateOptionalNumericSelector(key, selectors, "PR");
+  }
+
+  // issue comment must always include a numeric issue number selector
+  return validateRequiredNumericSelector(key, selectors, "issue");
+}
+
+function validateOptionalNumericSelector(
+  key: string,
+  selectors: string[],
+  resourceName: string,
+): string | null {
+  if (selectors.length > 1) {
+    return `"gh ${key}" allows at most one positional ${resourceName} number selector`;
+  }
+
+  if (selectors.length === 1 && !/^\d+$/.test(selectors[0])) {
+    return `"gh ${key}" positional selector must be a numeric ${resourceName} number`;
+  }
+
+  return null;
+}
+
+function validateRequiredNumericSelector(
+  key: string,
+  selectors: string[],
+  resourceName: string,
+): string | null {
+  if (selectors.length !== 1) {
+    return `"gh ${key}" requires exactly one positional ${resourceName} number selector`;
+  }
+
+  if (!/^\d+$/.test(selectors[0])) {
+    return `"gh ${key}" positional selector must be a numeric ${resourceName} number`;
+  }
+
+  return null;
+}
+
+function validateGhPrReviewArgs(args: string[]): string | null {
+  const key = "pr review";
+  const allowedFlagsWithValue: ReadonlySet<string> = new Set(["-b", "--body"]);
+
+  const allowedModeFlags: ReadonlySet<string> = new Set(["-c", "--comment", "-r", "--request-changes"]);
+
+  let sawCommentMode = false;
+  let sawRequestChangesMode = false;
+  let hasBody = false;
+  const selectors: string[] = [];
+
+  for (let i = 2; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg.startsWith("-")) {
+      selectors.push(arg);
+      continue;
+    }
+
+    const eqIdx = arg.indexOf("=");
+    const flag = eqIdx >= 0 ? arg.slice(0, eqIdx) : arg;
+
+    if (flag === "-a" || flag === "--approve") {
+      return '"gh pr review --approve" is not allowed — PR approval must be human';
+    }
+
+    if (
+      flag === "-e" ||
+      flag === "--editor" ||
+      flag === "-w" ||
+      flag === "--web" ||
+      flag === "-F" ||
+      flag === "--body-file"
+    ) {
+      return `"gh ${key} ${flag}" is not allowed — interactive and file-based review modes are blocked`;
+    }
+
+    if (allowedModeFlags.has(flag)) {
+      if (flag === "-c" || flag === "--comment") {
+        sawCommentMode = true;
+      }
+      if (flag === "-r" || flag === "--request-changes") {
+        sawRequestChangesMode = true;
+      }
+      continue;
+    }
+
+    if (!allowedFlagsWithValue.has(flag)) {
+      return `"gh ${key} ${arg}" is not allowed — only --comment/--request-changes with --body are permitted`;
+    }
+
+    if (flag === "-b" || flag === "--body") {
+      hasBody = true;
+    }
+
+    if (eqIdx < 0) {
+      if (i + 1 >= args.length) {
+        return `"gh ${key} ${flag}" requires a value`;
+      }
+      i += 1;
+    }
+  }
+
+  if (!sawCommentMode && !sawRequestChangesMode) {
+    return '"gh pr review" requires exactly one of --comment or --request-changes';
+  }
+
+  if (sawCommentMode && sawRequestChangesMode) {
+    return '"gh pr review" requires exactly one of --comment or --request-changes';
+  }
+
+  if (!hasBody) {
+    return '"gh pr review" requires --body';
+  }
+
+  return validateOptionalNumericSelector(key, selectors, "PR");
 }
