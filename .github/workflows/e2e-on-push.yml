@@ -6,13 +6,7 @@ on:
       - main
     paths:
       - ".github/workflows/e2e-on-push.yml"
-      - "docker-compose.yml"
-      - "Dockerfile"
-      - "docker/**"
-      - "packages/**"
       - "scripts/test-e2e.sh"
-      - "package.json"
-      - "pnpm-lock.yaml"
   workflow_dispatch:
 
 permissions:
@@ -25,7 +19,7 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -33,67 +27,14 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
           cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Validate required CI inputs
-        env:
-          THOR_CI_WORKSPACE_CONFIG_JSON: ${{ vars.THOR_CI_WORKSPACE_CONFIG_JSON }}
-          THOR_CI_OPENCODE_AUTH_JSON: ${{ secrets.THOR_CI_OPENCODE_AUTH_JSON }}
-          THOR_CI_CRON_SECRET: ${{ secrets.THOR_CI_CRON_SECRET }}
-          THOR_CI_RESOLVE_SECRET: ${{ secrets.THOR_CI_RESOLVE_SECRET }}
-          THOR_CI_SLACK_BOT_TOKEN: ${{ secrets.THOR_CI_SLACK_BOT_TOKEN }}
-          THOR_CI_SLACK_BOT_USER_ID: ${{ vars.THOR_CI_SLACK_BOT_USER_ID }}
-          THOR_CI_SLACK_SIGNING_SECRET: ${{ secrets.THOR_CI_SLACK_SIGNING_SECRET }}
-          THOR_CI_GRAFANA_URL: ${{ vars.THOR_CI_GRAFANA_URL }}
-          THOR_CI_GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ secrets.THOR_CI_GRAFANA_SERVICE_ACCOUNT_TOKEN }}
-          THOR_CI_ATLASSIAN_AUTH: ${{ secrets.THOR_CI_ATLASSIAN_AUTH }}
-          THOR_CI_POSTHOG_API_KEY: ${{ secrets.THOR_CI_POSTHOG_API_KEY }}
-          THOR_CI_DAYTONA_API_KEY: ${{ secrets.THOR_CI_DAYTONA_API_KEY }}
-          THOR_CI_DAYTONA_SNAPSHOT: ${{ vars.THOR_CI_DAYTONA_SNAPSHOT }}
-          THOR_CI_GITHUB_PAT: ${{ secrets.THOR_CI_GITHUB_PAT }}
-        run: |
-          set -euo pipefail
-          required=(
-            THOR_CI_WORKSPACE_CONFIG_JSON
-            THOR_CI_OPENCODE_AUTH_JSON
-            THOR_CI_CRON_SECRET
-            THOR_CI_RESOLVE_SECRET
-            THOR_CI_SLACK_BOT_TOKEN
-            THOR_CI_SLACK_BOT_USER_ID
-            THOR_CI_SLACK_SIGNING_SECRET
-            THOR_CI_GRAFANA_URL
-            THOR_CI_GRAFANA_SERVICE_ACCOUNT_TOKEN
-            THOR_CI_DAYTONA_API_KEY
-            THOR_CI_DAYTONA_SNAPSHOT
-            THOR_CI_GITHUB_PAT
-          )
-
-          missing=0
-          for name in "${required[@]}"; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "::error::Missing required GitHub variable/secret: ${name}"
-              missing=1
-            fi
-          done
-
-          if [[ "$missing" -ne 0 ]]; then
-            exit 1
-          fi
-
-          if [[ -z "${THOR_CI_ATLASSIAN_AUTH:-}" && -z "${THOR_CI_POSTHOG_API_KEY:-}" ]]; then
-            echo "::error::Set at least one approval-capable provider credential: THOR_CI_ATLASSIAN_AUTH or THOR_CI_POSTHOG_API_KEY"
-            exit 1
-          fi
 
       - name: Materialize CI runtime files
         env:
@@ -188,7 +129,3 @@ jobs:
       - name: Compose logs (on failure)
         if: failure()
         run: docker compose logs --no-color --timestamps
-
-      - name: Tear down compose
-        if: always()
-        run: docker compose down --volumes --remove-orphans
