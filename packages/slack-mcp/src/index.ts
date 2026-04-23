@@ -275,13 +275,13 @@ app.post("/progress", async (req, res) => {
     return;
   }
   try {
-    const { channel, threadTs, event } = parsed.data;
+    const { channel, threadTs, sourceTs, event } = parsed.data;
     if (!isChannelAllowed(channel)) {
       logInfo(log, "progress_blocked", { channel, reason: "channel_not_allowed" });
       res.json({ ok: true, ignored: true });
       return;
     }
-    await handleProgressEvent(channel, threadTs, event, slackDeps);
+    await handleProgressEvent(channel, threadTs, event, slackDeps, sourceTs);
     res.json({ ok: true });
   } catch (err) {
     logError(log, "progress_endpoint_error", err instanceof Error ? err.message : String(err));

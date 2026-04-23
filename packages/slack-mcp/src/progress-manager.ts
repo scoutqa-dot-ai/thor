@@ -4,6 +4,7 @@ import {
   postMessage,
   updateMessage,
   deleteMessage,
+  addReaction,
   type SlackDeps,
   type SlackBlock,
 } from "./slack.js";
@@ -184,6 +185,7 @@ class ProgressSession {
   private channel: string;
   private threadTs: string;
   private deps: SlackDeps;
+  private sourceTs: string;
 
   private messageTs?: string;
   private toolCallCount = 0;
@@ -194,11 +196,16 @@ class ProgressSession {
   private thresholdMet = false;
   private finished = false;
 
-  constructor(channel: string, threadTs: string, deps: SlackDeps) {
+  constructor(channel: string, threadTs: string, deps: SlackDeps, sourceTs: string) {
     this.channel = channel;
     this.threadTs = threadTs;
     this.deps = deps;
+    this.sourceTs = sourceTs;
     this.startTime = Date.now();
+  }
+
+  setSourceTs(sourceTs: string): void {
+    this.sourceTs = sourceTs;
   }
 
   async onToolCall(toolName: string): Promise<void> {
@@ -286,10 +293,9 @@ class ProgressSession {
       await this.update(text);
       updateProgressStatus(this.channel, this.threadTs, this.messageTs, "error");
     } else {
-      await this.post(text);
-      if (this.messageTs) {
-        updateProgressStatus(this.channel, this.threadTs, this.messageTs, "error");
-      }
+      await addReaction(this.channel, this.sourceTs, "x", this.deps).catch((err) =>
+        logError(log, "reaction_error", err instanceof Error ? err.message : String(err)),
+      );
     }
   }
 
@@ -347,6 +353,7 @@ export async function handleProgressEvent(
   threadTs: string,
   event: ProgressEvent,
   deps: SlackDeps,
+  sourceTs: string,
 ): Promise<void> {
   const key = threadKey(channel, threadTs);
 
@@ -361,16 +368,17 @@ export async function handleProgressEvent(
 
   if (event.type === "start") {
     // New session — replace any existing one
-    activeSessions.set(key, new ProgressSession(channel, threadTs, deps));
+    activeSessions.set(key, new ProgressSession(channel, threadTs, deps, sourceTs));
     return;
   }
 
   let session = activeSessions.get(key);
   if (!session) {
     // Late-arriving event without start — create session on the fly
-    session = new ProgressSession(channel, threadTs, deps);
+    session = new ProgressSession(channel, threadTs, deps, sourceTs);
     activeSessions.set(key, session);
   }
+  session.setSourceTs(sourceTs);
 
   switch (event.type) {
     case "tool":

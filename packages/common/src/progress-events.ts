@@ -62,6 +62,7 @@ export const ProgressEventSchema = z.discriminatedUnion("type", [
 export const SlackProgressRequestSchema = z.object({
   channel: z.string(),
   threadTs: z.string(),
+  sourceTs: z.string(),
   event: ProgressEventSchema,
 });
 

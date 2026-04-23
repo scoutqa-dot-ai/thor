@@ -37,11 +37,21 @@ function chat(deps: MockDeps) {
   return c.chat;
 }
 
+function reactions(deps: MockDeps) {
+  const c = deps.client as unknown as {
+    reactions: {
+      add: ReturnType<typeof vi.fn>;
+    };
+  };
+  return c.reactions;
+}
+
 async function sendTools(
   deps: MockDeps,
   count: number,
   channel = "C123",
   threadTs = "1710000000.001",
+  sourceTs = "",
 ) {
   for (let i = 0; i < count; i++) {
     await handleProgressEvent(
@@ -49,6 +59,7 @@ async function sendTools(
       threadTs,
       { type: "tool", tool: `Tool${i}`, status: "completed" },
       deps,
+      sourceTs,
     );
   }
 }
@@ -94,6 +105,7 @@ describe("ProgressManager", () => {
       "1710000000.001",
       { type: "tool", tool: "Write", status: "completed" },
       deps,
+      "",
     );
     expect(chat(deps).update).not.toHaveBeenCalled();
 
@@ -104,6 +116,7 @@ describe("ProgressManager", () => {
       "1710000000.001",
       { type: "tool", tool: "Bash", status: "completed" },
       deps,
+      "",
     );
     expect(chat(deps).update).toHaveBeenCalledOnce();
   });
@@ -121,7 +134,7 @@ describe("ProgressManager", () => {
       toolCalls: [],
       durationMs: 5000,
     };
-    await handleProgressEvent("C123", "1710000000.001", doneEvent, deps);
+    await handleProgressEvent("C123", "1710000000.001", doneEvent, deps, "");
 
     // Updates message to "Done", then onSessionEnd deletes it
     expect(chat(deps).update).toHaveBeenCalledWith(
@@ -151,7 +164,7 @@ describe("ProgressManager", () => {
       toolCalls: [],
       durationMs: 500,
     };
-    await handleProgressEvent("C123", "1710000000.001", abortEvent, deps);
+    await handleProgressEvent("C123", "1710000000.001", abortEvent, deps, "");
 
     // Should update to "Done" — not show an error
     expect(chat(deps).update).toHaveBeenCalledOnce();
@@ -174,7 +187,7 @@ describe("ProgressManager", () => {
       toolCalls: [],
       durationMs: 200,
     };
-    await handleProgressEvent("C123", "1710000000.001", abortEvent, deps);
+    await handleProgressEvent("C123", "1710000000.001", abortEvent, deps, "");
 
     expect(chat(deps).postMessage).not.toHaveBeenCalled();
     expect(chat(deps).update).not.toHaveBeenCalled();
@@ -193,10 +206,42 @@ describe("ProgressManager", () => {
       toolCalls: [],
       durationMs: 1000,
     };
-    await handleProgressEvent("C123", "1710000000.001", doneEvent, deps);
+    await handleProgressEvent("C123", "1710000000.001", doneEvent, deps, "");
 
     expect(chat(deps).postMessage).not.toHaveBeenCalled();
     expect(chat(deps).update).not.toHaveBeenCalled();
+  });
+
+  it("adds x reaction instead of posting a first-time failure message", async () => {
+    const deps = mockSlackDeps();
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "start", sessionId: "s1", resumed: false },
+      deps,
+      "1710000000.123",
+    );
+    await sendTools(deps, 1);
+
+    const errorEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "error",
+      error: "provider unavailable",
+      response: "",
+      toolCalls: [],
+      durationMs: 100,
+    };
+    await handleProgressEvent("C123", "1710000000.001", errorEvent, deps, "1710000000.123");
+
+    expect(chat(deps).postMessage).not.toHaveBeenCalled();
+    expect(chat(deps).update).not.toHaveBeenCalled();
+    expect(reactions(deps).add).toHaveBeenCalledWith({
+      channel: "C123",
+      timestamp: "1710000000.123",
+      name: "x",
+    });
   });
 });
 
@@ -239,7 +284,7 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
       toolCalls: [],
       durationMs: 5000,
     };
-    await handleProgressEvent("C123", "1710000000.001", doneEvent, deps);
+    await handleProgressEvent("C123", "1710000000.001", doneEvent, deps, "");
 
     expect(chat(deps).delete).toHaveBeenCalledWith({
       channel: "C123",
@@ -262,7 +307,7 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
       toolCalls: [],
       durationMs: 5000,
     };
-    await handleProgressEvent("C123", "1710000000.001", errorEvent, deps);
+    await handleProgressEvent("C123", "1710000000.001", errorEvent, deps, "");
 
     expect(chat(deps).delete).not.toHaveBeenCalled();
     expect(getRegistrySize()).toBe(1);
@@ -283,7 +328,7 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
       toolCalls: [],
       durationMs: 5000,
     };
-    await handleProgressEvent("C123", "1710000000.001", done1, deps);
+    await handleProgressEvent("C123", "1710000000.001", done1, deps, "");
 
     // Session 1's message cleaned up immediately
     expect(chat(deps).delete).toHaveBeenCalledWith({ channel: "C123", ts: "msg.001" });
@@ -296,6 +341,7 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
       "1710000000.001",
       { type: "start", sessionId: "s2", resumed: false },
       deps,
+      "",
     );
     await sendTools(deps, 3);
     const done2: ProgressEvent = {
@@ -307,7 +353,7 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
       toolCalls: [],
       durationMs: 3000,
     };
-    await handleProgressEvent("C123", "1710000000.001", done2, deps);
+    await handleProgressEvent("C123", "1710000000.001", done2, deps, "");
 
     // Session 2's message also cleaned up
     expect(chat(deps).delete).toHaveBeenCalledWith({ channel: "C123", ts: "msg.002" });
