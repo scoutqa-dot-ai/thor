@@ -26,15 +26,13 @@ Talk to Slack through real upstream URLs:
 Authentication is injected by `mitmproxy`. Do not pass `Authorization`
 manually.
 
-For message posts, use `curl` directly against
-`https://slack.com/api/chat.postMessage`. Thor's curl wrapper adds the OpenCode
-context headers required by the proxy and emits `[thor:meta]` thread aliases on
-`stderr` so Thor keeps Slack thread continuity in notes.
+Use direct `curl` for Slack reads and writes. For `chat.postMessage`, keep the
+raw JSON response on stdout so Thor can read in-band thread correlation metadata
+(`thor-meta-key`) injected by mitmproxy.
 
-The default tool for this skill is `curl` for both Slack reads and
-`chat.postMessage` writes. For any multiline Slack message, or whenever quoting
-feels fragile, write the message body to a unique temp file under `/tmp` and
-send it with `--data-urlencode "text@$TEXT_FILE"`.
+For any multiline Slack message, or whenever quoting feels fragile, write the
+message body to a unique temp file under `/tmp` and send it with
+`--data-urlencode "text@${TEXT_FILE}"`.
 For file uploads, prefer `slack-upload` over manually calling Slack's
 multi-step upload endpoints.
 
@@ -143,7 +141,7 @@ curl -sS -X POST https://slack.com/api/chat.postMessage \
   -H 'content-type: application/x-www-form-urlencoded' \
   --data-urlencode 'channel=C123' \
   --data-urlencode 'thread_ts=1710000000.001' \
-  --data-urlencode "text@$TEXT_FILE"
+  --data-urlencode "text@${TEXT_FILE}"
 ```
 
 ### 5. Upload a file
@@ -187,10 +185,11 @@ Common failures to report as-is:
 
 - Tool inputs use Slack IDs such as `C...` and `F...`, not channel names.
 - `thread_ts` should be the parent message timestamp for the thread.
-- Use real Slack URLs.
-- Use `curl` for `chat.postMessage` and Slack reads.
+- Use real Slack URLs. Do not route Slack work through `mcp slack`.
+- Use direct `curl` for `chat.postMessage`; preserve raw JSON stdout so
+  `thor-meta-key` remains available for alias extraction.
 - Do not send multiline Slack text as an inline shell string. Default to a
-  unique temp file under `/tmp` plus `--data-urlencode "text@$TEXT_FILE"`.
+  unique temp file under `/tmp` plus `--data-urlencode "text@${TEXT_FILE}"`.
 - Do not use literal `\n` inside single-quoted `text=...` arguments.
 - Do not use shared temp paths. Default to `mktemp` under `/tmp`; use
   `mktemp -d` when you need a stable filename inside a unique temp directory.

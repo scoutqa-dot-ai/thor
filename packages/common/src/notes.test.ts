@@ -504,29 +504,37 @@ describe("alias extraction", () => {
       expect(aliases[1].alias).toBe("git:branch:repo:feat/b");
     });
 
-    it("extracts slack thread alias from bash tool with [thor:meta]", () => {
-      const meta = JSON.stringify({
-        type: "alias",
-        alias: "slack:thread:1712345678.123",
-        context: "New thread posted to C123",
-      });
+    it("extracts slack thread alias from bash tool raw Slack JSON", () => {
       const aliases = extractAliases([
         {
           tool: "bash",
           input: {
             command:
-              "curl -sS -X POST https://slack.com/api/chat.postMessage --data-urlencode channel=C123 --data-urlencode text=hello",
+              "curl -sS -X POST https://slack.com/api/chat.postMessage --data-urlencode 'channel=C123'",
           },
-          output: `posted\n[thor:meta] ${meta}\n`,
+          output:
+            '{"ok":true,"channel":"C123","ts":"1712345678.999","thor-meta-key":"slack:thread:1712345678.123"}\n',
         },
       ]);
 
       expect(aliases).toEqual([
         {
           alias: "slack:thread:1712345678.123",
-          context: "New thread posted to C123",
+          context: "Slack postMessage in C123",
         },
       ]);
+    });
+
+    it("skips bash JSON output without thor-meta-key", () => {
+      const aliases = extractAliases([
+        {
+          tool: "bash",
+          input: { command: "curl -sS --get https://slack.com/api/conversations.replies" },
+          output: '{"ok":true,"messages":[]}',
+        },
+      ]);
+
+      expect(aliases).toEqual([]);
     });
 
     it("skips bash tool output without [thor:meta]", () => {

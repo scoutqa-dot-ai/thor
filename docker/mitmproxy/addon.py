@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from typing import Any
+from urllib.parse import parse_qs
 
 try:
     from mitmproxy import http
@@ -30,6 +32,7 @@ from rules import (
 
 HEALTH_HOST = "__health.thor"
 SLACK_POST_MESSAGE_PATH = "/api/chat.postMessage"
+THOR_META_KEY = "thor-meta-key"
 
 
 def _response(status: int, text: str) -> Any:
@@ -41,6 +44,81 @@ def _response(status: int, text: str) -> Any:
             "Cache-Control": "no-store",
         },
     )
+
+
+def _get_request_text(request: Any) -> str:
+    getter = getattr(request, "get_text", None)
+    if callable(getter):
+        try:
+            text = getter()
+            if isinstance(text, str):
+                return text
+        except Exception:
+            pass
+
+    text = getattr(request, "text", None)
+    if isinstance(text, str):
+        return text
+
+    content = getattr(request, "content", b"")
+    if isinstance(content, bytes):
+        return content.decode("utf-8", errors="replace")
+    return str(content)
+
+
+def _get_response_text(response: Any) -> str:
+    getter = getattr(response, "get_text", None)
+    if callable(getter):
+        try:
+            text = getter()
+            if isinstance(text, str):
+                return text
+        except Exception:
+            pass
+
+    content = getattr(response, "content", b"")
+    if isinstance(content, bytes):
+        return content.decode("utf-8", errors="replace")
+    return str(content)
+
+
+def _set_response_text(response: Any, text: str) -> None:
+    setter = getattr(response, "set_text", None)
+    if callable(setter):
+        setter(text)
+        return
+
+    if isinstance(response, dict):
+        response["content"] = text.encode("utf-8")
+        return
+
+    response.content = text.encode("utf-8")
+
+
+def _extract_request_thread_ts(request: Any) -> str | None:
+    headers = getattr(request, "headers", {})
+    content_type = str(headers.get("content-type", headers.get("Content-Type", ""))).lower()
+    body = _get_request_text(request)
+
+    if "application/json" in content_type:
+        try:
+            parsed = json.loads(body)
+            thread_ts = parsed.get("thread_ts") if isinstance(parsed, dict) else None
+            if isinstance(thread_ts, str) and thread_ts.strip():
+                return thread_ts.strip()
+        except Exception:
+            return None
+
+    if "application/x-www-form-urlencoded" in content_type or body:
+        try:
+            params = parse_qs(body, keep_blank_values=True)
+            values = params.get("thread_ts")
+            if values and isinstance(values[0], str) and values[0].strip():
+                return values[0].strip()
+        except Exception:
+            return None
+
+    return None
 
 
 class ThorMitmAddon:
@@ -77,23 +155,6 @@ class ThorMitmAddon:
             flow.response = _response(500, "invalid proxy rule state")
             return
 
-        if host == "slack.com" and path == SLACK_POST_MESSAGE_PATH and request.method.upper() == "POST":
-            directory = str(request.headers.get("x-opencode-directory", "")).strip()
-            if not directory:
-                flow.response = _response(
-                    403,
-                    "thor proxy requires x-opencode-directory for slack.com/api/chat.postMessage",
-                )
-                return
-
-            for header_name in (
-                "x-opencode-directory",
-                "x-opencode-session-id",
-                "x-opencode-call-id",
-            ):
-                if header_name in request.headers:
-                    del request.headers[header_name]
-
         if decision.rule.readonly and not is_readonly_method(request.method):
             flow.response = _response(
                 403,
@@ -109,6 +170,40 @@ class ThorMitmAddon:
 
         for name, value in resolved_headers.items():
             request.headers[name] = value
+
+    def response(self, flow: Any) -> None:
+        request = flow.request
+        response = getattr(flow, "response", None)
+        if response is None:
+            return
+
+        host = normalize_host(getattr(request, "pretty_host", None) or request.host)
+        path = normalize_path(getattr(request, "path", "/"))
+        method = str(getattr(request, "method", "")).upper()
+
+        if host != "slack.com" or path != SLACK_POST_MESSAGE_PATH or method != "POST":
+            return
+
+        try:
+            payload = json.loads(_get_response_text(response))
+        except Exception:
+            return
+
+        if not isinstance(payload, dict) or payload.get("ok") is not True:
+            return
+
+        thread_ts = _extract_request_thread_ts(request)
+        if thread_ts:
+            alias_ts = thread_ts
+        else:
+            ts = payload.get("ts")
+            alias_ts = ts.strip() if isinstance(ts, str) else ""
+
+        if not alias_ts:
+            return
+
+        payload[THOR_META_KEY] = f"slack:thread:{alias_ts}"
+        _set_response_text(response, json.dumps(payload, separators=(",", ":")))
 
 
 addons = [ThorMitmAddon()]

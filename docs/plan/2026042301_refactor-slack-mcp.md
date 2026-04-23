@@ -58,7 +58,7 @@ From the current codebase:
 
 | Capability | Current owner | Target owner |
 | --- | --- | --- |
-| Post Slack reply / start new thread | `slack-mcp` MCP tool | OpenCode wrapped `curl` for metadata-producing write endpoints |
+| Post Slack reply / start new thread | `slack-mcp` MCP tool | OpenCode direct `curl` with mitmproxy in-band metadata injection |
 | Read thread replies | `slack-mcp` MCP tool | OpenCode direct `conversations.replies` |
 | Read channel history | `slack-mcp` MCP tool | OpenCode direct `conversations.history` |
 | Read Slack file | `slack-mcp` MCP tool | OpenCode direct `files.info` + private file download |
@@ -67,7 +67,7 @@ From the current codebase:
 | Progress message lifecycle | `slack-mcp` REST + in-memory registry | `gateway` in-process |
 | Approval cards with buttons | `slack-mcp` REST | `gateway` direct Slack API |
 | Approval message update after click | `slack-mcp` REST | `gateway` direct Slack API |
-| Slack thread alias registration for new thread posts | MCP `post_message` metadata | wrapped-`curl` emitted `[thor:meta]` on `stderr` |
+| Slack thread alias registration for new thread posts | MCP `post_message` metadata | mitmproxy-injected in-band `thor-meta-key` on `chat.postMessage` JSON |
 
 ## Target shape
 
@@ -86,7 +86,7 @@ runner
 OpenCode
   |--- mcp --> remote-cli --> Atlassian / Grafana / PostHog / ...
   |
-  \--- wrapped curl / curl / fetch / slack-upload --> mitmproxy --> slack.com / files.slack.com
+  \--- curl / fetch / slack-upload --> mitmproxy --> slack.com / files.slack.com
 ```
 
 ## Recommendation
@@ -98,10 +98,9 @@ Remove `slack-mcp` by collapsing Slack responsibilities into two places only:
    agent-driven reads and writes.
 
 Do not build a new Slack-specific service or a new Slack MCP replacement.
-Use a wrapped `curl` path only for Slack write endpoints that need Thor
-metadata. Here, "curl-wrapper" means the same `curl` command/binary entrypoint
-inside OpenCode with a narrow Slack `chat.postMessage` special-case, not a new
-dedicated Slack CLI. Keep Slack reads on normal `curl` or built-in `fetch`.
+Use direct `curl` to Slack write endpoints and let mitmproxy inject in-band
+metadata into successful `chat.postMessage` JSON responses. Keep Slack reads on
+normal `curl` or built-in `fetch`.
 
 ## Decision Log
 
@@ -110,14 +109,13 @@ dedicated Slack CLI. Keep Slack reads on normal `curl` or built-in `fetch`.
 | D1 | Move all system-side Slack API calls into `packages/gateway` | Gateway already owns Slack webhooks, channel filtering, and approval interactivity routing. It is the natural place for reactions, progress, and approval cards. |
 | D2 | Keep agent Slack traffic on real Slack URLs over mitmproxy | That path already exists, matches the current OpenCode instructions, and removes the main reason for a dedicated Slack service. |
 | D3 | Do not replace `slack-mcp` with a general-purpose Slack CLI | A full wrapper would just recreate the MCP surface in another form. The repo already has `curl`, the Slack skill, and `slack-upload`. |
-| D4 | Use wrapped `curl` for Slack write endpoints that must emit `ThorMeta` | The transport stays `curl`, but the wrapper can keep Slack JSON on `stdout` and emit `[thor:meta]` on `stderr`, which preserves shell pipelines and fits the current runner parsing model. |
+| D4 | Inject Slack thread correlation in-band via mitmproxy response mutation | `chat.postMessage` already returns JSON; adding a top-level `thor-meta-key` preserves raw JSON usability and removes wrapper-specific stderr metadata plumbing. |
 | D5 | Keep service-side Slack writes off the mitmproxy allowlist | `chat.update`, `chat.delete`, and `reactions.add` are system-only methods. Keeping them in gateway avoids widening the OpenCode Slack proxy surface. |
 | D6 | Reuse the proven Slack progress and approval formatting code instead of rewriting behavior at the same time | The operational risk is in changing ownership, not in changing UX. Move the logic first; simplify internals later if still useful. |
 | D7 | Remove `slack` from repo proxy config immediately | This is a greenfield project. Carrying compatibility-only validation and prompt logic adds noise without protecting a real deployed population. |
 | D8 | Route approval outcomes back to OpenCode through the gateway queue | A direct non-interrupt runner trigger can return `busy`. Queue-backed replay preserves ordering and retries until the session can accept the announcement. |
 | D9 | Carry thread-routing context in the approval button payload | Slack interactivity gives us the approval message timestamp, not a guaranteed root-thread correlation key in our current parser. The button payload should carry enough data to re-enter the originating thread deterministically. |
-| D10 | Let mitmproxy enforce wrapped transport on metadata-producing Slack writes using existing OpenCode context headers | `chat.postMessage` should be denied unless the request carries a non-empty `x-opencode-directory` header forwarded from the OpenCode bash environment. The wrapper should also forward `x-opencode-session-id` and `x-opencode-call-id` when available so the headers match the existing bash context model and remain useful for future attribution. |
-| D11 | Implement wrapped Slack writes by wrapping the existing `curl` binary path, not by adding a new Slack-specific CLI | We only need a tiny `chat.postMessage` interception to inject OpenCode headers and emit alias metadata. Reusing `curl` keeps existing agent habits, shell pipelines, and docs intact while avoiding another command surface. |
+| D10 | Remove wrapper-only request-header policy for `chat.postMessage` | Slack writes should work with plain `curl`; correlation metadata is now injected by mitmproxy after inspecting request+response payloads rather than enforcing wrapper transport headers. |
 
 ## Phases
 
@@ -130,50 +128,37 @@ Scope:
 
 - preserve Slack thread aliasing for `chat.postMessage` while keeping the
   transport on real Slack URLs over mitmproxy
-- add a tiny OpenCode-side wrapped-`curl` path for `chat.postMessage` that:
-  - calls `https://slack.com/api/chat.postMessage` over mitmproxy
-  - reads the existing OpenCode bash context env vars from the execution
-    environment
-  - forwards them as `x-opencode-directory`,
-    `x-opencode-session-id`, and `x-opencode-call-id` when present
-  - preserves the Slack JSON body on `stdout`
-  - emits `[thor:meta]` alias metadata on `stderr` for new-thread and in-thread
-    posts
-- make mitmproxy require a non-empty `x-opencode-directory` header for
-  `POST https://slack.com/api/chat.postMessage`
-  - wrapped `curl` to that endpoint is allowed when the header is set
-  - plain `fetch` or raw `curl` to that endpoint is rejected
+- make mitmproxy generate Slack thread correlation metadata in-band for
+  successful `POST https://slack.com/api/chat.postMessage` responses:
+  - inspect request payload (`thread_ts`) and response payload (`ts`)
+  - inject top-level JSON field `thor-meta-key: slack:thread:<ts>`
+  - replies use request `thread_ts`; new threads use response `ts`
+- keep `chat.postMessage` accessible via plain `curl`/`fetch` without wrapper-
+  specific header enforcement
 - keep raw `curl` or built-in `fetch` for Slack reads and keep `slack-upload`
   for uploads
-- update `build.md` and the Slack skill to require the wrapped path for
-  metadata-producing Slack writes
+- update `build.md` and the Slack skill to use direct `curl` for
+  `chat.postMessage` writes while preserving raw JSON stdout
 - add or update tests around notes alias extraction and proxy policy so
-  wrapped Slack posts still produce `slack:thread:*` aliases without breaking
+  Slack posts still produce `slack:thread:*` aliases without breaking
   JSON pipelines
 
 Files likely affected:
 
-- `docker/opencode/bin/` wrapped `curl` script for Slack writes
 - `docker/opencode/config/agents/build.md`
 - `docker/opencode/config/skills/slack/SKILL.md`
 - `packages/common/src/notes.test.ts`
-- OpenCode bash-tool env/header wiring for `x-opencode-directory`,
-  `x-opencode-session-id`, and `x-opencode-call-id`
 - `docker/mitmproxy/addon.py`
-- `docker/mitmproxy/rules.py`
 - `docker/mitmproxy/test_addon.py`
-- `docker/mitmproxy/test_rules.py`
 
 **Exit criteria**:
 
 - agent can post to Slack without `mcp slack`
-- wrapped `chat.postMessage` preserves valid Slack JSON on `stdout`
-- wrapped `chat.postMessage` emits `slack:thread:<ts>` alias metadata on
-  `stderr`
+- `chat.postMessage` preserves valid Slack JSON on `stdout`
+- successful `chat.postMessage` responses include
+  `thor-meta-key=slack:thread:<ts>` in-band
 - new-thread Slack posts still register `slack:thread:<ts>` aliases in notes
 - in-thread Slack replies still register or preserve the thread alias
-- `chat.postMessage` is denied by mitmproxy when `x-opencode-directory` is
-  missing or empty
 - existing file upload flow still works via `slack-upload`
 
 ### Phase 2 — Move progress, reactions, and approvals into gateway
@@ -291,7 +276,7 @@ Scope:
 - update runner tool instructions so Slack is no longer listed under
   `[Available MCP tools]`
 - add a Slack capability hint for repos that have configured Slack channels,
-  pointing agents to the Slack skill and wrapped-write path instead of
+  pointing agents to the Slack skill and direct `curl` write path instead of
   `mcp slack`
 - remove `"slack"` from `repos.*.proxies` with no compatibility shim
 - update the tracked config example and tests to remove `slack` from repo
@@ -371,5 +356,5 @@ Run these checks before considering the migration complete:
 - introducing OAuth or user-token Slack access
 - redesigning the Slack progress UX
 - changing approval semantics or remote-cli approval storage
-- changing the mitmproxy Slack rule surface beyond what is needed to enforce
-  wrapped metadata-producing writes and allow direct reads/uploads
+- changing the mitmproxy Slack rule surface beyond what is needed to inject
+  in-band metadata for `chat.postMessage` and allow direct reads/uploads
