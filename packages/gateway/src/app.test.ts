@@ -50,7 +50,8 @@ async function withServer<T>(
   const queueDir = mkdtempSync(join(tmpdir(), "gateway-test-"));
   const { app, queue } = createGatewayApp({
     signingSecret: "signing-secret",
-    slackMcpUrl: "http://slack-mcp.test",
+    slackBotToken: "xoxb-test",
+    slackApiBaseUrl: "https://slack.com/api",
     slackBotUserId: "U0BOTEXAMPLE",
     runnerUrl: "http://runner.test",
     fetchImpl,
@@ -96,11 +97,6 @@ describe("gateway", () => {
       const url = String(input);
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
-      }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
       }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
@@ -163,7 +159,6 @@ describe("gateway", () => {
             configured: true,
             services: {
               runner: { status: "ok", service: "runner" },
-              "slack-mcp": { status: "ok", service: "slack-mcp" },
               "remote-cli": { status: "ok", service: "remote-cli" },
             },
             codex: {
@@ -219,11 +214,6 @@ describe("gateway", () => {
       const url = String(input);
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
-      }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
       }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
@@ -344,7 +334,7 @@ describe("gateway", () => {
   it("accepts a signed app mention and fires a trigger to the runner (fire-and-forget)", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // 1st call: POST /reaction to slack-mcp
+      // 1st call: POST reactions.add to Slack Web API
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
       // 2nd call: POST /trigger to runner
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
@@ -379,16 +369,16 @@ describe("gateway", () => {
 
       await queue.flush();
 
-      // Reaction via slack-mcp
+      // Reaction via Slack Web API
       const reactionCall = fetchImpl.mock.calls.find(
-        (c) => c[0] === "http://slack-mcp.test/reaction",
+        (c) => c[0] === "https://slack.com/api/reactions.add",
       );
       expect(reactionCall).toBeDefined();
       const reactionBody = JSON.parse(String(reactionCall![1]?.body));
       expect(reactionBody).toEqual({
         channel: "C123",
         timestamp: "1710000000.001",
-        reaction: "eyes",
+        name: "eyes",
       });
 
       // Runner trigger via fetchImpl
@@ -648,7 +638,7 @@ describe("gateway", () => {
   it("batches 3 rapid app_mention events into a single runner trigger with combined prompt", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // Reaction calls to slack-mcp (3x)
+      // Reaction calls to Slack Web API (3x)
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
@@ -687,9 +677,9 @@ describe("gateway", () => {
 
       await queue.flush();
 
-      // 3 reaction calls to slack-mcp
+      // 3 reaction calls to Slack Web API
       const reactionCalls = fetchImpl.mock.calls.filter(
-        (c) => c[0] === "http://slack-mcp.test/reaction",
+        (c) => c[0] === "https://slack.com/api/reactions.add",
       );
       expect(reactionCalls).toHaveLength(3);
 
@@ -1077,7 +1067,7 @@ describe("gateway", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 })))
-      .mockResolvedValueOnce(new Response("ok"));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
 
     await withServer(
       fetchImpl,

@@ -18,8 +18,8 @@ import {
   resolveApproval,
   updateSlackMessage,
   type RunnerDeps,
-  type SlackMcpDeps,
 } from "./service.js";
+import type { SlackDeps } from "./slack-api.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKey,
@@ -59,7 +59,8 @@ const SHORT_DELAY_MS = 3000;
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
-  slackMcpUrl: string;
+  slackBotToken: string;
+  slackApiBaseUrl?: string;
   /** Our bot's Slack user ID — used to ignore our own messages. */
   slackBotUserId: string;
   /** Remote CLI hostname for approval resolution. Default: "remote-cli". */
@@ -119,9 +120,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     runnerUrl: config.runnerUrl,
     fetchImpl: config.fetchImpl,
   };
-  const slackMcpDeps: SlackMcpDeps = {
-    slackMcpUrl: config.slackMcpUrl,
+  const slackDeps: SlackDeps = {
+    botToken: config.slackBotToken,
     fetchImpl: config.fetchImpl,
+    slackApiBaseUrl: config.slackApiBaseUrl,
   };
   const remoteCliHost = config.remoteCliHost ?? "remote-cli";
   const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;
@@ -144,7 +146,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             slackEvents.map((e) => e.payload),
             lastEvent.correlationKey,
             runnerDeps,
-            slackMcpDeps,
+            slackDeps,
             hasInterrupt,
             ack,
             getChannelRepos(),
@@ -223,7 +225,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   app.get("/health", async (_req, res) => {
     const result = await deepHealthCheck({
       runnerUrl: config.runnerUrl,
-      slackMcpUrl: config.slackMcpUrl,
       remoteCliHost,
       remoteCliPort: config.remoteCliPort ?? 3004,
       openaiAuthPath: config.openaiAuthPath,
@@ -232,7 +233,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     res.json({
       ...result,
       runnerUrl: config.runnerUrl,
-      configured: Boolean(config.signingSecret),
+      configured: Boolean(config.signingSecret && config.slackBotToken),
     });
   });
 
@@ -304,7 +305,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // app_mention — always forward
     if (event.type === "app_mention") {
       res.status(200).json({ ok: true });
-      void addSlackReaction(event.channel, event.ts, "eyes", slackMcpDeps).catch((err) =>
+      void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
         logError(log, "reaction_failed", err, { eventId }),
       );
       const rawKey = getSlackCorrelationKey(event);
@@ -474,7 +475,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               const statusEmoji = decision === "approved" ? "✅" : "❌";
               const decisionLabel = decision.charAt(0).toUpperCase() + decision.slice(1);
               const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}>`;
-              await updateSlackMessage(channel, messageTs, text, slackMcpDeps);
+              await updateSlackMessage(channel, messageTs, text, slackDeps);
             }
           })();
           return;

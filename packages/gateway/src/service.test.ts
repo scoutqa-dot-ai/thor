@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RunnerDeps, SlackMcpDeps } from "./service.js";
+import type { RunnerDeps } from "./service.js";
+import type { SlackDeps } from "./slack-api.js";
 
-// Helper: create a ReadableStream from NDJSON lines
 function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
   const text = lines.join("\n") + "\n";
   return new ReadableStream({
@@ -12,7 +12,6 @@ function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
   });
 }
 
-// Helper: create a mock Response with NDJSON body
 function ndjsonResponse(lines: string[], status = 200): Response {
   return new Response(ndjsonStream(lines), {
     status,
@@ -20,7 +19,6 @@ function ndjsonResponse(lines: string[], status = 200): Response {
   });
 }
 
-// Helper: create a mock Response with JSON body
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -87,15 +85,26 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
   let mockRunnerFetch: ReturnType<typeof vi.fn>;
   let mockSlackFetch: ReturnType<typeof vi.fn>;
   let runnerDeps: RunnerDeps;
-  let slackMcpDeps: SlackMcpDeps;
+  let slackDeps: SlackDeps;
 
   beforeEach(() => {
     mockRunnerFetch = vi.fn();
-    mockSlackFetch = vi.fn().mockResolvedValue(new Response("ok"));
+    mockSlackFetch = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "https://slack.com/api/chat.postMessage") {
+        return new Response(JSON.stringify({ ok: true, ts: "msg.001", channel: "C123" }), {
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
     runnerDeps = { runnerUrl: "http://runner:3000", fetchImpl: mockRunnerFetch };
-    slackMcpDeps = { slackMcpUrl: "http://slack-mcp:3003", fetchImpl: mockSlackFetch };
+    slackDeps = {
+      botToken: "xoxb-test",
+      fetchImpl: mockSlackFetch,
+      slackApiBaseUrl: "https://slack.com/api",
+    };
 
-    // Mock resolveRepoDirectory to return a directory
     vi.mock("@thor/common", async (importOriginal) => {
       const actual = (await importOriginal()) as Record<string, unknown>;
       return { ...actual, resolveRepoDirectory: () => "/workspace/repos/my-repo" };
@@ -109,13 +118,15 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     text: "hello",
     user: "U1",
     type: "message",
-  };
+  } as const;
   const channelRepos = new Map([["C123", "my-repo"]]);
 
-  it("forwards progress events to slack-mcp", async () => {
+  it("posts, updates, and deletes progress messages via Slack Web API", async () => {
     const lines = [
       JSON.stringify({ type: "start", sessionId: "s1", resumed: false }),
       JSON.stringify({ type: "tool", tool: "bash", status: "completed" }),
+      JSON.stringify({ type: "tool", tool: "read", status: "completed" }),
+      JSON.stringify({ type: "tool", tool: "write", status: "completed" }),
       JSON.stringify({
         type: "done",
         sessionId: "s1",
@@ -133,26 +144,22 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       [slackEvent],
       "key1",
       runnerDeps,
-      slackMcpDeps,
+      slackDeps,
       false,
       undefined,
       channelRepos,
     );
     expect(result.busy).toBe(false);
 
-    // Wait for background stream consumption
     await new Promise((r) => setTimeout(r, 50));
 
-    // Gateway forwards progress events directly and includes sourceTs for Slack-side decisions.
-    const progressCalls = mockSlackFetch.mock.calls.filter(
-      (c: [string, ...unknown[]]) => typeof c[0] === "string" && c[0].includes("/progress"),
-    );
-    expect(progressCalls.length).toBe(3);
-    const body = JSON.parse((progressCalls[0][1] as { body: string }).body);
-    expect(body.sourceTs).toBe("1710000000.001");
+    const slackUrls = mockSlackFetch.mock.calls.map((c: [string]) => c[0]);
+    expect(slackUrls).toContain("https://slack.com/api/chat.postMessage");
+    expect(slackUrls).toContain("https://slack.com/api/chat.update");
+    expect(slackUrls).toContain("https://slack.com/api/chat.delete");
   });
 
-  it("forwards approval_required events to /approval endpoint", async () => {
+  it("posts approval_required events with v2 button payload format", async () => {
     const lines = [
       JSON.stringify({
         type: "approval_required",
@@ -169,7 +176,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       [slackEvent],
       "key1",
       runnerDeps,
-      slackMcpDeps,
+      slackDeps,
       false,
       undefined,
       channelRepos,
@@ -177,21 +184,22 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    const approvalCalls = mockSlackFetch.mock.calls.filter(
-      (c: [string, ...unknown[]]) => typeof c[0] === "string" && c[0].includes("/approval"),
+    const approvalCall = mockSlackFetch.mock.calls.find(
+      (c: [string]) => c[0] === "https://slack.com/api/chat.postMessage",
     );
-    expect(approvalCalls.length).toBe(1);
-    const body = JSON.parse((approvalCalls[0][1] as { body: string }).body);
-    expect(body.actionId).toBe("act-1");
-    expect(body.tool).toBe("merge_pull_request");
-    expect(body.proxyName).toBe("github");
+    expect(approvalCall).toBeDefined();
+    const body = JSON.parse((approvalCall?.[1] as { body: string }).body);
+    const approveButton = body.blocks[3].elements.find(
+      (el: { action_id: string }) => el.action_id === "approval_approve",
+    );
+    expect(approveButton.value).toBe("v2:act-1:github");
   });
 
   it("skips invalid NDJSON lines without crashing", async () => {
     const lines = [
       "not valid json",
       JSON.stringify({ type: "tool", tool: "bash", status: "completed" }),
-      JSON.stringify({ unknown: "schema" }), // valid JSON but not a ProgressEvent
+      JSON.stringify({ unknown: "schema" }),
       "",
     ];
     mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
@@ -201,7 +209,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       [slackEvent],
       "key1",
       runnerDeps,
-      slackMcpDeps,
+      slackDeps,
       false,
       undefined,
       channelRepos,
@@ -209,15 +217,10 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     expect(result.busy).toBe(false);
 
     await new Promise((r) => setTimeout(r, 50));
-
-    // Gateway still forwards valid progress events directly.
-    const progressCalls = mockSlackFetch.mock.calls.filter(
-      (c: [string, ...unknown[]]) => typeof c[0] === "string" && c[0].includes("/progress"),
-    );
-    expect(progressCalls.length).toBe(1);
+    expect(mockSlackFetch).not.toHaveBeenCalled();
   });
 
-  it("forwards sourceTs on early errors for Slack-side suppression", async () => {
+  it("adds an x reaction on early errors below the progress threshold", async () => {
     const lines = [
       JSON.stringify({ type: "start", sessionId: "s1", resumed: false }),
       JSON.stringify({ type: "tool", tool: "bash", status: "completed" }),
@@ -239,7 +242,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       [slackEvent],
       "key1",
       runnerDeps,
-      slackMcpDeps,
+      slackDeps,
       false,
       undefined,
       channelRepos,
@@ -247,25 +250,22 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    const progressCalls = mockSlackFetch.mock.calls.filter(
-      (c: [string, ...unknown[]]) => typeof c[0] === "string" && c[0].includes("/progress"),
+    const reactionCall = mockSlackFetch.mock.calls.find(
+      (c: [string]) => c[0] === "https://slack.com/api/reactions.add",
     );
-    expect(progressCalls.length).toBe(3);
-    const body = JSON.parse((progressCalls[2][1] as { body: string }).body);
-    expect(body.sourceTs).toBe("1710000000.001");
-    expect(body.event.type).toBe("done");
-    expect(body.event.status).toBe("error");
+    expect(reactionCall).toBeDefined();
+    const body = JSON.parse((reactionCall?.[1] as { body: string }).body);
+    expect(body).toEqual({ channel: "C123", timestamp: "1710000000.001", name: "x" });
   });
 
   it("handles chunked delivery across newline boundaries", async () => {
-    // Simulate a stream that splits a JSON line across two chunks
     const line1 = JSON.stringify({ type: "tool", tool: "read", status: "completed" });
     const line2 = JSON.stringify({ type: "tool", tool: "write", status: "completed" });
+    const line3 = JSON.stringify({ type: "tool", tool: "bash", status: "completed" });
     const stream = new ReadableStream({
       start(controller) {
         const enc = new TextEncoder();
-        // Split line1 in the middle
-        const full = line1 + "\n" + line2 + "\n";
+        const full = line1 + "\n" + line2 + "\n" + line3 + "\n";
         const mid = Math.floor(full.length / 2);
         controller.enqueue(enc.encode(full.slice(0, mid)));
         controller.enqueue(enc.encode(full.slice(mid)));
@@ -281,7 +281,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       [slackEvent],
       "key1",
       runnerDeps,
-      slackMcpDeps,
+      slackDeps,
       false,
       undefined,
       channelRepos,
@@ -289,22 +289,26 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    const progressCalls = mockSlackFetch.mock.calls.filter(
-      (c: [string, ...unknown[]]) => typeof c[0] === "string" && c[0].includes("/progress"),
+    const postCalls = mockSlackFetch.mock.calls.filter(
+      (c: [string]) => c[0] === "https://slack.com/api/chat.postMessage",
     );
-    expect(progressCalls.length).toBe(2);
+    expect(postCalls.length).toBe(1);
   });
 });
 
 describe("triggerRunnerSlack edge cases", () => {
   let mockRunnerFetch: ReturnType<typeof vi.fn>;
   let runnerDeps: RunnerDeps;
-  let slackMcpDeps: SlackMcpDeps;
+  let slackDeps: SlackDeps;
 
   beforeEach(() => {
     mockRunnerFetch = vi.fn();
     runnerDeps = { runnerUrl: "http://runner:3000", fetchImpl: mockRunnerFetch };
-    slackMcpDeps = { slackMcpUrl: "http://slack-mcp:3003", fetchImpl: vi.fn() };
+    slackDeps = {
+      botToken: "xoxb-test",
+      fetchImpl: vi.fn(),
+      slackApiBaseUrl: "https://slack.com/api",
+    };
   });
 
   const slackEvent = {
@@ -314,11 +318,11 @@ describe("triggerRunnerSlack edge cases", () => {
     text: "hello",
     user: "U1",
     type: "message",
-  };
+  } as const;
 
   it("returns early for empty events", async () => {
     const { triggerRunnerSlack } = await import("./service.js");
-    const result = await triggerRunnerSlack([], "key1", runnerDeps, slackMcpDeps);
+    const result = await triggerRunnerSlack([], "key1", runnerDeps, slackDeps);
     expect(result.busy).toBe(false);
     expect(mockRunnerFetch).not.toHaveBeenCalled();
   });
@@ -330,10 +334,10 @@ describe("triggerRunnerSlack edge cases", () => {
       [slackEvent],
       "key1",
       runnerDeps,
-      slackMcpDeps,
+      slackDeps,
       false,
       undefined,
-      new Map(), // empty map — no repo for C123
+      new Map(),
       onRejected,
     );
     expect(result.busy).toBe(false);
@@ -349,7 +353,7 @@ describe("triggerRunnerSlack edge cases", () => {
       [slackEvent],
       "key1",
       runnerDeps,
-      slackMcpDeps,
+      slackDeps,
       false,
       undefined,
       new Map([["C123", "my-repo"]]),
@@ -366,7 +370,7 @@ describe("triggerRunnerSlack edge cases", () => {
         [slackEvent],
         "key1",
         runnerDeps,
-        slackMcpDeps,
+        slackDeps,
         false,
         undefined,
         new Map([["C123", "repo"]]),
