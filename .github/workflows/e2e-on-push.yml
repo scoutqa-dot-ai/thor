@@ -2,8 +2,6 @@ name: E2E on push
 
 on:
   push:
-    branches:
-      - main
     paths:
       - ".github/workflows/e2e-on-push.yml"
       - "scripts/test-e2e.sh"
