@@ -70,10 +70,10 @@ COPY docker/opencode/bin/npx /usr/local/bin/npx
 COPY docker/opencode/bin/pnpm /usr/local/bin/pnpm
 COPY docker/opencode/bin/pnpx /usr/local/bin/pnpx
 COPY docker/opencode/bin/corepack /usr/local/bin/corepack
+COPY docker/opencode/bin/curl /usr/local/bin/curl
 # mcp/approval wrapper scripts — forward to remote-cli service over HTTP
 COPY docker/opencode/bin/mcp /usr/local/bin/mcp
 COPY docker/opencode/bin/approval /usr/local/bin/approval
-COPY docker/opencode/bin/slack-post-message /usr/local/bin/slack-post-message
 COPY docker/opencode/bin/slack-upload /usr/local/bin/slack-upload
 USER thor
 RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state

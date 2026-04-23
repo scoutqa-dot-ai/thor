@@ -513,7 +513,10 @@ describe("alias extraction", () => {
       const aliases = extractAliases([
         {
           tool: "bash",
-          input: { command: "slack-post-message --channel C123 --text hello" },
+          input: {
+            command:
+              "curl -sS -X POST https://slack.com/api/chat.postMessage --data-urlencode channel=C123 --data-urlencode text=hello",
+          },
           output: `posted\n[thor:meta] ${meta}\n`,
         },
       ]);

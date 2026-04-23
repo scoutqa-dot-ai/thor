@@ -59,8 +59,8 @@ export function buildToolInstructions(
       [
         "[Slack capability]",
         "This repo is mapped to Slack channels.",
-        "Use the Slack skill and real Slack Web API URLs over mitmproxy (do not use `mcp slack`).",
-        "Use `slack-post-message` for `https://slack.com/api/chat.postMessage` writes.",
+        "Use the Slack skill and real Slack Web API URLs over mitmproxy.",
+        "Use `curl` for `https://slack.com/api/chat.postMessage` writes (Thor's curl wrapper injects OpenCode headers and emits thread alias metadata).",
         "Use direct `curl`/`fetch` to Slack read APIs (for example `conversations.replies` or `conversations.history`).",
       ].join("\n"),
     );

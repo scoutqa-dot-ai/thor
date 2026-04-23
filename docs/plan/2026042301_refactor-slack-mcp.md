@@ -99,7 +99,9 @@ Remove `slack-mcp` by collapsing Slack responsibilities into two places only:
 
 Do not build a new Slack-specific service or a new Slack MCP replacement.
 Use a wrapped `curl` path only for Slack write endpoints that need Thor
-metadata. Keep Slack reads on normal `curl` or built-in `fetch`.
+metadata. Here, "curl-wrapper" means the same `curl` command/binary entrypoint
+inside OpenCode with a narrow Slack `chat.postMessage` special-case, not a new
+dedicated Slack CLI. Keep Slack reads on normal `curl` or built-in `fetch`.
 
 ## Decision Log
 
@@ -115,6 +117,7 @@ metadata. Keep Slack reads on normal `curl` or built-in `fetch`.
 | D8 | Route approval outcomes back to OpenCode through the gateway queue | A direct non-interrupt runner trigger can return `busy`. Queue-backed replay preserves ordering and retries until the session can accept the announcement. |
 | D9 | Carry thread-routing context in the approval button payload | Slack interactivity gives us the approval message timestamp, not a guaranteed root-thread correlation key in our current parser. The button payload should carry enough data to re-enter the originating thread deterministically. |
 | D10 | Let mitmproxy enforce wrapped transport on metadata-producing Slack writes using existing OpenCode context headers | `chat.postMessage` should be denied unless the request carries a non-empty `x-opencode-directory` header forwarded from the OpenCode bash environment. The wrapper should also forward `x-opencode-session-id` and `x-opencode-call-id` when available so the headers match the existing bash context model and remain useful for future attribution. |
+| D11 | Implement wrapped Slack writes by wrapping the existing `curl` binary path, not by adding a new Slack-specific CLI | We only need a tiny `chat.postMessage` interception to inject OpenCode headers and emit alias metadata. Reusing `curl` keeps existing agent habits, shell pipelines, and docs intact while avoiding another command surface. |
 
 ## Phases
 

@@ -19,8 +19,8 @@ describe("buildToolInstructions", () => {
     expect(instructions).toContain("## atlassian (approve — requires human approval)");
     expect(instructions).toContain("- createJiraIssue");
     expect(instructions).toContain("[Slack capability]");
-    expect(instructions).toContain("do not use `mcp slack`");
-    expect(instructions).toContain("slack-post-message");
+    expect(instructions).toContain("real Slack Web API URLs over mitmproxy");
+    expect(instructions).toContain("Use `curl` for `https://slack.com/api/chat.postMessage` writes");
     expect(instructions).not.toContain("## slack (allow)");
     expect(instructions).not.toContain("## unknown");
   });
@@ -37,7 +37,7 @@ describe("buildToolInstructions", () => {
     const instructions = buildToolInstructions(config, "/workspace/repos/acme");
 
     expect(instructions).toContain("[Slack capability]");
-    expect(instructions).toContain("slack-post-message");
+    expect(instructions).toContain("Use `curl` for `https://slack.com/api/chat.postMessage` writes");
     expect(instructions).not.toContain("[Available MCP tools");
   });
 
