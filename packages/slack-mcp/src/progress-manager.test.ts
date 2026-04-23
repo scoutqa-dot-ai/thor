@@ -107,6 +107,7 @@ describe("ProgressManager", () => {
         source: "bootstrap",
       },
       deps,
+      "",
     );
     await handleProgressEvent(
       "C123",
@@ -117,6 +118,7 @@ describe("ProgressManager", () => {
         description: "investigate flaky tests",
       },
       deps,
+      "",
     );
     await sendTools(deps, 3);
 
@@ -136,24 +138,28 @@ describe("ProgressManager", () => {
       "1710000000.001",
       { type: "delegate", agent: "research-agent", description: "first" },
       deps,
+      "",
     );
     await handleProgressEvent(
       "C123",
       "1710000000.001",
       { type: "delegate", agent: "research-agent", description: "second" },
       deps,
+      "",
     );
     await handleProgressEvent(
       "C123",
       "1710000000.001",
       { type: "delegate", agent: "coding-agent" },
       deps,
+      "",
     );
     await handleProgressEvent(
       "C123",
       "1710000000.001",
       { type: "delegate", agent: "research-agent" },
       deps,
+      "",
     );
     await sendTools(deps, 3);
 
@@ -174,6 +180,7 @@ describe("ProgressManager", () => {
         source: "bootstrap",
       },
       deps,
+      "",
     );
     await handleProgressEvent(
       "C123",
@@ -185,6 +192,7 @@ describe("ProgressManager", () => {
         source: "tool",
       },
       deps,
+      "",
     );
     await sendTools(deps, 3);
 
@@ -208,6 +216,7 @@ describe("ProgressManager", () => {
         source: "tool",
       },
       deps,
+      "",
     );
     await handleProgressEvent(
       "C123",
@@ -219,6 +228,7 @@ describe("ProgressManager", () => {
         source: "tool",
       },
       deps,
+      "",
     );
     await handleProgressEvent(
       "C123",
@@ -230,6 +240,7 @@ describe("ProgressManager", () => {
         source: "tool",
       },
       deps,
+      "",
     );
     await handleProgressEvent(
       "C123",
@@ -241,6 +252,7 @@ describe("ProgressManager", () => {
         source: "tool",
       },
       deps,
+      "",
     );
     await sendTools(deps, 3);
 
@@ -262,6 +274,7 @@ describe("ProgressManager", () => {
         source: "tool",
       },
       deps,
+      "",
     );
     await handleProgressEvent(
       "C123",
@@ -271,6 +284,7 @@ describe("ProgressManager", () => {
         agent: "coding-agent",
       },
       deps,
+      "",
     );
 
     expect(chat(deps).postMessage).not.toHaveBeenCalled();
