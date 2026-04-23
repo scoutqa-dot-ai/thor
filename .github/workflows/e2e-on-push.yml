@@ -1,0 +1,194 @@
+name: E2E on push
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/e2e-on-push.yml"
+      - "docker-compose.yml"
+      - "Dockerfile"
+      - "docker/**"
+      - "packages/**"
+      - "scripts/test-e2e.sh"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-on-push-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate required CI inputs
+        env:
+          THOR_CI_WORKSPACE_CONFIG_JSON: ${{ vars.THOR_CI_WORKSPACE_CONFIG_JSON }}
+          THOR_CI_OPENCODE_AUTH_JSON: ${{ secrets.THOR_CI_OPENCODE_AUTH_JSON }}
+          THOR_CI_CRON_SECRET: ${{ secrets.THOR_CI_CRON_SECRET }}
+          THOR_CI_RESOLVE_SECRET: ${{ secrets.THOR_CI_RESOLVE_SECRET }}
+          THOR_CI_SLACK_BOT_TOKEN: ${{ secrets.THOR_CI_SLACK_BOT_TOKEN }}
+          THOR_CI_SLACK_BOT_USER_ID: ${{ vars.THOR_CI_SLACK_BOT_USER_ID }}
+          THOR_CI_SLACK_SIGNING_SECRET: ${{ secrets.THOR_CI_SLACK_SIGNING_SECRET }}
+          THOR_CI_GRAFANA_URL: ${{ vars.THOR_CI_GRAFANA_URL }}
+          THOR_CI_GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ secrets.THOR_CI_GRAFANA_SERVICE_ACCOUNT_TOKEN }}
+          THOR_CI_ATLASSIAN_AUTH: ${{ secrets.THOR_CI_ATLASSIAN_AUTH }}
+          THOR_CI_POSTHOG_API_KEY: ${{ secrets.THOR_CI_POSTHOG_API_KEY }}
+          THOR_CI_DAYTONA_API_KEY: ${{ secrets.THOR_CI_DAYTONA_API_KEY }}
+          THOR_CI_DAYTONA_SNAPSHOT: ${{ vars.THOR_CI_DAYTONA_SNAPSHOT }}
+          THOR_CI_GITHUB_PAT: ${{ secrets.THOR_CI_GITHUB_PAT }}
+        run: |
+          set -euo pipefail
+          required=(
+            THOR_CI_WORKSPACE_CONFIG_JSON
+            THOR_CI_OPENCODE_AUTH_JSON
+            THOR_CI_CRON_SECRET
+            THOR_CI_RESOLVE_SECRET
+            THOR_CI_SLACK_BOT_TOKEN
+            THOR_CI_SLACK_BOT_USER_ID
+            THOR_CI_SLACK_SIGNING_SECRET
+            THOR_CI_GRAFANA_URL
+            THOR_CI_GRAFANA_SERVICE_ACCOUNT_TOKEN
+            THOR_CI_DAYTONA_API_KEY
+            THOR_CI_DAYTONA_SNAPSHOT
+            THOR_CI_GITHUB_PAT
+          )
+
+          missing=0
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required GitHub variable/secret: ${name}"
+              missing=1
+            fi
+          done
+
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+
+          if [[ -z "${THOR_CI_ATLASSIAN_AUTH:-}" && -z "${THOR_CI_POSTHOG_API_KEY:-}" ]]; then
+            echo "::error::Set at least one approval-capable provider credential: THOR_CI_ATLASSIAN_AUTH or THOR_CI_POSTHOG_API_KEY"
+            exit 1
+          fi
+
+      - name: Materialize CI runtime files
+        env:
+          THOR_CI_WORKSPACE_CONFIG_JSON: ${{ vars.THOR_CI_WORKSPACE_CONFIG_JSON }}
+          THOR_CI_OPENCODE_AUTH_JSON: ${{ secrets.THOR_CI_OPENCODE_AUTH_JSON }}
+          THOR_CI_CRON_SECRET: ${{ secrets.THOR_CI_CRON_SECRET }}
+          THOR_CI_RESOLVE_SECRET: ${{ secrets.THOR_CI_RESOLVE_SECRET }}
+          THOR_CI_SLACK_BOT_TOKEN: ${{ secrets.THOR_CI_SLACK_BOT_TOKEN }}
+          THOR_CI_SLACK_BOT_USER_ID: ${{ vars.THOR_CI_SLACK_BOT_USER_ID }}
+          THOR_CI_SLACK_SIGNING_SECRET: ${{ secrets.THOR_CI_SLACK_SIGNING_SECRET }}
+          THOR_CI_GRAFANA_URL: ${{ vars.THOR_CI_GRAFANA_URL }}
+          THOR_CI_GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ secrets.THOR_CI_GRAFANA_SERVICE_ACCOUNT_TOKEN }}
+          THOR_CI_ATLASSIAN_AUTH: ${{ secrets.THOR_CI_ATLASSIAN_AUTH }}
+          THOR_CI_POSTHOG_API_KEY: ${{ secrets.THOR_CI_POSTHOG_API_KEY }}
+          THOR_CI_LANGFUSE_PUBLIC_KEY: ${{ secrets.THOR_CI_LANGFUSE_PUBLIC_KEY }}
+          THOR_CI_LANGFUSE_SECRET_KEY: ${{ secrets.THOR_CI_LANGFUSE_SECRET_KEY }}
+          THOR_CI_LANGFUSE_HOST: ${{ vars.THOR_CI_LANGFUSE_HOST }}
+          THOR_CI_GITHUB_PAT: ${{ secrets.THOR_CI_GITHUB_PAT }}
+          THOR_CI_GITHUB_API_URL: ${{ vars.THOR_CI_GITHUB_API_URL }}
+          THOR_CI_METABASE_URL: ${{ vars.THOR_CI_METABASE_URL }}
+          THOR_CI_METABASE_API_KEY: ${{ secrets.THOR_CI_METABASE_API_KEY }}
+          THOR_CI_METABASE_DATABASE_ID: ${{ vars.THOR_CI_METABASE_DATABASE_ID }}
+          THOR_CI_METABASE_ALLOWED_SCHEMAS: ${{ vars.THOR_CI_METABASE_ALLOWED_SCHEMAS }}
+          THOR_CI_DAYTONA_API_KEY: ${{ secrets.THOR_CI_DAYTONA_API_KEY }}
+          THOR_CI_DAYTONA_API_URL: ${{ vars.THOR_CI_DAYTONA_API_URL }}
+          THOR_CI_DAYTONA_SNAPSHOT: ${{ vars.THOR_CI_DAYTONA_SNAPSHOT }}
+          THOR_CI_ALIAS_REPO: ${{ vars.THOR_CI_ALIAS_REPO }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p \
+            docker-volumes/workspace/repos \
+            docker-volumes/workspace/memory \
+            docker-volumes/workspace/worklog \
+            docker-volumes/workspace/cron \
+            docker-volumes/workspace/worktrees \
+            docker-volumes/opencode
+
+          cat > .env <<EOF
+          CRON_SECRET=${THOR_CI_CRON_SECRET}
+          RESOLVE_SECRET=${THOR_CI_RESOLVE_SECRET}
+          SLACK_BOT_TOKEN=${THOR_CI_SLACK_BOT_TOKEN}
+          SLACK_BOT_USER_ID=${THOR_CI_SLACK_BOT_USER_ID}
+          SLACK_SIGNING_SECRET=${THOR_CI_SLACK_SIGNING_SECRET}
+          GRAFANA_URL=${THOR_CI_GRAFANA_URL}
+          GRAFANA_SERVICE_ACCOUNT_TOKEN=${THOR_CI_GRAFANA_SERVICE_ACCOUNT_TOKEN}
+          ATLASSIAN_AUTH=${THOR_CI_ATLASSIAN_AUTH}
+          POSTHOG_API_KEY=${THOR_CI_POSTHOG_API_KEY}
+          LANGFUSE_PUBLIC_KEY=${THOR_CI_LANGFUSE_PUBLIC_KEY}
+          LANGFUSE_SECRET_KEY=${THOR_CI_LANGFUSE_SECRET_KEY}
+          LANGFUSE_HOST=${THOR_CI_LANGFUSE_HOST}
+          GITHUB_PAT=${THOR_CI_GITHUB_PAT}
+          GITHUB_API_URL=${THOR_CI_GITHUB_API_URL}
+          METABASE_URL=${THOR_CI_METABASE_URL}
+          METABASE_API_KEY=${THOR_CI_METABASE_API_KEY}
+          METABASE_DATABASE_ID=${THOR_CI_METABASE_DATABASE_ID}
+          METABASE_ALLOWED_SCHEMAS=${THOR_CI_METABASE_ALLOWED_SCHEMAS}
+          DAYTONA_API_KEY=${THOR_CI_DAYTONA_API_KEY}
+          DAYTONA_API_URL=${THOR_CI_DAYTONA_API_URL}
+          DAYTONA_SNAPSHOT=${THOR_CI_DAYTONA_SNAPSHOT}
+          EOF
+
+          printf '%s' "$THOR_CI_WORKSPACE_CONFIG_JSON" > docker-volumes/workspace/config.json
+          printf '%s' "$THOR_CI_OPENCODE_AUTH_JSON" > docker-volumes/opencode/auth.json
+          chmod 600 docker-volumes/opencode/auth.json
+
+          alias_repo="${THOR_CI_ALIAS_REPO:-acme-multi-hyphen-repo}"
+          alias_repo_dir="docker-volumes/workspace/repos/${alias_repo}"
+          mkdir -p "$alias_repo_dir"
+          git init -b main "$alias_repo_dir"
+          printf '%s\n' '# CI alias fixture' > "$alias_repo_dir/README.md"
+          git -C "$alias_repo_dir" add README.md
+          git -C "$alias_repo_dir" -c user.name='Thor CI' -c user.email='thor-ci@localhost' commit -m 'chore: seed alias repo fixture'
+
+      - name: Bring up compose stack for e2e
+        run: docker compose up --build --wait -d gateway
+
+      - name: Run e2e test
+        env:
+          CI: "true"
+          ALIAS_REPO: ${{ vars.THOR_CI_ALIAS_REPO }}
+          CRON_SECRET: ${{ secrets.THOR_CI_CRON_SECRET }}
+          RESOLVE_SECRET: ${{ secrets.THOR_CI_RESOLVE_SECRET }}
+          REMOTE_CLI_GIT_REPO_URL: ${{ vars.THOR_CI_REMOTE_CLI_GIT_REPO_URL }}
+          REMOTE_CLI_GIT_REPO_NAME: ${{ vars.THOR_CI_REMOTE_CLI_GIT_REPO_NAME }}
+        run: pnpm test:e2e
+
+      - name: Compose status (on failure)
+        if: failure()
+        run: docker compose ps
+
+      - name: Compose logs (on failure)
+        if: failure()
+        run: docker compose logs --no-color --timestamps
+
+      - name: Tear down compose
+        if: always()
+        run: docker compose down --volumes --remove-orphans
