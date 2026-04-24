@@ -64,6 +64,18 @@ export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env)
   requireEnv("GITHUB_APP_PRIVATE_KEY_PATH", env);
 }
 
+function deriveBotGitIdentity(env: NodeJS.ProcessEnv = process.env): {
+  name: string;
+  email: string;
+} {
+  const slug = requireEnv("GITHUB_APP_SLUG", env);
+  const botId = requireEnv("GITHUB_APP_BOT_ID", env);
+  return {
+    name: `${slug}[bot]`,
+    email: `${botId}+${slug}[bot]@users.noreply.github.com`,
+  };
+}
+
 export interface RemoteCliAppConfig {
   getConfig?: ConfigLoader;
   mcp?: Omit<McpServiceDeps, "getConfig">;
@@ -810,8 +822,13 @@ function hasLdcliOutputOverride(args: string[]): boolean {
 
 export async function startRemoteCliServer(): Promise<void> {
   validateRemoteCliGitHubEnv();
+  const gitIdentity = deriveBotGitIdentity();
   const remoteCli = createRemoteCliApp();
-  logInfo(log, "remote_cli_starting", { port: PORT });
+  logInfo(log, "remote_cli_starting", {
+    port: PORT,
+    gitIdentityName: gitIdentity.name,
+    gitIdentityEmail: gitIdentity.email,
+  });
   const server = remoteCli.app.listen(PORT, () => {
     logInfo(log, "remote_cli_listening", { port: PORT });
   });
