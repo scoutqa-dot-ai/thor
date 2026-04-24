@@ -1,0 +1,23 @@
+docs/plan/2026042301_github-app-webhooks.md
+  d34f2aa08b2acd44 80,83-84,87,90-101,103,174-192,212-220,225,239-240,289,291,304,315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "771db89d93a00f49c261d1d7b178fa6cc3181100",
+  "prompts": {
+    "d34f2aa08b2acd44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea38cfdb-a22d-45b2-9f1e-c7499db21ae1",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 102,
+      "total_deletions": 60,
+      "accepted_lines": 54,
+      "overriden_lines": 0
+    }
+  }
+}
