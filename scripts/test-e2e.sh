@@ -548,7 +548,7 @@ flag_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
 flag_exit=$(json_field "$flag_raw" "exitCode")
 flag_stderr=$(json_field "$flag_raw" "stderr")
 assert '[[ "$flag_exit" == "1" ]]' "git leading flags are blocked" "exitCode='$flag_exit'"
-assert '[[ "$flag_stderr" == *"leading flags"* ]]' "leading flags error is descriptive" "stderr='${flag_stderr:0:200}'"
+assert '[[ "$flag_stderr" == *"Load skill using-git"* ]]' "leading flags error points to using-git" "stderr='${flag_stderr:0:200}'"
 
 # 6d. git push to non-origin remote should be blocked
 push_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
@@ -558,7 +558,7 @@ push_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
 push_exit=$(json_field "$push_raw" "exitCode")
 push_stderr=$(json_field "$push_raw" "stderr")
 assert '[[ "$push_exit" == "1" ]]' "git push to non-origin is blocked" "exitCode='$push_exit'"
-assert '[[ "$push_stderr" == *"origin"* ]]' "push error mentions origin restriction" "stderr='${push_stderr:0:200}'"
+assert '[[ "$push_stderr" == *"Load skill using-git"* ]]' "push error points to using-git" "stderr='${push_stderr:0:200}'"
 
 # 6e. cwd outside /workspace should be blocked
 cwd_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \

@@ -84,7 +84,9 @@ function isHelpRequest(args: string[]): boolean {
 }
 
 function hasRepoOverride(args: string[]): boolean {
-  return args.some((arg) => arg === "-R" || arg === "--repo" || arg.startsWith("--repo="));
+  return args.some(
+    (arg) => arg === "-R" || arg.startsWith("-R") || arg === "--repo" || arg.startsWith("--repo="),
+  );
 }
 
 function ghCommandKey(args: string[]): string | undefined {

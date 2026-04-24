@@ -411,6 +411,8 @@ describe("validateGhArgs", () => {
     it("blocks repo-targeting flags across the gh surface", () => {
       expectGhDenied(["pr", "view", "123", "--repo", "owner/repo"]);
       expectGhDenied(["issue", "view", "42", "-R", "owner/repo"]);
+      expectGhDenied(["issue", "view", "42", "-Rowner/repo"]);
+      expectGhDenied(["pr", "view", "123", "-Rowner/repo"]);
       expectGhDenied(["repo", "view", "--repo=owner/repo"]);
       expectGhDenied(["pr", "create", "--repo", "org/repo", "--title", "x", "--body", "y"]);
     });
