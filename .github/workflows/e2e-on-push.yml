@@ -59,6 +59,10 @@ jobs:
           METABASE_API_KEY: ci-fake
           METABASE_DATABASE_ID: "1"
           METABASE_ALLOWED_SCHEMAS: public
+          VOUCH_GOOGLE_CLIENT_ID: ci-fake
+          VOUCH_GOOGLE_CLIENT_SECRET: ci-fake
+          VOUCH_JWT_SECRET: ci-fake
+          VOUCH_WHITELIST: ci@localhost
         run: |
           set -euo pipefail
 
