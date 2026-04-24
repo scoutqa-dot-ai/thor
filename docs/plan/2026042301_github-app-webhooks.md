@@ -65,27 +65,61 @@ Branch-based, single continuity key. Canonical: `git:branch:{localRepo}:{branch}
 
 For PR-backed events that omit head ref in the payload (some `issue_comment` shapes), the queue handler asks remote-cli to resolve `head.ref` before dispatch. Never block the HTTP response on this lookup.
 
-### Repo mapping (inferred, not configured)
+### Repo mapping (directory-name match)
 
-No `full_names` config. At gateway boot (and on config reload):
+No mapping config, no scan, no cache. Per webhook:
 
-1. Scan `/workspace/repos/*/`.
-2. For each repo dir, run `git -C <dir> remote get-url origin`, parse to `owner/name`, lowercase.
-3. Build `githubFullName -> localRepo` map in memory.
-4. Log `github_repo_mapping` entries on boot so operators can verify.
-5. If two local repos resolve to the same GitHub full name, fail boot with a clear error.
+1. Parse `repository.full_name` (e.g. `scoutqa-dot-ai/thor`), take the basename (`thor`), lowercase.
+2. Call existing `resolveRepoDirectory(name)` from `packages/common/src/workspace-config.ts` — already realpath-checks `/workspace/repos/<name>/`.
+3. Exists → that's `localRepo`. Doesn't exist → drop with `reason: "repo_not_mapped"`.
 
-Webhooks for unmapped repos (repo not cloned, parse failure, etc.) are ignored with `reason: "repo_not_mapped"`.
+Convention: the GitHub repo basename must match the local clone directory name. Operators who want to host `owner/foo` as `/workspace/repos/foo` get zero-config routing. If two GitHub orgs publish a repo with the same basename, the operator chooses which one lives at `/workspace/repos/<basename>/`; the other is not supported under this convention.
 
-### Mention detection (inferred, not configured)
+### GitHub App identity (single app, env-configured)
 
-No `mention_logins` config by default. At gateway boot:
+One GitHub App across the whole deployment. Identity comes from env vars — no config file, no per-repo override, no runtime `GET /app` lookup:
 
-1. Call `GET /app` via remote-cli using the installed App's JWT.
-2. Read `slug`, build default mention list: `[slug, slug + "[bot]"]`, all lowercased.
-3. Detect mentions by word-boundary substring match on `@<login>` in normalized `body`.
+| Env var                      | Purpose                                                        | Example                                  |
+| ---------------------------- | -------------------------------------------------------------- | ---------------------------------------- |
+| `GITHUB_APP_ID`              | Numeric App ID. Used as JWT `iss` claim.                       | `123456`                                 |
+| `GITHUB_APP_SLUG`            | App slug. Used for mention detection + git author name.        | `thor`                                   |
+| `GITHUB_APP_BOT_ID`          | Numeric bot user ID. Used for git author email.                | `49699333`                               |
+| `GITHUB_APP_PRIVATE_KEY_PATH`| PEM file path for JWT signing. Owned by remote-cli only.       | `/secrets/thor-app.pem`                  |
+| `GITHUB_WEBHOOK_SECRET`      | HMAC secret for webhook verification. Owned by gateway only.   | (32+ random bytes)                       |
 
-Optional override: `repos.<name>.github_mention_logins: string[]` in workspace-config, lowercased at load. Used only when an operator wants extra identities (multi-app, legacy user-bot handle, etc.).
+The existing `github_app.installations: []` array in `workspace-config.ts` is removed. Installation IDs come from webhook payloads (`installation.id`) or are resolved on demand via JWT-authenticated `GET /repos/{owner}/{repo}/installation` when Thor initiates GitHub activity outside the webhook path.
+
+### Mention detection
+
+At gateway boot, derive the mention list once from env:
+
+```
+mentionLogins = [GITHUB_APP_SLUG, GITHUB_APP_SLUG + "[bot]"]
+```
+
+Both lowercased. Detect by word-boundary substring match on `@<login>` in the event body. No config file field. No override surface.
+
+### Git commit identity (derived, not configured)
+
+Bot commits must be attributed to the GitHub App so GitHub's UI shows the App avatar and the bot's activity graph:
+
+```
+git user.name  = "${GITHUB_APP_SLUG}[bot]"
+git user.email = "${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com"
+```
+
+Example: `thor[bot] <49699333+thor[bot]@users.noreply.github.com>`.
+
+Today, `packages/remote-cli/entrypoint.sh:29-30` sets identity from `GIT_USER_NAME` / `GIT_USER_EMAIL` env vars with weak defaults (`thor` / `thor@localhost`). That's the one site that needs to change:
+
+```sh
+git config --global user.name  "${GITHUB_APP_SLUG}[bot]"
+git config --global user.email "${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com"
+```
+
+The `GIT_USER_NAME` and `GIT_USER_EMAIL` env vars are removed — no fallback path, no override surface. Entrypoint fails fast if `GITHUB_APP_SLUG` or `GITHUB_APP_BOT_ID` are unset.
+
+Runtime overrides stay blocked by the existing policy layer: `validateGitArgs` in `packages/remote-cli/src/policy.ts` already rejects `git config user.name` (tested at `policy.test.ts:155`) and `git -c user.name=x` (tested at `test-e2e.sh:546`). No new enforcement needed — the identity set at entrypoint is the only identity agents can commit with.
 
 ### Filter order (gateway `/github/webhook`)
 
@@ -116,12 +150,13 @@ Only events that pass all 7 reach the queue.
 
 ### Auth boundary
 
-Gateway holds **only** the webhook secret (`GITHUB_WEBHOOK_SECRET` env). All installation-token minting and GitHub API calls stay in `remote-cli`, which already owns the App private key via `github_app.installations`. Gateway calls two new internal remote-cli endpoints:
+Gateway reads `GITHUB_WEBHOOK_SECRET` and `GITHUB_APP_SLUG`. Nothing else. The App private key stays in remote-cli (`GITHUB_APP_PRIVATE_KEY_PATH`). All installation-token minting and GitHub API calls happen in remote-cli.
 
-- `GET /github/app` — returns `{ slug, name }` for the configured App. Called once at boot.
-- `GET /github/pr-head?installation={id}&repo={full}&number={n}` — returns `{ ref, headRepoFullName }` or 404. Called by the queue handler for PR-backed events missing `head.ref`.
+One new internal remote-cli endpoint:
 
-No private-key handling in the gateway process.
+- `GET /github/pr-head?installation={id}&repo={full}&number={n}` — returns `{ ref, headRepoFullName }` or 404. Called by the queue handler for PR-backed events missing `head.ref`. Remote-cli mints the installation token internally using the JWT.
+
+No private-key handling in the gateway process. No boot-time GitHub API calls.
 
 ### Prompt shape for runner
 
@@ -142,10 +177,14 @@ Compact one-liner per event. The runner batches events sharing a correlation key
    - `normalizeGitHubEvent(raw, { localRepo, mentionLogins })` → `NormalizedGitHubEvent | { ignored: true, reason }`.
    - `detectMention(body, mentionLogins)` — word-boundary substring match, case-insensitive.
    - `buildCorrelationKey(localRepo, branch)` — returns `git:branch:{localRepo}:{branch}` (matches `computeGitAlias`).
-2. Add `packages/gateway/src/github-mapping.ts`:
-   - `scanGitHubRepoMap(reposRoot)` — shells out to `git -C <dir> remote get-url origin`, returns `Map<fullName, localRepo>`.
-   - Fails with a clear error if two local repos resolve to the same GitHub full name.
-3. Extend `packages/common/src/workspace-config.ts` with optional `repos.<name>.github_mention_logins: string[]`.
+2. Remove the `github_app.installations: []` array from `packages/common/src/workspace-config.ts`. Replace with env-sourced App identity (`GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`). Update any current callers of `github_app.installations` in remote-cli to read env instead.
+3. Remove every reference to the old `GIT_USER_NAME` / `GIT_USER_EMAIL` env vars. Derive identity from `GITHUB_APP_SLUG` + `GITHUB_APP_BOT_ID` at remote-cli boot. Concrete edits:
+   - `packages/remote-cli/entrypoint.sh:29-30` — replace with derived values; fail fast if either `GITHUB_APP_SLUG` or `GITHUB_APP_BOT_ID` is unset.
+   - `docker-compose.yml:37-38` — drop the `GIT_USER_EMAIL` / `GIT_USER_NAME` passthrough; add `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_WEBHOOK_SECRET`.
+   - `.env.example:24-25` — drop the commented-out `GIT_USER_NAME` / `GIT_USER_EMAIL` entries; add the 5 new `GITHUB_APP_*` vars with placeholder values.
+   - `README.md:79-80` — drop both env-var table rows; add rows for the 5 new vars.
+   - `docs/plan/2026032101_mention-interrupt.md:20,87` — historical plan references are superseded by this one. Leave as-is (historical record), but this plan's Decision Log supersedes.
+   - No other code paths set git identity today. Runtime overrides stay blocked by existing policy (`validateGitArgs` at `packages/remote-cli/src/policy.ts`).
 
 **Exit criteria:**
 
@@ -155,7 +194,10 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - [ ] `normalizeGitHubEvent` returns `{ ignored: true, reason }` for each of: pure-issue comment, fork PR, bot sender, empty review body, unsupported action.
 - [ ] Mention detection is case-insensitive and word-boundary-safe (`@thorbot` ≠ `@thor`).
 - [ ] Correlation key format matches `computeGitAlias()` byte-for-byte.
-- [ ] Repo map scan returns correct `{ fullName → localRepo }` entries and fails boot on collisions.
+- [ ] Basename resolution returns the expected `localRepo` for a known clone and rejects unknown basenames with `repo_not_mapped`.
+- [ ] Missing or empty `GITHUB_APP_ID` / `GITHUB_APP_SLUG` / `GITHUB_APP_BOT_ID` / `GITHUB_APP_PRIVATE_KEY_PATH` / `GITHUB_WEBHOOK_SECRET` fails gateway and remote-cli boot with a clear error naming the missing var.
+- [ ] `packages/remote-cli/entrypoint.sh` sets `user.name` = `${GITHUB_APP_SLUG}[bot]` and `user.email` = `${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com`.
+- [ ] `grep -r GIT_USER_NAME\|GIT_USER_EMAIL` returns zero hits outside `docs/plan/` historical files.
 
 ### Phase 2 — Gateway webhook route
 
@@ -169,7 +211,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
    - `sourceTs`: payload timestamp if present, else request time.
    - `interrupt` + `delayMs` from mention detection.
 5. Respond 200 in all non-401 cases.
-6. Call `scanGitHubRepoMap` and `GET /github/app` once at gateway boot. Log the resulting map and mention-login list.
+6. Compute the mention-login list from `GITHUB_APP_SLUG` at gateway boot. Log it for operator visibility. No network calls.
 
 **Exit criteria:**
 
@@ -177,7 +219,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - [ ] Invalid signatures return 401 without enqueueing.
 - [ ] Each of the 7 filter reasons has a passing unit test that checks (a) 200/401 response as appropriate, (b) nothing enqueued, (c) structured log emitted with `reason`.
 - [ ] Form-encoded webhook payloads (GitHub supports `application/x-www-form-urlencoded`) pass HMAC and still normalize correctly.
-- [ ] Repo map and mention-login list are resolved at boot and visible in logs.
+- [ ] Mention-login list is resolved at boot and visible in logs.
 - [ ] Gateway never touches the App private key.
 
 ### Phase 3 — Runner dispatch
@@ -202,23 +244,23 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 
 ### Phase 4 — Operator runbook
 
-1. Update `docs/examples/workspace-config.example.json` — show the optional `github_mention_logins` override with a comment explaining when to use it.
+1. Update `docs/examples/workspace-config.example.json` — remove the `github_app.installations` block (it's gone). No GitHub config in workspace-config at all.
 2. Write `docs/github-app-webhooks.md` with:
+   - **Env var matrix** — `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_WEBHOOK_SECRET`. How to find each value in the GitHub App settings page.
    - **Permission matrix** — `issues: read`, `pull_requests: read`, `contents: read`, `metadata: read`.
    - **Event subscriptions** — "Issue comment", "Pull request review", "Pull request review comment".
    - **Webhook URL format** — `https://<gateway-host>/github/webhook`.
-   - **Secret env** — `GITHUB_WEBHOOK_SECRET`.
    - **Secret rotation** — procedure with overlap window and a verify-next-delivery check.
    - **Local dev** — `smee.io` forwarding recipe.
    - **Troubleshooting table** — one row per `reason` in the filter-order table, with "what it means" and "how to fix."
-3. Boot log includes the resolved repo map and mention-login list so operators can verify at a glance.
+3. Boot log includes the resolved mention-login list and the bot git identity so operators can verify at a glance.
 
 **Exit criteria:**
 
 - [ ] An operator who has never seen Thor can set up their first webhook end-to-end from the doc in under 15 minutes.
 - [ ] The troubleshooting table covers every `github_event_ignored` reason.
-- [ ] Example config has zero required GitHub fields.
-- [ ] Boot log shows the full `{fullName → localRepo}` map and mention-login list.
+- [ ] Workspace-config has zero GitHub fields. All App identity comes from env.
+- [ ] Boot log shows the resolved mention-login list and the bot git identity. Docs explain the `basename-must-match-local-dir` convention.
 
 ## Decision Log
 
@@ -227,9 +269,10 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 | 1   | Reuse `packages/gateway` for GitHub webhook intake                             | Gateway already owns signed external event intake, queueing, and runner dispatch.                                                            |
 | 2   | Narrow allowlist — 3 events, PR-scoped only                                    | Keeps the trigger surface predictable and tests tractable; pure-issue and non-code-flow events route through a future issue-triage plan.     |
 | 3   | Normalize payloads before prompting the runner                                 | Smaller prompts, clearer tests, no GitHub-schema coupling in the runner.                                                                     |
-| 4   | Infer local repo mapping from `git remote get-url origin` — no config required | The mapping already exists on disk; requiring operators to duplicate it in config is drift-prone.                                            |
-| 5   | Infer `mention_logins` from `GET /app` — optional override only                | App slug is authoritative; operators override only for multi-app or legacy handles.                                                          |
-| 6   | Gateway holds webhook secret only; remote-cli owns App private key             | Single owner for installation-token minting; gateway stays signature-verification + routing.                                                 |
+| 4   | Map `repository.full_name` → local repo by basename match against `/workspace/repos/<name>/` | Zero config, zero scan, zero cache. Operators already clone to the basename; webhook routing reuses that convention.                         |
+| 5   | Single-App, env-sourced identity (`GITHUB_APP_ID`, `_SLUG`, `_BOT_ID`, `_PRIVATE_KEY_PATH`) | Removes `github_app.installations` config array, eliminates boot-time `GET /app` lookup, and gives the mention list and git identity a single source of truth. |
+| 6   | Gateway reads webhook secret + slug only; remote-cli owns App private key      | Single owner for JWT signing + installation-token minting; gateway stays signature-verification + routing.                                   |
+| 5b  | Bot git identity derived from slug + bot ID; config override disallowed        | Prevents drift between App identity and commit attribution. GitHub displays bot-authored commits correctly only with the derived format.     |
 | 7   | Canonical correlation key is `git:branch:{localRepo}:{branch}`                 | Matches existing `computeGitAlias()` output — one continuity format across all intake sources.                                               |
 | 8   | Branch resolution happens in the queue handler, not the HTTP path              | GitHub's 10s webhook budget cannot absorb installation-token mint + API lookup under load.                                                   |
 | 9   | Terminal drop on 401/403/404 from branch lookup                                | App uninstalled or repo gone — retries would loop forever.                                                                                   |
