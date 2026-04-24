@@ -201,13 +201,11 @@ Each repo can influence Thor's behavior in two ways:
 
 **Memory (Thor only, outside the repo):**
 
-- Root memory: `/workspace/memory/README.md` — injected into every new session. Cross-repo context: critical incidents, team decisions, corrections. Keep short.
-- Per-repo memory: `/workspace/memory/<repo>/README.md` — injected only for sessions in that repo. Repo-specific patterns, decisions, gotchas.
-- Additional memory files: `/workspace/memory/` and `/workspace/memory/<repo>/` — store one topic per file, list and grep as needed.
+- Root memory: `/workspace/memory/README.md`
+- Repo memory: `/workspace/memory/<repo>/README.md`
+- People memory: `/workspace/memory/people/*.md`
 
-**Reading:** at the start of non-trivial sessions, check for relevant memory files by listing and grepping `/workspace/memory/`. For recovering prior context (Slack threads, past decisions, earlier investigations), search `/workspace/worklog/` first — it is faster and more complete than scanning Slack history. When a prompt says "Previous session was lost" and points at a worklog note, read that note directly as the continuity artifact.
-
-Prefer in-repo docs for anything humans should also see. Use memory for Thor-only context that doesn't belong in the codebase. Do not store ephemeral task state, raw tool output, or anything already in the repo.
+Keep entries short and durable. For full memory rules and examples, load the `memory` skill.
 
 ## Final Rule
 

@@ -323,6 +323,54 @@ describe("triggerRunnerSlack edge cases", () => {
     expect(mockRunnerFetch).not.toHaveBeenCalled();
   });
 
+  it("forwards deduped slack user identifiers to runner", async () => {
+    mockRunnerFetch.mockResolvedValue(jsonResponse({ busy: true }));
+
+    const { triggerRunnerSlack } = await import("./service.js");
+    await triggerRunnerSlack(
+      [
+        slackEvent,
+        { ...slackEvent, ts: "1710000000.002", user: "U2" },
+        { ...slackEvent, ts: "1710000000.003", user: "U1" },
+      ],
+      "key1",
+      runnerDeps,
+      slackMcpDeps,
+      false,
+      undefined,
+      new Map([["C123", "repo"]]),
+    );
+
+    expect(mockRunnerFetch).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((mockRunnerFetch.mock.calls[0][1] as { body: string }).body);
+    expect(body.identifiers).toEqual([
+      { type: "slack", value: "U1" },
+      { type: "slack", value: "U2" },
+    ]);
+  });
+
+  it("skips missing slack users when building identifiers", async () => {
+    mockRunnerFetch.mockResolvedValue(jsonResponse({ busy: true }));
+
+    const { triggerRunnerSlack } = await import("./service.js");
+    await triggerRunnerSlack(
+      [
+        { ...slackEvent, user: undefined },
+        { ...slackEvent, ts: "1710000000.002", user: "U9" },
+        { ...slackEvent, ts: "1710000000.003", user: undefined },
+      ],
+      "key1",
+      runnerDeps,
+      slackMcpDeps,
+      false,
+      undefined,
+      new Map([["C123", "repo"]]),
+    );
+
+    const body = JSON.parse((mockRunnerFetch.mock.calls[0][1] as { body: string }).body);
+    expect(body.identifiers).toEqual([{ type: "slack", value: "U9" }]);
+  });
+
   it("rejects when channel has no repo mapping", async () => {
     const onRejected = vi.fn();
     const { triggerRunnerSlack } = await import("./service.js");

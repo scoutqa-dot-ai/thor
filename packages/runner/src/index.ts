@@ -13,6 +13,7 @@ import type {
 } from "@opencode-ai/sdk";
 import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   createLogger,
   logInfo,
@@ -38,6 +39,7 @@ import {
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { buildToolInstructions } from "./tool-instructions.js";
+import { injectPeopleMemoryForSession } from "./people-memory.js";
 
 const log = createLogger("runner");
 
@@ -136,6 +138,11 @@ app.get("/health", async (_req, res) => {
 
 // --- Trigger endpoint ---
 
+const TriggerIdentifierSchema = z.object({
+  type: z.enum(["slack", "github"]),
+  value: z.string(),
+});
+
 const TriggerRequestSchema = z.object({
   prompt: z.string(),
   model: z.string().optional(),
@@ -148,6 +155,8 @@ const TriggerRequestSchema = z.object({
   interrupt: z.boolean().optional(),
   /** Working directory for the OpenCode session. */
   directory: z.string(),
+  /** Structured person identifiers for contextual people memory. */
+  identifiers: z.array(TriggerIdentifierSchema).optional(),
 });
 
 type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
@@ -300,7 +309,14 @@ app.post("/trigger", async (req, res) => {
     return;
   }
 
-  let { prompt, model, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
+  let {
+    prompt,
+    model,
+    correlationKey,
+    sessionId: requestedSessionId,
+    directory,
+    identifiers,
+  } = parsed.data;
 
   try {
     await ensureOpencodeAvailable();
@@ -436,32 +452,65 @@ app.post("/trigger", async (req, res) => {
       }
     }
 
-    // --- Memory: inject into new or stale sessions ---
+    // --- Memory and tool context: inject into new or stale sessions ---
     if (!resumed) {
-      const rootMemory = readRootMemory();
-      if (rootMemory) {
-        prompt = `[Root memory — important context from prior sessions]\n${rootMemory}\n\n${prompt}`;
-      } else {
-        prompt = `[Root memory: none yet — write to ${ROOT_MEMORY_PATH} to persist cross-repo context]\n\n${prompt}`;
+      const promptBlocks: string[] = [];
+
+      const toolInstructions = getToolInstructions(sessionDirectory);
+      if (toolInstructions) {
+        promptBlocks.push(toolInstructions);
+        logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });
       }
 
-      // Per-repo memory: inject repo-specific context
+      const rootMemory = readRootMemory();
+      if (rootMemory) {
+        promptBlocks.push(`[Root memory — important context from prior sessions]\n${rootMemory}`);
+      } else {
+        promptBlocks.push(
+          `[Root memory: none yet — write to ${ROOT_MEMORY_PATH} to persist cross-repo context]`,
+        );
+      }
+
       const repo = extractRepoFromCwd(sessionDirectory);
       if (repo) {
         const repoMemoryPath = `${MEMORY_DIR}/${repo}/README.md`;
         const repoMemory = readRepoMemory(sessionDirectory);
         if (repoMemory) {
-          prompt = `[Repo memory — context for ${repo}]\n${repoMemory}\n\n${prompt}`;
+          promptBlocks.push(`[Repo memory — context for ${repo}]\n${repoMemory}`);
         } else {
-          prompt = `[Repo memory: none yet — write to ${repoMemoryPath} to persist per-repo context]\n\n${prompt}`;
+          promptBlocks.push(
+            `[Repo memory: none yet — write to ${repoMemoryPath} to persist per-repo context]`,
+          );
         }
       }
 
-      // Tool instructions: inject MCP tool list from config
-      const toolInstructions = getToolInstructions(sessionDirectory);
-      if (toolInstructions) {
-        prompt = `${toolInstructions}\n\n${prompt}`;
-        logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });
+      const peopleMemory = injectPeopleMemoryForSession({
+        prompt,
+        resumed,
+        identifiers,
+        peopleDir: join(MEMORY_DIR, "people"),
+      });
+      for (const warning of peopleMemory.warnings) {
+        logWarn(log, "people_memory_ambiguous_identifier", {
+          warning,
+          correlationKey,
+          directory: sessionDirectory,
+        });
+      }
+      if (peopleMemory.matchedFiles.length > 0) {
+        logInfo(log, "people_memory_injected", {
+          files: peopleMemory.matchedFiles.map((file) => file.fileName),
+          identifiers,
+          directory: sessionDirectory,
+        });
+      }
+
+      if (peopleMemory.block) {
+        promptBlocks.push(peopleMemory.block);
+      }
+
+      if (promptBlocks.length > 0) {
+        prompt = `${promptBlocks.join("\n\n")}\n\n${prompt}`;
       }
     }
 

@@ -9,8 +9,13 @@ import {
   resolveRepoDirectory,
 } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
-import { getSlackCorrelationKey, getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
+import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
+
+interface TriggerIdentifier {
+  type: "slack" | "github";
+  value: string;
+}
 
 const log = createLogger("gateway-service");
 
@@ -30,6 +35,22 @@ export interface SlackMcpDeps {
 
 function getFetch(fetchImpl?: typeof fetch): typeof fetch {
   return fetchImpl ?? fetch;
+}
+
+function collectSlackUserIdentifiers(events: SlackThreadEvent[]): TriggerIdentifier[] {
+  const seen = new Set<string>();
+  const identifiers: TriggerIdentifier[] = [];
+
+  for (const event of events) {
+    const user = event.user?.trim();
+    if (!user) continue;
+    const key = `slack:${user}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    identifiers.push({ type: "slack", value: user });
+  }
+
+  return identifiers;
 }
 
 /**
@@ -70,10 +91,12 @@ export async function triggerRunnerSlack(
     onRejected?.(`repo directory not found for ${repo}`);
     return { busy: false };
   }
+  const identifiers = collectSlackUserIdentifiers(events);
+
   const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, correlationKey, interrupt, directory }),
+    body: JSON.stringify({ prompt, correlationKey, interrupt, directory, identifiers }),
   });
 
   if (!response.ok) {
