@@ -76,6 +76,12 @@ Routing is basename-based:
 
 If the basename does not exist locally, gateway drops the event with `reason: "repo_not_mapped"`.
 
+Notes:
+
+- Routing currently uses the repo basename as delivered; Thor does not normalize mixed-case repo names during webhook intake.
+- We do not expect that to matter anytime soon for current repos because local clone names are already lowercase and aligned with the webhook payloads we use today.
+- If mixed-case repo naming becomes an operational problem later, we can add normalization then.
+
 ## 7) Secret rotation
 
 1. Generate a new high-entropy secret.

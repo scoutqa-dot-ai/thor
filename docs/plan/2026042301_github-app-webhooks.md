@@ -44,18 +44,18 @@ GitHub App webhook
 ```ts
 interface NormalizedGitHubEvent {
   source: "github";
-  deliveryId: string;        // X-GitHub-Delivery
-  eventType: string;         // "issue_comment" | "pull_request_review_comment" | "pull_request_review"
-  action: string;            // "created" | "submitted"
+  deliveryId: string; // X-GitHub-Delivery
+  eventType: string; // "issue_comment" | "pull_request_review_comment" | "pull_request_review"
+  action: string; // "created" | "submitted"
   installationId: number;
-  repoFullName: string;      // e.g. "scoutqa-dot-ai/thor" (lowercased)
-  localRepo: string;         // resolved local repo name
-  senderLogin: string;       // lowercased
+  repoFullName: string; // e.g. "scoutqa-dot-ai/thor"
+  localRepo: string; // resolved local repo name
+  senderLogin: string; // lowercased
   htmlUrl: string;
-  number: number;            // PR number
-  body: string;              // non-empty by the time it's here
-  branch: string | null;     // null means queue handler must resolve via remote-cli
-  mention: boolean;          // body mentions any configured login
+  number: number; // PR number
+  body: string; // non-empty by the time it's here
+  branch: string | null; // null means queue handler must resolve via remote-cli
+  mention: boolean; // body mentions any configured login
 }
 ```
 
@@ -69,23 +69,25 @@ For PR-backed events that omit head ref in the payload (some `issue_comment` sha
 
 No mapping config, no scan, no cache. Per webhook:
 
-1. Parse `repository.full_name` (e.g. `scoutqa-dot-ai/thor`), take the basename (`thor`), lowercase.
+1. Parse `repository.full_name` (e.g. `scoutqa-dot-ai/thor`), take the basename (`thor`) as-is.
 2. Call existing `resolveRepoDirectory(name)` from `packages/common/src/workspace-config.ts` — already realpath-checks `/workspace/repos/<name>/`.
 3. Exists → that's `localRepo`. Doesn't exist → drop with `reason: "repo_not_mapped"`.
 
 Convention: the GitHub repo basename must match the local clone directory name. Operators who want to host `owner/foo` as `/workspace/repos/foo` get zero-config routing. If two GitHub orgs publish a repo with the same basename, the operator chooses which one lives at `/workspace/repos/<basename>/`; the other is not supported under this convention.
 
+Exact-match identifiers are intentional for now. Mixed-case GitHub org/repo names are acknowledged, but this plan defers normalization until we see a real operator need; current deployments are expected to keep local clone names aligned with the webhook payloads they actually use.
+
 ### GitHub App identity (single app)
 
 One GitHub App across the whole deployment. App-level identity lives in env; per-org installation IDs live in `workspace-config.json`:
 
-| Env var                       | Purpose                                                               | Example                                  |
-| ----------------------------- | --------------------------------------------------------------------- | ---------------------------------------- |
-| `GITHUB_APP_ID`               | Numeric App ID. Used as JWT `iss` claim.                              | `3387270`                                |
-| `GITHUB_APP_SLUG`             | App slug. Used for mention detection + git author name.               | `thor`                                   |
-| `GITHUB_APP_BOT_ID`           | Numeric bot user ID. Used for git author email.                       | `49699333`                               |
-| `GITHUB_APP_PRIVATE_KEY_PATH` | PEM file path for JWT signing. Owned by remote-cli only.              | `/secrets/thor-app.pem`                  |
-| `GITHUB_WEBHOOK_SECRET`       | HMAC secret for webhook verification. Owned by gateway only.          | (32+ random bytes)                       |
+| Env var                       | Purpose                                                      | Example                 |
+| ----------------------------- | ------------------------------------------------------------ | ----------------------- |
+| `GITHUB_APP_ID`               | Numeric App ID. Used as JWT `iss` claim.                     | `3387270`               |
+| `GITHUB_APP_SLUG`             | App slug. Used for mention detection + git author name.      | `thor`                  |
+| `GITHUB_APP_BOT_ID`           | Numeric bot user ID. Used for git author email.              | `49699333`              |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | PEM file path for JWT signing. Owned by remote-cli only.     | `/secrets/thor-app.pem` |
+| `GITHUB_WEBHOOK_SECRET`       | HMAC secret for webhook verification. Owned by gateway only. | (32+ random bytes)      |
 
 A new top-level `orgs` block in workspace-config holds per-org installation IDs:
 
@@ -138,15 +140,15 @@ Runtime overrides stay blocked by the existing policy layer: `validateGitArgs` i
 
 Events are rejected as early as possible with a structured log (`github_event_ignored` + `reason`) and HTTP 200 — except signature failures, which return HTTP 401:
 
-| Order | Reason                            | Source                                                                 |
-| ----- | --------------------------------- | ---------------------------------------------------------------------- |
-| 1     | `signature_invalid`               | HMAC mismatch → HTTP 401                                               |
-| 2     | `event_unsupported`               | Not in allowlist                                                       |
-| 3     | `repo_not_mapped`                 | No local repo matches `repository.full_name`                           |
-| 4     | `pure_issue_comment_unsupported`  | `issue_comment` with `issue.pull_request == null`                      |
-| 5     | `fork_pr_unsupported`             | `head.repo.full_name !== base.repo.full_name`                          |
-| 6     | `bot_sender`                      | `sender.type === "Bot"` or matches mention logins (self-loop guard)    |
-| 7     | `empty_review_body`               | `pull_request_review.submitted` with blank body                        |
+| Order | Reason                           | Source                                                              |
+| ----- | -------------------------------- | ------------------------------------------------------------------- |
+| 1     | `signature_invalid`              | HMAC mismatch → HTTP 401                                            |
+| 2     | `event_unsupported`              | Not in allowlist                                                    |
+| 3     | `repo_not_mapped`                | No local repo matches `repository.full_name`                        |
+| 4     | `pure_issue_comment_unsupported` | `issue_comment` with `issue.pull_request == null`                   |
+| 5     | `fork_pr_unsupported`            | `head.repo.full_name !== base.repo.full_name`                       |
+| 6     | `bot_sender`                     | `sender.type === "Bot"` or matches mention logins (self-loop guard) |
+| 7     | `empty_review_body`              | `pull_request_review.submitted` with blank body                     |
 
 Only events that pass all 7 reach the queue.
 
@@ -160,6 +162,8 @@ Only events that pass all 7 reach the queue.
 `X-GitHub-Delivery` is the queue event ID. Queue overwrite coalesces in-flight retries from GitHub's 10s-timeout retry behavior. Processed deliveries are **not** remembered after ack.
 
 **Contract**: agent actions must stay idempotent — re-processing the same event is wasted compute, not data corruption. This contract is load-bearing once any reply path is added to GitHub or Slack. Reassess dedupe then.
+
+When GitHub omits payload timestamps, the queue fallback should be derived deterministically from `X-GitHub-Delivery` so repeated deliveries still overwrite the same queue file.
 
 ### Auth boundary
 
@@ -180,7 +184,7 @@ Two paths:
 **Agent-initiated path** (agent runs `gh pr create` / `git push` without a webhook context). Remote-cli:
 
 1. Resolves `org` from the repo's origin — already done by `resolveOrgFromRemote()` at `packages/remote-cli/src/github-app-auth.ts:77`.
-2. Reads `installation_id` from `config.orgs[org].github_app_installation_id` (via `loadWorkspaceConfig()`). Missing org entry → fail with a clear error naming the unconfigured org and the list of configured ones.
+2. Reads `installation_id` from `config.orgs[org].github_app_installation_id` (via `loadWorkspaceConfig()`). This is an exact org-key lookup today. Missing org entry → fail with a clear error naming the unconfigured org and the list of configured ones.
 3. Checks the existing disk cache at `/var/lib/remote-cli/github-app/cache/<org>.json` for a fresh token (existing early-refresh logic, 5 min before `expires_at`).
 4. On cache miss: mints a JWT from `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY_PATH` (reuses `generateAppJWT()` at line 179), mints the installation token via `POST /app/installations/{id}/access_tokens` (reuses `mintInstallationToken()` at line 215), writes `{ token, expires_at }` to the cache file.
 5. On 401/403 from token minting (installation uninstalled), unlink the cache file and re-raise with `reason: "installation_gone"`.
@@ -218,7 +222,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
    - Replace with a small helper that calls `getInstallationIdForOrg()` from the loaded workspace config. Unknown org → throw with the org name + the list of configured orgs.
    - On 401/403 from `mintInstallationToken()`, `unlinkSync(cachePath(org))` and surface as `installation_gone`.
    - `generateAppJWT()`, `mintInstallationToken()`, and the existing disk-cache logic are unchanged.
-3. Remove every reference to the old `GIT_USER_NAME` / `GIT_USER_EMAIL` env vars. Derive identity from `GITHUB_APP_SLUG` + `GITHUB_APP_BOT_ID` at remote-cli boot. Concrete edits:
+4. Remove every reference to the old `GIT_USER_NAME` / `GIT_USER_EMAIL` env vars. Derive identity from `GITHUB_APP_SLUG` + `GITHUB_APP_BOT_ID` at remote-cli boot. Concrete edits:
    - `packages/remote-cli/entrypoint.sh:29-30` — replace with derived values; fail fast if either `GITHUB_APP_SLUG` or `GITHUB_APP_BOT_ID` is unset.
    - `docker-compose.yml:37-38` — drop the `GIT_USER_EMAIL` / `GIT_USER_NAME` passthrough; add `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_WEBHOOK_SECRET`.
    - `.env.example:24-25` — drop the commented-out `GIT_USER_NAME` / `GIT_USER_EMAIL` entries; add the 5 new `GITHUB_APP_*` vars with placeholder values.
@@ -250,8 +254,8 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 4. Enqueue passing events with:
    - `id: <X-GitHub-Delivery>`
    - `source: "github"`
-   - `correlationKey`: built from branch if present, else the literal marker `pending:branch-resolve:{deliveryId}` (queue handler resolves before dispatch).
-   - `sourceTs`: payload timestamp if present, else request time.
+   - `correlationKey`: built from branch if present, else the literal marker `pending:branch-resolve:{localRepo}:{prNumber}` (queue handler resolves before dispatch).
+   - `sourceTs`: payload timestamp if present, else a deterministic fallback derived from `X-GitHub-Delivery`.
    - `interrupt` + `delayMs` from mention detection.
 5. Respond 200 in all non-401 cases.
 6. Compute the mention-login list from `GITHUB_APP_SLUG` at gateway boot. Log it for operator visibility. No network calls.
@@ -269,7 +273,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 
 1. Add `GitHubQueuedEvent` handling in the `EventQueue` handler in `app.ts`, symmetric to `SlackQueuedEvent` / `CronQueuedEvent`.
 2. Add `triggerRunnerGitHub(events, correlationKey, runnerDeps, hasInterrupt, ack, reposMap, reject)` in `packages/gateway/src/service.ts`.
-3. Before dispatch, if any event has `pending:branch-resolve:*` as its correlation key, call remote-cli `GET /github/pr-head` (3s timeout, one retry). On 401/403/404 or final timeout, reject with `reason: "installation_gone"` or `"branch_unresolved"` — terminal drop, no further retries.
+3. Before dispatch, if any event has `pending:branch-resolve:*` as its correlation key, call remote-cli `GET /github/pr-head` (3s timeout, one retry). On 401/403, reject with `reason: "installation_gone"`. On 404 or an exhausted timeout/5xx/network retry budget, reject with `reason: "branch_unresolved"` — terminal drop, no further retries.
 4. Once branch is resolved, rewrite the correlation key to `git:branch:{localRepo}:{branch}` and batch events by key.
 5. Resolve local repo directory via `resolveRepoDirectory(localRepo)` from `workspace-config.ts`.
 6. Render each event with the compact one-liner template. Concatenate with `\n\n` as the prompt. Cap at 8KB — if exceeded, truncate oldest events first, log `github_prompt_truncated`.
@@ -282,7 +286,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - [ ] Runner receives requests with correct `directory` (from local repo map) and `correlationKey` (canonical branch form).
 - [ ] Burst of 10 review comments in 30s coalesces into one dispatch, preserving mention-interrupt precedence when interleaved.
 - [ ] Branch resolution via remote-cli succeeds for PR-scoped `issue_comment` lacking `head.ref`.
-- [ ] Installation-gone (401/403/404) and branch-unresolved terminal drops have unit tests and do not loop.
+- [ ] `installation_gone` (401/403) and `branch_unresolved` (404 or exhausted lookup retry budget) terminal drops have unit tests and do not loop.
 - [ ] Prompt size cap works; truncation log fires on a 50-event burst.
 
 ### Phase 4 — Operator runbook
@@ -306,28 +310,43 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - [ ] Workspace-config has exactly one GitHub field: `orgs.<name>.github_app_installation_id`. App-level identity is env-only.
 - [ ] Boot log shows the resolved mention-login list and the bot git identity. Docs explain the `basename-must-match-local-dir` convention.
 
+### Phase 5 — Post-review follow-ups
+
+- Release accepted GitHub triggers immediately: once the runner accepts, stop awaiting the response body inline and drain or cancel it asynchronously so later interrupting same-branch events can reach the runner.
+- Treat exhausted PR-head lookup failures as terminal: after the defined retry budget, timeout/5xx/network lookup failures dead-letter once as `branch_unresolved` instead of retrying forever.
+- Keep wrapper gating aligned with the migrated config shape: `git` / `gh` wrappers should detect the `orgs`-based workspace config so GitHub App auth stays enabled after removing `github_app.installations`.
+- Preserve delivery-level dedupe when GitHub omits timestamps: derive the fallback `sourceTs` deterministically from `X-GitHub-Delivery` so retried deliveries still collapse to one queue file.
+
+**Exit criteria:**
+
+- [ ] Accepted GitHub triggers return before body completion and later interrupting same-branch events can still reach the runner.
+- [ ] Exhausted PR-head lookup failures dead-letter once as `branch_unresolved`.
+- [ ] `git` / `gh` wrapper auth still activates for migrated `orgs` configs.
+- [ ] Same-delivery retries without payload timestamps overwrite the same queued event.
+
 ## Decision Log
 
-| #   | Decision                                                                       | Rationale                                                                                                                                    |
-| --- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Reuse `packages/gateway` for GitHub webhook intake                             | Gateway already owns signed external event intake, queueing, and runner dispatch.                                                            |
-| 2   | Narrow allowlist — 3 events, PR-scoped only                                    | Keeps the trigger surface predictable and tests tractable; pure-issue and non-code-flow events route through a future issue-triage plan.     |
-| 3   | Normalize payloads before prompting the runner                                 | Smaller prompts, clearer tests, no GitHub-schema coupling in the runner.                                                                     |
-| 4   | Map `repository.full_name` → local repo by basename match against `/workspace/repos/<name>/` | Zero config, zero scan, zero cache. Operators already clone to the basename; webhook routing reuses that convention.                         |
-| 5   | Single-App, env-sourced identity + per-org `github_app_installation_id` in config.orgs | App-level identity (id, slug, bot_id, private key, webhook secret) is env; installation IDs are per-org in workspace-config. Installation IDs are stable and human-readable from GitHub's UI, so they belong in config; app-level secrets/identity belong in env. |
-| 6   | Gateway reads webhook secret + slug only; remote-cli owns App private key      | Single owner for JWT signing + installation-token minting; gateway stays signature-verification + routing.                                   |
-| 5b  | Bot git identity derived from slug + bot ID; config override disallowed        | Prevents drift between App identity and commit attribution. GitHub displays bot-authored commits correctly only with the derived format.     |
-| 7   | Canonical correlation key is `git:branch:{localRepo}:{branch}`                 | Matches existing `computeGitAlias()` output — one continuity format across all intake sources.                                               |
-| 8   | Branch resolution happens in the queue handler, not the HTTP path              | GitHub's 10s webhook budget cannot absorb installation-token mint + API lookup under load.                                                   |
-| 9   | Terminal drop on 401/403/404 from branch lookup                                | App uninstalled or repo gone — retries would loop forever.                                                                                   |
-| 10  | Fork PRs dropped with explicit `reason: "fork_pr_unsupported"`                 | Fork head branches don't exist in local checkouts; supporting them requires a separate plan.                                                 |
-| 11  | Bot-authored events dropped (self-loop guard)                                  | Prevents Thor-on-Thor loops and Dependabot noise.                                                                                            |
-| 12  | Empty-body `pull_request_review.submitted` ignored with structured log         | "Approved with no comment" is not an agent trigger; match the Slack `event_ignored_*` pattern.                                               |
-| 13  | Pure-issue `issue_comment` ignored with structured log                         | Issue triage is a future plan; ignoring loudly beats silent drops.                                                                           |
-| 14  | Queue-overwrite dedupe only; no persistent delivery-ID store                   | MVP agent actions are read-only or worktree-local; double-processing is wasted compute, not corruption. Reassess when a reply path is added. |
-| 15  | Mention detection is body-text substring match                                 | GitHub has no dedicated "bot mentioned" webhook; body-scan is the only signal.                                                               |
-| 16  | Compact one-liner prompt shape per event                                       | Keeps token budget predictable; runner can fetch more via `gh` when needed.                                                                  |
-| 17  | `X-GitHub-Delivery` is the queue event ID                                      | Best available dedupe key for webhook deliveries; aligns with the existing queue overwrite model.                                            |
+| #   | Decision                                                                                           | Rationale                                                                                                                                                                                                                                                         |
+| --- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Reuse `packages/gateway` for GitHub webhook intake                                                 | Gateway already owns signed external event intake, queueing, and runner dispatch.                                                                                                                                                                                 |
+| 2   | Narrow allowlist — 3 events, PR-scoped only                                                        | Keeps the trigger surface predictable and tests tractable; pure-issue and non-code-flow events route through a future issue-triage plan.                                                                                                                          |
+| 3   | Normalize payloads before prompting the runner                                                     | Smaller prompts, clearer tests, no GitHub-schema coupling in the runner.                                                                                                                                                                                          |
+| 4   | Map `repository.full_name` → local repo by exact basename match against `/workspace/repos/<name>/` | Zero config, zero scan, zero cache. Operators already clone to the basename; webhook routing reuses that convention. Mixed-case normalization can be added later if it becomes operationally relevant.                                                            |
+| 5   | Single-App, env-sourced identity + per-org `github_app_installation_id` in config.orgs             | App-level identity (id, slug, bot_id, private key, webhook secret) is env; installation IDs are per-org in workspace-config. Installation IDs are stable and human-readable from GitHub's UI, so they belong in config; app-level secrets/identity belong in env. |
+| 6   | Gateway reads webhook secret + slug only; remote-cli owns App private key                          | Single owner for JWT signing + installation-token minting; gateway stays signature-verification + routing.                                                                                                                                                        |
+| 5b  | Bot git identity derived from slug + bot ID; config override disallowed                            | Prevents drift between App identity and commit attribution. GitHub displays bot-authored commits correctly only with the derived format.                                                                                                                          |
+| 7   | Canonical correlation key is `git:branch:{localRepo}:{branch}`                                     | Matches existing `computeGitAlias()` output — one continuity format across all intake sources.                                                                                                                                                                    |
+| 8   | Branch resolution happens in the queue handler, not the HTTP path                                  | GitHub's 10s webhook budget cannot absorb installation-token mint + API lookup under load.                                                                                                                                                                        |
+| 9   | Terminal drop on installation-gone or exhausted branch-lookup failures                             | App uninstalled, repo missing, or an exhausted lookup retry budget would otherwise loop forever.                                                                                                                                                                  |
+| 10  | Fork PRs dropped with explicit `reason: "fork_pr_unsupported"`                                     | Fork head branches don't exist in local checkouts; supporting them requires a separate plan.                                                                                                                                                                      |
+| 11  | Bot-authored events dropped (self-loop guard)                                                      | Prevents Thor-on-Thor loops and Dependabot noise.                                                                                                                                                                                                                 |
+| 12  | Empty-body `pull_request_review.submitted` ignored with structured log                             | "Approved with no comment" is not an agent trigger; match the Slack `event_ignored_*` pattern.                                                                                                                                                                    |
+| 13  | Pure-issue `issue_comment` ignored with structured log                                             | Issue triage is a future plan; ignoring loudly beats silent drops.                                                                                                                                                                                                |
+| 14  | Queue-overwrite dedupe only; no persistent delivery-ID store                                       | MVP agent actions are read-only or worktree-local; double-processing is wasted compute, not corruption. Reassess when a reply path is added.                                                                                                                      |
+| 15  | Mention detection is body-text substring match                                                     | GitHub has no dedicated "bot mentioned" webhook; body-scan is the only signal.                                                                                                                                                                                    |
+| 16  | Compact one-liner prompt shape per event                                                           | Keeps token budget predictable; runner can fetch more via `gh` when needed.                                                                                                                                                                                       |
+| 17  | `X-GitHub-Delivery` is the queue event ID                                                          | Best available dedupe key for webhook deliveries; aligns with the existing queue overwrite model.                                                                                                                                                                 |
+| 18  | Derive missing-timestamp queue fallback from `X-GitHub-Delivery`                                   | Queue dedupe filenames include `sourceTs`, so retries without payload timestamps still need a stable overwrite key.                                                                                                                                               |
 
 ## Out of Scope
 
@@ -337,5 +356,6 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - Issue triage via `git:issue:{repo}:{number}` correlation.
 - Fork PR support.
 - Monorepo / multi-workdir-per-repo topologies.
+- Mixed-case GitHub org/repo normalization beyond the current exact-match routing model.
 - Backfilling historical GitHub activity.
 - Durable replay-prevention storage (reassess when a reply path is added).
