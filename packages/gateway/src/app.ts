@@ -7,6 +7,7 @@ import {
   hasSlackReply,
   getAllowedChannelIds,
   getChannelRepoMap,
+  truncate,
   type ConfigLoader,
 } from "@thor/common";
 import { z } from "zod/v4";
@@ -15,11 +16,13 @@ import {
   addSlackReaction,
   triggerRunnerSlack,
   triggerRunnerCron,
+  triggerRunnerApprovalOutcomes,
   resolveApproval,
   updateSlackMessage,
+  type ApprovalOutcomeEventPayload,
   type RunnerDeps,
-  type SlackMcpDeps,
 } from "./service.js";
+import type { SlackDeps } from "./slack-api.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKey,
@@ -31,6 +34,7 @@ import {
   type SlackThreadEvent,
 } from "./slack.js";
 import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.js";
+import { parseApprovalButtonValue } from "./approval.js";
 
 interface SlackQueuedEvent extends QueuedEvent<SlackThreadEvent> {
   source: "slack";
@@ -40,12 +44,58 @@ interface CronQueuedEvent extends QueuedEvent<CronPayload> {
   source: "cron";
 }
 
+interface ApprovalQueuedEvent extends QueuedEvent<ApprovalOutcomeEventPayload> {
+  source: "approval";
+}
+
 function isSlackEvent(e: QueuedEvent): e is SlackQueuedEvent {
   return e.source === "slack";
 }
 
 function isCronEvent(e: QueuedEvent): e is CronQueuedEvent {
   return e.source === "cron";
+}
+
+function isApprovalEvent(e: QueuedEvent): e is ApprovalQueuedEvent {
+  return e.source === "approval";
+}
+
+function summarizeResolutionOutput(
+  stdout: string,
+  stderr: string,
+): {
+  status?: string;
+  summary?: string;
+  tool?: string;
+  upstream?: string;
+} {
+  let status: string | undefined;
+  let summary: string | undefined;
+  let tool: string | undefined;
+  let upstream: string | undefined;
+
+  try {
+    const parsed = JSON.parse(stdout) as Record<string, unknown>;
+    if (typeof parsed.status === "string") status = parsed.status;
+    if (typeof parsed.tool === "string") tool = parsed.tool;
+    if (typeof parsed.upstream === "string") upstream = parsed.upstream;
+    if (typeof parsed.error === "string" && parsed.error) {
+      summary = parsed.error;
+    } else if (typeof parsed.reason === "string" && parsed.reason) {
+      summary = parsed.reason;
+    } else if (typeof parsed.result === "string" && parsed.result) {
+      summary = parsed.result;
+    }
+  } catch {
+    // Ignore JSON parse errors — fall back to text output below.
+  }
+
+  if (!summary) {
+    const text = stdout.trim() || stderr.trim();
+    if (text) summary = truncate(text.replace(/\s+/g, " "), 240);
+  }
+
+  return { status, summary, tool, upstream };
 }
 
 const log = createLogger("gateway");
@@ -59,7 +109,8 @@ const SHORT_DELAY_MS = 3000;
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
-  slackMcpUrl: string;
+  slackBotToken: string;
+  slackApiBaseUrl?: string;
   /** Our bot's Slack user ID — used to ignore our own messages. */
   slackBotUserId: string;
   /** Remote CLI hostname for approval resolution. Default: "remote-cli". */
@@ -119,9 +170,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     runnerUrl: config.runnerUrl,
     fetchImpl: config.fetchImpl,
   };
-  const slackMcpDeps: SlackMcpDeps = {
-    slackMcpUrl: config.slackMcpUrl,
+  const slackDeps: SlackDeps = {
+    botToken: config.slackBotToken,
     fetchImpl: config.fetchImpl,
+    slackApiBaseUrl: config.slackApiBaseUrl,
   };
   const remoteCliHost = config.remoteCliHost ?? "remote-cli";
   const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;
@@ -131,6 +183,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     disableInterval: config.disableQueueInterval === true,
     handler: async (events: QueuedEvent[], ack: () => void, reject: (reason: string) => void) => {
       const slackEvents = events.filter(isSlackEvent);
+      const approvalEvents = events.filter(isApprovalEvent);
 
       if (slackEvents.length > 0) {
         const lastEvent = slackEvents[slackEvents.length - 1];
@@ -144,11 +197,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             slackEvents.map((e) => e.payload),
             lastEvent.correlationKey,
             runnerDeps,
-            slackMcpDeps,
+            slackDeps,
             hasInterrupt,
             ack,
             getChannelRepos(),
             reject,
+            approvalEvents.map((e) => e.payload),
           );
           if (result.busy) {
             logInfo(log, "slack_trigger_busy", {
@@ -159,10 +213,43 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             logInfo(log, "slack_trigger_fired", {
               correlationKey: lastEvent.correlationKey,
               batchSize: slackEvents.length,
+              approvalOutcomes: approvalEvents.length,
             });
           }
         } catch (error) {
           logError(log, "slack_trigger_failed", error, {
+            correlationKey: lastEvent.correlationKey,
+          });
+        }
+        return;
+      }
+
+      if (approvalEvents.length > 0) {
+        const lastEvent = approvalEvents[approvalEvents.length - 1];
+
+        try {
+          const result = await triggerRunnerApprovalOutcomes(
+            approvalEvents.map((e) => e.payload),
+            lastEvent.correlationKey,
+            runnerDeps,
+            false,
+            ack,
+            getChannelRepos(),
+            reject,
+          );
+          if (result.busy) {
+            logInfo(log, "approval_outcome_trigger_busy", {
+              correlationKey: lastEvent.correlationKey,
+              batchSize: approvalEvents.length,
+            });
+          } else {
+            logInfo(log, "approval_outcome_trigger_fired", {
+              correlationKey: lastEvent.correlationKey,
+              batchSize: approvalEvents.length,
+            });
+          }
+        } catch (error) {
+          logError(log, "approval_outcome_trigger_failed", error, {
             correlationKey: lastEvent.correlationKey,
           });
         }
@@ -223,7 +310,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   app.get("/health", async (_req, res) => {
     const result = await deepHealthCheck({
       runnerUrl: config.runnerUrl,
-      slackMcpUrl: config.slackMcpUrl,
       remoteCliHost,
       remoteCliPort: config.remoteCliPort ?? 3004,
       openaiAuthPath: config.openaiAuthPath,
@@ -232,7 +318,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     res.json({
       ...result,
       runnerUrl: config.runnerUrl,
-      configured: Boolean(config.signingSecret),
+      configured: Boolean(config.signingSecret && config.slackBotToken),
     });
   });
 
@@ -304,7 +390,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // app_mention — always forward
     if (event.type === "app_mention") {
       res.status(200).json({ ok: true });
-      void addSlackReaction(event.channel, event.ts, "eyes", slackMcpDeps).catch((err) =>
+      void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
         logError(log, "reaction_failed", err, { eventId }),
       );
       const rawKey = getSlackCorrelationKey(event);
@@ -420,26 +506,21 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // Handle approval button clicks
     if (result.success && result.data.type === "block_actions" && result.data.actions) {
       const payload = result.data;
-      for (const action of payload.actions!) {
+      const actions = payload.actions ?? [];
+      for (const action of actions) {
         if (
           (action.action_id === "approval_approve" || action.action_id === "approval_reject") &&
           action.value
         ) {
           const decision = action.action_id === "approval_approve" ? "approved" : "rejected";
           const reviewer = payload.user?.id ?? "unknown";
-          const channel = payload.channel?.id;
-          const messageTs = payload.message?.ts;
+          const route = parseApprovalButtonValue(action.value);
+          const channel = payload.channel?.id ?? payload.container?.channel_id;
+          const messageTs = payload.message?.ts ?? payload.container?.message_ts;
+          const threadTs =
+            route?.threadTs ?? payload.message?.thread_ts ?? payload.container?.thread_ts;
 
-          // Button value format:
-          //   v2:{actionId}:{upstreamName}
-          const parts = action.value.split(":");
-          let actionId: string;
-          let upstreamName: string;
-
-          if (parts[0] === "v2" && parts.length >= 3) {
-            actionId = parts[1];
-            upstreamName = parts[2];
-          } else {
+          if (!route) {
             logError(log, "approval_resolve_failed", "Unrecognized button value format", {
               value: action.value,
             });
@@ -447,19 +528,30 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             return;
           }
 
+          if (!threadTs) {
+            logError(log, "approval_resolve_failed", "Unable to determine originating thread", {
+              actionId: route.actionId,
+              value: action.value,
+            });
+            res.status(200).json({ ok: true });
+            return;
+          }
+
           logInfo(log, "approval_action", {
-            actionId,
-            upstreamName,
+            actionId: route.actionId,
+            upstreamName: route.upstreamName,
             decision,
             reviewer,
+            threadTs,
             remoteCliUrl,
           });
 
           // Respond immediately to Slack (must reply within 3s)
           res.status(200).json({ ok: true });
+
           void (async () => {
             const resolved = await resolveApproval(
-              actionId,
+              route.actionId,
               decision,
               reviewer,
               remoteCliUrl,
@@ -467,21 +559,80 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               config.fetchImpl,
             );
             if (!resolved) {
-              logError(log, "approval_resolve_failed", "remote-cli returned error", { actionId });
+              logError(log, "approval_resolve_failed", "remote-cli returned error", {
+                actionId: route.actionId,
+              });
               return;
             }
+
+            const resolution = summarizeResolutionOutput(resolved.stdout, resolved.stderr);
+            const statusEmoji = decision === "approved" ? "✅" : "❌";
+            const decisionLabel = decision.charAt(0).toUpperCase() + decision.slice(1);
+            const target = [route.upstreamName ?? resolution.upstream, resolution.tool]
+              .filter(Boolean)
+              .join("/");
+            const summarySuffix = resolution.summary
+              ? `\n>${truncate(resolution.summary, 180)}`
+              : "";
+            const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}> · \`${route.actionId}\`${target ? ` (${target})` : ""}${summarySuffix}`;
+
             if (channel && messageTs) {
-              const statusEmoji = decision === "approved" ? "✅" : "❌";
-              const decisionLabel = decision.charAt(0).toUpperCase() + decision.slice(1);
-              const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}>`;
-              await updateSlackMessage(channel, messageTs, text, slackMcpDeps);
+              await updateSlackMessage(channel, messageTs, text, slackDeps);
             }
-          })();
+
+            if (!channel) {
+              logError(
+                log,
+                "approval_reentry_enqueue_failed",
+                "Missing channel for approval outcome",
+                {
+                  actionId: route.actionId,
+                  threadTs,
+                },
+              );
+              return;
+            }
+
+            const outcomePayload: ApprovalOutcomeEventPayload = {
+              actionId: route.actionId,
+              decision,
+              reviewer,
+              channel,
+              threadTs,
+              upstreamName: route.upstreamName ?? resolution.upstream,
+              tool: resolution.tool,
+              messageTs,
+              resolutionStatus: resolution.status,
+              resolutionSummary: resolution.summary,
+            };
+
+            queue.enqueue({
+              id: `approval-${route.actionId}-${decision}-${Date.now()}`,
+              source: "approval",
+              correlationKey: `slack:thread:${threadTs}`,
+              payload: outcomePayload,
+              receivedAt: new Date().toISOString(),
+              sourceTs: Date.now(),
+              readyAt: Date.now(),
+              delayMs: 0,
+              interrupt: false,
+            });
+
+            logInfo(log, "approval_outcome_enqueued", {
+              actionId: route.actionId,
+              decision,
+              channel,
+              threadTs,
+            });
+          })().catch((error) => {
+            logError(log, "approval_background_error", error, {
+              actionId: route.actionId,
+            });
+          });
           return;
         }
       }
     }
-
     res.status(200).json({ ok: true, ignored: true, interactionType });
   });
 

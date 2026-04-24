@@ -202,11 +202,80 @@ def test_builtin_slack_rule_sets_headers(tmp_path, monkeypatch) -> None:
     config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
-    flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/chat.postMessage"))
+    flow = FakeFlow(
+        request=FakeRequest(
+            host="slack.com",
+            method="POST",
+            path="/api/chat.postMessage",
+            headers={"x-opencode-directory": "/workspace/worktrees/thor/refactor/slack-mcp"},
+        )
+    )
     addon.request(flow)
 
     assert flow.response is None
     assert flow.request.headers["Authorization"] == "Bearer xoxb-test"
+    assert "x-opencode-directory" not in flow.request.headers
+    assert "x-opencode-session-id" not in flow.request.headers
+    assert "x-opencode-call-id" not in flow.request.headers
+
+
+def test_slack_post_message_enforcement_uses_normalized_host(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    addon = ThorMitmAddon(str(config))
+
+    flow = FakeFlow(
+        request=FakeRequest(host="SLACK.COM:", method="POST", path="/api/chat.postMessage")
+    )
+    addon.request(flow)
+
+    assert flow.response is not None
+    assert _status_code(flow.response) == 403
+    assert _response_text(flow.response) == (
+        "thor proxy requires x-opencode-directory for slack.com/api/chat.postMessage"
+    )
+
+
+def test_slack_post_message_requires_opencode_directory_header(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    addon = ThorMitmAddon(str(config))
+
+    flow = FakeFlow(
+        request=FakeRequest(host="slack.com", method="POST", path="/api/chat.postMessage")
+    )
+    addon.request(flow)
+
+    assert flow.response is not None
+    assert _status_code(flow.response) == 403
+    assert _response_text(flow.response) == (
+        "thor proxy requires x-opencode-directory for slack.com/api/chat.postMessage"
+    )
+
+
+def test_slack_post_message_rejects_blank_opencode_directory_header(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    addon = ThorMitmAddon(str(config))
+
+    flow = FakeFlow(
+        request=FakeRequest(
+            host="slack.com",
+            method="POST",
+            path="/api/chat.postMessage",
+            headers={"x-opencode-directory": "   "},
+        )
+    )
+    addon.request(flow)
+
+    assert flow.response is not None
+    assert _status_code(flow.response) == 403
 
 
 def test_builtin_slack_file_download_rule_is_readonly(tmp_path, monkeypatch) -> None:

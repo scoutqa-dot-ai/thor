@@ -7,13 +7,11 @@ import {
   addReaction,
   type SlackDeps,
   type SlackBlock,
-} from "./slack.js";
+} from "./slack-api.js";
 
-const log = createLogger("slack-progress");
+const log = createLogger("gateway-progress");
 
-/** Threshold: post first message after this many tool calls. */
 const TOOL_CALL_THRESHOLD = 3;
-/** Minimum interval between Slack message updates (ms). */
 const UPDATE_INTERVAL_MS = 10_000;
 
 function threadKey(channel: string, threadTs: string): string {
@@ -28,30 +26,22 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${remaining}s`;
 }
 
-/** A run of consecutive identical tool calls. */
 interface ToolGroup {
   name: string;
   count: number;
 }
 
-/** Format tool groups for display: [{name:"grep",count:2},{name:"read",count:1}] → "grep x2, read" */
 function formatToolGroups(groups: ToolGroup[]): string {
   return groups.map((g) => (g.count > 1 ? `${g.name} x${g.count}` : g.name)).join(", ");
 }
 
-/** Max characters for a Block Kit mrkdwn text object. */
 const BLOCK_TEXT_LIMIT = 3000;
 
-/** Wrap text in a context block for compact, muted rendering in Slack. */
 function contextBlocks(text: string): SlackBlock[] {
   const truncated =
     text.length > BLOCK_TEXT_LIMIT ? text.slice(0, BLOCK_TEXT_LIMIT - 1) + "…" : text;
   return [{ type: "context", elements: [{ type: "mrkdwn", text: truncated }] }];
 }
-
-// ---------------------------------------------------------------------------
-// Progress message registry — tracks all progress messages by thread
-// ---------------------------------------------------------------------------
 
 type ProgressStatus = "in_progress" | "completed" | "error";
 
@@ -60,7 +50,6 @@ interface ProgressEntry {
   deps: SlackDeps;
 }
 
-/** Map<threadKey, Map<messageTs, ProgressEntry>> */
 const progressMessages = new Map<string, Map<string, ProgressEntry>>();
 
 function registerProgress(
@@ -93,10 +82,6 @@ function updateProgressStatus(
   }
 }
 
-/**
- * Delete all non-error progress messages for a thread.
- * Skips deletion if there is still an active session running.
- */
 async function cleanupProgressMessages(
   channel: string,
   threadTs: string,
@@ -115,8 +100,6 @@ async function cleanupProgressMessages(
   });
   if (!thread) return;
 
-  // If there's still an active session, don't delete progress messages —
-  // the session is still running and will update/clean up its own message.
   if (hasActiveSession) {
     logInfo(log, "skip_delete_active_session", { trigger, key });
     return;
@@ -139,30 +122,19 @@ async function cleanupProgressMessages(
 
   await Promise.all(deletions);
 
-  // Clean up thread entry if empty
   if (thread.size === 0) {
     progressMessages.delete(key);
   }
 }
 
-/**
- * Called when the bot posts a reply to a thread.
- * Attempts cleanup — will skip if session is still active.
- */
 export async function onBotReply(channel: string, threadTs: string): Promise<void> {
   await cleanupProgressMessages(channel, threadTs, "bot_reply");
 }
 
-/**
- * Called when a progress session ends (done/error event received).
- * All bot replies have already been sent via the faster MCP path,
- * so this is the reliable cleanup point.
- */
 async function onSessionEnd(channel: string, threadTs: string): Promise<void> {
   await cleanupProgressMessages(channel, threadTs, "session_end");
 }
 
-/** Visible for testing. */
 export function getRegistrySize(): number {
   let count = 0;
   for (const thread of progressMessages.values()) {
@@ -171,15 +143,10 @@ export function getRegistrySize(): number {
   return count;
 }
 
-/** Visible for testing. */
 export function clearRegistry(): void {
   progressMessages.clear();
   activeSessions.clear();
 }
-
-// ---------------------------------------------------------------------------
-// Progress session — one per thread
-// ---------------------------------------------------------------------------
 
 class ProgressSession {
   private channel: string;
@@ -189,7 +156,6 @@ class ProgressSession {
 
   private messageTs?: string;
   private toolCallCount = 0;
-  /** Last 3 groups of consecutive identical tool calls. */
   private lastToolGroups: ToolGroup[] = [];
   private startTime: number;
   private lastUpdateTime = 0;
@@ -227,7 +193,6 @@ class ProgressSession {
     } else {
       this.lastToolGroups.push({ name: toolName, count: 1 });
     }
-    // Keep only the last 3 groups
     if (this.lastToolGroups.length > 3) {
       this.lastToolGroups = this.lastToolGroups.slice(-3);
     }
@@ -259,8 +224,6 @@ class ProgressSession {
     if (this.finished) return;
     this.finished = true;
 
-    // Treat aborts as successful completions — the session was intentionally
-    // interrupted (e.g. new message arrived) and will be re-triggered.
     if (status === "error" && errorMsg && /abort/i.test(errorMsg)) {
       logInfo(log, "session_abort_as_completed", {
         channel: this.channel,
@@ -272,14 +235,11 @@ class ProgressSession {
       errorMsg = undefined;
     }
 
-    // Always post errors so failures are never invisible in Slack.
     if (!this.thresholdMet && status === "completed") return;
 
     const elapsed = formatDuration(Date.now() - this.startTime);
 
     if (status === "completed") {
-      // Only update an existing progress message — never create a new "Done" post.
-      // If no progress message was posted (e.g. bot replied before threshold), stay silent.
       if (this.messageTs) {
         const text = `✅ Done — ${this.toolCallCount} tool calls in ${elapsed}`;
         await this.update(text);
@@ -319,7 +279,6 @@ class ProgressSession {
       const blocks = contextBlocks(text);
       const result = await postMessage(this.channel, text, this.threadTs, this.deps, blocks);
       this.messageTs = result.ts;
-      // Register immediately — this is the key to avoiding the race condition
       registerProgress(this.channel, this.threadTs, this.messageTs, "in_progress", this.deps);
       logInfo(log, "progress_posted", { channel: this.channel, ts: this.messageTs });
     } catch (err) {
@@ -338,16 +297,8 @@ class ProgressSession {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Active sessions registry
-// ---------------------------------------------------------------------------
-
 const activeSessions = new Map<string, ProgressSession>();
 
-/**
- * Handle a progress event for a specific thread.
- * Creates/reuses a ProgressSession per channel+threadTs.
- */
 export async function handleProgressEvent(
   channel: string,
   threadTs: string,
@@ -367,14 +318,12 @@ export async function handleProgressEvent(
   });
 
   if (event.type === "start") {
-    // New session — replace any existing one
     activeSessions.set(key, new ProgressSession(channel, threadTs, deps, sourceTs));
     return;
   }
 
   let session = activeSessions.get(key);
   if (!session) {
-    // Late-arriving event without start — create session on the fly
     session = new ProgressSession(channel, threadTs, deps, sourceTs);
     activeSessions.set(key, session);
   }

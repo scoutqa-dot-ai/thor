@@ -23,11 +23,13 @@ from rules import (
     MissingEnvVarError,
     RuleStore,
     is_readonly_method,
+    normalize_host,
     normalize_path,
     resolve_headers,
 )
 
 HEALTH_HOST = "__health.thor"
+SLACK_POST_MESSAGE_PATH = "/api/chat.postMessage"
 
 
 def _response(status: int, text: str) -> Any:
@@ -46,7 +48,7 @@ class ThorMitmAddon:
         self._store = RuleStore(config_path=config_path)
 
     def http_connect(self, flow: Any) -> None:
-        host = getattr(flow.request, "pretty_host", None) or flow.request.host
+        host = normalize_host(getattr(flow.request, "pretty_host", None) or flow.request.host)
         if host == HEALTH_HOST:
             return
 
@@ -55,7 +57,7 @@ class ThorMitmAddon:
 
     def request(self, flow: Any) -> None:
         request = flow.request
-        host = getattr(request, "pretty_host", None) or request.host
+        host = normalize_host(getattr(request, "pretty_host", None) or request.host)
         path = normalize_path(getattr(request, "path", "/"))
 
         if host == HEALTH_HOST:
@@ -74,6 +76,23 @@ class ThorMitmAddon:
         if decision.rule is None:
             flow.response = _response(500, "invalid proxy rule state")
             return
+
+        if host == "slack.com" and path == SLACK_POST_MESSAGE_PATH and request.method.upper() == "POST":
+            directory = str(request.headers.get("x-opencode-directory", "")).strip()
+            if not directory:
+                flow.response = _response(
+                    403,
+                    "thor proxy requires x-opencode-directory for slack.com/api/chat.postMessage",
+                )
+                return
+
+            for header_name in (
+                "x-opencode-directory",
+                "x-opencode-session-id",
+                "x-opencode-call-id",
+            ):
+                if header_name in request.headers:
+                    del request.headers[header_name]
 
         if decision.rule.readonly and not is_readonly_method(request.method):
             flow.response = _response(

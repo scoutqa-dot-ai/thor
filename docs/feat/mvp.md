@@ -11,18 +11,18 @@ flowchart LR
     B[Runner<br/>Session Orchestrator]
     C[Gateway<br/>Slack + Cron Intake]
     D[Remote CLI<br/>Exec + MCP Policy]
-    E[Slack MCP<br/>Progress + Notifications]
 
     F[Atlassian MCP]
     G[PostHog MCP]
     H[Grafana MCP]
     I[Langfuse / Git / GH / Metabase / LaunchDarkly]
+    J[Slack Web API<br/>via Gateway + OpenCode]
 
     C --> B
     B --> A
     A --> D
-    C --> E
-    D --> E
+    C --> J
+    A --> J
     D --> F
     D --> G
     D --> H
@@ -37,7 +37,7 @@ flowchart LR
 | Atlassian MCP    | `remote-cli /exec/mcp`                       | `ATLASSIAN_AUTH` header | Read + approved writes             |
 | PostHog MCP      | `remote-cli /exec/mcp`                       | API key                 | Read + approved writes             |
 | Grafana MCP      | `remote-cli /exec/mcp`                       | Service account token   | Logs and observability             |
-| Slack MCP        | `remote-cli /exec/mcp` + `slack-mcp` service | Bot token               | Messaging + approval notifications |
+| Slack Web API    | `gateway` + OpenCode over mitmproxy          | Bot token               | Mentions, progress, approvals, thread reads/writes |
 | Langfuse         | `remote-cli /exec/langfuse`                  | API key pair            | Read-only trace queries            |
 | LaunchDarkly     | `remote-cli /exec/ldcli`                     | Access token            | Read-only feature flag inspection  |
 | Metabase         | `remote-cli /exec/metabase`                  | API key                 | Read-only warehouse access         |

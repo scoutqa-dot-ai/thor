@@ -1,4 +1,4 @@
-import type { SlackBlock } from "./slack.js";
+import type { SlackBlock } from "./slack-api.js";
 
 const SLACK_SECTION_TEXT_LIMIT = 3000;
 const INLINE_CODE_BLOCK_OVERHEAD = "```json\n\n```".length;
@@ -23,6 +23,66 @@ type TrimStep = {
   maxArrayItems: number;
   maxStringLength: number;
 };
+
+export interface ApprovalButtonRoute {
+  version: "legacy" | "v2" | "v3";
+  actionId: string;
+  upstreamName?: string;
+  threadTs?: string;
+}
+
+export function buildApprovalButtonValue(input: {
+  actionId: string;
+  upstreamName?: string;
+  threadTs?: string;
+}): string {
+  const { actionId, upstreamName, threadTs } = input;
+  if (threadTs) {
+    return `v3:${actionId}:${encodeURIComponent(upstreamName ?? "")}:${threadTs}`;
+  }
+  if (upstreamName) {
+    return `v2:${actionId}:${upstreamName}`;
+  }
+  return actionId;
+}
+
+export function parseApprovalButtonValue(value: string): ApprovalButtonRoute | undefined {
+  const parts = value.split(":");
+
+  if (parts[0] === "v3" && parts.length >= 4) {
+    const actionId = parts[1];
+    const upstreamRaw = parts[2] ?? "";
+    const threadTs = parts.slice(3).join(":");
+    if (!actionId || !threadTs) return undefined;
+    const upstreamName = decodeURIComponent(upstreamRaw);
+    return {
+      version: "v3",
+      actionId,
+      upstreamName: upstreamName || undefined,
+      threadTs,
+    };
+  }
+
+  if (parts[0] === "v2" && parts.length >= 3) {
+    const actionId = parts[1];
+    const upstreamName = parts.slice(2).join(":");
+    if (!actionId || !upstreamName) return undefined;
+    return {
+      version: "v2",
+      actionId,
+      upstreamName,
+    };
+  }
+
+  if (value.trim().length > 0) {
+    return {
+      version: "legacy",
+      actionId: value.trim(),
+    };
+  }
+
+  return undefined;
+}
 
 export function formatApprovalArgs(args: Record<string, unknown>): string {
   const full = JSON.stringify(args, null, 2);

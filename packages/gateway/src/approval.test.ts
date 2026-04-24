@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildInlineApprovalBlocks, formatApprovalArgs } from "./approval.js";
+import {
+  buildApprovalButtonValue,
+  buildInlineApprovalBlocks,
+  formatApprovalArgs,
+  parseApprovalButtonValue,
+} from "./approval.js";
 
 describe("approval formatting", () => {
   it("keeps full pretty JSON inline when within the Slack block limit", () => {
@@ -62,5 +67,32 @@ describe("approval formatting", () => {
       argsJson.includes('"approval args too large for Slack"') ||
         argsJson.includes('"[+194 more keys]"'),
     ).toBe(true);
+  });
+});
+
+
+describe("approval button routing", () => {
+  it("encodes v3 payloads with thread routing data", () => {
+    const value = buildApprovalButtonValue({
+      actionId: "act-1",
+      upstreamName: "github",
+      threadTs: "1710000000.001",
+    });
+
+    expect(value).toBe("v3:act-1:github:1710000000.001");
+    expect(parseApprovalButtonValue(value)).toEqual({
+      version: "v3",
+      actionId: "act-1",
+      upstreamName: "github",
+      threadTs: "1710000000.001",
+    });
+  });
+
+  it("parses legacy v2 payloads for compatibility", () => {
+    expect(parseApprovalButtonValue("v2:act-1:atlassian")).toEqual({
+      version: "v2",
+      actionId: "act-1",
+      upstreamName: "atlassian",
+    });
   });
 });

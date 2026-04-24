@@ -2,7 +2,7 @@
   "repos": {
     "your-repo": {
       "channels": ["C0123456789"],
-      "proxies": ["atlassian", "grafana", "slack"]
+      "proxies": ["atlassian", "grafana"]
     }
   },
   "github_app": {

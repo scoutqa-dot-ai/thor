@@ -32,9 +32,10 @@ thor/
 ├── packages/
 │   ├── common/                # Shared config, logging, notes, schemas
 │   ├── gateway/               # Inbound webhook gateway (Slack, etc.)
+│   ├── opencode-cli/          # OpenCode helper wrappers for remote-cli
 │   ├── remote-cli/            # CLI + MCP policy gateway
 │   ├── runner/                # Agent runner + trigger endpoint
-│   └── slack-mcp/             # Slack MCP server + progress updates
+│   └── admin/                 # Admin API/UI service
 ├── scripts/                   # Test and utility scripts
 ├── docker-compose.yml
 ├── package.json               # pnpm workspace root

@@ -80,6 +80,15 @@ export const SlackInteractivityPayloadSchema = z.object({
   message: z
     .object({
       ts: z.string(),
+      thread_ts: z.string().optional(),
+    })
+    .optional(),
+  container: z
+    .object({
+      type: z.string().optional(),
+      message_ts: z.string().optional(),
+      thread_ts: z.string().optional(),
+      channel_id: z.string().optional(),
     })
     .optional(),
 });

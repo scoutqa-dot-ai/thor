@@ -24,14 +24,17 @@ Talk to Slack through real upstream URLs:
 - `https://files.slack.com/files-pri/...`
 
 Authentication is injected by `mitmproxy`. Do not pass `Authorization`
-manually and do not look for a separate Slack MCP tool.
+manually.
 
-The default tool for this skill is `curl`. Prefer URL-encoded form for simple
-Slack writes. Switch to JSON only when the payload becomes structured, such as
-`blocks` or `attachments`.
-For any multiline Slack message, or whenever quoting feels fragile, write the
-message body to a unique temp file under `/tmp` and send it with
-`--data-urlencode "text@$TEXT_FILE"`.
+For message posts, use `curl` directly against
+`https://slack.com/api/chat.postMessage`. Thor's curl wrapper adds the OpenCode
+context headers required by the proxy and emits `[thor:meta]` thread aliases on
+`stderr` so Thor keeps Slack thread continuity in notes.
+
+The default tool for this skill is `curl` for both Slack reads and
+`chat.postMessage` writes. For any multiline Slack message, or whenever quoting
+feels fragile, write the message body to a unique temp file under `/tmp` and
+send it with `--data-urlencode "text@$TEXT_FILE"`.
 For file uploads, prefer `slack-upload` over manually calling Slack's
 multi-step upload endpoints.
 
@@ -184,7 +187,8 @@ Common failures to report as-is:
 
 - Tool inputs use Slack IDs such as `C...` and `F...`, not channel names.
 - `thread_ts` should be the parent message timestamp for the thread.
-- Use real Slack URLs. Do not route Slack work through `mcp slack`.
+- Use real Slack URLs.
+- Use `curl` for `chat.postMessage` and Slack reads.
 - Do not send multiline Slack text as an inline shell string. Default to a
   unique temp file under `/tmp` plus `--data-urlencode "text@$TEXT_FILE"`.
 - Do not use literal `\n` inside single-quoted `text=...` arguments.
