@@ -235,7 +235,8 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - [ ] Mention detection is case-insensitive and word-boundary-safe (`@thorbot` ≠ `@thor`).
 - [ ] Correlation key format matches `computeGitAlias()` byte-for-byte.
 - [ ] Basename resolution returns the expected `localRepo` for a known clone and rejects unknown basenames with `repo_not_mapped`.
-- [ ] Missing or empty `GITHUB_APP_ID` / `GITHUB_APP_SLUG` / `GITHUB_APP_BOT_ID` / `GITHUB_APP_PRIVATE_KEY_PATH` / `GITHUB_WEBHOOK_SECRET` fails gateway and remote-cli boot with a clear error naming the missing var.
+- [ ] Gateway boot fails with a clear error naming the missing var when `GITHUB_APP_SLUG` or `GITHUB_WEBHOOK_SECRET` is missing or empty. Gateway does NOT check remote-cli-only vars (`GITHUB_APP_ID`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`).
+- [ ] Remote-cli boot fails with a clear error naming the missing var when `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, or `GITHUB_APP_PRIVATE_KEY_PATH` is missing or empty.
 - [ ] Workspace-config with an `orgs.<name>.github_app_installation_id` that isn't a positive integer fails validation with a specific error pointing to the offending path.
 - [ ] Remote-cli reads `installation_id` from `config.orgs[org].github_app_installation_id` and mints tokens into the existing disk cache. Missing org fails with a clear error naming the unconfigured org and the list of configured ones. On 401/403 from mint, the cache file is unlinked. Unit tests cover cache hit, cache miss, unknown-org, and uninstall eviction.
 - [ ] `packages/remote-cli/entrypoint.sh` sets `user.name` = `${GITHUB_APP_SLUG}[bot]` and `user.email` = `${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com`.
@@ -260,7 +261,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - [ ] Valid allowlist webhooks enqueue with correct correlation key, interrupt flag, and delay.
 - [ ] Invalid signatures return 401 without enqueueing.
 - [ ] Each of the 7 filter reasons has a passing unit test that checks (a) 200/401 response as appropriate, (b) nothing enqueued, (c) structured log emitted with `reason`.
-- [ ] Form-encoded webhook payloads (GitHub supports `application/x-www-form-urlencoded`) pass HMAC and still normalize correctly.
+- [ ] Webhook Content type is documented as required to be `application/json`. Form-encoded delivery is out of scope.
 - [ ] Mention-login list is resolved at boot and visible in logs.
 - [ ] Gateway never touches the App private key.
 
@@ -288,10 +289,11 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 
 1. Update `docs/examples/workspace-config.example.json` — remove the `github_app.installations` block; show the new top-level `orgs` block with a single example entry: `{"orgs": {"scoutqa-dot-ai": {"github_app_installation_id": 126669985}}}`.
 2. Write `docs/github-app-webhooks.md` with:
-   - **Env var matrix** — `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_INSTALLATIONS`, `GITHUB_WEBHOOK_SECRET`. Where each value lives in GitHub's UI (App settings page for the first four; the Install page URL for `installation_id`; the webhook settings for the secret).
+   - **Env var matrix** — `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_WEBHOOK_SECRET`. Where each value lives in GitHub's UI (App settings page for the first four; webhook settings for the secret).
+   - **Config block** — `orgs.<name>.github_app_installation_id` in workspace-config, with instructions for finding the ID in the Install page URL (e.g. `https://github.com/organizations/<org>/settings/installations/<id>`).
    - **Permission matrix** — `issues: read`, `pull_requests: read`, `contents: read`, `metadata: read`.
    - **Event subscriptions** — "Issue comment", "Pull request review", "Pull request review comment".
-   - **Webhook URL format** — `https://<gateway-host>/github/webhook`.
+   - **Webhook URL format** — `https://<gateway-host>/github/webhook`. **Content type must be `application/json`.** Form-encoded delivery is not supported.
    - **Secret rotation** — procedure with overlap window and a verify-next-delivery check.
    - **Local dev** — `smee.io` forwarding recipe.
    - **Troubleshooting table** — one row per `reason` in the filter-order table, with "what it means" and "how to fix."
