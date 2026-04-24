@@ -1,39 +1,38 @@
-name: E2E on push
+name: Sandbox E2E
 
 on:
   push:
     paths:
-      - ".github/workflows/e2e-on-push.yml"
-      - "scripts/test-e2e.sh"
+      - "docker/sandbox/**"
+      - "scripts/test-sandbox-e2e.sh"
+      - ".github/workflows/sandbox-e2e.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
-  group: e2e-on-push-${{ github.ref }}
+  group: sandbox-e2e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  e2e:
+  sandbox-e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
-      OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-      SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}
-      SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       GITHUB_APP_ID: ${{ vars.THOR_GITHUB_APP_ID }}
       GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/private-key.pem
       THOR_GITHUB_APP_PRIVATE_KEY: ${{ secrets.THOR_GITHUB_APP_PRIVATE_KEY }}
       THOR_GITHUB_APP_INSTALLATION_ID: ${{ vars.THOR_GITHUB_APP_INSTALLATION_ID }}
-      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-      DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
-      DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
-      ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
-      # Fakes: services not exercised by e2e, but referenced at compose startup.
+      # Fakes: services not exercised by sandbox e2e, but referenced at compose startup.
+      SLACK_BOT_TOKEN: ci-fake
+      SLACK_BOT_USER_ID: U000000000
+      SLACK_SIGNING_SECRET: ci-fake
       GRAFANA_URL: http://grafana-mcp:8000
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
+      ATLASSIAN_AUTH: ci-fake
       POSTHOG_API_KEY: ci-fake
       LANGFUSE_PUBLIC_KEY: ci-fake
       LANGFUSE_SECRET_KEY: ci-fake
@@ -62,20 +61,64 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Bring up compose stack for e2e
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/thor-sandbox
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Build and push sandbox image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/sandbox
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create Daytona snapshot from new image
+        id: snapshot
+        run: |
+          set -euo pipefail
+          snapshot_name="thor-sandbox-${GITHUB_SHA}"
+          image_name="ghcr.io/${{ github.repository_owner }}/thor-sandbox@${{ steps.build.outputs.digest }}"
+          echo "Creating snapshot $snapshot_name from $image_name"
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $DAYTONA_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg name "$snapshot_name" --arg image "$image_name" \
+                 '{name: $name, imageName: $image}')" \
+            "https://app.daytona.io/api/snapshots"
+          echo "name=$snapshot_name" >> "$GITHUB_OUTPUT"
+
+      - name: Bring up remote-cli stack
+        env:
+          DAYTONA_SNAPSHOT: ${{ steps.snapshot.outputs.name }}
         run: |
           set -euo pipefail
 
           mkdir -p \
             docker-volumes/workspace/repos \
-            docker-volumes/workspace/memory \
-            docker-volumes/workspace/worklog \
-            docker-volumes/workspace/cron \
-            docker-volumes/workspace/worktrees \
             docker-volumes/opencode \
             docker-volumes/github-app \
             docker-volumes/home/thor
-          # remote-cli runs as the "thor" user; make the mounted home writable.
           chmod 777 docker-volumes/home/thor
 
           printf '%s' "$THOR_GITHUB_APP_PRIVATE_KEY" > docker-volumes/github-app/private-key.pem
@@ -89,16 +132,12 @@ jobs:
           {
             echo "CRON_SECRET=$CRON_SECRET"
             echo "RESOLVE_SECRET=$RESOLVE_SECRET"
+            echo "DAYTONA_SNAPSHOT=$DAYTONA_SNAPSHOT"
           } >> "$GITHUB_ENV"
 
           cat > docker-volumes/workspace/config.json <<EOF
           {
-            "repos": {
-              "acme-multi-hyphen-repo": {
-                "channels": ["C123456789"],
-                "proxies": ["atlassian"]
-              }
-            },
+            "repos": {},
             "github_app": {
               "installations": [
                 {
@@ -110,22 +149,10 @@ jobs:
           }
           EOF
 
-          printf '%s' "$OPENCODE_AUTH_JSON" > docker-volumes/opencode/auth.json
-          chmod 600 docker-volumes/opencode/auth.json
+          docker compose up --build --wait -d remote-cli
 
-          alias_repo_dir="docker-volumes/workspace/repos/acme-multi-hyphen-repo"
-          mkdir -p "$alias_repo_dir"
-          git init -b main "$alias_repo_dir"
-          printf '%s\n' '# CI alias fixture' > "$alias_repo_dir/README.md"
-          git -C "$alias_repo_dir" add README.md
-          git -C "$alias_repo_dir" -c user.name='Thor CI' -c user.email='thor-ci@localhost' commit -m 'chore: seed alias repo fixture'
-
-          docker compose up --build --wait -d gateway
-
-      - name: Run e2e test
-        env:
-          CI: "true"
-        run: pnpm test:e2e
+      - name: Run sandbox e2e
+        run: pnpm test:sandbox-e2e
 
       - name: Compose status (on failure)
         if: failure()
