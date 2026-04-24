@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
+  resolveGitArgs,
   validateCwd,
   validateGitArgs,
   validateGhArgs,
@@ -12,13 +13,52 @@ import {
   validateMetabaseArgs,
 } from "./policy.js";
 
-function createRepoWithOrigin(remoteUrl: string): string {
+interface TestRepoOptions {
+  branch?: string;
+  upstreamBranch?: string;
+  upstreamRemote?: string;
+  detachedHead?: boolean;
+}
+
+function createRepoWithOrigin(remoteUrl: string, options: TestRepoOptions = {}): string {
+  const {
+    branch = "main",
+    upstreamBranch,
+    upstreamRemote = "origin",
+    detachedHead = false,
+  } = options;
   const dir = mkdtempSync(join(tmpdir(), "thor-policy-gh-"));
   execFileSync("/usr/bin/git", ["init"], { cwd: dir, stdio: "ignore" });
+  execFileSync("/usr/bin/git", ["config", "user.name", "Thor Policy"], {
+    cwd: dir,
+    stdio: "ignore",
+  });
+  execFileSync("/usr/bin/git", ["config", "user.email", "thor-policy@example.com"], {
+    cwd: dir,
+    stdio: "ignore",
+  });
+  writeFileSync(join(dir, "README.md"), "seed\n");
+  execFileSync("/usr/bin/git", ["add", "README.md"], { cwd: dir, stdio: "ignore" });
+  execFileSync("/usr/bin/git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
+  execFileSync("/usr/bin/git", ["branch", "-M", branch], { cwd: dir, stdio: "ignore" });
   execFileSync("/usr/bin/git", ["remote", "add", "origin", remoteUrl], {
     cwd: dir,
     stdio: "ignore",
   });
+  if (upstreamBranch) {
+    execFileSync("/usr/bin/git", ["config", "--local", `branch.${branch}.remote`, upstreamRemote], {
+      cwd: dir,
+      stdio: "ignore",
+    });
+    execFileSync(
+      "/usr/bin/git",
+      ["config", "--local", `branch.${branch}.merge`, `refs/heads/${upstreamBranch}`],
+      { cwd: dir, stdio: "ignore" },
+    );
+  }
+  if (detachedHead) {
+    execFileSync("/usr/bin/git", ["checkout", "--detach", "HEAD"], { cwd: dir, stdio: "ignore" });
+  }
   return dir;
 }
 
@@ -133,6 +173,31 @@ describe("validateGitArgs", () => {
       expect(validateGitArgs(["push", "origin", "my-branch"])).toBeNull();
     });
 
+    it("allows implicit push when the current branch has a safe origin upstream", () => {
+      const repoDir = createRepoWithOrigin("https://github.com/acme/web.git", {
+        branch: "feat/test",
+        upstreamBranch: "feat/test",
+      });
+
+      try {
+        expect(validateGitArgs(["push"], repoDir)).toBeNull();
+        expect(validateGitArgs(["push", "origin"], repoDir)).toBeNull();
+        expect(validateGitArgs(["push", "--dry-run"], repoDir)).toBeNull();
+
+        expect(resolveGitArgs(["push"], repoDir)).toEqual({
+          args: ["push", "origin", "HEAD:refs/heads/feat/test"],
+        });
+        expect(resolveGitArgs(["push", "origin"], repoDir)).toEqual({
+          args: ["push", "origin", "HEAD:refs/heads/feat/test"],
+        });
+        expect(resolveGitArgs(["push", "--dry-run"], repoDir)).toEqual({
+          args: ["push", "--dry-run", "origin", "HEAD:refs/heads/feat/test"],
+        });
+      } finally {
+        rmSync(repoDir, { recursive: true, force: true });
+      }
+    });
+
     it("allows worktree add under /workspace/worktrees/", () => {
       expect(
         validateGitArgs(["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/feat"]),
@@ -215,10 +280,64 @@ describe("validateGitArgs", () => {
       ).not.toBeNull();
     });
 
-    it("requires explicit remote and explicit refspec", () => {
+    it("requires explicit remote and explicit refspec when no safe upstream can be resolved", () => {
       expect(validateGitArgs(["push"])).not.toBeNull();
       expect(validateGitArgs(["push", "origin"])).not.toBeNull();
       expect(validateGitArgs(["push", "HEAD"])).not.toBeNull();
+    });
+
+    it("blocks implicit push when the current branch has no upstream", () => {
+      const repoDir = createRepoWithOrigin("https://github.com/acme/web.git", {
+        branch: "feat/test",
+      });
+
+      try {
+        expect(validateGitArgs(["push"], repoDir)).not.toBeNull();
+        expect(validateGitArgs(["push", "origin"], repoDir)).not.toBeNull();
+      } finally {
+        rmSync(repoDir, { recursive: true, force: true });
+      }
+    });
+
+    it("blocks implicit push when the upstream remote is not origin", () => {
+      const repoDir = createRepoWithOrigin("https://github.com/acme/web.git", {
+        branch: "feat/test",
+        upstreamBranch: "feat/test",
+        upstreamRemote: "upstream",
+      });
+
+      try {
+        expect(validateGitArgs(["push"], repoDir)).not.toBeNull();
+      } finally {
+        rmSync(repoDir, { recursive: true, force: true });
+      }
+    });
+
+    it("blocks implicit push when the upstream branch is protected", () => {
+      const repoDir = createRepoWithOrigin("https://github.com/acme/web.git", {
+        branch: "feat/test",
+        upstreamBranch: "main",
+      });
+
+      try {
+        expect(validateGitArgs(["push"], repoDir)).not.toBeNull();
+      } finally {
+        rmSync(repoDir, { recursive: true, force: true });
+      }
+    });
+
+    it("blocks implicit push from detached HEAD", () => {
+      const repoDir = createRepoWithOrigin("https://github.com/acme/web.git", {
+        branch: "feat/test",
+        upstreamBranch: "feat/test",
+        detachedHead: true,
+      });
+
+      try {
+        expect(validateGitArgs(["push"], repoDir)).not.toBeNull();
+      } finally {
+        rmSync(repoDir, { recursive: true, force: true });
+      }
     });
 
     it("allows -u / --set-upstream to set upstream tracking", () => {
