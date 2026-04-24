@@ -148,6 +148,13 @@ describe("validateGitArgs", () => {
         ["checkout", "origin/main", "--", "."],
         ["checkout", "--theirs", "packages/remote-cli/src/policy.ts"],
         ["checkout", "packages/remote-cli/src/policy.ts"],
+        // After `--`, git grammar guarantees pathspec; extensionless files
+        // (Dockerfile, Makefile, LICENSE, bin/*) must not be blocked.
+        ["checkout", "--", "Dockerfile"],
+        ["checkout", "--", "Makefile"],
+        ["checkout", "--", "LICENSE"],
+        ["checkout", "--", "bin/migrate"],
+        ["checkout", "HEAD", "--", "Dockerfile"],
       ];
 
       for (const args of allowedCommands) {
@@ -609,6 +616,17 @@ describe("validateGhArgs", () => {
     it("blocks gh api help even though other help flows are allowed", () => {
       expect(validateGhArgs(["api", "--help"])).not.toBeNull();
       expect(validateGhArgs(["help", "api"])).not.toBeNull();
+    });
+
+    it("does not route mutations to the help validator when --help/-h appears as a flag value", () => {
+      // -h / --help as the value of --body must not short-circuit validation.
+      // The comment validator still runs, so append-only shape is preserved.
+      expect(validateGhArgs(["pr", "comment", "123", "--body", "-h"])).toBeNull();
+      expect(validateGhArgs(["pr", "comment", "123", "--body", "see --help for more"])).toBeNull();
+      // --approve must still be blocked even with --help buried in --body.
+      expect(
+        validateGhArgs(["pr", "review", "123", "--approve", "--body", "--help"]),
+      ).not.toBeNull();
     });
 
     it("blocks secret commands", () => {

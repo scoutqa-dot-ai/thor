@@ -321,7 +321,10 @@ function validateGitCheckoutRestore(args: string[]): string | null {
     if (afterSeparator.length === 0 || beforeSeparator.length > 1) {
       return RESTORE_CHECKOUT_HINT;
     }
-    return afterSeparator.every(looksLikeCheckoutPathspec) ? null : RESTORE_CHECKOUT_HINT;
+    // After `--`, git grammar guarantees every remaining token is a pathspec,
+    // so the extension heuristic would only reject legitimate restore flows
+    // for extensionless files (Dockerfile, Makefile, LICENSE, bin/*).
+    return null;
   }
 
   if (beforeSeparator.length === 0) {
@@ -1033,8 +1036,42 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
   return null;
 }
 
+const GH_VALUE_TAKING_FLAGS: ReadonlySet<string> = new Set([
+  "-b",
+  "--body",
+  "-t",
+  "--title",
+  "-B",
+  "--base",
+  "-H",
+  "--head",
+  "-F",
+  "--body-file",
+  "-R",
+  "--repo",
+  "--json",
+  "-q",
+  "--jq",
+  "-L",
+  "--limit",
+  "--search",
+]);
+
 function isGhHelpRequest(args: string[]): boolean {
-  return args[0] === "help" || args.includes("--help") || args.includes("-h");
+  if (args[0] === "help") return true;
+  // Only treat --help/-h as a help request when it's in a flag position.
+  // Skip tokens that are values of known value-taking flags so a comment body
+  // of "-h" or "--help" doesn't silently route every mutation to the help
+  // validator.
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (GH_VALUE_TAKING_FLAGS.has(arg)) {
+      i += 1;
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") return true;
+  }
+  return false;
 }
 
 function validateGhHelpArgs(args: string[]): string | null {
