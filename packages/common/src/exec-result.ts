@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 
-/** Buffered response from remote-cli (git/gh) and proxy (tool calls). */
+/** Buffered response from remote-cli exec endpoints. */
 export const ExecResultSchema = z.object({
   stdout: z.string(),
   stderr: z.string(),
@@ -8,10 +8,11 @@ export const ExecResultSchema = z.object({
 });
 export type ExecResult = z.infer<typeof ExecResultSchema>;
 
-/** A single NDJSON chunk from a streaming response (scoutqa). */
-export const NdjsonChunkSchema = z.union([
-  z.object({ stream: z.literal("stdout"), data: z.string() }),
-  z.object({ stream: z.literal("stderr"), data: z.string() }),
-  z.object({ exitCode: z.number() }),
+/** A single event from a streaming exec response (scoutqa/sandbox). */
+export const ExecStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("stdout"), data: z.string() }),
+  z.object({ type: z.literal("stderr"), data: z.string() }),
+  z.object({ type: z.literal("exit"), exitCode: z.number() }),
+  z.object({ type: z.literal("heartbeat") }),
 ]);
-export type NdjsonChunk = z.infer<typeof NdjsonChunkSchema>;
+export type ExecStreamEvent = z.infer<typeof ExecStreamEventSchema>;

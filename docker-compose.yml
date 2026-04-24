@@ -36,18 +36,37 @@ services:
       - NODE_ENV=production
       - GIT_USER_EMAIL=${GIT_USER_EMAIL:-thor@localhost}
       - GIT_USER_NAME=${GIT_USER_NAME:-thor}
-      - GITHUB_PAT=${GITHUB_PAT}
+      - GITHUB_PAT=${GITHUB_PAT:-}
+      - GITHUB_APP_ID=${GITHUB_APP_ID:-}
+      - GITHUB_APP_PRIVATE_KEY_FILE=${GITHUB_APP_PRIVATE_KEY_FILE:-}
+      - GITHUB_API_URL=${GITHUB_API_URL:-}
+      - ATLASSIAN_AUTH=${ATLASSIAN_AUTH}
+      - POSTHOG_API_KEY=${POSTHOG_API_KEY}
+      - RESOLVE_SECRET=${RESOLVE_SECRET:?set RESOLVE_SECRET}
       - SCOUT_API_KEY=${SCOUT_API_KEY:-}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://us.cloud.langfuse.com}
+      - LD_ACCESS_TOKEN=${LD_ACCESS_TOKEN:-}
+      - LD_BASE_URI=${LD_BASE_URI:-}
+      - LD_PROJECT=${LD_PROJECT:-}
+      - LD_ENVIRONMENT=${LD_ENVIRONMENT:-}
       - METABASE_URL=${METABASE_URL:-}
       - METABASE_API_KEY=${METABASE_API_KEY:-}
       - METABASE_DATABASE_ID=${METABASE_DATABASE_ID:-}
       - METABASE_ALLOWED_SCHEMAS=${METABASE_ALLOWED_SCHEMAS:-}
+      - DAYTONA_API_KEY=${DAYTONA_API_KEY:-}
+      - DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}
+      - DAYTONA_SNAPSHOT=${DAYTONA_SNAPSHOT:-}
     volumes:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
+      - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
+    depends_on:
+      slack-mcp:
+        condition: service_healthy
+      grafana-mcp:
+        condition: service_healthy
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3004/health').then(r=>{if(!r.ok)throw 1})"]
@@ -83,41 +102,29 @@ services:
       timeout: 3s
       retries: 10
 
-  proxy:
+  mitmproxy:
     build:
       context: .
-      target: proxy
+      target: mitmproxy
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:3001:3001"
     environment:
-      - NODE_ENV=production
-      - POSTHOG_API_KEY=${POSTHOG_API_KEY}
-      - ATLASSIAN_BASIC_AUTH=${ATLASSIAN_BASIC_AUTH}
-    volumes:
-      - ./docker-volumes/workspace:/workspace
-    depends_on:
-      slack-mcp:
-        condition: service_healthy
-      grafana-mcp:
-        condition: service_healthy
-    healthcheck:
-      test:
-        ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>{if(!r.ok)throw 1})"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  data:
-    build:
-      context: ./docker/data
-    restart: unless-stopped
+      - ATLASSIAN_AUTH=${ATLASSIAN_AUTH:-}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
     ports:
-      - "127.0.0.1:3080:80"
+      - "127.0.0.1:3080:8080"
     env_file:
       - .env
+    volumes:
+      - ./docker-volumes/workspace:/workspace:ro
+      - ./docker-volumes/mitmproxy:/etc/thor/mitmproxy:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost/health"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; opener=urllib.request.build_opener(urllib.request.ProxyHandler({'http':'http://localhost:8080'})); r=opener.open('http://__health.thor/', timeout=2); sys.exit(0 if r.status == 200 else 1)",
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -136,19 +143,30 @@ services:
       - "127.0.0.1:4096:4096"
     working_dir: /workspace
     command: ["serve", "--port", "4096", "--hostname", "0.0.0.0"]
+    environment:
+      - http_proxy=http://mitmproxy:8080
+      - https_proxy=http://mitmproxy:8080
+      - no_proxy=localhost,127.0.0.1,::1,remote-cli,gateway,runner,slack-mcp,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - HTTP_PROXY=http://mitmproxy:8080
+      - HTTPS_PROXY=http://mitmproxy:8080
+      - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,slack-mcp,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - NODE_OPTIONS=--use-env-proxy --disable-warning=UNDICI-EHPA
+      - NODE_EXTRA_CA_CERTS=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      - CURL_CA_BUNDLE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      - SSL_CERT_FILE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
     volumes:
       - ./docker-volumes/opencode:/home/thor/.local/share/opencode
       - ./docker-volumes/workspace/memory:/workspace/memory
+      - ./docker-volumes/workspace/config.json:/workspace/config.json:ro
       - ./docker-volumes/workspace/repos:/workspace/repos:ro
       - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
       - ./docker-volumes/workspace/cron:/workspace/cron
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
+      - ./docker-volumes/mitmproxy/public:/etc/thor/mitmproxy-public:ro
     depends_on:
-      proxy:
-        condition: service_healthy
       remote-cli:
         condition: service_healthy
-      data:
+      mitmproxy:
         condition: service_healthy
     healthcheck:
       test:
@@ -190,14 +208,19 @@ services:
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
       - SLACK_BOT_USER_ID=${SLACK_BOT_USER_ID:?set SLACK_BOT_USER_ID}
       - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
+      - OPENAI_AUTH_PATH=/opencode/auth.json
+      - REMOTE_CLI_HOST=remote-cli
+      - REMOTE_CLI_PORT=3004
+      - RESOLVE_SECRET=${RESOLVE_SECRET:?set RESOLVE_SECRET}
     volumes:
       - ./docker-volumes/workspace:/workspace
+      - ./docker-volumes/opencode:/opencode:ro
     depends_on:
       runner:
         condition: service_started
       slack-mcp:
         condition: service_healthy
-      proxy:
+      remote-cli:
         condition: service_healthy
     healthcheck:
       test:
@@ -219,6 +242,24 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+
+  admin:
+    build:
+      context: .
+      target: admin
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3005:3005"
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./docker-volumes/workspace:/workspace
+    healthcheck:
+      test:
+        ["CMD", "node", "-e", "fetch('http://localhost:3005/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   vouch:
     image: quay.io/vouch/vouch-proxy:0.45.1
@@ -256,6 +297,8 @@ services:
       gateway:
         condition: service_healthy
       opencode:
+        condition: service_healthy
+      admin:
         condition: service_healthy
       vouch:
         condition: service_healthy

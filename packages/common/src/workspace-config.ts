@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
 import { createLogger, logWarn } from "./logger.js";
+import { PROXY_NAMES } from "./proxies.js";
 
 // --- Schema ---
 
@@ -10,26 +11,152 @@ const RepoConfigSchema = z.object({
   proxies: z.array(z.string()).optional(),
 });
 
-const ProxyUpstreamSchema = z.object({
-  url: z.string(),
-  headers: z.record(z.string(), z.string()).optional(),
+const GitHubAppInstallationSchema = z.object({
+  org: z.string(),
+  installation_id: z.number().int().positive(),
+  app_id: z.string().optional().default(""),
+  private_key_path: z.string().optional().default(""),
+  api_url: z.string().optional().default(""),
 });
 
-const ProxyConfigSchema = z.object({
-  upstream: ProxyUpstreamSchema,
-  allow: z.array(z.string()).default([]),
-  approve: z.array(z.string()).default([]),
+const GitHubAppConfigSchema = z.object({
+  installations: z.array(GitHubAppInstallationSchema),
 });
 
-export const WorkspaceConfigSchema = z.object({
-  repos: z.record(z.string(), RepoConfigSchema),
-  proxies: z.record(z.string(), ProxyConfigSchema).optional(),
-});
+const MitmproxyRuleSchema = z
+  .object({
+    host: z.string().min(1).optional(),
+    host_suffix: z.string().min(2).startsWith(".").optional(),
+    path_prefix: z.string().min(1).startsWith("/").optional(),
+    headers: z
+      .record(z.string(), z.string())
+      .refine(
+        (headers) => Object.keys(headers).length > 0,
+        '"headers" must contain at least one entry',
+      ),
+    readonly: z.boolean().optional().default(false),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const hasHost = typeof value.host === "string";
+    const hasHostSuffix = typeof value.host_suffix === "string";
+    if (hasHost === hasHostSuffix) {
+      ctx.addIssue({
+        code: "custom",
+        message: 'Exactly one of "host" or "host_suffix" is required',
+        path: ["host"],
+      });
+    }
+  });
+
+const MitmproxyPassthroughHostSchema = z.string().refine((value) => {
+  if (value.startsWith(".")) {
+    return value.length > 1;
+  }
+  return !value.includes("/") && !value.includes(":") && value.length > 0;
+}, "Passthrough entries must be an exact host or a suffix starting with '.'");
+
+export const WorkspaceConfigSchema = z
+  .object({
+    repos: z.record(z.string(), RepoConfigSchema),
+    github_app: GitHubAppConfigSchema.optional(),
+    mitmproxy: z.array(MitmproxyRuleSchema).optional(),
+    mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
+  })
+  .strict();
 
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;
-export type ProxyConfig = z.infer<typeof ProxyConfigSchema>;
-export type ProxyUpstream = z.infer<typeof ProxyUpstreamSchema>;
+export type GitHubAppInstallation = z.infer<typeof GitHubAppInstallationSchema>;
+export type GitHubAppConfig = z.infer<typeof GitHubAppConfigSchema>;
+
+export interface ProxyUpstream {
+  url: string;
+  headers?: Record<string, string>;
+}
+
+export interface ProxyConfig {
+  upstream: ProxyUpstream;
+  allow: string[];
+  approve: string[];
+}
+
+// --- Validator ---
+
+export interface ValidationIssue {
+  path: string;
+  message: string;
+}
+
+export type ValidationResult =
+  | { ok: true; data: WorkspaceConfig }
+  | { ok: false; issues: ValidationIssue[] };
+
+/**
+ * Validate an already-parsed config object. Aggregates all issues
+ * (schema, duplicate channels, unknown proxies) before returning.
+ */
+export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    Object.prototype.hasOwnProperty.call(parsed, "proxies")
+  ) {
+    return {
+      ok: false,
+      issues: [
+        {
+          path: "proxies",
+          message:
+            'Top-level "proxies" has moved to code (packages/common/src/proxies.ts). Remove it from config.json.',
+        },
+      ],
+    };
+  }
+
+  const result = WorkspaceConfigSchema.safeParse(parsed);
+  if (!result.success) {
+    return {
+      ok: false,
+      issues: result.error.issues.map((i) => ({
+        path: i.path.length > 0 ? i.path.join(".") : "(root)",
+        message: i.message,
+      })),
+    };
+  }
+
+  const issues: ValidationIssue[] = [];
+
+  const seen = new Map<string, string>(); // channel → repo
+  for (const [repo, config] of Object.entries(result.data.repos)) {
+    for (const channel of config.channels ?? []) {
+      const existing = seen.get(channel);
+      if (existing) {
+        issues.push({
+          path: `repos.${repo}.channels`,
+          message: `Duplicate channel ID "${channel}" — already mapped to repo "${existing}"`,
+        });
+      } else {
+        seen.set(channel, repo);
+      }
+    }
+  }
+
+  const proxyNames = new Set<string>(PROXY_NAMES);
+  for (const [repo, repoConfig] of Object.entries(result.data.repos)) {
+    for (const proxyRef of repoConfig.proxies ?? []) {
+      if (!proxyNames.has(proxyRef)) {
+        issues.push({
+          path: `repos.${repo}.proxies`,
+          message: `Unknown proxy "${proxyRef}". Available proxies: ${PROXY_NAMES.join(", ")}`,
+        });
+      }
+    }
+  }
+
+  if (issues.length > 0) return { ok: false, issues };
+  return { ok: true, data: result.data };
+}
 
 // --- Loader ---
 
@@ -58,54 +185,11 @@ export function loadWorkspaceConfig(path: string): WorkspaceConfig {
     );
   }
 
-  const result = WorkspaceConfigSchema.safeParse(parsed);
-  if (!result.success) {
-    const issues = result.error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`);
-    throw new Error(`Invalid workspace config at ${path}:\n${issues.join("\n")}`);
+  const result = validateWorkspaceConfig(parsed);
+  if (!result.ok) {
+    const lines = result.issues.map((i) => `  - ${i.path}: ${i.message}`);
+    throw new Error(`Invalid workspace config at ${path}:\n${lines.join("\n")}`);
   }
-
-  // Validate proxy names: alphanumeric + hyphens only, no reserved names
-  const RESERVED_PROXY_NAMES = new Set(["health", "upstreams", "tools", "approval", "approvals"]);
-  const PROXY_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
-  for (const name of Object.keys(result.data.proxies ?? {})) {
-    if (!PROXY_NAME_RE.test(name)) {
-      throw new Error(
-        `Invalid proxy name "${name}" in workspace config: must be lowercase alphanumeric with hyphens`,
-      );
-    }
-    if (RESERVED_PROXY_NAMES.has(name)) {
-      throw new Error(
-        `Reserved proxy name "${name}" in workspace config: collides with /${name} endpoint`,
-      );
-    }
-  }
-
-  // Detect duplicate channel IDs across repos
-  const seen = new Map<string, string>(); // channel → repo
-  for (const [repo, config] of Object.entries(result.data.repos)) {
-    for (const channel of config.channels ?? []) {
-      const existing = seen.get(channel);
-      if (existing) {
-        throw new Error(
-          `Duplicate channel ID "${channel}" in workspace config: mapped to both "${existing}" and "${repo}"`,
-        );
-      }
-      seen.set(channel, repo);
-    }
-  }
-
-  // Validate repo.proxies entries reference top-level proxy names
-  const proxyNames = new Set(Object.keys(result.data.proxies ?? {}));
-  for (const [repo, config] of Object.entries(result.data.repos)) {
-    for (const proxyRef of config.proxies ?? []) {
-      if (!proxyNames.has(proxyRef)) {
-        throw new Error(
-          `Repo "${repo}" references unknown proxy "${proxyRef}" in workspace config. Available proxies: ${[...proxyNames].join(", ") || "(none)"}`,
-        );
-      }
-    }
-  }
-
   return result.data;
 }
 
@@ -183,13 +267,6 @@ export function getChannelRepoMap(config: WorkspaceConfig): Map<string, string> 
 }
 
 /**
- * Get proxy config by name, or undefined if not configured.
- */
-export function getProxyConfig(config: WorkspaceConfig, name: string): ProxyConfig | undefined {
-  return config.proxies?.[name];
-}
-
-/**
  * Interpolate ${ENV_VAR} references in a string.
  */
 export function interpolateEnv(value: string): string {
@@ -245,11 +322,11 @@ export function extractRepoFromCwd(cwd: string): string | undefined {
 }
 
 /**
- * Get the list of proxy names allowed for a repo.
+ * Get the list of upstream names allowed for a repo.
  * Returns undefined if the repo is not in config.
  * Returns empty array if repo exists but has no proxies field.
  */
-export function getRepoProxies(config: WorkspaceConfig, repoName: string): string[] | undefined {
+export function getRepoUpstreams(config: WorkspaceConfig, repoName: string): string[] | undefined {
   const repo = config.repos[repoName];
   if (!repo) return undefined;
   return repo.proxies ?? [];

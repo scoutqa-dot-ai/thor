@@ -1,0 +1,28 @@
+#!/bin/sh
+# Thor gh wrapper — resolves GitHub App auth before executing real gh.
+# Placed on PATH before /usr/bin/gh inside the remote-cli container.
+# Falls back to PAT auth (GH_TOKEN) when GitHub App is not configured.
+
+set -e
+
+REAL_GH="/usr/bin/gh"
+TAG="[thor-github-app]"
+
+# If no GitHub App config exists, pass through to real gh unchanged
+if [ ! -f /workspace/config.json ] || ! grep -q '"github_app"' /workspace/config.json 2>/dev/null; then
+  exec "$REAL_GH" "$@"
+fi
+
+# Resolve auth via the Node.js auth helper
+AUTH_JSON=$(node /app/packages/remote-cli/dist/auth-helper.js gh "$@") || true
+
+if [ -n "$AUTH_JSON" ]; then
+  TOKEN=$(echo "$AUTH_JSON" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+  if [ -n "$TOKEN" ]; then
+    export GH_TOKEN="$TOKEN"
+    exec "$REAL_GH" "$@"
+  fi
+fi
+
+# Fallback: run real gh with whatever env is already set (PAT mode)
+exec "$REAL_GH" "$@"

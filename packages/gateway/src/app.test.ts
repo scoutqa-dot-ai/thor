@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -87,6 +87,180 @@ afterEach(() => {
 });
 
 describe("gateway", () => {
+  it("returns filtered Codex status from /health", async () => {
+    const authDir = mkdtempSync(join(tmpdir(), "gateway-auth-"));
+    const authPath = join(authDir, "auth.json");
+    writeFileSync(authPath, JSON.stringify({ openai: { access: "token-123" } }));
+
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      if (url === "https://chatgpt.com/backend-api/wham/usage") {
+        return new Response(
+          JSON.stringify({
+            plan_type: "prolite",
+            rate_limit: {
+              allowed: true,
+              limit_reached: false,
+              primary_window: {
+                used_percent: 1,
+                limit_window_seconds: 18000,
+                reset_after_seconds: 16117,
+                reset_at: 1776339408,
+              },
+              secondary_window: {
+                used_percent: 43,
+                limit_window_seconds: 604800,
+                reset_after_seconds: 35558,
+                reset_at: 1776358849,
+              },
+            },
+            additional_rate_limits: [
+              {
+                limit_name: "GPT-5.3-Codex-Spark",
+                metered_feature: "codex_bengalfox",
+                rate_limit: {
+                  primary_window: {
+                    used_percent: 0,
+                    limit_window_seconds: 18000,
+                    reset_after_seconds: 18000,
+                    reset_at: 1776341291,
+                  },
+                },
+              },
+            ],
+            nested: { raw: true },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    try {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const response = await fetch(`${baseUrl}/health`);
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({
+            status: "ok",
+            service: "gateway",
+            runnerUrl: "http://runner.test",
+            configured: true,
+            services: {
+              runner: { status: "ok", service: "runner" },
+              "slack-mcp": { status: "ok", service: "slack-mcp" },
+              "remote-cli": { status: "ok", service: "remote-cli" },
+            },
+            codex: {
+              status: "ok",
+              authenticated: true,
+              reachable: true,
+              planType: "prolite",
+              rateLimit: {
+                allowed: true,
+                limitReached: false,
+                windows: [
+                  {
+                    name: "primary",
+                    usedPercent: 1,
+                    limitWindowSeconds: 18000,
+                    resetAfterSeconds: 16117,
+                    resetAt: "2026-04-16T11:36:48.000Z",
+                  },
+                  {
+                    name: "secondary",
+                    usedPercent: 43,
+                    limitWindowSeconds: 604800,
+                    resetAfterSeconds: 35558,
+                    resetAt: "2026-04-16T17:00:49.000Z",
+                  },
+                  {
+                    name: "primary",
+                    usedPercent: 0,
+                    limitWindowSeconds: 18000,
+                    resetAfterSeconds: 18000,
+                    resetAt: "2026-04-16T12:08:11.000Z",
+                    limitName: "GPT-5.3-Codex-Spark",
+                    meteredFeature: "codex_bengalfox",
+                  },
+                ],
+              },
+            },
+          });
+        },
+        { openaiAuthPath: authPath },
+      );
+    } finally {
+      rmSync(authDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not expose raw Codex usage payload when auth is missing", async () => {
+    const authDir = mkdtempSync(join(tmpdir(), "gateway-auth-"));
+    const authPath = join(authDir, "auth.json");
+    writeFileSync(authPath, JSON.stringify({}));
+
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    try {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const response = await fetch(`${baseUrl}/health`);
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toMatchObject({
+            status: "ok",
+            codex: {
+              status: "no_auth",
+              authenticated: false,
+              reachable: false,
+              error: "missing access token",
+            },
+          });
+          expect(fetchImpl).not.toHaveBeenCalledWith(
+            "https://chatgpt.com/backend-api/wham/usage",
+            expect.anything(),
+          );
+        },
+        { openaiAuthPath: authPath },
+      );
+    } finally {
+      rmSync(authDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns a placeholder response for the configured redirect URL", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
@@ -534,6 +708,52 @@ describe("gateway", () => {
     });
   });
 
+  it("app_mention fires immediately ignoring shortDelayMs (interrupt shouldn't wait)", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    // Use a large shortDelayMs — mention should still fire immediately.
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const body = JSON.stringify({
+          type: "event_callback",
+          event_id: "EvFast",
+          team_id: "T123",
+          event: {
+            type: "app_mention",
+            user: "U123",
+            text: "<@U999> stop what you're doing",
+            ts: "1710000000.001",
+            channel: "C123",
+          },
+        });
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+        expect(response.status).toBe(200);
+
+        await queue.flush();
+
+        const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
+        expect(triggerCall).toBeDefined();
+        const triggerBody = JSON.parse(String(triggerCall![1]?.body));
+        expect(triggerBody.interrupt).toBe(true);
+      },
+      { shortDelayMs: 60_000 },
+    );
+  });
+
   it("processes two messages sent at different times as separate triggers", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
 
@@ -850,6 +1070,67 @@ describe("gateway", () => {
         interactionType: "block_actions",
       });
       expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("resolves approval actions through remote-cli for current v2 button values", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 })))
+      .mockResolvedValueOnce(new Response("ok"));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl) => {
+        const payloads = [
+          {
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.001" },
+            actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
+          },
+        ];
+
+        for (const payloadData of payloads) {
+          const payload = encodeURIComponent(JSON.stringify(payloadData));
+          const body = `payload=${payload}`;
+          const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+          const response = await fetch(`${baseUrl}/slack/interactivity`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              "X-Slack-Request-Timestamp": timestamp,
+              "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        resolveSecret: "resolve-secret",
+      },
+    );
+
+    const execCalls = fetchImpl.mock.calls.filter(
+      ([url]) => typeof url === "string" && url === "http://remote-cli.internal:3010/exec/mcp",
+    );
+    expect(execCalls).toHaveLength(1);
+    expect(execCalls[0]?.[1]).toMatchObject({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-thor-resolve-secret": "resolve-secret",
+      },
+      body: JSON.stringify({ args: ["resolve", "act-1", "approved", "U123"] }),
     });
   });
 });

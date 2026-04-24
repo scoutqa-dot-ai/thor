@@ -173,6 +173,31 @@ export class SessionSubscription implements AsyncIterable<Event> {
   }
 }
 
+/**
+ * Wait for a session to reach a terminal state, with a hard timeout.
+ * Resolves `true` if settled, `false` on timeout or subscription end.
+ *
+ * Terminal events:
+ *   - `session.idle`  — session completed successfully (no error)
+ *   - `session.error` — session errored out (including after abort)
+ */
+export async function waitForSessionSettled(
+  sub: AsyncIterable<Event>,
+  timeoutMs: number,
+): Promise<boolean> {
+  const waitForSettled = (async () => {
+    for await (const event of sub) {
+      if (event.type === "session.idle" || event.type === "session.error") return true;
+    }
+    return false;
+  })();
+
+  return Promise.race([
+    waitForSettled,
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+}
+
 function extractSessionId(event: Event): string | undefined {
   if (event.type === "message.part.updated") {
     return event.properties.part.sessionID;

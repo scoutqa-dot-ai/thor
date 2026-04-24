@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunnerDeps, SlackMcpDeps } from "./service.js";
 
 // Helper: create a ReadableStream from NDJSON lines
@@ -31,6 +31,57 @@ function jsonResponse(body: unknown, status = 200): Response {
 function textResponse(text: string, status: number): Response {
   return new Response(text, { status, headers: { "content-type": "text/plain" } });
 }
+
+describe("resolveApproval", () => {
+  it("posts resolve requests to remote-cli with the secret header", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ stdout: "ok", stderr: "", exitCode: 0 }));
+
+    const { resolveApproval } = await import("./service.js");
+    const result = await resolveApproval(
+      "act-1",
+      "approved",
+      "U123",
+      "http://remote-cli:3004",
+      "resolve-secret",
+      fetchImpl,
+      "ship it",
+    );
+
+    expect(result).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    expect(fetchImpl).toHaveBeenCalledWith("http://remote-cli:3004/exec/mcp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-thor-resolve-secret": "resolve-secret",
+      },
+      body: JSON.stringify({
+        args: ["resolve", "act-1", "approved", "U123", "ship it"],
+      }),
+    });
+  });
+
+  it("returns undefined when remote-cli reports a command failure", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        jsonResponse({ stdout: "", stderr: "Unknown subcommand: resolve\n", exitCode: 1 }),
+      );
+
+    const { resolveApproval } = await import("./service.js");
+    const result = await resolveApproval(
+      "act-1",
+      "approved",
+      "U123",
+      "http://remote-cli:3004",
+      "wrong-secret",
+      fetchImpl,
+    );
+
+    expect(result).toBeUndefined();
+  });
+});
 
 describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
   let mockRunnerFetch: ReturnType<typeof vi.fn>;
@@ -66,6 +117,17 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       JSON.stringify({ type: "start", sessionId: "s1", resumed: false }),
       JSON.stringify({ type: "tool", tool: "bash", status: "completed" }),
       JSON.stringify({
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/my-repo/README.md",
+        source: "bootstrap",
+      }),
+      JSON.stringify({
+        type: "delegate",
+        agent: "research-agent",
+        description: "collect incidents",
+      }),
+      JSON.stringify({
         type: "done",
         sessionId: "s1",
         resumed: false,
@@ -92,11 +154,18 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     // Wait for background stream consumption
     await new Promise((r) => setTimeout(r, 50));
 
-    // Should have forwarded 3 progress events to /progress
+    // Gateway forwards progress events directly, including sourceTs for Slack-side decisions.
     const progressCalls = mockSlackFetch.mock.calls.filter(
       (c: [string, ...unknown[]]) => typeof c[0] === "string" && c[0].includes("/progress"),
     );
-    expect(progressCalls.length).toBe(3);
+    expect(progressCalls.length).toBe(5);
+
+    const body = JSON.parse((progressCalls[0][1] as { body: string }).body);
+    expect(body.sourceTs).toBe("1710000000.001");
+    const memoryBody = JSON.parse((progressCalls[2][1] as { body: string }).body);
+    expect(memoryBody.event.type).toBe("memory");
+    const delegateBody = JSON.parse((progressCalls[3][1] as { body: string }).body);
+    expect(delegateBody.event.type).toBe("delegate");
   });
 
   it("forwards approval_required events to /approval endpoint", async () => {
@@ -157,11 +226,51 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    // Only the valid tool event should be forwarded
+    // Gateway still forwards valid progress events directly.
     const progressCalls = mockSlackFetch.mock.calls.filter(
       (c: [string, ...unknown[]]) => typeof c[0] === "string" && c[0].includes("/progress"),
     );
     expect(progressCalls.length).toBe(1);
+  });
+
+  it("forwards sourceTs on early errors for Slack-side suppression", async () => {
+    const lines = [
+      JSON.stringify({ type: "start", sessionId: "s1", resumed: false }),
+      JSON.stringify({ type: "tool", tool: "bash", status: "completed" }),
+      JSON.stringify({
+        type: "done",
+        sessionId: "s1",
+        resumed: false,
+        status: "error",
+        error: "provider unavailable",
+        response: "",
+        toolCalls: [],
+        durationMs: 100,
+      }),
+    ];
+    mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
+
+    const { triggerRunnerSlack } = await import("./service.js");
+    await triggerRunnerSlack(
+      [slackEvent],
+      "key1",
+      runnerDeps,
+      slackMcpDeps,
+      false,
+      undefined,
+      channelRepos,
+    );
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const progressCalls = mockSlackFetch.mock.calls.filter(
+      (c: [string, ...unknown[]]) => typeof c[0] === "string" && c[0].includes("/progress"),
+    );
+    expect(progressCalls.length).toBe(3);
+    const body = JSON.parse((progressCalls[2][1] as { body: string }).body);
+    expect(body.sourceTs).toBe("1710000000.001");
+    expect(body.event.type).toBe("done");
+    expect(body.event.status).toBe("error");
   });
 
   it("handles chunked delivery across newline boundaries", async () => {

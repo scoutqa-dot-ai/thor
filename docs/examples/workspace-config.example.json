@@ -1,0 +1,43 @@
+{
+  "repos": {
+    "your-repo": {
+      "channels": ["C0123456789"],
+      "proxies": ["atlassian", "grafana", "slack"]
+    }
+  },
+  "github_app": {
+    "installations": [
+      {
+        "org": "acme",
+        "installation_id": 12345678,
+        "app_id": "",
+        "private_key_path": "",
+        "api_url": ""
+      },
+      {
+        "org": "acme-labs",
+        "installation_id": 23456789,
+        "app_id": "",
+        "private_key_path": "",
+        "api_url": ""
+      }
+    ]
+  },
+  "mitmproxy": [
+    {
+      "host": "billing.example.com",
+      "path_prefix": "/v1/",
+      "headers": {
+        "X-Custom-Auth": "${BILLING_API_KEY}"
+      }
+    },
+    {
+      "host_suffix": ".internal.example",
+      "headers": {
+        "Authorization": "Bearer ${INTERNAL_API_TOKEN}"
+      },
+      "readonly": true
+    }
+  ],
+  "mitmproxy_passthrough": ["api.openai.com", ".anthropic.com"]
+}

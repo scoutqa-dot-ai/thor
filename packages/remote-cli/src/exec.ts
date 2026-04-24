@@ -1,8 +1,10 @@
 /**
  * Generic command execution for git and gh.
  *
- * Credentials are configured at the container level via entrypoint.sh
- * (GIT_ASKPASS + GH_TOKEN), so every process can authenticate.
+ * Authentication is resolved per-invocation by the Thor git/gh wrapper
+ * binaries (see bin/git, bin/gh). When GitHub App config exists in
+ * config.json, wrappers mint installation tokens. Otherwise they fall
+ * back to PAT auth via GIT_ASKPASS + GH_TOKEN set in entrypoint.sh.
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -11,24 +13,43 @@ import type { ExecResult } from "@thor/common";
 const TIMEOUT_MS = 60_000;
 const STREAM_TIMEOUT_MS = 300_000; // 5 minutes for streaming commands
 
-export function execCommand(binary: string, args: string[], cwd: string): Promise<ExecResult> {
-  // No maxBuffer cap — OpenCode (the caller) already truncates large outputs
-  // before feeding them to the LLM context window. Capping here would silently
-  // return broken JSON to the agent with no indication it was truncated.
-  const maxBuffer = Infinity;
+export interface ExecCommandOptions {
+  env?: NodeJS.ProcessEnv;
+  maxBuffer?: number;
+}
+
+export function execCommand(
+  binary: string,
+  args: string[],
+  cwd: string,
+  options: ExecCommandOptions = {},
+): Promise<ExecResult> {
+  // No maxBuffer cap by default — OpenCode (the caller) already truncates large
+  // outputs before feeding them to the LLM context window. Specific endpoints
+  // may opt into a cap when they need tighter control.
+  const maxBuffer = options.maxBuffer ?? Infinity;
 
   return new Promise((resolve) => {
-    const child = execFile(binary, args, { cwd, maxBuffer }, (err, stdout, stderr) => {
-      resolve({
-        stdout: stdout.toString(),
-        stderr: stderr.toString(),
-        exitCode: err
-          ? typeof (err as { code?: unknown }).code === "number"
-            ? (err as { code: number }).code
-            : 1
-          : 0,
-      });
-    });
+    const child = execFile(
+      binary,
+      args,
+      {
+        cwd,
+        maxBuffer,
+        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+      },
+      (err, stdout, stderr) => {
+        resolve({
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
+          exitCode: err
+            ? typeof (err as { code?: unknown }).code === "number"
+              ? (err as { code: number }).code
+              : 1
+            : 0,
+        });
+      },
+    );
 
     // Safety: kill after 60 seconds
     const timeout = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);

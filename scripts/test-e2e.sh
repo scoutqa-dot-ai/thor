@@ -2,7 +2,7 @@
 #
 # End-to-end test for Thor.
 #
-# Tests the full chain: curl -> runner -> OpenCode service -> per-upstream proxies -> MCP servers
+# Tests the full chain: curl -> runner -> OpenCode service -> remote-cli -> MCP servers
 #
 # Prerequisites:
 #   - Both services running (either `pnpm dev` or `docker compose up`)
@@ -15,14 +15,22 @@
 set -euo pipefail
 
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
-PROXY_URL="${PROXY_URL:-http://localhost:3001}"
-GIT_WRAPPERS_URL="${GIT_WRAPPERS_URL:-http://localhost:3004}"
+REMOTE_CLI_URL="${REMOTE_CLI_URL:-http://localhost:3004}"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
 SESSION_DIR="${SESSION_DIR:-/workspace/repos/e2e-test}"
 HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
 mkdir -p "${HOST_WORKSPACE}/repos/e2e-test"
 MEMORY_DIR="${MEMORY_DIR:-${HOST_WORKSPACE}/memory}"
 CRON_SECRET="${CRON_SECRET:-$(docker exec thor-cron-1 printenv CRON_SECRET 2>/dev/null)}"
+RESOLVE_SECRET="${RESOLVE_SECRET:-$(docker exec thor-gateway-1 printenv RESOLVE_SECRET 2>/dev/null)}"
+REMOTE_CLI_GIT_REPO_URL="${REMOTE_CLI_GIT_REPO_URL:-https://github.com/scoutqa-dot-ai/thor}"
+REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-scoutqa-dot-ai-thor-e2e}"
+REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
+HOST_REMOTE_CLI_GIT_REPO_DIR="${HOST_REMOTE_CLI_GIT_REPO_DIR:-${HOST_WORKSPACE}/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
+REMOTE_CLI_AUTH_TS="${REMOTE_CLI_AUTH_TS:-$(date +%s)}"
+REMOTE_CLI_WORKTREE_BRANCH="${REMOTE_CLI_WORKTREE_BRANCH:-e2e-remote-cli-${REMOTE_CLI_AUTH_TS}}"
+REMOTE_CLI_WORKTREE_DIR="${REMOTE_CLI_WORKTREE_DIR:-/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
+HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
 
 passed=0
 failed=0
@@ -68,6 +76,18 @@ json_field() {
   " 2>/dev/null || echo ""
 }
 
+# Helper: extract a field from the JSON stored in an exec-result stdout field
+exec_stdout_field() {
+  local json="$1"
+  local field="$2"
+  echo "$json" | node -e "
+    const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+    const stdout = JSON.parse(d.stdout || '{}');
+    const v = stdout[\"$field\"];
+    console.log(v === undefined ? '' : typeof v === 'boolean' ? String(v) : String(v));
+  " 2>/dev/null || echo ""
+}
+
 # Helper: check if response text contains a substring
 response_contains() {
   local json="$1"
@@ -79,18 +99,153 @@ response_contains() {
   " 2>/dev/null || echo "no"
 }
 
-# ── 1. Health checks ────────────────────────────────────────────────────────
+resolve_remote_cli_container() {
+  if [[ -n "${REMOTE_CLI_CONTAINER:-}" ]]; then
+    echo "$REMOTE_CLI_CONTAINER"
+    return 0
+  fi
+
+  docker ps --filter label=com.docker.compose.service=remote-cli --format '{{.Names}}' 2>/dev/null | head -n 1
+}
+
+approval_tool_for_upstream() {
+  case "$1" in
+    atlassian) echo "createJiraIssue" ;;
+    posthog) echo "create-feature-flag" ;;
+    *) echo "" ;;
+  esac
+}
+
+# ── Prerequisites ──────────────────────────────────────────────────────────
+#
+# Fail early if the environment isn't ready. Every section below depends on
+# healthy services and a discoverable remote-cli container.
 
 echo ""
-echo "=== Health Checks ==="
+echo "=== Prerequisites ==="
 
-proxy_health=$(curl -sf "$PROXY_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$proxy_health" == *"ok"* ]]' "Proxy is healthy" "got: $proxy_health"
-
+remote_cli_container=$(resolve_remote_cli_container)
+remote_cli_health=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null || echo '{}')
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
-assert '[[ "$runner_health" == *"ok"* ]]' "Runner is healthy" "got: $runner_health"
+gateway_health=$(curl -sf "$GATEWAY_URL/health" 2>/dev/null || echo '{}')
 
-# ── 2. Session resume via correlation key ────────────────────────────────────
+preflight_ok=true
+
+if [[ -z "$remote_cli_container" ]]; then
+  echo "  ✗ remote-cli container not found (set REMOTE_CLI_CONTAINER or start the compose service)"
+  preflight_ok=false
+else
+  echo "  ✓ remote-cli container: $remote_cli_container"
+fi
+
+if [[ "$remote_cli_health" == *"ok"* ]]; then
+  echo "  ✓ remote-cli is healthy"
+else
+  echo "  ✗ remote-cli is not healthy at $REMOTE_CLI_URL"
+  preflight_ok=false
+fi
+
+if [[ "$runner_health" == *"ok"* ]]; then
+  echo "  ✓ runner is healthy"
+else
+  echo "  ✗ runner is not healthy at $RUNNER_URL"
+  preflight_ok=false
+fi
+
+if [[ "$gateway_health" == *"ok"* ]]; then
+  echo "  ✓ gateway is healthy"
+else
+  echo "  ✗ gateway is not healthy at $GATEWAY_URL"
+  preflight_ok=false
+fi
+
+if [[ -n "$remote_cli_container" ]]; then
+  DAYTONA_SNAPSHOT=$(docker exec "$remote_cli_container" printenv DAYTONA_SNAPSHOT 2>/dev/null || true)
+  if [[ -n "$DAYTONA_SNAPSHOT" ]]; then
+    echo "  ✓ DAYTONA_SNAPSHOT: $DAYTONA_SNAPSHOT"
+  else
+    echo "  ✗ DAYTONA_SNAPSHOT is not set in remote-cli (sandbox tests will fail)"
+    preflight_ok=false
+  fi
+fi
+
+if [[ "$preflight_ok" != "true" ]]; then
+  echo ""
+  echo "FAIL — prerequisites not met"
+  exit 1
+fi
+
+# ── 2. Remote-cli git/gh auth ────────────────────────────────────────────────
+
+echo ""
+echo "=== Remote-CLI Git/GH Auth ==="
+
+[[ -n "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+[[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
+mkdir -p "$(dirname "$HOST_REMOTE_CLI_GIT_REPO_DIR")" "$(dirname "$HOST_REMOTE_CLI_WORKTREE_DIR")"
+
+echo "  Cloning $REMOTE_CLI_GIT_REPO_URL inside $remote_cli_container..."
+clone_output=$(docker exec "$remote_cli_container" \
+  git clone "$REMOTE_CLI_GIT_REPO_URL" "$REMOTE_CLI_GIT_REPO_DIR" 2>&1 || true)
+clone_origin=$(docker exec "$remote_cli_container" \
+  git -C "$REMOTE_CLI_GIT_REPO_DIR" remote get-url origin 2>/dev/null || echo "")
+
+assert '[[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" ]]' \
+  "docker exec in remote-cli cloned the GitHub repo" \
+  "output: ${clone_output:0:300}"
+assert '[[ "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]' \
+  "cloned repo origin matches expected URL" \
+  "origin='$clone_origin'"
+
+if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" && "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]; then
+  REMOTE_CLI_GH_CORR_KEY="e2e-remote-cli-gh-${REMOTE_CLI_AUTH_TS}"
+  echo "  Sending trigger #1 (asking agent to run gh pr list)..."
+  gh_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+    -H 'Content-Type: application/json' \
+    -d "{\"prompt\":\"Run: gh pr list --limit 5\\nIf the command succeeds, reply with GH_PR_LIST_OK on the first line, then summarize the result in one short sentence. If the command fails, reply with GH_PR_LIST_FAILED on the first line and include the error.\",\"correlationKey\":\"$REMOTE_CLI_GH_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+    --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+  gh_trigger=$(echo "$gh_trigger_raw" | parse_done)
+
+  gh_session=$(json_field "$gh_trigger" "sessionId")
+  gh_status=$(json_field "$gh_trigger" "status")
+  gh_response_text=$(json_field "$gh_trigger" "response")
+  gh_response_ok=$(response_contains "$gh_trigger" "GH_PR_LIST_OK")
+
+  assert '[[ -n "$gh_session" ]]' "GH auth trigger: got a session ID" "sessionId='$gh_session'"
+  assert '[[ "$gh_status" == "completed" ]]' "GH auth trigger: completed successfully" "status='$gh_status'"
+  assert '[[ "$gh_response_ok" == "yes" ]]' \
+    "GH auth trigger: agent successfully listed PRs" \
+    "response: ${gh_response_text:0:300}"
+
+  REMOTE_CLI_WORKTREE_CORR_KEY="e2e-remote-cli-worktree-${REMOTE_CLI_AUTH_TS}"
+  echo "  Sending trigger #2 (asking agent to create a worktree)..."
+  worktree_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+    -H 'Content-Type: application/json' \
+    -d "{\"prompt\":\"Run: git worktree add -b $REMOTE_CLI_WORKTREE_BRANCH $REMOTE_CLI_WORKTREE_DIR HEAD\\nIf the command succeeds, reply with GIT_WORKTREE_OK on the first line, then mention the branch name. If the command fails, reply with GIT_WORKTREE_FAILED on the first line and include the error.\",\"correlationKey\":\"$REMOTE_CLI_WORKTREE_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+    --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+  worktree_trigger=$(echo "$worktree_trigger_raw" | parse_done)
+
+  worktree_session=$(json_field "$worktree_trigger" "sessionId")
+  worktree_status=$(json_field "$worktree_trigger" "status")
+  worktree_response_text=$(json_field "$worktree_trigger" "response")
+  worktree_response_ok=$(response_contains "$worktree_trigger" "GIT_WORKTREE_OK")
+  worktree_list=$(docker exec "$remote_cli_container" \
+    git -C "$REMOTE_CLI_GIT_REPO_DIR" worktree list 2>/dev/null || echo "")
+
+  assert '[[ -n "$worktree_session" ]]' "Worktree trigger: got a session ID" "sessionId='$worktree_session'"
+  assert '[[ "$worktree_status" == "completed" ]]' "Worktree trigger: completed successfully" "status='$worktree_status'"
+  assert '[[ "$worktree_response_ok" == "yes" ]]' \
+    "Worktree trigger: agent created the worktree" \
+    "response: ${worktree_response_text:0:300}"
+  assert '[[ -d "$HOST_REMOTE_CLI_WORKTREE_DIR" ]]' \
+    "Worktree trigger: worktree path exists on disk" \
+    "expected path: $HOST_REMOTE_CLI_WORKTREE_DIR"
+  assert '[[ "$worktree_list" == *"$REMOTE_CLI_WORKTREE_DIR"* ]]' \
+    "Worktree trigger: cloned repo registers the new worktree" \
+    "worktree list: ${worktree_list:0:300}"
+fi
+
+# ── 3. Session resume via correlation key ────────────────────────────────────
 
 echo ""
 echo "=== Session Resume ==="
@@ -134,7 +289,7 @@ assert '[[ "$session2" == "$session1" ]]' "Trigger #2: reused the SAME session I
 assert '[[ "$resumed2" == "true" ]]' "Trigger #2: was a resumed session" "resumed='$resumed2'"
 assert '[[ "$response2_has_phrase" == "yes" ]]' "Trigger #2: agent recalled the phrase ($PHRASE)" "response: ${response2_text:0:200}"
 
-# ── 3. Cross-session memory ──────────────────────────────────────────────────
+# ── 4. Cross-session memory ──────────────────────────────────────────────────
 
 # Clean up stale memory files from prior runs
 rm -f "$MEMORY_DIR/ALWAYS.md" "$MEMORY_DIR/README.md"
@@ -176,7 +331,7 @@ response_b_text=$(json_field "$trigger_b" "response")
 assert '[[ "$resumed_b" == "false" ]]' "Trigger B: was NOT a resumed session (different corr key)" "resumed='$resumed_b'"
 assert '[[ "$response_b_has_phrase" == "yes" ]]' "Trigger B: agent recalled cross-session memory phrase ($MEMORY_PHRASE)" "response: ${response_b_text:0:200}"
 
-# ── 4. Approval Flow ────────────────────────────────────────────────────────
+# ── 5. Approval Flow ────────────────────────────────────────────────────────
 
 echo ""
 echo "=== Approval Flow ==="
@@ -186,64 +341,70 @@ APPROVAL_UPSTREAM=""
 APPROVAL_TOOL=""
 APPROVAL_DIR=""
 CONFIG_FILE="${HOST_WORKSPACE}/config.json"
+APPROVAL_DISCOVERY_DEBUG=""
+approval_health=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null || echo '{}')
 
-if [[ -f "$CONFIG_FILE" ]]; then
-  # Build a list of "repo:upstream" pairs — only connected upstreams with approve lists
-  repo_upstream_pairs=$(curl -sf "$PROXY_URL/health" 2>/dev/null | node -e "
-    const health = JSON.parse(require('fs').readFileSync(0,'utf8'));
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  APPROVAL_DISCOVERY_DEBUG="workspace config not found at $CONFIG_FILE"
+else
+  repo_upstream_pairs=$(CONFIG_FILE="$CONFIG_FILE" node -e "
+    const fs = require('fs');
+    const health = JSON.parse(fs.readFileSync(0, 'utf8'));
+    const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_FILE, 'utf8'));
     const connected = new Set(
-      Object.entries(health.instances || {})
-        .filter(([, info]) => info.connected)
+      Object.entries(health.mcp?.instances || {})
+        .filter(([, info]) => info && info.connected)
         .map(([name]) => name)
     );
-    const cfg = JSON.parse(require('fs').readFileSync('$CONFIG_FILE','utf8'));
-    const repos = cfg.repos || {};
-    const proxies = cfg.proxies || {};
-    for (const [repo, rcfg] of Object.entries(repos)) {
-      for (const p of (rcfg.proxies || [])) {
-        if (connected.has(p) && (proxies[p]?.approve || []).length > 0) {
-          console.log(repo + ':' + p);
+    for (const [repo, rcfg] of Object.entries(cfg.repos || {})) {
+      for (const upstream of (rcfg.proxies || [])) {
+        if (connected.has(upstream)) {
+          console.log(repo + ':' + upstream);
         }
       }
     }
-  " 2>/dev/null || echo "")
+  " <<<"$approval_health" 2>/dev/null || echo "")
 
-  for pair in $repo_upstream_pairs; do
-    repo_name="${pair%%:*}"
-    upstream_name="${pair##*:}"
-    test_dir="/workspace/repos/$repo_name"
-    host_dir="${HOST_WORKSPACE}/repos/$repo_name"
-    # Repo directory must exist on host (mounted into container)
-    if [[ ! -d "$host_dir" ]]; then
-      continue
-    fi
-    tools_json=$(curl -sf "$PROXY_URL/$upstream_name/tools" \
-      -H "x-thor-directory: $test_dir" 2>/dev/null || echo '{"tools":[]}')
-    found_tool=$(echo "$tools_json" | node -e "
-      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-      const t = (d.tools || []).find(t => t.classification === 'approve');
-      console.log(t ? t.name : '');
-    " 2>/dev/null || echo "")
-    if [[ -n "$found_tool" ]]; then
-      APPROVAL_UPSTREAM="$upstream_name"
-      APPROVAL_TOOL="$found_tool"
-      APPROVAL_DIR="$test_dir"
-      break
-    fi
-  done
+  if [[ "$approval_health" != *'"status":"ok"'* ]]; then
+    APPROVAL_DISCOVERY_DEBUG="remote-cli health unavailable at $REMOTE_CLI_URL"
+  elif [[ -z "$repo_upstream_pairs" ]]; then
+    APPROVAL_DISCOVERY_DEBUG="No configured repo has a connected MCP upstream. Check $CONFIG_FILE and $REMOTE_CLI_URL/health."
+  else
+    while IFS= read -r pair; do
+      [[ -n "$pair" ]] || continue
+      repo_name="${pair%%:*}"
+      upstream_name="${pair##*:}"
+      test_dir="/workspace/repos/$repo_name"
+      host_dir="${HOST_WORKSPACE}/repos/$repo_name"
+      found_tool="$(approval_tool_for_upstream "$upstream_name")"
+      # Repo directory must exist on host (mounted into container)
+      if [[ ! -d "$host_dir" ]]; then
+        APPROVAL_DISCOVERY_DEBUG="${APPROVAL_DISCOVERY_DEBUG:+$APPROVAL_DISCOVERY_DEBUG; }missing host repo dir: $host_dir"
+        continue
+      fi
+      if [[ -n "$found_tool" ]]; then
+        APPROVAL_UPSTREAM="$upstream_name"
+        APPROVAL_TOOL="$found_tool"
+        APPROVAL_DIR="$test_dir"
+        break
+      fi
+      APPROVAL_DISCOVERY_DEBUG="${APPROVAL_DISCOVERY_DEBUG:+$APPROVAL_DISCOVERY_DEBUG; }upstream $upstream_name has no approval-required tool in e2e map"
+    done <<<"$repo_upstream_pairs"
+  fi
 fi
 
 if [[ -z "$APPROVAL_TOOL" ]]; then
-  echo "  ⚠ No approval-required tools found — skipping approval flow tests"
+  assert 'false' "approval flow: discovered an approval-required tool" "${APPROVAL_DISCOVERY_DEBUG:-approval tool discovery returned no match}"
+elif [[ -z "$RESOLVE_SECRET" ]]; then
+  assert 'false' "approval flow: RESOLVE_SECRET is available" "Set RESOLVE_SECRET or ensure docker exec thor-gateway-1 printenv RESOLVE_SECRET returns a value"
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
-  # 4b. Proxy-level: call the approval-required tool directly
-  echo "  Calling tool via proxy (expecting approval interception)..."
-  call_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/tools/call" \
+  # 4b. remote-cli-level: call the approval-required tool directly
+  echo "  Calling tool via remote-cli (expecting approval interception)..."
+  call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
-    -H "x-thor-directory: $APPROVAL_DIR" \
-    -d "{\"name\":\"$APPROVAL_TOOL\",\"arguments\":{}}" \
+    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",\"{}\"],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
     2>/dev/null || echo '{}')
 
   # Parse action ID — check stdout, stderr (thor:meta), and content (legacy MCP format)
@@ -263,32 +424,37 @@ else
     console.log(ok ? 'yes' : 'no');
   " 2>/dev/null || echo "no")
 
-  assert '[[ -n "$action_id" ]]' "Proxy: tool call returned an action ID" "response: ${call_raw:0:300}"
-  assert '[[ "$call_not_error" == "yes" ]]' "Proxy: tool call was not an error" "response: ${call_raw:0:200}"
+  assert '[[ -n "$action_id" ]]' "remote-cli: tool call returned an action ID" "response: ${call_raw:0:300}"
+  assert '[[ "$call_not_error" == "yes" ]]' "remote-cli: tool call was not an error" "response: ${call_raw:0:200}"
 
   if [[ -n "$action_id" ]]; then
     # 4c. Check approval status is pending
-    status_raw=$(curl -sf "$PROXY_URL/approval/$action_id" 2>/dev/null || echo '{}')
-    status_val=$(json_field "$status_raw" "status")
-    status_tool=$(json_field "$status_raw" "tool")
-    assert '[[ "$status_val" == "pending" ]]' "Proxy: approval status is 'pending'" "status='$status_val'"
-    assert '[[ "$status_tool" == "$APPROVAL_TOOL" ]]' "Proxy: approval record has correct tool name" "tool='$status_tool'"
+    status_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
+      -H 'Content-Type: application/json' \
+      -d "{\"args\":[\"status\",\"$action_id\"]}" \
+      2>/dev/null || echo '{}')
+    status_val=$(exec_stdout_field "$status_raw" "status")
+    status_tool=$(exec_stdout_field "$status_raw" "tool")
+    assert '[[ "$status_val" == "pending" ]]' "remote-cli: approval status is 'pending'" "status='$status_val'"
+    assert '[[ "$status_tool" == "$APPROVAL_TOOL" ]]' "remote-cli: approval record has correct tool name" "tool='$status_tool'"
 
     # 4d. Reject the approval (safe — no side effects on the upstream MCP)
     echo "  Rejecting approval $action_id..."
-    resolve_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/approval/$action_id/resolve" \
+    resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
       -H 'Content-Type: application/json' \
-      -d '{"decision":"rejected","reviewer":"e2e-test","reason":"e2e test — automated rejection"}' \
+      -H "x-thor-resolve-secret: $RESOLVE_SECRET" \
+      -d "{\"args\":[\"resolve\",\"$action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
       2>/dev/null || echo '{}')
-    resolve_status=$(json_field "$resolve_raw" "status")
-    resolve_reviewer=$(json_field "$resolve_raw" "reviewer")
-    assert '[[ "$resolve_status" == "rejected" ]]' "Proxy: approval was rejected" "status='$resolve_status'"
-    assert '[[ "$resolve_reviewer" == "e2e-test" ]]' "Proxy: reviewer recorded correctly" "reviewer='$resolve_reviewer'"
+    resolve_exit=$(json_field "$resolve_raw" "exitCode")
+    assert '[[ "$resolve_exit" == "0" ]]' "remote-cli: approval rejection command succeeded" "exitCode='$resolve_exit'"
 
     # 4e. Verify final status confirms rejection
-    final_raw=$(curl -sf "$PROXY_URL/approval/$action_id" 2>/dev/null || echo '{}')
-    final_status=$(json_field "$final_raw" "status")
-    assert '[[ "$final_status" == "rejected" ]]' "Proxy: final status confirms 'rejected'" "status='$final_status'"
+    final_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
+      -H 'Content-Type: application/json' \
+      -d "{\"args\":[\"status\",\"$action_id\"]}" \
+      2>/dev/null || echo '{}')
+    final_status=$(exec_stdout_field "$final_raw" "status")
+    assert '[[ "$final_status" == "rejected" ]]' "remote-cli: final status confirms 'rejected'" "status='$final_status'"
   fi
 
   # ── 4f–4h. End-to-end: rejection lands back in OpenCode session ───────────
@@ -296,12 +462,11 @@ else
   echo ""
   echo "  --- E2E: Rejection reaches OpenCode session ---"
 
-  # 4f. Create a fresh pending approval via proxy API
-  echo "  Creating pending approval via proxy..."
-  e2e_call_raw=$(curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/tools/call" \
+  # 4f. Create a fresh pending approval via remote-cli API
+  echo "  Creating pending approval via remote-cli..."
+  e2e_call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
-    -H "x-thor-directory: $APPROVAL_DIR" \
-    -d "{\"name\":\"$APPROVAL_TOOL\",\"arguments\":{}}" \
+    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",\"{}\"],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
     2>/dev/null || echo '{}')
 
   e2e_action_id=$(echo "$e2e_call_raw" | node -e "
@@ -316,11 +481,12 @@ else
   if [[ -z "$e2e_action_id" ]]; then
     echo "  ⚠ Could not create pending approval — skipping session tests"
   else
-    # 4g. Reject the approval via proxy API
+    # 4g. Reject the approval via remote-cli API
     echo "  Rejecting approval $e2e_action_id..."
-    curl -sf -X POST "$PROXY_URL/$APPROVAL_UPSTREAM/approval/$e2e_action_id/resolve" \
+    curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
       -H 'Content-Type: application/json' \
-      -d '{"decision":"rejected","reviewer":"e2e-test","reason":"e2e test — automated rejection"}' \
+      -H "x-thor-resolve-secret: $RESOLVE_SECRET" \
+      -d "{\"args\":[\"resolve\",\"$e2e_action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
       2>/dev/null >/dev/null
 
     # 4h. Ask the agent to check the approval status — rejection should be visible
@@ -346,7 +512,770 @@ else
   fi
 fi
 
-# ── 5. Alias-based session matching via gateway ──────────────────────────────
+# ── 6. Git/GH policy enforcement ─────────────────────────────────────────────
+#
+# Validates that remote-cli blocks disallowed git/gh commands at the policy
+# layer. These are direct HTTP calls — no LLM round-trip needed.
+
+echo ""
+echo "=== Git/GH Policy Enforcement ==="
+
+POLICY_CWD="${POLICY_CWD:-/workspace/repos/${ALIAS_REPO:-acme-multi-hyphen-repo}}"
+
+# 6a. git checkout should be blocked
+checkout_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"checkout\",\"main\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+checkout_exit=$(json_field "$checkout_raw" "exitCode")
+checkout_stderr=$(json_field "$checkout_raw" "stderr")
+assert '[[ "$checkout_exit" == "1" ]]' "git checkout is blocked" "exitCode='$checkout_exit'"
+assert '[[ "$checkout_stderr" == *"not allowed"* ]]' "git checkout error mentions not allowed" "stderr='${checkout_stderr:0:200}'"
+
+# 6b. git switch should be blocked
+switch_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"switch\",\"main\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+switch_exit=$(json_field "$switch_raw" "exitCode")
+assert '[[ "$switch_exit" == "1" ]]' "git switch is blocked" "exitCode='$switch_exit'"
+
+# 6c. Leading flags should be blocked
+flag_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"-c\",\"user.name=x\",\"status\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+flag_exit=$(json_field "$flag_raw" "exitCode")
+flag_stderr=$(json_field "$flag_raw" "stderr")
+assert '[[ "$flag_exit" == "1" ]]' "git leading flags are blocked" "exitCode='$flag_exit'"
+assert '[[ "$flag_stderr" == *"leading flags"* ]]' "leading flags error is descriptive" "stderr='${flag_stderr:0:200}'"
+
+# 6d. git push to non-origin remote should be blocked
+push_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"push\",\"upstream\",\"main\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+push_exit=$(json_field "$push_raw" "exitCode")
+push_stderr=$(json_field "$push_raw" "stderr")
+assert '[[ "$push_exit" == "1" ]]' "git push to non-origin is blocked" "exitCode='$push_exit'"
+assert '[[ "$push_stderr" == *"origin"* ]]' "push error mentions origin restriction" "stderr='${push_stderr:0:200}'"
+
+# 6e. cwd outside /workspace should be blocked
+cwd_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"status\"],\"cwd\":\"/tmp/evil\"}" \
+  2>/dev/null || echo '{}')
+cwd_exit=$(json_field "$cwd_raw" "exitCode")
+assert '[[ "$cwd_exit" == "1" ]]' "git cwd outside /workspace is blocked" "exitCode='$cwd_exit'"
+
+# 6f. gh api should be blocked
+gh_api_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"api\",\"repos\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+gh_api_exit=$(json_field "$gh_api_raw" "exitCode")
+gh_api_stderr=$(json_field "$gh_api_raw" "stderr")
+assert '[[ "$gh_api_exit" == "1" ]]' "gh api is blocked" "exitCode='$gh_api_exit'"
+assert '[[ "$gh_api_stderr" == *"not allowed"* ]]' "gh api error mentions not allowed" "stderr='${gh_api_stderr:0:200}'"
+
+# 6g. gh pr checkout should be blocked
+gh_prco_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"pr\",\"checkout\",\"1\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+gh_prco_exit=$(json_field "$gh_prco_raw" "exitCode")
+assert '[[ "$gh_prco_exit" == "1" ]]' "gh pr checkout is blocked" "exitCode='$gh_prco_exit'"
+
+# 6h. Allowed read commands should succeed
+status_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"status\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+status_exit=$(json_field "$status_raw" "exitCode")
+assert '[[ "$status_exit" == "0" ]]' "git status (allowed) succeeds" "exitCode='$status_exit'"
+
+# ── 7. Busy session + interrupt ──────────────────────────────────────────────
+#
+# Tests that a busy session returns { busy: true } without interrupt,
+# and that interrupt=true aborts the busy session and executes the new prompt.
+
+echo ""
+echo "=== Busy Session + Interrupt ==="
+
+BUSY_CORR_KEY="e2e-busy-$(date +%s)"
+BUSY_PHRASE="BUSY$(date +%s | tail -c 6)"
+
+# 7a. Start a long-running trigger (sleep prompt) in the background
+echo "  Sending trigger #1 (long-running prompt to occupy session)..."
+curl -sf -X POST "$RUNNER_URL/trigger" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"Run a bash command: sleep 30. Then say DONE.\",\"correlationKey\":\"$BUSY_CORR_KEY\",\"directory\":\"$SESSION_DIR\"}" \
+  --max-time 10 2>/dev/null >/dev/null &
+BUSY_BG_PID=$!
+sleep 5
+
+# 7b. Send a non-interrupt trigger — should get { busy: true }
+echo "  Sending trigger #2 (non-interrupt, expecting busy)..."
+busy_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"Say hello.\",\"correlationKey\":\"$BUSY_CORR_KEY\",\"directory\":\"$SESSION_DIR\"}" \
+  --max-time 30 2>/dev/null || echo '{}')
+busy_val=$(json_field "$busy_raw" "busy")
+assert '[[ "$busy_val" == "true" ]]' "Non-interrupt trigger returns busy" "response: ${busy_raw:0:200}"
+
+# 7c. Send an interrupt trigger — should abort and execute
+echo "  Sending trigger #3 (interrupt=true, expecting execution)..."
+interrupt_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+  -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"Our secret word is $BUSY_PHRASE. Confirm by repeating it back.\",\"correlationKey\":\"$BUSY_CORR_KEY\",\"interrupt\":true,\"directory\":\"$SESSION_DIR\"}" \
+  --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+interrupt_trigger=$(echo "$interrupt_raw" | parse_done)
+
+interrupt_session=$(json_field "$interrupt_trigger" "sessionId")
+interrupt_status=$(json_field "$interrupt_trigger" "status")
+interrupt_response=$(json_field "$interrupt_trigger" "response")
+interrupt_has_phrase=$(response_contains "$interrupt_trigger" "$BUSY_PHRASE")
+
+assert '[[ -n "$interrupt_session" ]]' "Interrupt trigger: got a session ID" "sessionId='$interrupt_session'"
+assert '[[ "$interrupt_status" == "completed" ]]' "Interrupt trigger: completed successfully" "status='$interrupt_status'"
+assert '[[ "$interrupt_has_phrase" == "yes" ]]' "Interrupt trigger: agent confirmed the phrase" "response: ${interrupt_response:0:200}"
+
+# Clean up background curl
+kill "$BUSY_BG_PID" 2>/dev/null || true
+wait "$BUSY_BG_PID" 2>/dev/null || true
+
+# ── 8. Sandbox lifecycle + git bundle sync ───────────────────────────────────
+#
+# Tests the full sandbox lifecycle via direct remote-cli calls (no LLM):
+#   1. List → empty
+#   2. Create worktree at old commit, exec → initial bundle sync
+#   3. Verify sandbox has correct SHA
+#   4. Fast-forward worktree to recent commit, exec → delta bundle sync
+#   5. Verify sandbox updated to new SHA
+#   6. Reset worktree backward to old commit, exec → backward sync (no bundle)
+#   7. Verify sandbox reverted to old SHA
+#   8. Stop → cleanup
+#   9. List → empty again
+
+echo ""
+echo "=== Sandbox Lifecycle + Git Bundle Sync ==="
+
+# Parse NDJSON sandbox exec response: extract stdout data and exitCode
+sandbox_exec_stdout() {
+  node -e "
+    const lines = require('fs').readFileSync(0,'utf8').trim().split('\n');
+    let out = '';
+    for (const line of lines) {
+      try {
+        const d = JSON.parse(line);
+        if (d.type === 'stdout' && typeof d.data === 'string') out += d.data;
+      } catch {}
+    }
+    process.stdout.write(out);
+  " 2>/dev/null
+}
+
+sandbox_exec_exit() {
+  node -e "
+    const lines = require('fs').readFileSync(0,'utf8').trim().split('\n');
+    let code = '';
+    for (const line of lines) {
+      try {
+        const d = JSON.parse(line);
+        if (typeof d.exitCode === 'number') code = String(d.exitCode);
+      } catch {}
+    }
+    console.log(code);
+  " 2>/dev/null
+}
+
+# Use the thor clone from section 2 (REMOTE_CLI_GIT_REPO_DIR)
+SBX_REPO_DIR="$REMOTE_CLI_GIT_REPO_DIR"
+SBX_HOST_REPO_DIR="$HOST_REMOTE_CLI_GIT_REPO_DIR"
+
+# Pick an old commit (first commit) and a recent one.
+# These can fail if the section 2 clone didn't succeed — || true lets the guard below handle it.
+SBX_OLD_SHA=$(docker exec "$remote_cli_container" \
+  git -C "$SBX_REPO_DIR" rev-list --reverse HEAD 2>/dev/null | head -1) || true
+SBX_NEW_SHA=$(docker exec "$remote_cli_container" \
+  git -C "$SBX_REPO_DIR" rev-parse HEAD 2>/dev/null) || true
+
+SBX_TS=$(date +%s)
+SBX_BRANCH="e2e-sandbox-${SBX_TS}"
+SBX_WORKTREE_DIR="/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH}"
+SBX_HOST_WORKTREE_DIR="${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH}"
+
+if [[ -z "$SBX_OLD_SHA" || -z "$SBX_NEW_SHA" ]]; then
+  echo "  ⚠ Prerequisites missing (section 2 clone may have failed) — skipping sandbox tests"
+elif [[ "$SBX_OLD_SHA" == "$SBX_NEW_SHA" ]]; then
+  echo "  ⚠ Repo has only one commit — skipping sandbox tests"
+else
+  # 8a. List sandboxes — should be empty (or at least none for our worktree)
+  sbx_list_before=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+    -H 'Content-Type: application/json' \
+    -d '{"mode":"list"}' 2>/dev/null)
+  sbx_list_before_exit=$(json_field "$sbx_list_before" "exitCode")
+  assert '[[ "$sbx_list_before_exit" == "0" ]]' "sandbox list succeeds" "exitCode='$sbx_list_before_exit'"
+
+  # 8b. Create worktree at old commit
+  mkdir -p "$(dirname "$SBX_HOST_WORKTREE_DIR")"
+  docker exec "$remote_cli_container" \
+    git -C "$SBX_REPO_DIR" worktree add -b "$SBX_BRANCH" "$SBX_WORKTREE_DIR" "$SBX_OLD_SHA" 2>/dev/null
+  worktree_created=$?
+
+  if [[ $worktree_created -ne 0 ]]; then
+    assert 'false' "sandbox worktree created at old commit" "git worktree add failed"
+  else
+    assert 'true' "sandbox worktree created at old commit ($SBX_OLD_SHA)" ""
+
+    # Verify local HEAD matches old SHA
+    local_sha=$(docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" rev-parse HEAD 2>/dev/null)
+    assert '[[ "$local_sha" == "$SBX_OLD_SHA" ]]' \
+      "worktree HEAD is old commit" \
+      "expected='${SBX_OLD_SHA:0:12}', got='${local_sha:0:12}'"
+
+    # 8c. Exec in sandbox — initial bundle sync, verify SHA inside sandbox
+    echo "  Creating sandbox and verifying initial bundle sync..."
+    sbx_exec1_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"cat\",\".git/HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_exec1_exit=$(echo "$sbx_exec1_raw" | sandbox_exec_exit)
+    sbx_exec1_sha=$(echo "$sbx_exec1_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+
+    assert '[[ "$sbx_exec1_exit" == "0" ]]' "sandbox exec (initial sync) succeeded" "exitCode='$sbx_exec1_exit'"
+    assert '[[ "$sbx_exec1_sha" == "$SBX_OLD_SHA" ]]' \
+      "sandbox has correct SHA after initial bundle" \
+      "expected='${SBX_OLD_SHA:0:12}', got='${sbx_exec1_sha:0:12}'"
+
+    # 8d. List sandboxes — should show our sandbox
+    sbx_list_mid=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d '{"mode":"list"}' 2>/dev/null)
+    sbx_list_mid_has_cwd=$(echo "$sbx_list_mid" | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+      const list = JSON.parse(d.stdout || '[]');
+      console.log(list.some(s => s.cwd === '$SBX_WORKTREE_DIR') ? 'yes' : 'no');
+    " 2>/dev/null || echo "no")
+    assert '[[ "$sbx_list_mid_has_cwd" == "yes" ]]' \
+      "sandbox list includes our worktree" \
+      "cwd=$SBX_WORKTREE_DIR"
+
+    # 8e. Fast-forward worktree to recent commit
+    echo "  Fast-forwarding worktree to recent commit for delta sync..."
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" reset --hard "$SBX_NEW_SHA" 2>/dev/null >/dev/null
+    updated_sha=$(docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" rev-parse HEAD 2>/dev/null)
+    assert '[[ "$updated_sha" == "$SBX_NEW_SHA" ]]' \
+      "worktree fast-forwarded to recent commit" \
+      "expected='${SBX_NEW_SHA:0:12}', got='${updated_sha:0:12}'"
+
+    # 8f. Exec again — delta bundle sync, verify new SHA in sandbox
+    echo "  Verifying delta bundle sync..."
+    sbx_exec2_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"cat\",\".git/HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_exec2_exit=$(echo "$sbx_exec2_raw" | sandbox_exec_exit)
+    sbx_exec2_sha=$(echo "$sbx_exec2_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+
+    assert '[[ "$sbx_exec2_exit" == "0" ]]' "sandbox exec (delta sync) succeeded" "exitCode='$sbx_exec2_exit'"
+    assert '[[ "$sbx_exec2_sha" == "$SBX_NEW_SHA" ]]' \
+      "sandbox has correct SHA after delta bundle" \
+      "expected='${SBX_NEW_SHA:0:12}', got='${sbx_exec2_sha:0:12}'"
+
+    # 8i. Switch worktree to an unrelated orphan branch, verify sandbox syncs
+    # (also covers backward/fallback bundle path since orphan is unrelated to HEAD)
+    echo "  Creating orphan branch and switching worktree..."
+    docker exec "$remote_cli_container" sh -c "
+      cd $SBX_WORKTREE_DIR &&
+      git checkout --orphan e2e-orphan-${SBX_TS} &&
+      git rm -rf . >/dev/null 2>&1 &&
+      echo 'orphan-content' > orphan.txt &&
+      git add orphan.txt &&
+      git commit -m 'orphan commit' --allow-empty
+    " 2>/dev/null >/dev/null
+    orphan_sha=$(docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" rev-parse HEAD 2>/dev/null)
+    assert '[[ -n "$orphan_sha" && "$orphan_sha" != "$SBX_OLD_SHA" && "$orphan_sha" != "$SBX_NEW_SHA" ]]' \
+      "worktree switched to unrelated orphan branch" \
+      "orphan_sha='${orphan_sha:0:12}'"
+
+    echo "  Verifying unrelated branch sync..."
+    sbx_exec4_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"cat\",\".git/HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_exec4_exit=$(echo "$sbx_exec4_raw" | sandbox_exec_exit)
+    sbx_exec4_sha=$(echo "$sbx_exec4_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+
+    assert '[[ "$sbx_exec4_exit" == "0" ]]' "sandbox exec (unrelated branch sync) succeeded" "exitCode='$sbx_exec4_exit'"
+    assert '[[ "$sbx_exec4_sha" == "$orphan_sha" ]]' \
+      "sandbox has correct SHA after unrelated branch sync" \
+      "expected='${orphan_sha:0:12}', got='${sbx_exec4_sha:0:12}'"
+
+    # 8j. Stop sandbox
+    echo "  Cleaning up sandbox..."
+    sbx_stop_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null)
+    sbx_stop_exit=$(json_field "$sbx_stop_raw" "exitCode")
+    assert '[[ "$sbx_stop_exit" == "0" ]]' "sandbox stop succeeded" "exitCode='$sbx_stop_exit'"
+
+    # 8k. List sandboxes — ours should be gone (retry for Daytona API eventual consistency)
+    sbx_list_after_has_cwd="yes"
+    for _sbx_retry in 1 2 3; do
+      sbx_list_after=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d '{"mode":"list"}' 2>/dev/null)
+      sbx_list_after_has_cwd=$(echo "$sbx_list_after" | node -e "
+        const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+        const list = JSON.parse(d.stdout || '[]');
+        console.log(list.some(s => s.cwd === '$SBX_WORKTREE_DIR') ? 'yes' : 'no');
+      " 2>/dev/null || echo "yes")
+      [[ "$sbx_list_after_has_cwd" == "no" ]] && break
+      sleep 2
+    done
+    assert '[[ "$sbx_list_after_has_cwd" == "no" ]]' \
+      "sandbox removed after stop" \
+      "still found in list"
+
+    # 8l. Dirty worktree overlay from subdirectory cwd
+    # Uses subdirectory cwd to verify overlay push resolves the worktree root correctly.
+    echo "  Testing dirty worktree overlay (subdirectory cwd)..."
+    docker exec "$remote_cli_container" sh -c \
+      "mkdir -p $SBX_WORKTREE_DIR/sub/pkg && echo 'dirty-content-e2e' > $SBX_WORKTREE_DIR/sub/pkg/dirty-file.txt" 2>/dev/null
+    sbx_dirty_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"cat\",\"dirty-file.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR/sub/pkg\"}" \
+      2>/dev/null)
+    sbx_dirty_exit=$(echo "$sbx_dirty_raw" | sandbox_exec_exit)
+    sbx_dirty_stdout=$(echo "$sbx_dirty_raw" | sandbox_exec_stdout)
+    assert '[[ "$sbx_dirty_exit" == "0" ]]' "dirty worktree exec succeeded (overlay, subdir cwd)" "exitCode='$sbx_dirty_exit'"
+    assert '[[ "$sbx_dirty_stdout" == *"dirty-content-e2e"* ]]' \
+      "sandbox received uncommitted file content via subdir cwd" \
+      "stdout='${sbx_dirty_stdout:0:200}'"
+    # Verify local worktree is untouched (no git history manipulation)
+    dirty_file_exists=$(docker exec "$remote_cli_container" \
+      test -f "$SBX_WORKTREE_DIR/sub/pkg/dirty-file.txt" && echo "yes" || echo "no")
+    assert '[[ "$dirty_file_exists" == "yes" ]]' \
+      "local dirty file preserved after overlay" \
+      "file exists: $dirty_file_exists"
+    # Verify git history is untouched (no temp commits)
+    local_head_msg=$(docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" log -1 --format=%s 2>/dev/null)
+    assert '[[ "$local_head_msg" != "thor-sandbox-wip" ]]' \
+      "no temp commit in local history" \
+      "HEAD message: '$local_head_msg'"
+    # Clean up dirty file
+    docker exec "$remote_cli_container" \
+      rm -rf "$SBX_WORKTREE_DIR/sub" 2>/dev/null
+
+    # 8l-2. Pull sandbox changes back to local worktree (subdirectory cwd)
+    # Uses subdirectory cwd to verify pull resolves the worktree root correctly.
+    echo "  Testing pull sandbox changes (subdirectory cwd)..."
+    # First, create the subdirectory in the sandbox so the cd prefix succeeds
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"mkdir\",\"-p\",\"pulltest\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null >/dev/null
+    # Run from a subdirectory — creates a file relative to the subdir cwd
+    sbx_pull_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"bash\",\"-c\",\"echo pull-content-e2e > created.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR/pulltest\"}" \
+      2>/dev/null)
+    sbx_pull_exit=$(echo "$sbx_pull_raw" | sandbox_exec_exit)
+    assert '[[ "$sbx_pull_exit" == "0" ]]' "sandbox create-file command succeeded (subdir cwd)" "exitCode='$sbx_pull_exit'"
+    # Verify the file was pulled to the worktree root (under pulltest/, not doubled)
+    pull_content=$(docker exec "$remote_cli_container" \
+      cat "$SBX_WORKTREE_DIR/pulltest/created.txt" 2>/dev/null || echo "")
+    assert '[[ "$pull_content" == *"pull-content-e2e"* ]]' \
+      "file created in subdir cwd pulled to correct worktree path" \
+      "content='${pull_content:0:200}'"
+    # Clean up pulled files
+    docker exec "$remote_cli_container" \
+      rm -rf "$SBX_WORKTREE_DIR/pulltest" 2>/dev/null
+
+    # 8l-3. Realistic pull: mangle package.json, run prettier in sandbox, verify formatted result pulled back
+    echo "  Testing realistic pull: format mangled package.json in sandbox..."
+    # Switch worktree to latest commit (which has package.json with prettier)
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" checkout -B "$SBX_BRANCH" "$SBX_NEW_SHA" 2>/dev/null >/dev/null
+    # Save original package.json content
+    original_pkg=$(docker exec "$remote_cli_container" \
+      cat "$SBX_WORKTREE_DIR/package.json" 2>/dev/null)
+    # Mangle: add a new field with bad formatting (single-line JSON blob)
+    # This ensures the formatted result differs from the committed version,
+    # so git status inside the sandbox sees it as modified and pull brings it back.
+    docker exec -w "$SBX_WORKTREE_DIR" "$remote_cli_container" \
+      node -e 'const p=JSON.parse(require("fs").readFileSync("package.json","utf8"));p.e2eMarker="FORMATTED_E2E";require("fs").writeFileSync("package.json",JSON.stringify(p))' 2>/dev/null
+    mangled_pkg=$(docker exec "$remote_cli_container" \
+      cat "$SBX_WORKTREE_DIR/package.json" 2>/dev/null)
+    mangled_lines=$(echo "$mangled_pkg" | wc -l | tr -d ' ')
+    assert '[[ "$mangled_lines" == "1" ]]' \
+      "package.json mangled to single line with e2eMarker" \
+      "lines='$mangled_lines'"
+    # Run prettier in sandbox (overlay pushes mangled file, exec formats, pull brings it back)
+    sbx_fmt_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"npx -y prettier@3 --write package.json\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_fmt_exit=$(echo "$sbx_fmt_raw" | sandbox_exec_exit)
+    assert '[[ "$sbx_fmt_exit" == "0" ]]' \
+      "npx prettier succeeded in sandbox" \
+      "exitCode='$sbx_fmt_exit'"
+    # Verify the local package.json is now properly formatted (multi-line, not mangled)
+    formatted_pkg=$(docker exec "$remote_cli_container" \
+      cat "$SBX_WORKTREE_DIR/package.json" 2>/dev/null)
+    formatted_lines=$(echo "$formatted_pkg" | wc -l | tr -d ' ')
+    assert '[[ "$formatted_lines" -gt 5 ]]' \
+      "formatted package.json pulled back (multi-line)" \
+      "lines='$formatted_lines'"
+    # Verify the e2eMarker survived the round-trip (proves it's not just the original)
+    assert '[[ "$formatted_pkg" == *"FORMATTED_E2E"* ]]' \
+      "formatted package.json contains e2eMarker (not just original)" \
+      "content='${formatted_pkg:0:300}'"
+    # Restore original package.json
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" checkout -- package.json 2>/dev/null
+
+    # 8m. Failing command exit code propagation
+    echo "  Testing failing command propagation..."
+    # Reset worktree to a clean state (may be on orphan branch from previous test)
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_WORKTREE_DIR" checkout -B "$SBX_BRANCH" "$SBX_OLD_SHA" 2>/dev/null >/dev/null
+    sbx_fail_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo FAIL_OUTPUT && exit 42\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_fail_exit=$(echo "$sbx_fail_raw" | sandbox_exec_exit)
+    sbx_fail_stdout=$(echo "$sbx_fail_raw" | sandbox_exec_stdout)
+    assert '[[ "$sbx_fail_exit" == "42" ]]' \
+      "failing command exit code propagates" \
+      "exitCode='$sbx_fail_exit'"
+    assert '[[ "$sbx_fail_stdout" == *"FAIL_OUTPUT"* ]]' \
+      "failing command output arrives on stdout" \
+      "stdout='${sbx_fail_stdout:0:200}'"
+
+    # 8o. Toolchain: verify pre-installed runtimes are available via bash -lc
+    echo "  Testing sandbox toolchain (Node, Java, Python, Maven, Gradle)..."
+    sbx_tc_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"node --version && java --version 2>&1 | head -1 && python3 --version && mvn --version 2>&1 | head -1 && gradle --version 2>&1 | grep Gradle\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_tc_exit=$(echo "$sbx_tc_raw" | sandbox_exec_exit)
+    sbx_tc_stdout=$(echo "$sbx_tc_raw" | sandbox_exec_stdout)
+    assert '[[ "$sbx_tc_exit" == "0" ]]' "toolchain commands all succeeded" "exitCode='$sbx_tc_exit'"
+    assert '[[ "$sbx_tc_stdout" == *"v22."* ]]' \
+      "Node 22 available (default)" "stdout='${sbx_tc_stdout:0:300}'"
+    assert '[[ "$sbx_tc_stdout" == *"21.0"* ]]' \
+      "Java 21 available (default)" "stdout='${sbx_tc_stdout:0:300}'"
+    assert '[[ "$sbx_tc_stdout" == *"3.12"* ]]' \
+      "Python 3.12 available (default)" "stdout='${sbx_tc_stdout:0:300}'"
+    assert '[[ "$sbx_tc_stdout" == *"Maven"* ]]' \
+      "Maven available" "stdout='${sbx_tc_stdout:0:300}'"
+    assert '[[ "$sbx_tc_stdout" == *"Gradle"* ]]' \
+      "Gradle available" "stdout='${sbx_tc_stdout:0:300}'"
+
+    # 8p. Version switching: set non-default version, verify it persists
+    echo "  Testing version switching persistence across sandbox calls..."
+
+    # Node: switch default to 20, verify next call uses it
+    sbx_nvm_set=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"nvm\",\"alias\",\"default\",\"20\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_nvm_set_exit=$(echo "$sbx_nvm_set" | sandbox_exec_exit)
+    assert '[[ "$sbx_nvm_set_exit" == "0" ]]' "nvm alias default 20 succeeded" "exitCode='$sbx_nvm_set_exit'"
+
+    sbx_nvm_check=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"node\",\"--version\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_nvm_ver=$(echo "$sbx_nvm_check" | sandbox_exec_stdout | tr -d '[:space:]')
+    assert '[[ "$sbx_nvm_ver" == v20.* ]]' \
+      "Node version persisted to 20 across calls" \
+      "got='$sbx_nvm_ver'"
+
+    # Restore Node default to 22
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"nvm\",\"alias\",\"default\",\"22\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null >/dev/null
+
+    # Java: switch default to 17, verify next call uses it
+    sbx_sdk_set=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sdk\",\"default\",\"java\",\"17.0.18-tem\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_sdk_set_exit=$(echo "$sbx_sdk_set" | sandbox_exec_exit)
+    assert '[[ "$sbx_sdk_set_exit" == "0" ]]' "sdk default java 17 succeeded" "exitCode='$sbx_sdk_set_exit'"
+
+    sbx_sdk_check=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"java\",\"--version\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_sdk_ver=$(echo "$sbx_sdk_check" | sandbox_exec_stdout | head -1)
+    assert '[[ "$sbx_sdk_ver" == *"17.0"* ]]' \
+      "Java version persisted to 17 across calls" \
+      "got='$sbx_sdk_ver'"
+
+    # Restore Java default to 21
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sdk\",\"default\",\"java\",\"21.0.10-tem\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null >/dev/null
+
+    # Python: switch global to 3.11, verify next call uses it
+    sbx_py_set=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"pyenv\",\"global\",\"3.11\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_py_set_exit=$(echo "$sbx_py_set" | sandbox_exec_exit)
+    assert '[[ "$sbx_py_set_exit" == "0" ]]' "pyenv global 3.11 succeeded" "exitCode='$sbx_py_set_exit'"
+
+    sbx_py_check=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"python3\",\"--version\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_py_ver=$(echo "$sbx_py_check" | sandbox_exec_stdout | tr -d '[:space:]')
+    assert '[[ "$sbx_py_ver" == *"3.11"* ]]' \
+      "Python version persisted to 3.11 across calls" \
+      "got='$sbx_py_ver'"
+
+    # Restore Python default to 3.12
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"pyenv\",\"global\",\"3.12\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null >/dev/null
+
+    # 8q. Args with spaces are preserved (shell quoting)
+    echo "  Testing arg quoting preservation..."
+    sbx_quote_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"touch\",\"hello world.txt\",\"foo.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_quote_exit=$(echo "$sbx_quote_raw" | sandbox_exec_exit)
+    assert '[[ "$sbx_quote_exit" == "0" ]]' "touch with spaced filename succeeded" "exitCode='$sbx_quote_exit'"
+    # Count files: should be exactly 2 (not 3 from "hello" + "world.txt" + "foo.txt")
+    sbx_count_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"ls -1 'hello world.txt' foo.txt 2>/dev/null | wc -l\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_file_count=$(echo "$sbx_count_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+    assert '[[ "$sbx_file_count" == "2" ]]' \
+      "quoting preserved: 2 files created (not 3)" \
+      "file_count='$sbx_file_count'"
+
+    # 8r. Subdirectory cwd: command runs in correct subpath
+    echo "  Testing subdirectory cwd resolution..."
+    # Create a subdirectory with a marker file in the sandbox
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"bash\",\"-c\",\"mkdir -p sub/dir && echo MARKER > sub/dir/test.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null >/dev/null
+
+    # Execute from the subdirectory — should find the marker file
+    sbx_subdir_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"cat\",\"test.txt\"],\"cwd\":\"$SBX_WORKTREE_DIR/sub/dir\"}" \
+      2>/dev/null)
+    sbx_subdir_exit=$(echo "$sbx_subdir_raw" | sandbox_exec_exit)
+    sbx_subdir_stdout=$(echo "$sbx_subdir_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+    assert '[[ "$sbx_subdir_exit" == "0" ]]' \
+      "subdirectory cwd: command succeeded" "exitCode='$sbx_subdir_exit'"
+    assert '[[ "$sbx_subdir_stdout" == "MARKER" ]]' \
+      "subdirectory cwd: ran in correct directory" "stdout='$sbx_subdir_stdout'"
+
+    # Verify subdirectory reuses same sandbox (no new sandbox created)
+    sbx_list_after_subdir=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d '{"mode":"list"}' 2>/dev/null)
+    sbx_count_after_subdir=$(echo "$sbx_list_after_subdir" | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+      const list = JSON.parse(d.stdout || '[]');
+      const ours = list.filter(s => s.cwd === '$SBX_WORKTREE_DIR');
+      console.log(ours.length);
+    " 2>/dev/null || echo "0")
+    assert '[[ "$sbx_count_after_subdir" == "1" ]]' \
+      "subdirectory cwd: reused existing sandbox (no duplicate)" \
+      "count='$sbx_count_after_subdir'"
+
+    # 8s. Sandbox disappears between execs (auto-recreate)
+    echo "  Testing auto-recreate after sandbox disappears..."
+    # First, exec to ensure a sandbox exists
+    sbx_pre_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"echo\",\"pre-disappear\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_pre_exit=$(echo "$sbx_pre_raw" | sandbox_exec_exit)
+    assert '[[ "$sbx_pre_exit" == "0" ]]' "pre-disappear exec succeeded" "exitCode='$sbx_pre_exit'"
+    # Stop the sandbox behind the scenes (simulates Daytona auto-stop)
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
+    sleep 2
+    # Exec again — should auto-recreate
+    sbx_recreate_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"echo\",\"post-recreate\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_recreate_exit=$(echo "$sbx_recreate_raw" | sandbox_exec_exit)
+    sbx_recreate_stdout=$(echo "$sbx_recreate_raw" | sandbox_exec_stdout)
+    assert '[[ "$sbx_recreate_exit" == "0" ]]' \
+      "auto-recreate after disappear succeeded" \
+      "exitCode='$sbx_recreate_exit'"
+    assert '[[ "$sbx_recreate_stdout" == *"post-recreate"* ]]' \
+      "auto-recreated sandbox runs command correctly" \
+      "stdout='${sbx_recreate_stdout:0:200}'"
+    # Stop for cleanup
+    curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
+
+    # 8t. Two worktrees, two sandboxes (label isolation)
+    sleep 3  # allow Daytona to fully clean up previous sandbox
+    echo "  Testing two-worktree sandbox isolation..."
+    SBX_BRANCH2="e2e-sandbox2-${SBX_TS}"
+    SBX_WORKTREE_DIR2="/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH2}"
+    docker exec "$remote_cli_container" \
+      git -C "$SBX_REPO_DIR" worktree add -b "$SBX_BRANCH2" "$SBX_WORKTREE_DIR2" "$SBX_NEW_SHA" 2>/dev/null
+    worktree2_created=$?
+
+    if [[ $worktree2_created -eq 0 ]]; then
+      # Exec on worktree 1 (old SHA)
+      sbx_iso1_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d "{\"mode\":\"exec\",\"args\":[\"cat\",\".git/HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+        2>/dev/null)
+      sbx_iso1_sha=$(echo "$sbx_iso1_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+
+      # Exec on worktree 2 (new SHA)
+      sbx_iso2_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d "{\"mode\":\"exec\",\"args\":[\"cat\",\".git/HEAD\"],\"cwd\":\"$SBX_WORKTREE_DIR2\"}" \
+        2>/dev/null)
+      sbx_iso2_sha=$(echo "$sbx_iso2_raw" | sandbox_exec_stdout | tr -d '[:space:]')
+
+      assert '[[ "$sbx_iso1_sha" == "$SBX_OLD_SHA" ]]' \
+        "worktree 1 sandbox has correct SHA" \
+        "expected='${SBX_OLD_SHA:0:12}', got='${sbx_iso1_sha:0:12}'"
+      assert '[[ "$sbx_iso2_sha" == "$SBX_NEW_SHA" ]]' \
+        "worktree 2 sandbox has correct SHA (isolated)" \
+        "expected='${SBX_NEW_SHA:0:12}', got='${sbx_iso2_sha:0:12}'"
+
+      # Verify list shows both
+      sbx_list_both=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d '{"mode":"list"}' 2>/dev/null)
+      sbx_list_both_count=$(echo "$sbx_list_both" | node -e "
+        const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+        const list = JSON.parse(d.stdout || '[]');
+        const ours = list.filter(s =>
+          s.cwd === '$SBX_WORKTREE_DIR' || s.cwd === '$SBX_WORKTREE_DIR2'
+        );
+        console.log(ours.length);
+      " 2>/dev/null || echo "0")
+      assert '[[ "$sbx_list_both_count" == "2" ]]' \
+        "list shows both sandboxes" \
+        "count='$sbx_list_both_count'"
+
+      # Stop both
+      curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
+      curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR2\"}" 2>/dev/null >/dev/null
+
+      # Clean up worktree 2
+      docker exec "$remote_cli_container" \
+        git -C "$SBX_REPO_DIR" worktree remove --force "$SBX_WORKTREE_DIR2" 2>/dev/null || true
+      docker exec "$remote_cli_container" \
+        git -C "$SBX_REPO_DIR" branch -D "$SBX_BRANCH2" 2>/dev/null || true
+    else
+      assert 'false' "second worktree created for isolation test" "git worktree add failed"
+    fi
+  fi
+
+  # 8u. Parallel exec on same worktree (cwd-level lock + concurrent streaming)
+  echo "  Testing parallel sandbox exec on same worktree..."
+  # Create a dirty file so both requests exercise the overlay path
+  docker exec "$remote_cli_container" sh -c \
+    "echo 'parallel-e2e' > $SBX_WORKTREE_DIR/parallel-test.txt" 2>/dev/null
+
+  # Fire two sandbox exec requests in parallel.
+  # Each command prints a start timestamp, sleeps 3s, then prints an end
+  # timestamp. On the host side we verify the time ranges overlap —
+  # proving both commands ran concurrently in the sandbox (the lock
+  # serializes overlay sync, not the exec itself).
+  sbx_par1_file=$(mktemp)
+  sbx_par2_file=$(mktemp)
+  curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+    -H 'Content-Type: application/json' \
+    -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo START_A \$(date +%s); sleep 10; echo END_A \$(date +%s)\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+    2>/dev/null > "$sbx_par1_file" &
+  par1_pid=$!
+  curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+    -H 'Content-Type: application/json' \
+    -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"echo START_B \$(date +%s); sleep 10; echo END_B \$(date +%s)\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+    2>/dev/null > "$sbx_par2_file" &
+  par2_pid=$!
+  wait "$par1_pid" "$par2_pid" 2>/dev/null
+
+  sbx_par1_exit=$(cat "$sbx_par1_file" | sandbox_exec_exit)
+  sbx_par1_stdout=$(cat "$sbx_par1_file" | sandbox_exec_stdout)
+  sbx_par2_exit=$(cat "$sbx_par2_file" | sandbox_exec_exit)
+  sbx_par2_stdout=$(cat "$sbx_par2_file" | sandbox_exec_stdout)
+  rm -f "$sbx_par1_file" "$sbx_par2_file"
+
+  assert '[[ "$sbx_par1_exit" == "0" ]]' "parallel exec #1 succeeded" "exitCode='$sbx_par1_exit'"
+  assert '[[ "$sbx_par2_exit" == "0" ]]' "parallel exec #2 succeeded" "exitCode='$sbx_par2_exit'"
+  assert '[[ "$sbx_par1_stdout" == *"START_A"* ]]' \
+    "parallel exec #1 output correct" "stdout='${sbx_par1_stdout:0:200}'"
+  assert '[[ "$sbx_par2_stdout" == *"START_B"* ]]' \
+    "parallel exec #2 output correct" "stdout='${sbx_par2_stdout:0:200}'"
+
+  # Verify time ranges overlap: A started before B ended, and B started before A ended.
+  # This proves both commands were running concurrently in the sandbox.
+  par_start_a=$(echo "$sbx_par1_stdout" | grep -o 'START_A [0-9]*' | awk '{print $2}')
+  par_end_a=$(echo "$sbx_par1_stdout" | grep -o 'END_A [0-9]*' | awk '{print $2}')
+  par_start_b=$(echo "$sbx_par2_stdout" | grep -o 'START_B [0-9]*' | awk '{print $2}')
+  par_end_b=$(echo "$sbx_par2_stdout" | grep -o 'END_B [0-9]*' | awk '{print $2}')
+  assert '[[ -n "$par_start_a" && -n "$par_end_a" && -n "$par_start_b" && -n "$par_end_b" ]]' \
+    "parallel exec: all timestamps captured" \
+    "start_a=$par_start_a end_a=$par_end_a start_b=$par_start_b end_b=$par_end_b"
+  # Overlap: A starts before B ends AND B starts before A ends
+  if [[ -n "$par_start_a" && -n "$par_end_a" && -n "$par_start_b" && -n "$par_end_b" ]]; then
+    assert '[[ "$par_start_a" -le "$par_end_b" && "$par_start_b" -le "$par_end_a" ]]' \
+      "parallel exec: time ranges overlap (commands ran concurrently)" \
+      "A=[$par_start_a..$par_end_a] B=[$par_start_b..$par_end_b]"
+  fi
+
+  # Verify local worktree is clean (no git history manipulation)
+  local_head_parallel=$(docker exec "$remote_cli_container" \
+    git -C "$SBX_WORKTREE_DIR" log -1 --format=%s 2>/dev/null)
+  assert '[[ "$local_head_parallel" != "thor-sandbox-wip" ]]' \
+    "no temp commits in local history after parallel exec" \
+    "HEAD message: '$local_head_parallel'"
+
+  # Clean up dirty file and stop sandbox
+  docker exec "$remote_cli_container" \
+    rm -f "$SBX_WORKTREE_DIR/parallel-test.txt" 2>/dev/null
+  curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+    -H 'Content-Type: application/json' \
+    -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
+
+  # Clean up worktree
+  docker exec "$remote_cli_container" \
+    git -C "$SBX_REPO_DIR" worktree remove --force "$SBX_WORKTREE_DIR" 2>/dev/null || true
+  docker exec "$remote_cli_container" \
+    git -C "$SBX_REPO_DIR" branch -D "$SBX_BRANCH" 2>/dev/null || true
+fi
+
+# ── 9. Alias-based session matching via gateway ──────────────────────────────
 #
 # Test flow:
 #   1. Trigger #1 (runner): agent runs git worktree add → alias registered
@@ -360,7 +1289,7 @@ echo "=== Alias-based Session Matching ==="
 ALIAS_TS=$(date +%s)
 ALIAS_BRANCH="e2e-alias-${ALIAS_TS}"
 CORR_KEY_ALIAS="e2e-alias-session-${ALIAS_TS}"
-ALIAS_PHRASE="ALIAS$(echo $ALIAS_TS | tail -c 6)"
+ALIAS_PHRASE="ALIAS$(echo "${ALIAS_TS}" | tail -c 6)"
 ALIAS_REPO="${ALIAS_REPO:-acme-multi-hyphen-repo}"
 ALIAS_DIR="/workspace/repos/$ALIAS_REPO"
 ALIAS_WORKTREE="/workspace/worktrees/$ALIAS_REPO/$ALIAS_BRANCH"
@@ -448,11 +1377,11 @@ else
   # Clean up: remove worktree and delete the test branch
   echo ""
   echo "  Cleaning up test worktree and branch..."
-  curl -sf -X POST "$GIT_WRAPPERS_URL/exec/git" \
+  curl -sf -X POST "$REMOTE_CLI_URL/exec/git" \
     -H 'Content-Type: application/json' \
     -d "{\"args\":[\"worktree\",\"remove\",\"--force\",\"$ALIAS_WORKTREE\"],\"cwd\":\"$ALIAS_DIR\"}" \
     2>/dev/null >/dev/null
-  curl -sf -X POST "$GIT_WRAPPERS_URL/exec/git" \
+  curl -sf -X POST "$REMOTE_CLI_URL/exec/git" \
     -H 'Content-Type: application/json' \
     -d "{\"args\":[\"branch\",\"-D\",\"$ALIAS_BRANCH\"],\"cwd\":\"$ALIAS_DIR\"}" \
     2>/dev/null >/dev/null
@@ -466,7 +1395,9 @@ echo "  $passed passed, $failed failed"
 echo ""
 
 # Clean up e2e test directory and per-repo memory (only if we created the default one)
-[[ "$SESSION_DIR" == "/workspace/repos/e2e-test" ]] && rm -rf "${HOST_WORKSPACE}/repos/e2e-test" "${MEMORY_DIR}/e2e-test"
+[[ "$SESSION_DIR" == "/workspace/repos/e2e-test" && -n "$HOST_WORKSPACE" ]] && rm -rf "${HOST_WORKSPACE}/repos/e2e-test" "${MEMORY_DIR}/e2e-test"
+[[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
+[[ -n "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
 
 if [[ $failed -gt 0 ]]; then
   echo "FAIL"

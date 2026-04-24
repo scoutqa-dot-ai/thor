@@ -23,7 +23,7 @@ Rename `repos.json` → `config.json`. Add `createConfigLoader` in `@thor/common
     "atlassian": {
       "upstream": {
         "url": "https://mcp.atlassian.com/v1/mcp",
-        "headers": { "Authorization": "Basic ${ATLASSIAN_BASIC_AUTH}" }
+        "headers": { "Authorization": "${ATLASSIAN_AUTH}" }
       },
       "allow": [
         "atlassianUserInfo",

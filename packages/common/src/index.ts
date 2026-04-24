@@ -1,25 +1,31 @@
 export {
   WorkspaceConfigSchema,
   loadWorkspaceConfig,
+  validateWorkspaceConfig,
   getAllowedChannelIds,
   getChannelRepoMap,
   resolveRepoDirectory,
   isAllowedDirectory,
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
-  getProxyConfig,
   extractRepoFromCwd,
-  getRepoProxies,
+  getRepoUpstreams,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";
+export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.js";
 export type {
   WorkspaceConfig,
   RepoConfig,
   ProxyConfig,
   ProxyUpstream,
   ConfigLoader,
+  GitHubAppInstallation,
+  GitHubAppConfig,
+  ValidationIssue,
+  ValidationResult,
 } from "./workspace-config.js";
+export type { ProxyName } from "./proxies.js";
 export { writeToolCallLog } from "./worklog.js";
 export type { ToolCallLogEntry } from "./worklog.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
@@ -57,11 +63,13 @@ export type {
   ThorMetaAlias,
   ThorMetaApproval,
 } from "./notes.js";
-export { ExecResultSchema, NdjsonChunkSchema } from "./exec-result.js";
-export type { ExecResult, NdjsonChunk } from "./exec-result.js";
+export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
+export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,
+  ProgressMemorySchema,
+  ProgressDelegateSchema,
   ProgressDoneSchema,
   ProgressErrorSchema,
   ProgressApprovalRequiredSchema,
@@ -73,6 +81,8 @@ export {
 export type {
   ProgressStart,
   ProgressTool,
+  ProgressMemory,
+  ProgressDelegate,
   ProgressDone,
   ProgressError,
   ProgressApprovalRequired,

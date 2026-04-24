@@ -1,3 +1,4 @@
+import type { Block, KnownBlock } from "@slack/types";
 import { WebClient, type FilesInfoResponse } from "@slack/web-api";
 
 export type SlackDeps = {
@@ -68,7 +69,7 @@ export type SlackFileReadResult =
       data: string;
     };
 
-export type SlackBlock = Record<string, unknown>;
+export type SlackBlock = Block | KnownBlock;
 
 export async function postMessage(
   channel: string,

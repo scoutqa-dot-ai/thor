@@ -11,7 +11,7 @@ import type {
   ToolStateCompleted,
   ToolStateError,
 } from "@opencode-ai/sdk";
-import { EventBusRegistry } from "./event-bus.js";
+import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
 import { readFileSync } from "node:fs";
 import {
   createLogger,
@@ -34,10 +34,11 @@ import {
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
   extractRepoFromCwd,
-  getRepoProxies,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
+import { buildToolInstructions } from "./tool-instructions.js";
+import { getMemoryProgressEvents } from "./memory-progress.js";
 
 const log = createLogger("runner");
 
@@ -81,58 +82,12 @@ function readRepoMemory(directory: string): string | undefined {
   return readMemoryFile(`${MEMORY_DIR}/${repo}/README.md`);
 }
 
-/**
- * Build tool instructions block for a session based on the repo's configured upstreams.
- * Renders entirely from workspace config — no proxy dependency.
- */
-function buildToolInstructions(directory: string): string | undefined {
-  const repo = extractRepoFromCwd(directory);
-  if (!repo) return undefined;
-
-  let config;
+function getToolInstructions(directory: string): string | undefined {
   try {
-    config = getWorkspaceConfig();
+    return buildToolInstructions(getWorkspaceConfig(), directory);
   } catch {
     return undefined;
   }
-
-  const allowed = getRepoProxies(config, repo);
-  if (!allowed || allowed.length === 0) return undefined;
-
-  const sections: string[] = [];
-
-  for (const upstreamName of allowed) {
-    const proxyDef = config.proxies?.[upstreamName];
-    if (!proxyDef) continue;
-
-    const allow = proxyDef.allow ?? [];
-    const approve = proxyDef.approve ?? [];
-
-    if (allow.length > 0) {
-      sections.push(`## ${upstreamName} (allow)`);
-      for (const name of allow) sections.push(`- ${name}`);
-    }
-
-    if (approve.length > 0) {
-      sections.push(`## ${upstreamName} (approve — requires human approval)`);
-      for (const name of approve) sections.push(`- ${name}`);
-    }
-  }
-
-  if (sections.length === 0) return undefined;
-
-  return [
-    "[Available MCP tools — use the `mcp` CLI to call these]",
-    "",
-    ...sections,
-    "",
-    "Usage: mcp <upstream> <tool> <<'EOF'",
-    '{"arg":"value"}',
-    "EOF",
-    "Always pass JSON via heredoc (<<'EOF') to avoid shell quoting issues.",
-    "Run `mcp <upstream> <tool> --help` to see tool description and input schema.",
-    "Run `approval status <id>` to check approval status.",
-  ].join("\n");
 }
 
 async function fetchOpencode(path: string): Promise<Response> {
@@ -226,6 +181,8 @@ const CMD_DEPTH: Record<string, number> = {
   npm: 2,
   pnpm: 2,
   bun: 2,
+  langfuse: 4,
+  metabase: 2,
 };
 
 /**
@@ -246,6 +203,14 @@ function toolDisplayName(toolPart: ToolPart): string {
 
   const depth = CMD_DEPTH[cmd] ?? 1;
   return parts.slice(0, depth).join(" ");
+}
+
+function emitMemoryEventsFromToolPart(toolPart: ToolPart, emit: (event: ProgressEvent) => void): void {
+  const status = toolPart.state.status;
+  const input = (toolPart.state as { input?: unknown }).input;
+  for (const event of getMemoryProgressEvents({ tool: toolPart.tool, status, input })) {
+    emit(event);
+  }
 }
 
 /** Log a part to stdout if it's interesting. */
@@ -442,22 +407,7 @@ app.post("/trigger", async (req, res) => {
         await client.session.abort({ path: { id: sessionId } });
 
         const abortSub = await eventBuses.subscribe(sessionDirectory, [sessionId]);
-
-        // Wait for session.idle with a hard timeout via Promise.race.
-        // The previous `for await` approach only checked the deadline when a
-        // new SSE event arrived — if the stream went quiet after abort, the
-        // deadline was never evaluated and the handler hung for minutes.
-        const waitForIdle = (async () => {
-          for await (const event of abortSub) {
-            if (event.type === "session.idle") return true;
-          }
-          return false;
-        })();
-
-        const aborted = await Promise.race([
-          waitForIdle,
-          new Promise<false>((resolve) => setTimeout(() => resolve(false), ABORT_TIMEOUT)),
-        ]);
+        const aborted = await waitForSessionSettled(abortSub, ABORT_TIMEOUT);
         abortSub.close();
 
         if (!aborted) {
@@ -495,11 +445,14 @@ app.post("/trigger", async (req, res) => {
       }
     }
 
+    const bootstrapMemoryPaths: string[] = [];
+
     // --- Memory: inject into new or stale sessions ---
     if (!resumed) {
       const rootMemory = readRootMemory();
       if (rootMemory) {
         prompt = `[Root memory — important context from prior sessions]\n${rootMemory}\n\n${prompt}`;
+        bootstrapMemoryPaths.push(ROOT_MEMORY_PATH);
       } else {
         prompt = `[Root memory: none yet — write to ${ROOT_MEMORY_PATH} to persist cross-repo context]\n\n${prompt}`;
       }
@@ -511,13 +464,14 @@ app.post("/trigger", async (req, res) => {
         const repoMemory = readRepoMemory(sessionDirectory);
         if (repoMemory) {
           prompt = `[Repo memory — context for ${repo}]\n${repoMemory}\n\n${prompt}`;
+          bootstrapMemoryPaths.push(repoMemoryPath);
         } else {
           prompt = `[Repo memory: none yet — write to ${repoMemoryPath} to persist per-repo context]\n\n${prompt}`;
         }
       }
 
       // Tool instructions: inject MCP tool list from config
-      const toolInstructions = buildToolInstructions(sessionDirectory);
+      const toolInstructions = getToolInstructions(sessionDirectory);
       if (toolInstructions) {
         prompt = `${toolInstructions}\n\n${prompt}`;
         logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });
@@ -570,6 +524,12 @@ app.post("/trigger", async (req, res) => {
         sessionId,
         type: event.type,
         ...(event.type === "tool" ? { tool: event.tool } : {}),
+        ...(event.type === "memory"
+          ? { action: event.action, path: event.path, source: event.source }
+          : {}),
+        ...(event.type === "delegate"
+          ? { agent: event.agent, description: event.description }
+          : {}),
         ...(event.type === "done"
           ? { status: event.status, durationMs: (event as { durationMs?: number }).durationMs }
           : {}),
@@ -586,6 +546,10 @@ app.post("/trigger", async (req, res) => {
       ...(previousNotesPath ? { previousNotesPath } : {}),
     });
 
+    for (const path of bootstrapMemoryPaths) {
+      emit({ type: "memory", action: "read", path, source: "bootstrap" });
+    }
+
     // --- Stream processing ---
 
     let seq = 0;
@@ -601,118 +565,130 @@ app.post("/trigger", async (req, res) => {
     // Track child session IDs for progress forwarding.
     const childSessionIds = new Set<string>();
 
-    for await (const event of subscription) {
-      if (finished) break;
+    await withNdjsonHeartbeat(emit, async () => {
+      for await (const event of subscription) {
+        if (finished) break;
 
-      const isParent = isSessionEvent(event, sessionId);
+        const isParent = isSessionEvent(event, sessionId);
 
-      // Forward tool progress from child sessions so
-      // Slack progress isn't silent while a task runs.
-      if (!isParent) {
-        if (
-          event.type === "message.part.updated" &&
-          childSessionIds.has(event.properties.part.sessionID)
-        ) {
-          const part = event.properties.part;
-          if (part.type === "tool") {
-            const toolPart = part as ToolPart;
-            const status = toolPart.state.status;
-            if (status === "completed" || status === "error") {
-              const displayName = toolDisplayName(toolPart);
-              emit({ type: "tool", tool: displayName, status });
-            }
-          }
-        }
-        continue;
-      }
-
-      if (event.type === "message.part.updated") {
-        const part = event.properties.part;
-        seq++;
-
-        // Stdout logging (selective)
-        logPartToStdout(sessionId, part);
-
-        // Accumulate data for response regardless of filtering
-        if (part.type === "text") {
-          const textPart = part as TextPart;
-          collectedTextParts.push(textPart.text);
-          lastMessageId = textPart.messageID;
-        } else if (part.type === "tool") {
-          const toolPart = part as ToolPart;
-          const status = toolPart.state.status;
-
-          // Discover child sessions when a task tool starts running.
-          if (toolPart.tool === "task" && status === "running") {
-            client.session
-              .children({ path: { id: sessionId } })
-              .then((resp) => {
-                if (resp.data) {
-                  for (const child of resp.data) {
-                    childSessionIds.add(child.id);
-                    subscription.addSessionId(child.id);
-                  }
-                }
-              })
-              .catch(() => {});
-          }
-
-          if (status === "completed" || status === "error") {
-            const displayName = toolDisplayName(toolPart);
-            collectedToolCalls.push({ tool: displayName, state: status });
-            emit({ type: "tool", tool: displayName, status });
-
-            // Detect approval-required tool results and emit approval event.
-            if (status === "completed") {
-              const completed = toolPart.state as ToolStateCompleted;
-              const approval = parseApprovalResult(
-                completed.output,
-                toolPart.tool,
-                (completed.input as Record<string, unknown>) ?? {},
-              );
-              if (approval) {
-                emit(approval);
+        // Forward tool progress from child sessions so
+        // Slack progress isn't silent while a task runs.
+        if (!isParent) {
+          if (
+            event.type === "message.part.updated" &&
+            childSessionIds.has(event.properties.part.sessionID)
+          ) {
+            const part = event.properties.part;
+            if (part.type === "tool") {
+              const toolPart = part as ToolPart;
+              const status = toolPart.state.status;
+              if (status === "completed" || status === "error") {
+                const displayName = toolDisplayName(toolPart);
+                emit({ type: "tool", tool: displayName, status });
+                emitMemoryEventsFromToolPart(toolPart, emit);
               }
             }
-
-            // Collect input/output for aliasable tools
-            if (status === "completed" && isAliasableTool(toolPart.tool)) {
-              const completed = toolPart.state as ToolStateCompleted;
-              collectedArtifacts.push({
-                tool: toolPart.tool,
-                input: completed.input as Record<string, unknown>,
-                output: typeof completed.output === "string" ? completed.output : "",
-              });
-            }
           }
-          lastMessageId = toolPart.messageID;
-        } else if (part.type === "step-finish") {
-          const stepFinish = part as StepFinishPart;
-          totalCost += stepFinish.cost;
-          totalTokens.input += stepFinish.tokens.input;
-          totalTokens.output += stepFinish.tokens.output;
-          totalTokens.reasoning += stepFinish.tokens.reasoning;
-          totalTokens.cache.read += stepFinish.tokens.cache.read;
-          totalTokens.cache.write += stepFinish.tokens.cache.write;
-          lastMessageId = stepFinish.messageID;
+          continue;
         }
-      } else if (event.type === "session.error") {
-        const errorProps = event.properties;
-        sessionError =
-          errorProps.error && "data" in errorProps.error
-            ? (errorProps.error.data as { message?: string }).message || errorProps.error.name
-            : "Unknown error";
-        logError(log, "session_error", sessionError, {
-          sessionId,
-          errorDetail: JSON.stringify(errorProps.error),
-        });
-        finished = true;
-        break;
-      } else if (event.type === "session.idle") {
-        finished = true;
-        break;
+
+        if (event.type === "message.part.updated") {
+          const part = event.properties.part;
+          seq++;
+
+          // Stdout logging (selective)
+          logPartToStdout(sessionId, part);
+
+          // Accumulate data for response regardless of filtering
+          if (part.type === "text") {
+            const textPart = part as TextPart;
+            collectedTextParts.push(textPart.text);
+            lastMessageId = textPart.messageID;
+          } else if (part.type === "tool") {
+            const toolPart = part as ToolPart;
+            const status = toolPart.state.status;
+
+            // Discover child sessions when a task tool starts running.
+            if (toolPart.tool === "task" && status === "running") {
+              client.session
+                .children({ path: { id: sessionId } })
+                .then((resp) => {
+                  if (resp.data) {
+                    for (const child of resp.data) {
+                      childSessionIds.add(child.id);
+                      subscription.addSessionId(child.id);
+                    }
+                  }
+                })
+                .catch(() => {});
+            }
+
+            if (status === "completed" || status === "error") {
+              const displayName = toolDisplayName(toolPart);
+              collectedToolCalls.push({ tool: displayName, state: status });
+              emit({ type: "tool", tool: displayName, status });
+              emitMemoryEventsFromToolPart(toolPart, emit);
+
+              // Detect approval-required tool results and emit approval event.
+              if (status === "completed") {
+                const completed = toolPart.state as ToolStateCompleted;
+                const approval = parseApprovalResult(
+                  completed.output,
+                  toolPart.tool,
+                  (completed.input as Record<string, unknown>) ?? {},
+                );
+                if (approval) {
+                  emit(approval);
+                }
+              }
+
+              // Collect input/output for aliasable tools
+              if (status === "completed" && isAliasableTool(toolPart.tool)) {
+                const completed = toolPart.state as ToolStateCompleted;
+                collectedArtifacts.push({
+                  tool: toolPart.tool,
+                  input: completed.input as Record<string, unknown>,
+                  output: typeof completed.output === "string" ? completed.output : "",
+                });
+              }
+            }
+            lastMessageId = toolPart.messageID;
+          } else if (part.type === "step-finish") {
+            const stepFinish = part as StepFinishPart;
+            totalCost += stepFinish.cost;
+            totalTokens.input += stepFinish.tokens.input;
+            totalTokens.output += stepFinish.tokens.output;
+            totalTokens.reasoning += stepFinish.tokens.reasoning;
+            totalTokens.cache.read += stepFinish.tokens.cache.read;
+            totalTokens.cache.write += stepFinish.tokens.cache.write;
+            lastMessageId = stepFinish.messageID;
+          } else if (part.type === "subtask") {
+            const subtaskPart = part as Part & { type: "subtask"; description: string; agent: string };
+            const description = subtaskPart.description?.trim();
+            emit({
+              type: "delegate",
+              agent: subtaskPart.agent,
+              ...(description ? { description } : {}),
+            });
+          }
+        } else if (event.type === "session.error") {
+          const errorProps = event.properties;
+          sessionError =
+            errorProps.error && "data" in errorProps.error
+              ? (errorProps.error.data as { message?: string }).message || errorProps.error.name
+              : "Unknown error";
+          logError(log, "session_error", sessionError, {
+            sessionId,
+            errorDetail: JSON.stringify(errorProps.error),
+          });
+          finished = true;
+          break;
+        } else if (event.type === "session.idle") {
+          finished = true;
+          break;
+        }
       }
-    }
+    });
     subscription.close();
 
     const durationMs = Date.now() - promptStart;
@@ -794,6 +770,23 @@ app.post("/trigger", async (req, res) => {
 // --- Helpers ---
 
 /**
+ * Run `fn` while a heartbeat keeps the NDJSON response stream alive.
+ * Sends a typed heartbeat event every 30s to prevent idle-connection
+ * timeouts; the heartbeat is always cleared on exit.
+ */
+async function withNdjsonHeartbeat<T>(
+  emit: (event: ProgressEvent) => void,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const id = setInterval(() => emit({ type: "heartbeat" }), 30_000);
+  try {
+    return await fn();
+  } finally {
+    clearInterval(id);
+  }
+}
+
+/**
  * Check if an SSE event belongs to a specific session.
  */
 function isSessionEvent(event: Event, sessionId: string): boolean {
@@ -812,7 +805,7 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
 
 /**
  * Parse a tool result for approval-required signal.
- * The proxy emits a [thor:meta] line with { type: "approval", actionId, proxyName, tool }.
+ * remote-cli emits a [thor:meta] line with { type: "approval", actionId, proxyName, tool }.
  */
 function parseApprovalResult(
   output: string,
