@@ -12,6 +12,7 @@ import {
   getInstallationIdForOrg,
   interpolateEnv,
   interpolateHeaders,
+  validateWorkspaceConfig,
 } from "./workspace-config.js";
 
 let tempDir: string;
@@ -371,6 +372,30 @@ describe("getInstallationIdForOrg", () => {
     ).toBe(126669985);
   });
 
+  it("matches mixed-case configured org keys with lowercase lookup", () => {
+    expect(
+      getInstallationIdForOrg(
+        {
+          repos: {},
+          orgs: { AcmeCorp: { github_app_installation_id: 424242 } },
+        },
+        "acmecorp",
+      ),
+    ).toBe(424242);
+  });
+
+  it("matches mixed-case configured org keys with mixed-case lookup", () => {
+    expect(
+      getInstallationIdForOrg(
+        {
+          repos: {},
+          orgs: { AcmeCorp: { github_app_installation_id: 424242 } },
+        },
+        "aCmEcOrP",
+      ),
+    ).toBe(424242);
+  });
+
   it("returns undefined for unknown or missing org map", () => {
     expect(getInstallationIdForOrg({ repos: {} }, "acme")).toBeUndefined();
     expect(
@@ -382,5 +407,28 @@ describe("getInstallationIdForOrg", () => {
         "acme",
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("validateWorkspaceConfig org casing", () => {
+  it("rejects org keys that differ only by case", () => {
+    const result = validateWorkspaceConfig({
+      repos: {},
+      orgs: {
+        acme: { github_app_installation_id: 1 },
+        Acme: { github_app_installation_id: 2 },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "orgs.Acme",
+          message: expect.stringContaining('already configured as "acme"'),
+        }),
+      ]),
+    );
   });
 });

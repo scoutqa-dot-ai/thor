@@ -145,6 +145,20 @@ export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
     }
   }
 
+  const seenOrgs = new Map<string, string>();
+  for (const org of Object.keys(result.data.orgs ?? {})) {
+    const normalizedOrg = org.toLowerCase();
+    const existing = seenOrgs.get(normalizedOrg);
+    if (existing) {
+      issues.push({
+        path: `orgs.${org}`,
+        message: `Duplicate org key "${org}" — already configured as "${existing}" when compared case-insensitively`,
+      });
+    } else {
+      seenOrgs.set(normalizedOrg, org);
+    }
+  }
+
   if (issues.length > 0) return { ok: false, issues };
   return { ok: true, data: result.data };
 }
@@ -327,7 +341,22 @@ export function getRepoUpstreams(config: WorkspaceConfig, repoName: string): str
  * Lookup GitHub App installation ID for a configured org.
  */
 export function getInstallationIdForOrg(config: WorkspaceConfig, org: string): number | undefined {
-  return config.orgs?.[org.toLowerCase()]?.github_app_installation_id;
+  const configuredOrgs = config.orgs;
+  if (!configuredOrgs) return undefined;
+
+  const exactMatch = configuredOrgs[org];
+  if (exactMatch) {
+    return exactMatch.github_app_installation_id;
+  }
+
+  const orgLower = org.toLowerCase();
+  for (const [configuredOrg, orgConfig] of Object.entries(configuredOrgs)) {
+    if (configuredOrg.toLowerCase() === orgLower) {
+      return orgConfig.github_app_installation_id;
+    }
+  }
+
+  return undefined;
 }
 
 const ALLOWED_PREFIXES = ["/workspace/repos/"];
