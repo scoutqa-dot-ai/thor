@@ -150,6 +150,10 @@ export interface GatewayApp {
 }
 
 export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
+  if (!config.slackBotToken.trim()) {
+    throw new Error("SLACK_BOT_TOKEN is required");
+  }
+
   // --- Event queue with handler ---
 
   const selfUserId = config.slackBotUserId;

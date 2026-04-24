@@ -1,5 +1,6 @@
 import {
   createLogger,
+  logError,
   logInfo,
   createConfigLoader,
   getAllowedChannelIds,
@@ -29,6 +30,11 @@ const REMOTE_CLI_PORT = parseInt(process.env.REMOTE_CLI_PORT || "3004", 10);
 const RESOLVE_SECRET = process.env.RESOLVE_SECRET || "";
 const OPENAI_AUTH_PATH = process.env.OPENAI_AUTH_PATH || "";
 const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
+
+if (!SLACK_BOT_TOKEN.trim()) {
+  logError(log, "missing_env", "SLACK_BOT_TOKEN is required");
+  process.exit(1);
+}
 
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,

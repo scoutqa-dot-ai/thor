@@ -88,6 +88,26 @@ afterEach(() => {
 });
 
 describe("gateway", () => {
+  it("fails fast when slack bot token is missing", () => {
+    const queueDir = mkdtempSync(join(tmpdir(), "gateway-config-test-"));
+
+    try {
+      expect(() =>
+        createGatewayApp({
+          signingSecret: "signing-secret",
+          slackBotToken: "",
+          slackBotUserId: "U0BOTEXAMPLE",
+          runnerUrl: "http://runner.test",
+          fetchImpl: vi.fn<typeof fetch>(),
+          queueDir,
+          disableQueueInterval: true,
+        }),
+      ).toThrow("SLACK_BOT_TOKEN is required");
+    } finally {
+      rmSync(queueDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns filtered Codex status from /health", async () => {
     const authDir = mkdtempSync(join(tmpdir(), "gateway-auth-"));
     const authPath = join(authDir, "auth.json");

@@ -542,4 +542,52 @@ describe("triggerRunnerApprovalOutcomes", () => {
     expect(body.interrupt).toBe(false);
     expect(body.correlationKey).toBe("slack:thread:1710000000.001");
   });
+
+  it("returns after acceptance without waiting for the runner body to finish", async () => {
+    let closeStream: (() => void) | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("pending"));
+        closeStream = () => controller.close();
+      },
+    });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { "content-type": "application/x-ndjson" },
+      }),
+    );
+    const onAccepted = vi.fn();
+    const { triggerRunnerApprovalOutcomes } = await import("./service.js");
+
+    const resultPromise = triggerRunnerApprovalOutcomes(
+      [
+        {
+          actionId: "act-1",
+          decision: "approved",
+          reviewer: "U123",
+          channel: "C123",
+          threadTs: "1710000000.001",
+        },
+      ],
+      "slack:thread:1710000000.001",
+      { runnerUrl: "http://runner:3000", fetchImpl },
+      false,
+      onAccepted,
+      new Map([["C123", "my-repo"]]),
+    );
+
+    const outcome = await Promise.race([
+      resultPromise.then((result) => ({ kind: "resolved" as const, result })),
+      new Promise<{ kind: "timeout" }>((resolve) =>
+        setTimeout(() => resolve({ kind: "timeout" }), 25),
+      ),
+    ]);
+
+    expect(outcome).toEqual({ kind: "resolved", result: { busy: false } });
+    expect(onAccepted).toHaveBeenCalledTimes(1);
+
+    closeStream?.();
+    await resultPromise;
+  });
 });
