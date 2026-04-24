@@ -12,6 +12,8 @@
 export { resolveGitArgs, validateGitArgs, type ResolvedGitArgs } from "./policy-git.js";
 export { validateGhArgs } from "./policy-gh.js";
 
+import { normalizePath } from "./policy-paths.js";
+
 // ── cwd validation ──────────────────────────────────────────────────────────
 
 const ALLOWED_CWD_PREFIXES = ["/workspace/repos", "/workspace/worktrees"];
@@ -33,18 +35,6 @@ export function validateCwd(cwd: string): string | null {
   }
 
   return null;
-}
-
-function normalizePath(p: string): string {
-  const parts: string[] = [];
-  for (const seg of p.split("/")) {
-    if (seg === "..") {
-      parts.pop();
-    } else if (seg !== "" && seg !== ".") {
-      parts.push(seg);
-    }
-  }
-  return "/" + parts.join("/");
 }
 
 // ── scoutqa policy ──────────────────────────────────────────────────────────

@@ -7,6 +7,9 @@
  */
 
 import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
+import { isPathUnderCwd, normalizePath } from "./policy-paths.js";
+
+const DIGITS_ONLY = /^\d+$/;
 
 interface ResolvedGitArgsSuccess {
   args: string[];
@@ -204,7 +207,7 @@ function validateRevParse(args: string[]): string | null {
   // `rev-parse --short=<N> HEAD`
   if (args.length === 3 && args[2] === "HEAD" && args[1].startsWith("--short=")) {
     const n = args[1].slice("--short=".length);
-    if (n.length > 0 && /^\d+$/.test(n)) return null;
+    if (n.length > 0 && DIGITS_ONLY.test(n)) return null;
   }
   return denyMessage("git rev-parse");
 }
@@ -242,7 +245,7 @@ function validateFetch(args: string[]): string | null {
   }
 
   const depths = valueFlagValues(parsed, "depth");
-  if (depths.length > 1 || depths.some((d) => !/^\d+$/.test(d) || d === "0")) {
+  if (depths.length > 1 || depths.some((d) => !DIGITS_ONLY.test(d) || d === "0")) {
     return denyMessage("git fetch");
   }
 
@@ -339,14 +342,6 @@ function validateCommit(args: string[], cwd: string | undefined): string | null 
   }
 
   return null;
-}
-
-function isPathUnderCwd(path: string, cwd: string | undefined): boolean {
-  if (!cwd || path.length === 0 || path === "-") return false;
-  const resolved = path.startsWith("/") ? path : `${cwd.replace(/\/+$/, "")}/${path}`;
-  const normalized = normalizePath(resolved);
-  const normalizedCwd = normalizePath(cwd);
-  return normalized === normalizedCwd || normalized.startsWith(normalizedCwd + "/");
 }
 
 function validateWorktree(args: string[]): string | null {
@@ -468,26 +463,18 @@ function validateLsRemote(args: string[]): string | null {
 }
 
 function validateTag(args: string[]): string | null {
-  // List-only: `git tag`, `git tag -l [<pattern>...]`, `git tag --list [<pattern>...]`,
-  // optionally with `-n[<num>]` output. Positional args are tag-name patterns and are
-  // only meaningful paired with `-l`/`--list` — without the list flag, `git tag <name>`
-  // creates a tag at HEAD, which is a write.
-  let listMode = false;
-  let sawPositional = false;
+  // List-only. `-l`/`--list` is required before any positional pattern —
+  // without it, `git tag <name>` creates a tag at HEAD.
+  const listMode = args.includes("-l") || args.includes("--list");
   for (let i = 1; i < args.length; i += 1) {
     const arg = args[i];
     if (!arg.startsWith("-")) {
-      sawPositional = true;
+      if (!listMode) return denyMessage("git tag");
       continue;
     }
-    if (arg === "-l" || arg === "--list") {
-      listMode = true;
-      continue;
-    }
-    if (arg === "-n" || /^-n\d+$/.test(arg)) continue;
+    if (arg === "-l" || arg === "--list" || arg === "-n" || /^-n\d+$/.test(arg)) continue;
     return denyMessage("git tag");
   }
-  if (sawPositional && !listMode) return denyMessage("git tag");
   return null;
 }
 
@@ -502,17 +489,4 @@ function validateStash(args: string[]): string | null {
 
 function matchesExactArgs(args: string[], expected: readonly string[]): boolean {
   return args.length === expected.length && args.every((arg, idx) => arg === expected[idx]);
-}
-
-function normalizePath(p: string): string {
-  const parts: string[] = [];
-  for (const seg of p.split("/")) {
-    if (seg === "" || seg === ".") continue;
-    if (seg === "..") {
-      parts.pop();
-      continue;
-    }
-    parts.push(seg);
-  }
-  return "/" + parts.join("/");
 }

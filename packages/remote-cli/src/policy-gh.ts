@@ -7,29 +7,10 @@
  */
 
 import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
+import { isPathUnderCwd } from "./policy-paths.js";
 
 const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
-
-function normalizePath(p: string): string {
-  const parts: string[] = [];
-  for (const seg of p.split("/")) {
-    if (seg === "" || seg === ".") continue;
-    if (seg === "..") {
-      parts.pop();
-      continue;
-    }
-    parts.push(seg);
-  }
-  return "/" + parts.join("/");
-}
-
-function isPathUnderCwd(path: string, cwd: string | undefined): boolean {
-  if (!cwd || path.length === 0 || path === "-") return false;
-  const resolved = path.startsWith("/") ? path : `${cwd.replace(/\/+$/, "")}/${path}`;
-  const normalized = normalizePath(resolved);
-  const normalizedCwd = normalizePath(cwd);
-  return normalized === normalizedCwd || normalized.startsWith(normalizedCwd + "/");
-}
+const DIGITS_ONLY = /^\d+$/;
 
 const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "api",
@@ -90,13 +71,13 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
     case "pr create":
       return validateGhPrCreateArgs(args, cwd);
     case "pr comment":
-      return validateGhCommentArgs(args, "gh pr comment", cwd);
+      return validateGhCommentArgs(args, "gh pr comment", { supportBodyFile: true, cwd });
     case "pr review":
       return validateGhPrReviewArgs(args);
     case "issue view":
       return validateRequiredNumericSelector(args, "gh issue view");
     case "issue comment":
-      return validateGhCommentArgs(args, "gh issue comment", cwd);
+      return validateGhCommentArgs(args, "gh issue comment", { supportBodyFile: false });
     case "issue create":
       return validateGhIssueCreateArgs(args);
     case "run view":
@@ -152,7 +133,7 @@ function denyMessage(command: string): string {
 }
 
 function validateRequiredNumericSelector(args: string[], command: string): string | null {
-  return args.length >= 3 && /^\d+$/.test(args[2]) ? null : denyMessage(command);
+  return args.length >= 3 && DIGITS_ONLY.test(args[2]) ? null : denyMessage(command);
 }
 
 function validateWorkflowViewArgs(args: string[]): string | null {
@@ -223,25 +204,24 @@ function validateGhIssueCreateArgs(args: string[]): string | null {
     : denyMessage("gh issue create");
 }
 
+type CommentOpts = { supportBodyFile: false } | { supportBodyFile: true; cwd: string | undefined };
+
 function validateGhCommentArgs(
   args: string[],
   command: "gh pr comment" | "gh issue comment",
-  cwd: string | undefined,
+  opts: CommentOpts,
 ): string | null {
   const selector = args[2];
-  if (!selector || !/^\d+$/.test(selector)) {
+  if (!selector || !DIGITS_ONLY.test(selector)) {
     return denyMessage(command);
   }
 
-  // `-F` is only allowed on `gh pr comment` (user scope). `gh issue comment` keeps
-  // the inline-body-only shape.
-  const flags: Parameters<typeof scanPolicyArgs>[2] =
-    command === "gh pr comment"
-      ? [
-          { name: "body", kind: "value", aliases: ["-b", "--body"] },
-          { name: "body-file", kind: "value", aliases: ["-F", "--body-file"] },
-        ]
-      : [{ name: "body", kind: "value", aliases: ["-b", "--body"] }];
+  const flags: Parameters<typeof scanPolicyArgs>[2] = opts.supportBodyFile
+    ? [
+        { name: "body", kind: "value", aliases: ["-b", "--body"] },
+        { name: "body-file", kind: "value", aliases: ["-F", "--body-file"] },
+      ]
+    : [{ name: "body", kind: "value", aliases: ["-b", "--body"] }];
 
   const parsed = scanPolicyArgs(args, 3, flags);
   if (!parsed || parsed.positionals.length > 0) {
@@ -249,11 +229,11 @@ function validateGhCommentArgs(
   }
 
   const bodies = valueFlagValues(parsed, "body");
-  const bodyFiles = command === "gh pr comment" ? valueFlagValues(parsed, "body-file") : [];
+  const bodyFiles = opts.supportBodyFile ? valueFlagValues(parsed, "body-file") : [];
 
   if (bodies.length > 0 && bodyFiles.length > 0) return denyMessage(command);
   if (bodyFiles.length > 1) return denyMessage(command);
-  if (bodyFiles.length === 1 && !isPathUnderCwd(bodyFiles[0], cwd)) {
+  if (opts.supportBodyFile && bodyFiles.length === 1 && !isPathUnderCwd(bodyFiles[0], opts.cwd)) {
     return denyMessage(command);
   }
 
@@ -263,7 +243,7 @@ function validateGhCommentArgs(
 function validateGhPrReviewArgs(args: string[]): string | null {
   let i = 2;
   if (i < args.length && !args[i].startsWith("-")) {
-    if (!/^\d+$/.test(args[i])) {
+    if (!DIGITS_ONLY.test(args[i])) {
       return denyMessage("gh pr review");
     }
     i += 1;
@@ -292,7 +272,7 @@ function validateGhPrReviewArgs(args: string[]): string | null {
 function validateGhRunRerunArgs(args: string[]): string | null {
   // `gh run rerun <id> [--failed] [--debug]`. `--job` is intentionally omitted
   // (minimal surface) but could be added later.
-  if (args.length < 3 || !/^\d+$/.test(args[2])) {
+  if (args.length < 3 || !DIGITS_ONLY.test(args[2])) {
     return denyMessage("gh run rerun");
   }
   const parsed = scanPolicyArgs(args, 3, [
@@ -308,7 +288,7 @@ function validateGhRunRerunArgs(args: string[]): string | null {
 function validateGhRunDownloadArgs(args: string[], cwd: string | undefined): string | null {
   // `gh run download <id> [--dir <path>] [--name <n>]... [--pattern <p>]...`.
   // --dir must resolve under cwd; --name / --pattern / -p are repeatable filters.
-  if (args.length < 3 || !/^\d+$/.test(args[2])) {
+  if (args.length < 3 || !DIGITS_ONLY.test(args[2])) {
     return denyMessage("gh run download");
   }
   const parsed = scanPolicyArgs(args, 3, [
