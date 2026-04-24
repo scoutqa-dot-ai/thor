@@ -1,0 +1,23 @@
+docs/plan/2026042404_declarative-command-policy.md
+  40353b33ce484e1f 1-150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b44662c79a838b1f4470de73520087ca071a6143",
+  "prompts": {
+    "40353b33ce484e1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c323878d-2418-41c9-b1eb-4b2333a5e889",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 150,
+      "total_deletions": 0,
+      "accepted_lines": 150,
+      "overriden_lines": 0
+    }
+  }
+}
