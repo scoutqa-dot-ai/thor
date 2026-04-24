@@ -6,6 +6,8 @@
  * every denied shape points the user at the `using-gh` skill.
  */
 
+import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
+
 const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
 
 const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
@@ -31,8 +33,6 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 const HELP_FLAGS: ReadonlySet<string> = new Set(["-h", "--help"]);
-const GH_API_BOOLEAN_FLAGS: ReadonlySet<string> = new Set(["--include", "-i", "--silent"]);
-const GH_API_VALUE_FLAGS: ReadonlySet<string> = new Set(["--jq", "-q", "--template", "-t"]);
 
 export function validateGhArgs(args: string[], _cwd?: string): string | null {
   if (!Array.isArray(args)) return "args must be an array";
@@ -120,41 +120,19 @@ function validateWorkflowViewArgs(args: string[]): string | null {
 }
 
 function validateGhPrCreateArgs(args: string[]): string | null {
-  let hasTitle = false;
-  let hasBody = false;
-
-  for (let i = 2; i < args.length; i += 1) {
-    const arg = args[i];
-
-    if (arg === "--draft") continue;
-
-    if (matchesFlag(arg, "-t", "--title")) {
-      const next = consumeRequiredValue(args, i);
-      if (next < 0) return denyMessage("gh pr create");
-      hasTitle = true;
-      i = next;
-      continue;
-    }
-
-    if (matchesFlag(arg, "-b", "--body")) {
-      const next = consumeRequiredValue(args, i);
-      if (next < 0) return denyMessage("gh pr create");
-      hasBody = true;
-      i = next;
-      continue;
-    }
-
-    if (matchesFlag(arg, "-B", "--base")) {
-      const next = consumeRequiredValue(args, i);
-      if (next < 0) return denyMessage("gh pr create");
-      i = next;
-      continue;
-    }
-
+  const parsed = scanPolicyArgs(args, 2, [
+    { name: "draft", kind: "boolean", aliases: ["--draft"] },
+    { name: "title", kind: "value", aliases: ["-t", "--title"] },
+    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+    { name: "base", kind: "value", aliases: ["-B", "--base"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
     return denyMessage("gh pr create");
   }
 
-  return hasTitle && hasBody ? null : denyMessage("gh pr create");
+  return valueFlagValues(parsed, "title").length > 0 && valueFlagValues(parsed, "body").length > 0
+    ? null
+    : denyMessage("gh pr create");
 }
 
 function validateGhCommentArgs(
@@ -166,21 +144,14 @@ function validateGhCommentArgs(
     return denyMessage(command);
   }
 
-  let hasBody = false;
-
-  for (let i = 3; i < args.length; i += 1) {
-    const arg = args[i];
-    if (!matchesFlag(arg, "-b", "--body")) {
-      return denyMessage(command);
-    }
-
-    const next = consumeRequiredValue(args, i);
-    if (next < 0) return denyMessage(command);
-    hasBody = true;
-    i = next;
+  const parsed = scanPolicyArgs(args, 3, [
+    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage(command);
   }
 
-  return hasBody ? null : denyMessage(command);
+  return valueFlagValues(parsed, "body").length > 0 ? null : denyMessage(command);
 }
 
 function validateGhPrReviewArgs(args: string[]): string | null {
@@ -192,33 +163,18 @@ function validateGhPrReviewArgs(args: string[]): string | null {
     i += 1;
   }
 
-  let hasComment = false;
-  let hasRequestChanges = false;
-  let hasBody = false;
-
-  for (; i < args.length; i += 1) {
-    const arg = args[i];
-
-    if (arg === "-c" || arg === "--comment") {
-      hasComment = true;
-      continue;
-    }
-
-    if (arg === "-r" || arg === "--request-changes") {
-      hasRequestChanges = true;
-      continue;
-    }
-
-    if (matchesFlag(arg, "-b", "--body")) {
-      const next = consumeRequiredValue(args, i);
-      if (next < 0) return denyMessage("gh pr review");
-      hasBody = true;
-      i = next;
-      continue;
-    }
-
+  const parsed = scanPolicyArgs(args, i, [
+    { name: "comment", kind: "boolean", aliases: ["-c", "--comment"] },
+    { name: "request-changes", kind: "boolean", aliases: ["-r", "--request-changes"] },
+    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
     return denyMessage("gh pr review");
   }
+
+  const hasComment = booleanFlagCount(parsed, "comment") > 0;
+  const hasRequestChanges = booleanFlagCount(parsed, "request-changes") > 0;
+  const hasBody = valueFlagValues(parsed, "body").length > 0;
 
   if (hasComment === hasRequestChanges || !hasBody) {
     return denyMessage("gh pr review");
@@ -233,47 +189,17 @@ function validateGhApiArgs(args: string[]): string | null {
     return denyMessage("gh api");
   }
 
-  for (let i = 2; i < args.length; i += 1) {
-    const arg = args[i];
-
-    if (GH_API_BOOLEAN_FLAGS.has(arg)) continue;
-
-    if (matchesValueOnlyFlag(arg, GH_API_VALUE_FLAGS)) {
-      const next = consumeRequiredValue(args, i);
-      if (next < 0) return denyMessage("gh api");
-      i = next;
-      continue;
-    }
-
+  const parsed = scanPolicyArgs(args, 2, [
+    { name: "include", kind: "boolean", aliases: ["--include", "-i"] },
+    { name: "silent", kind: "boolean", aliases: ["--silent"] },
+    { name: "jq", kind: "value", aliases: ["--jq", "-q"] },
+    { name: "template", kind: "value", aliases: ["--template", "-t"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
     return denyMessage("gh api");
   }
 
   return null;
-}
-
-function matchesFlag(arg: string, shortFlag: string, longFlag: string): boolean {
-  return arg === shortFlag || arg === longFlag || arg.startsWith(`${longFlag}=`);
-}
-
-function matchesValueOnlyFlag(arg: string, flags: ReadonlySet<string>): boolean {
-  if (flags.has(arg)) return true;
-
-  for (const flag of flags) {
-    if (flag.startsWith("--") && arg.startsWith(`${flag}=`)) return true;
-  }
-
-  return false;
-}
-
-function consumeRequiredValue(args: string[], index: number): number {
-  const arg = args[index];
-  const eqIndex = arg.indexOf("=");
-
-  if (eqIndex >= 0) {
-    return eqIndex < arg.length - 1 ? index : -1;
-  }
-
-  return index + 1 < args.length ? index + 1 : -1;
 }
 
 function matchesExactArgs(args: string[], expected: readonly string[]): boolean {

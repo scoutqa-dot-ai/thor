@@ -60,11 +60,17 @@ Exact non-interactive shape only: `git commit -m <message>`.
 
 ### `git worktree`
 
-Only `git worktree add -b <branch> <path> [<start-point>]` is supported, and `<path>` must stay under `/workspace/worktrees/`.
+Only `git worktree add` is supported, with:
+
+- one `-b <branch>`
+- a worktree `<path>` under `/workspace/worktrees/`
+- an optional `<start-point>`
+
+Those safe arguments may appear in any order that Git accepts.
 
 ### `git push`
 
-Only `git push [--dry-run] [-u|--set-upstream] origin HEAD:refs/heads/<branch>` is supported. Force, implicit upstream resolution, and pushes to protected branches (`main`, `master`) are denied.
+Only `git push origin HEAD:refs/heads/<branch>` is supported, with optional `--dry-run` and either `-u` or `--set-upstream`. Those approved flags may appear in any order that Git accepts. Force, implicit upstream resolution, and pushes to protected branches (`main`, `master`) are denied.
 
 ## Passthrough subcommands (any arguments accepted)
 

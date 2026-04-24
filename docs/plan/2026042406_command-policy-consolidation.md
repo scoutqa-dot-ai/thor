@@ -38,6 +38,7 @@ The final model is:
 
 - Match only approved command shapes; deny everything else by default.
 - Keep parsing minimal and localized to the commands that truly need it.
+- Reuse only a small shared arg-scanning helper where structured validators need the same token-walking mechanics.
 - Use the hand-maintained skills as the user-facing description of the allowed surface.
 
 Every denied command returns:
@@ -68,9 +69,9 @@ Thor supports the following `git` workflows:
 - commit:
   `git commit -m <message>`
 - worktree:
-  `git worktree add -b <branch> <path> [<start-point>]` with `<path>` under `/workspace/worktrees/`
+  `git worktree add` with one `-b <branch>`, a `<path>` under `/workspace/worktrees/`, and an optional `<start-point>` in any order Git accepts
 - push:
-  `git push [--dry-run] [-u|--set-upstream] origin HEAD:refs/heads/<branch>`
+  `git push origin HEAD:refs/heads/<branch>` with optional `--dry-run` and either `-u` or `--set-upstream` in any order Git accepts
 
 Notable exclusions:
 
@@ -200,6 +201,11 @@ Notable exclusions:
 
 **Status:** Completed
 
+## Follow-up
+
+- Safe argument ordering: replace slot-based validation for `git worktree add` with option-aware parsing, allow the approved `git push` flags to appear in any position, and add regression tests for reordered valid forms while keeping invalid forms denied. Status: Completed.
+- Bounded arg scanner: create a shared helper for recognized flag aliases and positional collection, refactor the structured `git` / `gh` validators onto it, and keep per-command semantic checks in the validators themselves. Status: Completed.
+
 ## Verification
 
 ```bash
@@ -220,6 +226,11 @@ pnpm -r typecheck
 | 7   | Allow only a tiny implicit-GET `gh api` subset                                                  | `gh api` defaults to GET but can become POST when parameter flags are introduced; banning method and parameter controls removes that ambiguity.          | Keep blocking `gh api` entirely or allow broader method-aware parsing                     |
 | 8   | Hand-maintain `using-git` and `using-gh`                                                        | The skill docs are stable enough that direct maintenance is simpler than keeping generation and sync tooling alive.                                      | Keep code generation as the long-term maintenance model                                   |
 | 9   | Keep GH read-only commands broad by tuple and validate exact grammar only where needed          | Read-only tuple pass-through preserves common inspection flows without rebuilding the full GH CLI grammar.                                               | Fully parse every GH read-only selector and flag combination                              |
+| 10  | Parse supported git commands by recognized flags and positionals                                | The policy should gate workflows, not fail because Git accepted the same workflow in another order.                                                      | Keep exact tuple matching for commands with safe reordering                               |
+| 11  | Keep the ordering fix limited to `git worktree add` and `git push`                              | Those were the concrete user-facing drift points in this branch and did not justify a broad parser rewrite by themselves.                                | Broad parser rewrites across every structured command                                     |
+| 12  | Extract only token-scanning concerns into a shared helper                                       | The duplication was in walking flags and values, not in the policy decisions themselves.                                                                 | A generic reusable command-policy engine                                                  |
+| 13  | Keep command semantics in the per-subcommand validators                                         | Each supported workflow still has materially different safety rules and should stay easy to audit.                                                       | Move allow/deny semantics into a shared abstraction                                       |
+| 14  | Refactor only the structured validators that already scan tokens                                | That is where reuse improves clarity without changing the policy shape or forcing passthrough tuple checks into a parser abstraction.                    | Rewrite passthrough tuple checks to fit the shared helper                                 |
 
 ## References
 

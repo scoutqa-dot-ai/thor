@@ -6,6 +6,8 @@
  * which is the user-facing documentation for the supported surface.
  */
 
+import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
+
 interface ResolvedGitArgsSuccess {
   args: string[];
 }
@@ -34,7 +36,6 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 const PROTECTED_PUSH_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
-const ALLOWED_PUSH_FLAGS: ReadonlySet<string> = new Set(["--dry-run", "-u", "--set-upstream"]);
 
 export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
   if (!Array.isArray(args) || args.length === 0) {
@@ -205,23 +206,28 @@ function validateCommit(args: string[]): string | null {
 }
 
 function validateWorktreeAdd(args: string[]): string | null {
-  if (args[1] !== "add" || args[2] !== "-b" || (args.length !== 5 && args.length !== 6)) {
+  if (args[1] !== "add" || args.length < 5 || args.length > 6) {
     return denyMessage("git worktree add");
   }
 
-  const branch = args[3];
-  const path = args[4];
+  const parsed = scanPolicyArgs(args, 2, [{ name: "branch", kind: "value", aliases: ["-b"] }]);
+  if (!parsed) {
+    return denyMessage("git worktree add");
+  }
 
+  const branches = valueFlagValues(parsed, "branch");
+  if (branches.length !== 1 || parsed.positionals.length < 1 || parsed.positionals.length > 2) {
+    return denyMessage("git worktree add");
+  }
+
+  const branch = branches[0];
   if (!branch || branch.startsWith("-")) {
     return denyMessage("git worktree add");
   }
 
+  const path = parsed.positionals[0];
   const normalizedPath = normalizePath(path);
   if (!normalizedPath.startsWith(WORKTREE_PREFIX)) {
-    return denyMessage("git worktree add");
-  }
-
-  if (args.length === 6 && args[5].startsWith("-")) {
     return denyMessage("git worktree add");
   }
 
@@ -229,30 +235,24 @@ function validateWorktreeAdd(args: string[]): string | null {
 }
 
 function validatePush(args: string[]): string | null {
-  let i = 1;
-  let sawDryRun = false;
-  let sawUpstream = false;
-
-  while (i < args.length && args[i].startsWith("-")) {
-    const arg = args[i];
-    if (!ALLOWED_PUSH_FLAGS.has(arg)) {
-      return denyMessage("git push");
-    }
-    if (arg === "--dry-run") {
-      if (sawDryRun) return denyMessage("git push");
-      sawDryRun = true;
-    } else {
-      if (sawUpstream) return denyMessage("git push");
-      sawUpstream = true;
-    }
-    i += 1;
-  }
-
-  if (args.length - i !== 2 || args[i] !== "origin") {
+  const parsed = scanPolicyArgs(args, 1, [
+    { name: "dry-run", kind: "boolean", aliases: ["--dry-run"] },
+    { name: "upstream", kind: "boolean", aliases: ["-u", "--set-upstream"] },
+  ]);
+  if (!parsed) {
     return denyMessage("git push");
   }
 
-  return validatePushRefspec(args[i + 1]);
+  if (
+    booleanFlagCount(parsed, "dry-run") > 1 ||
+    booleanFlagCount(parsed, "upstream") > 1 ||
+    parsed.positionals.length !== 2 ||
+    parsed.positionals[0] !== "origin"
+  ) {
+    return denyMessage("git push");
+  }
+
+  return validatePushRefspec(parsed.positionals[1]);
 }
 
 function validatePushRefspec(refspec: string): string | null {

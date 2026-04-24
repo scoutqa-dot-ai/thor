@@ -96,10 +96,17 @@ describe("validateGitArgs", () => {
         ["commit", "-m", "test: expand git and gh policy coverage"],
         ["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/feat"],
         ["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/feat", "origin/main"],
+        ["worktree", "add", "/workspace/worktrees/repo/feat", "-b", "feat"],
+        ["worktree", "add", "/workspace/worktrees/repo/feat", "-b", "feat", "origin/main"],
+        ["worktree", "add", "/workspace/worktrees/repo/feat", "origin/main", "-b", "feat"],
         ["push", "origin", "HEAD:refs/heads/feat/x"],
         ["push", "--dry-run", "origin", "HEAD:refs/heads/feat/x"],
+        ["push", "origin", "--dry-run", "HEAD:refs/heads/feat/x"],
+        ["push", "origin", "HEAD:refs/heads/feat/x", "--dry-run"],
         ["push", "-u", "origin", "HEAD:refs/heads/feat/x"],
+        ["push", "origin", "-u", "HEAD:refs/heads/feat/x"],
         ["push", "--set-upstream", "origin", "HEAD:refs/heads/feat/x"],
+        ["push", "origin", "HEAD:refs/heads/feat/x", "--set-upstream"],
       ];
 
       for (const args of allowedCommands) {
