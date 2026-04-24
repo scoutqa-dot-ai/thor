@@ -10,6 +10,27 @@ import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args
 
 const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
 
+function normalizePath(p: string): string {
+  const parts: string[] = [];
+  for (const seg of p.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      parts.pop();
+      continue;
+    }
+    parts.push(seg);
+  }
+  return "/" + parts.join("/");
+}
+
+function isPathUnderCwd(path: string, cwd: string | undefined): boolean {
+  if (!cwd || path.length === 0 || path === "-") return false;
+  const resolved = path.startsWith("/") ? path : `${cwd.replace(/\/+$/, "")}/${path}`;
+  const normalized = normalizePath(resolved);
+  const normalizedCwd = normalizePath(cwd);
+  return normalized === normalizedCwd || normalized.startsWith(normalizedCwd + "/");
+}
+
 const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "api",
   "auth status",
@@ -29,6 +50,7 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "issue view",
   "issue list",
   "issue comment",
+  "issue create",
   "label list",
   "release list",
   "release view",
@@ -42,7 +64,7 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
 
 const HELP_FLAGS: ReadonlySet<string> = new Set(["-h", "--help"]);
 
-export function validateGhArgs(args: string[], _cwd?: string): string | null {
+export function validateGhArgs(args: string[], cwd?: string): string | null {
   if (!Array.isArray(args)) return "args must be an array";
   if (args.length === 0) return null;
 
@@ -63,15 +85,17 @@ export function validateGhArgs(args: string[], _cwd?: string): string | null {
     case "auth status":
       return matchesExactArgs(args, ["auth", "status"]) ? null : denyMessage("gh auth status");
     case "pr create":
-      return validateGhPrCreateArgs(args);
+      return validateGhPrCreateArgs(args, cwd);
     case "pr comment":
-      return validateGhCommentArgs(args, "gh pr comment");
+      return validateGhCommentArgs(args, "gh pr comment", cwd);
     case "pr review":
       return validateGhPrReviewArgs(args);
     case "issue view":
       return validateRequiredNumericSelector(args, "gh issue view");
     case "issue comment":
-      return validateGhCommentArgs(args, "gh issue comment");
+      return validateGhCommentArgs(args, "gh issue comment", cwd);
+    case "issue create":
+      return validateGhIssueCreateArgs(args);
     case "run view":
       return validateRequiredNumericSelector(args, "gh run view");
     case "run watch":
@@ -136,39 +160,95 @@ function validateReleaseViewArgs(args: string[]): string | null {
   return null;
 }
 
-function validateGhPrCreateArgs(args: string[]): string | null {
+function validateGhPrCreateArgs(args: string[], cwd: string | undefined): string | null {
   const parsed = scanPolicyArgs(args, 2, [
     { name: "draft", kind: "boolean", aliases: ["--draft"] },
+    { name: "fill", kind: "boolean", aliases: ["--fill"] },
     { name: "title", kind: "value", aliases: ["-t", "--title"] },
     { name: "body", kind: "value", aliases: ["-b", "--body"] },
+    { name: "body-file", kind: "value", aliases: ["-F", "--body-file"] },
     { name: "base", kind: "value", aliases: ["-B", "--base"] },
+    { name: "label", kind: "value", aliases: ["-l", "--label"] },
+    { name: "assignee", kind: "value", aliases: ["-a", "--assignee"] },
+    { name: "reviewer", kind: "value", aliases: ["-r", "--reviewer"] },
   ]);
   if (!parsed || parsed.positionals.length > 0) {
     return denyMessage("gh pr create");
   }
 
+  const titles = valueFlagValues(parsed, "title");
+  const bodies = valueFlagValues(parsed, "body");
+  const bodyFiles = valueFlagValues(parsed, "body-file");
+  const fill = booleanFlagCount(parsed, "fill") > 0;
+
+  // --fill is mutually exclusive with explicit title/body/-F.
+  if (fill && (titles.length > 0 || bodies.length > 0 || bodyFiles.length > 0)) {
+    return denyMessage("gh pr create");
+  }
+  // --body and -F are mutually exclusive.
+  if (bodies.length > 0 && bodyFiles.length > 0) {
+    return denyMessage("gh pr create");
+  }
+  if (bodyFiles.length > 1) return denyMessage("gh pr create");
+  if (bodyFiles.length === 1 && !isPathUnderCwd(bodyFiles[0], cwd)) {
+    return denyMessage("gh pr create");
+  }
+
+  if (fill) return null;
+
+  const hasBodySource = bodies.length > 0 || bodyFiles.length > 0;
+  return titles.length > 0 && hasBodySource ? null : denyMessage("gh pr create");
+}
+
+function validateGhIssueCreateArgs(args: string[]): string | null {
+  const parsed = scanPolicyArgs(args, 2, [
+    { name: "title", kind: "value", aliases: ["-t", "--title"] },
+    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+    { name: "label", kind: "value", aliases: ["-l", "--label"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage("gh issue create");
+  }
   return valueFlagValues(parsed, "title").length > 0 && valueFlagValues(parsed, "body").length > 0
     ? null
-    : denyMessage("gh pr create");
+    : denyMessage("gh issue create");
 }
 
 function validateGhCommentArgs(
   args: string[],
   command: "gh pr comment" | "gh issue comment",
+  cwd: string | undefined,
 ): string | null {
   const selector = args[2];
   if (!selector || !/^\d+$/.test(selector)) {
     return denyMessage(command);
   }
 
-  const parsed = scanPolicyArgs(args, 3, [
-    { name: "body", kind: "value", aliases: ["-b", "--body"] },
-  ]);
+  // `-F` is only allowed on `gh pr comment` (user scope). `gh issue comment` keeps
+  // the inline-body-only shape.
+  const flags: Parameters<typeof scanPolicyArgs>[2] =
+    command === "gh pr comment"
+      ? [
+          { name: "body", kind: "value", aliases: ["-b", "--body"] },
+          { name: "body-file", kind: "value", aliases: ["-F", "--body-file"] },
+        ]
+      : [{ name: "body", kind: "value", aliases: ["-b", "--body"] }];
+
+  const parsed = scanPolicyArgs(args, 3, flags);
   if (!parsed || parsed.positionals.length > 0) {
     return denyMessage(command);
   }
 
-  return valueFlagValues(parsed, "body").length > 0 ? null : denyMessage(command);
+  const bodies = valueFlagValues(parsed, "body");
+  const bodyFiles = command === "gh pr comment" ? valueFlagValues(parsed, "body-file") : [];
+
+  if (bodies.length > 0 && bodyFiles.length > 0) return denyMessage(command);
+  if (bodyFiles.length > 1) return denyMessage(command);
+  if (bodyFiles.length === 1 && !isPathUnderCwd(bodyFiles[0], cwd)) {
+    return denyMessage(command);
+  }
+
+  return bodies.length > 0 || bodyFiles.length > 0 ? null : denyMessage(command);
 }
 
 function validateGhPrReviewArgs(args: string[]): string | null {

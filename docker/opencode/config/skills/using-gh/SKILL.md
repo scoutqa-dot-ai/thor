@@ -25,11 +25,15 @@ git worktree add -b pr-<N> /workspace/worktrees/<repo>/pr-<N> pr-<N>
 
 ### `gh pr create`
 
-Required: `--title`/`-t`, `--body`/`-b`. Optional: `--base`/`-B`, `--draft`. Blocked: `--head`, `--editor`, `--web`, `--body-file`, and `--repo`/`-R`.
+One of: `--title`/`-t` plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`), OR `--fill` (no title/body needed; derived from commits). Optional: `--base`/`-B`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). `-F <path>` must point at a file under the current working directory. Blocked: `--head`, `--editor`, `--web`, `--repo`/`-R`, and combining `--fill` with `--title`/`--body`/`-F`.
+
+### `gh issue create`
+
+Required: `--title`/`-t`, `--body`/`-b`. Optional: `--label`/`-l` (repeatable). Blocked: `--repo`/`-R`, `--assignee`, `--project`, `--milestone`, `--editor`, `--web`, `--body-file`, `--template`, `--recover`.
 
 ### `gh pr comment`
 
-Required: numeric PR selector plus `--body`/`-b`. Blocked: non-numeric selectors, edit/delete modes, interactive/file flags, and `--repo`/`-R`.
+Required: numeric PR selector plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`). `-F <path>` must point at a file under the current working directory. Blocked: non-numeric selectors, edit/delete modes, `--editor`, and `--repo`/`-R`.
 
 ### `gh issue comment`
 

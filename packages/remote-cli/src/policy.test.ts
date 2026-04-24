@@ -501,10 +501,66 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["pr", "create", "--title=Add feature", "--body=Summary"])).toBeNull();
     });
 
+    it("allows pr create with --fill and creation-time metadata", () => {
+      const CWD = "/workspace/repos/my-repo";
+      expect(validateGhArgs(["pr", "create", "--fill"])).toBeNull();
+      expect(validateGhArgs(["pr", "create", "--fill", "--draft"])).toBeNull();
+      expect(
+        validateGhArgs([
+          "pr",
+          "create",
+          "--title",
+          "x",
+          "--body",
+          "y",
+          "--label",
+          "bug",
+          "--label",
+          "p1",
+          "--assignee",
+          "alice",
+          "--reviewer",
+          "bob",
+          "--reviewer",
+          "carol",
+        ]),
+      ).toBeNull();
+      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "body.md"], CWD)).toBeNull();
+      expect(
+        validateGhArgs(["pr", "create", "--title", "x", "--body-file", "docs/pr-body.md"], CWD),
+      ).toBeNull();
+      expect(
+        validateGhArgs(
+          ["pr", "create", "--title", "x", "-F", "/workspace/repos/my-repo/body.md"],
+          CWD,
+        ),
+      ).toBeNull();
+    });
+
+    it("allows append-only issue create with title/body and optional labels", () => {
+      expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toBeNull();
+      expect(
+        validateGhArgs([
+          "issue",
+          "create",
+          "--title",
+          "Bug",
+          "--body",
+          "Broken",
+          "--label",
+          "bug",
+          "--label",
+          "p1",
+        ]),
+      ).toBeNull();
+    });
+
     it("allows append-only pr/issue comments with explicit body", () => {
+      const CWD = "/workspace/repos/my-repo";
       expect(validateGhArgs(["pr", "comment", "123", "--body", "noted"])).toBeNull();
       expect(validateGhArgs(["pr", "comment", "123", "-b", "noted"])).toBeNull();
       expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toBeNull();
+      expect(validateGhArgs(["pr", "comment", "123", "-F", "comment.md"], CWD)).toBeNull();
     });
 
     it("allows append-only pr reviews for comment/request-changes", () => {
@@ -583,9 +639,52 @@ describe("validateGhArgs", () => {
     it("blocks removed pr create forms", () => {
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--web"]);
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--editor"]);
-      expectGhDenied(["pr", "create", "--title", "x", "--body-file", "body.md"]);
-      expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--fill"]);
       expectGhDenied(["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"]);
+    });
+
+    it("blocks conflicting pr create body sources and escaping body-file paths", () => {
+      const CWD = "/workspace/repos/my-repo";
+      // --fill is exclusive with --title/--body/-F
+      expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--fill"]);
+      expectGhDenied(["pr", "create", "--fill", "--title", "x"]);
+      expectGhDenied(["pr", "create", "--fill", "-F", "body.md"]);
+      // --body and -F are mutually exclusive
+      expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "-F", "body.md"]);
+      // -F must resolve under cwd
+      expect(
+        validateGhArgs(["pr", "create", "--title", "x", "-F", "/etc/passwd"], CWD),
+      ).not.toBeNull();
+      expect(
+        validateGhArgs(["pr", "create", "--title", "x", "-F", "../other-repo/body.md"], CWD),
+      ).not.toBeNull();
+      // -F with no cwd is always denied
+      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "body.md"])).not.toBeNull();
+      // Title still required when -F supplies body
+      expect(validateGhArgs(["pr", "create", "-F", "body.md"], CWD)).not.toBeNull();
+      // Duplicate -F
+      expect(
+        validateGhArgs(["pr", "create", "--title", "x", "-F", "a.md", "--body-file", "b.md"], CWD),
+      ).not.toBeNull();
+    });
+
+    it("blocks pr comment body-file escapes and issue comment -F entirely", () => {
+      const CWD = "/workspace/repos/my-repo";
+      expect(validateGhArgs(["pr", "comment", "123", "-F", "/etc/passwd"], CWD)).not.toBeNull();
+      expect(validateGhArgs(["pr", "comment", "123", "-F", "../sneaky.md"], CWD)).not.toBeNull();
+      expect(
+        validateGhArgs(["pr", "comment", "123", "--body", "x", "-F", "body.md"], CWD),
+      ).not.toBeNull();
+      // issue comment does not support -F
+      expect(validateGhArgs(["issue", "comment", "42", "-F", "body.md"], CWD)).not.toBeNull();
+    });
+
+    it("blocks issue create without title or body and with unsupported flags", () => {
+      expectGhDenied(["issue", "create"]);
+      expectGhDenied(["issue", "create", "--title", "x"]);
+      expectGhDenied(["issue", "create", "--body", "y"]);
+      expectGhDenied(["issue", "create", "--title", "x", "--body", "y", "--assignee", "alice"]);
+      expectGhDenied(["issue", "create", "--title", "x", "--body-file", "body.md"]);
+      expectGhDenied(["issue", "create", "--title", "x", "--body", "y", "--repo", "org/repo"]);
     });
 
     it("requires pr create to include --title and --body", () => {
