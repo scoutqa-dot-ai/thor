@@ -103,9 +103,16 @@ jobs:
           auth=(-H "Authorization: Bearer $DAYTONA_API_KEY")
 
           # Delete any stale snapshot with this name (may be in error state).
-          echo "Deleting existing snapshot $snapshot_name if present..."
-          curl -sS -X DELETE "${auth[@]}" "$api/$snapshot_name" || true
-          echo
+          # DELETE endpoint requires UUID, so resolve name -> id first.
+          echo "Looking up existing snapshot $snapshot_name..."
+          existing_id=$(curl -sS "${auth[@]}" "$api/$snapshot_name" | jq -r '.id // empty')
+          if [[ -n "$existing_id" ]]; then
+            echo "Deleting existing snapshot (id=$existing_id)..."
+            curl -sS -X DELETE "${auth[@]}" "$api/$existing_id"
+            echo
+          else
+            echo "No existing snapshot found."
+          fi
 
           echo "Creating snapshot $snapshot_name from $image_name"
           curl -sS --fail-with-body -X POST "${auth[@]}" \
