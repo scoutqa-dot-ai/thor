@@ -75,19 +75,32 @@ No mapping config, no scan, no cache. Per webhook:
 
 Convention: the GitHub repo basename must match the local clone directory name. Operators who want to host `owner/foo` as `/workspace/repos/foo` get zero-config routing. If two GitHub orgs publish a repo with the same basename, the operator chooses which one lives at `/workspace/repos/<basename>/`; the other is not supported under this convention.
 
-### GitHub App identity (single app, env-configured)
+### GitHub App identity (single app)
 
-One GitHub App across the whole deployment. Identity comes from env vars — no config file, no per-repo override, no runtime `GET /app` lookup:
+One GitHub App across the whole deployment. App-level identity lives in env; per-org installation IDs live in `workspace-config.json`:
 
-| Env var                      | Purpose                                                        | Example                                  |
-| ---------------------------- | -------------------------------------------------------------- | ---------------------------------------- |
-| `GITHUB_APP_ID`              | Numeric App ID. Used as JWT `iss` claim.                       | `123456`                                 |
-| `GITHUB_APP_SLUG`            | App slug. Used for mention detection + git author name.        | `thor`                                   |
-| `GITHUB_APP_BOT_ID`          | Numeric bot user ID. Used for git author email.                | `49699333`                               |
-| `GITHUB_APP_PRIVATE_KEY_PATH`| PEM file path for JWT signing. Owned by remote-cli only.       | `/secrets/thor-app.pem`                  |
-| `GITHUB_WEBHOOK_SECRET`      | HMAC secret for webhook verification. Owned by gateway only.   | (32+ random bytes)                       |
+| Env var                       | Purpose                                                               | Example                                  |
+| ----------------------------- | --------------------------------------------------------------------- | ---------------------------------------- |
+| `GITHUB_APP_ID`               | Numeric App ID. Used as JWT `iss` claim.                              | `3387270`                                |
+| `GITHUB_APP_SLUG`             | App slug. Used for mention detection + git author name.               | `thor`                                   |
+| `GITHUB_APP_BOT_ID`           | Numeric bot user ID. Used for git author email.                       | `49699333`                               |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | PEM file path for JWT signing. Owned by remote-cli only.              | `/secrets/thor-app.pem`                  |
+| `GITHUB_WEBHOOK_SECRET`       | HMAC secret for webhook verification. Owned by gateway only.          | (32+ random bytes)                       |
 
-The existing `github_app.installations: []` array in `workspace-config.ts` is removed. Installation IDs come from webhook payloads (`installation.id`) or are resolved on demand via JWT-authenticated `GET /repos/{owner}/{repo}/installation` when Thor initiates GitHub activity outside the webhook path.
+A new top-level `orgs` block in workspace-config holds per-org installation IDs:
+
+```json
+{
+  "repos": { ... },
+  "orgs": {
+    "scoutqa-dot-ai": {
+      "github_app_installation_id": 126669985
+    }
+  }
+}
+```
+
+The old `github_app.installations: []` array is removed. Installation IDs are stable — they only change on uninstall/reinstall — so they sit naturally in config. When available in a webhook payload, `installation.id` is used directly without the config lookup.
 
 ### Mention detection
 
@@ -158,6 +171,25 @@ One new internal remote-cli endpoint:
 
 No private-key handling in the gateway process. No boot-time GitHub API calls.
 
+### Installation ID lookup
+
+Two paths:
+
+**Webhook path.** Installation ID arrives in the payload as `installation.id`. It's part of `NormalizedGitHubEvent.installationId` and flows through the queue to remote-cli directly. Zero lookup.
+
+**Agent-initiated path** (agent runs `gh pr create` / `git push` without a webhook context). Remote-cli:
+
+1. Resolves `org` from the repo's origin — already done by `resolveOrgFromRemote()` at `packages/remote-cli/src/github-app-auth.ts:77`.
+2. Reads `installation_id` from `config.orgs[org].github_app_installation_id` (via `loadWorkspaceConfig()`). Missing org entry → fail with a clear error naming the unconfigured org and the list of configured ones.
+3. Checks the existing disk cache at `/var/lib/remote-cli/github-app/cache/<org>.json` for a fresh token (existing early-refresh logic, 5 min before `expires_at`).
+4. On cache miss: mints a JWT from `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY_PATH` (reuses `generateAppJWT()` at line 179), mints the installation token via `POST /app/installations/{id}/access_tokens` (reuses `mintInstallationToken()` at line 215), writes `{ token, expires_at }` to the cache file.
+5. On 401/403 from token minting (installation uninstalled), unlink the cache file and re-raise with `reason: "installation_gone"`.
+6. Returns the token to the git/gh wrapper via `git-askpass` / `GH_TOKEN`.
+
+No discovery API call. Installation IDs are set once via env and don't change.
+
+`./test.sh` verifies the JWT → mint-token → installation-scoped call chain end-to-end.
+
 ### Prompt shape for runner
 
 Compact one-liner per event. The runner batches events sharing a correlation key; each is rendered as:
@@ -177,12 +209,20 @@ Compact one-liner per event. The runner batches events sharing a correlation key
    - `normalizeGitHubEvent(raw, { localRepo, mentionLogins })` → `NormalizedGitHubEvent | { ignored: true, reason }`.
    - `detectMention(body, mentionLogins)` — word-boundary substring match, case-insensitive.
    - `buildCorrelationKey(localRepo, branch)` — returns `git:branch:{localRepo}:{branch}` (matches `computeGitAlias`).
-2. Remove the `github_app.installations: []` array from `packages/common/src/workspace-config.ts`. Replace with env-sourced App identity (`GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`). Update any current callers of `github_app.installations` in remote-cli to read env instead.
+2. Edit `packages/common/src/workspace-config.ts`:
+   - Remove the `github_app.installations: []` array and its schema (`GitHubAppInstallationSchema`, `GitHubAppConfigSchema`).
+   - Add a new top-level `orgs: z.record(z.string(), OrgConfigSchema).optional()` block. `OrgConfigSchema` holds `github_app_installation_id: z.number().int().positive()`.
+   - Add `getInstallationIdForOrg(config, org): number | undefined` helper.
+3. Update `packages/remote-cli/src/github-app-auth.ts`:
+   - Delete `findInstallation(org)` (line 129) and `resolveInstallation()` (line 145) — both read the removed `github_app.installations` block.
+   - Replace with a small helper that calls `getInstallationIdForOrg()` from the loaded workspace config. Unknown org → throw with the org name + the list of configured orgs.
+   - On 401/403 from `mintInstallationToken()`, `unlinkSync(cachePath(org))` and surface as `installation_gone`.
+   - `generateAppJWT()`, `mintInstallationToken()`, and the existing disk-cache logic are unchanged.
 3. Remove every reference to the old `GIT_USER_NAME` / `GIT_USER_EMAIL` env vars. Derive identity from `GITHUB_APP_SLUG` + `GITHUB_APP_BOT_ID` at remote-cli boot. Concrete edits:
    - `packages/remote-cli/entrypoint.sh:29-30` — replace with derived values; fail fast if either `GITHUB_APP_SLUG` or `GITHUB_APP_BOT_ID` is unset.
    - `docker-compose.yml:37-38` — drop the `GIT_USER_EMAIL` / `GIT_USER_NAME` passthrough; add `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_WEBHOOK_SECRET`.
    - `.env.example:24-25` — drop the commented-out `GIT_USER_NAME` / `GIT_USER_EMAIL` entries; add the 5 new `GITHUB_APP_*` vars with placeholder values.
-   - `README.md:79-80` — drop both env-var table rows; add rows for the 5 new vars.
+   - `README.md:79-80` — drop both env-var table rows; add rows for the 5 new vars plus a note about `orgs.<name>.github_app_installation_id` in workspace-config.
    - `docs/plan/2026032101_mention-interrupt.md:20,87` — historical plan references are superseded by this one. Leave as-is (historical record), but this plan's Decision Log supersedes.
    - No other code paths set git identity today. Runtime overrides stay blocked by existing policy (`validateGitArgs` at `packages/remote-cli/src/policy.ts`).
 
@@ -196,6 +236,8 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - [ ] Correlation key format matches `computeGitAlias()` byte-for-byte.
 - [ ] Basename resolution returns the expected `localRepo` for a known clone and rejects unknown basenames with `repo_not_mapped`.
 - [ ] Missing or empty `GITHUB_APP_ID` / `GITHUB_APP_SLUG` / `GITHUB_APP_BOT_ID` / `GITHUB_APP_PRIVATE_KEY_PATH` / `GITHUB_WEBHOOK_SECRET` fails gateway and remote-cli boot with a clear error naming the missing var.
+- [ ] Workspace-config with an `orgs.<name>.github_app_installation_id` that isn't a positive integer fails validation with a specific error pointing to the offending path.
+- [ ] Remote-cli reads `installation_id` from `config.orgs[org].github_app_installation_id` and mints tokens into the existing disk cache. Missing org fails with a clear error naming the unconfigured org and the list of configured ones. On 401/403 from mint, the cache file is unlinked. Unit tests cover cache hit, cache miss, unknown-org, and uninstall eviction.
 - [ ] `packages/remote-cli/entrypoint.sh` sets `user.name` = `${GITHUB_APP_SLUG}[bot]` and `user.email` = `${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com`.
 - [ ] `grep -r GIT_USER_NAME\|GIT_USER_EMAIL` returns zero hits outside `docs/plan/` historical files.
 
@@ -244,9 +286,9 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 
 ### Phase 4 — Operator runbook
 
-1. Update `docs/examples/workspace-config.example.json` — remove the `github_app.installations` block (it's gone). No GitHub config in workspace-config at all.
+1. Update `docs/examples/workspace-config.example.json` — remove the `github_app.installations` block; show the new top-level `orgs` block with a single example entry: `{"orgs": {"scoutqa-dot-ai": {"github_app_installation_id": 126669985}}}`.
 2. Write `docs/github-app-webhooks.md` with:
-   - **Env var matrix** — `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_WEBHOOK_SECRET`. How to find each value in the GitHub App settings page.
+   - **Env var matrix** — `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_INSTALLATIONS`, `GITHUB_WEBHOOK_SECRET`. Where each value lives in GitHub's UI (App settings page for the first four; the Install page URL for `installation_id`; the webhook settings for the secret).
    - **Permission matrix** — `issues: read`, `pull_requests: read`, `contents: read`, `metadata: read`.
    - **Event subscriptions** — "Issue comment", "Pull request review", "Pull request review comment".
    - **Webhook URL format** — `https://<gateway-host>/github/webhook`.
@@ -259,7 +301,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 
 - [ ] An operator who has never seen Thor can set up their first webhook end-to-end from the doc in under 15 minutes.
 - [ ] The troubleshooting table covers every `github_event_ignored` reason.
-- [ ] Workspace-config has zero GitHub fields. All App identity comes from env.
+- [ ] Workspace-config has exactly one GitHub field: `orgs.<name>.github_app_installation_id`. App-level identity is env-only.
 - [ ] Boot log shows the resolved mention-login list and the bot git identity. Docs explain the `basename-must-match-local-dir` convention.
 
 ## Decision Log
@@ -270,7 +312,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 | 2   | Narrow allowlist — 3 events, PR-scoped only                                    | Keeps the trigger surface predictable and tests tractable; pure-issue and non-code-flow events route through a future issue-triage plan.     |
 | 3   | Normalize payloads before prompting the runner                                 | Smaller prompts, clearer tests, no GitHub-schema coupling in the runner.                                                                     |
 | 4   | Map `repository.full_name` → local repo by basename match against `/workspace/repos/<name>/` | Zero config, zero scan, zero cache. Operators already clone to the basename; webhook routing reuses that convention.                         |
-| 5   | Single-App, env-sourced identity (`GITHUB_APP_ID`, `_SLUG`, `_BOT_ID`, `_PRIVATE_KEY_PATH`) | Removes `github_app.installations` config array, eliminates boot-time `GET /app` lookup, and gives the mention list and git identity a single source of truth. |
+| 5   | Single-App, env-sourced identity + per-org `github_app_installation_id` in config.orgs | App-level identity (id, slug, bot_id, private key, webhook secret) is env; installation IDs are per-org in workspace-config. Installation IDs are stable and human-readable from GitHub's UI, so they belong in config; app-level secrets/identity belong in env. |
 | 6   | Gateway reads webhook secret + slug only; remote-cli owns App private key      | Single owner for JWT signing + installation-token minting; gateway stays signature-verification + routing.                                   |
 | 5b  | Bot git identity derived from slug + bot ID; config override disallowed        | Prevents drift between App identity and commit attribution. GitHub displays bot-authored commits correctly only with the derived format.     |
 | 7   | Canonical correlation key is `git:branch:{localRepo}:{branch}`                 | Matches existing `computeGitAlias()` output — one continuity format across all intake sources.                                               |
