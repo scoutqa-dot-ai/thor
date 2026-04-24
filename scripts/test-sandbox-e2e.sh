@@ -683,6 +683,14 @@ else
   docker exec "$remote_cli_container" sh -c \
     "echo 'parallel-e2e' > $SBX_WORKTREE_DIR/parallel-test.txt" 2>/dev/null
 
+  # Warm up the sandbox — two-worktree test above stopped it, and the
+  # first parallel exec can race with the auto-recreate path (Daytona
+  # returns "sandbox container not found" before the container boots).
+  curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+    -H 'Content-Type: application/json' \
+    -d "{\"mode\":\"exec\",\"args\":[\"true\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+    2>/dev/null >/dev/null
+
   # Fire two sandbox exec requests in parallel.
   # Each command prints a start timestamp, sleeps, then prints an end
   # timestamp. On the host side we verify the time ranges overlap —
