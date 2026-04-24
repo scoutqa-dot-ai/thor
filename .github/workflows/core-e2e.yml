@@ -1,0 +1,137 @@
+name: Core E2E
+
+on:
+  push:
+    paths:
+      - ".github/workflows/core-e2e.yml"
+      - "scripts/test-e2e.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}
+      SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+      GITHUB_APP_ID: ${{ vars.THOR_GITHUB_APP_ID }}
+      GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/private-key.pem
+      THOR_GITHUB_APP_PRIVATE_KEY: ${{ secrets.THOR_GITHUB_APP_PRIVATE_KEY }}
+      THOR_GITHUB_APP_INSTALLATION_ID: ${{ vars.THOR_GITHUB_APP_INSTALLATION_ID }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
+      ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
+      # Fakes: services not exercised by e2e, but referenced at compose startup.
+      GRAFANA_URL: http://grafana-mcp:8000
+      GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
+      POSTHOG_API_KEY: ci-fake
+      LANGFUSE_PUBLIC_KEY: ci-fake
+      LANGFUSE_SECRET_KEY: ci-fake
+      LANGFUSE_HOST: https://us.cloud.langfuse.com
+      METABASE_URL: http://localhost
+      METABASE_API_KEY: ci-fake
+      METABASE_DATABASE_ID: "1"
+      METABASE_ALLOWED_SCHEMAS: public
+      VOUCH_GOOGLE_CLIENT_ID: ci-fake
+      VOUCH_GOOGLE_CLIENT_SECRET: ci-fake
+      VOUCH_JWT_SECRET: ci-fake
+      VOUCH_WHITELIST: ci@localhost
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bring up compose stack for e2e
+        run: |
+          set -euo pipefail
+
+          mkdir -p \
+            docker-volumes/workspace/repos \
+            docker-volumes/workspace/memory \
+            docker-volumes/workspace/worklog \
+            docker-volumes/workspace/cron \
+            docker-volumes/workspace/worktrees \
+            docker-volumes/opencode \
+            docker-volumes/github-app \
+            docker-volumes/home/thor
+          # remote-cli runs as the "thor" user; make the mounted home writable.
+          chmod 777 docker-volumes/home/thor
+
+          printf '%s' "$THOR_GITHUB_APP_PRIVATE_KEY" > docker-volumes/github-app/private-key.pem
+          chmod 600 docker-volumes/github-app/private-key.pem
+
+          # data service requires env_file: .env — create an empty one.
+          : > .env
+
+          export CRON_SECRET="$(openssl rand -hex 32)"
+          export RESOLVE_SECRET="$(openssl rand -hex 32)"
+          {
+            echo "CRON_SECRET=$CRON_SECRET"
+            echo "RESOLVE_SECRET=$RESOLVE_SECRET"
+          } >> "$GITHUB_ENV"
+
+          cat > docker-volumes/workspace/config.json <<EOF
+          {
+            "repos": {
+              "acme-multi-hyphen-repo": {
+                "channels": ["C123456789"],
+                "proxies": ["atlassian"]
+              }
+            },
+            "github_app": {
+              "installations": [
+                {
+                  "org": "${{ github.repository_owner }}",
+                  "installation_id": ${THOR_GITHUB_APP_INSTALLATION_ID}
+                }
+              ]
+            }
+          }
+          EOF
+
+          printf '%s' "$OPENCODE_AUTH_JSON" > docker-volumes/opencode/auth.json
+          chmod 600 docker-volumes/opencode/auth.json
+
+          alias_repo_dir="docker-volumes/workspace/repos/acme-multi-hyphen-repo"
+          mkdir -p "$alias_repo_dir"
+          git init -b main "$alias_repo_dir"
+          printf '%s\n' '# CI alias fixture' > "$alias_repo_dir/README.md"
+          git -C "$alias_repo_dir" add README.md
+          git -C "$alias_repo_dir" -c user.name='Thor CI' -c user.email='thor-ci@localhost' commit -m 'chore: seed alias repo fixture'
+
+          ./scripts/mitmproxy-ca-init.sh
+
+          docker compose up --build --wait -d gateway
+
+      - name: Run e2e test
+        env:
+          CI: "true"
+        run: pnpm test:e2e
+
+      - name: Compose status (on failure)
+        if: failure()
+        run: docker compose ps
+
+      - name: Compose logs (on failure)
+        if: failure()
+        run: docker compose logs --no-color --timestamps

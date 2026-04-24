@@ -14,7 +14,7 @@ import {
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.js";
-import { listSchemas, listTables, getColumns, executeQuery } from "./metabase.js";
+import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.js";
 import {
   createSandbox,
   deleteSandbox,

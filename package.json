@@ -1,7 +1,7 @@
 {
   "name": "thor",
   "private": true,
-  "packageManager": "pnpm@9.15.4",
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:mcp": "npx tsx scripts/test-mcp.ts",
     "test:e2e": "./scripts/test-e2e.sh",
+    "test:sandbox-e2e": "./scripts/test-sandbox-e2e.sh",
     "prepare": "husky"
   },
   "lint-staged": {
