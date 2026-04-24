@@ -97,10 +97,10 @@ jobs:
         id: snapshot
         run: |
           set -euo pipefail
-          snapshot_name="thor-sandbox-${GITHUB_SHA}"
+          snapshot_name="thor-snapshot"
           image_name="ghcr.io/${{ github.repository_owner }}/thor-sandbox@${{ steps.build.outputs.digest }}"
           echo "Creating snapshot $snapshot_name from $image_name"
-          curl -fsS -X POST \
+          curl -sS --fail-with-body -X POST \
             -H "Authorization: Bearer $DAYTONA_API_KEY" \
             -H "Content-Type: application/json" \
             -d "$(jq -n --arg name "$snapshot_name" --arg image "$image_name" \
