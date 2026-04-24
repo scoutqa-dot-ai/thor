@@ -10,8 +10,8 @@ description: GitHub CLI surface allowed by Thor's remote-cli server policy. Appe
 All `gh` commands go through Thor's remote-cli which enforces:
 
 - **Append-only writes.** Create PRs, post comments, submit `--comment`/`--request-changes` reviews. Never approve, merge, edit, or delete.
-- **Current-repo only.** Write commands cannot target another repository — `--repo`/`-R` is blocked on PR/comment/review writes.
-- **`gh api` is blocked.** Use typed `gh pr`/`gh issue`/`gh repo`/etc. subcommands.
+- **Repo-targeting flags are blocked.** `--repo`/`-R` is not part of the supported surface.
+- **`gh api` is a tiny read-only subset.** REST only, implicit GET only, output-shaping flags only.
 - **PR approval is a human gate.** `gh pr review --approve` is denied.
 
 ## Common redirect
@@ -19,48 +19,44 @@ All `gh` commands go through Thor's remote-cli which enforces:
 Instead of `gh pr checkout <N>`:
 ```
 git fetch origin pull/<N>/head:pr-<N>
-git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>
+git worktree add -b pr-<N> /workspace/worktrees/<repo>/pr-<N> pr-<N>
 ```
 
 ## Structured commands
 
 ### `gh pr create`
 
-Required: `--title`/`-t`, `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`-H` (must be a branch in the current repo), `--draft`. Blocked: `--editor`, `--web`, `--body-file`, `--repo`/`-R`.
+Required: `--title`/`-t`, `--body`/`-b`. Optional: `--base`/`-B`, `--draft`. Blocked: `--head`, `--editor`, `--web`, `--body-file`, and `--repo`/`-R`.
 
 ### `gh pr comment`
 
-Required: `--body`/`-b`. Optional positional selector: numeric PR number, current-repo PR URL, or branch name. Blocked: `--edit-last`, `--delete-last`, `--create-if-none`, `--yes`, `--editor`, `--web`, `--body-file`, `--repo`/`-R`.
+Required: numeric PR selector plus `--body`/`-b`. Blocked: non-numeric selectors, edit/delete modes, interactive/file flags, and `--repo`/`-R`.
 
 ### `gh issue comment`
 
-Required: `--body`/`-b` and exactly one positional selector (numeric issue number or current-repo issue URL). Blocked: same mutation/interactive/file/cross-repo flags as `pr comment`.
+Required: numeric issue selector plus `--body`/`-b`. Blocked: non-numeric selectors, interactive/file flags, and `--repo`/`-R`.
 
 ### `gh pr review`
 
-Required: `--body`/`-b` and exactly one of `--comment`/`-c` or `--request-changes`/`-r`. Optional positional PR selector. `--approve`/`-a` is **denied** — PR approval is a human gate. Blocked: `--editor`, `--web`, `--body-file`, `--repo`/`-R`.
+Required: `--body`/`-b` and exactly one of `--comment`/`-c` or `--request-changes`/`-r`. Optional positional selector: numeric PR number only. `--approve`/`-a` is denied. Blocked: non-numeric selectors, interactive/file flags, and `--repo`/`-R`.
+
+### `gh api`
+
+Implicit GET only. Required: REST endpoint as the first positional argument. Optional output flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`. Blocked: `graphql`, `--method`/`-X`, `--input`, `-H`/`--header`, `--preview`, `--hostname`, `-f`/`--raw-field`, and `-F`/`--field`.
 
 ## Read-only (passthrough) commands
 
 - `gh auth status`
 - `gh issue list`
 - `gh issue view`
-- `gh label list`
 - `gh pr checks`
 - `gh pr diff`
 - `gh pr list`
 - `gh pr status`
 - `gh pr view`
-- `gh release download`
-- `gh release list`
-- `gh release view`
 - `gh repo view`
 - `gh run list`
 - `gh run view`
 - `gh run watch`
-- `gh search code`
-- `gh search issues`
-- `gh search prs`
-- `gh search repos`
 - `gh workflow list`
 - `gh workflow view`

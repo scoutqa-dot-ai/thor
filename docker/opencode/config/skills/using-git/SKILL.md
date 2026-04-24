@@ -10,132 +10,69 @@ description: Git command surface allowed by Thor's remote-cli server policy. Tho
 All `git` commands go through Thor's remote-cli which enforces:
 
 - **No branch switching in-place.** `git checkout <ref>` and `git switch` are denied — use `git worktree add <path> <ref>` instead.
-- **No force-push.** `--force` and `--force-with-lease` on `git push` are denied.
+- **No force-push or implicit push resolution.** Pushes must target `origin HEAD:refs/heads/<branch>` explicitly.
 - **Pushes only to `origin`**, never to protected branches `main` or `master`.
-- **Read-only `git config`, `git remote`, `git symbolic-ref`** — no mutation.
-- **`git checkout -- <path>`** (restore from index/HEAD) is allowed.
+- **No config or ref-introspection helpers outside the allowlist.** `git config`, `git symbolic-ref`, and `git check-ignore` are denied.
+- **Use `git restore` for file restore.** `git checkout -- <path>` is not part of the supported surface.
 
 ## Common redirects
 
 Instead of switching branches in place:
 ```
-git worktree add /workspace/worktrees/<repo>/<branch> <ref>
+git worktree add -b <branch> /workspace/worktrees/<repo>/<branch> <start-point>
 ```
 
 Instead of `gh pr checkout 123`:
 ```
 git fetch origin pull/123/head:pr-123
-git worktree add /workspace/worktrees/<repo>/pr-123 pr-123
+git worktree add -b pr-123 /workspace/worktrees/<repo>/pr-123 pr-123
 ```
 
 ## Structured commands
 
-### `git push`
+### `git merge-base`
 
-Only pushes to `origin`. Flags: `-u`/`--set-upstream`, `--no-verify`, `--dry-run`/`-n`, `--verbose`/`-v`, `--quiet`/`-q`. Refspecs cannot target protected branches (`main`, `master`) or force-update via leading `+`. Implicit `git push` works when the current branch has a safe `origin` upstream — the server rewrites it to `HEAD:refs/heads/<branch>` before exec.
+Exact shape only: `git merge-base <left> <right>`.
 
-### `git config`
+### `git branch`
 
-Read-only lookups only: `--get`, `--get-all`, `--get-regexp`, optionally with `--show-origin`. Requires a key or pattern.
-
-### `git check-ignore`
-
-Direct path lookups only. Flags: `-q`/`--quiet`, `-v`/`--verbose`, `-n`/`--non-matching`. At least one path required.
-
-### `git symbolic-ref`
-
-Read-only: exactly one ref argument. Flags: `--short`, `-q`/`--quiet`. Mutation forms are denied.
-
-### `git worktree`
-
-`git worktree add <path>` requires the path to start with `/workspace/worktrees/`. Other sub-subcommands (list, remove, prune, move, lock, unlock, repair) pass through.
+Read-only only: `git branch --show-current`, `git branch -a`, or `git branch --all`.
 
 ### `git remote`
 
-Read-only sub-subcommands only: `show`, `get-url`, `-v`/`--verbose`. `add`, `remove`, `set-url`, `rename` are denied.
+Read-only only: `git remote`, `git remote -v`, `git remote --verbose`, `git remote show origin`, `git remote get-url origin`.
 
-### `git checkout`
+### `git fetch`
 
-Only the restore form: `git checkout [<ref>] -- <paths>` (or `git checkout <pathspec>` for common file extensions). Branch switching is denied — use `git worktree add` instead.
+Exact remote only: `git fetch origin [<ref>...]`. Flags are not part of the supported surface.
+
+### `git restore`
+
+Use `git restore [--source <tree>] -- <path...>` for file restore. This replaces all `git checkout` restore support.
+
+### `git add`
+
+Allowed forms: `git add -A` or `git add <path...>`. Extra flags are not supported.
+
+### `git commit`
+
+Exact non-interactive shape only: `git commit -m <message>`.
+
+### `git worktree`
+
+Only `git worktree add -b <branch> <path> [<start-point>]` is supported, and `<path>` must stay under `/workspace/worktrees/`.
+
+### `git push`
+
+Only `git push [--dry-run] [-u|--set-upstream] origin HEAD:refs/heads/<branch>` is supported. Force, implicit upstream resolution, and pushes to protected branches (`main`, `master`) are denied.
 
 ## Passthrough subcommands (any arguments accepted)
 
-- `git add`
-- `git am`
-- `git apply`
-- `git blame`
-- `git branch`
-- `git cat-file`
-- `git check-ref-format`
-- `git cherry`
-- `git cherry-pick`
-- `git clean`
-- `git commit`
-- `git count-objects`
-- `git describe`
 - `git diff`
-- `git diff-tree`
-- `git fetch`
-- `git for-each-ref`
-- `git grep`
-- `git help`
 - `git log`
-- `git ls-files`
-- `git ls-remote`
-- `git ls-tree`
-- `git merge`
-- `git merge-base`
-- `git mv`
-- `git name-rev`
-- `git pull`
-- `git range-diff`
-- `git rebase`
-- `git reflog`
-- `git reset`
-- `git restore`
-- `git rev-list`
-- `git rev-parse`
-- `git revert`
-- `git rm`
-- `git shortlog`
 - `git show`
-- `git show-branch`
-- `git show-ref`
-- `git stash`
 - `git status`
-- `git submodule`
-- `git tag`
-- `git version`
 
 ## Safe under `git --no-pager`
 
-- `git blame`
-- `git cat-file`
-- `git check-ignore`
-- `git check-ref-format`
-- `git cherry`
-- `git config`
-- `git count-objects`
-- `git describe`
-- `git diff`
-- `git diff-tree`
-- `git for-each-ref`
-- `git grep`
-- `git help`
-- `git log`
-- `git ls-files`
-- `git ls-remote`
-- `git ls-tree`
-- `git merge-base`
-- `git name-rev`
-- `git range-diff`
-- `git reflog`
-- `git remote`
-- `git rev-list`
-- `git rev-parse`
-- `git shortlog`
-- `git show`
-- `git show-branch`
-- `git show-ref`
-- `git status`
-- `git symbolic-ref`
+No `git --no-pager` forms are supported.

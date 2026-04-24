@@ -1,7 +1,3 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   resolveGitArgs,
@@ -12,55 +8,6 @@ import {
   validateLangfuseArgs,
   validateMetabaseArgs,
 } from "./policy.js";
-
-interface TestRepoOptions {
-  branch?: string;
-  upstreamBranch?: string;
-  upstreamRemote?: string;
-  detachedHead?: boolean;
-}
-
-function createRepoWithOrigin(remoteUrl: string, options: TestRepoOptions = {}): string {
-  const {
-    branch = "main",
-    upstreamBranch,
-    upstreamRemote = "origin",
-    detachedHead = false,
-  } = options;
-  const dir = mkdtempSync(join(tmpdir(), "thor-policy-gh-"));
-  execFileSync("/usr/bin/git", ["init"], { cwd: dir, stdio: "ignore" });
-  execFileSync("/usr/bin/git", ["config", "user.name", "Thor Policy"], {
-    cwd: dir,
-    stdio: "ignore",
-  });
-  execFileSync("/usr/bin/git", ["config", "user.email", "thor-policy@example.com"], {
-    cwd: dir,
-    stdio: "ignore",
-  });
-  writeFileSync(join(dir, "README.md"), "seed\n");
-  execFileSync("/usr/bin/git", ["add", "README.md"], { cwd: dir, stdio: "ignore" });
-  execFileSync("/usr/bin/git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
-  execFileSync("/usr/bin/git", ["branch", "-M", branch], { cwd: dir, stdio: "ignore" });
-  execFileSync("/usr/bin/git", ["remote", "add", "origin", remoteUrl], {
-    cwd: dir,
-    stdio: "ignore",
-  });
-  if (upstreamBranch) {
-    execFileSync("/usr/bin/git", ["config", "--local", `branch.${branch}.remote`, upstreamRemote], {
-      cwd: dir,
-      stdio: "ignore",
-    });
-    execFileSync(
-      "/usr/bin/git",
-      ["config", "--local", `branch.${branch}.merge`, `refs/heads/${upstreamBranch}`],
-      { cwd: dir, stdio: "ignore" },
-    );
-  }
-  if (detachedHead) {
-    execFileSync("/usr/bin/git", ["checkout", "--detach", "HEAD"], { cwd: dir, stdio: "ignore" });
-  }
-  return dir;
-}
 
 // ── cwd validation ──────────────────────────────────────────────────────────
 
@@ -310,63 +257,37 @@ describe("validateGitArgs", () => {
 // ── gh policy ───────────────────────────────────────────────────────────────
 
 describe("validateGhArgs", () => {
-  let ghRepoDir: string;
-
-  beforeAll(() => {
-    ghRepoDir = createRepoWithOrigin("https://github.com/acme/web.git");
-  });
-
-  afterAll(() => {
-    rmSync(ghRepoDir, { recursive: true, force: true });
-  });
+  function expectGhDenied(args: string[]): string {
+    const error = validateGhArgs(args);
+    expect(error).toContain("Load skill using-gh");
+    return error ?? "";
+  }
 
   describe("allowed commands", () => {
     it("allows common gh read-only workflows", () => {
       const allowedCommands: string[][] = [
         [],
         ["--version"],
+        ["--help"],
         ["auth", "status"],
+        ["pr", "view"],
         ["pr", "view", "123"],
         ["pr", "view", "123", "--json", "title", "--jq", ".title"],
-        ["pr", "view", "123", "-R", "owner/repo", "--json", "title", "--jq", ".title"],
         ["pr", "list", "--limit", "10"],
         ["pr", "list", "--search", "is:open", "--limit", "10"],
         ["pr", "status"],
-        ["pr", "checks", "123"],
-        ["pr", "diff", "123"],
+        ["pr", "checks", "123", "--watch"],
+        ["pr", "diff", "123", "--patch"],
         ["issue", "view", "42"],
-        ["issue", "view", "42", "--repo", "owner/repo", "--json", "title", "--jq", ".title"],
+        ["issue", "view", "42", "--json", "title", "--jq", ".title"],
         ["issue", "list", "--limit", "10"],
         ["repo", "view"],
-        [
-          "repo",
-          "view",
-          "owner/repo",
-          "--json",
-          "defaultBranchRef",
-          "-q",
-          ".defaultBranchRef.name",
-        ],
-        ["run", "list"],
-        ["run", "view", "123"],
-        ["run", "view", "123", "--repo", "owner/repo"],
+        ["repo", "view", "owner/repo", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+        ["run", "list", "--limit", "10"],
+        ["run", "view", "123", "--log"],
         ["run", "watch", "123", "--exit-status"],
-        ["search", "issues", "--repo", "anomalyco/opencode", "sandbox", "--limit", "10"],
-        ["search", "prs", "--repo", "anomalyco/opencode", "container sandbox", "--limit", "10"],
-        [
-          "search",
-          "code",
-          "x-opencode-directory",
-          "--repo",
-          "anomalyco/opencode",
-          "--json",
-          "path,textMatches",
-          "-L",
-          "10",
-        ],
-        ["search", "repos", "opencode", "--limit", "5", "--json", "fullName,description"],
-        ["workflow", "list"],
-        ["workflow", "view", "ci.yml"],
+        ["workflow", "list", "--all"],
+        ["workflow", "view", "ci.yml", "--yaml"],
       ];
 
       for (const args of allowedCommands) {
@@ -374,22 +295,23 @@ describe("validateGhArgs", () => {
       }
     });
 
-    it("allows gh help and command introspection flows while keeping gh api help blocked", () => {
+    it("allows gh help and command introspection flows", () => {
       const allowedCommands: string[][] = [
         ["help"],
         ["help", "formatting"],
         ["help", "environment"],
+        ["help", "api"],
         ["pr", "--help"],
+        ["pr", "view", "--help"],
         ["pr", "create", "--help"],
         ["pr", "comment", "--help"],
         ["pr", "review", "--help"],
         ["issue", "--help"],
-        ["issue", "status", "--help"],
-        ["search", "--help"],
+        ["issue", "comment", "--help"],
         ["run", "--help"],
         ["workflow", "--help"],
         ["repo", "--help"],
-        ["label", "--help"],
+        ["api", "--help"],
       ];
 
       for (const args of allowedCommands) {
@@ -408,8 +330,6 @@ describe("validateGhArgs", () => {
         validateGhArgs([
           "pr",
           "create",
-          "--head",
-          "feat/test",
           "--base",
           "main",
           "--title",
@@ -419,35 +339,12 @@ describe("validateGhArgs", () => {
         ]),
       ).toBeNull();
       expect(validateGhArgs(["pr", "create", "--title=Add feature", "--body=Summary"])).toBeNull();
-      expect(
-        validateGhArgs([
-          "pr",
-          "create",
-          "--head=feat/test",
-          "--title=Add feature",
-          "--body=Summary",
-        ]),
-      ).toBeNull();
     });
 
     it("allows append-only pr/issue comments with explicit body", () => {
-      expect(validateGhArgs(["pr", "comment", "--body", "noted"])).toBeNull();
       expect(validateGhArgs(["pr", "comment", "123", "--body", "noted"])).toBeNull();
       expect(validateGhArgs(["pr", "comment", "123", "-b", "noted"])).toBeNull();
-      expect(validateGhArgs(["pr", "comment", "feat/test", "--body", "noted"])).toBeNull();
-      expect(
-        validateGhArgs(
-          ["pr", "comment", "https://github.com/acme/web/pull/123", "--body", "noted"],
-          ghRepoDir,
-        ),
-      ).toBeNull();
       expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toBeNull();
-      expect(
-        validateGhArgs(
-          ["issue", "comment", "https://github.com/acme/web/issues/42", "--body=noted"],
-          ghRepoDir,
-        ),
-      ).toBeNull();
     });
 
     it("allows append-only pr reviews for comment/request-changes", () => {
@@ -458,259 +355,147 @@ describe("validateGhArgs", () => {
       ).toBeNull();
       expect(validateGhArgs(["pr", "review", "123", "-c", "-b", "review body"])).toBeNull();
       expect(validateGhArgs(["pr", "review", "123", "-r", "--body=review body"])).toBeNull();
+    });
+
+    it("allows implicit-get gh api reads with output shaping only", () => {
+      expect(validateGhArgs(["api", "repos/{owner}/{repo}"])).toBeNull();
       expect(
-        validateGhArgs(["pr", "review", "feat/test", "--comment", "--body", "LGTM-ish"]),
+        validateGhArgs(["api", "repos/{owner}/{repo}/pulls", "--jq", ".[].number"]),
       ).toBeNull();
-      expect(
-        validateGhArgs(
-          [
-            "pr",
-            "review",
-            "https://github.com/acme/web/pull/123",
-            "--comment",
-            "--body",
-            "LGTM-ish",
-          ],
-          ghRepoDir,
-        ),
-      ).toBeNull();
+      expect(validateGhArgs(["api", "repos/{owner}/{repo}", "--template", "{{.name}}"])).toBeNull();
+      expect(validateGhArgs(["api", "repos/{owner}/{repo}", "--include", "--silent"])).toBeNull();
+    });
+
+    it("does not route body values that look like help flags into the help path", () => {
+      expect(validateGhArgs(["pr", "comment", "123", "--body", "-h"])).toBeNull();
+      expect(validateGhArgs(["pr", "review", "123", "--comment", "--body", "--help"])).toBeNull();
     });
   });
 
   describe("blocked commands", () => {
     it("blocks non-append-only pr state mutation commands", () => {
-      expect(validateGhArgs(["pr", "edit", "123", "--title", "new"])).not.toBeNull();
-      expect(validateGhArgs(["pr", "ready", "123"])).not.toBeNull();
+      expectGhDenied(["pr", "edit", "123", "--title", "new"]);
+      expectGhDenied(["pr", "ready", "123"]);
     });
 
     it("blocks pr merge", () => {
-      expect(validateGhArgs(["pr", "merge", "123"])).not.toBeNull();
+      expectGhDenied(["pr", "merge", "123"]);
     });
 
     it("blocks run/workflow mutation commands", () => {
-      expect(validateGhArgs(["run", "cancel", "123"])).not.toBeNull();
-      expect(validateGhArgs(["run", "rerun", "123"])).not.toBeNull();
-      expect(validateGhArgs(["workflow", "run", "ci.yml"])).not.toBeNull();
+      expectGhDenied(["run", "cancel", "123"]);
+      expectGhDenied(["run", "rerun", "123"]);
+      expectGhDenied(["workflow", "run", "ci.yml"]);
     });
 
     it("blocks repo create", () => {
-      expect(validateGhArgs(["repo", "create", "foo"])).not.toBeNull();
+      expectGhDenied(["repo", "create", "foo"]);
     });
 
     it("blocks repo delete", () => {
-      expect(validateGhArgs(["repo", "delete", "foo"])).not.toBeNull();
+      expectGhDenied(["repo", "delete", "foo"]);
     });
 
     it("blocks auth commands", () => {
-      expect(validateGhArgs(["auth", "login"])).not.toBeNull();
-    });
-
-    it("blocks gh api help even though other help flows are allowed", () => {
-      expect(validateGhArgs(["api", "--help"])).not.toBeNull();
-      expect(validateGhArgs(["help", "api"])).not.toBeNull();
-    });
-
-    it("does not route mutations to the help validator when --help/-h appears as a flag value", () => {
-      // -h / --help as the value of --body must not short-circuit validation.
-      // The comment validator still runs, so append-only shape is preserved.
-      expect(validateGhArgs(["pr", "comment", "123", "--body", "-h"])).toBeNull();
-      expect(validateGhArgs(["pr", "comment", "123", "--body", "see --help for more"])).toBeNull();
-      // --approve must still be blocked even with --help buried in --body.
-      expect(
-        validateGhArgs(["pr", "review", "123", "--approve", "--body", "--help"]),
-      ).not.toBeNull();
+      expectGhDenied(["auth", "login"]);
     });
 
     it("blocks secret commands", () => {
-      expect(validateGhArgs(["secret", "set", "FOO"])).not.toBeNull();
+      expectGhDenied(["secret", "set", "FOO"]);
     });
 
-    it("blocks gh pr checkout with a git worktree hint", () => {
-      const err = validateGhArgs(["pr", "checkout", "2984"]);
-      expect(err).toContain("git worktree add");
-      expect(err).toContain("pull/<N>/head");
+    it("blocks gh pr checkout", () => {
+      expectGhDenied(["pr", "checkout", "2984"]);
     });
 
-    it("blocks interactive and file-based pr create flags", () => {
-      expect(
-        validateGhArgs(["pr", "create", "--title", "x", "--body", "y", "--web"]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "create", "--title", "x", "--body", "y", "--editor"]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "create", "--title", "x", "--body-file", "body.md"]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "create", "--title", "x", "--body", "y", "--fill"]),
-      ).not.toBeNull();
+    it("blocks repo-targeting flags across the gh surface", () => {
+      expectGhDenied(["pr", "view", "123", "--repo", "owner/repo"]);
+      expectGhDenied(["issue", "view", "42", "-R", "owner/repo"]);
+      expectGhDenied(["repo", "view", "--repo=owner/repo"]);
+      expectGhDenied(["pr", "create", "--repo", "org/repo", "--title", "x", "--body", "y"]);
+    });
+
+    it("blocks removed pr create forms", () => {
+      expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--web"]);
+      expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--editor"]);
+      expectGhDenied(["pr", "create", "--title", "x", "--body-file", "body.md"]);
+      expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--fill"]);
+      expectGhDenied(["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"]);
     });
 
     it("requires pr create to include --title and --body", () => {
-      expect(validateGhArgs(["pr", "create", "--title", "x"])).not.toBeNull();
-      expect(validateGhArgs(["pr", "create", "--body", "y"])).not.toBeNull();
-      expect(validateGhArgs(["pr", "create", "--title"])).not.toBeNull();
-      expect(validateGhArgs(["pr", "create", "--body"])).not.toBeNull();
+      expectGhDenied(["pr", "create", "--title", "x"]);
+      expectGhDenied(["pr", "create", "--body", "y"]);
+      expectGhDenied(["pr", "create", "--title"]);
+      expectGhDenied(["pr", "create", "--body"]);
     });
 
-    it("blocks cross-repo head selectors for pr create", () => {
-      expect(
-        validateGhArgs([
-          "pr",
-          "create",
-          "--head",
-          "otheruser:feat/test",
-          "--title",
-          "x",
-          "--body",
-          "y",
-        ]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs([
-          "pr",
-          "create",
-          "--head=otheruser:feat/test",
-          "--title",
-          "x",
-          "--body",
-          "y",
-        ]),
-      ).not.toBeNull();
+    it("blocks non-numeric or malformed comment selectors", () => {
+      expectGhDenied(["pr", "comment", "feat/test", "--body", "x"]);
+      expectGhDenied(["issue", "comment", "abc", "--body", "x"]);
+      expectGhDenied(["pr", "comment", "123", "124", "--body", "x"]);
     });
 
-    it("blocks cross-repo flags for gh write commands", () => {
-      expect(
-        validateGhArgs(["pr", "create", "--repo", "org/repo", "--title", "x", "--body", "y"]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "create", "-R", "org/repo", "--title", "x", "--body", "y"]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "comment", "123", "--repo", "org/repo", "--body", "x"]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(["issue", "comment", "42", "-R", "org/repo", "--body", "x"]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "review", "123", "--comment", "--repo", "org/repo", "--body", "x"]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs([
-          "pr",
-          "review",
-          "123",
-          "--request-changes",
-          "-R",
-          "org/repo",
-          "--body",
-          "x",
-        ]),
-      ).not.toBeNull();
+    it("requires comments to provide a body", () => {
+      expectGhDenied(["pr", "comment", "123"]);
+      expectGhDenied(["pr", "comment", "123", "--body"]);
+      expectGhDenied(["issue", "comment", "42"]);
     });
 
-    it("blocks comment edit/delete/interactive/file flags", () => {
-      expect(validateGhArgs(["pr", "comment", "123", "--edit-last", "--body", "x"])).not.toBeNull();
-      expect(validateGhArgs(["pr", "comment", "123", "--delete-last"])).not.toBeNull();
-      expect(
-        validateGhArgs(["issue", "comment", "42", "--create-if-none", "--body", "x"]),
-      ).not.toBeNull();
-      expect(validateGhArgs(["issue", "comment", "42", "--web", "--body", "x"])).not.toBeNull();
-      expect(validateGhArgs(["issue", "comment", "42", "--editor", "--body", "x"])).not.toBeNull();
-      expect(
-        validateGhArgs(["issue", "comment", "42", "--body-file", "comment.md"]),
-      ).not.toBeNull();
-      expect(validateGhArgs(["issue", "comment", "42", "-F", "comment.md"])).not.toBeNull();
+    it("blocks non-numeric or malformed pr review selectors", () => {
+      expectGhDenied(["pr", "review", "feat/test", "--comment", "--body", "x"]);
+      expectGhDenied(["pr", "review", "owner/repo#123", "--comment", "--body", "x"]);
+      expectGhDenied(["pr", "review", "123", "124", "--comment", "--body", "x"]);
     });
 
-    it("requires comments to provide --body", () => {
-      expect(validateGhArgs(["pr", "comment", "123"])).not.toBeNull();
-      expect(validateGhArgs(["pr", "comment", "123", "--body"])).not.toBeNull();
-      expect(validateGhArgs(["issue", "comment", "42", "--repo"])).not.toBeNull();
+    it("blocks pr review approve and unknown shapes", () => {
+      expectGhDenied(["pr", "review", "123", "--approve", "--body", "ok"]);
+      expectGhDenied(["pr", "review", "123", "-a", "-b", "ok"]);
+      expectGhDenied(["pr", "review", "123", "--comment", "--web", "--body", "ok"]);
+      expectGhDenied(["pr", "review", "123", "--request-changes", "--editor", "--body", "x"]);
+      expectGhDenied(["pr", "review", "123", "--comment", "--body-file", "review.md"]);
+      expectGhDenied(["pr", "review", "123", "--comment", "--foo", "x", "--body", "ok"]);
     });
 
-    it("blocks cross-repo URL selectors and repo-style shorthands for gh write comment/review commands", () => {
-      expect(
-        validateGhArgs(
-          ["pr", "comment", "https://github.com/other/repo/pull/123", "--body", "x"],
-          ghRepoDir,
-        ),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(
-          ["issue", "comment", "https://github.com/other/repo/issues/42", "--body", "x"],
-          ghRepoDir,
-        ),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(
-          ["pr", "review", "https://github.com/other/repo/pull/123", "--comment", "--body", "x"],
-          ghRepoDir,
-        ),
-      ).not.toBeNull();
-      expect(validateGhArgs(["pr", "comment", "owner/repo#123", "--body", "x"])).not.toBeNull();
-      expect(validateGhArgs(["issue", "comment", "abc", "--body", "x"])).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "review", "owner/repo#123", "--comment", "--body", "x"]),
-      ).not.toBeNull();
+    it("requires pr review mode and body", () => {
+      expectGhDenied(["pr", "review", "123", "--body", "x"]);
+      expectGhDenied(["pr", "review", "123", "--comment"]);
+      expectGhDenied(["pr", "review", "123", "--comment", "--request-changes", "--body", "x"]);
     });
 
-    it("rejects extra positional selectors for gh write comment/review commands", () => {
-      expect(validateGhArgs(["pr", "comment", "123", "124", "--body", "x"])).not.toBeNull();
-      expect(validateGhArgs(["issue", "comment", "42", "43", "--body", "x"])).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "review", "123", "124", "--comment", "--body", "x"]),
-      ).not.toBeNull();
+    it("requires required selectors for exact read commands", () => {
+      expectGhDenied(["issue", "view"]);
+      expectGhDenied(["issue", "view", "abc"]);
+      expectGhDenied(["run", "view"]);
+      expectGhDenied(["run", "view", "abc"]);
+      expectGhDenied(["run", "watch"]);
+      expectGhDenied(["workflow", "view"]);
     });
 
-    it("requires issue comment to include a numeric issue selector", () => {
-      expect(validateGhArgs(["issue", "comment", "--body", "x"])).not.toBeNull();
-    });
-
-    it("blocks unknown comment flags", () => {
-      expect(
-        validateGhArgs(["pr", "comment", "123", "--foo", "bar", "--body", "x"]),
-      ).not.toBeNull();
-    });
-
-    it("blocks pr review approve and interactive/file/unknown flags", () => {
-      expect(validateGhArgs(["pr", "review", "123", "--approve", "--body", "ok"])).not.toBeNull();
-      expect(validateGhArgs(["pr", "review", "123", "-a", "-b", "ok"])).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "review", "123", "--comment", "--web", "--body", "ok"]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "review", "123", "--request-changes", "--editor", "--body", "x"]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "review", "123", "--comment", "--body-file", "review.md"]),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "review", "123", "--comment", "--foo", "x", "--body", "ok"]),
-      ).not.toBeNull();
-    });
-
-    it("requires pr review mode and --body", () => {
-      expect(validateGhArgs(["pr", "review", "123", "--body", "x"])).not.toBeNull();
-      expect(validateGhArgs(["pr", "review", "123", "--comment"])).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "review", "123", "--comment", "--request-changes", "--body", "x"]),
-      ).not.toBeNull();
+    it("blocks less-central read commands removed from the allowlist", () => {
+      expectGhDenied(["search", "issues", "sandbox"]);
+      expectGhDenied(["label", "list"]);
+      expectGhDenied(["release", "list"]);
     });
   });
 
   describe("gh api", () => {
-    it("blocks gh api entirely", () => {
-      expect(validateGhArgs(["api", "--help"])).not.toBeNull();
-      expect(validateGhArgs(["api", "repos/org/repo/pulls"])).not.toBeNull();
-      expect(validateGhArgs(["api", "-X", "GET", "repos/org/repo"])).not.toBeNull();
-      expect(validateGhArgs(["api", "-X", "POST", "repos/org/repo/pulls"])).not.toBeNull();
-      expect(validateGhArgs(["api", "graphql"])).not.toBeNull();
+    it("blocks unsafe gh api execution forms", () => {
+      expectGhDenied(["api", "graphql"]);
+      expectGhDenied(["api", "-X", "GET", "repos/org/repo"]);
+      expectGhDenied(["api", "repos/org/repo", "--method", "GET"]);
+      expectGhDenied(["api", "repos/org/repo", "--input", "body.json"]);
+      expectGhDenied(["api", "repos/org/repo", "-H", "Accept: application/json"]);
+      expectGhDenied(["api", "repos/org/repo", "--preview", "corsair"]);
+      expectGhDenied(["api", "repos/org/repo", "--hostname", "ghe.example.com"]);
+      expectGhDenied(["api", "repos/org/repo", "-f", "state=open"]);
+      expectGhDenied(["api", "repos/org/repo", "-F", "q=@query.graphql"]);
+      expectGhDenied(["api", "--silent", "repos/org/repo"]);
     });
   });
 
   it("requires a subcommand unless the invocation is help/version", () => {
-    expect(validateGhArgs(["pr"])).not.toBeNull();
+    expectGhDenied(["pr"]);
   });
 });
 

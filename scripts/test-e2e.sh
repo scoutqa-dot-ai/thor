@@ -568,17 +568,25 @@ cwd_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
 cwd_exit=$(json_field "$cwd_raw" "exitCode")
 assert '[[ "$cwd_exit" == "1" ]]' "git cwd outside /workspace is blocked" "exitCode='$cwd_exit'"
 
-# 6f. gh api should be blocked
+# 6f. unsafe gh api shapes should be blocked
 gh_api_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
   -H 'Content-Type: application/json' \
-  -d "{\"args\":[\"api\",\"repos\"],\"cwd\":\"$POLICY_CWD\"}" \
+  -d "{\"args\":[\"api\",\"repos/{owner}/{repo}\",\"--method\",\"GET\"],\"cwd\":\"$POLICY_CWD\"}" \
   2>/dev/null || echo '{}')
 gh_api_exit=$(json_field "$gh_api_raw" "exitCode")
 gh_api_stderr=$(json_field "$gh_api_raw" "stderr")
-assert '[[ "$gh_api_exit" == "1" ]]' "gh api is blocked" "exitCode='$gh_api_exit'"
+assert '[[ "$gh_api_exit" == "1" ]]' "unsafe gh api shapes are blocked" "exitCode='$gh_api_exit'"
 assert '[[ "$gh_api_stderr" == *"not allowed"* ]]' "gh api error mentions not allowed" "stderr='${gh_api_stderr:0:200}'"
 
-# 6g. gh pr checkout should be blocked
+# 6g. gh api help should be allowed
+gh_api_help_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"api\",\"--help\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+gh_api_help_exit=$(json_field "$gh_api_help_raw" "exitCode")
+assert '[[ "$gh_api_help_exit" == "0" ]]' "gh api help succeeds" "exitCode='$gh_api_help_exit'"
+
+# 6h. gh pr checkout should be blocked
 gh_prco_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
   -H 'Content-Type: application/json' \
   -d "{\"args\":[\"pr\",\"checkout\",\"1\"],\"cwd\":\"$POLICY_CWD\"}" \
@@ -586,7 +594,7 @@ gh_prco_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
 gh_prco_exit=$(json_field "$gh_prco_raw" "exitCode")
 assert '[[ "$gh_prco_exit" == "1" ]]' "gh pr checkout is blocked" "exitCode='$gh_prco_exit'"
 
-# 6h. Allowed read commands should succeed
+# 6i. Allowed read commands should succeed
 status_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
   -H 'Content-Type: application/json' \
   -d "{\"args\":[\"status\"],\"cwd\":\"$POLICY_CWD\"}" \
