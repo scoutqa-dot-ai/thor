@@ -102,6 +102,11 @@ jobs:
           api="https://app.daytona.io/api/snapshots"
           auth=(-H "Authorization: Bearer $DAYTONA_API_KEY")
 
+          # Delete any stale snapshot with this name (may be in error state).
+          echo "Deleting existing snapshot $snapshot_name if present..."
+          curl -sS -X DELETE "${auth[@]}" "$api/$snapshot_name" || true
+          echo
+
           echo "Creating snapshot $snapshot_name from $image_name"
           curl -sS --fail-with-body -X POST "${auth[@]}" \
             -H "Content-Type: application/json" \
