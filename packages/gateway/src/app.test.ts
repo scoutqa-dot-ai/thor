@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConfigLoader, WorkspaceConfig } from "@thor/common";
 import { createGatewayApp, type GatewayAppConfig } from "./app.js";
+import { getGitHubDeliveryFallbackSourceTs } from "./github.js";
 import type { EventQueue } from "./queue.js";
 
 /** Create a fake ConfigLoader from channel IDs and channel→repo map for tests. */
@@ -425,6 +426,56 @@ describe("gateway", () => {
         const queued = readQueuedEvents(queueDir);
         expect(queued).toHaveLength(1);
         expect(queued[0]).toMatchObject({ id: "delivery-retry", sourceTs: Date.parse("2026-04-24T11:00:00Z") });
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
+  it("coalesces retried GitHub deliveries when the payload omits source timestamps", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir) => {
+        const body = JSON.stringify({
+          action: "created",
+          installation: { id: 126669985 },
+          repository: { full_name: "ScoutQA-Dot-AI/Thor" },
+          sender: { login: "alice", type: "User" },
+          pull_request: {
+            number: 42,
+            head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
+            base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+          },
+          comment: {
+            body: "Retry me without timestamp",
+            html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+          },
+        });
+
+        const headers = {
+          "Content-Type": "application/json",
+          "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+          "X-GitHub-Delivery": "delivery-retry-missing-ts",
+          "X-GitHub-Event": "pull_request_review_comment",
+        };
+
+        const first = await fetch(`${baseUrl}/github/webhook`, { method: "POST", headers, body });
+        const second = await fetch(`${baseUrl}/github/webhook`, { method: "POST", headers, body });
+
+        expect(first.status).toBe(200);
+        expect(second.status).toBe(200);
+
+        const queued = readQueuedEvents(queueDir);
+        expect(queued).toHaveLength(1);
+        expect(queued[0]).toMatchObject({
+          id: "delivery-retry-missing-ts",
+          sourceTs: getGitHubDeliveryFallbackSourceTs("delivery-retry-missing-ts"),
+        });
+        expect(queued[0].readyAt).toBeGreaterThan(Date.parse(String(queued[0].receivedAt)));
       },
       {
         githubWebhookSecret: "github-secret",

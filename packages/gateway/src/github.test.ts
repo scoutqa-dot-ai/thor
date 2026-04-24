@@ -4,6 +4,7 @@ import { computeGitAlias } from "@thor/common";
 import {
   buildCorrelationKey,
   detectMention,
+  getGitHubDeliveryFallbackSourceTs,
   GitHubWebhookEnvelopeSchema,
   normalizeGitHubEvent,
   verifyGitHubSignature,
@@ -169,6 +170,13 @@ describe("mention and correlation helpers", () => {
   it("mention matching is case-insensitive and boundary-safe", () => {
     expect(detectMention("Please check @Thor", ["thor"])).toBe(true);
     expect(detectMention("Please check @thorbot", ["thor"])).toBe(false);
+  });
+
+  it("delivery fallback source timestamp is stable for the same delivery id", () => {
+    expect(getGitHubDeliveryFallbackSourceTs("delivery-1")).toBe(
+      getGitHubDeliveryFallbackSourceTs("delivery-1"),
+    );
+    expect(Number.isSafeInteger(getGitHubDeliveryFallbackSourceTs("delivery-1"))).toBe(true);
   });
 
   it("buildCorrelationKey matches computeGitAlias format", () => {

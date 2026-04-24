@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 
 const GitHubSenderSchema = z.object({
@@ -165,6 +165,10 @@ export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number | und
   if (!iso) return undefined;
   const parsed = Date.parse(iso);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function getGitHubDeliveryFallbackSourceTs(deliveryId: string): number {
+  return createHash("sha256").update(deliveryId).digest().readUIntBE(0, 6);
 }
 
 export function normalizeGitHubEvent(
