@@ -297,6 +297,7 @@ describe("validateGhArgs", () => {
         ["auth", "status"],
         ["pr", "view"],
         ["pr", "view", "123"],
+        ["pr", "view", "https://github.com/acme/web/pull/123"],
         ["pr", "view", "123", "--json", "title", "--jq", ".title"],
         ["pr", "list", "--limit", "10"],
         ["pr", "list", "--search", "is:open", "--limit", "10"],
@@ -306,6 +307,12 @@ describe("validateGhArgs", () => {
         ["issue", "view", "42"],
         ["issue", "view", "42", "--json", "title", "--jq", ".title"],
         ["issue", "list", "--limit", "10"],
+        ["search", "prs", "is:open reviewer:me"],
+        ["search", "issues", "label:bug sort:updated-desc"],
+        ["label", "list", "--limit", "20"],
+        ["release", "list", "--limit", "5"],
+        ["release", "view", "latest"],
+        ["release", "view", "v1.2.3", "--json", "tagName"],
         ["repo", "view"],
         ["repo", "view", "owner/repo", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
         ["run", "list", "--limit", "10"],
@@ -499,10 +506,11 @@ describe("validateGhArgs", () => {
       expectGhDenied(["workflow", "view"]);
     });
 
-    it("blocks less-central read commands removed from the allowlist", () => {
-      expectGhDenied(["search", "issues", "sandbox"]);
-      expectGhDenied(["label", "list"]);
-      expectGhDenied(["release", "list"]);
+    it("blocks still-unsupported search and release command shapes", () => {
+      expectGhDenied(["search", "code", "sandbox"]);
+      expectGhDenied(["release", "download", "v1.2.3"]);
+      expectGhDenied(["release", "delete", "v1.2.3"]);
+      expectGhDenied(["release", "view"]);
     });
   });
 

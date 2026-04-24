@@ -13,6 +13,8 @@ const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
 const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "api",
   "auth status",
+  "search prs",
+  "search issues",
   "pr view",
   "pr diff",
   "pr list",
@@ -24,6 +26,9 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "issue view",
   "issue list",
   "issue comment",
+  "label list",
+  "release list",
+  "release view",
   "repo view",
   "run list",
   "run view",
@@ -70,6 +75,8 @@ export function validateGhArgs(args: string[], _cwd?: string): string | null {
       return validateRequiredNumericSelector(args, "gh run watch");
     case "workflow view":
       return validateWorkflowViewArgs(args);
+    case "release view":
+      return validateReleaseViewArgs(args);
     default:
       return null;
   }
@@ -115,6 +122,13 @@ function validateRequiredNumericSelector(args: string[], command: string): strin
 function validateWorkflowViewArgs(args: string[]): string | null {
   if (args.length < 3 || args[2].startsWith("-")) {
     return denyMessage("gh workflow view");
+  }
+  return null;
+}
+
+function validateReleaseViewArgs(args: string[]): string | null {
+  if (args.length < 3 || args[2].startsWith("-")) {
+    return denyMessage("gh release view");
   }
   return null;
 }

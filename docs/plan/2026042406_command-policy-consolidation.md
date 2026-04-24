@@ -97,11 +97,17 @@ Thor supports the following `gh` workflows:
 - auth read:
   `gh auth status`
 - PR read:
-  `gh pr view [selector] ...`, `gh pr diff [selector] ...`, `gh pr list ...`, `gh pr checks [selector] ...`, `gh pr status`
+  `gh pr view [selector|url] ...`, `gh pr diff [selector] ...`, `gh pr list ...`, `gh pr checks [selector] ...`, `gh pr status`
 - issue read:
   `gh issue view <number> ...`, `gh issue list ...`
 - repo read:
   `gh repo view [<owner/repo>] ...`
+- search read:
+  `gh search prs ...`, `gh search issues ...`
+- label read:
+  `gh label list ...`
+- release read:
+  `gh release list ...`, `gh release view <tag|latest> ...`
 - run read:
   `gh run list ...`, `gh run view <id> ...`, `gh run watch <id> ...`
 - workflow read:
@@ -132,7 +138,7 @@ Notable exclusions:
 - `gh pr checkout`
 - editor/browser/body-file modes
 - PR approval, merge, edit, delete-last, and similar mutating shortcuts
-- less-central read tuples such as `gh search ...`, `gh label list`, and `gh release ...`
+- mutating or side-effecting release flows such as `gh release download`, create, edit, and delete
 
 ### Skill Docs
 
@@ -208,6 +214,7 @@ Notable exclusions:
 - Safe argument ordering: replace slot-based validation for `git worktree add` with option-aware parsing, allow the approved `git push` flags to appear in any position, and add regression tests for reordered valid forms while keeping invalid forms denied. Status: Completed.
 - Bounded arg scanner: create a shared helper for recognized flag aliases and positional collection, refactor the structured `git` / `gh` validators onto it, and keep per-command semantic checks in the validators themselves. Status: Completed.
 - Stakeholder read-only additions: allow `git shortlog ...`, `git ls-files ...`, and `git show-ref ...` as read-only passthrough commands, add constrained support for `git branch --list [<pattern>]` and `git branch (-a|--all) --list [<pattern>]`, and allow the exact branch-introspection form `git rev-parse --abbrev-ref HEAD`. Status: Completed.
+- GH investigation reads: allow `gh search prs ...`, `gh search issues ...`, `gh label list ...`, `gh release list ...`, and `gh release view <tag|latest> ...` on the broad read path, while keeping `gh release download` and write flows blocked. Also document that `gh pr view` already allows URL selectors on the read path. Status: Completed.
 
 ## Verification
 
@@ -235,6 +242,7 @@ pnpm -r typecheck
 | 13  | Keep command semantics in the per-subcommand validators                                         | Each supported workflow still has materially different safety rules and should stay easy to audit.                                                                                                        | Move allow/deny semantics into a shared abstraction                                             |
 | 14  | Refactor only the structured validators that already scan tokens                                | That is where reuse improves clarity without changing the policy shape or forcing passthrough tuple checks into a parser abstraction.                                                                     | Rewrite passthrough tuple checks to fit the shared helper                                       |
 | 15  | Broaden the Git read-only surface with narrowly bounded ownership and ref-inspection helpers    | `shortlog`, `ls-files`, and `show-ref` are read-only and useful enough to allow broadly, while `branch --list` and `rev-parse --abbrev-ref HEAD` stay constrained to avoid reopening generic parser work. | Keep the narrower surface and force agents into workarounds, or allow broad `rev-parse` grammar |
+| 16  | Broaden the GH read-only surface for investigation, but keep release side effects blocked       | `search`, `label list`, and selected `release` reads improve investigation workflows with much lower risk than widening write selectors or allowing local-file side effects like `release download`.      | Keep the narrower GH read-only surface, or allow broader release operations including download  |
 
 ## References
 
@@ -257,3 +265,8 @@ pnpm -r typecheck
 - GH `pr checks`: https://cli.github.com/manual/gh_pr_checks
 - GH `issue view`: https://cli.github.com/manual/gh_issue_view
 - GH `repo view`: https://cli.github.com/manual/gh_repo_view
+- GH `search prs`: https://cli.github.com/manual/gh_search_prs
+- GH `search issues`: https://cli.github.com/manual/gh_search_issues
+- GH `label list`: https://cli.github.com/manual/gh_label_list
+- GH `release list`: https://cli.github.com/manual/gh_release_list
+- GH `release view`: https://cli.github.com/manual/gh_release_view

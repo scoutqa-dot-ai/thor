@@ -48,14 +48,24 @@ Implicit GET only. Required: REST endpoint as the first positional argument. Opt
 - `gh auth status`
 - `gh issue list`
 - `gh issue view`
+- `gh label list`
 - `gh pr checks`
 - `gh pr diff`
 - `gh pr list`
 - `gh pr status`
-- `gh pr view`
+- `gh pr view` (numeric selectors and PR URLs are both allowed on the read path)
 - `gh repo view`
+- `gh release list`
 - `gh run list`
 - `gh run view`
 - `gh run watch`
+- `gh search issues`
+- `gh search prs`
 - `gh workflow list`
 - `gh workflow view`
+
+## Additional constrained read-only commands
+
+- `gh release view <tag|latest> ...`
+
+`gh release download` is still blocked because it has local filesystem side effects.
