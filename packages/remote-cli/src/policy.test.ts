@@ -68,16 +68,24 @@ describe("validateGitArgs", () => {
         ["show", "HEAD~1"],
         ["show", "HEAD", "--stat"],
         ["show", "HEAD:packages/remote-cli/src/policy.ts"],
+        ["shortlog", "HEAD~10..HEAD"],
         ["branch", "--show-current"],
         ["branch", "-a"],
+        ["branch", "--list"],
+        ["branch", "--list", "feat/*"],
+        ["branch", "-a", "--list", "feat/*"],
+        ["branch", "--list", "--all", "feat/*"],
+        ["rev-parse", "--abbrev-ref", "HEAD"],
         ["merge-base", "HEAD", "origin/main"],
         ["fetch", "origin"],
         ["fetch", "origin", "main"],
         ["fetch", "origin", "refs/heads/main:refs/remotes/origin/main"],
+        ["ls-files", "--", "packages/remote-cli/src/policy.ts"],
         ["remote"],
         ["remote", "-v"],
         ["remote", "show", "origin"],
         ["remote", "get-url", "origin"],
+        ["show-ref", "--verify", "refs/heads/main"],
       ];
 
       for (const args of allowedCommands) {
@@ -163,9 +171,19 @@ describe("validateGitArgs", () => {
       ).toBeNull();
     });
 
-    it("blocks non-allowlisted branch commands", () => {
+    it("blocks branch commands outside the approved read-only shapes", () => {
       expectGitDenied(["branch", "-m", "rename-policy-tests"]);
-      expectGitDenied(["branch", "--list"]);
+      expectGitDenied(["branch", "feat/test"]);
+      expectGitDenied(["branch", "--list", "feat/*", "fix/*"]);
+      expectGitDenied(["branch", "-a", "feat/*"]);
+      expectGitDenied(["branch", "--show-current", "--list"]);
+    });
+
+    it("blocks rev-parse forms outside exact branch introspection", () => {
+      expectGitDenied(["rev-parse"]);
+      expectGitDenied(["rev-parse", "HEAD"]);
+      expectGitDenied(["rev-parse", "--show-toplevel"]);
+      expectGitDenied(["rev-parse", "--abbrev-ref", "origin/main"]);
     });
 
     it("blocks git remote add/set-url/rename/remove and other unsupported shapes", () => {

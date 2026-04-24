@@ -24,11 +24,15 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "log",
   "diff",
   "show",
+  "shortlog",
   "merge-base",
   "branch",
+  "rev-parse",
   "remote",
   "fetch",
+  "ls-files",
   "restore",
+  "show-ref",
   "add",
   "commit",
   "worktree",
@@ -65,11 +69,16 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
     case "log":
     case "diff":
     case "show":
+    case "shortlog":
+    case "ls-files":
+    case "show-ref":
       return { args: [...args] };
     case "merge-base":
       return wrap(validateMergeBase(args), args);
     case "branch":
       return wrap(validateBranch(args), args);
+    case "rev-parse":
+      return wrap(validateRevParse(args), args);
     case "remote":
       return wrap(validateRemote(args), args);
     case "fetch":
@@ -114,15 +123,35 @@ function validateMergeBase(args: string[]): string | null {
 }
 
 function validateBranch(args: string[]): string | null {
-  if (
-    matchesExactArgs(args, ["branch", "--show-current"]) ||
-    matchesExactArgs(args, ["branch", "-a"]) ||
-    matchesExactArgs(args, ["branch", "--all"])
-  ) {
+  if (matchesExactArgs(args, ["branch", "--show-current"])) {
     return null;
   }
 
-  return denyMessage("git branch");
+  const parsed = scanPolicyArgs(args, 1, [
+    { name: "all", kind: "boolean", aliases: ["-a", "--all"] },
+    { name: "list", kind: "boolean", aliases: ["--list"] },
+  ]);
+  if (!parsed) {
+    return denyMessage("git branch");
+  }
+
+  const allCount = booleanFlagCount(parsed, "all");
+  const listCount = booleanFlagCount(parsed, "list");
+  if (allCount > 1 || listCount > 1 || parsed.positionals.length > 1) {
+    return denyMessage("git branch");
+  }
+
+  if (listCount === 0) {
+    return parsed.positionals.length === 0 && allCount === 1 ? null : denyMessage("git branch");
+  }
+
+  return null;
+}
+
+function validateRevParse(args: string[]): string | null {
+  return matchesExactArgs(args, ["rev-parse", "--abbrev-ref", "HEAD"])
+    ? null
+    : denyMessage("git rev-parse");
 }
 
 function validateRemote(args: string[]): string | null {

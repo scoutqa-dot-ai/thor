@@ -10,7 +10,7 @@ All `git` commands go through Thor's remote-cli which enforces:
 - **No branch switching in-place.** `git checkout <ref>` and `git switch` are denied — use `git worktree add <path> <ref>` instead.
 - **No force-push or implicit push resolution.** Pushes must target `origin HEAD:refs/heads/<branch>` explicitly.
 - **Pushes only to `origin`**, never to protected branches `main` or `master`.
-- **No config or ref-introspection helpers outside the allowlist.** `git config`, `git symbolic-ref`, and `git check-ignore` are denied.
+- **No config or broad ref-introspection helpers outside the allowlist.** `git config`, `git symbolic-ref`, and generic `git rev-parse` forms are denied.
 - **Use `git restore` for file restore.** `git checkout -- <path>` is not part of the supported surface.
 
 ## Common redirects
@@ -36,7 +36,11 @@ Exact shape only: `git merge-base <left> <right>`.
 
 ### `git branch`
 
-Read-only only: `git branch --show-current`, `git branch -a`, or `git branch --all`.
+Read-only only: `git branch --show-current`, `git branch -a`, `git branch --all`, `git branch --list [<pattern>]`, or `git branch (-a|--all) --list [<pattern>]`.
+
+### `git rev-parse`
+
+Only the exact branch-introspection form `git rev-parse --abbrev-ref HEAD` is supported.
 
 ### `git remote`
 
@@ -75,8 +79,11 @@ Only `git push origin HEAD:refs/heads/<branch>` is supported, with optional `--d
 ## Passthrough subcommands (any arguments accepted)
 
 - `git diff`
+- `git ls-files`
 - `git log`
+- `git shortlog`
 - `git show`
+- `git show-ref`
 - `git status`
 
 ## Safe under `git --no-pager`

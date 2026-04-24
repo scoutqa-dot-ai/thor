@@ -53,11 +53,13 @@ Thor supports the following `git` workflows:
 - version:
   `git --version`
 - read-only:
-  `git status ...`, `git log ...`, `git diff ...`, `git show ...`
+  `git status ...`, `git log ...`, `git diff ...`, `git show ...`, `git shortlog ...`, `git ls-files ...`, `git show-ref ...`
 - merge base:
   `git merge-base <left> <right>`
 - branch read:
-  `git branch --show-current`, `git branch -a`, `git branch --all`
+  `git branch --show-current`, `git branch -a`, `git branch --all`, `git branch --list [<pattern>]`, `git branch (-a|--all) --list [<pattern>]`
+- exact ref introspection:
+  `git rev-parse --abbrev-ref HEAD`
 - remote read:
   `git remote`, `git remote -v`, `git remote --verbose`, `git remote show origin`, `git remote get-url origin`
 - fetch:
@@ -205,6 +207,7 @@ Notable exclusions:
 
 - Safe argument ordering: replace slot-based validation for `git worktree add` with option-aware parsing, allow the approved `git push` flags to appear in any position, and add regression tests for reordered valid forms while keeping invalid forms denied. Status: Completed.
 - Bounded arg scanner: create a shared helper for recognized flag aliases and positional collection, refactor the structured `git` / `gh` validators onto it, and keep per-command semantic checks in the validators themselves. Status: Completed.
+- Stakeholder read-only additions: allow `git shortlog ...`, `git ls-files ...`, and `git show-ref ...` as read-only passthrough commands, add constrained support for `git branch --list [<pattern>]` and `git branch (-a|--all) --list [<pattern>]`, and allow the exact branch-introspection form `git rev-parse --abbrev-ref HEAD`. Status: Completed.
 
 ## Verification
 
@@ -215,22 +218,23 @@ pnpm -r typecheck
 
 ## Decision Log
 
-| #   | Decision                                                                                        | Rationale                                                                                                                                                | Rejected                                                                                  |
-| --- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| 1   | Prefer a reduced workflow allowlist over the earlier widening and declarative-parser directions | The maintenance cost came from CLI grammar emulation, not from the number of policy entries. A smaller explicit surface is easier to audit and maintain. | Keep widening compatibility or continue investing in a generic parser for a broad surface |
-| 2   | Make the policy allowlist-only                                                                  | A positive spec is easier to audit than mixed allow/deny logic and keeps drift under control as new flags appear.                                        | Maintain separate blocked-command or blocked-flag policy tables                           |
-| 3   | Replace `git checkout` restore support with `git restore`                                       | `git restore` is purpose-built for file restore and avoids reopening branch-switching ambiguity.                                                         | Keep heuristic path-vs-branch detection for `git checkout`                                |
-| 4   | Remove implicit `git push` support                                                              | Implicit push behavior depends on local branch state and Git config, which makes policy reasoning harder.                                                | Resolve upstreams and rewrite implicit push forms                                         |
-| 5   | Keep the GH mutating path current-repo-only                                                     | Blocking `-R` / `--repo` and cross-repo write selectors keeps auth and validation simpler on the write path.                                             | Preserve cross-repo write support for convenience                                         |
-| 6   | Use exact templates for GH write commands                                                       | PR creation, comments, and reviews are where selector and flag complexity concentrate; exact templates keep that manageable.                             | Preserve broad write parsing for URLs, branch selectors, and interactive modes            |
-| 7   | Allow only a tiny implicit-GET `gh api` subset                                                  | `gh api` defaults to GET but can become POST when parameter flags are introduced; banning method and parameter controls removes that ambiguity.          | Keep blocking `gh api` entirely or allow broader method-aware parsing                     |
-| 8   | Hand-maintain `using-git` and `using-gh`                                                        | The skill docs are stable enough that direct maintenance is simpler than keeping generation and sync tooling alive.                                      | Keep code generation as the long-term maintenance model                                   |
-| 9   | Keep GH read-only commands broad by tuple and validate exact grammar only where needed          | Read-only tuple pass-through preserves common inspection flows without rebuilding the full GH CLI grammar.                                               | Fully parse every GH read-only selector and flag combination                              |
-| 10  | Parse supported git commands by recognized flags and positionals                                | The policy should gate workflows, not fail because Git accepted the same workflow in another order.                                                      | Keep exact tuple matching for commands with safe reordering                               |
-| 11  | Keep the ordering fix limited to `git worktree add` and `git push`                              | Those were the concrete user-facing drift points in this branch and did not justify a broad parser rewrite by themselves.                                | Broad parser rewrites across every structured command                                     |
-| 12  | Extract only token-scanning concerns into a shared helper                                       | The duplication was in walking flags and values, not in the policy decisions themselves.                                                                 | A generic reusable command-policy engine                                                  |
-| 13  | Keep command semantics in the per-subcommand validators                                         | Each supported workflow still has materially different safety rules and should stay easy to audit.                                                       | Move allow/deny semantics into a shared abstraction                                       |
-| 14  | Refactor only the structured validators that already scan tokens                                | That is where reuse improves clarity without changing the policy shape or forcing passthrough tuple checks into a parser abstraction.                    | Rewrite passthrough tuple checks to fit the shared helper                                 |
+| #   | Decision                                                                                        | Rationale                                                                                                                                                                                                 | Rejected                                                                                        |
+| --- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| 1   | Prefer a reduced workflow allowlist over the earlier widening and declarative-parser directions | The maintenance cost came from CLI grammar emulation, not from the number of policy entries. A smaller explicit surface is easier to audit and maintain.                                                  | Keep widening compatibility or continue investing in a generic parser for a broad surface       |
+| 2   | Make the policy allowlist-only                                                                  | A positive spec is easier to audit than mixed allow/deny logic and keeps drift under control as new flags appear.                                                                                         | Maintain separate blocked-command or blocked-flag policy tables                                 |
+| 3   | Replace `git checkout` restore support with `git restore`                                       | `git restore` is purpose-built for file restore and avoids reopening branch-switching ambiguity.                                                                                                          | Keep heuristic path-vs-branch detection for `git checkout`                                      |
+| 4   | Remove implicit `git push` support                                                              | Implicit push behavior depends on local branch state and Git config, which makes policy reasoning harder.                                                                                                 | Resolve upstreams and rewrite implicit push forms                                               |
+| 5   | Keep the GH mutating path current-repo-only                                                     | Blocking `-R` / `--repo` and cross-repo write selectors keeps auth and validation simpler on the write path.                                                                                              | Preserve cross-repo write support for convenience                                               |
+| 6   | Use exact templates for GH write commands                                                       | PR creation, comments, and reviews are where selector and flag complexity concentrate; exact templates keep that manageable.                                                                              | Preserve broad write parsing for URLs, branch selectors, and interactive modes                  |
+| 7   | Allow only a tiny implicit-GET `gh api` subset                                                  | `gh api` defaults to GET but can become POST when parameter flags are introduced; banning method and parameter controls removes that ambiguity.                                                           | Keep blocking `gh api` entirely or allow broader method-aware parsing                           |
+| 8   | Hand-maintain `using-git` and `using-gh`                                                        | The skill docs are stable enough that direct maintenance is simpler than keeping generation and sync tooling alive.                                                                                       | Keep code generation as the long-term maintenance model                                         |
+| 9   | Keep GH read-only commands broad by tuple and validate exact grammar only where needed          | Read-only tuple pass-through preserves common inspection flows without rebuilding the full GH CLI grammar.                                                                                                | Fully parse every GH read-only selector and flag combination                                    |
+| 10  | Parse supported git commands by recognized flags and positionals                                | The policy should gate workflows, not fail because Git accepted the same workflow in another order.                                                                                                       | Keep exact tuple matching for commands with safe reordering                                     |
+| 11  | Keep the ordering fix limited to `git worktree add` and `git push`                              | Those were the concrete user-facing drift points in this branch and did not justify a broad parser rewrite by themselves.                                                                                 | Broad parser rewrites across every structured command                                           |
+| 12  | Extract only token-scanning concerns into a shared helper                                       | The duplication was in walking flags and values, not in the policy decisions themselves.                                                                                                                  | A generic reusable command-policy engine                                                        |
+| 13  | Keep command semantics in the per-subcommand validators                                         | Each supported workflow still has materially different safety rules and should stay easy to audit.                                                                                                        | Move allow/deny semantics into a shared abstraction                                             |
+| 14  | Refactor only the structured validators that already scan tokens                                | That is where reuse improves clarity without changing the policy shape or forcing passthrough tuple checks into a parser abstraction.                                                                     | Rewrite passthrough tuple checks to fit the shared helper                                       |
+| 15  | Broaden the Git read-only surface with narrowly bounded ownership and ref-inspection helpers    | `shortlog`, `ls-files`, and `show-ref` are read-only and useful enough to allow broadly, while `branch --list` and `rev-parse --abbrev-ref HEAD` stay constrained to avoid reopening generic parser work. | Keep the narrower surface and force agents into workarounds, or allow broad `rev-parse` grammar |
 
 ## References
 
@@ -238,7 +242,11 @@ pnpm -r typecheck
 - Git `switch`: https://git-scm.com/docs/git-switch
 - Git `push`: https://git-scm.com/docs/git-push
 - Git `branch`: https://git-scm.com/docs/git-branch
+- Git `rev-parse`: https://git-scm.com/docs/git-rev-parse
 - Git `remote`: https://git-scm.com/docs/git-remote
+- Git `ls-files`: https://git-scm.com/docs/git-ls-files
+- Git `show-ref`: https://git-scm.com/docs/git-show-ref
+- Git `shortlog`: https://git-scm.com/docs/git-shortlog
 - Git `worktree`: https://git-scm.com/docs/git-worktree
 - GH `pr create`: https://cli.github.com/manual/gh_pr_create
 - GH `pr review`: https://cli.github.com/manual/gh_pr_review
