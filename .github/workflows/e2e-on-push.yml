@@ -30,10 +30,10 @@ jobs:
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
+      ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
       # Fakes: services not exercised by e2e, but referenced at compose startup.
       GRAFANA_URL: http://grafana-mcp:8000
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
-      ATLASSIAN_AUTH: ci-fake
       POSTHOG_API_KEY: ci-fake
       LANGFUSE_PUBLIC_KEY: ci-fake
       LANGFUSE_SECRET_KEY: ci-fake
