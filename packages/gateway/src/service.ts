@@ -33,6 +33,70 @@ export interface SlackMcpDeps {
   fetchImpl?: typeof fetch;
 }
 
+export type BatchSource = "slack" | "cron" | "github";
+export type BatchLogPrefix = BatchSource | "mixed";
+
+export interface ProgressRelayTarget {
+  channel: string;
+  threadTs: string;
+  triggerTs: string;
+  slackMcpDeps: SlackMcpDeps;
+}
+
+export interface RunnerTriggerOptions {
+  prompt: string;
+  correlationKey: string;
+  directory: string;
+  deps: RunnerDeps;
+  interrupt?: boolean;
+  onAccepted?: () => void;
+  onRejected?: (reason: string) => void;
+  reject4xx?: boolean;
+  progressTarget?: ProgressRelayTarget;
+  backgroundDrain?: boolean;
+  backgroundDrainLogEvent?: string;
+}
+
+export interface BatchDispatchInput {
+  slackEvents: SlackThreadEvent[];
+  cronEvents: CronPayload[];
+  githubEvents: NormalizedGitHubEvent[];
+  correlationKey: string;
+  deps: RunnerDeps;
+  slackMcpDeps: SlackMcpDeps;
+  remoteCliUrl?: string;
+  interrupt?: boolean;
+  onAccepted?: () => void;
+  onRejected?: (reason: string) => void;
+  channelRepos?: Map<string, string>;
+}
+
+export type BatchDispatchPlan =
+  | {
+      kind: "dispatch";
+      logPrefix: BatchLogPrefix;
+      options: RunnerTriggerOptions;
+    }
+  | {
+      kind: "drop";
+      logPrefix: BatchLogPrefix;
+      reason: string;
+    }
+  | {
+      kind: "reroute";
+      logPrefix: "github";
+      fromCorrelationKey: string;
+      toCorrelationKey: string;
+      githubEvents: NormalizedGitHubEvent[];
+    };
+
+interface SourceContribution {
+  source: BatchSource;
+  directory: string;
+  singlePrompt: string;
+  mixedPrompt: string;
+}
+
 function getFetch(fetchImpl?: typeof fetch): typeof fetch {
   return fetchImpl ?? fetch;
 }
@@ -71,6 +135,368 @@ export function getTerminalGitHubRejectReason(
   return error instanceof TerminalGitHubDispatchError ? error.reason : undefined;
 }
 
+function renderSlackPrompt(events: SlackThreadEvent[]): string {
+  return events.length === 1
+    ? `Slack event:\n\n${JSON.stringify(events[0])}`
+    : `Slack events:\n\n${JSON.stringify(events)}`;
+}
+
+function renderCronPrompt(events: CronPayload[]): string {
+  return events.length === 1
+    ? `Cron event:\n\n${events[0].prompt}`
+    : `Cron events:\n\n${events.map((event) => event.prompt).join("\n\n")}`;
+}
+
+function renderGitHubPromptSection(events: NormalizedGitHubEvent[]): string {
+  const heading = events.length === 1 ? "GitHub event" : "GitHub events";
+  return `${heading}:\n\n${renderGitHubPrompt(events)}`;
+}
+
+function getBatchSources(input: BatchDispatchInput): BatchSource[] {
+  const sources: BatchSource[] = [];
+  if (input.slackEvents.length > 0) sources.push("slack");
+  if (input.githubEvents.length > 0) sources.push("github");
+  if (input.cronEvents.length > 0) sources.push("cron");
+  return sources;
+}
+
+function getBatchLogPrefix(sources: BatchSource[]): BatchLogPrefix {
+  return sources.length === 1 ? sources[0] : "mixed";
+}
+
+function buildDispatchPrompt(contributions: SourceContribution[]): string {
+  if (contributions.length === 1) {
+    return contributions[0].singlePrompt;
+  }
+  return contributions.map((contribution) => contribution.mixedPrompt).join("\n\n");
+}
+
+function resolveDispatchDirectory(
+  contributions: SourceContribution[],
+  logPrefix: BatchLogPrefix,
+): { directory?: string; reason?: string } {
+  const directories = [...new Set(contributions.map((contribution) => contribution.directory))];
+  if (directories.length === 0) {
+    return { reason: "no directory resolved for batch" };
+  }
+  if (directories.length > 1) {
+    return {
+      reason:
+        logPrefix === "mixed"
+          ? `mixed-source batch resolved to multiple directories: ${directories.join(", ")}`
+          : `${logPrefix} events for one correlation key resolved to multiple directories: ${directories.join(", ")}`,
+    };
+  }
+  return { directory: directories[0] };
+}
+
+function buildProgressTarget(
+  slackEvents: SlackThreadEvent[],
+  slackMcpDeps: SlackMcpDeps,
+): ProgressRelayTarget | undefined {
+  const lastSlackEvent = slackEvents[slackEvents.length - 1];
+  if (!lastSlackEvent) return undefined;
+  return {
+    channel: lastSlackEvent.channel,
+    threadTs: getSlackThreadTs(lastSlackEvent),
+    triggerTs: lastSlackEvent.ts,
+    slackMcpDeps,
+  };
+}
+
+function planSlackContribution(
+  events: SlackThreadEvent[],
+  channelRepos?: Map<string, string>,
+): { contribution?: SourceContribution; reason?: string } {
+  const directory = resolveSlackBatchDirectory(events, channelRepos);
+  if (directory.reason) return directory;
+  return {
+    contribution: {
+      source: "slack",
+      directory: directory.directory!,
+      singlePrompt: renderSlackPrompt(events),
+      mixedPrompt: renderSlackPrompt(events),
+    },
+  };
+}
+
+function planCronContribution(events: CronPayload[]): {
+  contribution?: SourceContribution;
+  reason?: string;
+} {
+  const directory = resolveCronBatchDirectory(events);
+  if (directory.reason) return directory;
+  return {
+    contribution: {
+      source: "cron",
+      directory: directory.directory!,
+      singlePrompt: events.length === 1 ? events[0].prompt : renderCronPrompt(events),
+      mixedPrompt: renderCronPrompt(events),
+    },
+  };
+}
+
+function planGitHubContribution(events: NormalizedGitHubEvent[]): {
+  contribution?: SourceContribution;
+  reason?: string;
+} {
+  const directory = resolveGitHubBatchDirectory(events);
+  if (directory.reason) return directory;
+  return {
+    contribution: {
+      source: "github",
+      directory: directory.directory!,
+      singlePrompt: renderGitHubPrompt(events),
+      mixedPrompt: renderGitHubPromptSection(events),
+    },
+  };
+}
+
+function resolveSlackBatchDirectory(
+  events: SlackThreadEvent[],
+  channelRepos?: Map<string, string>,
+): { directory?: string; reason?: string } {
+  if (events.length === 0) return {};
+
+  const directories = new Set<string>();
+  for (const event of events) {
+    const repo = channelRepos?.get(event.channel);
+    if (!repo) {
+      return { reason: `channel ${event.channel} has no repo mapping` };
+    }
+    const directory = resolveRepoDirectory(repo);
+    if (!directory) {
+      return { reason: `repo directory not found for ${repo}` };
+    }
+    directories.add(directory);
+  }
+
+  if (directories.size > 1) {
+    return {
+      reason: `Slack events for one correlation key resolved to multiple directories: ${[...directories].join(", ")}`,
+    };
+  }
+
+  return { directory: [...directories][0] };
+}
+
+function resolveGitHubBatchDirectory(events: NormalizedGitHubEvent[]): {
+  directory?: string;
+  reason?: string;
+} {
+  if (events.length === 0) return {};
+
+  const directories = new Set<string>();
+  for (const event of events) {
+    const directory = resolveRepoDirectory(event.localRepo);
+    if (!directory) {
+      return { reason: `repo directory not found for ${event.localRepo}` };
+    }
+    directories.add(directory);
+  }
+
+  if (directories.size > 1) {
+    return {
+      reason: `GitHub events for one correlation key resolved to multiple directories: ${[...directories].join(", ")}`,
+    };
+  }
+
+  return { directory: [...directories][0] };
+}
+
+function resolveCronBatchDirectory(events: CronPayload[]): { directory?: string; reason?: string } {
+  if (events.length === 0) return {};
+
+  const directories = new Set(events.map((event) => event.directory));
+  if (directories.size > 1) {
+    return {
+      reason: `Cron events for one correlation key resolved to multiple directories: ${[...directories].join(", ")}`,
+    };
+  }
+
+  return { directory: [...directories][0] };
+}
+
+async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<TriggerResult> {
+  const response = await getFetch(options.deps.fetchImpl)(`${options.deps.runnerUrl}/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: options.prompt,
+      correlationKey: options.correlationKey,
+      interrupt: options.interrupt,
+      directory: options.directory,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    if (options.reject4xx && response.status >= 400 && response.status < 500) {
+      options.onRejected?.(`Runner returned ${response.status}: ${text}`);
+      return { busy: false, rejected: true };
+    }
+    throw new Error(`Runner returned ${response.status}: ${text}`);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const json = (await response.json()) as Record<string, unknown>;
+    if (json.busy === true) {
+      return { busy: true };
+    }
+  }
+
+  options.onAccepted?.();
+
+  if (options.progressTarget) {
+    const { channel, threadTs, triggerTs, slackMcpDeps } = options.progressTarget;
+    void consumeNdjsonStream(response, channel, threadTs, triggerTs, slackMcpDeps).catch(
+      async (err) => {
+        logError(log, "stream_consume_error", err instanceof Error ? err.message : String(err));
+        await forwardProgressEvent(
+          channel,
+          threadTs,
+          { type: "error", error: err instanceof Error ? err.message : "stream error" },
+          slackMcpDeps,
+          triggerTs,
+        ).catch(() => {});
+      },
+    );
+    return { busy: false };
+  }
+
+  if (options.backgroundDrain) {
+    void drainResponseBody(response).catch((err) => {
+      logWarn(log, options.backgroundDrainLogEvent ?? "runner_response_drain_error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    return { busy: false };
+  }
+
+  await drainResponseBody(response);
+  return { busy: false };
+}
+
+export async function planBatchDispatch(input: BatchDispatchInput): Promise<BatchDispatchPlan> {
+  const sources = getBatchSources(input);
+  const logPrefix = getBatchLogPrefix(sources);
+
+  if (input.githubEvents.length > 0 && input.correlationKey.startsWith("pending:branch-resolve:")) {
+    if (!input.remoteCliUrl) {
+      throw new Error("remoteCliUrl is required for pending GitHub branch resolution");
+    }
+
+    const latest = input.githubEvents[input.githubEvents.length - 1];
+    try {
+      const branchInfo = await resolveGitHubPrHead(
+        latest,
+        input.remoteCliUrl,
+        input.deps.fetchImpl,
+      );
+      if (branchInfo.headRepoFullName !== latest.repoFullName) {
+        return { kind: "drop", logPrefix, reason: "branch_unresolved" };
+      }
+
+      return {
+        kind: "reroute",
+        logPrefix: "github",
+        fromCorrelationKey: input.correlationKey,
+        toCorrelationKey: buildCorrelationKey(latest.localRepo, branchInfo.ref),
+        githubEvents: input.githubEvents.map((event) => ({ ...event, branch: branchInfo.ref })),
+      };
+    } catch (error) {
+      if (error instanceof TerminalGitHubDispatchError) {
+        return { kind: "drop", logPrefix, reason: error.reason };
+      }
+      throw error;
+    }
+  }
+
+  const contributions: SourceContribution[] = [];
+
+  if (input.slackEvents.length > 0) {
+    const slack = planSlackContribution(input.slackEvents, input.channelRepos);
+    if (slack.reason) {
+      return { kind: "drop", logPrefix, reason: slack.reason };
+    }
+    contributions.push(slack.contribution!);
+  }
+
+  if (input.githubEvents.length > 0) {
+    const github = planGitHubContribution(input.githubEvents);
+    if (github.reason) {
+      return { kind: "drop", logPrefix, reason: github.reason };
+    }
+    contributions.push(github.contribution!);
+  }
+
+  if (input.cronEvents.length > 0) {
+    const cron = planCronContribution(input.cronEvents);
+    if (cron.reason) {
+      return { kind: "drop", logPrefix, reason: cron.reason };
+    }
+    contributions.push(cron.contribution!);
+  }
+
+  const directory = resolveDispatchDirectory(contributions, logPrefix);
+  if (directory.reason) {
+    return { kind: "drop", logPrefix, reason: directory.reason };
+  }
+
+  const progressTarget = buildProgressTarget(input.slackEvents, input.slackMcpDeps);
+  const backgroundDrain = !progressTarget && !(sources.length === 1 && sources[0] === "cron");
+
+  return {
+    kind: "dispatch",
+    logPrefix,
+    options: {
+      prompt: buildDispatchPrompt(contributions),
+      correlationKey: input.correlationKey,
+      directory: directory.directory!,
+      deps: input.deps,
+      interrupt: input.interrupt,
+      onAccepted: input.onAccepted,
+      onRejected: input.onRejected,
+      reject4xx: input.slackEvents.length === 0,
+      progressTarget,
+      backgroundDrain,
+      backgroundDrainLogEvent: backgroundDrain
+        ? logPrefix === "github"
+          ? "github_response_drain_error"
+          : "mixed_response_drain_error"
+        : undefined,
+    },
+  };
+}
+
+export async function executeBatchDispatchPlan(
+  plan: Extract<BatchDispatchPlan, { kind: "dispatch" }>,
+): Promise<TriggerResult> {
+  return triggerRunnerPrompt(plan.options);
+}
+
+async function dispatchBatch(input: BatchDispatchInput): Promise<TriggerResult> {
+  let currentInput = input;
+
+  for (;;) {
+    const plan = await planBatchDispatch(currentInput);
+    if (plan.kind === "drop") {
+      currentInput.onRejected?.(plan.reason);
+      return { busy: false, rejected: true };
+    }
+    if (plan.kind === "reroute") {
+      currentInput = {
+        ...currentInput,
+        correlationKey: plan.toCorrelationKey,
+        githubEvents: plan.githubEvents,
+      };
+      continue;
+    }
+    return executeBatchDispatchPlan(plan);
+  }
+}
+
 export async function triggerRunnerSlack(
   events: SlackThreadEvent[],
   correlationKey: string,
@@ -83,67 +509,28 @@ export async function triggerRunnerSlack(
 ): Promise<TriggerResult> {
   if (events.length === 0) return { busy: false };
 
-  const prompt =
-    events.length === 1
-      ? `Slack event:\n\n${JSON.stringify(events[0])}`
-      : `Slack events:\n\n${JSON.stringify(events)}`;
-  const last = events[events.length - 1];
-  const repo = channelRepos?.get(last.channel);
-  if (!repo) {
-    logWarn(log, "channel_has_no_repo", { channel: last.channel });
-    onRejected?.(`channel ${last.channel} has no repo mapping`);
-    return { busy: false };
-  }
-  const directory = resolveRepoDirectory(repo);
-  if (!directory) {
-    logWarn(log, "repo_directory_not_found", { repo, channel: last.channel });
-    onRejected?.(`repo directory not found for ${repo}`);
-    return { busy: false };
-  }
-  const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, correlationKey, interrupt, directory }),
+  const handleRejected = (reason: string) => {
+    const last = events[events.length - 1];
+    logWarn(
+      log,
+      reason.includes("no repo mapping") ? "channel_has_no_repo" : "repo_directory_not_found",
+      { channel: last.channel },
+    );
+    onRejected?.(reason);
+  };
+
+  return dispatchBatch({
+    slackEvents: events,
+    cronEvents: [],
+    githubEvents: [],
+    correlationKey,
+    deps,
+    slackMcpDeps,
+    interrupt,
+    onAccepted,
+    onRejected: handleRejected,
+    channelRepos,
   });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Runner returned ${response.status}: ${text}`);
-  }
-
-  // Check for busy response (non-interrupt hit a running session)
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    const json = (await response.json()) as Record<string, unknown>;
-    if (json.busy === true) {
-      return { busy: true };
-    }
-  }
-
-  // Runner accepted — safe to delete queue files.
-  onAccepted?.();
-
-  // Consume NDJSON stream in the background so the queue handler can return
-  // immediately. This keeps the per-key processing lock short (released as
-  // soon as the runner accepts) while still forwarding progress events.
-  const channel = last.channel;
-  const threadTs = getSlackThreadTs(last);
-  const triggerTs = last.ts;
-
-  void consumeNdjsonStream(response, channel, threadTs, triggerTs, slackMcpDeps).catch(
-    async (err) => {
-      logError(log, "stream_consume_error", err instanceof Error ? err.message : String(err));
-      await forwardProgressEvent(
-        channel,
-        threadTs,
-        { type: "error", error: err instanceof Error ? err.message : "stream error" },
-        slackMcpDeps,
-        triggerTs,
-      ).catch(() => {});
-    },
-  );
-
-  return { busy: false };
 }
 
 /**
@@ -240,53 +627,28 @@ async function forwardProgressEvent(
  * instruct the agent where to post results (Slack, Atlassian, etc.).
  */
 export async function triggerRunnerCron(
-  payload: CronPayload,
+  payload: CronPayload | CronPayload[],
   correlationKey: string,
   deps: RunnerDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
   onRejected?: (reason: string) => void,
 ): Promise<TriggerResult> {
-  const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt: payload.prompt,
-      correlationKey,
-      interrupt,
-      directory: payload.directory,
-    }),
+  return dispatchBatch({
+    slackEvents: [],
+    cronEvents: Array.isArray(payload) ? payload : [payload],
+    githubEvents: [],
+    correlationKey,
+    deps,
+    slackMcpDeps: { slackMcpUrl: "", fetchImpl: deps.fetchImpl },
+    interrupt,
+    onAccepted,
+    onRejected,
   });
+}
 
-  if (!response.ok) {
-    const text = await response.text();
-    // 4xx = client error (bad directory, invalid payload) — reject to dead-letter
-    if (response.status >= 400 && response.status < 500) {
-      onRejected?.(`Runner returned ${response.status}: ${text}`);
-      return { busy: false };
-    }
-    throw new Error(`Runner returned ${response.status}: ${text}`);
-  }
-
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    const json = (await response.json()) as Record<string, unknown>;
-    if (json.busy === true) {
-      return { busy: true };
-    }
-  }
-
-  onAccepted?.();
-
-  // Consume stream silently to avoid backpressure
-  const body = response.body;
-  if (body) {
-    for await (const _ of body) {
-      // discard
-    }
-  }
-
-  return { busy: false };
+export async function triggerRunnerMixedBatch(input: BatchDispatchInput): Promise<TriggerResult> {
+  return dispatchBatch(input);
 }
 
 export async function triggerRunnerGitHub(
@@ -301,72 +663,18 @@ export async function triggerRunnerGitHub(
 ): Promise<TriggerResult> {
   if (events.length === 0) return { busy: false };
 
-  let resolvedKey = correlationKey;
-  if (resolvedKey.startsWith("pending:branch-resolve:")) {
-    const latest = events[events.length - 1];
-    try {
-      const branchInfo = await resolveGitHubPrHead(latest, remoteCliUrl, deps.fetchImpl);
-      if (branchInfo.headRepoFullName !== latest.repoFullName) {
-        throw new TerminalGitHubDispatchError(
-          "branch_unresolved",
-          `PR head repo ${branchInfo.headRepoFullName} is not supported for ${latest.repoFullName}`,
-        );
-      }
-      resolvedKey = buildCorrelationKey(latest.localRepo, branchInfo.ref);
-    } catch (error) {
-      if (error instanceof TerminalGitHubDispatchError) {
-        onRejected?.(error.reason);
-        return { busy: false, rejected: true };
-      }
-      throw error;
-    }
-  }
-
-  const latest = events[events.length - 1];
-  const directory = resolveRepoDirectory(latest.localRepo);
-  if (!directory) {
-    onRejected?.(`repo directory not found for ${latest.localRepo}`);
-    return { busy: false, rejected: true };
-  }
-
-  const prompt = renderGitHubPrompt(events);
-  const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      correlationKey: resolvedKey,
-      interrupt,
-      directory,
-    }),
+  return dispatchBatch({
+    slackEvents: [],
+    cronEvents: [],
+    githubEvents: events,
+    correlationKey,
+    deps,
+    slackMcpDeps: { slackMcpUrl: "", fetchImpl: deps.fetchImpl },
+    remoteCliUrl,
+    interrupt,
+    onAccepted,
+    onRejected,
   });
-
-  if (!response.ok) {
-    const text = await response.text();
-    if (response.status >= 400 && response.status < 500) {
-      onRejected?.(`Runner returned ${response.status}: ${text}`);
-      return { busy: false, rejected: true };
-    }
-    throw new Error(`Runner returned ${response.status}: ${text}`);
-  }
-
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    const json = (await response.json()) as Record<string, unknown>;
-    if (json.busy === true) {
-      return { busy: true };
-    }
-  }
-
-  onAccepted?.();
-
-  void drainResponseBody(response).catch((err) => {
-    logWarn(log, "github_response_drain_error", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
-
-  return { busy: false };
 }
 
 export async function resolveGitHubPrHead(

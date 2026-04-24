@@ -761,6 +761,147 @@ describe("gateway", () => {
     );
   });
 
+  it("dispatches same-key Slack and GitHub batches together in one runner trigger", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue, queueDir) => {
+        const now = Date.now();
+        queue.enqueue({
+          id: "mixed-slack",
+          source: "slack",
+          correlationKey: "git:branch:thor:main",
+          payload: {
+            channel: "C123",
+            ts: "1710000000.001",
+            thread_ts: "1710000000.001",
+            text: "please take a look",
+            user: "U1",
+            type: "message",
+          },
+          receivedAt: new Date(now).toISOString(),
+          sourceTs: now,
+          readyAt: now,
+          delayMs: 0,
+          interrupt: false,
+        });
+        queue.enqueue({
+          id: "mixed-github",
+          source: "github",
+          correlationKey: "git:branch:thor:main",
+          payload: {
+            source: "github",
+            eventType: "pull_request_review_comment",
+            action: "created",
+            installationId: 126669985,
+            repoFullName: "scoutqa-dot-ai/thor",
+            localRepo: "thor",
+            senderLogin: "alice",
+            htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+            number: 42,
+            body: "looks good",
+            branch: "main",
+            mention: false,
+          },
+          receivedAt: new Date(now + 1).toISOString(),
+          sourceTs: now + 1,
+          readyAt: now,
+          delayMs: 0,
+          interrupt: false,
+        });
+
+        await queue.flush();
+
+        const triggerCalls = fetchImpl.mock.calls.filter(
+          (call) => call[0] === "http://runner.test/trigger",
+        );
+        expect(triggerCalls).toHaveLength(1);
+        const triggerBody = JSON.parse(String(triggerCalls[0][1]?.body));
+        expect(triggerBody.correlationKey).toBe("git:branch:thor:main");
+        expect(triggerBody.directory).toBe("/workspace/repos/thor");
+        expect(triggerBody.prompt).toContain("Slack event:");
+        expect(triggerBody.prompt).toContain('"text":"please take a look"');
+        expect(triggerBody.prompt).toContain("GitHub event:");
+        expect(triggerBody.prompt).toContain(
+          "[alice] created on scoutqa-dot-ai/thor#42 (pull_request_review_comment): looks good",
+        );
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+      },
+      {
+        getConfig: fakeConfigLoader(["C123"], [["C123", "thor"]]),
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
+  it("keeps same-key Slack and GitHub batches queued when the runner is busy", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ busy: true }));
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue, queueDir) => {
+        const now = Date.now();
+        queue.enqueue({
+          id: "mixed-slack-busy",
+          source: "slack",
+          correlationKey: "git:branch:thor:main",
+          payload: {
+            channel: "C123",
+            ts: "1710000000.001",
+            thread_ts: "1710000000.001",
+            text: "please take a look",
+            user: "U1",
+            type: "message",
+          },
+          receivedAt: new Date(now).toISOString(),
+          sourceTs: now,
+          readyAt: now,
+          delayMs: 0,
+          interrupt: false,
+        });
+        queue.enqueue({
+          id: "mixed-github-busy",
+          source: "github",
+          correlationKey: "git:branch:thor:main",
+          payload: {
+            source: "github",
+            eventType: "pull_request_review_comment",
+            action: "created",
+            installationId: 126669985,
+            repoFullName: "scoutqa-dot-ai/thor",
+            localRepo: "thor",
+            senderLogin: "alice",
+            htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+            number: 42,
+            body: "looks good",
+            branch: "main",
+            mention: false,
+          },
+          receivedAt: new Date(now + 1).toISOString(),
+          sourceTs: now + 1,
+          readyAt: now,
+          delayMs: 0,
+          interrupt: false,
+        });
+
+        await queue.flush();
+
+        const triggerCalls = fetchImpl.mock.calls.filter(
+          (call) => call[0] === "http://runner.test/trigger",
+        );
+        expect(triggerCalls).toHaveLength(1);
+        expect(readQueuedEvents(queueDir)).toHaveLength(2);
+      },
+      {
+        getConfig: fakeConfigLoader(["C123"], [["C123", "thor"]]),
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
   it("defers non-mention GitHub events when runner reports busy", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ busy: true }));
 

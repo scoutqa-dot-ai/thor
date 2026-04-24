@@ -14,11 +14,8 @@ import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
 import {
   addSlackReaction,
-  getTerminalGitHubRejectReason,
-  resolveGitHubPrHead,
-  triggerRunnerSlack,
-  triggerRunnerCron,
-  triggerRunnerGitHub,
+  executeBatchDispatchPlan,
+  planBatchDispatch,
   resolveApproval,
   updateSlackMessage,
   type RunnerDeps,
@@ -193,175 +190,165 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const remoteCliHost = config.remoteCliHost ?? "remote-cli";
   const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;
 
+  const getDispatchLogPrefix = (sources: string[]): "slack" | "cron" | "github" | "mixed" => {
+    if (sources.length === 1) {
+      const source = sources[0];
+      if (source === "slack" || source === "cron" || source === "github") {
+        return source;
+      }
+    }
+    return "mixed";
+  };
+
+  const buildDispatchLogContext = (input: {
+    logPrefix: "slack" | "cron" | "github" | "mixed";
+    correlationKey?: string;
+    batchSize: number;
+    interrupt: boolean;
+    sources: string[];
+    reason?: string;
+  }) => {
+    const context: Record<string, unknown> = {
+      correlationKey: input.correlationKey,
+      batchSize: input.batchSize,
+    };
+    if (input.logPrefix === "github" || input.logPrefix === "mixed") {
+      context.interrupt = input.interrupt;
+    }
+    if (input.logPrefix === "mixed") {
+      context.sources = input.sources;
+    }
+    if (input.reason) {
+      context.reason = input.reason;
+    }
+    return context;
+  };
+
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
     disableInterval: config.disableQueueInterval === true,
     handler: async (events: QueuedEvent[], ack: () => void, reject: (reason: string) => void) => {
       const slackEvents = events.filter(isSlackEvent);
-
-      if (slackEvents.length > 0) {
-        const lastEvent = slackEvents[slackEvents.length - 1];
-        const hasInterrupt = events.some((e) => e.interrupt);
-
-        // Await the trigger so the queue keeps the per-key processing lock
-        // until the runner responds. triggerRunnerSlack returns as soon as
-        // the runner accepts (NDJSON stream is consumed in the background).
-        try {
-          const result = await triggerRunnerSlack(
-            slackEvents.map((e) => e.payload),
-            lastEvent.correlationKey,
-            runnerDeps,
-            slackMcpDeps,
-            hasInterrupt,
-            ack,
-            getChannelRepos(),
-            reject,
-          );
-          if (result.busy) {
-            logInfo(log, "slack_trigger_busy", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: slackEvents.length,
-            });
-          } else {
-            logInfo(log, "slack_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: slackEvents.length,
-            });
-          }
-        } catch (error) {
-          logError(log, "slack_trigger_failed", error, {
-            correlationKey: lastEvent.correlationKey,
-          });
-        }
-        return;
-      }
-
       const cronEvents = events.filter(isCronEvent);
-      if (cronEvents.length > 0) {
-        const lastEvent = cronEvents[cronEvents.length - 1];
-
-        try {
-          const result = await triggerRunnerCron(
-            lastEvent.payload,
-            lastEvent.correlationKey,
-            runnerDeps,
-            false,
-            ack,
-            reject,
-          );
-          if (result.busy) {
-            logInfo(log, "cron_trigger_busy", {
-              correlationKey: lastEvent.correlationKey,
-            });
-          } else {
-            logInfo(log, "cron_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
-            });
-          }
-        } catch (error) {
-          logError(log, "cron_trigger_failed", error, {
-            correlationKey: lastEvent.correlationKey,
-          });
-        }
-        return;
-      }
-
       const githubEvents = events.filter(isGitHubEvent);
-      if (githubEvents.length > 0) {
-        const lastEvent = githubEvents[githubEvents.length - 1];
-        const hasInterrupt = events.some((e) => e.interrupt);
+      const sources = [...new Set(events.map((event) => event.source))].sort();
+      const logPrefix = getDispatchLogPrefix(sources);
+      const correlationKey = events[events.length - 1]?.correlationKey;
+      const hasInterrupt = events.some((event) => event.interrupt);
 
-        if (lastEvent.correlationKey.startsWith("pending:branch-resolve:")) {
-          const latest = lastEvent.payload;
-          try {
-            const branchInfo = await resolveGitHubPrHead(latest, remoteCliUrl, config.fetchImpl);
-            if (branchInfo.headRepoFullName !== latest.repoFullName) {
-              reject("branch_unresolved");
-              logInfo(log, "github_trigger_dropped", {
-                correlationKey: lastEvent.correlationKey,
-                batchSize: githubEvents.length,
-                interrupt: hasInterrupt,
-                reason: "branch_unresolved",
-              });
-              return;
-            }
+      try {
+        const plan = await planBatchDispatch({
+          slackEvents: slackEvents.map((event) => event.payload),
+          cronEvents: cronEvents.map((event) => event.payload),
+          githubEvents: githubEvents.map((event) => event.payload),
+          correlationKey: correlationKey ?? "",
+          deps: runnerDeps,
+          slackMcpDeps,
+          remoteCliUrl,
+          interrupt: hasInterrupt,
+          onAccepted: ack,
+          onRejected: reject,
+          channelRepos: getChannelRepos(),
+        });
 
-            const reroutedKey = buildCorrelationKey(latest.localRepo, branchInfo.ref);
-            const now = Date.now();
-            for (const event of githubEvents) {
-              queue.enqueue({
-                ...event,
-                id: `${event.id}:resolved`,
-                correlationKey: reroutedKey,
-                payload: { ...event.payload, branch: branchInfo.ref },
-                receivedAt: new Date(now).toISOString(),
-                readyAt: now,
-                delayMs: 0,
-              });
-            }
-            ack();
-            logInfo(log, "github_events_rerouted", {
-              fromCorrelationKey: lastEvent.correlationKey,
-              toCorrelationKey: reroutedKey,
-              batchSize: githubEvents.length,
-            });
-            return;
-          } catch (error) {
-            const reason = getTerminalGitHubRejectReason(error);
-            if (reason) {
-              reject(reason);
-              logInfo(log, "github_trigger_dropped", {
-                correlationKey: lastEvent.correlationKey,
-                batchSize: githubEvents.length,
-                interrupt: hasInterrupt,
-                reason,
-              });
-              return;
-            }
-            logError(log, "github_branch_resolution_retryable", error, {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: githubEvents.length,
-            });
-            return;
-          }
-        }
-
-        try {
-          const result = await triggerRunnerGitHub(
-            githubEvents.map((e) => e.payload),
-            lastEvent.correlationKey,
-            runnerDeps,
-            remoteCliUrl,
-            hasInterrupt,
-            ack,
-            undefined,
-            reject,
-          );
-          if (result.busy) {
-            logInfo(log, "github_trigger_busy", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: githubEvents.length,
-              interrupt: hasInterrupt,
-            });
-          } else if (result.rejected) {
-            logInfo(log, "github_trigger_dropped", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: githubEvents.length,
-              interrupt: hasInterrupt,
-            });
-          } else {
-            logInfo(log, "github_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: githubEvents.length,
-              interrupt: hasInterrupt,
+        if (plan.kind === "reroute") {
+          const now = Date.now();
+          for (const [index, event] of githubEvents.entries()) {
+            queue.enqueue({
+              ...event,
+              id: `${event.id}:resolved`,
+              correlationKey: plan.toCorrelationKey,
+              payload: plan.githubEvents[index],
+              receivedAt: new Date(now).toISOString(),
+              readyAt: now,
+              delayMs: 0,
             });
           }
-        } catch (error) {
-          logError(log, "github_trigger_failed", error, {
-            correlationKey: lastEvent.correlationKey,
+          ack();
+          logInfo(log, "github_events_rerouted", {
+            fromCorrelationKey: plan.fromCorrelationKey,
+            toCorrelationKey: plan.toCorrelationKey,
             batchSize: githubEvents.length,
           });
+          return;
         }
+
+        if (plan.kind === "drop") {
+          reject(plan.reason);
+          logInfo(
+            log,
+            `${plan.logPrefix}_trigger_dropped`,
+            buildDispatchLogContext({
+              logPrefix: plan.logPrefix,
+              correlationKey,
+              batchSize: events.length,
+              interrupt: hasInterrupt,
+              sources,
+              reason: plan.reason,
+            }),
+          );
+          return;
+        }
+
+        const result = await executeBatchDispatchPlan(plan);
+        if (result.busy) {
+          logInfo(
+            log,
+            `${plan.logPrefix}_trigger_busy`,
+            buildDispatchLogContext({
+              logPrefix: plan.logPrefix,
+              correlationKey,
+              batchSize: events.length,
+              interrupt: hasInterrupt,
+              sources,
+            }),
+          );
+        } else if (result.rejected) {
+          logInfo(
+            log,
+            `${plan.logPrefix}_trigger_dropped`,
+            buildDispatchLogContext({
+              logPrefix: plan.logPrefix,
+              correlationKey,
+              batchSize: events.length,
+              interrupt: hasInterrupt,
+              sources,
+            }),
+          );
+        } else {
+          logInfo(
+            log,
+            `${plan.logPrefix}_trigger_fired`,
+            buildDispatchLogContext({
+              logPrefix: plan.logPrefix,
+              correlationKey,
+              batchSize: events.length,
+              interrupt: hasInterrupt,
+              sources,
+            }),
+          );
+        }
+      } catch (error) {
+        if (logPrefix === "github" && correlationKey?.startsWith("pending:branch-resolve:")) {
+          logError(log, "github_branch_resolution_retryable", error, {
+            correlationKey,
+            batchSize: githubEvents.length,
+          });
+          return;
+        }
+
+        logError(
+          log,
+          `${logPrefix}_trigger_failed`,
+          error,
+          buildDispatchLogContext({
+            logPrefix,
+            correlationKey,
+            batchSize: events.length,
+            interrupt: hasInterrupt,
+            sources,
+          }),
+        );
       }
     },
   });

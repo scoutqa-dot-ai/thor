@@ -487,6 +487,24 @@ describe("triggerRunnerCron", () => {
     expect(result.busy).toBe(false);
     expect(onAccepted).toHaveBeenCalled();
   });
+
+  it("batches multiple cron payloads that share a correlation key", async () => {
+    mockFetch.mockResolvedValue(ndjsonResponse(["line1"]));
+
+    const { triggerRunnerCron } = await import("./service.js");
+    const result = await triggerRunnerCron(
+      [
+        { prompt: "do something", directory: "/workspace/repos/test" },
+        { prompt: "do the follow-up", directory: "/workspace/repos/test" },
+      ],
+      "cron-1",
+      deps,
+    );
+
+    expect(result.busy).toBe(false);
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
+    expect(triggerBody.prompt).toBe("Cron events:\n\ndo something\n\ndo the follow-up");
+  });
 });
 
 describe("triggerRunnerGitHub", () => {
@@ -503,7 +521,9 @@ describe("triggerRunnerGitHub", () => {
       .mockResolvedValueOnce(
         jsonResponse({ ref: "feature/refactor", headRepoFullName: "scoutqa-dot-ai/thor" }),
       )
-      .mockResolvedValueOnce(ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]));
+      .mockResolvedValueOnce(
+        ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
+      );
 
     const onAccepted = vi.fn();
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -528,7 +548,9 @@ describe("triggerRunnerGitHub", () => {
     expect(triggerBody.prompt).toContain(
       "[alice] created on scoutqa-dot-ai/thor#42 (issue_comment): please review this",
     );
-    expect(triggerBody.prompt).toContain("https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1");
+    expect(triggerBody.prompt).toContain(
+      "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+    );
     expect(onAccepted).toHaveBeenCalled();
   });
 
