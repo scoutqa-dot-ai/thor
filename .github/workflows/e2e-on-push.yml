@@ -40,8 +40,10 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
-          GITHUB_PAT: ${{ secrets.THOR_GITHUB_PAT }}
-          GITHUB_API_URL: ${{ vars.THOR_GITHUB_API_URL }}
+          GITHUB_APP_ID: ${{ vars.THOR_GITHUB_APP_ID }}
+          GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/private-key.pem
+          THOR_GITHUB_APP_PRIVATE_KEY: ${{ secrets.THOR_GITHUB_APP_PRIVATE_KEY }}
+          THOR_GITHUB_APP_INSTALLATION_ID: ${{ vars.THOR_GITHUB_APP_INSTALLATION_ID }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
           DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
@@ -66,7 +68,11 @@ jobs:
             docker-volumes/workspace/worklog \
             docker-volumes/workspace/cron \
             docker-volumes/workspace/worktrees \
-            docker-volumes/opencode
+            docker-volumes/opencode \
+            docker-volumes/github-app
+
+          printf '%s' "$THOR_GITHUB_APP_PRIVATE_KEY" > docker-volumes/github-app/private-key.pem
+          chmod 600 docker-volumes/github-app/private-key.pem
 
           export CRON_SECRET="$(openssl rand -hex 32)"
           export RESOLVE_SECRET="$(openssl rand -hex 32)"
@@ -75,13 +81,21 @@ jobs:
             echo "RESOLVE_SECRET=$RESOLVE_SECRET"
           } >> "$GITHUB_ENV"
 
-          cat > docker-volumes/workspace/config.json <<'EOF'
+          cat > docker-volumes/workspace/config.json <<EOF
           {
             "repos": {
               "acme-multi-hyphen-repo": {
                 "channels": ["C123456789"],
                 "proxies": ["atlassian"]
               }
+            },
+            "github_app": {
+              "installations": [
+                {
+                  "org": "${{ github.repository_owner }}",
+                  "installation_id": ${THOR_GITHUB_APP_INSTALLATION_ID}
+                }
+              ]
             }
           }
           EOF
