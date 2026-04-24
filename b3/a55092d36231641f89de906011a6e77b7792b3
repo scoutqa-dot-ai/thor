@@ -1,0 +1,23 @@
+.github/workflows/e2e-on-push.yml
+  2340d8698683f502 33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b3a55092d36231641f89de906011a6e77b7792b3",
+  "prompts": {
+    "2340d8698683f502": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eb97f61b-6096-49b5-a988-5a9a30b456b0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
