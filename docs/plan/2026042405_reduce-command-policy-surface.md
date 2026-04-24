@@ -248,12 +248,10 @@ The current `packages/remote-cli/src/policy.test.ts` should be migrated as follo
 
 - all `validateCwd` tests
 - `allows a representative read command`
-- `allows push to origin`
-- `allows worktree add under /workspace/worktrees/`
 - `blocks git clone`
 - `blocks git init`
 - `blocks leading git flags before the subcommand`
-- `blocks checkout and switch with a git worktree hint`
+- `blocks checkout and switch`
 - `blocks worktree add outside /workspace/worktrees/`
 - `allows worktree paths with nested branch names`
 - `blocks git remote add/set-url/rename/remove`
@@ -288,6 +286,8 @@ The current `packages/remote-cli/src/policy.test.ts` should be migrated as follo
   - reduce to the kept read-only git subset (`status`, `log`, `diff`, `show`, `merge-base`, limited `branch`, limited `remote`, `fetch origin`)
 - `allows common git write workflows that stay inside the current repo`
   - reduce to `git add`, `git commit -m`, `git restore`, `git worktree add`, explicit `git push`
+- `returns explicit push args unchanged`
+  - keep explicit pushes unchanged; remove implicit-push rewrite coverage
 - `rejects unknown push flags but keeps known safe ones working`
   - keep only `--dry-run`, `-u`, `--set-upstream`; remove `--force-with-lease` expectations
 - `allows -u / --set-upstream to set upstream tracking`

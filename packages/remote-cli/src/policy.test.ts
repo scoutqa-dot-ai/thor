@@ -98,6 +98,12 @@ describe("validateCwd", () => {
 // ── git policy ──────────────────────────────────────────────────────────────
 
 describe("validateGitArgs", () => {
+  function expectGitDenied(args: string[]): string {
+    const error = validateGitArgs(args);
+    expect(error).toContain("Load skill using-git");
+    return error ?? "";
+  }
+
   describe("allowed commands", () => {
     it("allows a representative read command", () => {
       expect(validateGitArgs(["status"])).toBeNull();
@@ -106,7 +112,6 @@ describe("validateGitArgs", () => {
     it("allows common git read-only workflows", () => {
       const allowedCommands: string[][] = [
         ["--version"],
-        ["--no-pager", "log", "--oneline", "-10"],
         ["status", "--short"],
         ["log", "--oneline", "-5"],
         ["log", "origin/main..HEAD", "--oneline"],
@@ -118,18 +123,10 @@ describe("validateGitArgs", () => {
         ["show", "HEAD:packages/remote-cli/src/policy.ts"],
         ["branch", "--show-current"],
         ["branch", "-a"],
-        ["rev-parse", "HEAD"],
         ["merge-base", "HEAD", "origin/main"],
-        ["config", "--get", "remote.origin.url"],
-        ["config", "--show-origin", "--get-regexp", "^remote\\..*url$"],
-        ["check-ignore", "-v", "docs/plan/2026042401_command-usage-regression-tests.md"],
-        ["symbolic-ref", "refs/remotes/origin/HEAD"],
-        ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-        ["check-ref-format", "--branch", "feat/test"],
-        ["check-ref-format", "refs/heads/feat/test"],
         ["fetch", "origin"],
         ["fetch", "origin", "main"],
-        ["pull", "origin", "feat/x"],
+        ["fetch", "origin", "refs/heads/main:refs/remotes/origin/main"],
         ["remote"],
         ["remote", "-v"],
         ["remote", "show", "origin"],
@@ -141,34 +138,21 @@ describe("validateGitArgs", () => {
       }
     });
 
-    it("allows restore-only git checkout flows without reopening branch switching", () => {
-      const allowedCommands: string[][] = [
-        ["checkout", "--", "package-lock.json"],
-        ["checkout", "HEAD~1", "--", "packages/remote-cli/src/policy.ts"],
-        ["checkout", "origin/main", "--", "."],
-        ["checkout", "--theirs", "packages/remote-cli/src/policy.ts"],
-        ["checkout", "packages/remote-cli/src/policy.ts"],
-        // After `--`, git grammar guarantees pathspec; extensionless files
-        // (Dockerfile, Makefile, LICENSE, bin/*) must not be blocked.
-        ["checkout", "--", "Dockerfile"],
-        ["checkout", "--", "Makefile"],
-        ["checkout", "--", "LICENSE"],
-        ["checkout", "--", "bin/migrate"],
-        ["checkout", "HEAD", "--", "Dockerfile"],
-      ];
-
-      for (const args of allowedCommands) {
-        expect(validateGitArgs(args)).toBeNull();
-      }
-    });
-
     it("allows common git write workflows that stay inside the current repo", () => {
       const allowedCommands: string[][] = [
-        ["branch", "-m", "rename-policy-tests"],
+        ["restore", "--", "package-lock.json"],
+        ["restore", "--source", "HEAD~1", "--", "packages/remote-cli/src/policy.ts"],
+        ["restore", "--source=origin/main", "--", "Dockerfile"],
         ["add", "docs/plan/2026042401_command-usage-regression-tests.md"],
         ["add", "-A"],
         ["add", "packages/remote-cli/src/policy.ts", "packages/remote-cli/src/policy.test.ts"],
         ["commit", "-m", "test: expand git and gh policy coverage"],
+        ["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/feat"],
+        ["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/feat", "origin/main"],
+        ["push", "origin", "HEAD:refs/heads/feat/x"],
+        ["push", "--dry-run", "origin", "HEAD:refs/heads/feat/x"],
+        ["push", "-u", "origin", "HEAD:refs/heads/feat/x"],
+        ["push", "--set-upstream", "origin", "HEAD:refs/heads/feat/x"],
       ];
 
       for (const args of allowedCommands) {
@@ -176,229 +160,137 @@ describe("validateGitArgs", () => {
       }
     });
 
-    it("allows push to origin", () => {
-      expect(validateGitArgs(["push", "origin", "my-branch"])).toBeNull();
-    });
-
-    it("allows implicit push when the current branch has a safe origin upstream", () => {
-      const repoDir = createRepoWithOrigin("https://github.com/acme/web.git", {
-        branch: "feat/test",
-        upstreamBranch: "feat/test",
+    it("returns explicit push args unchanged", () => {
+      expect(resolveGitArgs(["push", "origin", "HEAD:refs/heads/feat/test"])).toEqual({
+        args: ["push", "origin", "HEAD:refs/heads/feat/test"],
       });
-
-      try {
-        expect(validateGitArgs(["push"], repoDir)).toBeNull();
-        expect(validateGitArgs(["push", "origin"], repoDir)).toBeNull();
-        expect(validateGitArgs(["push", "--dry-run"], repoDir)).toBeNull();
-
-        expect(resolveGitArgs(["push"], repoDir)).toEqual({
-          args: ["push", "origin", "HEAD:refs/heads/feat/test"],
-        });
-        expect(resolveGitArgs(["push", "origin"], repoDir)).toEqual({
-          args: ["push", "origin", "HEAD:refs/heads/feat/test"],
-        });
-        expect(resolveGitArgs(["push", "--dry-run"], repoDir)).toEqual({
-          args: ["push", "--dry-run", "origin", "HEAD:refs/heads/feat/test"],
-        });
-      } finally {
-        rmSync(repoDir, { recursive: true, force: true });
-      }
-    });
-
-    it("allows worktree add under /workspace/worktrees/", () => {
-      expect(
-        validateGitArgs(["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/feat"]),
-      ).toBeNull();
+      expect(resolveGitArgs(["push", "--dry-run", "origin", "HEAD:refs/heads/feat/test"])).toEqual({
+        args: ["push", "--dry-run", "origin", "HEAD:refs/heads/feat/test"],
+      });
     });
   });
 
   describe("blocked commands", () => {
     it("blocks git clone", () => {
-      expect(validateGitArgs(["clone", "https://github.com/foo/bar"])).not.toBeNull();
+      expectGitDenied(["clone", "https://github.com/foo/bar"]);
     });
 
     it("blocks git init", () => {
-      expect(validateGitArgs(["init"])).not.toBeNull();
+      expectGitDenied(["init"]);
     });
 
     it("blocks leading git flags before the subcommand", () => {
-      expect(validateGitArgs(["-C", "/tmp", "status"])).not.toBeNull();
-      expect(validateGitArgs(["-c", "credential.helper=!evil", "push", "origin"])).not.toBeNull();
-      expect(validateGitArgs(["--exec-path=/tmp/evil", "status"])).not.toBeNull();
+      expectGitDenied(["-C", "/tmp", "status"]);
+      expectGitDenied(["-c", "credential.helper=!evil", "push", "origin"]);
+      expectGitDenied(["--exec-path=/tmp/evil", "status"]);
     });
 
-    it("blocks checkout and switch with a git worktree hint", () => {
-      expect(validateGitArgs(["checkout", "main"])).toContain("git worktree add");
-      expect(validateGitArgs(["switch", "feature"])).toContain("git worktree add");
-      expect(validateGitArgs(["checkout", "docs/pre-release"])).toContain("git worktree add");
-      expect(validateGitArgs(["checkout", "-b", "feat/test", "origin/main"])).toContain(
-        "git worktree add",
-      );
-      expect(validateGitArgs(["checkout", "-f", "review/pr-1569"])).toContain("git worktree add");
+    it("blocks checkout and switch", () => {
+      expectGitDenied(["checkout", "main"]);
+      expectGitDenied(["switch", "feature"]);
+      expectGitDenied(["checkout", "-b", "feat/test", "origin/main"]);
     });
 
     it("blocks worktree add outside /workspace/worktrees/", () => {
-      expect(validateGitArgs(["worktree", "add", "/tmp/evil"])).not.toBeNull();
-      expect(validateGitArgs(["worktree", "add", "/workspace/repos/sneaky"])).not.toBeNull();
-      expect(
-        validateGitArgs(["worktree", "add", "/workspace/worktrees/../repos/escape"]),
-      ).not.toBeNull();
+      expectGitDenied(["worktree", "add", "-b", "feat", "/tmp/evil"]);
+      expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/repos/sneaky"]);
+      expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/worktrees/../repos/escape"]);
     });
 
     it("allows worktree paths with nested branch names", () => {
       expect(
-        validateGitArgs(["worktree", "add", "/workspace/worktrees/repo/feat/my-feature"]),
+        validateGitArgs([
+          "worktree",
+          "add",
+          "-b",
+          "feat/my-feature",
+          "/workspace/worktrees/repo/feat/my-feature",
+        ]),
       ).toBeNull();
     });
 
-    it("blocks git remote add/set-url/rename/remove", () => {
-      expect(
-        validateGitArgs(["remote", "add", "evil", "https://evil.com/repo.git"]),
-      ).not.toBeNull();
-      expect(
-        validateGitArgs(["remote", "set-url", "origin", "https://evil.com/repo.git"]),
-      ).not.toBeNull();
-      expect(validateGitArgs(["remote", "rename", "origin", "old"])).not.toBeNull();
-      expect(validateGitArgs(["remote", "remove", "origin"])).not.toBeNull();
-      expect(validateGitArgs(["remote", "prune", "origin"])).not.toBeNull();
+    it("blocks non-allowlisted branch commands", () => {
+      expectGitDenied(["branch", "-m", "rename-policy-tests"]);
+      expectGitDenied(["branch", "--list"]);
+    });
+
+    it("blocks git remote add/set-url/rename/remove and other unsupported shapes", () => {
+      expectGitDenied(["remote", "add", "evil", "https://evil.com/repo.git"]);
+      expectGitDenied(["remote", "set-url", "origin", "https://evil.com/repo.git"]);
+      expectGitDenied(["remote", "rename", "origin", "old"]);
+      expectGitDenied(["remote", "remove", "origin"]);
+      expectGitDenied(["remote", "prune", "origin"]);
+    });
+
+    it("blocks fetches outside the allowlist", () => {
+      expectGitDenied(["fetch", "upstream"]);
+      expectGitDenied(["fetch", "origin", "--tags"]);
     });
 
     it("blocks push to non-origin remotes", () => {
-      expect(validateGitArgs(["push", "evil", "main"])).not.toBeNull();
-      expect(validateGitArgs(["push", "https://evil.com/repo.git", "main"])).not.toBeNull();
-      expect(validateGitArgs(["push", "upstream", "main"])).not.toBeNull();
+      expectGitDenied(["push", "evil", "HEAD:refs/heads/feat/x"]);
+      expectGitDenied(["push", "https://evil.com/repo.git", "HEAD:refs/heads/feat/x"]);
+      expectGitDenied(["push", "upstream", "HEAD:refs/heads/feat/x"]);
     });
 
     it("blocks security-sensitive push flags", () => {
-      expect(validateGitArgs(["push", "--receive-pack=evil", "origin"])).not.toBeNull();
-      expect(validateGitArgs(["push", "--repo=https://evil.com", "origin"])).not.toBeNull();
-      expect(validateGitArgs(["push", "--exec=evil", "origin"])).not.toBeNull();
+      expectGitDenied(["push", "--receive-pack=evil", "origin", "HEAD:refs/heads/feat/x"]);
+      expectGitDenied(["push", "--repo=https://evil.com", "origin", "HEAD:refs/heads/feat/x"]);
+      expectGitDenied(["push", "--exec=evil", "origin", "HEAD:refs/heads/feat/x"]);
     });
 
     it("rejects unknown push flags but keeps known safe ones working", () => {
-      expect(validateGitArgs(["push", "--some-unknown-flag", "origin"])).not.toBeNull();
-      expect(validateGitArgs(["push", "--no-verify", "origin", "feat/x"])).toBeNull();
-      expect(validateGitArgs(["push", "--force-with-lease", "origin", "main"])).not.toBeNull();
-    });
-
-    it("blocks --force-with-lease with an inline value", () => {
+      expectGitDenied(["push", "--some-unknown-flag", "origin", "HEAD:refs/heads/feat/x"]);
+      expect(validateGitArgs(["push", "--dry-run", "origin", "HEAD:refs/heads/feat/x"])).toBeNull();
+      expect(validateGitArgs(["push", "-u", "origin", "HEAD:refs/heads/feat/x"])).toBeNull();
       expect(
-        validateGitArgs(["push", "--force-with-lease=main:abc123", "origin", "main"]),
-      ).not.toBeNull();
+        validateGitArgs(["push", "--set-upstream", "origin", "HEAD:refs/heads/feat/x"]),
+      ).toBeNull();
     });
 
-    it("requires explicit remote and explicit refspec when no safe upstream can be resolved", () => {
-      expect(validateGitArgs(["push"])).not.toBeNull();
-      expect(validateGitArgs(["push", "origin"])).not.toBeNull();
-      expect(validateGitArgs(["push", "HEAD"])).not.toBeNull();
-    });
-
-    it("blocks implicit push when the current branch has no upstream", () => {
-      const repoDir = createRepoWithOrigin("https://github.com/acme/web.git", {
-        branch: "feat/test",
-      });
-
-      try {
-        expect(validateGitArgs(["push"], repoDir)).not.toBeNull();
-        expect(validateGitArgs(["push", "origin"], repoDir)).not.toBeNull();
-      } finally {
-        rmSync(repoDir, { recursive: true, force: true });
-      }
-    });
-
-    it("blocks implicit push when the upstream remote is not origin", () => {
-      const repoDir = createRepoWithOrigin("https://github.com/acme/web.git", {
-        branch: "feat/test",
-        upstreamBranch: "feat/test",
-        upstreamRemote: "upstream",
-      });
-
-      try {
-        expect(validateGitArgs(["push"], repoDir)).not.toBeNull();
-      } finally {
-        rmSync(repoDir, { recursive: true, force: true });
-      }
-    });
-
-    it("blocks implicit push when the upstream branch is protected", () => {
-      const repoDir = createRepoWithOrigin("https://github.com/acme/web.git", {
-        branch: "feat/test",
-        upstreamBranch: "main",
-      });
-
-      try {
-        expect(validateGitArgs(["push"], repoDir)).not.toBeNull();
-      } finally {
-        rmSync(repoDir, { recursive: true, force: true });
-      }
-    });
-
-    it("blocks implicit push from detached HEAD", () => {
-      const repoDir = createRepoWithOrigin("https://github.com/acme/web.git", {
-        branch: "feat/test",
-        upstreamBranch: "feat/test",
-        detachedHead: true,
-      });
-
-      try {
-        expect(validateGitArgs(["push"], repoDir)).not.toBeNull();
-      } finally {
-        rmSync(repoDir, { recursive: true, force: true });
-      }
+    it("requires an explicit HEAD refspec push shape", () => {
+      expectGitDenied(["push"]);
+      expectGitDenied(["push", "origin"]);
+      expectGitDenied(["push", "HEAD"]);
+      expectGitDenied(["push", "origin", "feat/x"]);
     });
 
     it("allows -u / --set-upstream to set upstream tracking", () => {
-      expect(validateGitArgs(["push", "-u", "origin", "feat/x"])).toBeNull();
-      expect(validateGitArgs(["push", "--set-upstream", "origin", "feat/x"])).toBeNull();
+      expect(validateGitArgs(["push", "-u", "origin", "HEAD:refs/heads/feat/x"])).toBeNull();
+      expect(
+        validateGitArgs(["push", "--set-upstream", "origin", "HEAD:refs/heads/feat/x"]),
+      ).toBeNull();
     });
 
     it("blocks pushes to protected target branches", () => {
-      expect(validateGitArgs(["push", "origin", "main"])).not.toBeNull();
-      expect(validateGitArgs(["push", "origin", "master"])).not.toBeNull();
-      expect(validateGitArgs(["push", "origin", "HEAD:refs/heads/main"])).not.toBeNull();
-      expect(validateGitArgs(["push", "origin", "HEAD:refs/heads/master"])).not.toBeNull();
-    });
-
-    it("blocks previously-allowed push flags now removed from the surface", () => {
-      expect(validateGitArgs(["push", "--force", "origin", "main"])).not.toBeNull();
-      expect(validateGitArgs(["push", "-f", "origin", "main"])).not.toBeNull();
-      expect(validateGitArgs(["push", "--delete", "origin", "feat/x"])).not.toBeNull();
-      expect(validateGitArgs(["push", "-d", "origin", "feat/x"])).not.toBeNull();
+      expectGitDenied(["push", "origin", "main"]);
+      expectGitDenied(["push", "origin", "master"]);
+      expectGitDenied(["push", "origin", "HEAD:refs/heads/main"]);
+      expectGitDenied(["push", "origin", "HEAD:refs/heads/master"]);
     });
 
     it("allows explicit HEAD refspecs and blocks dangerous mapped refspecs", () => {
       expect(validateGitArgs(["push", "origin", "HEAD:refs/heads/feat/auth"])).toBeNull();
-      expect(validateGitArgs(["push", "origin", "+HEAD:refs/heads/main"])).not.toBeNull();
-      expect(validateGitArgs(["push", "origin", "main:refs/heads/other"])).not.toBeNull();
-      expect(validateGitArgs(["push", "origin", "HEAD:refs/tags/v1"])).not.toBeNull();
-      expect(validateGitArgs(["push", "origin", ":main"])).not.toBeNull();
-      expect(validateGitArgs(["push", "origin", "HEAD:refs/heads/foo:bar"])).not.toBeNull();
+      expectGitDenied(["push", "origin", "+HEAD:refs/heads/main"]);
+      expectGitDenied(["push", "origin", "main:refs/heads/other"]);
+      expectGitDenied(["push", "origin", "HEAD:refs/tags/v1"]);
+      expectGitDenied(["push", "origin", ":main"]);
+      expectGitDenied(["push", "origin", "HEAD:refs/heads/foo:bar"]);
     });
 
-    it("blocks write-oriented git config operations", () => {
-      expect(validateGitArgs(["config", "--global", "--get", "user.name"])).not.toBeNull();
-      expect(validateGitArgs(["config", "user.name", "Thor"])).not.toBeNull();
-    });
-
-    it("blocks non-read-only git --no-pager usage", () => {
-      expect(validateGitArgs(["--no-pager", "push", "origin", "feat/x"])).not.toBeNull();
-    });
-
-    it("blocks git check-ignore modes that can read from stdin", () => {
-      expect(validateGitArgs(["check-ignore", "--stdin"])).not.toBeNull();
-    });
-
-    it("blocks git symbolic-ref mutation shapes", () => {
-      expect(validateGitArgs(["symbolic-ref", "HEAD", "refs/heads/main"])).not.toBeNull();
-      expect(
-        validateGitArgs(["symbolic-ref", "-m", "update", "HEAD", "refs/heads/main"]),
-      ).not.toBeNull();
+    it("blocks commands removed from the allowlist", () => {
+      expectGitDenied(["config", "--global", "--get", "user.name"]);
+      expectGitDenied(["config", "user.name", "Thor"]);
+      expectGitDenied(["--no-pager", "log", "--oneline", "-10"]);
+      expectGitDenied(["check-ignore", "--stdin"]);
+      expectGitDenied(["symbolic-ref", "HEAD", "refs/heads/main"]);
+      expectGitDenied(["pull", "origin", "feat/x"]);
     });
 
     it("blocks arbitrary commands", () => {
-      expect(validateGitArgs(["fsck"])).not.toBeNull();
-      expect(validateGitArgs(["gc"])).not.toBeNull();
-      expect(validateGitArgs(["daemon"])).not.toBeNull();
+      expectGitDenied(["fsck"]);
+      expectGitDenied(["gc"]);
+      expectGitDenied(["daemon"]);
     });
   });
 
@@ -411,7 +303,7 @@ describe("validateGitArgs", () => {
   });
 
   it("rejects leading flags that are not explicitly allowlisted", () => {
-    expect(validateGitArgs(["--exec-path=/tmp/evil"])).not.toBeNull();
+    expectGitDenied(["--exec-path=/tmp/evil"]);
   });
 });
 
