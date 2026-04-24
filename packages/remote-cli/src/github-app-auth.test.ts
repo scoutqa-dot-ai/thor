@@ -2,6 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+const mockedWorkspace = vi.hoisted(() => ({ configPath: "" }));
+
+vi.mock("@thor/common", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@thor/common")>();
+  return {
+    ...actual,
+    get WORKSPACE_CONFIG_PATH() {
+      return mockedWorkspace.configPath;
+    },
+  };
+});
+
 import {
   parseOrgFromRemoteUrl,
   resolveOrgFromArgs,
@@ -9,8 +21,6 @@ import {
   getInstallationIdFromWorkspace,
   getInstallationToken,
 } from "./github-app-auth.js";
-
-const CONFIG_PATH = "/workspace/config.json";
 
 describe("resolveOrgFromArgs", () => {
   it("extracts org from -R owner/repo", () => {
@@ -41,17 +51,21 @@ describe("parseOrgFromRemoteUrl", () => {
 });
 
 describe("getInstallationIdFromWorkspace", () => {
+  let configDir: string;
+
   beforeEach(() => {
-    mkdirSync("/workspace", { recursive: true });
+    configDir = mkdtempSync(join(tmpdir(), "thor-workspace-config-"));
+    mockedWorkspace.configPath = join(configDir, "config.json");
   });
 
   afterEach(() => {
-    rmSync(CONFIG_PATH, { force: true });
+    rmSync(configDir, { recursive: true, force: true });
+    mockedWorkspace.configPath = "";
   });
 
   it("reads installation ID from config.orgs", () => {
     writeFileSync(
-      CONFIG_PATH,
+      mockedWorkspace.configPath,
       JSON.stringify({
         repos: { thor: {} },
         orgs: { acme: { github_app_installation_id: 123456 } },
@@ -63,7 +77,7 @@ describe("getInstallationIdFromWorkspace", () => {
 
   it("reads installation ID when config org key is mixed case", () => {
     writeFileSync(
-      CONFIG_PATH,
+      mockedWorkspace.configPath,
       JSON.stringify({
         repos: { thor: {} },
         orgs: { AcmeCorp: { github_app_installation_id: 789012 } },
@@ -76,7 +90,7 @@ describe("getInstallationIdFromWorkspace", () => {
 
   it("throws with configured org list when org is missing", () => {
     writeFileSync(
-      CONFIG_PATH,
+      mockedWorkspace.configPath,
       JSON.stringify({
         repos: { thor: {} },
         orgs: {
@@ -87,23 +101,26 @@ describe("getInstallationIdFromWorkspace", () => {
     );
 
     expect(() => getInstallationIdFromWorkspace("acme")).toThrow(
-      'Configured orgs: alpha, zeta. Add orgs.acme.github_app_installation_id',
+      "Configured orgs: alpha, zeta. Add orgs.acme.github_app_installation_id",
     );
   });
 });
 
 describe("getInstallationToken", () => {
   let tempDir: string;
+  let configDir: string;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "thor-gh-auth-"));
+    configDir = mkdtempSync(join(tmpdir(), "thor-workspace-config-"));
+    mockedWorkspace.configPath = join(configDir, "config.json");
     process.env.GITHUB_APP_DIR = tempDir;
     process.env.GITHUB_APP_ID = "123";
     process.env.GITHUB_APP_PRIVATE_KEY_PATH = join(tempDir, "private-key.pem");
     writeFileSync(process.env.GITHUB_APP_PRIVATE_KEY_PATH, "not-used-in-cache-hit");
 
     writeFileSync(
-      CONFIG_PATH,
+      mockedWorkspace.configPath,
       JSON.stringify({
         repos: { thor: {} },
         orgs: { acme: { github_app_installation_id: 999 } },
@@ -114,7 +131,8 @@ describe("getInstallationToken", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     rmSync(tempDir, { recursive: true, force: true });
-    rmSync(CONFIG_PATH, { force: true });
+    rmSync(configDir, { recursive: true, force: true });
+    mockedWorkspace.configPath = "";
     delete process.env.GITHUB_APP_DIR;
     delete process.env.GITHUB_APP_ID;
     delete process.env.GITHUB_APP_PRIVATE_KEY_PATH;
@@ -133,7 +151,10 @@ describe("getInstallationToken", () => {
     );
 
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    await expect(getInstallationToken("acme")).resolves.toEqual({ token: "cached-token", org: "acme" });
+    await expect(getInstallationToken("acme")).resolves.toEqual({
+      token: "cached-token",
+      org: "acme",
+    });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -147,12 +168,18 @@ describe("getInstallationToken", () => {
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
-        JSON.stringify({ token: "minted-token", expires_at: new Date(Date.now() + 3600_000).toISOString() }),
+        JSON.stringify({
+          token: "minted-token",
+          expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        }),
         { status: 201 },
       ),
     );
 
-    await expect(getInstallationToken("acme")).resolves.toEqual({ token: "minted-token", org: "acme" });
+    await expect(getInstallationToken("acme")).resolves.toEqual({
+      token: "minted-token",
+      org: "acme",
+    });
 
     const cached = JSON.parse(readFileSync(join(tempDir, "cache", "acme.json"), "utf8")) as {
       token: string;
@@ -172,7 +199,10 @@ describe("getInstallationToken", () => {
 
     const cacheDir = join(tempDir, "cache");
     mkdirSync(cacheDir, { recursive: true });
-    writeFileSync(join(cacheDir, "acme.json"), JSON.stringify({ token: "stale", expires_at: "2000-01-01T00:00:00.000Z" }));
+    writeFileSync(
+      join(cacheDir, "acme.json"),
+      JSON.stringify({ token: "stale", expires_at: "2000-01-01T00:00:00.000Z" }),
+    );
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("forbidden", { status: 403 }));
 
