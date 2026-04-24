@@ -530,6 +530,73 @@ describe("triggerRunnerGitHub", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("maps exhausted 5xx branch lookup retries to terminal branch_unresolved", async () => {
+    mockFetch
+      .mockResolvedValueOnce(textResponse("upstream error", 500))
+      .mockResolvedValueOnce(textResponse("upstream error", 500));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      undefined,
+      undefined,
+      onRejected,
+    );
+
+    expect(result).toEqual({ busy: false, rejected: true });
+    expect(onRejected).toHaveBeenCalledWith("branch_unresolved");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps exhausted timeout retries to terminal branch_unresolved", async () => {
+    const abortError = new Error("aborted");
+    abortError.name = "AbortError";
+    mockFetch.mockRejectedValue(abortError);
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      undefined,
+      undefined,
+      onRejected,
+    );
+
+    expect(result).toEqual({ busy: false, rejected: true });
+    expect(onRejected).toHaveBeenCalledWith("branch_unresolved");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps exhausted network lookup retries to terminal branch_unresolved", async () => {
+    mockFetch.mockRejectedValue(new TypeError("fetch failed"));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      undefined,
+      undefined,
+      onRejected,
+    );
+
+    expect(result).toEqual({ busy: false, rejected: true });
+    expect(onRejected).toHaveBeenCalledWith("branch_unresolved");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("returns busy without ack for non-mention events", async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({ busy: true }));
     const onAccepted = vi.fn();

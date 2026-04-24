@@ -887,7 +887,7 @@ describe("gateway", () => {
     );
   });
 
-  it("defers pending GitHub branch resolution on retryable lookup errors", async () => {
+  it("dead-letters pending GitHub branch resolution after exhausted 5xx lookup retries", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(textResponse("upstream error", 500));
 
     await withServer(
@@ -920,11 +920,12 @@ describe("gateway", () => {
 
         await queue.flush();
 
-        expect(readQueuedEvents(queueDir)).toHaveLength(1);
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
         const deadLetterFiles = readdirSync(join(queueDir, "dead-letter")).filter((entry) =>
           entry.endsWith(".json"),
         );
-        expect(deadLetterFiles).toHaveLength(0);
+        expect(deadLetterFiles).toHaveLength(1);
       },
       {
         githubWebhookSecret: "github-secret",

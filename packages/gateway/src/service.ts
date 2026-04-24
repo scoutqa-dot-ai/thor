@@ -398,8 +398,14 @@ export async function resolveGitHubPrHead(
           "Remote-cli /github/pr-head returned 404",
         );
       }
-      if (response.status >= 500 && attempt < GITHUB_PR_HEAD_RETRIES) {
-        continue;
+      if (response.status >= 500) {
+        if (attempt < GITHUB_PR_HEAD_RETRIES) {
+          continue;
+        }
+        throw new TerminalGitHubDispatchError(
+          "branch_unresolved",
+          `Remote-cli /github/pr-head returned ${response.status} after retries`,
+        );
       }
       throw new Error(`Remote-cli /github/pr-head returned ${response.status}`);
     } catch (error) {
@@ -410,7 +416,16 @@ export async function resolveGitHubPrHead(
         if (attempt < GITHUB_PR_HEAD_RETRIES) {
           continue;
         }
-        throw new Error("Remote-cli /github/pr-head timed out");
+        throw new TerminalGitHubDispatchError(
+          "branch_unresolved",
+          "Remote-cli /github/pr-head timed out after retries",
+        );
+      }
+      if (error instanceof TypeError && attempt >= GITHUB_PR_HEAD_RETRIES) {
+        throw new TerminalGitHubDispatchError(
+          "branch_unresolved",
+          `Remote-cli /github/pr-head request failed after retries: ${error.message}`,
+        );
       }
       if (attempt < GITHUB_PR_HEAD_RETRIES) {
         continue;
