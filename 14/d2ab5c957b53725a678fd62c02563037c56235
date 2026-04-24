@@ -1,0 +1,29 @@
+docs/plan/2026042401_runner-live-watch.md
+  677b2d51537bb16c 1-83
+packages/runner/src/live-watch.ts
+  677b2d51537bb16c 1-73
+packages/runner/src/index.ts
+  677b2d51537bb16c 42,64-66,777
+packages/runner/package.json
+  677b2d51537bb16c 17,23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "14d2ab5c957b53725a678fd62c02563037c56235",
+  "prompts": {
+    "677b2d51537bb16c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c138aba6-f3a6-4dc0-adcc-d7d95bfb2fee",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 174,
+      "total_deletions": 4,
+      "accepted_lines": 174,
+      "overriden_lines": 0
+    }
+  }
+}
