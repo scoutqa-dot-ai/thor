@@ -300,7 +300,11 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.status(400).json({ error: "installation must be a positive integer" });
       return;
     }
-    if (!repo.includes("/")) {
+    const slash = repo.indexOf("/");
+    const owner = slash > 0 ? repo.slice(0, slash) : "";
+    const name = slash > 0 ? repo.slice(slash + 1) : "";
+    const repoSegmentRe = /^[A-Za-z0-9._-]+$/;
+    if (!owner || !name || !repoSegmentRe.test(owner) || !repoSegmentRe.test(name)) {
       res.status(400).json({ error: "repo must be owner/repo" });
       return;
     }
@@ -316,7 +320,8 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       const appJwt = generateAppJWT(appId, privateKeyPath);
       const installationToken = await mintInstallationToken(installation, appJwt, apiUrl);
 
-      const pullResponse = await fetch(`${apiUrl}/repos/${repo}/pulls/${number}`, {
+      const pullUrl = `${apiUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}`;
+      const pullResponse = await fetch(pullUrl, {
         headers: {
           Authorization: `token ${installationToken.token}`,
           Accept: "application/vnd.github+json",

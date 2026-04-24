@@ -116,3 +116,12 @@ npx smee-client --url https://smee.io/<channel-id> --path /github/webhook --port
 | `fork_pr_unsupported`            | PR head repo differs from base repo                  | Use same-repo branch PRs                                                           |
 | `bot_sender`                     | Sender is a bot (or Thor app identity)               | Trigger from a human account                                                       |
 | `empty_review_body`              | Submitted review body was blank                      | Include text in the review body                                                    |
+
+## 10) Trust boundary for `remote-cli`
+
+The `remote-cli` service owns the GitHub App private key and mints installation tokens on demand (`/github/pr-head` for the webhook branch-resolution path; the `git` / `gh` wrappers for agent commands). Its endpoints have no per-request auth header — they rely on the docker network being the trust boundary:
+
+- The host port mapping is `127.0.0.1:3004:3004`, so it is not reachable from outside the host.
+- Inside the docker network, every compose service listed in the `depends_on` graph can call it directly.
+
+Operators adding new services to the compose network must treat them as equally trusted with gateway and runner. If that ever becomes too permissive, introduce a shared-secret header (mirroring the `RESOLVE_SECRET` / `x-thor-resolve-secret` pattern already used for MCP approvals) before adding the service.

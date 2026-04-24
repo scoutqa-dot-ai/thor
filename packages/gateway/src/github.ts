@@ -172,10 +172,7 @@ export function normalizeGitHubEvent(
   options: { localRepo: string; mentionLogins: string[] },
 ): NormalizedGitHubEvent | { ignored: true; reason: IgnoreReason } {
   const senderLogin = raw.sender.login.toLowerCase();
-
-  if (isBotSender(raw.sender.type, senderLogin, options.mentionLogins)) {
-    return { ignored: true, reason: "bot_sender" };
-  }
+  const isBot = isBotSender(raw.sender.type, senderLogin, options.mentionLogins);
 
   if (isIssueCommentEvent(raw)) {
     if (raw.action !== "created") {
@@ -183,6 +180,9 @@ export function normalizeGitHubEvent(
     }
     if (!raw.issue.pull_request) {
       return { ignored: true, reason: "pure_issue_comment_unsupported" };
+    }
+    if (isBot) {
+      return { ignored: true, reason: "bot_sender" };
     }
     return {
       source: "github",
@@ -206,6 +206,9 @@ export function normalizeGitHubEvent(
     }
     if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
       return { ignored: true, reason: "fork_pr_unsupported" };
+    }
+    if (isBot) {
+      return { ignored: true, reason: "bot_sender" };
     }
     return {
       source: "github",
@@ -233,6 +236,9 @@ export function normalizeGitHubEvent(
   const body = raw.review.body?.trim() ?? "";
   if (!body) {
     return { ignored: true, reason: "empty_review_body" };
+  }
+  if (isBot) {
+    return { ignored: true, reason: "bot_sender" };
   }
 
   return {

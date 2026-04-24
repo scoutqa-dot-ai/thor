@@ -117,7 +117,7 @@ export interface GitHubPrHeadResult {
   headRepoFullName: string;
 }
 
-type TerminalGitHubRejectReason = "installation_gone" | "branch_unresolved";
+type TerminalGitHubRejectReason = "installation_gone" | "branch_unresolved" | "fork_pr_unsupported";
 
 class TerminalGitHubDispatchError extends Error {
   constructor(
@@ -395,7 +395,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
         input.deps.fetchImpl,
       );
       if (branchInfo.headRepoFullName !== latest.repoFullName) {
-        return { kind: "drop", logPrefix, reason: "branch_unresolved" };
+        return { kind: "drop", logPrefix, reason: "fork_pr_unsupported" };
       }
 
       return {
