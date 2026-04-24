@@ -135,6 +135,10 @@ describe("validateGitArgs", () => {
         ["restore", "--", "package-lock.json"],
         ["restore", "--source", "HEAD~1", "--", "packages/remote-cli/src/policy.ts"],
         ["restore", "--source=origin/main", "--", "Dockerfile"],
+        ["restore", "--staged", "--", "packages/remote-cli/src/policy.ts"],
+        ["restore", "-S", "--", "packages/remote-cli/src/policy.ts"],
+        ["restore", "--staged", "--source", "HEAD~1", "--", "package.json"],
+        ["restore", "--source=HEAD", "-S", "--", "README.md"],
         ["add", "docs/plan/2026042406_command-policy-consolidation.md"],
         ["add", "-A"],
         ["add", "packages/remote-cli/src/policy.ts", "packages/remote-cli/src/policy.test.ts"],
@@ -356,6 +360,19 @@ describe("validateGitArgs", () => {
       expectGitDenied(["push", "origin", "HEAD:refs/tags/v1"]);
       expectGitDenied(["push", "origin", ":main"]);
       expectGitDenied(["push", "origin", "HEAD:refs/heads/foo:bar"]);
+    });
+
+    it("blocks malformed restore forms", () => {
+      expectGitDenied(["restore"]);
+      expectGitDenied(["restore", "--"]);
+      expectGitDenied(["restore", "package.json"]);
+      expectGitDenied(["restore", "--source"]);
+      expectGitDenied(["restore", "--source=", "--", "package.json"]);
+      expectGitDenied(["restore", "--source", "HEAD", "--source", "origin/main", "--", "a"]);
+      expectGitDenied(["restore", "--source=HEAD", "--source=origin/main", "--", "a"]);
+      expectGitDenied(["restore", "--worktree", "--", "a"]);
+      expectGitDenied(["restore", "--overlay", "--", "a"]);
+      expectGitDenied(["restore", "--staged", "package.json"]);
     });
 
     it("blocks commands removed from the allowlist", () => {

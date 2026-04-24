@@ -68,7 +68,7 @@ Supported shapes:
 
 ### `git restore`
 
-Use `git restore [--source <tree>] -- <path...>` for file restore. This replaces all `git checkout` restore support.
+Use `git restore [--source <tree>] [--staged|-S] -- <path...>` for file restore or unstaging. `--staged`/`-S` unstages the listed paths (the replacement for `git reset <path>`); combine with `--source <tree>` to restore staged content from a specific tree. This replaces all `git checkout` restore support.
 
 ### `git add`
 

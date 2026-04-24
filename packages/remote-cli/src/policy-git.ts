@@ -261,25 +261,37 @@ function validateFetch(args: string[]): string | null {
 }
 
 function validateRestore(args: string[]): string | null {
+  // Approved flag pool before the `--` separator: at most one `--source[=<tree>]`
+  // and any number of `--staged` / `-S` (a simple boolean toggle).
   let i = 1;
+  let sawSource = false;
 
-  if (i < args.length && args[i] === "--source") {
-    if (i + 1 >= args.length || args[i + 1].length === 0) {
-      return denyMessage("git restore");
+  while (i < args.length && args[i] !== "--") {
+    const arg = args[i];
+    if (arg === "--staged" || arg === "-S") {
+      i += 1;
+      continue;
     }
-    i += 2;
-  } else if (i < args.length && args[i].startsWith("--source=")) {
-    if (args[i].length <= "--source=".length) {
-      return denyMessage("git restore");
+    if (arg === "--source") {
+      if (sawSource || i + 1 >= args.length || args[i + 1].length === 0) {
+        return denyMessage("git restore");
+      }
+      sawSource = true;
+      i += 2;
+      continue;
     }
-    i += 1;
-  }
-
-  if (i >= args.length || args[i] !== "--") {
+    if (arg.startsWith("--source=")) {
+      if (sawSource || arg.length <= "--source=".length) {
+        return denyMessage("git restore");
+      }
+      sawSource = true;
+      i += 1;
+      continue;
+    }
     return denyMessage("git restore");
   }
 
-  if (i + 1 >= args.length) {
+  if (i >= args.length || args[i] !== "--" || i + 1 >= args.length) {
     return denyMessage("git restore");
   }
 
