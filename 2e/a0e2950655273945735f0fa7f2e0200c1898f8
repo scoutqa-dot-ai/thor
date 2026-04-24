@@ -1,0 +1,27 @@
+package.json
+  40353b33ce484e1f 16-17
+scripts/gen-policy-skill.ts
+  40353b33ce484e1f 1-209
+.prettierignore
+  40353b33ce484e1f 4-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2ea0e2950655273945735f0fa7f2e0200c1898f8",
+  "prompts": {
+    "40353b33ce484e1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c323878d-2418-41c9-b1eb-4b2333a5e889",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 224,
+      "total_deletions": 8,
+      "accepted_lines": 216,
+      "overriden_lines": 0
+    }
+  }
+}
