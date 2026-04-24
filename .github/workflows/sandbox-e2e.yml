@@ -110,6 +110,17 @@ jobs:
             echo "Deleting existing snapshot (id=$existing_id)..."
             curl -sS -X DELETE "${auth[@]}" "$api/$existing_id"
             echo
+            # DELETE is async — poll until the name is free (404).
+            for attempt in $(seq 1 30); do
+              status=$(curl -sS -o /dev/null -w '%{http_code}' "${auth[@]}" "$api/$snapshot_name")
+              echo "  attempt $attempt: GET $snapshot_name -> $status"
+              [[ "$status" == "404" ]] && break
+              sleep 2
+            done
+            if [[ "$status" != "404" ]]; then
+              echo "snapshot still present after delete (status=$status)" >&2
+              exit 1
+            fi
           else
             echo "No existing snapshot found."
           fi
