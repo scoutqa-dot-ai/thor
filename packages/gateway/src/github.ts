@@ -31,6 +31,7 @@ const IssueCommentEnvelopeSchema = z.object({
   comment: z.object({
     body: z.string(),
     html_url: z.string(),
+    created_at: z.string().optional(),
   }),
 });
 
@@ -47,6 +48,7 @@ const PullRequestReviewCommentEnvelopeSchema = z.object({
   comment: z.object({
     body: z.string(),
     html_url: z.string(),
+    created_at: z.string().optional(),
   }),
 });
 
@@ -63,6 +65,7 @@ const PullRequestReviewEnvelopeSchema = z.object({
   review: z.object({
     body: z.string().nullable().optional(),
     html_url: z.string(),
+    submitted_at: z.string().optional(),
   }),
 });
 
@@ -134,6 +137,11 @@ export function detectMention(body: string, mentionLogins: string[]): boolean {
   });
 }
 
+export function buildMentionLogins(appSlug: string): string[] {
+  const slug = appSlug.trim().toLowerCase();
+  return [slug, `${slug}[bot]`];
+}
+
 function isBotSender(senderType: string, senderLogin: string, mentionLogins: string[]): boolean {
   if (senderType.toLowerCase() === "bot") return true;
   return mentionLogins.map((login) => login.toLowerCase()).includes(senderLogin.toLowerCase());
@@ -145,6 +153,18 @@ function isSameRepo(left: string, right: string): boolean {
 
 export function buildCorrelationKey(localRepo: string, branch: string): string {
   return `git:branch:${localRepo}:${branch}`;
+}
+
+export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number | undefined {
+  const iso = isIssueCommentEvent(raw)
+    ? raw.comment.created_at
+    : isPullRequestReviewCommentEvent(raw)
+      ? raw.comment.created_at
+      : raw.review.submitted_at;
+
+  if (!iso) return undefined;
+  const parsed = Date.parse(iso);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 export function normalizeGitHubEvent(
