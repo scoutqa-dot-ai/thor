@@ -36,27 +36,27 @@ jobs:
 
       - name: Bring up compose stack for e2e
         env:
-          WORKSPACE_CONFIG_JSON: ${{ vars.THOR_CI_WORKSPACE_CONFIG_JSON }}
-          OPENCODE_AUTH_JSON: ${{ secrets.THOR_CI_OPENCODE_AUTH_JSON }}
-          SLACK_BOT_TOKEN: ${{ secrets.THOR_CI_SLACK_BOT_TOKEN }}
-          SLACK_BOT_USER_ID: ${{ vars.THOR_CI_SLACK_BOT_USER_ID }}
-          SLACK_SIGNING_SECRET: ${{ secrets.THOR_CI_SLACK_SIGNING_SECRET }}
-          GRAFANA_URL: ${{ vars.THOR_CI_GRAFANA_URL }}
-          GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ secrets.THOR_CI_GRAFANA_SERVICE_ACCOUNT_TOKEN }}
-          ATLASSIAN_AUTH: ${{ secrets.THOR_CI_ATLASSIAN_AUTH }}
-          POSTHOG_API_KEY: ${{ secrets.THOR_CI_POSTHOG_API_KEY }}
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.THOR_CI_LANGFUSE_PUBLIC_KEY }}
-          LANGFUSE_SECRET_KEY: ${{ secrets.THOR_CI_LANGFUSE_SECRET_KEY }}
-          LANGFUSE_HOST: ${{ vars.THOR_CI_LANGFUSE_HOST }}
-          GITHUB_PAT: ${{ secrets.THOR_CI_GITHUB_PAT }}
-          GITHUB_API_URL: ${{ vars.THOR_CI_GITHUB_API_URL }}
-          METABASE_URL: ${{ vars.THOR_CI_METABASE_URL }}
-          METABASE_API_KEY: ${{ secrets.THOR_CI_METABASE_API_KEY }}
-          METABASE_DATABASE_ID: ${{ vars.THOR_CI_METABASE_DATABASE_ID }}
-          METABASE_ALLOWED_SCHEMAS: ${{ vars.THOR_CI_METABASE_ALLOWED_SCHEMAS }}
-          DAYTONA_API_KEY: ${{ secrets.THOR_CI_DAYTONA_API_KEY }}
-          DAYTONA_API_URL: ${{ vars.THOR_CI_DAYTONA_API_URL }}
-          DAYTONA_SNAPSHOT: ${{ vars.THOR_CI_DAYTONA_SNAPSHOT }}
+          WORKSPACE_CONFIG_JSON: ${{ vars.WORKSPACE_CONFIG_JSON }}
+          OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+          GRAFANA_URL: ${{ vars.GRAFANA_URL }}
+          GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ secrets.GRAFANA_SERVICE_ACCOUNT_TOKEN }}
+          ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
+          GITHUB_PAT: ${{ secrets.THOR_GITHUB_PAT }}
+          GITHUB_API_URL: ${{ vars.THOR_GITHUB_API_URL }}
+          METABASE_URL: ${{ vars.METABASE_URL }}
+          METABASE_API_KEY: ${{ secrets.METABASE_API_KEY }}
+          METABASE_DATABASE_ID: ${{ vars.METABASE_DATABASE_ID }}
+          METABASE_ALLOWED_SCHEMAS: ${{ vars.METABASE_ALLOWED_SCHEMAS }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
+          DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
         run: |
           set -euo pipefail
 
