@@ -90,7 +90,7 @@ describe("validateGitArgs", () => {
         ["restore", "--", "package-lock.json"],
         ["restore", "--source", "HEAD~1", "--", "packages/remote-cli/src/policy.ts"],
         ["restore", "--source=origin/main", "--", "Dockerfile"],
-        ["add", "docs/plan/2026042401_command-usage-regression-tests.md"],
+        ["add", "docs/plan/2026042406_command-policy-consolidation.md"],
         ["add", "-A"],
         ["add", "packages/remote-cli/src/policy.ts", "packages/remote-cli/src/policy.test.ts"],
         ["commit", "-m", "test: expand git and gh policy coverage"],
