@@ -94,6 +94,242 @@ describe("ProgressManager", () => {
     );
   });
 
+  it("includes memory and delegated agents in progress context", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/my-repo/README.md",
+        source: "bootstrap",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "delegate",
+        agent: "research-agent",
+        description: "investigate flaky tests",
+      },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).toContain("3 tool calls");
+    expect(postCall.text).toContain("memory: README.md");
+    expect(postCall.text).toContain("agents: research-agent");
+    expect(postCall.text).not.toContain("investigate flaky tests");
+  });
+
+  it("collapses consecutive duplicate agents using run semantics", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "delegate", agent: "research-agent", description: "first" },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "delegate", agent: "research-agent", description: "second" },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "delegate", agent: "coding-agent" },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "delegate", agent: "research-agent" },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).toContain("agents: research-agent x2, coding-agent, research-agent");
+  });
+
+  it("shows compact memory file labels when fewer than 3 distinct files", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/service-a/README.md",
+        source: "bootstrap",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/service-b/README.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).toContain("memory: service-a/README.md, service-b/README.md");
+    expect(postCall.text).not.toContain("(boot)");
+    expect(postCall.text).not.toContain("read ");
+    expect(postCall.text).not.toContain("write ");
+  });
+
+  it("summarizes memory activity counts when 3+ distinct files are present", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/a.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/b.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/c.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/a.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).toContain("memory: read x3, write x1");
+  });
+
+  it("does not count memory/delegate events toward tool threshold", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 2);
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/README.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "delegate",
+        agent: "coding-agent",
+      },
+      deps,
+      "",
+    );
+
+    expect(chat(deps).postMessage).not.toHaveBeenCalled();
+  });
+
+  it("updates immediately when memory/delegate context arrives after threshold is reached", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+    expect(chat(deps).update).not.toHaveBeenCalled();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/README.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    expect(chat(deps).update).toHaveBeenCalledOnce();
+    expect((chat(deps).update.mock.calls[0][0] as { text: string }).text).toContain(
+      "memory: README.md",
+    );
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "delegate",
+        agent: "coding-agent",
+      },
+      deps,
+      "",
+    );
+    expect(chat(deps).update).toHaveBeenCalledTimes(2);
+    expect((chat(deps).update.mock.calls[1][0] as { text: string }).text).toContain(
+      "agents: coding-agent",
+    );
+  });
+
   it("throttles updates to 10s intervals", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);

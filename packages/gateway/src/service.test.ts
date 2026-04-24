@@ -117,6 +117,17 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       JSON.stringify({ type: "start", sessionId: "s1", resumed: false }),
       JSON.stringify({ type: "tool", tool: "bash", status: "completed" }),
       JSON.stringify({
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/my-repo/README.md",
+        source: "bootstrap",
+      }),
+      JSON.stringify({
+        type: "delegate",
+        agent: "research-agent",
+        description: "collect incidents",
+      }),
+      JSON.stringify({
         type: "done",
         sessionId: "s1",
         resumed: false,
@@ -143,13 +154,18 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     // Wait for background stream consumption
     await new Promise((r) => setTimeout(r, 50));
 
-    // Gateway forwards progress events directly and includes sourceTs for Slack-side decisions.
+    // Gateway forwards progress events directly, including sourceTs for Slack-side decisions.
     const progressCalls = mockSlackFetch.mock.calls.filter(
       (c: [string, ...unknown[]]) => typeof c[0] === "string" && c[0].includes("/progress"),
     );
-    expect(progressCalls.length).toBe(3);
+    expect(progressCalls.length).toBe(5);
+
     const body = JSON.parse((progressCalls[0][1] as { body: string }).body);
     expect(body.sourceTs).toBe("1710000000.001");
+    const memoryBody = JSON.parse((progressCalls[2][1] as { body: string }).body);
+    expect(memoryBody.event.type).toBe("memory");
+    const delegateBody = JSON.parse((progressCalls[3][1] as { body: string }).body);
+    expect(delegateBody.event.type).toBe("delegate");
   });
 
   it("forwards approval_required events to /approval endpoint", async () => {

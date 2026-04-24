@@ -38,6 +38,7 @@ import {
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { buildToolInstructions } from "./tool-instructions.js";
+import { getMemoryProgressEvents } from "./memory-progress.js";
 
 const log = createLogger("runner");
 
@@ -202,6 +203,14 @@ function toolDisplayName(toolPart: ToolPart): string {
 
   const depth = CMD_DEPTH[cmd] ?? 1;
   return parts.slice(0, depth).join(" ");
+}
+
+function emitMemoryEventsFromToolPart(toolPart: ToolPart, emit: (event: ProgressEvent) => void): void {
+  const status = toolPart.state.status;
+  const input = (toolPart.state as { input?: unknown }).input;
+  for (const event of getMemoryProgressEvents({ tool: toolPart.tool, status, input })) {
+    emit(event);
+  }
 }
 
 /** Log a part to stdout if it's interesting. */
@@ -436,11 +445,14 @@ app.post("/trigger", async (req, res) => {
       }
     }
 
+    const bootstrapMemoryPaths: string[] = [];
+
     // --- Memory: inject into new or stale sessions ---
     if (!resumed) {
       const rootMemory = readRootMemory();
       if (rootMemory) {
         prompt = `[Root memory — important context from prior sessions]\n${rootMemory}\n\n${prompt}`;
+        bootstrapMemoryPaths.push(ROOT_MEMORY_PATH);
       } else {
         prompt = `[Root memory: none yet — write to ${ROOT_MEMORY_PATH} to persist cross-repo context]\n\n${prompt}`;
       }
@@ -452,6 +464,7 @@ app.post("/trigger", async (req, res) => {
         const repoMemory = readRepoMemory(sessionDirectory);
         if (repoMemory) {
           prompt = `[Repo memory — context for ${repo}]\n${repoMemory}\n\n${prompt}`;
+          bootstrapMemoryPaths.push(repoMemoryPath);
         } else {
           prompt = `[Repo memory: none yet — write to ${repoMemoryPath} to persist per-repo context]\n\n${prompt}`;
         }
@@ -511,6 +524,12 @@ app.post("/trigger", async (req, res) => {
         sessionId,
         type: event.type,
         ...(event.type === "tool" ? { tool: event.tool } : {}),
+        ...(event.type === "memory"
+          ? { action: event.action, path: event.path, source: event.source }
+          : {}),
+        ...(event.type === "delegate"
+          ? { agent: event.agent, description: event.description }
+          : {}),
         ...(event.type === "done"
           ? { status: event.status, durationMs: (event as { durationMs?: number }).durationMs }
           : {}),
@@ -526,6 +545,10 @@ app.post("/trigger", async (req, res) => {
       resumed,
       ...(previousNotesPath ? { previousNotesPath } : {}),
     });
+
+    for (const path of bootstrapMemoryPaths) {
+      emit({ type: "memory", action: "read", path, source: "bootstrap" });
+    }
 
     // --- Stream processing ---
 
@@ -562,6 +585,7 @@ app.post("/trigger", async (req, res) => {
               if (status === "completed" || status === "error") {
                 const displayName = toolDisplayName(toolPart);
                 emit({ type: "tool", tool: displayName, status });
+                emitMemoryEventsFromToolPart(toolPart, emit);
               }
             }
           }
@@ -603,6 +627,7 @@ app.post("/trigger", async (req, res) => {
               const displayName = toolDisplayName(toolPart);
               collectedToolCalls.push({ tool: displayName, state: status });
               emit({ type: "tool", tool: displayName, status });
+              emitMemoryEventsFromToolPart(toolPart, emit);
 
               // Detect approval-required tool results and emit approval event.
               if (status === "completed") {
@@ -637,6 +662,14 @@ app.post("/trigger", async (req, res) => {
             totalTokens.cache.read += stepFinish.tokens.cache.read;
             totalTokens.cache.write += stepFinish.tokens.cache.write;
             lastMessageId = stepFinish.messageID;
+          } else if (part.type === "subtask") {
+            const subtaskPart = part as Part & { type: "subtask"; description: string; agent: string };
+            const description = subtaskPart.description?.trim();
+            emit({
+              type: "delegate",
+              agent: subtaskPart.agent,
+              ...(description ? { description } : {}),
+            });
           }
         } else if (event.type === "session.error") {
           const errorProps = event.properties;
