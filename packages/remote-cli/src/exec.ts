@@ -2,9 +2,10 @@
  * Generic command execution for git and gh.
  *
  * Authentication is resolved per-invocation by the Thor git/gh wrapper
- * binaries (see bin/git, bin/gh). When GitHub App config exists in
- * config.json, wrappers mint installation tokens. Otherwise they fall
- * back to PAT auth via GIT_ASKPASS + GH_TOKEN set in entrypoint.sh.
+ * binaries (see bin/git, bin/gh). When workspace config includes
+ * `orgs.<org>.github_app_installation_id`, wrappers mint installation
+ * tokens. Otherwise they fall back to PAT auth via GIT_ASKPASS +
+ * GH_TOKEN set in entrypoint.sh.
  */
 
 import { execFile, spawn } from "node:child_process";
