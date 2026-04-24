@@ -224,14 +224,37 @@ function validateRemote(args: string[]): string | null {
 }
 
 function validateFetch(args: string[]): string | null {
-  if (args.length < 2 || args[1] !== "origin") {
+  if (args.length < 2) {
     return denyMessage("git fetch");
   }
 
-  for (let i = 2; i < args.length; i += 1) {
-    if (args[i].startsWith("-")) {
-      return denyMessage("git fetch");
-    }
+  const parsed = scanPolicyArgs(args, 1, [
+    { name: "prune", kind: "boolean", aliases: ["--prune", "-p"] },
+    { name: "tags", kind: "boolean", aliases: ["--tags", "-t"] },
+    { name: "no-tags", kind: "boolean", aliases: ["--no-tags"] },
+    { name: "all", kind: "boolean", aliases: ["--all"] },
+    { name: "depth", kind: "value", aliases: ["--depth"] },
+  ]);
+  if (!parsed) return denyMessage("git fetch");
+
+  if (booleanFlagCount(parsed, "tags") > 0 && booleanFlagCount(parsed, "no-tags") > 0) {
+    return denyMessage("git fetch");
+  }
+
+  const depths = valueFlagValues(parsed, "depth");
+  if (depths.length > 1 || depths.some((d) => !/^\d+$/.test(d) || d === "0")) {
+    return denyMessage("git fetch");
+  }
+
+  // `--all` fetches every configured remote. Accept it standalone (no positional
+  // remote), and deny the combination `--all origin ...` which Git already rejects.
+  if (booleanFlagCount(parsed, "all") > 0) {
+    return parsed.positionals.length === 0 ? null : denyMessage("git fetch");
+  }
+
+  // Otherwise: first positional must be `origin`; remaining positionals are refspecs.
+  if (parsed.positionals.length === 0 || parsed.positionals[0] !== "origin") {
+    return denyMessage("git fetch");
   }
 
   return null;

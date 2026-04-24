@@ -60,7 +60,11 @@ Read-only only: `git remote`, `git remote -v`, `git remote --verbose`, `git remo
 
 ### `git fetch`
 
-Exact remote only: `git fetch origin [<ref>...]`. Flags are not part of the supported surface.
+Supported shapes:
+
+- `git fetch origin [<ref>...]` — fetch from origin, optionally scoped to refs.
+- `git fetch --all` — fetch every configured remote (standalone, no positional remote).
+- Approved flags on any shape: `--prune`/`-p`, `--tags`/`-t`, `--no-tags`, `--depth=<n>` (positive integer). `--tags` and `--no-tags` cannot be combined.
 
 ### `git restore`
 

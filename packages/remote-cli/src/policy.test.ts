@@ -80,6 +80,14 @@ describe("validateGitArgs", () => {
         ["fetch", "origin"],
         ["fetch", "origin", "main"],
         ["fetch", "origin", "refs/heads/main:refs/remotes/origin/main"],
+        ["fetch", "--prune", "origin"],
+        ["fetch", "-p", "origin"],
+        ["fetch", "origin", "--tags"],
+        ["fetch", "--no-tags", "origin", "main"],
+        ["fetch", "--depth", "1", "origin", "main"],
+        ["fetch", "--all"],
+        ["fetch", "--all", "--prune"],
+        ["fetch", "--all", "--tags", "--prune"],
         ["ls-files", "--", "packages/remote-cli/src/policy.ts"],
         ["remote"],
         ["remote", "-v"],
@@ -286,8 +294,17 @@ describe("validateGitArgs", () => {
     });
 
     it("blocks fetches outside the allowlist", () => {
+      expectGitDenied(["fetch"]);
       expectGitDenied(["fetch", "upstream"]);
-      expectGitDenied(["fetch", "origin", "--tags"]);
+      expectGitDenied(["fetch", "upstream", "--prune"]);
+      expectGitDenied(["fetch", "--all", "origin"]);
+      expectGitDenied(["fetch", "origin", "--tags", "--no-tags"]);
+      expectGitDenied(["fetch", "--depth"]);
+      expectGitDenied(["fetch", "--depth", "abc", "origin"]);
+      expectGitDenied(["fetch", "--depth", "0", "origin"]);
+      expectGitDenied(["fetch", "--depth", "1", "--depth", "2", "origin"]);
+      expectGitDenied(["fetch", "--unshallow", "origin"]);
+      expectGitDenied(["fetch", "--receive-pack=evil", "origin"]);
     });
 
     it("blocks push to non-origin remotes", () => {
