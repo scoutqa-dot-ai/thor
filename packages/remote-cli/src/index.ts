@@ -301,7 +301,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      const argsError = validateGhArgs(args);
+      const argsError = validateGhArgs(args, cwd);
       if (argsError) {
         res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
         return;

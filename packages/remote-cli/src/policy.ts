@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+
 /**
  * Server-side command policy for git and gh.
  *
@@ -75,6 +77,10 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "grep",
   "help",
   "submodule",
+  "config",
+  "check-ignore",
+  "symbolic-ref",
+  "check-ref-format",
   // write (local) — no checkout/switch; agent stays on its assigned branch
   "add",
   "commit",
@@ -100,19 +106,63 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "version",
 ]);
 
+const NO_PAGER_SAFE_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "status",
+  "log",
+  "diff",
+  "diff-tree",
+  "show",
+  "show-branch",
+  "show-ref",
+  "rev-list",
+  "rev-parse",
+  "blame",
+  "shortlog",
+  "describe",
+  "for-each-ref",
+  "ls-files",
+  "ls-remote",
+  "ls-tree",
+  "cat-file",
+  "cherry",
+  "count-objects",
+  "merge-base",
+  "name-rev",
+  "range-diff",
+  "reflog",
+  "grep",
+  "help",
+  "config",
+  "check-ignore",
+  "symbolic-ref",
+  "check-ref-format",
+  "remote",
+]);
+
 export function validateGitArgs(args: string[]): string | null {
   if (!Array.isArray(args) || args.length === 0) {
     return "args must be a non-empty array";
   }
 
   const first = args[0];
+  if (first === "--version") {
+    return args.length === 1 ? null : '"git --version" does not accept additional arguments';
+  }
+
+  if (first === "--no-pager") {
+    return validateGitNoPagerArgs(args.slice(1));
+  }
+
   if (first.startsWith("-")) {
     return `"git ${first}" is not allowed — leading flags are not permitted; start with a bare subcommand`;
   }
 
   const subcommand = first.toLowerCase();
   if (!ALLOWED_GIT_SUBCOMMANDS.has(subcommand)) {
-    if (subcommand === "checkout" || subcommand === "switch") {
+    if (subcommand === "checkout") {
+      return validateGitCheckoutRestore(args);
+    }
+    if (subcommand === "switch") {
       return `"git ${subcommand}" is not allowed — use 'git worktree add <path> <ref>' to work on another branch without leaving this worktree`;
     }
     return `"git ${subcommand}" is not allowed`;
@@ -133,10 +183,137 @@ export function validateGitArgs(args: string[]): string | null {
     return validateGitPush(args);
   }
 
+  if (subcommand === "config") {
+    return validateGitConfig(args);
+  }
+
+  if (subcommand === "check-ignore") {
+    return validateGitCheckIgnore(args);
+  }
+
+  if (subcommand === "symbolic-ref") {
+    return validateGitSymbolicRef(args);
+  }
+
   return null;
 }
 
 const WORKTREE_PREFIX = "/workspace/worktrees/";
+
+function validateGitNoPagerArgs(args: string[]): string | null {
+  if (args.length === 0) {
+    return '"git --no-pager" requires a subcommand';
+  }
+
+  const subcommand = args[0].toLowerCase();
+  if (!NO_PAGER_SAFE_GIT_SUBCOMMANDS.has(subcommand)) {
+    return `"git --no-pager ${subcommand}" is not allowed — only read-only commands may use --no-pager`;
+  }
+
+  return validateGitArgs(args);
+}
+
+const RESTORE_CHECKOUT_HINT =
+  "\"git checkout\" is not allowed — use 'git worktree add <path> <ref>' to work on another branch without leaving this worktree";
+
+const CHECKOUT_PATHSPEC_SUFFIXES = [
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".json",
+  ".md",
+  ".dart",
+  ".xml",
+  ".yaml",
+  ".yml",
+  ".kt",
+  ".kts",
+  ".java",
+  ".py",
+  ".go",
+  ".sh",
+  ".sql",
+  ".css",
+  ".scss",
+  ".html",
+  ".txt",
+  ".lock",
+  ".toml",
+  ".gradle",
+  ".properties",
+  ".prisma",
+];
+
+function validateGitCheckoutRestore(args: string[]): string | null {
+  const beforeSeparator: string[] = [];
+  const afterSeparator: string[] = [];
+  let sawSeparator = false;
+
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--") {
+      if (sawSeparator) {
+        return RESTORE_CHECKOUT_HINT;
+      }
+      sawSeparator = true;
+      continue;
+    }
+
+    if (arg === "--ours" || arg === "--theirs") {
+      if (sawSeparator) {
+        return RESTORE_CHECKOUT_HINT;
+      }
+      continue;
+    }
+
+    if (arg.startsWith("-")) {
+      return RESTORE_CHECKOUT_HINT;
+    }
+
+    if (sawSeparator) {
+      afterSeparator.push(arg);
+    } else {
+      beforeSeparator.push(arg);
+    }
+  }
+
+  if (sawSeparator) {
+    if (afterSeparator.length === 0 || beforeSeparator.length > 1) {
+      return RESTORE_CHECKOUT_HINT;
+    }
+    return afterSeparator.every(looksLikeCheckoutPathspec) ? null : RESTORE_CHECKOUT_HINT;
+  }
+
+  if (beforeSeparator.length === 0) {
+    return RESTORE_CHECKOUT_HINT;
+  }
+
+  return beforeSeparator.every(looksLikeCheckoutPathspec) ? null : RESTORE_CHECKOUT_HINT;
+}
+
+function looksLikeCheckoutPathspec(value: string): boolean {
+  if (!value) {
+    return false;
+  }
+
+  if (value === "." || value === "./." || value.endsWith("/")) {
+    return true;
+  }
+
+  if (value.startsWith(":(") || value.includes("*") || value.includes("?")) {
+    return true;
+  }
+
+  const normalized = value.toLowerCase();
+  if (normalized === ".gitignore" || normalized === ".metadata") {
+    return true;
+  }
+
+  const parts = normalized.split("/");
+  const last = parts[parts.length - 1];
+  return CHECKOUT_PATHSPEC_SUFFIXES.some((suffix) => last.endsWith(suffix));
+}
 
 function validateGitWorktree(args: string[]): string | null {
   // Find "worktree" then the sub-subcommand (add, list, remove, etc.)
@@ -197,6 +374,106 @@ function validateGitRemote(args: string[]): string | null {
   }
 
   return null;
+}
+
+// ── git config policy ──────────────────────────────────────────────────────
+
+const ALLOWED_GIT_CONFIG_READ_MODES: ReadonlySet<string> = new Set([
+  "--get",
+  "--get-all",
+  "--get-regexp",
+]);
+
+function validateGitConfig(args: string[]): string | null {
+  let i = 1;
+  let mode: string | undefined;
+
+  while (i < args.length) {
+    const arg = args[i];
+    if (!arg.startsWith("-")) {
+      break;
+    }
+
+    if (arg === "--show-origin") {
+      i += 1;
+      continue;
+    }
+
+    if (ALLOWED_GIT_CONFIG_READ_MODES.has(arg)) {
+      mode = arg;
+      i += 1;
+      break;
+    }
+
+    return `"git config ${arg}" is not allowed — only read-only --get lookups are permitted`;
+  }
+
+  if (!mode) {
+    return '"git config" is not allowed — only read-only --get lookups are permitted';
+  }
+
+  if (i >= args.length) {
+    return `"git config ${mode}" requires a key or pattern`;
+  }
+
+  for (; i < args.length; i += 1) {
+    if (args[i].startsWith("-")) {
+      return `"git config ${args[i]}" is not allowed — only read-only --get lookups are permitted`;
+    }
+  }
+
+  return null;
+}
+
+// ── git check-ignore policy ────────────────────────────────────────────────
+
+const ALLOWED_GIT_CHECK_IGNORE_FLAGS: ReadonlySet<string> = new Set([
+  "-q",
+  "--quiet",
+  "-v",
+  "--verbose",
+  "-n",
+  "--non-matching",
+]);
+
+function validateGitCheckIgnore(args: string[]): string | null {
+  let sawPath = false;
+
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg.startsWith("-")) {
+      if (!ALLOWED_GIT_CHECK_IGNORE_FLAGS.has(arg)) {
+        return `"git check-ignore ${arg}" is not allowed — only direct path lookups are permitted`;
+      }
+      continue;
+    }
+
+    sawPath = true;
+  }
+
+  return sawPath ? null : '"git check-ignore" requires at least one path';
+}
+
+// ── git symbolic-ref policy ────────────────────────────────────────────────
+
+const ALLOWED_GIT_SYMBOLIC_REF_FLAGS: ReadonlySet<string> = new Set(["--short", "-q", "--quiet"]);
+
+function validateGitSymbolicRef(args: string[]): string | null {
+  const refs: string[] = [];
+
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg.startsWith("-")) {
+      if (!ALLOWED_GIT_SYMBOLIC_REF_FLAGS.has(arg)) {
+        return `"git symbolic-ref ${arg}" is not allowed — only read-only ref lookups are permitted`;
+      }
+      continue;
+    }
+
+    refs.push(arg);
+  }
+
+  return refs.length === 1 ? null : '"git symbolic-ref" only allows reading a single symbolic ref';
 }
 
 // ── git push policy ────────────────────────────────────────────────────────
@@ -555,6 +832,7 @@ function getMetabaseAllowedSchemas(): Set<string> {
  * Format: "group subcommand" — e.g. "pr view", "issue list".
  */
 const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
+  "auth status",
   "pr view",
   "pr diff",
   "pr list",
@@ -569,6 +847,11 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "repo view",
   "run list",
   "run view",
+  "run watch",
+  "search issues",
+  "search prs",
+  "search code",
+  "search repos",
   "workflow list",
   "workflow view",
   "label list",
@@ -577,9 +860,21 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "release download",
 ]);
 
-export function validateGhArgs(args: string[]): string | null {
-  if (!Array.isArray(args) || args.length === 0) {
-    return "args must be a non-empty array";
+export function validateGhArgs(args: string[], cwd?: string): string | null {
+  if (!Array.isArray(args)) {
+    return "args must be an array";
+  }
+
+  if (args.length === 0) {
+    return null;
+  }
+
+  if (args[0] === "--version") {
+    return args.length === 1 ? null : '"gh --version" does not accept additional arguments';
+  }
+
+  if (isGhHelpRequest(args)) {
+    return validateGhHelpArgs(args);
   }
 
   const group = args[0];
@@ -607,14 +902,35 @@ export function validateGhArgs(args: string[]): string | null {
   }
 
   if (key === "pr comment" || key === "issue comment") {
-    return validateGhAppendOnlyCommentArgs(args, key);
+    return validateGhAppendOnlyCommentArgs(args, key, cwd);
   }
 
   if (key === "pr review") {
-    return validateGhPrReviewArgs(args);
+    return validateGhPrReviewArgs(args, cwd);
   }
 
   return null;
+}
+
+function isGhHelpRequest(args: string[]): boolean {
+  return args[0] === "help" || args.includes("--help") || args.includes("-h");
+}
+
+function validateGhHelpArgs(args: string[]): string | null {
+  const topic = resolveGhHelpTopic(args);
+  if (topic === "api") {
+    return '"gh api --help" is not allowed — gh api remains blocked';
+  }
+
+  return null;
+}
+
+function resolveGhHelpTopic(args: string[]): string | undefined {
+  if (args[0] === "help") {
+    return args[1];
+  }
+
+  return args[0];
 }
 
 function validateGhPrCreateArgs(args: string[]): string | null {
@@ -672,11 +988,20 @@ function validateGhPrCreateArgs(args: string[]): string | null {
       hasBody = true;
     }
 
+    let value: string | undefined;
+
     if (eqIdx < 0) {
       if (i + 1 >= args.length) {
         return `"gh ${key} ${flag}" requires a value`;
       }
+      value = args[i + 1];
       i += 1;
+    } else {
+      value = arg.slice(eqIdx + 1);
+    }
+
+    if ((flag === "-H" || flag === "--head") && !isValidLocalBranchSelector(value ?? "")) {
+      return `"gh ${key} ${flag}" is not allowed — --head must be a branch in the current repo`;
     }
   }
 
@@ -687,7 +1012,7 @@ function validateGhPrCreateArgs(args: string[]): string | null {
   return null;
 }
 
-function validateGhAppendOnlyCommentArgs(args: string[], key: string): string | null {
+function validateGhAppendOnlyCommentArgs(args: string[], key: string, cwd?: string): string | null {
   const allowedFlagsWithValue: ReadonlySet<string> = new Set(["-b", "--body"]);
 
   const blockedMutationFlags: ReadonlySet<string> = new Set([
@@ -741,50 +1066,214 @@ function validateGhAppendOnlyCommentArgs(args: string[], key: string): string | 
   }
 
   if (key === "pr comment") {
-    return validateOptionalNumericSelector(key, selectors, "PR");
+    return validateOptionalPrSelector(key, selectors, cwd);
   }
 
-  // issue comment must always include a numeric issue number selector
-  return validateRequiredNumericSelector(key, selectors, "issue");
+  return validateRequiredIssueSelector(key, selectors, cwd);
 }
 
-function validateOptionalNumericSelector(
-  key: string,
-  selectors: string[],
-  resourceName: string,
-): string | null {
+function validateOptionalPrSelector(key: string, selectors: string[], cwd?: string): string | null {
   if (selectors.length > 1) {
-    return `"gh ${key}" allows at most one positional ${resourceName} number selector`;
+    return `"gh ${key}" allows at most one positional PR selector`;
   }
 
-  if (selectors.length === 1 && !/^\d+$/.test(selectors[0])) {
-    return `"gh ${key}" positional selector must be a numeric ${resourceName} number`;
+  if (selectors.length === 0) {
+    return null;
   }
 
-  return null;
+  return validatePrSelector(key, selectors[0], cwd);
 }
 
-function validateRequiredNumericSelector(
+function validateRequiredIssueSelector(
   key: string,
   selectors: string[],
-  resourceName: string,
+  cwd?: string,
 ): string | null {
   if (selectors.length !== 1) {
-    return `"gh ${key}" requires exactly one positional ${resourceName} number selector`;
+    return `"gh ${key}" requires exactly one positional issue selector`;
   }
 
-  if (!/^\d+$/.test(selectors[0])) {
-    return `"gh ${key}" positional selector must be a numeric ${resourceName} number`;
+  return validateIssueSelector(key, selectors[0], cwd);
+}
+
+function validatePrSelector(key: string, selector: string, cwd?: string): string | null {
+  if (/^\d+$/.test(selector)) {
+    return null;
+  }
+
+  if (looksLikeHttpsUrl(selector)) {
+    return validateCurrentRepoUrlSelector(key, selector, "pull", cwd);
+  }
+
+  if (!isValidLocalBranchSelector(selector)) {
+    return `"gh ${key}" positional selector must be a numeric PR number, current-repo PR URL, or branch name`;
   }
 
   return null;
 }
 
-function validateGhPrReviewArgs(args: string[]): string | null {
+function validateIssueSelector(key: string, selector: string, cwd?: string): string | null {
+  if (/^\d+$/.test(selector)) {
+    return null;
+  }
+
+  if (looksLikeHttpsUrl(selector)) {
+    return validateCurrentRepoUrlSelector(key, selector, "issues", cwd);
+  }
+
+  return `"gh ${key}" positional selector must be a numeric issue number or current-repo issue URL`;
+}
+
+function validateCurrentRepoUrlSelector(
+  key: string,
+  selector: string,
+  resourceType: "pull" | "issues",
+  cwd?: string,
+): string | null {
+  const target = parseGitHubResourceUrl(selector, resourceType);
+  if (!target) {
+    const resourceName = resourceType === "pull" ? "PR" : "issue";
+    return `"gh ${key}" positional selector must be a valid ${resourceName} URL`;
+  }
+
+  const currentRepo = resolveCurrentGitHubRepo(cwd);
+  if (!currentRepo) {
+    return `"gh ${key}" URL selectors require a resolvable origin remote for the current repo`;
+  }
+
+  if (
+    target.host !== currentRepo.host ||
+    target.owner !== currentRepo.owner ||
+    target.repo !== currentRepo.repo
+  ) {
+    return `"gh ${key}" URL selector must target the current repo`;
+  }
+
+  return null;
+}
+
+function looksLikeHttpsUrl(value: string): boolean {
+  return value.startsWith("https://");
+}
+
+function isValidLocalBranchSelector(selector: string): boolean {
+  if (!selector || selector.includes(":") || selector.includes("#")) {
+    return false;
+  }
+
+  try {
+    execFileSync("/usr/bin/git", ["check-ref-format", "--branch", selector], {
+      encoding: "utf8",
+      stdio: "ignore",
+      timeout: 5000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface GitHubRepoRef {
+  host: string;
+  owner: string;
+  repo: string;
+}
+
+function resolveCurrentGitHubRepo(cwd?: string): GitHubRepoRef | undefined {
+  if (!cwd) {
+    return undefined;
+  }
+
+  try {
+    const remoteUrl = execFileSync("/usr/bin/git", ["remote", "get-url", "origin"], {
+      cwd,
+      encoding: "utf8",
+      timeout: 5000,
+    }).trim();
+    return parseGitHubRepoFromRemoteUrl(remoteUrl);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseGitHubRepoFromRemoteUrl(url: string): GitHubRepoRef | undefined {
+  const sshMatch = url.match(/^git@([^:]+):([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (sshMatch) {
+    return {
+      host: normalizeRepoHost(sshMatch[1]),
+      owner: normalizeRepoSegment(sshMatch[2]),
+      repo: normalizeRepoSegment(sshMatch[3]),
+    };
+  }
+
+  try {
+    const parsed = new URL(url);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) {
+      return undefined;
+    }
+
+    return {
+      host: normalizeRepoHost(parsed.hostname),
+      owner: normalizeRepoSegment(parts[0]),
+      repo: normalizeRepoSegment(parts[1]),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseGitHubResourceUrl(
+  url: string,
+  resourceType: "pull" | "issues",
+): GitHubRepoRef | undefined {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") {
+      return undefined;
+    }
+
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length !== 4) {
+      return undefined;
+    }
+
+    const [owner, repo, resource, number] = parts;
+    if (resource !== resourceType || !/^\d+$/.test(number)) {
+      return undefined;
+    }
+
+    return {
+      host: normalizeRepoHost(parsed.hostname),
+      owner: normalizeRepoSegment(owner),
+      repo: normalizeRepoSegment(repo),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeRepoHost(host: string): string {
+  return host.trim().toLowerCase();
+}
+
+function normalizeRepoSegment(value: string): string {
+  return value
+    .replace(/\.git$/i, "")
+    .trim()
+    .toLowerCase();
+}
+
+function validateGhPrReviewArgs(args: string[], cwd?: string): string | null {
   const key = "pr review";
   const allowedFlagsWithValue: ReadonlySet<string> = new Set(["-b", "--body"]);
 
-  const allowedModeFlags: ReadonlySet<string> = new Set(["-c", "--comment", "-r", "--request-changes"]);
+  const allowedModeFlags: ReadonlySet<string> = new Set([
+    "-c",
+    "--comment",
+    "-r",
+    "--request-changes",
+  ]);
 
   let sawCommentMode = false;
   let sawRequestChangesMode = false;
@@ -854,5 +1343,5 @@ function validateGhPrReviewArgs(args: string[]): string | null {
     return '"gh pr review" requires --body';
   }
 
-  return validateOptionalNumericSelector(key, selectors, "PR");
+  return validateOptionalPrSelector(key, selectors, cwd);
 }
