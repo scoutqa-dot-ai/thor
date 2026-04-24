@@ -78,6 +78,9 @@ jobs:
           printf '%s' "$THOR_GITHUB_APP_PRIVATE_KEY" > docker-volumes/github-app/private-key.pem
           chmod 600 docker-volumes/github-app/private-key.pem
 
+          # data service requires env_file: .env — create an empty one.
+          : > .env
+
           export CRON_SECRET="$(openssl rand -hex 32)"
           export RESOLVE_SECRET="$(openssl rand -hex 32)"
           {
