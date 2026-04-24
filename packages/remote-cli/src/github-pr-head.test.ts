@@ -75,16 +75,17 @@ describe("remote-cli github pr-head endpoint", () => {
   });
 
   it("returns PR head ref and repo full name", async () => {
-    mockGithubApiFetch(async () =>
-      new Response(
-        JSON.stringify({
-          head: {
-            ref: "feature/refactor",
-            repo: { full_name: "ScoutQA-Dot-AI/Thor" },
-          },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
+    mockGithubApiFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            head: {
+              ref: "feature/refactor",
+              repo: { full_name: "ScoutQA-Dot-AI/Thor" },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
     );
 
     const response = await fetch(
@@ -93,9 +94,13 @@ describe("remote-cli github pr-head endpoint", () => {
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ ref: "feature/refactor", headRepoFullName: "scoutqa-dot-ai/thor" });
+    expect(body).toEqual({ ref: "feature/refactor", headRepoFullName: "ScoutQA-Dot-AI/Thor" });
     expect(generateAppJWTMock).toHaveBeenCalledWith("12345", "/tmp/github-app.pem");
-    expect(mintInstallationTokenMock).toHaveBeenCalledWith(126669985, "app-jwt", "https://api.github.test");
+    expect(mintInstallationTokenMock).toHaveBeenCalledWith(
+      126669985,
+      "app-jwt",
+      "https://api.github.test",
+    );
   });
 
   it("returns 404 when pull request is not found", async () => {

@@ -63,7 +63,9 @@ function textResponse(text: string, status: number): Response {
 function readQueuedEvents(queueDir: string): Array<Record<string, unknown>> {
   return readdirSync(queueDir)
     .filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
-    .map((entry) => JSON.parse(readFileSync(join(queueDir, entry), "utf8")) as Record<string, unknown>);
+    .map(
+      (entry) => JSON.parse(readFileSync(join(queueDir, entry), "utf8")) as Record<string, unknown>,
+    );
 }
 
 async function withServer<T>(
@@ -333,7 +335,7 @@ describe("gateway", () => {
         const body = JSON.stringify({
           action: "created",
           installation: { id: 126669985 },
-          repository: { full_name: "ScoutQA-Dot-AI/Thor" },
+          repository: { full_name: "scoutqa-dot-ai/thor" },
           sender: { login: "alice", type: "User" },
           pull_request: {
             number: 42,
@@ -396,7 +398,7 @@ describe("gateway", () => {
         const body = JSON.stringify({
           action: "created",
           installation: { id: 126669985 },
-          repository: { full_name: "ScoutQA-Dot-AI/Thor" },
+          repository: { full_name: "scoutqa-dot-ai/thor" },
           sender: { login: "alice", type: "User" },
           pull_request: {
             number: 42,
@@ -425,7 +427,10 @@ describe("gateway", () => {
 
         const queued = readQueuedEvents(queueDir);
         expect(queued).toHaveLength(1);
-        expect(queued[0]).toMatchObject({ id: "delivery-retry", sourceTs: Date.parse("2026-04-24T11:00:00Z") });
+        expect(queued[0]).toMatchObject({
+          id: "delivery-retry",
+          sourceTs: Date.parse("2026-04-24T11:00:00Z"),
+        });
       },
       {
         githubWebhookSecret: "github-secret",
@@ -443,7 +448,7 @@ describe("gateway", () => {
         const body = JSON.stringify({
           action: "created",
           installation: { id: 126669985 },
-          repository: { full_name: "ScoutQA-Dot-AI/Thor" },
+          repository: { full_name: "scoutqa-dot-ai/thor" },
           sender: { login: "alice", type: "User" },
           pull_request: {
             number: 42,
@@ -526,7 +531,10 @@ describe("gateway", () => {
           repository: { full_name: "acme/thor" },
           sender: { login: "alice", type: "User" },
           issue: { number: 12, pull_request: null },
-          comment: { body: "hello", html_url: "https://github.com/acme/thor/issues/12#issuecomment-1" },
+          comment: {
+            body: "hello",
+            html_url: "https://github.com/acme/thor/issues/12#issuecomment-1",
+          },
         });
 
         const response = await fetch(`${baseUrl}/github/webhook`, {
@@ -736,7 +744,9 @@ describe("gateway", () => {
 
         await queue.flush();
 
-        const triggerCalls = fetchImpl.mock.calls.filter((call) => call[0] === "http://runner.test/trigger");
+        const triggerCalls = fetchImpl.mock.calls.filter(
+          (call) => call[0] === "http://runner.test/trigger",
+        );
         expect(triggerCalls).toHaveLength(1);
         const triggerBody = JSON.parse(String(triggerCalls[0][1]?.body));
         expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
@@ -914,7 +924,9 @@ describe("gateway", () => {
 
         await queue.flush();
 
-        const triggerCalls = fetchImpl.mock.calls.filter((call) => call[0] === "http://runner.test/trigger");
+        const triggerCalls = fetchImpl.mock.calls.filter(
+          (call) => call[0] === "http://runner.test/trigger",
+        );
         expect(triggerCalls).toHaveLength(2);
         const secondBody = JSON.parse(String(triggerCalls[1][1]?.body));
         expect(secondBody.interrupt).toBe(true);

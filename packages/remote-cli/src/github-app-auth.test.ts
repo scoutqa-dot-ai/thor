@@ -75,19 +75,6 @@ describe("getInstallationIdFromWorkspace", () => {
     expect(getInstallationIdFromWorkspace("acme")).toBe(123456);
   });
 
-  it("reads installation ID when config org key is mixed case", () => {
-    writeFileSync(
-      mockedWorkspace.configPath,
-      JSON.stringify({
-        repos: { thor: {} },
-        orgs: { AcmeCorp: { github_app_installation_id: 789012 } },
-      }),
-    );
-
-    expect(getInstallationIdFromWorkspace("acmecorp")).toBe(789012);
-    expect(getInstallationIdFromWorkspace("aCmEcOrP")).toBe(789012);
-  });
-
   it("throws with configured org list when org is missing", () => {
     writeFileSync(
       mockedWorkspace.configPath,

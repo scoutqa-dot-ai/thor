@@ -56,7 +56,10 @@ export interface GitHubPrHeadResult {
 type TerminalGitHubRejectReason = "installation_gone" | "branch_unresolved";
 
 class TerminalGitHubDispatchError extends Error {
-  constructor(readonly reason: TerminalGitHubRejectReason, message: string) {
+  constructor(
+    readonly reason: TerminalGitHubRejectReason,
+    message: string,
+  ) {
     super(message);
     this.name = "TerminalGitHubDispatchError";
   }
@@ -303,7 +306,7 @@ export async function triggerRunnerGitHub(
     const latest = events[events.length - 1];
     try {
       const branchInfo = await resolveGitHubPrHead(latest, remoteCliUrl, deps.fetchImpl);
-      if (branchInfo.headRepoFullName !== latest.repoFullName.toLowerCase()) {
+      if (branchInfo.headRepoFullName !== latest.repoFullName) {
         throw new TerminalGitHubDispatchError(
           "branch_unresolved",
           `PR head repo ${branchInfo.headRepoFullName} is not supported for ${latest.repoFullName}`,
@@ -384,7 +387,7 @@ export async function resolveGitHubPrHead(
       if (response.ok) {
         const body = (await response.json()) as { ref?: string; headRepoFullName?: string };
         const ref = body.ref?.trim();
-        const headRepoFullName = body.headRepoFullName?.trim().toLowerCase();
+        const headRepoFullName = body.headRepoFullName?.trim();
         if (!ref || !headRepoFullName) {
           throw new TerminalGitHubDispatchError(
             "branch_unresolved",

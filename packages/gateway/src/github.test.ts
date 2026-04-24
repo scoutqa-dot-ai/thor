@@ -19,7 +19,7 @@ function baseReviewCommentEvent(): GitHubWebhookEnvelope {
   return {
     action: "created",
     installation: { id: 123 },
-    repository: { full_name: "ScoutQA-Dot-AI/Thor" },
+    repository: { full_name: "scoutqa-dot-ai/thor" },
     sender: { login: "alice", type: "User" },
     pull_request: {
       number: 42,
@@ -50,9 +50,9 @@ describe("verifyGitHubSignature", () => {
     expect(verifyGitHubSignature({ secret, rawBody: Buffer.from('{"text":"hi👋"}'), header })).toBe(
       false,
     );
-    expect(verifyGitHubSignature({ secret, rawBody: Buffer.from('{"text":"hi 👋 "}'), header })).toBe(
-      false,
-    );
+    expect(
+      verifyGitHubSignature({ secret, rawBody: Buffer.from('{"text":"hi 👋 "}'), header }),
+    ).toBe(false);
   });
 });
 
@@ -89,7 +89,10 @@ describe("normalizeGitHubEvent", () => {
         repository: { full_name: "acme/repo" },
         sender: { login: "alice", type: "User" },
         issue: { number: 12, pull_request: null },
-        comment: { body: "hello", html_url: "https://github.com/acme/repo/issues/12#issuecomment-1" },
+        comment: {
+          body: "hello",
+          html_url: "https://github.com/acme/repo/issues/12#issuecomment-1",
+        },
       },
       options,
     );
@@ -108,22 +111,6 @@ describe("normalizeGitHubEvent", () => {
       options,
     );
     expect(result).toEqual({ ignored: true, reason: "fork_pr_unsupported" });
-  });
-
-  it("treats repo full names case-insensitively for same-repo PRs", () => {
-    const result = normalizeGitHubEvent(
-      {
-        ...baseReviewCommentEvent(),
-        pull_request: {
-          ...baseReviewCommentEvent().pull_request,
-          head: { ref: "feature/refactor", repo: { full_name: "ScoutQA-Dot-AI/Thor" } },
-          base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
-        },
-      },
-      options,
-    );
-
-    expect("ignored" in result).toBe(false);
   });
 
   it("ignores bot senders and unsupported actions", () => {
@@ -158,7 +145,10 @@ describe("normalizeGitHubEvent", () => {
           head: { ref: "main", repo: { full_name: "acme/repo" } },
           base: { repo: { full_name: "acme/repo" } },
         },
-        review: { body: "   ", html_url: "https://github.com/acme/repo/pull/12#pullrequestreview-1" },
+        review: {
+          body: "   ",
+          html_url: "https://github.com/acme/repo/pull/12#pullrequestreview-1",
+        },
       },
       options,
     );
@@ -181,7 +171,11 @@ describe("mention and correlation helpers", () => {
 
   it("buildCorrelationKey matches computeGitAlias format", () => {
     const built = buildCorrelationKey("thor", "feature/refactor");
-    const alias = computeGitAlias("git", ["push", "origin", "feature/refactor"], "/workspace/repos/thor");
+    const alias = computeGitAlias(
+      "git",
+      ["push", "origin", "feature/refactor"],
+      "/workspace/repos/thor",
+    );
     expect(alias?.alias).toBe(built);
   });
 });

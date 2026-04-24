@@ -275,7 +275,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           const latest = lastEvent.payload;
           try {
             const branchInfo = await resolveGitHubPrHead(latest, remoteCliUrl, config.fetchImpl);
-            if (branchInfo.headRepoFullName !== latest.repoFullName.toLowerCase()) {
+            if (branchInfo.headRepoFullName !== latest.repoFullName) {
               reject("branch_unresolved");
               logInfo(log, "github_trigger_dropped", {
                 correlationKey: lastEvent.correlationKey,
@@ -677,7 +677,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     if (!GITHUB_SUPPORTED_EVENTS.has(eventTypeHeader)) {
-      logGitHubIgnored({ deliveryId, eventType: eventTypeHeader || undefined, reason: "event_unsupported" });
+      logGitHubIgnored({
+        deliveryId,
+        eventType: eventTypeHeader || undefined,
+        reason: "event_unsupported",
+      });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
@@ -689,9 +693,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const repoFullName = parsed.data.repository.full_name.toLowerCase();
+    const repoFullName = parsed.data.repository.full_name;
     const parts = repoFullName.split("/");
-    const localRepo = parts[parts.length - 1]?.toLowerCase();
+    const localRepo = parts[parts.length - 1];
     if (!localRepo || !resolveRepoDirectory(localRepo)) {
       logGitHubIgnored({
         deliveryId,
@@ -704,7 +708,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const normalized = normalizeGitHubEvent(parsed.data, { localRepo, mentionLogins: githubMentionLogins });
+    const normalized = normalizeGitHubEvent(parsed.data, {
+      localRepo,
+      mentionLogins: githubMentionLogins,
+    });
     if ("ignored" in normalized) {
       const reason =
         normalized.reason === "unsupported_action" ? "event_unsupported" : normalized.reason;

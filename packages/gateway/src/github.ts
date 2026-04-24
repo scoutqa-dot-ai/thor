@@ -147,10 +147,6 @@ function isBotSender(senderType: string, senderLogin: string, mentionLogins: str
   return mentionLogins.map((login) => login.toLowerCase()).includes(senderLogin.toLowerCase());
 }
 
-function isSameRepo(left: string, right: string): boolean {
-  return left.toLowerCase() === right.toLowerCase();
-}
-
 export function buildCorrelationKey(localRepo: string, branch: string): string {
   return `git:branch:${localRepo}:${branch}`;
 }
@@ -193,7 +189,7 @@ export function normalizeGitHubEvent(
       eventType: "issue_comment",
       action: "created",
       installationId: raw.installation.id,
-      repoFullName: raw.repository.full_name.toLowerCase(),
+      repoFullName: raw.repository.full_name,
       localRepo: options.localRepo,
       senderLogin,
       htmlUrl: raw.comment.html_url,
@@ -208,7 +204,7 @@ export function normalizeGitHubEvent(
     if (raw.action !== "created") {
       return { ignored: true, reason: "unsupported_action" };
     }
-    if (!isSameRepo(raw.pull_request.head.repo.full_name, raw.pull_request.base.repo.full_name)) {
+    if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
       return { ignored: true, reason: "fork_pr_unsupported" };
     }
     return {
@@ -216,7 +212,7 @@ export function normalizeGitHubEvent(
       eventType: "pull_request_review_comment",
       action: "created",
       installationId: raw.installation.id,
-      repoFullName: raw.repository.full_name.toLowerCase(),
+      repoFullName: raw.repository.full_name,
       localRepo: options.localRepo,
       senderLogin,
       htmlUrl: raw.comment.html_url,
@@ -230,7 +226,7 @@ export function normalizeGitHubEvent(
   if (raw.action !== "submitted") {
     return { ignored: true, reason: "unsupported_action" };
   }
-  if (!isSameRepo(raw.pull_request.head.repo.full_name, raw.pull_request.base.repo.full_name)) {
+  if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
     return { ignored: true, reason: "fork_pr_unsupported" };
   }
 
@@ -244,7 +240,7 @@ export function normalizeGitHubEvent(
     eventType: "pull_request_review",
     action: "submitted",
     installationId: raw.installation.id,
-    repoFullName: raw.repository.full_name.toLowerCase(),
+    repoFullName: raw.repository.full_name,
     localRepo: options.localRepo,
     senderLogin,
     htmlUrl: raw.review.html_url,

@@ -348,7 +348,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      res.json({ ref, headRepoFullName: headRepoFullName.toLowerCase() });
+      res.json({ ref, headRepoFullName });
     } catch (error) {
       const status =
         error && typeof error === "object" && "status" in error
