@@ -170,25 +170,72 @@ type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
 // | snapshot/patch  | No         | No                      | Infrastructure noise                   |
 // | compaction      | No         | No                      | Infrastructure noise                   |
 
-/** How many args to show per command in progress. */
-const CMD_DEPTH: Record<string, number> = {
-  git: 2,
-  gh: 2,
-  mcp: 3,
+/**
+ * Binaries available in the opencode image. If a bash command's first token is one
+ * of these, we show the binary (with the configured token depth, e.g. `git checkout`);
+ * otherwise we fall back to "bash" so noise like `TEXT_FILE="$(mktemp ...)"` or
+ * `cd x && ...` doesn't leak into the progress line.
+ *
+ * Three sources:
+ *   1. Thor wrappers COPY'd from docker/opencode/bin/ → /usr/local/bin
+ *   2. Explicitly installed in the `opencode` Dockerfile stage (apt, npm -g, pip, curl)
+ *   3. Common coreutils from the node:22-slim base image
+ */
+const KNOWN_BINS: Record<string, number> = {
+  // Thor wrappers (docker/opencode/bin/)
   approval: 2,
-  docker: 2,
-  kubectl: 2,
-  npm: 2,
-  pnpm: 2,
-  bun: 2,
+  corepack: 2,
+  gh: 2,
+  git: 2,
   langfuse: 4,
+  ldcli: 2,
+  mcp: 3,
   metabase: 2,
+  npm: 2,
+  npx: 2,
+  pnpm: 2,
+  pnpx: 2,
+  sandbox: 2,
+  scoutqa: 2,
+  "slack-upload": 1,
+
+  // Explicitly installed in the opencode Dockerfile stage
+  curl: 1,
+  jq: 1,
+  node: 1,
+  perl: 1,
+  pip3: 2,
+  prettier: 1,
+  python3: 2,
+  rg: 1,
+  ruff: 2,
+  shfmt: 1,
+
+  // Coreutils from node:22-slim worth distinguishing from "bash"
+  awk: 1,
+  cat: 1,
+  cp: 1,
+  diff: 1,
+  find: 1,
+  grep: 1,
+  gunzip: 1,
+  gzip: 1,
+  head: 1,
+  ls: 1,
+  mkdir: 1,
+  mktemp: 1,
+  mv: 1,
+  rm: 1,
+  sed: 1,
+  tail: 1,
+  tar: 1,
+  wc: 1,
 };
 
 /**
  * Extract a short display name from a tool part.
- * For bash, parses the command to show e.g. "git checkout", "mcp slack post_message".
- * For other tools, returns the tool name as-is.
+ * For bash, show the wrapper binary (e.g. "git checkout") when the command starts
+ * with one of our known wrappers; otherwise show "bash".
  */
 function toolDisplayName(toolPart: ToolPart): string {
   if (toolPart.tool !== "bash") return toolPart.tool;
@@ -201,11 +248,15 @@ function toolDisplayName(toolPart: ToolPart): string {
   const cmd = parts[0];
   if (!cmd) return "bash";
 
-  const depth = CMD_DEPTH[cmd] ?? 1;
+  const depth = KNOWN_BINS[cmd];
+  if (depth === undefined) return "bash";
   return parts.slice(0, depth).join(" ");
 }
 
-function emitMemoryEventsFromToolPart(toolPart: ToolPart, emit: (event: ProgressEvent) => void): void {
+function emitMemoryEventsFromToolPart(
+  toolPart: ToolPart,
+  emit: (event: ProgressEvent) => void,
+): void {
   const status = toolPart.state.status;
   const input = (toolPart.state as { input?: unknown }).input;
   for (const event of getMemoryProgressEvents({ tool: toolPart.tool, status, input })) {
@@ -663,7 +714,11 @@ app.post("/trigger", async (req, res) => {
             totalTokens.cache.write += stepFinish.tokens.cache.write;
             lastMessageId = stepFinish.messageID;
           } else if (part.type === "subtask") {
-            const subtaskPart = part as Part & { type: "subtask"; description: string; agent: string };
+            const subtaskPart = part as Part & {
+              type: "subtask";
+              description: string;
+              agent: string;
+            };
             const description = subtaskPart.description?.trim();
             emit({
               type: "delegate",
