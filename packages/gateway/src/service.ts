@@ -188,6 +188,15 @@ async function consumeNdjsonStream(
   }
 }
 
+async function drainResponseBody(response: Response): Promise<void> {
+  const body = response.body;
+  if (!body) return;
+
+  for await (const _ of body) {
+    // discard
+  }
+}
+
 /** TransformStream that splits chunks on newlines. */
 function newlineStream(): TransformStream<string, string> {
   let buffer = "";
@@ -348,12 +357,11 @@ export async function triggerRunnerGitHub(
 
   onAccepted?.();
 
-  const body = response.body;
-  if (body) {
-    for await (const _ of body) {
-      // discard
-    }
-  }
+  void drainResponseBody(response).catch((err) => {
+    logWarn(log, "github_response_drain_error", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
 
   return { busy: false };
 }

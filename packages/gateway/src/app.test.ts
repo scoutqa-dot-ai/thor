@@ -791,6 +791,92 @@ describe("gateway", () => {
     );
   });
 
+  it("allows later interrupting same-branch GitHub events to reach /trigger while prior stream is open", async () => {
+    let openController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let triggerCount = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url !== "http://runner.test/trigger") {
+        throw new Error(`Unexpected fetch: ${url}`);
+      }
+
+      triggerCount += 1;
+      if (triggerCount === 1) {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            openController = controller;
+            controller.enqueue(
+              new TextEncoder().encode('{"type":"start","sessionId":"s1","resumed":false}\n'),
+            );
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "application/x-ndjson" },
+        });
+      }
+
+      return new Response(null, { status: 200 });
+    });
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue) => {
+        const basePayload = {
+          source: "github" as const,
+          eventType: "pull_request_review_comment" as const,
+          action: "created" as const,
+          installationId: 126669985,
+          repoFullName: "scoutqa-dot-ai/thor",
+          localRepo: "thor",
+          senderLogin: "alice",
+          htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+          number: 42,
+          branch: "main",
+        };
+
+        queue.enqueue({
+          id: "delivery-github-open-stream",
+          source: "github",
+          correlationKey: "git:branch:thor:main",
+          payload: { ...basePayload, body: "first", mention: false },
+          receivedAt: new Date().toISOString(),
+          sourceTs: Date.now(),
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: false,
+        });
+
+        await queue.flush();
+
+        queue.enqueue({
+          id: "delivery-github-interrupt",
+          source: "github",
+          correlationKey: "git:branch:thor:main",
+          payload: { ...basePayload, body: "@thor interrupt", mention: true },
+          receivedAt: new Date().toISOString(),
+          sourceTs: Date.now() + 1,
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: true,
+        });
+
+        await queue.flush();
+
+        const triggerCalls = fetchImpl.mock.calls.filter((call) => call[0] === "http://runner.test/trigger");
+        expect(triggerCalls).toHaveLength(2);
+        const secondBody = JSON.parse(String(triggerCalls[1][1]?.body));
+        expect(secondBody.interrupt).toBe(true);
+
+        openController?.close();
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
   it("dead-letters pending GitHub branch resolution when remote-cli returns 404", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(textResponse("not found", 404));
 
