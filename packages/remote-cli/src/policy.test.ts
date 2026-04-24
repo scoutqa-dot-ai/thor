@@ -45,8 +45,8 @@ describe("validateCwd", () => {
 // ── git policy ──────────────────────────────────────────────────────────────
 
 describe("validateGitArgs", () => {
-  function expectGitDenied(args: string[]): string {
-    const error = validateGitArgs(args);
+  function expectGitDenied(args: string[], cwd?: string): string {
+    const error = validateGitArgs(args, cwd);
     expect(error).toContain("Load skill using-git");
     return error ?? "";
   }
@@ -143,6 +143,8 @@ describe("validateGitArgs", () => {
         ["add", "-A"],
         ["add", "packages/remote-cli/src/policy.ts", "packages/remote-cli/src/policy.test.ts"],
         ["commit", "-m", "test: expand git and gh policy coverage"],
+        ["commit", "-m", "subject", "-m", "body paragraph"],
+        ["commit", "-m", "subject", "-m", "body", "-m", "footer"],
         ["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/feat"],
         ["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/feat", "origin/main"],
         ["worktree", "add", "/workspace/worktrees/repo/feat", "-b", "feat"],
@@ -167,6 +169,14 @@ describe("validateGitArgs", () => {
       for (const args of allowedCommands) {
         expect(validateGitArgs(args)).toBeNull();
       }
+    });
+
+    it("allows git commit -F with a body file under cwd", () => {
+      const CWD = "/workspace/repos/my-repo";
+      expect(validateGitArgs(["commit", "-F", "msg.txt"], CWD)).toBeNull();
+      expect(validateGitArgs(["commit", "--file", "docs/msg.md"], CWD)).toBeNull();
+      expect(validateGitArgs(["commit", "-F", "/workspace/repos/my-repo/msg.txt"], CWD)).toBeNull();
+      expect(validateGitArgs(["commit", "--file=msg.txt"], CWD)).toBeNull();
     });
 
     it("returns explicit push args unchanged", () => {
@@ -360,6 +370,29 @@ describe("validateGitArgs", () => {
       expectGitDenied(["push", "origin", "HEAD:refs/tags/v1"]);
       expectGitDenied(["push", "origin", ":main"]);
       expectGitDenied(["push", "origin", "HEAD:refs/heads/foo:bar"]);
+    });
+
+    it("blocks malformed commit forms and body-file escapes", () => {
+      const CWD = "/workspace/repos/my-repo";
+      // Interactive / unsafe shapes
+      expectGitDenied(["commit"]);
+      expectGitDenied(["commit", "-m"]);
+      expectGitDenied(["commit", "-m", "x", "--amend"]);
+      expectGitDenied(["commit", "-m", "x", "--no-verify"]);
+      expectGitDenied(["commit", "-a", "-m", "x"]);
+      expectGitDenied(["commit", "-s", "-m", "x"]);
+      expectGitDenied(["commit", "-m", "x", "--signoff"]);
+      expectGitDenied(["commit", "--allow-empty", "-m", "x"]);
+      expectGitDenied(["commit", "some-path"]);
+      // Mutually exclusive body sources
+      expectGitDenied(["commit", "-m", "x", "-F", "msg.txt"]);
+      // -F path must resolve under cwd
+      expect(validateGitArgs(["commit", "-F", "/etc/passwd"], CWD)).not.toBeNull();
+      expect(validateGitArgs(["commit", "-F", "../escape.md"], CWD)).not.toBeNull();
+      // -F with no cwd cannot validate
+      expect(validateGitArgs(["commit", "-F", "msg.txt"])).not.toBeNull();
+      // Duplicate -F
+      expect(validateGitArgs(["commit", "-F", "a.md", "--file", "b.md"], CWD)).not.toBeNull();
     });
 
     it("blocks malformed restore forms", () => {

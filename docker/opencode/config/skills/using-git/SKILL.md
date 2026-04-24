@@ -76,7 +76,12 @@ Allowed forms: `git add -A` or `git add <path...>`. Extra flags are not supporte
 
 ### `git commit`
 
-Exact non-interactive shape only: `git commit -m <message>`.
+Non-interactive only. Exactly one body source must be provided:
+
+- `git commit -m <subject> [-m <paragraph>...]` — one or more `-m` messages. Multiple `-m` flags map to separate paragraphs.
+- `git commit -F <path>` / `git commit --file=<path>` — read the message from a file under the current working directory.
+
+`-m` and `-F` cannot be combined. Other flags (`--amend`, `--no-verify`, `-a`, `-s`, `--signoff`) remain denied.
 
 ### `git worktree`
 
