@@ -1,0 +1,27 @@
+packages/remote-cli/src/index.ts
+  6719eb270b3f4026 303-307,323-324
+packages/gateway/src/github.ts
+  6719eb270b3f4026 175,184-185,210-212,240-242
+docs/github-app-webhooks.md
+  6719eb270b3f4026 119-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "985aa6553ac2b94d441030ff1f9031ecf9c054c2",
+  "prompts": {
+    "6719eb270b3f4026": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "170eee3f-4b7c-4d0e-adc4-2c0b325687b9",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 31,
+      "total_deletions": 8,
+      "accepted_lines": 29,
+      "overriden_lines": 0
+    }
+  }
+}
