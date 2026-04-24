@@ -360,6 +360,8 @@ const ALLOWED_METABASE_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "question",
 ]);
 
+const METABASE_QUESTION_REF_RE = /^[1-9]\d*(?:-[a-z0-9-]+)?$/;
+
 export function validateMetabaseArgs(args: string[]): string | null {
   if (!Array.isArray(args) || args.length === 0) {
     return "args must be a non-empty array";
@@ -403,9 +405,7 @@ export function validateMetabaseArgs(args: string[]): string | null {
 
   if (subcommand === "question") {
     if (args.length !== 2) return '"metabase question" requires exactly 1 argument: <question-id>';
-    // Accept "7751" or "7751-daily-log-web-pages-paths" (URL slug form)
-    const id = parseInt(args[1], 10);
-    if (isNaN(id) || id <= 0)
+    if (!METABASE_QUESTION_REF_RE.test(args[1]))
       return `"${args[1]}" is not a valid question ID (expected a positive integer or URL slug)`;
     return null;
   }

@@ -429,6 +429,9 @@ describe("validateMetabaseArgs", () => {
       expect(validateMetabaseArgs(["question", "abc"])).not.toBeNull();
       expect(validateMetabaseArgs(["question", "0"])).not.toBeNull();
       expect(validateMetabaseArgs(["question", "-1"])).not.toBeNull();
+      expect(validateMetabaseArgs(["question", "1e3"])).not.toBeNull();
+      expect(validateMetabaseArgs(["question", "123abc"])).not.toBeNull();
+      expect(validateMetabaseArgs(["question", "42/slug"])).not.toBeNull();
     });
   });
 });

@@ -167,9 +167,10 @@ export async function executeQuery(sql: string): Promise<QueryResult> {
 
 /**
  * Fetch the native SQL from a saved Metabase question (card).
- * Accepts a question ID parsed from a numeric string or URL slug like "7751-daily-log-web-pages-paths".
+ * Accepts either a numeric string or a slug-like card ref such as
+ * "7751-daily-log-web-pages-paths", which Metabase resolves directly.
  */
-export async function getQuestion(questionId: number): Promise<QuestionInfo> {
+export async function getQuestion(questionRef: string): Promise<QuestionInfo> {
   const card = await mbGet<{
     id: number;
     name: string;
@@ -178,11 +179,11 @@ export async function getQuestion(questionId: number): Promise<QuestionInfo> {
       type: string;
       native?: { query: string };
     };
-  }>(`/api/card/${questionId}`);
+  }>(`/api/card/${encodeURIComponent(questionRef)}`);
 
   if (card.dataset_query.type !== "native" || !card.dataset_query.native?.query) {
     throw new Error(
-      `Question ${questionId} is not a native SQL question (type: ${card.dataset_query.type}). ` +
+      `Question ${questionRef} is not a native SQL question (type: ${card.dataset_query.type}). ` +
         `Only native SQL questions are supported.`,
     );
   }
