@@ -1,0 +1,25 @@
+packages/runner/src/live-watch.ts
+  677b2d51537bb16c 70-90
+packages/runner/src/index.ts
+  677b2d51537bb16c 142-235
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "68f675d17bd1d0f42370eecad4936c3525712352",
+  "prompts": {
+    "677b2d51537bb16c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c138aba6-f3a6-4dc0-adcc-d7d95bfb2fee",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 119,
+      "total_deletions": 6,
+      "accepted_lines": 115,
+      "overriden_lines": 0
+    }
+  }
+}
