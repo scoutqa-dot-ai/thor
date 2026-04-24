@@ -1,0 +1,29 @@
+packages/remote-cli/src/policy.ts
+  a699f0b9da0318ee 15-16
+packages/remote-cli/src/policy-gh.ts
+  a699f0b9da0318ee 10,13,74,80,207-208,221
+packages/remote-cli/src/policy-paths.ts
+  a699f0b9da0318ee 1-20
+packages/remote-cli/src/policy-git.ts
+  a699f0b9da0318ee 10-12,210,248,466-468,472,475
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3b9536e6fbcd66a4416b9c65e0a180fa203f6a34",
+  "prompts": {
+    "a699f0b9da0318ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f77ceed5-cc32-4464-834e-5ca79c8e1042",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 51,
+      "total_deletions": 85,
+      "accepted_lines": 44,
+      "overriden_lines": 0
+    }
+  }
+}
