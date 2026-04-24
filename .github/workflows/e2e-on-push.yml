@@ -41,22 +41,23 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
-          GRAFANA_URL: ${{ vars.GRAFANA_URL }}
-          GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ secrets.GRAFANA_SERVICE_ACCOUNT_TOKEN }}
-          ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
-          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
-          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-          LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
           GITHUB_PAT: ${{ secrets.THOR_GITHUB_PAT }}
           GITHUB_API_URL: ${{ vars.THOR_GITHUB_API_URL }}
-          METABASE_URL: ${{ vars.METABASE_URL }}
-          METABASE_API_KEY: ${{ secrets.METABASE_API_KEY }}
-          METABASE_DATABASE_ID: ${{ vars.METABASE_DATABASE_ID }}
-          METABASE_ALLOWED_SCHEMAS: ${{ vars.METABASE_ALLOWED_SCHEMAS }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
           DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
+          # Fakes: services not exercised by e2e, but referenced at compose startup.
+          GRAFANA_URL: http://grafana-mcp:8000
+          GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
+          ATLASSIAN_AUTH: ci-fake
+          POSTHOG_API_KEY: ci-fake
+          LANGFUSE_PUBLIC_KEY: ci-fake
+          LANGFUSE_SECRET_KEY: ci-fake
+          LANGFUSE_HOST: https://us.cloud.langfuse.com
+          METABASE_URL: http://localhost
+          METABASE_API_KEY: ci-fake
+          METABASE_DATABASE_ID: "1"
+          METABASE_ALLOWED_SCHEMAS: public
         run: |
           set -euo pipefail
 
