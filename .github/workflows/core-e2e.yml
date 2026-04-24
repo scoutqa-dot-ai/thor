@@ -119,6 +119,8 @@ jobs:
           git -C "$alias_repo_dir" add README.md
           git -C "$alias_repo_dir" -c user.name='Thor CI' -c user.email='thor-ci@localhost' commit -m 'chore: seed alias repo fixture'
 
+          ./scripts/mitmproxy-ca-init.sh
+
           docker compose up --build --wait -d gateway
 
       - name: Run e2e test
