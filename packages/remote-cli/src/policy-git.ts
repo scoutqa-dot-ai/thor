@@ -1,23 +1,12 @@
 /**
- * git policy, driven by declarative command specs.
+ * git policy — imperative allowlist + narrow validators.
  *
- * Most subcommands are `passthrough: true` — the allowlist is the spec
- * *table*, not per-subcommand flag parsing. A small number of commands
- * (push, config, check-ignore, symbolic-ref) have structured flag shapes
- * and get real spec definitions. A few (checkout, worktree, remote) keep
- * dedicated helpers because their sub-subcommand logic doesn't fit the
- * generic flag grammar.
+ * The allowlist sets (ALLOWED_GIT_SUBCOMMANDS, NO_PAGER_SAFE_GIT_SUBCOMMANDS)
+ * are exported so the skill generator can project them into `using-git`
+ * without reimplementing the policy.
  */
 
 import { execFileSync } from "node:child_process";
-
-import {
-  findSpec,
-  parseAgainstSpec,
-  type CommandSpec,
-  type ParsedArgs,
-  type ParseContext,
-} from "./policy-spec.js";
 
 interface ResolvedGitArgsSuccess {
   args: string[];
@@ -32,20 +21,72 @@ interface ResolvedImplicitPushTarget {
   refspec: string;
 }
 
-const USING_GIT_HINT = "Load skill using-git for the full allowed surface.";
+const WORKTREE_PREFIX = "/workspace/worktrees/";
 const WORKTREE_HINT =
   "use 'git worktree add <path> <ref>' to work on another branch without leaving this worktree";
-const WORKTREE_PREFIX = "/workspace/worktrees/";
-const PROTECTED_PUSH_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
+const USING_GIT_HINT = "Load skill using-git for the full allowed surface.";
 
-type GitCommandSpec = CommandSpec & { noPagerSafe?: boolean };
+export const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  // read
+  "status",
+  "log",
+  "diff",
+  "diff-tree",
+  "show",
+  "show-branch",
+  "show-ref",
+  "rev-list",
+  "rev-parse",
+  "branch",
+  "tag",
+  "stash",
+  "blame",
+  "shortlog",
+  "describe",
+  "for-each-ref",
+  "ls-files",
+  "ls-remote",
+  "ls-tree",
+  "cat-file",
+  "cherry",
+  "count-objects",
+  "merge-base",
+  "name-rev",
+  "range-diff",
+  "reflog",
+  "grep",
+  "help",
+  "submodule",
+  "config",
+  "check-ignore",
+  "symbolic-ref",
+  "check-ref-format",
+  // write (local) — no checkout/switch; agent stays on its assigned branch
+  "add",
+  "commit",
+  "merge",
+  "rebase",
+  "cherry-pick",
+  "revert",
+  "reset",
+  "restore",
+  "rm",
+  "mv",
+  "clean",
+  "apply",
+  "am",
+  // worktree
+  "worktree",
+  // remote (fetch/push/pull only)
+  "fetch",
+  "pull",
+  "push",
+  "remote",
+  // misc
+  "version",
+]);
 
-function passthrough(name: string, opts: { noPagerSafe?: boolean } = {}): GitCommandSpec {
-  return { path: [name], passthrough: true, noPagerSafe: opts.noPagerSafe };
-}
-
-// Read-only subcommands that are safe behind --no-pager.
-const NO_PAGER_READ_SUBCOMMANDS = [
+export const NO_PAGER_SAFE_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "status",
   "log",
   "diff",
@@ -71,148 +112,12 @@ const NO_PAGER_READ_SUBCOMMANDS = [
   "reflog",
   "grep",
   "help",
+  "config",
+  "check-ignore",
+  "symbolic-ref",
   "check-ref-format",
-];
-
-// Other allowlisted subcommands — not safe under --no-pager (writes or
-// commands that don't paginate). Must stay in sync with the previous
-// ALLOWED_GIT_SUBCOMMANDS surface.
-const OTHER_PASSTHROUGH_SUBCOMMANDS = [
-  "branch",
-  "tag",
-  "stash",
-  "submodule",
-  "add",
-  "commit",
-  "merge",
-  "rebase",
-  "cherry-pick",
-  "revert",
-  "reset",
-  "restore",
-  "rm",
-  "mv",
-  "clean",
-  "apply",
-  "am",
-  "fetch",
-  "pull",
-  "version",
-];
-
-// ── specialized specs ──────────────────────────────────────────────────────
-
-const PUSH_SPEC: GitCommandSpec = {
-  path: ["push"],
-  flags: {
-    "--set-upstream": { kind: "bool" },
-    "--no-verify": { kind: "bool" },
-    "--dry-run": { kind: "bool" },
-    "--verbose": { kind: "bool" },
-    "--quiet": { kind: "bool" },
-  },
-  aliases: { "-u": "--set-upstream", "-n": "--dry-run", "-v": "--verbose", "-q": "--quiet" },
-  positional: { min: 0, max: 10 },
-  unknownFlagHint: (flag) => `"git push ${flag}" is not allowed — unrecognized flag`,
-  rewrite: (parsed, originalArgs, ctx) => resolvePushRewrite(parsed, originalArgs, ctx),
-};
-
-const CONFIG_SPEC: GitCommandSpec = {
-  path: ["config"],
-  noPagerSafe: true,
-  flags: {
-    "--get": { kind: "bool" },
-    "--get-all": { kind: "bool" },
-    "--get-regexp": { kind: "bool" },
-    "--show-origin": { kind: "bool" },
-  },
-  requireOneOf: {
-    flags: ["--get", "--get-all", "--get-regexp"],
-    hint: '"git config" is not allowed — only read-only --get lookups are permitted',
-  },
-  positional: {
-    min: 1,
-    max: 2, // key + optional value-regex (e.g. --get-regexp pattern value-pattern)
-  },
-  missingPositionalHint: '"git config" requires a key or pattern',
-  unknownFlagHint: (flag) =>
-    `"git config ${flag}" is not allowed — only read-only --get lookups are permitted`,
-};
-
-const CHECK_IGNORE_SPEC: GitCommandSpec = {
-  path: ["check-ignore"],
-  noPagerSafe: true,
-  flags: {
-    "--quiet": { kind: "bool" },
-    "--verbose": { kind: "bool" },
-    "--non-matching": { kind: "bool" },
-  },
-  aliases: { "-q": "--quiet", "-v": "--verbose", "-n": "--non-matching" },
-  positional: { min: 1, max: 1000 },
-  missingPositionalHint: '"git check-ignore" requires at least one path',
-  unknownFlagHint: (flag) =>
-    `"git check-ignore ${flag}" is not allowed — only direct path lookups are permitted`,
-};
-
-const SYMBOLIC_REF_SPEC: GitCommandSpec = {
-  path: ["symbolic-ref"],
-  noPagerSafe: true,
-  flags: {
-    "--short": { kind: "bool" },
-    "--quiet": { kind: "bool" },
-  },
-  aliases: { "-q": "--quiet" },
-  positional: { min: 1, max: 1 },
-  missingPositionalHint: '"git symbolic-ref" only allows reading a single symbolic ref',
-  extraPositionalHint: '"git symbolic-ref" only allows reading a single symbolic ref',
-  unknownFlagHint: (flag) =>
-    `"git symbolic-ref ${flag}" is not allowed — only read-only ref lookups are permitted`,
-};
-
-const WORKTREE_SPEC: GitCommandSpec = {
-  path: ["worktree"],
-  passthrough: true,
-  postValidate: (parsed) => {
-    const subSub = parsed.positional[0];
-    if (subSub === "add") {
-      const path = findWorktreePath(parsed.positional.slice(1));
-      if (!path) return '"git worktree add" requires a path';
-      const normalized = normalizePath(path);
-      if (!normalized.startsWith(WORKTREE_PREFIX)) {
-        return `worktree path must be under ${WORKTREE_PREFIX}`;
-      }
-    }
-    return null;
-  },
-};
-
-const REMOTE_SPEC: GitCommandSpec = {
-  path: ["remote"],
-  noPagerSafe: true,
-  passthrough: true,
-  postValidate: (parsed) => {
-    const subSub = parsed.positional[0];
-    if (!subSub) return null; // bare "git remote" is OK
-    const ALLOWED: ReadonlySet<string> = new Set(["show", "get-url", "-v", "--verbose"]);
-    if (!ALLOWED.has(subSub)) {
-      return `"git remote ${subSub}" is not allowed — only read-only operations (show, get-url, -v) are permitted`;
-    }
-    return null;
-  },
-};
-
-// ── spec table ─────────────────────────────────────────────────────────────
-
-export const GIT_SPECS: readonly GitCommandSpec[] = [
-  ...NO_PAGER_READ_SUBCOMMANDS.map((n) => passthrough(n, { noPagerSafe: true })),
-  ...OTHER_PASSTHROUGH_SUBCOMMANDS.map((n) => passthrough(n)),
-  PUSH_SPEC,
-  CONFIG_SPEC,
-  CHECK_IGNORE_SPEC,
-  SYMBOLIC_REF_SPEC,
-  WORKTREE_SPEC,
-  REMOTE_SPEC,
-];
+  "remote",
+]);
 
 // ── entry point ────────────────────────────────────────────────────────────
 
@@ -239,9 +144,6 @@ export function resolveGitArgs(args: string[], cwd?: string): ResolvedGitArgs {
     };
   }
 
-  // Inline worktree-redirect hints for the miss patterns every agent hits.
-  // Targeted hints stay in prose so the first round-trip gets actionable
-  // guidance; everything else points at the skill.
   if (first === "switch") {
     return { error: `"git switch" is not allowed — ${WORKTREE_HINT}` };
   }
@@ -250,50 +152,42 @@ export function resolveGitArgs(args: string[], cwd?: string): ResolvedGitArgs {
     return err ? { error: err } : { args: [...args] };
   }
 
-  const spec = findSpec(GIT_SPECS, args);
-  if (!spec) {
+  if (!ALLOWED_GIT_SUBCOMMANDS.has(first)) {
     return { error: `"git ${first}" is not allowed. ${USING_GIT_HINT}` };
   }
 
-  const afterPath = args.slice(spec.path.length);
-  const ctx: ParseContext = { cwd };
-  const parsed = parseAgainstSpec(afterPath, spec, ctx);
-  if (!parsed.ok) return { error: parsed.error };
-
-  if (spec.rewrite) {
-    const r = spec.rewrite(parsed.parsed, args, ctx);
-    if (!Array.isArray(r)) return r;
-    return { args: r };
-  }
+  if (first === "worktree") return wrap(validateGitWorktree(args), args);
+  if (first === "remote") return wrap(validateGitRemote(args), args);
+  if (first === "config") return wrap(validateGitConfig(args), args);
+  if (first === "check-ignore") return wrap(validateGitCheckIgnore(args), args);
+  if (first === "symbolic-ref") return wrap(validateGitSymbolicRef(args), args);
+  if (first === "push") return resolveGitPushArgs(args, cwd);
 
   return { args: [...args] };
 }
 
 export function validateGitArgs(args: string[], cwd?: string): string | null {
-  const resolved = resolveGitArgs(args, cwd);
-  return "error" in resolved ? resolved.error : null;
+  const r = resolveGitArgs(args, cwd);
+  return "error" in r ? r.error : null;
 }
 
-// ── --no-pager handling ────────────────────────────────────────────────────
+function wrap(err: string | null, args: string[]): ResolvedGitArgs {
+  return err ? { error: err } : { args: [...args] };
+}
+
+// ── --no-pager ─────────────────────────────────────────────────────────────
 
 function resolveNoPager(args: string[], cwd?: string): ResolvedGitArgs {
-  const inner = args.slice(1);
-  if (inner.length === 0) {
-    return { error: '"git --no-pager" requires a subcommand' };
-  }
-
-  const sub = inner[0];
-  const spec = findSpec(GIT_SPECS, inner) as GitCommandSpec | undefined;
-
-  if (!spec || !spec.noPagerSafe) {
+  if (args.length < 2) return { error: '"git --no-pager" requires a subcommand' };
+  const sub = args[1];
+  if (!NO_PAGER_SAFE_GIT_SUBCOMMANDS.has(sub)) {
     return {
       error: `"git --no-pager ${sub}" is not allowed — only read-only commands may use --no-pager`,
     };
   }
-
-  const innerResolved = resolveGitArgs(inner, cwd);
-  if ("error" in innerResolved) return innerResolved;
-  return { args: ["--no-pager", ...innerResolved.args] };
+  const inner = resolveGitArgs(args.slice(1), cwd);
+  if ("error" in inner) return inner;
+  return { args: ["--no-pager", ...inner.args] };
 }
 
 // ── checkout restore ───────────────────────────────────────────────────────
@@ -354,7 +248,7 @@ function validateGitCheckoutRestore(args: string[]): string | null {
     if (afterSeparator.length === 0 || beforeSeparator.length > 1) {
       return RESTORE_CHECKOUT_HINT;
     }
-    // After `--`, git grammar guarantees every remaining token is a pathspec.
+    // After `--`, git grammar guarantees pathspec.
     return null;
   }
 
@@ -373,22 +267,32 @@ function looksLikeCheckoutPathspec(value: string): boolean {
   return CHECKOUT_PATHSPEC_SUFFIXES.some((suffix) => last.endsWith(suffix));
 }
 
-// ── worktree / push helpers ────────────────────────────────────────────────
+// ── worktree ───────────────────────────────────────────────────────────────
 
-function findWorktreePath(tokens: string[]): string | null {
+function validateGitWorktree(args: string[]): string | null {
+  const wtIdx = args.indexOf("worktree");
+  const subSub = args[wtIdx + 1];
+  if (subSub !== "add") return null;
+
   const flagsWithValue = new Set(["-b", "-B"]);
-  let i = 0;
-  while (i < tokens.length) {
-    const arg = tokens[i];
+  let i = wtIdx + 2;
+  while (i < args.length) {
+    const arg = args[i];
     if (flagsWithValue.has(arg)) {
       i += 2;
-    } else if (arg.startsWith("-")) {
-      i += 1;
-    } else {
-      return arg;
+      continue;
     }
+    if (arg.startsWith("-")) {
+      i += 1;
+      continue;
+    }
+    const normalized = normalizePath(arg);
+    if (!normalized.startsWith(WORKTREE_PREFIX)) {
+      return `worktree path must be under ${WORKTREE_PREFIX}`;
+    }
+    return null;
   }
-  return null;
+  return '"git worktree add" requires a path';
 }
 
 function normalizePath(p: string): string {
@@ -404,17 +308,147 @@ function normalizePath(p: string): string {
   return "/" + parts.join("/");
 }
 
-function resolvePushRewrite(
-  parsed: ParsedArgs,
-  originalArgs: string[],
-  ctx: ParseContext,
-): string[] | { error: string } {
-  const positional = parsed.positional;
-  let remote: string | undefined = positional[0];
-  const refspecs: string[] = positional.slice(1);
+// ── remote ─────────────────────────────────────────────────────────────────
 
-  if (remote === undefined) {
-    const implicit = resolveImplicitPushTarget(ctx.cwd, "git push");
+const ALLOWED_REMOTE_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "show",
+  "get-url",
+  "-v",
+  "--verbose",
+]);
+
+function validateGitRemote(args: string[]): string | null {
+  const subSub = args[args.indexOf("remote") + 1];
+  if (!subSub) return null;
+  if (!ALLOWED_REMOTE_SUBCOMMANDS.has(subSub)) {
+    return `"git remote ${subSub}" is not allowed — only read-only operations (show, get-url, -v) are permitted`;
+  }
+  return null;
+}
+
+// ── config ─────────────────────────────────────────────────────────────────
+
+const ALLOWED_GIT_CONFIG_READ_MODES: ReadonlySet<string> = new Set([
+  "--get",
+  "--get-all",
+  "--get-regexp",
+]);
+
+function validateGitConfig(args: string[]): string | null {
+  let i = 1;
+  let mode: string | undefined;
+  while (i < args.length) {
+    const arg = args[i];
+    if (!arg.startsWith("-")) break;
+    if (arg === "--show-origin") {
+      i += 1;
+      continue;
+    }
+    if (ALLOWED_GIT_CONFIG_READ_MODES.has(arg)) {
+      mode = arg;
+      i += 1;
+      break;
+    }
+    return `"git config ${arg}" is not allowed — only read-only --get lookups are permitted`;
+  }
+  if (!mode) {
+    return '"git config" is not allowed — only read-only --get lookups are permitted';
+  }
+  if (i >= args.length) return `"git config ${mode}" requires a key or pattern`;
+  for (; i < args.length; i += 1) {
+    if (args[i].startsWith("-")) {
+      return `"git config ${args[i]}" is not allowed — only read-only --get lookups are permitted`;
+    }
+  }
+  return null;
+}
+
+// ── check-ignore ───────────────────────────────────────────────────────────
+
+const ALLOWED_GIT_CHECK_IGNORE_FLAGS: ReadonlySet<string> = new Set([
+  "-q",
+  "--quiet",
+  "-v",
+  "--verbose",
+  "-n",
+  "--non-matching",
+]);
+
+function validateGitCheckIgnore(args: string[]): string | null {
+  let sawPath = false;
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg.startsWith("-")) {
+      if (!ALLOWED_GIT_CHECK_IGNORE_FLAGS.has(arg)) {
+        return `"git check-ignore ${arg}" is not allowed — only direct path lookups are permitted`;
+      }
+      continue;
+    }
+    sawPath = true;
+  }
+  return sawPath ? null : '"git check-ignore" requires at least one path';
+}
+
+// ── symbolic-ref ───────────────────────────────────────────────────────────
+
+const ALLOWED_GIT_SYMBOLIC_REF_FLAGS: ReadonlySet<string> = new Set(["--short", "-q", "--quiet"]);
+
+function validateGitSymbolicRef(args: string[]): string | null {
+  const refs: string[] = [];
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg.startsWith("-")) {
+      if (!ALLOWED_GIT_SYMBOLIC_REF_FLAGS.has(arg)) {
+        return `"git symbolic-ref ${arg}" is not allowed — only read-only ref lookups are permitted`;
+      }
+      continue;
+    }
+    refs.push(arg);
+  }
+  return refs.length === 1 ? null : '"git symbolic-ref" only allows reading a single symbolic ref';
+}
+
+// ── push ───────────────────────────────────────────────────────────────────
+
+const ALLOWED_PUSH_FLAGS: ReadonlySet<string> = new Set([
+  "-u",
+  "--set-upstream",
+  "--no-verify",
+  "--dry-run",
+  "-n",
+  "--verbose",
+  "-v",
+  "--quiet",
+  "-q",
+]);
+
+const PROTECTED_PUSH_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
+
+function resolveGitPushArgs(args: string[], cwd?: string): ResolvedGitArgs {
+  let i = 1; // skip "push"
+  const flags: string[] = [];
+  let sawRemote = false;
+  let remote: string | undefined;
+  const refspecs: string[] = [];
+  while (i < args.length) {
+    const arg = args[i];
+    if (ALLOWED_PUSH_FLAGS.has(arg)) {
+      flags.push(arg);
+      i += 1;
+    } else if (arg.startsWith("-")) {
+      return { error: `"git push ${arg}" is not allowed — unrecognized flag` };
+    } else if (!sawRemote) {
+      sawRemote = true;
+      remote = arg;
+      i += 1;
+    } else {
+      refspecs.push(arg);
+      i += 1;
+    }
+  }
+
+  if (!sawRemote) {
+    const implicit = resolveImplicitPushTarget(cwd, "git push");
     if ("error" in implicit) return implicit;
     remote = implicit.remote;
     refspecs.push(implicit.refspec);
@@ -423,7 +457,7 @@ function resolvePushRewrite(
   }
 
   if (refspecs.length === 0) {
-    const implicit = resolveImplicitPushTarget(ctx.cwd, "git push origin");
+    const implicit = resolveImplicitPushTarget(cwd, "git push origin");
     if ("error" in implicit) return implicit;
     refspecs.push(implicit.refspec);
   }
@@ -433,15 +467,7 @@ function resolvePushRewrite(
     if (err) return { error: err };
   }
 
-  // Preserve the user's original flag tokens (order and canonical form) by
-  // walking originalArgs and keeping only tokens that look like flags.
-  const flagTokens: string[] = [];
-  for (let i = 1; i < originalArgs.length; i += 1) {
-    const t = originalArgs[i];
-    if (t.startsWith("-")) flagTokens.push(t);
-  }
-
-  return ["push", ...flagTokens, remote, ...refspecs];
+  return { args: ["push", ...flags, remote ?? "origin", ...refspecs] };
 }
 
 function validatePushRefspec(refspec: string): string | null {
