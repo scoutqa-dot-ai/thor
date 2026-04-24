@@ -43,6 +43,18 @@ Required: numeric issue selector plus `--body`/`-b`. Blocked: non-numeric select
 
 Required: `--body`/`-b` and exactly one of `--comment`/`-c` or `--request-changes`/`-r`. Optional positional selector: numeric PR number only. `--approve`/`-a` is denied. Blocked: non-numeric selectors, interactive/file flags, and `--repo`/`-R`.
 
+### `gh run rerun`
+
+Required: numeric run ID. Optional: `--failed` (rerun only failed jobs), `--debug`. Blocked: `--job`, `--repo`/`-R`.
+
+### `gh run download`
+
+Required: numeric run ID. Optional: `--dir`/`-D <path>` (must be under the current working directory), `--name`/`-n <artifact>` (repeatable), `--pattern`/`-p <glob>` (repeatable). Blocked: `--repo`/`-R`.
+
+### `gh workflow run`
+
+Required: workflow selector (workflow file name or numeric ID, positional, no flag-leading values). Optional: `--ref <branch>`, `-f key=value` (repeatable string inputs; `-F name=@file` is denied to prevent reading local files). Blocked: `--repo`/`-R`.
+
 ### `gh api`
 
 Implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages). Blocked: `graphql`, `--method`/`-X`, `--input`, `-H`/`--header`, `--preview`, `--hostname`, `-f`/`--raw-field`, and `-F`/`--field`.

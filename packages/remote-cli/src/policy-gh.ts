@@ -58,8 +58,11 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "run list",
   "run view",
   "run watch",
+  "run rerun",
+  "run download",
   "workflow list",
   "workflow view",
+  "workflow run",
 ]);
 
 const HELP_FLAGS: ReadonlySet<string> = new Set(["-h", "--help"]);
@@ -100,8 +103,14 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
       return validateRequiredNumericSelector(args, "gh run view");
     case "run watch":
       return validateRequiredNumericSelector(args, "gh run watch");
+    case "run rerun":
+      return validateGhRunRerunArgs(args);
+    case "run download":
+      return validateGhRunDownloadArgs(args, cwd);
     case "workflow view":
       return validateWorkflowViewArgs(args);
+    case "workflow run":
+      return validateGhWorkflowRunArgs(args);
     case "release view":
       return validateReleaseViewArgs(args);
     default:
@@ -277,6 +286,67 @@ function validateGhPrReviewArgs(args: string[]): string | null {
     return denyMessage("gh pr review");
   }
 
+  return null;
+}
+
+function validateGhRunRerunArgs(args: string[]): string | null {
+  // `gh run rerun <id> [--failed] [--debug]`. `--job` is intentionally omitted
+  // (minimal surface) but could be added later.
+  if (args.length < 3 || !/^\d+$/.test(args[2])) {
+    return denyMessage("gh run rerun");
+  }
+  const parsed = scanPolicyArgs(args, 3, [
+    { name: "failed", kind: "boolean", aliases: ["--failed"] },
+    { name: "debug", kind: "boolean", aliases: ["--debug"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage("gh run rerun");
+  }
+  return null;
+}
+
+function validateGhRunDownloadArgs(args: string[], cwd: string | undefined): string | null {
+  // `gh run download <id> [--dir <path>] [--name <n>]... [--pattern <p>]...`.
+  // --dir must resolve under cwd; --name / --pattern / -p are repeatable filters.
+  if (args.length < 3 || !/^\d+$/.test(args[2])) {
+    return denyMessage("gh run download");
+  }
+  const parsed = scanPolicyArgs(args, 3, [
+    { name: "dir", kind: "value", aliases: ["-D", "--dir"] },
+    { name: "name", kind: "value", aliases: ["-n", "--name"] },
+    { name: "pattern", kind: "value", aliases: ["-p", "--pattern"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage("gh run download");
+  }
+  const dirs = valueFlagValues(parsed, "dir");
+  if (dirs.length > 1) return denyMessage("gh run download");
+  if (dirs.length === 1 && !isPathUnderCwd(dirs[0], cwd)) {
+    return denyMessage("gh run download");
+  }
+  return null;
+}
+
+function validateGhWorkflowRunArgs(args: string[]): string | null {
+  // `gh workflow run <selector> [--ref <branch>] [-f key=value]...`. The selector
+  // is a workflow file name or numeric ID — no flags, no URLs. `-F name=@file` is
+  // not allowed (it would read from a local file); only string-value `-f` pairs.
+  if (args.length < 3 || args[2].startsWith("-")) {
+    return denyMessage("gh workflow run");
+  }
+  const parsed = scanPolicyArgs(args, 3, [
+    { name: "ref", kind: "value", aliases: ["--ref", "-r"] },
+    { name: "field", kind: "value", aliases: ["-f", "--raw-field"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage("gh workflow run");
+  }
+  if (valueFlagValues(parsed, "ref").length > 1) return denyMessage("gh workflow run");
+  for (const kv of valueFlagValues(parsed, "field")) {
+    if (!/^[A-Za-z_][A-Za-z0-9_-]*=/.test(kv) || kv.includes("=@")) {
+      return denyMessage("gh workflow run");
+    }
+  }
   return null;
 }
 

@@ -537,6 +537,33 @@ describe("validateGhArgs", () => {
       ).toBeNull();
     });
 
+    it("allows gh run rerun / run download / workflow run within policy", () => {
+      const CWD = "/workspace/repos/my-repo";
+      expect(validateGhArgs(["run", "rerun", "123"])).toBeNull();
+      expect(validateGhArgs(["run", "rerun", "123", "--failed"])).toBeNull();
+      expect(validateGhArgs(["run", "rerun", "123", "--failed", "--debug"])).toBeNull();
+      expect(validateGhArgs(["run", "download", "123"], CWD)).toBeNull();
+      expect(validateGhArgs(["run", "download", "123", "--dir", "artifacts"], CWD)).toBeNull();
+      expect(
+        validateGhArgs(["run", "download", "123", "--name", "logs", "--name", "coverage"], CWD),
+      ).toBeNull();
+      expect(validateGhArgs(["workflow", "run", "ci.yml"])).toBeNull();
+      expect(validateGhArgs(["workflow", "run", "ci.yml", "--ref", "main"])).toBeNull();
+      expect(
+        validateGhArgs([
+          "workflow",
+          "run",
+          "ci.yml",
+          "--ref",
+          "main",
+          "-f",
+          "env=staging",
+          "-f",
+          "dry_run=true",
+        ]),
+      ).toBeNull();
+    });
+
     it("allows append-only issue create with title/body and optional labels", () => {
       expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toBeNull();
       expect(
@@ -601,10 +628,11 @@ describe("validateGhArgs", () => {
       expectGhDenied(["pr", "merge", "123"]);
     });
 
-    it("blocks run/workflow mutation commands", () => {
+    it("blocks run/workflow mutation commands outside the allowlist", () => {
       expectGhDenied(["run", "cancel", "123"]);
-      expectGhDenied(["run", "rerun", "123"]);
-      expectGhDenied(["workflow", "run", "ci.yml"]);
+      expectGhDenied(["run", "delete", "123"]);
+      expectGhDenied(["workflow", "enable", "ci.yml"]);
+      expectGhDenied(["workflow", "disable", "ci.yml"]);
     });
 
     it("blocks repo create", () => {
@@ -676,6 +704,32 @@ describe("validateGhArgs", () => {
       ).not.toBeNull();
       // issue comment does not support -F
       expect(validateGhArgs(["issue", "comment", "42", "-F", "body.md"], CWD)).not.toBeNull();
+    });
+
+    it("blocks unsafe run rerun / run download / workflow run shapes", () => {
+      const CWD = "/workspace/repos/my-repo";
+      // Non-numeric selectors
+      expectGhDenied(["run", "rerun"]);
+      expectGhDenied(["run", "rerun", "abc"]);
+      expectGhDenied(["run", "download", "abc"]);
+      // Unsupported rerun flags
+      expectGhDenied(["run", "rerun", "123", "--job", "456"]);
+      // Download --dir escapes cwd
+      expect(validateGhArgs(["run", "download", "123", "--dir", "/etc"], CWD)).not.toBeNull();
+      expect(validateGhArgs(["run", "download", "123", "--dir", "../escape"], CWD)).not.toBeNull();
+      // Download with no cwd cannot validate --dir
+      expect(validateGhArgs(["run", "download", "123", "--dir", "artifacts"])).not.toBeNull();
+      // Duplicate --dir
+      expect(
+        validateGhArgs(["run", "download", "123", "--dir", "a", "--dir", "b"], CWD),
+      ).not.toBeNull();
+      // Workflow run: missing selector / flag selector / URL selector / -F file input
+      expectGhDenied(["workflow", "run"]);
+      expectGhDenied(["workflow", "run", "--ref", "main"]);
+      expectGhDenied(["workflow", "run", "ci.yml", "-F", "payload=@secrets.json"]);
+      expectGhDenied(["workflow", "run", "ci.yml", "-f", "bad key=value"]);
+      expectGhDenied(["workflow", "run", "ci.yml", "-f", "novalue"]);
+      expectGhDenied(["workflow", "run", "ci.yml", "--ref", "main", "--ref", "dev"]);
     });
 
     it("blocks issue create without title or body and with unsupported flags", () => {
