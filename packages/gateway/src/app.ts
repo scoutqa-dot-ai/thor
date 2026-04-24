@@ -14,8 +14,11 @@ import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
 import {
   addSlackReaction,
+  getTerminalGitHubRejectReason,
+  resolveGitHubPrHead,
   triggerRunnerSlack,
   triggerRunnerCron,
+  triggerRunnerGitHub,
   resolveApproval,
   updateSlackMessage,
   type RunnerDeps,
@@ -36,6 +39,7 @@ import {
   buildCorrelationKey,
   getGitHubEventSourceTs,
   GitHubWebhookEnvelopeSchema,
+  type NormalizedGitHubEvent,
   normalizeGitHubEvent,
   verifyGitHubSignature,
 } from "./github.js";
@@ -48,12 +52,20 @@ interface CronQueuedEvent extends QueuedEvent<CronPayload> {
   source: "cron";
 }
 
+interface GitHubQueuedEvent extends QueuedEvent<NormalizedGitHubEvent> {
+  source: "github";
+}
+
 function isSlackEvent(e: QueuedEvent): e is SlackQueuedEvent {
   return e.source === "slack";
 }
 
 function isCronEvent(e: QueuedEvent): e is CronQueuedEvent {
   return e.source === "cron";
+}
+
+function isGitHubEvent(e: QueuedEvent): e is GitHubQueuedEvent {
+  return e.source === "github";
 }
 
 const log = createLogger("gateway");
@@ -248,6 +260,105 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         } catch (error) {
           logError(log, "cron_trigger_failed", error, {
             correlationKey: lastEvent.correlationKey,
+          });
+        }
+        return;
+      }
+
+      const githubEvents = events.filter(isGitHubEvent);
+      if (githubEvents.length > 0) {
+        const lastEvent = githubEvents[githubEvents.length - 1];
+        const hasInterrupt = events.some((e) => e.interrupt);
+
+        if (lastEvent.correlationKey.startsWith("pending:branch-resolve:")) {
+          const latest = lastEvent.payload;
+          try {
+            const branchInfo = await resolveGitHubPrHead(latest, remoteCliUrl, config.fetchImpl);
+            if (branchInfo.headRepoFullName !== latest.repoFullName.toLowerCase()) {
+              reject("branch_unresolved");
+              logInfo(log, "github_trigger_dropped", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: githubEvents.length,
+                interrupt: hasInterrupt,
+                reason: "branch_unresolved",
+              });
+              return;
+            }
+
+            const reroutedKey = buildCorrelationKey(latest.localRepo, branchInfo.ref);
+            const now = Date.now();
+            for (const event of githubEvents) {
+              queue.enqueue({
+                ...event,
+                id: `${event.id}:resolved`,
+                correlationKey: reroutedKey,
+                payload: { ...event.payload, branch: branchInfo.ref },
+                receivedAt: new Date(now).toISOString(),
+                readyAt: now,
+                delayMs: 0,
+              });
+            }
+            ack();
+            logInfo(log, "github_events_rerouted", {
+              fromCorrelationKey: lastEvent.correlationKey,
+              toCorrelationKey: reroutedKey,
+              batchSize: githubEvents.length,
+            });
+            return;
+          } catch (error) {
+            const reason = getTerminalGitHubRejectReason(error);
+            if (reason) {
+              reject(reason);
+              logInfo(log, "github_trigger_dropped", {
+                correlationKey: lastEvent.correlationKey,
+                batchSize: githubEvents.length,
+                interrupt: hasInterrupt,
+                reason,
+              });
+              return;
+            }
+            logError(log, "github_branch_resolution_retryable", error, {
+              correlationKey: lastEvent.correlationKey,
+              batchSize: githubEvents.length,
+            });
+            return;
+          }
+        }
+
+        try {
+          const result = await triggerRunnerGitHub(
+            githubEvents.map((e) => e.payload),
+            lastEvent.correlationKey,
+            runnerDeps,
+            remoteCliUrl,
+            hasInterrupt,
+            ack,
+            undefined,
+            reject,
+          );
+          if (result.busy) {
+            logInfo(log, "github_trigger_busy", {
+              correlationKey: lastEvent.correlationKey,
+              batchSize: githubEvents.length,
+              interrupt: hasInterrupt,
+            });
+          } else if (result.rejected) {
+            logInfo(log, "github_trigger_dropped", {
+              correlationKey: lastEvent.correlationKey,
+              batchSize: githubEvents.length,
+              interrupt: hasInterrupt,
+            });
+          } else {
+            logInfo(log, "github_trigger_fired", {
+              correlationKey: lastEvent.correlationKey,
+              batchSize: githubEvents.length,
+              interrupt: hasInterrupt,
+            });
+          }
+        } catch (error) {
+          logError(log, "github_trigger_failed", error, {
+            correlationKey: lastEvent.correlationKey,
+            batchSize: githubEvents.length,
           });
         }
       }
@@ -624,7 +735,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const delayMs = normalized.mention ? githubMentionDelay : githubNonMentionDelay;
     const correlationKey = normalized.branch
       ? buildCorrelationKey(normalized.localRepo, normalized.branch)
-      : `pending:branch-resolve:${deliveryId}`;
+      : `pending:branch-resolve:${normalized.localRepo}:${normalized.number}`;
 
     queue.enqueue({
       id: deliveryId,

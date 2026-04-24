@@ -48,6 +48,17 @@ function signGitHub(body: string, secret: string): string {
   return `sha256=${createHmac("sha256", secret).update(Buffer.from(body)).digest("hex")}`;
 }
 
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function textResponse(text: string, status: number): Response {
+  return new Response(text, { status, headers: { "content-type": "text/plain" } });
+}
+
 function readQueuedEvents(queueDir: string): Array<Record<string, unknown>> {
   return readdirSync(queueDir)
     .filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
@@ -603,7 +614,7 @@ describe("gateway", () => {
         expect(queued[0]).toMatchObject({
           id: "delivery-branch-pending",
           source: "github",
-          correlationKey: "pending:branch-resolve:delivery-branch-pending",
+          correlationKey: "pending:branch-resolve:thor:12",
           delayMs: 60000,
           interrupt: false,
           payload: {
@@ -612,6 +623,308 @@ describe("gateway", () => {
             mention: false,
           },
         });
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
+  it("reroutes pending branch-resolve deliveries onto the canonical branch key before dispatch", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.startsWith("http://remote-cli:3004/github/pr-head?")) {
+        return jsonResponse({ ref: "feature/refactor", headRepoFullName: "scoutqa-dot-ai/thor" });
+      }
+      if (url === "http://runner.test/trigger") {
+        return new Response(null, { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue, queueDir) => {
+        const baseEvent = {
+          source: "github" as const,
+          eventType: "issue_comment" as const,
+          action: "created" as const,
+          installationId: 126669985,
+          repoFullName: "scoutqa-dot-ai/thor",
+          localRepo: "thor",
+          senderLogin: "alice",
+          htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+          number: 42,
+          branch: null,
+          mention: false,
+        };
+
+        queue.enqueue({
+          id: "delivery-pending-1",
+          source: "github",
+          correlationKey: "pending:branch-resolve:thor:42",
+          payload: { ...baseEvent, body: "first comment" },
+          receivedAt: new Date().toISOString(),
+          sourceTs: Date.parse("2026-04-24T11:00:00Z"),
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: false,
+        });
+        queue.enqueue({
+          id: "delivery-pending-2",
+          source: "github",
+          correlationKey: "pending:branch-resolve:thor:42",
+          payload: { ...baseEvent, body: "second comment" },
+          receivedAt: new Date().toISOString(),
+          sourceTs: Date.parse("2026-04-24T11:00:01Z"),
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: false,
+        });
+
+        await queue.flush();
+
+        const triggerCalls = fetchImpl.mock.calls.filter((call) => call[0] === "http://runner.test/trigger");
+        expect(triggerCalls).toHaveLength(1);
+        const triggerBody = JSON.parse(String(triggerCalls[0][1]?.body));
+        expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
+        expect(triggerBody.prompt).toContain("first comment");
+        expect(triggerBody.prompt).toContain("second comment");
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
+  it("defers non-mention GitHub events when runner reports busy", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ busy: true }));
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue, queueDir) => {
+        queue.enqueue({
+          id: "delivery-github-busy",
+          source: "github",
+          correlationKey: "git:branch:thor:main",
+          payload: {
+            source: "github",
+            eventType: "pull_request_review_comment",
+            action: "created",
+            installationId: 126669985,
+            repoFullName: "scoutqa-dot-ai/thor",
+            localRepo: "thor",
+            senderLogin: "alice",
+            htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+            number: 42,
+            body: "looks good",
+            branch: "main",
+            mention: false,
+          },
+          receivedAt: new Date().toISOString(),
+          sourceTs: Date.now(),
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: false,
+        });
+
+        await queue.flush();
+
+        expect(fetchImpl).toHaveBeenCalledWith(
+          "http://runner.test/trigger",
+          expect.objectContaining({ method: "POST" }),
+        );
+        expect(readQueuedEvents(queueDir)).toHaveLength(1);
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
+  it("sends mention GitHub events with interrupt=true", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue) => {
+        queue.enqueue({
+          id: "delivery-github-mention",
+          source: "github",
+          correlationKey: "git:branch:thor:main",
+          payload: {
+            source: "github",
+            eventType: "pull_request_review_comment",
+            action: "created",
+            installationId: 126669985,
+            repoFullName: "scoutqa-dot-ai/thor",
+            localRepo: "thor",
+            senderLogin: "alice",
+            htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+            number: 42,
+            body: "@thor please check",
+            branch: "main",
+            mention: true,
+          },
+          receivedAt: new Date().toISOString(),
+          sourceTs: Date.now(),
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: true,
+        });
+
+        await queue.flush();
+
+        const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
+        expect(triggerCall).toBeDefined();
+        const triggerBody = JSON.parse(String(triggerCall![1]?.body));
+        expect(triggerBody.interrupt).toBe(true);
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
+  it("dead-letters pending GitHub branch resolution when remote-cli returns 404", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(textResponse("not found", 404));
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue, queueDir) => {
+        queue.enqueue({
+          id: "delivery-github-missing-branch",
+          source: "github",
+          correlationKey: "pending:branch-resolve:thor:42",
+          payload: {
+            source: "github",
+            eventType: "issue_comment",
+            action: "created",
+            installationId: 126669985,
+            repoFullName: "scoutqa-dot-ai/thor",
+            localRepo: "thor",
+            senderLogin: "alice",
+            htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+            number: 42,
+            body: "please review",
+            branch: null,
+            mention: false,
+          },
+          receivedAt: new Date().toISOString(),
+          sourceTs: Date.now(),
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: false,
+        });
+
+        await queue.flush();
+
+        expect(fetchImpl).toHaveBeenCalledWith(
+          expect.stringContaining("http://remote-cli:3004/github/pr-head?"),
+          expect.anything(),
+        );
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+        const deadLetterFiles = readdirSync(join(queueDir, "dead-letter")).filter((entry) =>
+          entry.endsWith(".json"),
+        );
+        expect(deadLetterFiles).toHaveLength(1);
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
+  it("dead-letters pending GitHub branch resolution when installation is gone", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(textResponse("forbidden", 403));
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue, queueDir) => {
+        queue.enqueue({
+          id: "delivery-github-installation-gone",
+          source: "github",
+          correlationKey: "pending:branch-resolve:thor:42",
+          payload: {
+            source: "github",
+            eventType: "issue_comment",
+            action: "created",
+            installationId: 126669985,
+            repoFullName: "scoutqa-dot-ai/thor",
+            localRepo: "thor",
+            senderLogin: "alice",
+            htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+            number: 42,
+            body: "please review",
+            branch: null,
+            mention: false,
+          },
+          receivedAt: new Date().toISOString(),
+          sourceTs: Date.now(),
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: false,
+        });
+
+        await queue.flush();
+
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+        const deadLetterFiles = readdirSync(join(queueDir, "dead-letter")).filter((entry) =>
+          entry.endsWith(".json"),
+        );
+        expect(deadLetterFiles).toHaveLength(1);
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
+  it("defers pending GitHub branch resolution on retryable lookup errors", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(textResponse("upstream error", 500));
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue, queueDir) => {
+        queue.enqueue({
+          id: "delivery-github-retryable",
+          source: "github",
+          correlationKey: "pending:branch-resolve:thor:42",
+          payload: {
+            source: "github",
+            eventType: "issue_comment",
+            action: "created",
+            installationId: 126669985,
+            repoFullName: "scoutqa-dot-ai/thor",
+            localRepo: "thor",
+            senderLogin: "alice",
+            htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+            number: 42,
+            body: "please review",
+            branch: null,
+            mention: false,
+          },
+          receivedAt: new Date().toISOString(),
+          sourceTs: Date.now(),
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: false,
+        });
+
+        await queue.flush();
+
+        expect(readQueuedEvents(queueDir)).toHaveLength(1);
+        const deadLetterFiles = readdirSync(join(queueDir, "dead-letter")).filter((entry) =>
+          entry.endsWith(".json"),
+        );
+        expect(deadLetterFiles).toHaveLength(0);
       },
       {
         githubWebhookSecret: "github-secret",

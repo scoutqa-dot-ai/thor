@@ -9,10 +9,15 @@ import {
   resolveRepoDirectory,
 } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
-import { getSlackCorrelationKey, getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
+import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
+import { buildCorrelationKey, type NormalizedGitHubEvent } from "./github.js";
 
 const log = createLogger("gateway-service");
+const GITHUB_PR_HEAD_TIMEOUT_MS = 3000;
+const GITHUB_PR_HEAD_RETRIES = 1;
+const GITHUB_PROMPT_LIMIT_BYTES = 8 * 1024;
+const GITHUB_PROMPT_EVENT_BODY_MAX = 280;
 
 // --- Runner deps (internal HTTP, testable via fetchImpl) ---
 
@@ -39,6 +44,28 @@ function getFetch(fetchImpl?: typeof fetch): typeof fetch {
 export interface TriggerResult {
   /** True when the runner reported session busy and interrupt was false. */
   busy: boolean;
+  /** True when the batch was terminally rejected (dead-lettered). */
+  rejected?: boolean;
+}
+
+export interface GitHubPrHeadResult {
+  ref: string;
+  headRepoFullName: string;
+}
+
+type TerminalGitHubRejectReason = "installation_gone" | "branch_unresolved";
+
+class TerminalGitHubDispatchError extends Error {
+  constructor(readonly reason: TerminalGitHubRejectReason, message: string) {
+    super(message);
+    this.name = "TerminalGitHubDispatchError";
+  }
+}
+
+export function getTerminalGitHubRejectReason(
+  error: unknown,
+): TerminalGitHubRejectReason | undefined {
+  return error instanceof TerminalGitHubDispatchError ? error.reason : undefined;
 }
 
 export async function triggerRunnerSlack(
@@ -241,6 +268,196 @@ export async function triggerRunnerCron(
   }
 
   return { busy: false };
+}
+
+export async function triggerRunnerGitHub(
+  events: NormalizedGitHubEvent[],
+  correlationKey: string,
+  deps: RunnerDeps,
+  remoteCliUrl: string,
+  interrupt?: boolean,
+  onAccepted?: () => void,
+  _reposMap?: Map<string, string>,
+  onRejected?: (reason: string) => void,
+): Promise<TriggerResult> {
+  if (events.length === 0) return { busy: false };
+
+  let resolvedKey = correlationKey;
+  if (resolvedKey.startsWith("pending:branch-resolve:")) {
+    const latest = events[events.length - 1];
+    try {
+      const branchInfo = await resolveGitHubPrHead(latest, remoteCliUrl, deps.fetchImpl);
+      if (branchInfo.headRepoFullName !== latest.repoFullName.toLowerCase()) {
+        throw new TerminalGitHubDispatchError(
+          "branch_unresolved",
+          `PR head repo ${branchInfo.headRepoFullName} is not supported for ${latest.repoFullName}`,
+        );
+      }
+      resolvedKey = buildCorrelationKey(latest.localRepo, branchInfo.ref);
+    } catch (error) {
+      if (error instanceof TerminalGitHubDispatchError) {
+        onRejected?.(error.reason);
+        return { busy: false, rejected: true };
+      }
+      throw error;
+    }
+  }
+
+  const latest = events[events.length - 1];
+  const directory = resolveRepoDirectory(latest.localRepo);
+  if (!directory) {
+    onRejected?.(`repo directory not found for ${latest.localRepo}`);
+    return { busy: false, rejected: true };
+  }
+
+  const prompt = renderGitHubPrompt(events);
+  const response = await getFetch(deps.fetchImpl)(`${deps.runnerUrl}/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt,
+      correlationKey: resolvedKey,
+      interrupt,
+      directory,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    if (response.status >= 400 && response.status < 500) {
+      onRejected?.(`Runner returned ${response.status}: ${text}`);
+      return { busy: false, rejected: true };
+    }
+    throw new Error(`Runner returned ${response.status}: ${text}`);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const json = (await response.json()) as Record<string, unknown>;
+    if (json.busy === true) {
+      return { busy: true };
+    }
+  }
+
+  onAccepted?.();
+
+  const body = response.body;
+  if (body) {
+    for await (const _ of body) {
+      // discard
+    }
+  }
+
+  return { busy: false };
+}
+
+export async function resolveGitHubPrHead(
+  event: NormalizedGitHubEvent,
+  remoteCliUrl: string,
+  fetchImpl?: typeof fetch,
+): Promise<GitHubPrHeadResult> {
+  const params = new URLSearchParams({
+    installation: String(event.installationId),
+    repo: event.repoFullName,
+    number: String(event.number),
+  });
+  const url = `${remoteCliUrl}/github/pr-head?${params.toString()}`;
+
+  for (let attempt = 0; attempt <= GITHUB_PR_HEAD_RETRIES; attempt++) {
+    try {
+      const response = await fetchWithTimeout(url, GITHUB_PR_HEAD_TIMEOUT_MS, fetchImpl);
+      if (response.ok) {
+        const body = (await response.json()) as { ref?: string; headRepoFullName?: string };
+        const ref = body.ref?.trim();
+        const headRepoFullName = body.headRepoFullName?.trim().toLowerCase();
+        if (!ref || !headRepoFullName) {
+          throw new TerminalGitHubDispatchError(
+            "branch_unresolved",
+            "Remote-cli /github/pr-head returned incomplete PR head info",
+          );
+        }
+        return { ref, headRepoFullName };
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        throw new TerminalGitHubDispatchError(
+          "installation_gone",
+          `Remote-cli /github/pr-head returned ${response.status}`,
+        );
+      }
+      if (response.status === 404) {
+        throw new TerminalGitHubDispatchError(
+          "branch_unresolved",
+          "Remote-cli /github/pr-head returned 404",
+        );
+      }
+      if (response.status >= 500 && attempt < GITHUB_PR_HEAD_RETRIES) {
+        continue;
+      }
+      throw new Error(`Remote-cli /github/pr-head returned ${response.status}`);
+    } catch (error) {
+      if (error instanceof TerminalGitHubDispatchError) {
+        throw error;
+      }
+      if (error instanceof Error && error.name === "AbortError") {
+        if (attempt < GITHUB_PR_HEAD_RETRIES) {
+          continue;
+        }
+        throw new Error("Remote-cli /github/pr-head timed out");
+      }
+      if (attempt < GITHUB_PR_HEAD_RETRIES) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new TerminalGitHubDispatchError("branch_unresolved", "Remote-cli /github/pr-head failed");
+}
+
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs: number,
+  fetchImpl?: typeof fetch,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await getFetch(fetchImpl)(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function renderGitHubPrompt(events: NormalizedGitHubEvent[]): string {
+  const lines = events.map((event) => renderGitHubPromptLine(event));
+  let selected = [...lines];
+  let prompt = selected.join("\n\n");
+
+  while (selected.length > 1 && Buffer.byteLength(prompt, "utf8") > GITHUB_PROMPT_LIMIT_BYTES) {
+    selected = selected.slice(1);
+    prompt = selected.join("\n\n");
+  }
+
+  if (selected.length < lines.length) {
+    logInfo(log, "github_prompt_truncated", {
+      originalCount: lines.length,
+      retainedCount: selected.length,
+      droppedCount: lines.length - selected.length,
+      bytes: Buffer.byteLength(prompt, "utf8"),
+    });
+  }
+
+  return prompt;
+}
+
+function renderGitHubPromptLine(event: NormalizedGitHubEvent): string {
+  const body = truncate(singleLine(event.body), GITHUB_PROMPT_EVENT_BODY_MAX);
+  return `[${event.senderLogin}] ${event.action} on ${event.repoFullName}#${event.number} (${event.eventType}): ${body}\n${event.htmlUrl}`;
+}
+
+function singleLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 async function forwardApprovalNotification(

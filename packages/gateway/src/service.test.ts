@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunnerDeps, SlackMcpDeps } from "./service.js";
+import type { NormalizedGitHubEvent } from "./github.js";
 
 // Helper: create a ReadableStream from NDJSON lines
 function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
@@ -31,6 +32,21 @@ function jsonResponse(body: unknown, status = 200): Response {
 function textResponse(text: string, status: number): Response {
   return new Response(text, { status, headers: { "content-type": "text/plain" } });
 }
+
+const githubEventBase: NormalizedGitHubEvent = {
+  source: "github",
+  eventType: "issue_comment",
+  action: "created",
+  installationId: 126669985,
+  repoFullName: "scoutqa-dot-ai/thor",
+  localRepo: "thor",
+  senderLogin: "alice",
+  htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+  number: 42,
+  body: "please review this branch",
+  branch: null,
+  mention: false,
+};
 
 describe("resolveApproval", () => {
   it("posts resolve requests to remote-cli with the secret header", async () => {
@@ -389,5 +405,90 @@ describe("triggerRunnerCron", () => {
 
     expect(result.busy).toBe(false);
     expect(onAccepted).toHaveBeenCalled();
+  });
+});
+
+describe("triggerRunnerGitHub", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+  let deps: RunnerDeps;
+
+  beforeEach(() => {
+    mockFetch = vi.fn();
+    deps = { runnerUrl: "http://runner:3000", fetchImpl: mockFetch };
+  });
+
+  it("resolves pending branch then dispatches runner with canonical correlation key", async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        jsonResponse({ ref: "feature/refactor", headRepoFullName: "scoutqa-dot-ai/thor" }),
+      )
+      .mockResolvedValueOnce(ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]));
+
+    const onAccepted = vi.fn();
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      onAccepted,
+      undefined,
+      vi.fn(),
+    );
+
+    expect(result.busy).toBe(false);
+    expect(mockFetch.mock.calls[0][0]).toContain(
+      "/github/pr-head?installation=126669985&repo=scoutqa-dot-ai%2Fthor&number=42",
+    );
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[1][1]?.body));
+    expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
+    expect(triggerBody.directory).toBe("/workspace/repos/my-repo");
+    expect(triggerBody.prompt).toContain(
+      "[alice] created on scoutqa-dot-ai/thor#42 (issue_comment): please review this",
+    );
+    expect(triggerBody.prompt).toContain("https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1");
+    expect(onAccepted).toHaveBeenCalled();
+  });
+
+  it("maps branch lookup 403 to terminal installation_gone rejection", async () => {
+    mockFetch.mockResolvedValueOnce(textResponse("forbidden", 403));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      undefined,
+      undefined,
+      onRejected,
+    );
+
+    expect(result.busy).toBe(false);
+    expect(onRejected).toHaveBeenCalledWith("installation_gone");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns busy without ack for non-mention events", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ busy: true }));
+    const onAccepted = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [{ ...githubEventBase, branch: "main" }],
+      "git:branch:thor:main",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      onAccepted,
+    );
+
+    expect(result.busy).toBe(true);
+    expect(onAccepted).not.toHaveBeenCalled();
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
+    expect(triggerBody.interrupt).toBe(false);
   });
 });
