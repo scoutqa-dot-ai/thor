@@ -524,6 +524,9 @@ describe("validateGhArgs", () => {
       ).toBeNull();
       expect(validateGhArgs(["api", "repos/{owner}/{repo}", "--template", "{{.name}}"])).toBeNull();
       expect(validateGhArgs(["api", "repos/{owner}/{repo}", "--include", "--silent"])).toBeNull();
+      expect(
+        validateGhArgs(["api", "repos/{owner}/{repo}/pulls", "--paginate", "--jq", ".[].number"]),
+      ).toBeNull();
     });
 
     it("does not route body values that look like help flags into the help path", () => {

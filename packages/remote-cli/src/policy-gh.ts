@@ -209,6 +209,7 @@ function validateGhApiArgs(args: string[]): string | null {
   const parsed = scanPolicyArgs(args, 2, [
     { name: "include", kind: "boolean", aliases: ["--include", "-i"] },
     { name: "silent", kind: "boolean", aliases: ["--silent"] },
+    { name: "paginate", kind: "boolean", aliases: ["--paginate"] },
     { name: "jq", kind: "value", aliases: ["--jq", "-q"] },
     { name: "template", kind: "value", aliases: ["--template", "-t"] },
   ]);

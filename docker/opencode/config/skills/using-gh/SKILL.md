@@ -41,7 +41,7 @@ Required: `--body`/`-b` and exactly one of `--comment`/`-c` or `--request-change
 
 ### `gh api`
 
-Implicit GET only. Required: REST endpoint as the first positional argument. Optional output flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`. Blocked: `graphql`, `--method`/`-X`, `--input`, `-H`/`--header`, `--preview`, `--hostname`, `-f`/`--raw-field`, and `-F`/`--field`.
+Implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages). Blocked: `graphql`, `--method`/`-X`, `--input`, `-H`/`--header`, `--preview`, `--hostname`, `-f`/`--raw-field`, and `-F`/`--field`.
 
 ## Read-only (passthrough) commands
 
