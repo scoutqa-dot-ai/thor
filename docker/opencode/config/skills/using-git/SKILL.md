@@ -32,7 +32,19 @@ git worktree add -b pr-123 /workspace/worktrees/<repo>/pr-123 pr-123
 
 ### `git merge-base`
 
-Exact shape only: `git merge-base <left> <right>`.
+Supported shapes: `git merge-base <left> <right>`, `git merge-base --is-ancestor <left> <right>`, and `git merge-base --fork-point <ref> [<commit>]`.
+
+### `git ls-remote`
+
+Network-safe form only: `git ls-remote [<flags>] origin [<ref-pattern>...]`. Non-`origin` remotes are denied.
+
+### `git tag`
+
+List-only: `git tag`, `git tag -l [<pattern>...]`, `git tag --list [<pattern>...]`, optionally with `-n[<num>]` output. Creation, deletion, signing, and move flags are denied.
+
+### `git stash`
+
+Read-only subcommands only: `git stash list [...]` and `git stash show [...]`. `stash push`/`pop`/`apply`/`drop`/`clear` are denied.
 
 ### `git branch`
 
@@ -40,7 +52,7 @@ Read-only only: `git branch --show-current`, `git branch -a`, `git branch --all`
 
 ### `git rev-parse`
 
-Only the exact branch-introspection form `git rev-parse --abbrev-ref HEAD` is supported.
+Exact forms only: `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`, `git rev-parse --short HEAD`, `git rev-parse --short=<N> HEAD`, `git rev-parse --show-toplevel`, `git rev-parse --git-dir`, `git rev-parse --is-inside-work-tree`.
 
 ### `git remote`
 
@@ -78,9 +90,16 @@ Only `git push origin HEAD:refs/heads/<branch>` is supported, with optional `--d
 
 ## Passthrough subcommands (any arguments accepted)
 
+- `git blame`
+- `git cat-file`
+- `git describe`
 - `git diff`
-- `git ls-files`
+- `git for-each-ref`
+- `git grep`
 - `git log`
+- `git ls-files`
+- `git name-rev`
+- `git reflog`
 - `git shortlog`
 - `git show`
 - `git show-ref`

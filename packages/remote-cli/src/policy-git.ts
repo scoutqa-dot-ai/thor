@@ -31,12 +31,22 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "remote",
   "fetch",
   "ls-files",
+  "ls-remote",
   "restore",
   "show-ref",
   "add",
   "commit",
   "worktree",
   "push",
+  "blame",
+  "reflog",
+  "grep",
+  "for-each-ref",
+  "cat-file",
+  "name-rev",
+  "describe",
+  "tag",
+  "stash",
 ]);
 
 const PROTECTED_PUSH_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
@@ -72,6 +82,13 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
     case "shortlog":
     case "ls-files":
     case "show-ref":
+    case "blame":
+    case "reflog":
+    case "grep":
+    case "for-each-ref":
+    case "cat-file":
+    case "name-rev":
+    case "describe":
       return { args: [...args] };
     case "merge-base":
       return wrap(validateMergeBase(args), args);
@@ -83,6 +100,12 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
       return wrap(validateRemote(args), args);
     case "fetch":
       return wrap(validateFetch(args), args);
+    case "ls-remote":
+      return wrap(validateLsRemote(args), args);
+    case "tag":
+      return wrap(validateTag(args), args);
+    case "stash":
+      return wrap(validateStash(args), args);
     case "restore":
       return wrap(validateRestore(args), args);
     case "add":
@@ -116,10 +139,28 @@ function denyMessage(command: string): string {
 }
 
 function validateMergeBase(args: string[]): string | null {
-  if (args.length !== 3 || args[1].startsWith("-") || args[2].startsWith("-")) {
-    return denyMessage("git merge-base");
+  // Plain: `merge-base <left> <right>`.
+  if (args.length === 3 && !args[1].startsWith("-") && !args[2].startsWith("-")) {
+    return null;
   }
-  return null;
+  // `merge-base --is-ancestor <left> <right>` — exits 0/1 without output.
+  if (
+    args.length === 4 &&
+    args[1] === "--is-ancestor" &&
+    !args[2].startsWith("-") &&
+    !args[3].startsWith("-")
+  ) {
+    return null;
+  }
+  // `merge-base --fork-point <ref> [<commit>]`.
+  if (
+    (args.length === 3 || args.length === 4) &&
+    args[1] === "--fork-point" &&
+    args.slice(2).every((a) => !a.startsWith("-"))
+  ) {
+    return null;
+  }
+  return denyMessage("git merge-base");
 }
 
 function validateBranch(args: string[]): string | null {
@@ -149,9 +190,23 @@ function validateBranch(args: string[]): string | null {
 }
 
 function validateRevParse(args: string[]): string | null {
-  return matchesExactArgs(args, ["rev-parse", "--abbrev-ref", "HEAD"])
-    ? null
-    : denyMessage("git rev-parse");
+  const EXACT_FORMS: readonly (readonly string[])[] = [
+    ["rev-parse", "--abbrev-ref", "HEAD"],
+    ["rev-parse", "HEAD"],
+    ["rev-parse", "--short", "HEAD"],
+    ["rev-parse", "--show-toplevel"],
+    ["rev-parse", "--git-dir"],
+    ["rev-parse", "--is-inside-work-tree"],
+  ];
+  for (const expected of EXACT_FORMS) {
+    if (matchesExactArgs(args, expected)) return null;
+  }
+  // `rev-parse --short=<N> HEAD`
+  if (args.length === 3 && args[2] === "HEAD" && args[1].startsWith("--short=")) {
+    const n = args[1].slice("--short=".length);
+    if (n.length > 0 && /^\d+$/.test(n)) return null;
+  }
+  return denyMessage("git rev-parse");
 }
 
 function validateRemote(args: string[]): string | null {
@@ -296,6 +351,56 @@ function validatePushRefspec(refspec: string): string | null {
   }
 
   return null;
+}
+
+function validateLsRemote(args: string[]): string | null {
+  // `git ls-remote [<flags>] origin [<ref-pattern>...]`. Network call, so the
+  // remote must be `origin` — matches the `validateFetch` restriction.
+  let sawRepo = false;
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg.startsWith("-")) continue;
+    if (!sawRepo) {
+      if (arg !== "origin") return denyMessage("git ls-remote");
+      sawRepo = true;
+      continue;
+    }
+    // Subsequent positionals are ref patterns; no further validation.
+  }
+  return sawRepo ? null : denyMessage("git ls-remote");
+}
+
+function validateTag(args: string[]): string | null {
+  // List-only: `git tag`, `git tag -l [<pattern>...]`, `git tag --list [<pattern>...]`,
+  // optionally with `-n[<num>]` output. Positional args are tag-name patterns and are
+  // only meaningful paired with `-l`/`--list` — without the list flag, `git tag <name>`
+  // creates a tag at HEAD, which is a write.
+  let listMode = false;
+  let sawPositional = false;
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg.startsWith("-")) {
+      sawPositional = true;
+      continue;
+    }
+    if (arg === "-l" || arg === "--list") {
+      listMode = true;
+      continue;
+    }
+    if (arg === "-n" || /^-n\d+$/.test(arg)) continue;
+    return denyMessage("git tag");
+  }
+  if (sawPositional && !listMode) return denyMessage("git tag");
+  return null;
+}
+
+function validateStash(args: string[]): string | null {
+  // Read-only only: `git stash list [...]` and `git stash show [...]`.
+  // Bare `git stash` defaults to `stash push`, so we require an explicit subcommand.
+  if (args.length < 2) return denyMessage("git stash");
+  const sub = args[1];
+  if (sub === "list" || sub === "show") return null;
+  return denyMessage("git stash");
 }
 
 function matchesExactArgs(args: string[], expected: readonly string[]): boolean {

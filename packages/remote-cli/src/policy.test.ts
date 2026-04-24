@@ -86,6 +86,35 @@ describe("validateGitArgs", () => {
         ["remote", "show", "origin"],
         ["remote", "get-url", "origin"],
         ["show-ref", "--verify", "refs/heads/main"],
+        ["blame", "packages/remote-cli/src/policy.ts"],
+        ["blame", "-L", "10,20", "packages/remote-cli/src/policy.ts"],
+        ["reflog"],
+        ["reflog", "show", "HEAD"],
+        ["grep", "TODO", "--", "packages/remote-cli/src"],
+        ["for-each-ref", "--format=%(refname)", "refs/heads/"],
+        ["cat-file", "-p", "HEAD"],
+        ["cat-file", "--batch-check"],
+        ["name-rev", "HEAD"],
+        ["describe", "--tags", "--always"],
+        ["ls-remote", "origin"],
+        ["ls-remote", "--heads", "origin"],
+        ["ls-remote", "origin", "refs/heads/main"],
+        ["tag"],
+        ["tag", "-l"],
+        ["tag", "--list", "v*"],
+        ["tag", "-n", "--list", "v*"],
+        ["tag", "-n5", "--list"],
+        ["stash", "list"],
+        ["stash", "show", "stash@{0}"],
+        ["rev-parse", "HEAD"],
+        ["rev-parse", "--short", "HEAD"],
+        ["rev-parse", "--short=12", "HEAD"],
+        ["rev-parse", "--show-toplevel"],
+        ["rev-parse", "--git-dir"],
+        ["rev-parse", "--is-inside-work-tree"],
+        ["merge-base", "--is-ancestor", "HEAD", "origin/main"],
+        ["merge-base", "--fork-point", "origin/main"],
+        ["merge-base", "--fork-point", "origin/main", "HEAD"],
       ];
 
       for (const args of allowedCommands) {
@@ -179,11 +208,51 @@ describe("validateGitArgs", () => {
       expectGitDenied(["branch", "--show-current", "--list"]);
     });
 
-    it("blocks rev-parse forms outside exact branch introspection", () => {
+    it("blocks rev-parse forms outside the exact introspection allowlist", () => {
       expectGitDenied(["rev-parse"]);
-      expectGitDenied(["rev-parse", "HEAD"]);
-      expectGitDenied(["rev-parse", "--show-toplevel"]);
       expectGitDenied(["rev-parse", "--abbrev-ref", "origin/main"]);
+      expectGitDenied(["rev-parse", "origin/main"]);
+      expectGitDenied(["rev-parse", "--verify", "HEAD"]);
+      expectGitDenied(["rev-parse", "--short=", "HEAD"]);
+      expectGitDenied(["rev-parse", "--short=abc", "HEAD"]);
+      expectGitDenied(["rev-parse", "--short", "origin/main"]);
+      expectGitDenied(["rev-parse", "--show-cdup"]);
+    });
+
+    it("blocks merge-base shapes outside the allowed forms", () => {
+      expectGitDenied(["merge-base"]);
+      expectGitDenied(["merge-base", "HEAD"]);
+      expectGitDenied(["merge-base", "--octopus", "HEAD", "origin/main"]);
+      expectGitDenied(["merge-base", "--is-ancestor", "--all", "HEAD", "origin/main"]);
+      expectGitDenied(["merge-base", "--fork-point", "--all", "origin/main"]);
+    });
+
+    it("blocks ls-remote to remotes other than origin", () => {
+      expectGitDenied(["ls-remote"]);
+      expectGitDenied(["ls-remote", "upstream"]);
+      expectGitDenied(["ls-remote", "https://evil.com/repo.git"]);
+      expectGitDenied(["ls-remote", "--heads"]);
+    });
+
+    it("blocks tag creation, deletion, and other write forms", () => {
+      expectGitDenied(["tag", "v1.0.0"]);
+      expectGitDenied(["tag", "-a", "v1.0.0", "-m", "release"]);
+      expectGitDenied(["tag", "-d", "v1.0.0"]);
+      expectGitDenied(["tag", "-f", "v1.0.0"]);
+      expectGitDenied(["tag", "-s", "v1.0.0"]);
+      expectGitDenied(["tag", "--delete", "v1.0.0"]);
+      expectGitDenied(["tag", "--contains", "HEAD"]);
+    });
+
+    it("blocks stash write subcommands", () => {
+      expectGitDenied(["stash"]);
+      expectGitDenied(["stash", "push"]);
+      expectGitDenied(["stash", "pop"]);
+      expectGitDenied(["stash", "apply"]);
+      expectGitDenied(["stash", "drop"]);
+      expectGitDenied(["stash", "clear"]);
+      expectGitDenied(["stash", "save", "wip"]);
+      expectGitDenied(["stash", "branch", "recovery"]);
     });
 
     it("blocks git remote add/set-url/rename/remove and other unsupported shapes", () => {
