@@ -36,7 +36,6 @@ jobs:
 
       - name: Bring up compose stack for e2e
         env:
-          WORKSPACE_CONFIG_JSON: ${{ vars.WORKSPACE_CONFIG_JSON }}
           OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}
@@ -76,7 +75,17 @@ jobs:
             echo "RESOLVE_SECRET=$RESOLVE_SECRET"
           } >> "$GITHUB_ENV"
 
-          printf '%s' "$WORKSPACE_CONFIG_JSON" > docker-volumes/workspace/config.json
+          cat > docker-volumes/workspace/config.json <<'EOF'
+          {
+            "repos": {
+              "acme-multi-hyphen-repo": {
+                "channels": ["C123456789"],
+                "proxies": ["atlassian"]
+              }
+            }
+          }
+          EOF
+
           printf '%s' "$OPENCODE_AUTH_JSON" > docker-volumes/opencode/auth.json
           chmod 600 docker-volumes/opencode/auth.json
 
