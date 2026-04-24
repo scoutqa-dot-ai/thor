@@ -1,0 +1,27 @@
+packages/remote-cli/src/policy-git.ts
+  40353b33ce484e1f 2,4-6,24,27,29-30,60-64,78-80,83-85,87,89-120,155,159-164,170-171,174-175,178,180-183,188-190,251,270,272-275,278-280,283-284,287,289-291,293,295,311-323,327-360,364-408,410-448,450-451,460,470
+scripts/gen-policy-skill.ts
+  40353b33ce484e1f 3-6,8-10,13-14,22-23,25,32-96,100-101,212
+packages/remote-cli/src/policy-gh.ts
+  40353b33ce484e1f 2,4-5,12-23,25-38,51,64-69,72-74,76,78,126-187,199-245,253-300,306-309,317-320,325,337-342,345-346,360,364,369,374-378,384,389,401,406-408
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5a4b0333e19203ccc50e11764a00578dd59e0a22",
+  "prompts": {
+    "40353b33ce484e1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c323878d-2418-41c9-b1eb-4b2333a5e889",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 664,
+      "total_deletions": 625,
+      "accepted_lines": 554,
+      "overriden_lines": 0
+    }
+  }
+}
