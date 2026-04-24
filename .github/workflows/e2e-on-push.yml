@@ -73,7 +73,10 @@ jobs:
             docker-volumes/workspace/cron \
             docker-volumes/workspace/worktrees \
             docker-volumes/opencode \
-            docker-volumes/github-app
+            docker-volumes/github-app \
+            docker-volumes/home/thor
+          # remote-cli runs as the "thor" user; make the mounted home writable.
+          chmod 777 docker-volumes/home/thor
 
           printf '%s' "$THOR_GITHUB_APP_PRIVATE_KEY" > docker-volumes/github-app/private-key.pem
           chmod 600 docker-volumes/github-app/private-key.pem
