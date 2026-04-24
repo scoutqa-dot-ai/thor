@@ -125,7 +125,12 @@ export function parseAgainstSpec(
   ctx: ParseContext,
 ): { ok: true; parsed: ParsedArgs } | { ok: false; error: string } {
   if (spec.passthrough) {
-    return { ok: true, parsed: { positional: [...args], flags: new Map() } };
+    const parsed: ParsedArgs = { positional: [...args], flags: new Map() };
+    if (spec.postValidate) {
+      const err = spec.postValidate(parsed, ctx);
+      if (err) return { ok: false, error: err };
+    }
+    return { ok: true, parsed };
   }
 
   const positional: string[] = [];

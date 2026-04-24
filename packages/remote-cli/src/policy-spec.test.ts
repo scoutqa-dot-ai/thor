@@ -45,6 +45,21 @@ describe("parseAgainstSpec", () => {
       };
       expect(parseAgainstSpec(["anything", "--unknown"], spec, {}).ok).toBe(true);
     });
+
+    it("still runs postValidate so passthrough specs can enforce business rules", () => {
+      const spec: CommandSpec = {
+        path: ["worktree", "add"],
+        passthrough: true,
+        postValidate: (p) =>
+          p.positional.some((t) => t.startsWith("/workspace/worktrees/"))
+            ? null
+            : "worktree path must be under /workspace/worktrees/",
+      };
+      expect(parseAgainstSpec(["/workspace/worktrees/repo/x"], spec, {}).ok).toBe(true);
+      const bad = parseAgainstSpec(["/tmp/x"], spec, {});
+      expect(bad.ok).toBe(false);
+      if (!bad.ok) expect(bad.error).toContain("/workspace/worktrees/");
+    });
   });
 
   describe("bool flags", () => {
