@@ -46,6 +46,7 @@ Implicit GET only. Required: REST endpoint as the first positional argument. Opt
 ## Read-only (passthrough) commands
 
 - `gh auth status`
+- `gh cache list`
 - `gh issue list`
 - `gh issue view`
 - `gh label list`
@@ -59,8 +60,10 @@ Implicit GET only. Required: REST endpoint as the first positional argument. Opt
 - `gh run list`
 - `gh run view`
 - `gh run watch`
+- `gh search code`
 - `gh search issues`
 - `gh search prs`
+- `gh search repos`
 - `gh workflow list`
 - `gh workflow view`
 

@@ -13,8 +13,11 @@ const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
 const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "api",
   "auth status",
+  "cache list",
   "search prs",
   "search issues",
+  "search repos",
+  "search code",
   "pr view",
   "pr diff",
   "pr list",

@@ -434,10 +434,13 @@ describe("validateGhArgs", () => {
         ["issue", "list", "--limit", "10"],
         ["search", "prs", "is:open reviewer:me"],
         ["search", "issues", "label:bug sort:updated-desc"],
+        ["search", "repos", "org:acme topic:observability"],
+        ["search", "code", "sandbox"],
         ["label", "list", "--limit", "20"],
         ["release", "list", "--limit", "5"],
         ["release", "view", "latest"],
         ["release", "view", "v1.2.3", "--json", "tagName"],
+        ["cache", "list", "--limit", "20"],
         ["repo", "view"],
         ["repo", "view", "owner/repo", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
         ["run", "list", "--limit", "10"],
@@ -631,11 +634,15 @@ describe("validateGhArgs", () => {
       expectGhDenied(["workflow", "view"]);
     });
 
-    it("blocks still-unsupported search and release command shapes", () => {
-      expectGhDenied(["search", "code", "sandbox"]);
+    it("blocks still-unsupported search, release, and cache command shapes", () => {
+      expectGhDenied(["search", "commits", "hash:abc"]);
       expectGhDenied(["release", "download", "v1.2.3"]);
       expectGhDenied(["release", "delete", "v1.2.3"]);
       expectGhDenied(["release", "view"]);
+      expectGhDenied(["release", "create", "v1.2.3"]);
+      expectGhDenied(["cache", "delete", "123"]);
+      expectGhDenied(["label", "create", "bug"]);
+      expectGhDenied(["label", "delete", "bug"]);
     });
   });
 
