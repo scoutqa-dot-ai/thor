@@ -136,6 +136,12 @@ describe("validateGitArgs", () => {
         ["worktree", "add", "/workspace/worktrees/repo/feat", "-b", "feat"],
         ["worktree", "add", "/workspace/worktrees/repo/feat", "-b", "feat", "origin/main"],
         ["worktree", "add", "/workspace/worktrees/repo/feat", "origin/main", "-b", "feat"],
+        ["worktree", "list"],
+        ["worktree", "list", "--porcelain"],
+        ["worktree", "remove", "/workspace/worktrees/repo/feat"],
+        ["worktree", "prune"],
+        ["worktree", "prune", "--dry-run"],
+        ["worktree", "prune", "-n"],
         ["push", "origin", "HEAD:refs/heads/feat/x"],
         ["push", "--dry-run", "origin", "HEAD:refs/heads/feat/x"],
         ["push", "origin", "--dry-run", "HEAD:refs/heads/feat/x"],
@@ -186,6 +192,22 @@ describe("validateGitArgs", () => {
       expectGitDenied(["worktree", "add", "-b", "feat", "/tmp/evil"]);
       expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/repos/sneaky"]);
       expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/worktrees/../repos/escape"]);
+    });
+
+    it("blocks worktree remove outside /workspace/worktrees/ and unsupported forms", () => {
+      expectGitDenied(["worktree", "remove", "/tmp/evil"]);
+      expectGitDenied(["worktree", "remove", "/workspace/repos/sneaky"]);
+      expectGitDenied(["worktree", "remove", "/workspace/worktrees/../etc"]);
+      expectGitDenied(["worktree", "remove", "--force", "/workspace/worktrees/repo/feat"]);
+      expectGitDenied(["worktree", "remove"]);
+    });
+
+    it("blocks unsupported worktree subcommands and flag shapes", () => {
+      expectGitDenied(["worktree"]);
+      expectGitDenied(["worktree", "move", "/a", "/b"]);
+      expectGitDenied(["worktree", "lock", "/workspace/worktrees/repo/feat"]);
+      expectGitDenied(["worktree", "list", "--verbose"]);
+      expectGitDenied(["worktree", "prune", "--expire", "1.day.ago"]);
     });
 
     it("allows worktree paths with nested branch names", () => {

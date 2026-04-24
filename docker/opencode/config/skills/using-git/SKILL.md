@@ -76,13 +76,18 @@ Exact non-interactive shape only: `git commit -m <message>`.
 
 ### `git worktree`
 
-Only `git worktree add` is supported, with:
+Supported subcommands:
 
-- one `-b <branch>`
-- a worktree `<path>` under `/workspace/worktrees/`
-- an optional `<start-point>`
+- `git worktree add` with:
+  - one `-b <branch>`
+  - a worktree `<path>` under `/workspace/worktrees/`
+  - an optional `<start-point>`
 
-Those safe arguments may appear in any order that Git accepts.
+  Those safe arguments may appear in any order that Git accepts.
+
+- `git worktree list [--porcelain]` — read-only enumeration.
+- `git worktree remove <path>` — `<path>` must be under `/workspace/worktrees/`. `--force` is denied; clean uncommitted state first.
+- `git worktree prune [--dry-run]` — remove admin entries for worktrees whose directories are gone.
 
 ### `git push`
 

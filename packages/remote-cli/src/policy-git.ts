@@ -113,7 +113,7 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
     case "commit":
       return wrap(validateCommit(args), args);
     case "worktree":
-      return wrap(validateWorktreeAdd(args), args);
+      return wrap(validateWorktree(args), args);
     case "push":
       return wrap(validatePush(args), args);
     default:
@@ -289,8 +289,45 @@ function validateCommit(args: string[]): string | null {
   return denyMessage("git commit");
 }
 
+function validateWorktree(args: string[]): string | null {
+  const sub = args[1];
+  if (sub === "add") return validateWorktreeAdd(args);
+  if (sub === "list") return validateWorktreeList(args);
+  if (sub === "remove") return validateWorktreeRemove(args);
+  if (sub === "prune") return validateWorktreePrune(args);
+  return denyMessage("git worktree");
+}
+
+function validateWorktreeList(args: string[]): string | null {
+  // `git worktree list [--porcelain]` — read-only.
+  if (args.length === 2) return null;
+  if (args.length === 3 && args[2] === "--porcelain") return null;
+  return denyMessage("git worktree list");
+}
+
+function validateWorktreeRemove(args: string[]): string | null {
+  // `git worktree remove <path>` — path must be under /workspace/worktrees/.
+  // --force is denied: callers should handle the "has uncommitted changes" case
+  // explicitly rather than nuke blindly.
+  if (args.length !== 3 || args[2].startsWith("-")) {
+    return denyMessage("git worktree remove");
+  }
+  const normalized = normalizePath(args[2]);
+  if (!normalized.startsWith(WORKTREE_PREFIX)) {
+    return denyMessage("git worktree remove");
+  }
+  return null;
+}
+
+function validateWorktreePrune(args: string[]): string | null {
+  // `git worktree prune [--dry-run]` — removes admin entries for gone worktrees.
+  if (args.length === 2) return null;
+  if (args.length === 3 && (args[2] === "--dry-run" || args[2] === "-n")) return null;
+  return denyMessage("git worktree prune");
+}
+
 function validateWorktreeAdd(args: string[]): string | null {
-  if (args[1] !== "add" || args.length < 5 || args.length > 6) {
+  if (args.length < 5 || args.length > 6) {
     return denyMessage("git worktree add");
   }
 
