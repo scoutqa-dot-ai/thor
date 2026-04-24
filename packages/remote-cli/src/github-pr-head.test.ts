@@ -81,7 +81,7 @@ describe("remote-cli github pr-head endpoint", () => {
           JSON.stringify({
             head: {
               ref: "feature/refactor",
-              repo: { full_name: "ScoutQA-Dot-AI/Thor" },
+              repo: { full_name: "scoutqa-dot-ai/thor" },
             },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -94,7 +94,7 @@ describe("remote-cli github pr-head endpoint", () => {
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ ref: "feature/refactor", headRepoFullName: "ScoutQA-Dot-AI/Thor" });
+    expect(body).toEqual({ ref: "feature/refactor", headRepoFullName: "scoutqa-dot-ai/thor" });
     expect(generateAppJWTMock).toHaveBeenCalledWith("12345", "/tmp/github-app.pem");
     expect(mintInstallationTokenMock).toHaveBeenCalledWith(
       126669985,
