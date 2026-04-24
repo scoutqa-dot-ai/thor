@@ -24,6 +24,7 @@ metabase schemas
 metabase tables <schema>
 metabase columns <schema> <table>
 metabase query '<SQL>'
+metabase question <question-id>
 ```
 
 Discovery commands (`schemas`, `tables`, `columns`) are filtered by `METABASE_ALLOWED_SCHEMAS`.
@@ -31,6 +32,25 @@ Discovery commands (`schemas`, `tables`, `columns`) are filtered by `METABASE_AL
 ---
 
 ## Core workflows
+
+### 0. Start from a saved question URL
+
+When the user gives you a Metabase question URL like
+`https://insights-metabase.katalon.com/question/7751-daily-log-web-pages-paths`,
+fetch the SQL it uses directly instead of guessing from the slug:
+
+```bash
+metabase question 7751
+# or pass the full URL slug — the ID is parsed automatically:
+metabase question 7751-daily-log-web-pages-paths
+```
+
+Response: `{ id, name, description, sql }` — use `sql` as the starting point for your query.
+Adapt it (add filters, change date ranges, narrow columns, etc.) then run with `metabase query`.
+
+Only native SQL questions are supported. MBQL (GUI-built) questions will return an error.
+
+---
 
 ### 1. List available schemas
 

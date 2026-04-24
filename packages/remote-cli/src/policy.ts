@@ -242,7 +242,10 @@ const ALLOWED_METABASE_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "tables",
   "columns",
   "query",
+  "question",
 ]);
+
+const METABASE_QUESTION_REF_RE = /^[1-9]\d*(?:-[a-z0-9-]+)?$/;
 
 export function validateMetabaseArgs(args: string[]): string | null {
   if (!Array.isArray(args) || args.length === 0) {
@@ -251,7 +254,7 @@ export function validateMetabaseArgs(args: string[]): string | null {
 
   const subcommand = args[0];
   if (!ALLOWED_METABASE_SUBCOMMANDS.has(subcommand)) {
-    return `"metabase ${subcommand}" is not allowed — valid subcommands: schemas, tables, columns, query`;
+    return `"metabase ${subcommand}" is not allowed — valid subcommands: schemas, tables, columns, query, question`;
   }
 
   const allowedSchemas = getMetabaseAllowedSchemas();
@@ -282,6 +285,13 @@ export function validateMetabaseArgs(args: string[]): string | null {
 
   if (subcommand === "query") {
     if (args.length !== 2) return '"metabase query" requires exactly 1 argument: <sql>';
+    return null;
+  }
+
+  if (subcommand === "question") {
+    if (args.length !== 2) return '"metabase question" requires exactly 1 argument: <question-id>';
+    if (!METABASE_QUESTION_REF_RE.test(args[1]))
+      return `"${args[1]}" is not a valid question ID (expected a positive integer or URL slug)`;
     return null;
   }
 
