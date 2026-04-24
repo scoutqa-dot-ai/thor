@@ -2,8 +2,8 @@
  * git policy — explicit allowlist of Thor-supported workflows.
  *
  * This module intentionally supports a small set of command shapes. Anything
- * outside that allowlist is denied with a pointer to the generated `using-git`
- * skill, which is the user-facing documentation for the supported surface.
+ * outside that allowlist is denied with a pointer to the `using-git` skill,
+ * which is the user-facing documentation for the supported surface.
  */
 
 interface ResolvedGitArgsSuccess {
@@ -17,7 +17,7 @@ export type ResolvedGitArgs = ResolvedGitArgsSuccess | ResolvedGitArgsFailure;
 const WORKTREE_PREFIX = "/workspace/worktrees/";
 const USING_GIT_HINT = "Load skill using-git for the supported command patterns.";
 
-export const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
+const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "status",
   "log",
   "diff",
@@ -32,10 +32,6 @@ export const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "worktree",
   "push",
 ]);
-
-// Kept for generator compatibility until the skill-doc phase rewrites that
-// script around the reduced allowlist. No `git --no-pager` forms are allowed.
-export const NO_PAGER_SAFE_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set();
 
 const PROTECTED_PUSH_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
 const ALLOWED_PUSH_FLAGS: ReadonlySet<string> = new Set(["--dry-run", "-u", "--set-upstream"]);

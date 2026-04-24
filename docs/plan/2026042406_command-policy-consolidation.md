@@ -12,7 +12,7 @@ The final model is:
 2. workflow-oriented instead of grammar-oriented
 3. current-repo-only on the mutating path
 4. explicit about ambiguous operations such as checkout, push, and GH write selectors
-5. paired with generated `using-git` / `using-gh` skill docs from the same allowlist source of truth
+5. paired with hand-maintained `using-git` / `using-gh` skill docs that describe the same allowed surface
 
 ## Scope
 
@@ -20,7 +20,7 @@ The final model is:
 
 - reduce the supported `git` / `gh` surface to the workflows Thor actually needs
 - make `git` and `gh` denials default to skill-loading hints
-- keep generated skill docs aligned with runtime policy
+- keep hand-maintained skill docs aligned with runtime policy
 - keep policy coverage explicit in `packages/remote-cli/src/policy.test.ts`
 - preserve the exported policy API: `validateGitArgs`, `resolveGitArgs`, and `validateGhArgs`
 
@@ -38,7 +38,7 @@ The final model is:
 
 - Match only approved command shapes; deny everything else by default.
 - Keep parsing minimal and localized to the commands that truly need it.
-- Use the generated skills as the user-facing description of the allowed surface.
+- Use the hand-maintained skills as the user-facing description of the allowed surface.
 
 Every denied command returns:
 
@@ -49,19 +49,28 @@ Every denied command returns:
 
 Thor supports the following `git` workflows:
 
-| Area        | Supported shape                                                                                              |
-| ----------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
-| Version     | `git --version`                                                                                              |
-| Read-only   | `git status ...`, `git log ...`, `git diff ...`, `git show ...`                                              |
-| Merge base  | `git merge-base <left> <right>`                                                                              |
-| Branch read | `git branch --show-current`, `git branch -a`, `git branch --all`                                             |
-| Remote read | `git remote`, `git remote -v`, `git remote --verbose`, `git remote show origin`, `git remote get-url origin` |
-| Fetch       | `git fetch origin [<ref>...]`                                                                                |
-| Restore     | `git restore [--source <tree>] -- <path...>`                                                                 |
-| Stage       | `git add -A`, `git add <path...>`                                                                            |
-| Commit      | `git commit -m <message>`                                                                                    |
-| Worktree    | `git worktree add -b <branch> <path> [<start-point>]` with `<path>` under `/workspace/worktrees/`            |
-| Push        | `git push [--dry-run] [-u                                                                                    | --set-upstream] origin HEAD:refs/heads/<branch>` |
+- version:
+  `git --version`
+- read-only:
+  `git status ...`, `git log ...`, `git diff ...`, `git show ...`
+- merge base:
+  `git merge-base <left> <right>`
+- branch read:
+  `git branch --show-current`, `git branch -a`, `git branch --all`
+- remote read:
+  `git remote`, `git remote -v`, `git remote --verbose`, `git remote show origin`, `git remote get-url origin`
+- fetch:
+  `git fetch origin [<ref>...]`
+- restore:
+  `git restore [--source <tree>] -- <path...>`
+- stage:
+  `git add -A`, `git add <path...>`
+- commit:
+  `git commit -m <message>`
+- worktree:
+  `git worktree add -b <branch> <path> [<start-point>]` with `<path>` under `/workspace/worktrees/`
+- push:
+  `git push [--dry-run] [-u|--set-upstream] origin HEAD:refs/heads/<branch>`
 
 Notable exclusions:
 
@@ -80,20 +89,30 @@ Notable exclusions:
 
 Thor supports the following `gh` workflows:
 
-| Area             | Supported shape                                                                                                           |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| Version and help | `gh --version`, `gh help ...`, `gh <group> --help`, `gh <group> <subcommand> --help`                                      |
-| Auth read        | `gh auth status`                                                                                                          |
-| PR read          | `gh pr view [selector] ...`, `gh pr diff [selector] ...`, `gh pr list ...`, `gh pr checks [selector] ...`, `gh pr status` |
-| Issue read       | `gh issue view <number> ...`, `gh issue list ...`                                                                         |
-| Repo read        | `gh repo view [<owner/repo>] ...`                                                                                         |
-| Run read         | `gh run list ...`, `gh run view <id> ...`, `gh run watch <id> ...`                                                        |
-| Workflow read    | `gh workflow list ...`, `gh workflow view <workflow> ...`                                                                 |
-| PR create        | `gh pr create --title <t> --body <b> [--base <branch>] [--draft]`                                                         |
-| PR comment       | `gh pr comment <number> --body <text>`                                                                                    |
-| Issue comment    | `gh issue comment <number> --body <text>`                                                                                 |
-| PR review        | `gh pr review [<number>] (--comment                                                                                       | --request-changes) --body <text>` |
-| REST read gap    | `gh api <endpoint> [output flags]` with the restricted subset below                                                       |
+- version and help:
+  `gh --version`, `gh help ...`, `gh <group> --help`, `gh <group> <subcommand> --help`
+- auth read:
+  `gh auth status`
+- PR read:
+  `gh pr view [selector] ...`, `gh pr diff [selector] ...`, `gh pr list ...`, `gh pr checks [selector] ...`, `gh pr status`
+- issue read:
+  `gh issue view <number> ...`, `gh issue list ...`
+- repo read:
+  `gh repo view [<owner/repo>] ...`
+- run read:
+  `gh run list ...`, `gh run view <id> ...`, `gh run watch <id> ...`
+- workflow read:
+  `gh workflow list ...`, `gh workflow view <workflow> ...`
+- PR create:
+  `gh pr create --title <t> --body <b> [--base <branch>] [--draft]`
+- PR comment:
+  `gh pr comment <number> --body <text>`
+- issue comment:
+  `gh issue comment <number> --body <text>`
+- PR review:
+  `gh pr review [<number>] (--comment | --request-changes) --body <text>`
+- REST read gap:
+  `gh api <endpoint> [output flags]` with the restricted subset below
 
 The supported `gh api` subset is intentionally tiny:
 
@@ -112,9 +131,9 @@ Notable exclusions:
 - PR approval, merge, edit, delete-last, and similar mutating shortcuts
 - less-central read tuples such as `gh search ...`, `gh label list`, and `gh release ...`
 
-### Generated Skills
+### Skill Docs
 
-`docker/opencode/config/skills/using-git/SKILL.md` and `docker/opencode/config/skills/using-gh/SKILL.md` remain generated artifacts. They are projections of the allowlist exported from `policy-git.ts` and `policy-gh.ts`, not hand-maintained documentation.
+`docker/opencode/config/skills/using-git/SKILL.md` and `docker/opencode/config/skills/using-gh/SKILL.md` are maintained by hand. They should stay aligned with the allowlist enforced by `policy-git.ts` and `policy-gh.ts`, but they are no longer generated artifacts.
 
 ## Phases
 
@@ -157,13 +176,13 @@ Notable exclusions:
 - make GH write commands exact templates
 - remove cross-repo write support and selector-heavy write parsing
 - reintroduce only a narrow implicit-GET `gh api` subset
-- regenerate skill docs and align tests
+- update skill docs directly and align tests
 
 **Exit criteria:**
 
 - GH write validation is template-based
 - `gh api` cannot send a body, change method, switch host, or use GraphQL
-- generated skills and tests match the final policy surface
+- skill docs and tests match the final policy surface
 
 **Status:** Completed
 
@@ -172,13 +191,11 @@ Notable exclusions:
 **Changes:**
 
 - run focused policy tests
-- run skill sync check
 - run workspace typecheck
 
 **Exit criteria:**
 
 - `packages/remote-cli/src/policy.test.ts` passes
-- `pnpm gen:skills:check` passes
 - workspace typecheck passes
 
 **Status:** Completed
@@ -187,7 +204,6 @@ Notable exclusions:
 
 ```bash
 pnpm exec vitest run packages/remote-cli/src/policy.test.ts
-pnpm gen:skills:check
 pnpm -r typecheck
 ```
 
@@ -202,7 +218,7 @@ pnpm -r typecheck
 | 5   | Keep the GH mutating path current-repo-only                                                     | Blocking `-R` / `--repo` and cross-repo write selectors keeps auth and validation simpler on the write path.                                             | Preserve cross-repo write support for convenience                                         |
 | 6   | Use exact templates for GH write commands                                                       | PR creation, comments, and reviews are where selector and flag complexity concentrate; exact templates keep that manageable.                             | Preserve broad write parsing for URLs, branch selectors, and interactive modes            |
 | 7   | Allow only a tiny implicit-GET `gh api` subset                                                  | `gh api` defaults to GET but can become POST when parameter flags are introduced; banning method and parameter controls removes that ambiguity.          | Keep blocking `gh api` entirely or allow broader method-aware parsing                     |
-| 8   | Keep generated `using-git` and `using-gh` skills                                                | The skill docs should describe the same surface the runtime enforces, and code generation keeps them synchronized.                                       | Hand-maintain skill docs separately from policy                                           |
+| 8   | Hand-maintain `using-git` and `using-gh`                                                        | The skill docs are stable enough that direct maintenance is simpler than keeping generation and sync tooling alive.                                      | Keep code generation as the long-term maintenance model                                   |
 | 9   | Keep GH read-only commands broad by tuple and validate exact grammar only where needed          | Read-only tuple pass-through preserves common inspection flows without rebuilding the full GH CLI grammar.                                               | Fully parse every GH read-only selector and flag combination                              |
 
 ## References

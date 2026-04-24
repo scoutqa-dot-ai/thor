@@ -3,12 +3,12 @@
  *
  * The policy is intentionally small: read-only commands are allowed by command
  * tuple, mutating commands must match exact non-interactive templates, and
- * every denied shape points the user at the generated `using-gh` skill.
+ * every denied shape points the user at the `using-gh` skill.
  */
 
 const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
 
-export const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
+const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "api",
   "auth status",
   "pr view",
