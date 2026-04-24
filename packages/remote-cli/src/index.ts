@@ -47,6 +47,21 @@ const log = createLogger("remote-cli");
 const PORT = parseInt(process.env.PORT || "3004", 10);
 const LDCLI_MAX_OUTPUT = 1024 * 1024;
 
+function requireEnv(name: string, env: NodeJS.ProcessEnv = process.env): string {
+  const value = env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required env var ${name}`);
+  }
+  return value;
+}
+
+export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
+  requireEnv("GITHUB_APP_ID", env);
+  requireEnv("GITHUB_APP_SLUG", env);
+  requireEnv("GITHUB_APP_BOT_ID", env);
+  requireEnv("GITHUB_APP_PRIVATE_KEY_PATH", env);
+}
+
 export interface RemoteCliAppConfig {
   getConfig?: ConfigLoader;
   mcp?: Omit<McpServiceDeps, "getConfig">;
@@ -715,6 +730,7 @@ function hasLdcliOutputOverride(args: string[]): boolean {
 }
 
 export async function startRemoteCliServer(): Promise<void> {
+  validateRemoteCliGitHubEnv();
   const remoteCli = createRemoteCliApp();
   logInfo(log, "remote_cli_starting", { port: PORT });
   const server = remoteCli.app.listen(PORT, () => {

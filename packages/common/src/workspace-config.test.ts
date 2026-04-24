@@ -9,6 +9,7 @@ import {
   getChannelRepoMap,
   extractRepoFromCwd,
   getRepoUpstreams,
+  getInstallationIdForOrg,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";
@@ -49,8 +50,18 @@ describe("loadWorkspaceConfig", () => {
   });
 
   it("throws on schema violation (missing repos)", () => {
-    const path = writeConfig("config.json", { github_app: {} });
+    const path = writeConfig("config.json", { orgs: {} });
     expect(() => loadWorkspaceConfig(path)).toThrow("Invalid workspace config");
+  });
+
+  it("rejects non-positive org installation IDs with path details", () => {
+    const path = writeConfig("config.json", {
+      repos: { "my-repo": {} },
+      orgs: {
+        acme: { github_app_installation_id: 0 },
+      },
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow("orgs.acme.github_app_installation_id");
   });
 
   it("rejects the legacy top-level proxies block with a migration hint", () => {
@@ -95,10 +106,9 @@ describe("loadWorkspaceConfig", () => {
 
     expect(config.repos["your-repo"]).toBeDefined();
     expect(config.repos["your-repo"].proxies).toEqual(["atlassian", "grafana", "slack"]);
-    expect(config.github_app?.installations.map((installation) => installation.org)).toEqual([
-      "acme",
-      "acme-labs",
-    ]);
+    expect(config.orgs).toEqual({
+      "scoutqa-dot-ai": { github_app_installation_id: 126669985 },
+    });
   });
 });
 
@@ -244,5 +254,44 @@ describe("getRepoUpstreams", () => {
   it("returns undefined for unknown repo", () => {
     const config = loadWorkspaceConfig(writeConfig("config.json", { repos: {} }));
     expect(getRepoUpstreams(config, "unknown")).toBeUndefined();
+  });
+});
+
+describe("getInstallationIdForOrg", () => {
+  it("returns installation id for known org", () => {
+    expect(
+      getInstallationIdForOrg(
+        {
+          repos: {},
+          orgs: { acme: { github_app_installation_id: 12345 } },
+        },
+        "acme",
+      ),
+    ).toBe(12345);
+  });
+
+  it("matches org names case-insensitively", () => {
+    expect(
+      getInstallationIdForOrg(
+        {
+          repos: {},
+          orgs: { "scoutqa-dot-ai": { github_app_installation_id: 126669985 } },
+        },
+        "ScoutQA-Dot-AI",
+      ),
+    ).toBe(126669985);
+  });
+
+  it("returns undefined for unknown or missing org map", () => {
+    expect(getInstallationIdForOrg({ repos: {} }, "acme")).toBeUndefined();
+    expect(
+      getInstallationIdForOrg(
+        {
+          repos: {},
+          orgs: { other: { github_app_installation_id: 1 } },
+        },
+        "acme",
+      ),
+    ).toBeUndefined();
   });
 });

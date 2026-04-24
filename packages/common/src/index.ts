@@ -10,6 +10,7 @@ export {
   WORKSPACE_CONFIG_PATH,
   extractRepoFromCwd,
   getRepoUpstreams,
+  getInstallationIdForOrg,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";
@@ -20,8 +21,7 @@ export type {
   ProxyConfig,
   ProxyUpstream,
   ConfigLoader,
-  GitHubAppInstallation,
-  GitHubAppConfig,
+  OrgConfig,
   ValidationIssue,
   ValidationResult,
 } from "./workspace-config.js";

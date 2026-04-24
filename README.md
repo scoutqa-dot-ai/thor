@@ -76,11 +76,12 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `ATLASSIAN_AUTH`                    | Yes      | `remote-cli`            | Atlassian MCP auth header value                                     |
 | `CRON_SECRET`                       | Yes      | `gateway`, `cron`       | Shared secret for cron endpoint auth                                |
 | `DATA_ROUTES`                       | No       | `data`                  | Comma-separated list of credential-injecting proxy routes           |
-| `GIT_USER_EMAIL`                    | No       | `remote-cli`            | Git author email                                                    |
-| `GIT_USER_NAME`                     | No       | `remote-cli`            | Git author name                                                     |
 | `GITHUB_APP_ID`                     | No       | `remote-cli`            | GitHub App ID for GitHub App auth                                   |
+| `GITHUB_APP_BOT_ID`                 | No       | `remote-cli`            | GitHub App bot user ID (used for commit identity)                   |
+| `GITHUB_APP_SLUG`                   | No       | `remote-cli`, `gateway` | GitHub App slug (commit identity + mention detection)               |
 | `GITHUB_API_URL`                    | No       | `remote-cli`            | GitHub API base URL override                                        |
-| `GITHUB_APP_PRIVATE_KEY_FILE`       | No       | `remote-cli`            | GitHub App private key path                                         |
+| `GITHUB_APP_PRIVATE_KEY_PATH`       | No       | `remote-cli`            | GitHub App private key path                                         |
+| `GITHUB_WEBHOOK_SECRET`             | No       | `gateway`               | GitHub webhook signature secret                                     |
 | `GITHUB_PAT`                        | No       | `remote-cli`            | Fallback token for `git` / `gh` when GitHub App auth is unavailable |
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | `grafana-mcp`           | Grafana service account token                                       |
 | `GRAFANA_URL`                       | Yes      | `grafana-mcp`           | Grafana instance URL                                                |
@@ -111,25 +112,19 @@ Thor ships with generic defaults. A new deployment typically needs:
 
 Thor uses a shared workspace config file at `/workspace/config.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config.json`. Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point, and use [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
 
-GitHub App installation entries live under `github_app.installations` in that config:
+GitHub App installation entries live under `orgs.<org>.github_app_installation_id` in that config:
 
 ```json
 {
-  "github_app": {
-    "installations": [
-      {
-        "org": "acme",
-        "installation_id": 12345678,
-        "app_id": "",
-        "private_key_path": "",
-        "api_url": ""
-      }
-    ]
+  "orgs": {
+    "acme": {
+      "github_app_installation_id": 12345678
+    }
   }
 }
 ```
 
-When `github_app.installations` is present, the `git` wrapper resolves installation tokens lazily through `GIT_ASKPASS`, and the `gh` wrapper resolves them before invoking `gh`. If no installation matches the target org, both wrappers fall back to the inherited PAT path when `GITHUB_PAT` is set.
+The `git` wrapper resolves installation tokens lazily through `GIT_ASKPASS`, and the `gh` wrapper resolves them before invoking `gh`. If no installation matches the target org, both wrappers fall back to the inherited PAT path when `GITHUB_PAT` is set.
 
 If you have internal APIs that Thor should access with injected credentials, add routes to `.env`:
 
@@ -157,7 +152,12 @@ The data container generates its nginx config from those vars at startup.
 | ------------------------------- | -------- | ----------------------- | ------------------------------------- |
 | `ATLASSIAN_AUTH`                | Yes      | `remote-cli`            | Atlassian MCP auth header value       |
 | `CRON_SECRET`                   | Yes      | `gateway`, `cron`       | Cron endpoint auth                    |
+| `GITHUB_APP_ID`                 | No       | `remote-cli`            | GitHub App ID                         |
+| `GITHUB_APP_BOT_ID`             | No       | `remote-cli`            | GitHub App bot user ID                |
+| `GITHUB_APP_PRIVATE_KEY_PATH`   | No       | `remote-cli`            | GitHub App private key path           |
+| `GITHUB_APP_SLUG`               | No       | `remote-cli`, `gateway` | GitHub App slug                       |
 | `GITHUB_PAT`                    | No       | `remote-cli`            | Fallback token for `git` / `gh`       |
+| `GITHUB_WEBHOOK_SECRET`         | No       | `gateway`               | GitHub webhook signature secret       |
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN` | Yes      | `grafana-mcp`           | Grafana access token                  |
 | `GRAFANA_URL`                   | Yes      | `grafana-mcp`           | Grafana base URL                      |
 | `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`            | Langfuse read-only auth               |
@@ -174,7 +174,7 @@ The data container generates its nginx config from those vars at startup.
 - OpenCode does not get direct API credentials for MCP upstreams.
 - `remote-cli` enforces MCP allow/approve policy server-side and stores approvals under `/workspace/data/approvals`.
 - Approval resolution is only available through `POST /exec/mcp` with `x-thor-resolve-secret`.
-- `git` uses GitHub App installation tokens through `GIT_ASKPASS` when `github_app.installations` is configured and the target org can be resolved; otherwise it falls back to inherited PAT auth via `GITHUB_PAT`.
+- `git` uses GitHub App installation tokens through `GIT_ASKPASS` when `orgs.<org>.github_app_installation_id` is configured and the target org can be resolved; otherwise it falls back to inherited PAT auth via `GITHUB_PAT`.
 - `gh` resolves GitHub App auth before execution and falls back to inherited `GH_TOKEN` / `GITHUB_PAT` when no installation token is available.
 - Source repos are mounted read-only into OpenCode; edits happen in `/workspace/worktrees`.
 - Tool calls are audit-logged under `/workspace/worklog`.

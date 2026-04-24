@@ -6,6 +6,7 @@ import {
   WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 import { createGatewayApp } from "./app.js";
+import { validateGatewayGitHubEnv } from "./env.js";
 
 const log = createLogger("gateway");
 
@@ -24,6 +25,7 @@ const REMOTE_CLI_HOST = process.env.REMOTE_CLI_HOST || "remote-cli";
 const REMOTE_CLI_PORT = parseInt(process.env.REMOTE_CLI_PORT || "3004", 10);
 const RESOLVE_SECRET = process.env.RESOLVE_SECRET || "";
 const OPENAI_AUTH_PATH = process.env.OPENAI_AUTH_PATH || "";
+const githubEnv = validateGatewayGitHubEnv();
 const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
 const { app } = createGatewayApp({
@@ -59,6 +61,7 @@ app.listen(PORT, () => {
     remoteCliHost: REMOTE_CLI_HOST,
     queueDir: QUEUE_DIR,
     configured: Boolean(SLACK_SIGNING_SECRET),
+    githubAppSlug: githubEnv.githubAppSlug,
     ...configSummary,
   });
 });

@@ -13,16 +13,13 @@ import { join } from "node:path";
 import { createSign } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
+  getInstallationIdForOrg,
   loadWorkspaceConfig,
   WORKSPACE_CONFIG_PATH,
-  type GitHubAppInstallation,
 } from "@thor/common";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const GITHUB_APP_DIR = process.env.GITHUB_APP_DIR ?? "/var/lib/remote-cli/github-app";
-const DEFAULT_PRIVATE_KEY_PATH = join(GITHUB_APP_DIR, "private-key.pem");
-const CACHE_DIR = join(GITHUB_APP_DIR, "cache");
 const DEFAULT_API_URL = "https://api.github.com";
 
 /** Refresh token when less than this many seconds remain. */
@@ -42,6 +39,16 @@ export interface TokenResult {
 interface CachedToken {
   token: string;
   expires_at: string; // ISO 8601
+}
+
+class GitHubApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "GitHubApiError";
+  }
 }
 
 // ── Org resolution ───────────────────────────────────────────────────────────
@@ -122,52 +129,40 @@ export function resolveOrg(args: string[], cwd?: string): string | undefined {
 
 // ── Config lookup ────────────────────────────────────────────────────────────
 
-/**
- * Find the installation config for a given org.
- * Throws if no matching installation is found.
- */
-export function findInstallation(org: string): GitHubAppInstallation {
+export function getInstallationIdFromWorkspace(org: string): number {
   const config = loadWorkspaceConfig(WORKSPACE_CONFIG_PATH);
-  const installations = config.github_app?.installations ?? [];
-  const match = installations.find((i) => i.org === org);
-  if (!match) {
-    throw new Error(
-      `${TAG} No GitHub App installation configured for org "${org}". ` +
-        `Add it to github_app.installations in ${WORKSPACE_CONFIG_PATH}.`,
-    );
+  const installationId = getInstallationIdForOrg(config, org);
+  if (installationId !== undefined) {
+    return installationId;
   }
-  return match;
+
+  const configuredOrgs = Object.keys(config.orgs ?? {}).sort();
+  const configured = configuredOrgs.length > 0 ? configuredOrgs.join(", ") : "(none)";
+  throw new Error(
+    `${TAG} No GitHub App installation configured for org "${org}". ` +
+      `Configured orgs: ${configured}. ` +
+      `Add orgs.${org}.github_app_installation_id in ${WORKSPACE_CONFIG_PATH}.`,
+  );
 }
 
-/**
- * Resolve effective values for an installation, applying env/default fallbacks.
- */
-export function resolveInstallation(inst: GitHubAppInstallation): {
-  org: string;
-  installationId: number;
-  appId: string;
-  privateKeyPath: string;
-  apiUrl: string;
-} {
-  const appId = inst.app_id || process.env.GITHUB_APP_ID || "";
+function resolveGitHubAppEnv(): { appId: string; privateKeyPath: string; apiUrl: string } {
+  const appId = process.env.GITHUB_APP_ID || "";
   if (!appId) {
     throw new Error(
-      `${TAG} No app_id for org "${inst.org}". Set it in config.json or GITHUB_APP_ID env.`,
+      `${TAG} Missing required env var GITHUB_APP_ID. ` +
+        `Set GitHub App identity env vars in remote-cli bootstrap.`,
     );
   }
 
-  const privateKeyPath =
-    inst.private_key_path || process.env.GITHUB_APP_PRIVATE_KEY_FILE || DEFAULT_PRIVATE_KEY_PATH;
+  const privateKeyPath = process.env.GITHUB_APP_PRIVATE_KEY_PATH || "";
+  if (!privateKeyPath) {
+    throw new Error(
+      `${TAG} Missing required env var GITHUB_APP_PRIVATE_KEY_PATH. ` +
+        `Set GitHub App identity env vars in remote-cli bootstrap.`,
+    );
+  }
 
-  const apiUrl = inst.api_url || process.env.GITHUB_API_URL || DEFAULT_API_URL;
-
-  return {
-    org: inst.org,
-    installationId: inst.installation_id,
-    appId,
-    privateKeyPath,
-    apiUrl,
-  };
+  return { appId, privateKeyPath, apiUrl: process.env.GITHUB_API_URL || DEFAULT_API_URL };
 }
 
 // ── JWT generation ───────────────────────────────────────────────────────────
@@ -229,7 +224,8 @@ export async function mintInstallationToken(
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    throw new Error(
+    throw new GitHubApiError(
+      response.status,
       `${TAG} GitHub API ${response.status} minting token for installation ${installationId}: ${body}`,
     );
   }
@@ -246,16 +242,24 @@ function safeOrgName(org: string): string {
 }
 
 function cachePath(org: string): string {
-  return join(CACHE_DIR, `${safeOrgName(org)}.json`);
+  return join(getCacheDir(), `${safeOrgName(org)}.json`);
 }
 
 function lockPath(org: string): string {
-  return join(CACHE_DIR, `${safeOrgName(org)}.lock`);
+  return join(getCacheDir(), `${safeOrgName(org)}.lock`);
+}
+
+function getGitHubAppDir(): string {
+  return process.env.GITHUB_APP_DIR ?? "/var/lib/remote-cli/github-app";
+}
+
+function getCacheDir(): string {
+  return join(getGitHubAppDir(), "cache");
 }
 
 function ensureCacheDir(): void {
   try {
-    mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+    mkdirSync(getCacheDir(), { recursive: true, mode: 0o700 });
   } catch {
     // Ignore if exists
   }
@@ -331,8 +335,8 @@ function releaseLock(org: string): void {
  * Reads from cache if available, mints a new one if not.
  */
 export async function getInstallationToken(org: string): Promise<TokenResult> {
-  const inst = findInstallation(org);
-  const resolved = resolveInstallation(inst);
+  const installationId = getInstallationIdFromWorkspace(org);
+  const { appId, privateKeyPath, apiUrl } = resolveGitHubAppEnv();
 
   // Check cache first
   const cached = readCache(org);
@@ -352,11 +356,21 @@ export async function getInstallationToken(org: string): Promise<TokenResult> {
 
   try {
     process.stderr.write(`${TAG} Minting installation token for org "${org}"...\n`);
-    const jwt = generateAppJWT(resolved.appId, resolved.privateKeyPath);
-    const token = await mintInstallationToken(resolved.installationId, jwt, resolved.apiUrl);
+    const jwt = generateAppJWT(appId, privateKeyPath);
+    const token = await mintInstallationToken(installationId, jwt, apiUrl);
     writeCache(org, token);
     process.stderr.write(`${TAG} Token cached for org "${org}" (expires ${token.expires_at})\n`);
     return { token: token.token, org };
+  } catch (error) {
+    if (error instanceof GitHubApiError && (error.status === 401 || error.status === 403)) {
+      try {
+        unlinkSync(cachePath(org));
+      } catch {
+        // Ignore missing/unlink errors during eviction.
+      }
+      throw new Error(`${TAG} installation_gone for org "${org}"`);
+    }
+    throw error;
   } finally {
     if (locked) releaseLock(org);
   }
