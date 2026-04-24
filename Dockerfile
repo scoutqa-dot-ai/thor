@@ -62,9 +62,11 @@ CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
 FROM base AS opencode
 RUN npm install -g opencode-ai@1.4.3
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep shfmt \
-    && npm install -g prettier@3.6.2 \
+    && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
+    && npm install -g prettier@3.8.3 \
     && pip3 install --break-system-packages ruff \
+    && curl -fsSL "https://github.com/mvdan/sh/releases/download/v3.13.1/shfmt_v3.13.1_linux_$(dpkg --print-architecture)" -o /usr/local/bin/shfmt \
+    && chmod +x /usr/local/bin/shfmt \
     && rm -rf /var/lib/apt/lists/*
 # git/gh/scoutqa wrapper scripts — forward to remote-cli service over HTTP
 COPY --from=build /app/packages/opencode-cli/dist/remote-cli.mjs /usr/local/bin/remote-cli.mjs
