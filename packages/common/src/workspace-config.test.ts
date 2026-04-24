@@ -110,6 +110,95 @@ describe("loadWorkspaceConfig", () => {
       "scoutqa-dot-ai": { github_app_installation_id: 126669985 },
     });
   });
+
+  it("accepts mitmproxy rules and passthrough host list", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [
+        {
+          host: "api.example.com",
+          path_prefix: "/v1/",
+          headers: { Authorization: "Bearer ${EXAMPLE_TOKEN}" },
+        },
+        {
+          host_suffix: ".example.internal",
+          headers: { "X-API-Key": "${INTERNAL_TOKEN}" },
+          readonly: true,
+        },
+      ],
+      mitmproxy_passthrough: ["api.openai.com", ".openai.com"],
+    });
+
+    const config = loadWorkspaceConfig(path);
+    expect(config.mitmproxy?.[0].host).toBe("api.example.com");
+    expect(config.mitmproxy?.[0].path_prefix).toBe("/v1/");
+    expect(config.mitmproxy?.[1].host_suffix).toBe(".example.internal");
+    expect(config.mitmproxy?.[1].readonly).toBe(true);
+    expect(config.mitmproxy_passthrough).toEqual(["api.openai.com", ".openai.com"]);
+  });
+
+  it("rejects mitmproxy rule without host selector", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [{ headers: { Authorization: "Bearer ${TOKEN}" } }],
+    });
+
+    expect(() => loadWorkspaceConfig(path)).toThrow(
+      'Exactly one of "host" or "host_suffix" is required',
+    );
+  });
+
+  it("rejects mitmproxy rule with both host and host_suffix", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [
+        {
+          host: "api.example.com",
+          host_suffix: ".example.com",
+          headers: { Authorization: "Bearer ${TOKEN}" },
+        },
+      ],
+    });
+
+    expect(() => loadWorkspaceConfig(path)).toThrow(
+      'Exactly one of "host" or "host_suffix" is required',
+    );
+  });
+
+  it("rejects invalid passthrough entries", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy_passthrough: ["https://openai.com"],
+    });
+
+    expect(() => loadWorkspaceConfig(path)).toThrow(
+      "Passthrough entries must be an exact host or a suffix starting with '.'",
+    );
+  });
+
+  it("rejects mitmproxy rules with invalid path_prefix", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [
+        {
+          host: "api.example.com",
+          path_prefix: "v1",
+          headers: { Authorization: "Bearer ${TOKEN}" },
+        },
+      ],
+    });
+
+    expect(() => loadWorkspaceConfig(path)).toThrow('Invalid string: must start with "/"');
+  });
+
+  it("rejects mitmproxy rules with empty headers", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [{ host: "api.example.com", headers: {} }],
+    });
+
+    expect(() => loadWorkspaceConfig(path)).toThrow('"headers" must contain at least one entry');
+  });
 });
 
 describe("createConfigLoader", () => {

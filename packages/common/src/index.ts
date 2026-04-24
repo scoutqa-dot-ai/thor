@@ -68,6 +68,8 @@ export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,
+  ProgressMemorySchema,
+  ProgressDelegateSchema,
   ProgressDoneSchema,
   ProgressErrorSchema,
   ProgressApprovalRequiredSchema,
@@ -79,6 +81,8 @@ export {
 export type {
   ProgressStart,
   ProgressTool,
+  ProgressMemory,
+  ProgressDelegate,
   ProgressDone,
   ProgressError,
   ProgressApprovalRequired,

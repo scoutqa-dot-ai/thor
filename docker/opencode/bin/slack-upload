@@ -1,0 +1,190 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  cat <<'EOF'
+Usage:
+  slack-upload [options] <file>
+
+Upload a file to Slack using Slack's external upload flow.
+Authentication is injected by mitmproxy; do not pass a token manually.
+
+Options:
+  --channel <id>     Share the file in channel ID C...
+  --thread-ts <ts>   Reply in an existing thread; requires --channel
+  --title <title>    Slack file title; defaults to the file basename
+  --comment <text>   Initial comment when sharing; requires --channel
+  -h, --help         Show this help
+
+Examples:
+  slack-upload ./report.txt --channel C123
+  slack-upload ./report.txt --channel C123 --thread-ts 1710000000.001 \
+    --comment "Attached the report."
+EOF
+}
+
+die() {
+  echo "slack-upload: $*" >&2
+  exit 1
+}
+
+require_value() {
+  flag="$1"
+  shift
+  [ "$#" -gt 0 ] || die "missing value for $flag"
+}
+
+file=""
+channel=""
+thread_ts=""
+title=""
+comment=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --channel)
+      shift
+      require_value --channel "$@"
+      channel="$1"
+      ;;
+    --thread-ts)
+      shift
+      require_value --thread-ts "$@"
+      thread_ts="$1"
+      ;;
+    --title)
+      shift
+      require_value --title "$@"
+      title="$1"
+      ;;
+    --comment)
+      shift
+      require_value --comment "$@"
+      comment="$1"
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "unknown option: $1"
+      ;;
+    *)
+      [ -z "$file" ] || die "only one file path is supported"
+      file="$1"
+      ;;
+  esac
+  shift
+done
+
+if [ "$#" -gt 0 ]; then
+  [ -z "$file" ] || die "unexpected extra arguments"
+  [ "$#" -eq 1 ] || die "unexpected extra arguments"
+  file="$1"
+fi
+
+[ -n "$file" ] || die "file path is required"
+[ -f "$file" ] || die "file not found: $file"
+[ -r "$file" ] || die "file is not readable: $file"
+
+if [ -n "$thread_ts" ] && [ -z "$channel" ]; then
+  die "--thread-ts requires --channel"
+fi
+
+if [ -n "$comment" ] && [ -z "$channel" ]; then
+  die "--comment requires --channel"
+fi
+
+size="$(wc -c < "$file" | tr -d '[:space:]')"
+name="$(basename "$file")"
+
+if [ -z "$title" ]; then
+  title="$name"
+fi
+
+request_upload_json="$(curl -sS -X POST https://slack.com/api/files.getUploadURLExternal \
+  -H 'content-type: application/x-www-form-urlencoded' \
+  --data-urlencode "filename=$name" \
+  --data-urlencode "length=$size")"
+
+upload_url="$(node -e '
+let response;
+try {
+  response = JSON.parse(process.argv[1]);
+} catch (error) {
+  console.error("slack-upload: could not parse files.getUploadURLExternal response");
+  process.exit(1);
+}
+if (!response.ok) {
+  console.error(`slack-upload: ${response.error || "files.getUploadURLExternal failed"}`);
+  process.exit(1);
+}
+if (!response.upload_url || !response.file_id) {
+  console.error("slack-upload: Slack response is missing upload_url or file_id");
+  process.exit(1);
+}
+process.stdout.write(response.upload_url);
+' "$request_upload_json")"
+
+file_id="$(node -e '
+let response;
+try {
+  response = JSON.parse(process.argv[1]);
+} catch (error) {
+  console.error("slack-upload: could not parse files.getUploadURLExternal response");
+  process.exit(1);
+}
+process.stdout.write(response.file_id);
+' "$request_upload_json")"
+
+upload_body="$(mktemp)"
+trap 'rm -f "$upload_body"' EXIT INT TERM
+
+upload_status="$(curl -sS -o "$upload_body" -w '%{http_code}' -X POST "$upload_url" \
+  -H 'content-type: application/octet-stream' \
+  --data-binary @"$file")"
+
+if [ "$upload_status" != "200" ]; then
+  die "raw upload failed with HTTP $upload_status: $(cat "$upload_body")"
+fi
+
+files_json="$(node -e '
+process.stdout.write(JSON.stringify([{ id: process.argv[1], title: process.argv[2] }]));
+' "$file_id" "$title")"
+
+set -- -sS -X POST https://slack.com/api/files.completeUploadExternal \
+  -H 'content-type: application/x-www-form-urlencoded' \
+  --data-urlencode "files=$files_json"
+
+if [ -n "$channel" ]; then
+  set -- "$@" --data-urlencode "channel_id=$channel"
+fi
+
+if [ -n "$thread_ts" ]; then
+  set -- "$@" --data-urlencode "thread_ts=$thread_ts"
+fi
+
+if [ -n "$comment" ]; then
+  set -- "$@" --data-urlencode "initial_comment=$comment"
+fi
+
+complete_json="$(curl "$@")"
+
+node -e '
+let response;
+try {
+  response = JSON.parse(process.argv[1]);
+} catch (error) {
+  console.error("slack-upload: could not parse files.completeUploadExternal response");
+  process.exit(1);
+}
+if (!response.ok) {
+  console.error(`slack-upload: ${response.error || "files.completeUploadExternal failed"}`);
+  process.exit(1);
+}
+process.stdout.write(`${JSON.stringify(response)}\n`);
+' "$complete_json"

@@ -125,16 +125,20 @@ export async function triggerRunnerSlack(
   // soon as the runner accepts) while still forwarding progress events.
   const channel = last.channel;
   const threadTs = getSlackThreadTs(last);
+  const triggerTs = last.ts;
 
-  void consumeNdjsonStream(response, channel, threadTs, slackMcpDeps).catch(async (err) => {
-    logError(log, "stream_consume_error", err instanceof Error ? err.message : String(err));
-    await forwardProgressEvent(
-      channel,
-      threadTs,
-      { type: "error", error: err instanceof Error ? err.message : "stream error" },
-      slackMcpDeps,
-    ).catch(() => {});
-  });
+  void consumeNdjsonStream(response, channel, threadTs, triggerTs, slackMcpDeps).catch(
+    async (err) => {
+      logError(log, "stream_consume_error", err instanceof Error ? err.message : String(err));
+      await forwardProgressEvent(
+        channel,
+        threadTs,
+        { type: "error", error: err instanceof Error ? err.message : "stream error" },
+        slackMcpDeps,
+        triggerTs,
+      ).catch(() => {});
+    },
+  );
 
   return { busy: false };
 }
@@ -146,6 +150,7 @@ async function consumeNdjsonStream(
   response: Response,
   channel: string,
   threadTs: string,
+  triggerTs: string,
   slackMcpDeps: SlackMcpDeps,
 ): Promise<void> {
   const body = response.body;
@@ -157,22 +162,23 @@ async function consumeNdjsonStream(
     try {
       const parsed = ProgressEventSchema.safeParse(JSON.parse(line));
       if (!parsed.success) continue;
-      if (parsed.data.type === "heartbeat") continue;
+      const event = parsed.data;
+      if (event.type === "heartbeat") continue;
 
       logInfo(log, "progress_relay", {
         channel,
         threadTs,
-        type: parsed.data.type,
-        ...(parsed.data.type === "tool" ? { tool: parsed.data.tool } : {}),
-        ...(parsed.data.type === "done" ? { status: parsed.data.status } : {}),
+        type: event.type,
+        ...(event.type === "tool" ? { tool: event.tool } : {}),
+        ...(event.type === "done" ? { status: event.status } : {}),
         ts: Date.now(),
       });
 
-      if (parsed.data.type === "approval_required") {
-        await forwardApprovalNotification(channel, threadTs, parsed.data, slackMcpDeps);
-      } else {
-        await forwardProgressEvent(channel, threadTs, parsed.data, slackMcpDeps);
+      if (event.type === "approval_required") {
+        await forwardApprovalNotification(channel, threadTs, event, slackMcpDeps);
+        continue;
       }
+      await forwardProgressEvent(channel, threadTs, event, slackMcpDeps, triggerTs);
     } catch (err) {
       logWarn(log, "ndjson_parse_skip", {
         line: truncate(line, 200),
@@ -203,12 +209,13 @@ async function forwardProgressEvent(
   threadTs: string,
   event: ProgressEvent,
   deps: SlackMcpDeps,
+  sourceTs: string,
 ): Promise<void> {
   try {
     await getFetch(deps.fetchImpl)(`${deps.slackMcpUrl}/progress`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channel, threadTs, event }),
+      body: JSON.stringify({ channel, threadTs, sourceTs, event }),
     });
   } catch (err) {
     logError(log, "progress_forward_error", err instanceof Error ? err.message : String(err));
