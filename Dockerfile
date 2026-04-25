@@ -6,7 +6,7 @@
 #     context: .
 #     target: gateway
 
-FROM node:22-slim AS base
+FROM node:24-slim AS base
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 RUN groupadd --gid 1001 thor && useradd --uid 1001 --gid thor --create-home thor
 RUN mkdir -p /workspace && chown thor:thor /workspace
