@@ -17,6 +17,23 @@ class FakeRequest:
     path: str = "/"
     pretty_host: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
+    content: bytes = b""
+
+    def get_text(self) -> str:
+        return self.content.decode("utf-8")
+
+
+@dataclass
+class FakeResponse:
+    status_code: int = 200
+    content: bytes = b""
+    headers: dict[str, str] = field(default_factory=dict)
+
+    def get_text(self) -> str:
+        return self.content.decode("utf-8")
+
+    def set_text(self, text: str) -> None:
+        self.content = text.encode("utf-8")
 
 
 @dataclass
@@ -207,59 +224,15 @@ def test_builtin_slack_rule_sets_headers(tmp_path, monkeypatch) -> None:
             host="slack.com",
             method="POST",
             path="/api/chat.postMessage",
-            headers={"x-opencode-directory": "/workspace/worktrees/thor/refactor/slack-mcp"},
         )
     )
     addon.request(flow)
 
     assert flow.response is None
     assert flow.request.headers["Authorization"] == "Bearer xoxb-test"
-    assert "x-opencode-directory" not in flow.request.headers
-    assert "x-opencode-session-id" not in flow.request.headers
-    assert "x-opencode-call-id" not in flow.request.headers
 
 
-def test_slack_post_message_enforcement_uses_normalized_host(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
-
-    config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
-    addon = ThorMitmAddon(str(config))
-
-    flow = FakeFlow(
-        request=FakeRequest(host="SLACK.COM:", method="POST", path="/api/chat.postMessage")
-    )
-    addon.request(flow)
-
-    assert flow.response is not None
-    assert _status_code(flow.response) == 403
-    assert _response_text(flow.response) == (
-        "thor proxy requires x-opencode-directory for slack.com/api/chat.postMessage"
-    )
-
-
-def test_slack_post_message_requires_opencode_directory_header(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
-
-    config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
-    addon = ThorMitmAddon(str(config))
-
-    flow = FakeFlow(
-        request=FakeRequest(host="slack.com", method="POST", path="/api/chat.postMessage")
-    )
-    addon.request(flow)
-
-    assert flow.response is not None
-    assert _status_code(flow.response) == 403
-    assert _response_text(flow.response) == (
-        "thor proxy requires x-opencode-directory for slack.com/api/chat.postMessage"
-    )
-
-
-def test_slack_post_message_rejects_blank_opencode_directory_header(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
-
+def test_slack_chat_post_message_response_injects_thread_alias_for_reply(tmp_path) -> None:
     config = tmp_path / "config.json"
     config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
@@ -269,13 +242,121 @@ def test_slack_post_message_rejects_blank_opencode_directory_header(tmp_path, mo
             host="slack.com",
             method="POST",
             path="/api/chat.postMessage",
-            headers={"x-opencode-directory": "   "},
-        )
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            content=b"channel=C123&thread_ts=1710000000.001&text=hello",
+        ),
+        response=FakeResponse(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            content=b'{"ok":true,"ts":"1710000000.999","channel":"C123"}',
+        ),
     )
-    addon.request(flow)
+
+    addon.response(flow)
 
     assert flow.response is not None
-    assert _status_code(flow.response) == 403
+    assert (
+        _response_text(flow.response)
+        == '{"ok":true,"ts":"1710000000.999","channel":"C123","thor-meta-key":"slack:thread:1710000000.001"}'
+    )
+
+
+def test_slack_chat_post_message_response_injects_thread_alias_for_new_thread(tmp_path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    addon = ThorMitmAddon(str(config))
+
+    flow = FakeFlow(
+        request=FakeRequest(
+            host="slack.com",
+            method="POST",
+            path="/api/chat.postMessage",
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            content=b"channel=C123&text=hello",
+        ),
+        response=FakeResponse(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            content=b'{"ok":true,"ts":"1710000000.999","channel":"C123"}',
+        ),
+    )
+
+    addon.response(flow)
+
+    assert flow.response is not None
+    assert (
+        _response_text(flow.response)
+        == '{"ok":true,"ts":"1710000000.999","channel":"C123","thor-meta-key":"slack:thread:1710000000.999"}'
+    )
+
+
+def test_slack_chat_post_message_response_injects_alias_from_json_request_body(tmp_path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    addon = ThorMitmAddon(str(config))
+
+    flow = FakeFlow(
+        request=FakeRequest(
+            host="slack.com",
+            method="POST",
+            path="/api/chat.postMessage",
+            headers={"Content-Type": "application/json"},
+            content=b'{"channel":"C123","thread_ts":"1710000000.111","text":"hello"}',
+        ),
+        response=FakeResponse(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            content=b'{"ok":true,"ts":"1710000000.999","channel":"C123"}',
+        ),
+    )
+
+    addon.response(flow)
+
+    assert flow.response is not None
+    assert (
+        _response_text(flow.response)
+        == '{"ok":true,"ts":"1710000000.999","channel":"C123","thor-meta-key":"slack:thread:1710000000.111"}'
+    )
+
+
+def test_slack_chat_post_message_response_does_not_inject_on_non_ok_payload(tmp_path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    addon = ThorMitmAddon(str(config))
+
+    flow = FakeFlow(
+        request=FakeRequest(host="slack.com", method="POST", path="/api/chat.postMessage"),
+        response=FakeResponse(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            content=b'{"ok":false,"error":"not_in_channel"}',
+        ),
+    )
+
+    addon.response(flow)
+
+    assert flow.response is not None
+    assert _response_text(flow.response) == '{"ok":false,"error":"not_in_channel"}'
+
+
+def test_slack_chat_post_message_response_does_not_inject_for_other_paths(tmp_path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    addon = ThorMitmAddon(str(config))
+
+    flow = FakeFlow(
+        request=FakeRequest(host="slack.com", method="POST", path="/api/chat.update"),
+        response=FakeResponse(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            content=b'{"ok":true,"ts":"1710000000.999","channel":"C123"}',
+        ),
+    )
+
+    addon.response(flow)
+
+    assert flow.response is not None
+    assert _response_text(flow.response) == '{"ok":true,"ts":"1710000000.999","channel":"C123"}'
 
 
 def test_builtin_slack_file_download_rule_is_readonly(tmp_path, monkeypatch) -> None:

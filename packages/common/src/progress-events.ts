@@ -16,6 +16,19 @@ export const ProgressToolSchema = z.object({
   status: z.enum(["completed", "error"]),
 });
 
+export const ProgressMemorySchema = z.object({
+  type: z.literal("memory"),
+  action: z.enum(["read", "write"]),
+  path: z.string(),
+  source: z.enum(["bootstrap", "tool"]),
+});
+
+export const ProgressDelegateSchema = z.object({
+  type: z.literal("delegate"),
+  agent: z.string(),
+  description: z.string().optional(),
+});
+
 export const ProgressDoneSchema = z.object({
   type: z.literal("done"),
   sessionId: z.string(),
@@ -51,6 +64,8 @@ export const ProgressHeartbeatSchema = z.object({
 export const ProgressEventSchema = z.discriminatedUnion("type", [
   ProgressStartSchema,
   ProgressToolSchema,
+  ProgressMemorySchema,
+  ProgressDelegateSchema,
   ProgressDoneSchema,
   ProgressErrorSchema,
   ProgressApprovalRequiredSchema,
@@ -89,6 +104,8 @@ export type SlackApprovalRequest = z.infer<typeof SlackApprovalRequestSchema>;
 
 export type ProgressStart = z.infer<typeof ProgressStartSchema>;
 export type ProgressTool = z.infer<typeof ProgressToolSchema>;
+export type ProgressMemory = z.infer<typeof ProgressMemorySchema>;
+export type ProgressDelegate = z.infer<typeof ProgressDelegateSchema>;
 export type ProgressDone = z.infer<typeof ProgressDoneSchema>;
 export type ProgressError = z.infer<typeof ProgressErrorSchema>;
 export type ProgressApprovalRequired = z.infer<typeof ProgressApprovalRequiredSchema>;

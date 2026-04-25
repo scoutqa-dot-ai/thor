@@ -41,10 +41,8 @@ You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh`
 
 **Important:** `npm`, `npx`, `pnpm`, `pnpx`, and `corepack` are redirected to the cloud sandbox automatically. When you run `npm install` or `npx prettier`, it executes in the sandbox where the full toolchain is installed. Use `sandbox` explicitly for other runtimes (Java, Python, etc.). If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
 
-Outbound HTTP(S) requests use real upstream URLs through `HTTP(S)_PROXY`. For
-Slack `chat.postMessage`, use `curl` directly against the real Slack endpoint.
-The Thor curl wrapper automatically adds OpenCode headers and emits thread alias
-metadata:
+Outbound HTTP(S) requests use real upstream URLs through `HTTP(S)_PROXY`. For a
+simple Slack reply, use direct `curl` to Slack Web API:
 
 ```bash
 curl -sS -X POST https://slack.com/api/chat.postMessage \
@@ -54,11 +52,10 @@ curl -sS -X POST https://slack.com/api/chat.postMessage \
   --data-urlencode 'text=Looking into this now. I will report back in-thread.'
 ```
 
-When posting to Slack, inline `text=...` is only for short single-line replies.
-If the message has paragraph breaks, bullets, code spans, or quoting feels
-fragile, write the body to a unique temp file under `/tmp` and send it with
-`--data-urlencode "text@$TEXT_FILE"`. Do not send multiline Slack text as an
-inline shell argument.
+When posting to Slack, preserve raw JSON stdout from `chat.postMessage` (do not
+pipe through formatters that replace the original JSON body). For multiline
+message text or fragile quoting, use `--data-urlencode "text@${TEXT_FILE}"`
+with a unique temp file under `/tmp`.
 
 For any Slack task beyond a simple post, use the `slack` skill.
 

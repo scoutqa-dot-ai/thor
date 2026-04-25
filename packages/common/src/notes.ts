@@ -258,6 +258,7 @@ export interface ExtractedAlias {
 
 /** Tool names that can produce cross-channel aliases. */
 const ALIASABLE_TOOLS = new Set(["slack_post_message", "bash"]);
+const THOR_META_KEY = "thor-meta-key";
 
 /** Check if a tool name is aliasable. */
 export function isAliasableTool(tool: string): boolean {
@@ -297,6 +298,7 @@ const SlackPostMessageOutput = z.object({
  *
  * Two sources:
  * - `bash` with [thor:meta]: pre-computed aliases from service-side helpers
+ * - `bash` raw JSON output for Slack `chat.postMessage` with injected `thor-meta-key`
  * - `slack_post_message`: direct MCP tool (not proxied through bash)
  *
  * Best-effort: malformed artifacts are silently skipped.
@@ -313,6 +315,11 @@ export function extractAliases(artifacts: ToolArtifact[]): ExtractedAlias[] {
             aliases.push({ alias: meta.alias, context: meta.context });
           }
         }
+
+        // Slack chat.postMessage responses include an in-band alias key.
+        const slackAlias = extractSlackAliasFromBashOutput(raw.output);
+        if (slackAlias) aliases.push(slackAlias);
+
         continue;
       }
 
@@ -396,6 +403,41 @@ export function extractThorMeta(output: string): ThorMeta[] {
     }
   }
   return results;
+}
+
+/**
+ * Extract Slack alias from bash output that contains raw Slack JSON.
+ *
+ * chat.postMessage successful responses may include a top-level
+ * `thor-meta-key: slack:thread:<ts>` field injected by mitmproxy.
+ */
+export function extractSlackAliasFromBashOutput(output: string): ExtractedAlias | undefined {
+  const candidates = [output.trim(), ...output.split(/\r?\n/).map((line) => line.trim())].filter(
+    Boolean,
+  );
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (!parsed || typeof parsed !== "object") continue;
+
+      const metaKey = (parsed as Record<string, unknown>)[THOR_META_KEY];
+      if (typeof metaKey !== "string" || !metaKey.startsWith("slack:thread:")) continue;
+
+      const channel = (parsed as Record<string, unknown>).channel;
+      return {
+        alias: metaKey,
+        context:
+          typeof channel === "string" && channel.length > 0
+            ? `Slack postMessage in ${channel}`
+            : "Slack postMessage",
+      };
+    } catch {
+      // skip non-JSON lines
+    }
+  }
+
+  return undefined;
 }
 
 /**

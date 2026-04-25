@@ -54,7 +54,7 @@ services:
       retries: 10
 
   grafana-mcp:
-    image: grafana/mcp-grafana:0.11.3
+    image: grafana/mcp-grafana:0.12.0
     restart: unless-stopped
     entrypoint:
       [
@@ -113,11 +113,6 @@ services:
       context: .
       target: opencode
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: ${OPENCODE_MEMORY_LIMIT:-4g}
-          cpus: "${OPENCODE_CPU_LIMIT:-3}"
     ports:
       - "127.0.0.1:4096:4096"
     working_dir: /workspace
@@ -185,7 +180,7 @@ services:
     environment:
       - NODE_ENV=production
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:?set SLACK_BOT_TOKEN}
       - SLACK_BOT_USER_ID=${SLACK_BOT_USER_ID:?set SLACK_BOT_USER_ID}
       - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
       - OPENAI_AUTH_PATH=/opencode/auth.json

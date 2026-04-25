@@ -6,7 +6,7 @@
 #     context: .
 #     target: gateway
 
-FROM node:22-slim AS base
+FROM node:24-slim AS base
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 RUN groupadd --gid 1001 thor && useradd --uid 1001 --gid thor --create-home thor
 RUN mkdir -p /workspace && chown thor:thor /workspace
@@ -53,8 +53,14 @@ CMD ["node", "/app/packages/runner/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
-RUN npm install -g opencode-ai@1.4.3
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl jq ripgrep && rm -rf /var/lib/apt/lists/*
+RUN npm install -g opencode-ai@1.14.24
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
+    && npm install -g prettier@3.8.3 \
+    && pip3 install --break-system-packages ruff \
+    && curl -fsSL "https://github.com/mvdan/sh/releases/download/v3.13.1/shfmt_v3.13.1_linux_$(dpkg --print-architecture)" -o /usr/local/bin/shfmt \
+    && chmod +x /usr/local/bin/shfmt \
+    && rm -rf /var/lib/apt/lists/*
 # git/gh/scoutqa wrapper scripts — forward to remote-cli service over HTTP
 COPY --from=build /app/packages/opencode-cli/dist/remote-cli.mjs /usr/local/bin/remote-cli.mjs
 COPY docker/opencode/bin/git /usr/local/bin/git

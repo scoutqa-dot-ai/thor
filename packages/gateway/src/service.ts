@@ -216,6 +216,15 @@ async function forwardProgressEvent(
   }
 }
 
+async function consumeResponseBody(response: Response): Promise<void> {
+  const body = response.body;
+  if (!body) return;
+
+  for await (const _ of body) {
+    // discard
+  }
+}
+
 export async function triggerRunnerCron(
   payload: CronPayload,
   correlationKey: string,
@@ -254,12 +263,7 @@ export async function triggerRunnerCron(
 
   onAccepted?.();
 
-  const body = response.body;
-  if (body) {
-    for await (const _ of body) {
-      // discard
-    }
-  }
+  await consumeResponseBody(response);
 
   return { busy: false };
 }
@@ -320,12 +324,13 @@ export async function triggerRunnerApprovalOutcomes(
 
   onAccepted?.();
 
-  const body = response.body;
-  if (body) {
-    for await (const _ of body) {
-      // discard
-    }
-  }
+  void consumeResponseBody(response).catch((err) => {
+    logError(
+      log,
+      "approval_outcome_stream_consume_error",
+      err instanceof Error ? err.message : String(err),
+    );
+  });
 
   return { busy: false };
 }

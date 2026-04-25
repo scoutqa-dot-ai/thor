@@ -43,13 +43,22 @@ That's it — the first `sandbox <cmd>` in any worktree will provision a sandbox
 
 ## Custom snapshot (admin)
 
-For full polyglot runtime support (Node, Java, Python, Docker, `uv`), use the custom image defined in `docker/sandbox/Dockerfile`. It preinstalls nvm, SDKMAN, pyenv, Docker CE, and common runtime versions.
+For a predictable polyglot baseline, use the custom image defined in `docker/sandbox/Dockerfile`.
+
+Slim runtime contract in the custom image:
+
+- Node via nvm: **22 (default)** and **20**
+- Java via SDKMAN: **21 (default)** and **17**, plus Maven and Gradle
+- Python via pyenv: **3.12 (default)** and `uv`
+- Docker CE (with docker compose)
+
+Everything else should be installed on demand inside the sandbox for the current task (for example Node 19, Python 3.11, Go, Rust, Terraform/Terragrunt/SOPS/AWS CLI).
 
 ### Build + publish the image
 
 CI does this automatically:
 
-- **Workflow:** `.github/workflows/sandbox-image.yml`
+- **Workflow:** `.github/workflows/sandbox-e2e.yml`
 - **Trigger:** push to `docker/sandbox/**` or the workflow file itself, or manual `workflow_dispatch`.
 - **Output:** image pushed to `ghcr.io/scoutqa-dot-ai/thor-sandbox`, tagged with the long commit SHA and `latest` (on the default branch).
 
@@ -84,6 +93,8 @@ Restart the `remote-cli` service. New sandboxes will launch from the custom snap
 2. The workflow publishes a new `:latest` and `:<sha>` tag to GHCR.
 3. In Daytona, update the snapshot to the new tag (or create a new snapshot and switch `DAYTONA_SNAPSHOT`).
 
+For one-off extra toolchains in a running sandbox, use the helper documented in `docker/opencode/config/skills/sandbox/SKILL.md` (`docker/opencode/config/skills/sandbox/install-common-toolchains.sh`) instead of expanding the base image preinstall matrix.
+
 Pinning `DAYTONA_SNAPSHOT` to a snapshot built from a specific `:<sha>` tag gives you reproducible sandbox environments across teams.
 
 ## Troubleshooting
@@ -97,4 +108,4 @@ Pinning `DAYTONA_SNAPSHOT` to a snapshot built from a specific `:<sha>` tag give
 | `File "…" is NNN MB, exceeding 100 MB`       | Large artifact in dirty worktree        | Commit, `.gitignore`, or remove the file before running `sandbox`.          |
 | `… exceeds the 100-file sync limit`          | Too many dirty files                    | Commit or clean up the worktree; the sync refuses to guess what to include. |
 
-To inspect or clean up sandboxes directly, use the Daytona dashboard or the `@daytonaio/sdk` (e.g. via `scripts/test-dind-compose.ts`).
+To inspect or clean up sandboxes directly, use the Daytona dashboard or the `@daytonaio/sdk`.
