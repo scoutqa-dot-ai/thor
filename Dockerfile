@@ -120,7 +120,7 @@ EXPOSE 3004
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "/app/packages/remote-cli/dist/index.js"]
 
-FROM python:3.12-slim AS mitmproxy
+FROM python:3.14-slim AS mitmproxy
 RUN pip install --no-cache-dir mitmproxy==11.0.2
 COPY docker/mitmproxy/ /opt/thor/mitmproxy/
 RUN chmod +x /opt/thor/mitmproxy/entrypoint.sh
