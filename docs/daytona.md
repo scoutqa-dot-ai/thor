@@ -108,4 +108,4 @@ Pinning `DAYTONA_SNAPSHOT` to a snapshot built from a specific `:<sha>` tag give
 | `File "…" is NNN MB, exceeding 100 MB`       | Large artifact in dirty worktree        | Commit, `.gitignore`, or remove the file before running `sandbox`.          |
 | `… exceeds the 100-file sync limit`          | Too many dirty files                    | Commit or clean up the worktree; the sync refuses to guess what to include. |
 
-To inspect or clean up sandboxes directly, use the Daytona dashboard or the `@daytonaio/sdk` (e.g. via `scripts/test-dind-compose.ts`).
+To inspect or clean up sandboxes directly, use the Daytona dashboard or the `@daytonaio/sdk`.
