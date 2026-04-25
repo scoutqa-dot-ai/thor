@@ -6,7 +6,7 @@
 #     context: .
 #     target: gateway
 
-FROM node:22-slim AS base
+FROM node:24-slim AS base
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 RUN groupadd --gid 1001 thor && useradd --uid 1001 --gid thor --create-home thor
 RUN mkdir -p /workspace && chown thor:thor /workspace
@@ -60,7 +60,7 @@ CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
-RUN npm install -g opencode-ai@1.4.3
+RUN npm install -g opencode-ai@1.14.24
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
     && npm install -g prettier@3.8.3 \

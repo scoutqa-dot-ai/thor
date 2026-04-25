@@ -115,7 +115,6 @@ describe("ProgressManager", () => {
       {
         type: "delegate",
         agent: "research-agent",
-        description: "investigate flaky tests",
       },
       deps,
       "",
@@ -127,7 +126,35 @@ describe("ProgressManager", () => {
     expect(postCall.text).toContain("3 tool calls");
     expect(postCall.text).toContain("memory: README.md");
     expect(postCall.text).toContain("agents: research-agent");
-    expect(postCall.text).not.toContain("investigate flaky tests");
+  });
+
+  it("renders delegate context from task-derived delegate events", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "delegate",
+        agent: "research-agent",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "delegate",
+        agent: "research-agent",
+      },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).toContain("agents: research-agent x2");
   });
 
   it("collapses consecutive duplicate agents using run semantics", async () => {
@@ -136,14 +163,14 @@ describe("ProgressManager", () => {
     await handleProgressEvent(
       "C123",
       "1710000000.001",
-      { type: "delegate", agent: "research-agent", description: "first" },
+      { type: "delegate", agent: "research-agent" },
       deps,
       "",
     );
     await handleProgressEvent(
       "C123",
       "1710000000.001",
-      { type: "delegate", agent: "research-agent", description: "second" },
+      { type: "delegate", agent: "research-agent" },
       deps,
       "",
     );
