@@ -572,6 +572,11 @@ describe("validateGhArgs", () => {
           "dry_run=true",
         ]),
       ).toBeNull();
+      // Typed -F values (number, boolean) and the @file form pass through.
+      expect(validateGhArgs(["workflow", "run", "ci.yml", "-F", "count=5"])).toBeNull();
+      expect(validateGhArgs(["workflow", "run", "ci.yml", "-F", "enabled=true"])).toBeNull();
+      expect(validateGhArgs(["workflow", "run", "ci.yml", "-F", "payload=@input.json"])).toBeNull();
+      expect(validateGhArgs(["workflow", "run", "ci.yml", "--field", "retries=null"])).toBeNull();
     });
 
     it("allows append-only issue create with title/body and optional labels", () => {
@@ -710,12 +715,9 @@ describe("validateGhArgs", () => {
       expectGhDenied(["run", "rerun", "123", "--job", "456"]);
       // Duplicate --dir
       expectGhDenied(["run", "download", "123", "--dir", "a", "--dir", "b"]);
-      // Workflow run: missing selector / flag selector / URL selector / -F file input
+      // Workflow run: missing selector / flag selector / duplicate --ref
       expectGhDenied(["workflow", "run"]);
       expectGhDenied(["workflow", "run", "--ref", "main"]);
-      expectGhDenied(["workflow", "run", "ci.yml", "-F", "payload=@secrets.json"]);
-      expectGhDenied(["workflow", "run", "ci.yml", "-f", "bad key=value"]);
-      expectGhDenied(["workflow", "run", "ci.yml", "-f", "novalue"]);
       expectGhDenied(["workflow", "run", "ci.yml", "--ref", "main", "--ref", "dev"]);
     });
 

@@ -58,7 +58,7 @@ Required: numeric run ID. Optional: `--dir`/`-D <path>`, `--name`/`-n <artifact>
 
 ### `gh workflow run`
 
-Required: workflow selector (workflow file name or numeric ID, positional, no flag-leading values). Optional: `--ref <branch>`, `-f key=value` (repeatable string inputs; `-F name=@file` is denied to prevent reading local files). Blocked: `--repo`/`-R`.
+Required: workflow selector (workflow file name or numeric ID, positional, no flag-leading values). Optional: `--ref <branch>`, and repeatable workflow inputs via `-f key=value` (raw string) or `-F key=value` (typed: number, boolean, null, or `@file` to load from disk). Blocked: `--repo`/`-R`.
 
 ### `gh api`
 

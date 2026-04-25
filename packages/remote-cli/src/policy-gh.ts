@@ -294,25 +294,22 @@ function validateGhRunDownloadArgs(args: string[]): string | null {
 }
 
 function validateGhWorkflowRunArgs(args: string[]): string | null {
-  // `gh workflow run <selector> [--ref <branch>] [-f key=value]...`. The selector
-  // is a workflow file name or numeric ID — no flags, no URLs. `-F name=@file` is
-  // not allowed (it would read from a local file); only string-value `-f` pairs.
+  // `gh workflow run <selector> [--ref <branch>] [-f|-F key=value]...`. The
+  // selector is a workflow file name or numeric ID — no flags, no URLs.
+  // Workflow inputs (`-f` raw / `-F` typed, including `key=@file`) pass through:
+  // the same exfil channel exists via committing a workflow that reads files
+  // and posts them, so policing the dispatch flag is friction without protection.
   if (args.length < 3 || args[2].startsWith("-")) {
     return denyMessage("gh workflow run");
   }
   const parsed = scanPolicyArgs(args, 3, [
     { name: "ref", kind: "value", aliases: ["--ref", "-r"] },
-    { name: "field", kind: "value", aliases: ["-f", "--raw-field"] },
+    { name: "field", kind: "value", aliases: ["-f", "--raw-field", "-F", "--field"] },
   ]);
   if (!parsed || parsed.positionals.length > 0) {
     return denyMessage("gh workflow run");
   }
   if (valueFlagValues(parsed, "ref").length > 1) return denyMessage("gh workflow run");
-  for (const kv of valueFlagValues(parsed, "field")) {
-    if (!/^[A-Za-z_][A-Za-z0-9_-]*=/.test(kv) || kv.includes("=@")) {
-      return denyMessage("gh workflow run");
-    }
-  }
   return null;
 }
 
