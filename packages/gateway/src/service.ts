@@ -339,11 +339,16 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
   }
 
   const contentType = response.headers.get("content-type") ?? "";
+  // JSON response means the runner returned a final status, not a stream.
+  // Body is fully consumed by response.json() — skip the drain/stream paths
+  // below, which would otherwise hit "ReadableStream is locked".
   if (contentType.includes("application/json")) {
     const json = (await response.json()) as Record<string, unknown>;
     if (json.busy === true) {
       return { busy: true };
     }
+    options.onAccepted?.();
+    return { busy: false };
   }
 
   options.onAccepted?.();
