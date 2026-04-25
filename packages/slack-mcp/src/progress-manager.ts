@@ -56,6 +56,11 @@ function formatToolGroups(groups: ToolGroup[]): string {
 
 const MEMORY_ROOT_PREFIX = "/workspace/memory/";
 
+function isReadmePath(path: string): boolean {
+  const base = path.split("/").filter(Boolean).pop() ?? "";
+  return base.toLowerCase() === "readme.md";
+}
+
 function shortenMemoryPath(path: string): string {
   if (path.startsWith(MEMORY_ROOT_PREFIX)) {
     return path.slice(MEMORY_ROOT_PREFIX.length);
@@ -361,6 +366,7 @@ class ProgressSession {
 
   async onMemory(activity: MemoryActivity): Promise<void> {
     if (this.finished) return;
+    if (activity.action === "read" && isReadmePath(activity.path)) return;
 
     this.recentMemory.push(activity);
     if (this.recentMemory.length > 4) {
