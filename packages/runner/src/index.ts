@@ -39,7 +39,6 @@ import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { buildToolInstructions } from "./tool-instructions.js";
 import { getMemoryProgressEvents } from "./memory-progress.js";
-import { createDelegateProgressState, getDelegateProgressEvents } from "./delegate-progress.js";
 
 const log = createLogger("runner");
 
@@ -617,7 +616,31 @@ app.post("/trigger", async (req, res) => {
     // Track child session IDs for progress forwarding.
     const childSessionIds = new Set<string>();
     // Dedupe task delegate emissions across repeated part updates.
-    const delegateProgressState = createDelegateProgressState();
+    const emittedTaskDelegates = new Set<string>();
+
+    function emitTaskDelegateProgress(toolPart: ToolPart): void {
+      if (toolPart.tool !== "task") return;
+
+      const input = (toolPart.state as { input?: unknown }).input;
+      if (!input || typeof input !== "object") return;
+
+      const inputRecord = input as Record<string, unknown>;
+      const agent =
+        typeof inputRecord.subagent_type === "string" ? inputRecord.subagent_type.trim() : "";
+      if (!agent) return;
+
+      const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
+      if (emittedTaskDelegates.has(key)) return;
+      emittedTaskDelegates.add(key);
+
+      const description =
+        typeof inputRecord.description === "string" ? inputRecord.description.trim() : "";
+      emit({
+        type: "delegate",
+        agent,
+        ...(description ? { description } : {}),
+      });
+    }
 
     await withNdjsonHeartbeat(emit, async () => {
       for await (const event of subscription) {
@@ -633,11 +656,9 @@ app.post("/trigger", async (req, res) => {
             childSessionIds.has(event.properties.part.sessionID)
           ) {
             const part = event.properties.part;
-            for (const delegateEvent of getDelegateProgressEvents(part, delegateProgressState)) {
-              emit(delegateEvent);
-            }
             if (part.type === "tool") {
               const toolPart = part as ToolPart;
+              emitTaskDelegateProgress(toolPart);
               const status = toolPart.state.status;
               if (status === "completed" || status === "error") {
                 const displayName = toolDisplayName(toolPart);
@@ -656,10 +677,6 @@ app.post("/trigger", async (req, res) => {
           // Stdout logging (selective)
           logPartToStdout(sessionId, part);
 
-          for (const delegateEvent of getDelegateProgressEvents(part, delegateProgressState)) {
-            emit(delegateEvent);
-          }
-
           // Accumulate data for response regardless of filtering
           if (part.type === "text") {
             const textPart = part as TextPart;
@@ -667,6 +684,7 @@ app.post("/trigger", async (req, res) => {
             lastMessageId = textPart.messageID;
           } else if (part.type === "tool") {
             const toolPart = part as ToolPart;
+            emitTaskDelegateProgress(toolPart);
             const status = toolPart.state.status;
 
             // Discover child sessions when a task tool starts running.

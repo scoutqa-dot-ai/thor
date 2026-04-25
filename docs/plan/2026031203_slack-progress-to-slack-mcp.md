@@ -79,18 +79,15 @@ Shared Zod schemas (`SlackProgressRequestSchema`, `SlackReactionRequestSchema`) 
 
 ### Problem
 
-Runner progress emission only converted `subtask` parts into `delegate` events. OpenCode `task` tool invocations now carry sub-agent metadata in `state.input.subagent_type` and `state.input.description`, and some runs emit no `subtask` parts. This made delegated work invisible in Slack progress for those runs.
+Runner progress emission only converted `subtask` parts into `delegate` events. OpenCode `task` tool invocations now carry sub-agent metadata in `state.input.subagent_type` and `state.input.description`, and current runs emit no `subtask` parts. This made delegated work invisible in Slack progress.
 
 ### Fix
 
 - Added runner-side delegate extraction for `tool` parts where `part.tool === "task"`.
 - Emit one `delegate` progress event per task invocation when `state.input.subagent_type` is a non-empty string; include trimmed `description` when present.
-- Keep existing `subtask` conversion as backward-compatible fallback.
 - Apply extraction to both parent session parts and forwarded child-session parts.
-- Also forward child-session `subtask` parts as delegate events.
 - Added dedupe so repeated updates for the same task invocation do not emit duplicate delegate events.
 
 ### Validation
 
-- Added focused runner unit tests for task/subtask delegate extraction and task dedupe behavior.
 - Added slack-mcp progress-manager test to verify delegate events still render in the Slack progress line (`agents: ...`) without descriptions.

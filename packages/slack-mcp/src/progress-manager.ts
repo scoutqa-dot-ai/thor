@@ -304,7 +304,7 @@ class ProgressSession {
   private lastToolGroups: ToolGroup[] = [];
   /** Recent memory activity from bootstrap/tool file access. */
   private recentMemory: MemoryActivity[] = [];
-  /** Recent delegated agents from subtask parts. */
+  /** Recent delegated agents from runner progress events. */
   private recentDelegates: DelegateActivity[] = [];
   private startTime: number;
   private lastUpdateTime = 0;
