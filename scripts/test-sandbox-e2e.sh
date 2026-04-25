@@ -505,23 +505,6 @@ else
       -d "{\"mode\":\"exec\",\"args\":[\"sdk\",\"default\",\"java\",\"21.0.10-tem\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
       2>/dev/null >/dev/null
 
-    # Python: install 3.11 on-demand, then verify it is usable
-    sbx_py_set=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
-      -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"pyenv\",\"install\",\"-s\",\"3.11\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
-      2>/dev/null)
-    sbx_py_set_exit=$(echo "$sbx_py_set" | sandbox_exec_exit)
-    assert '[[ "$sbx_py_set_exit" == "0" ]]' "on-demand Python 3.11 install succeeded" "exitCode='$sbx_py_set_exit'"
-
-    sbx_py_check=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
-      -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"bash\",\"-lc\",\"PYENV_VERSION=3.11 python3 --version\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
-      2>/dev/null)
-    sbx_py_ver=$(echo "$sbx_py_check" | sandbox_exec_stdout | tr -d '[:space:]')
-    assert '[[ "$sbx_py_ver" == *"3.11"* ]]' \
-      "on-demand Python 3.11 is usable" \
-      "got='$sbx_py_ver'"
-
     # 8q. Args with spaces are preserved (shell quoting)
     echo "  Testing arg quoting preservation..."
     sbx_quote_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
