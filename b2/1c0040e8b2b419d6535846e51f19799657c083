@@ -1,0 +1,29 @@
+packages/runner/src/trigger-spool.test.ts
+  677b2d51537bb16c 1-43
+packages/runner/src/trigger-spool.ts
+  677b2d51537bb16c 1-49
+packages/runner/src/index.ts
+  677b2d51537bb16c 42-43,140,142-151,153-166,170,174-175,177,189-190,195-198,201-203,206-207,389-395,623,854
+docs/plan/2026042401_runner-live-watch.md
+  677b2d51537bb16c 75-105,115-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b21c0040e8b2b419d6535846e51f19799657c083",
+  "prompts": {
+    "677b2d51537bb16c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c138aba6-f3a6-4dc0-adcc-d7d95bfb2fee",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 190,
+      "total_deletions": 96,
+      "accepted_lines": 178,
+      "overriden_lines": 0
+    }
+  }
+}
