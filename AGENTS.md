@@ -29,22 +29,6 @@ Instructions for AI agents working on this repository.
 
 5. **Document decisions** — When making a non-obvious choice (library, pattern, architecture), add it to the active plan's Decision Log table. Future sessions can read this to understand why things are the way they are.
 
-## PR Review Workflow
-
-When asked to review or critique a PR, the first action is always to check out the branch to a worktree:
-
-```
-git fetch origin pull/<N>/head:pr-<N>
-git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>
-```
-
-Then `cd` into the worktree for every subsequent action — diffs, code search, tests, builds, file reads. Reviewing through `gh pr diff`, `git show <ref>` of an unfetched commit, or `gh api repos/.../pulls/<N>/files` is forbidden. Those produce shallow reviews because:
-
-- you can't run the test suite or type checks against the PR state,
-- you can't grep beyond the changed lines for callers, related tests, or pattern matches,
-- you can't cross-reference unchanged code that the change depends on,
-- you can't reproduce the build to verify the change actually compiles.
-
 ## Repository Structure
 
 ```
