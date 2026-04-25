@@ -14,7 +14,7 @@ ingress -> gateway -> runner -> opencode
 
 - `gateway` accepts Slack and cron events, batches them, and forwards them to the runner.
 - `runner` manages OpenCode session continuity and streams progress back out.
-- `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, langfuse, metabase, MCP tool calls, and approval status/resolution, and is the server-side policy boundary for CLI access.
+- `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, langfuse, metabase, MCP tool calls, and approval status/resolution.
 - `slack-mcp` owns Slack API access for progress updates and approval notifications.
 
 ## Services
@@ -222,7 +222,6 @@ Rules match by exact host or suffix first, then by optional `path_prefix`.
 
 - OpenCode does not get direct API credentials for MCP upstreams.
 - `remote-cli` enforces MCP allow/approve policy server-side and stores approvals under `/workspace/data/approvals`.
-- `remote-cli` enforces append-only `gh` policy server-side: Thor may create PRs/comments and submit comment/request-changes reviews, but cannot edit/delete comments, approve PRs, or merge.
 - Approval resolution is only available through `POST /exec/mcp` with `x-thor-resolve-secret`.
 - `git` uses GitHub App installation tokens through `GIT_ASKPASS` when `github_app.installations` is configured and the target org can be resolved; otherwise it falls back to inherited PAT auth via `GITHUB_PAT`.
 - `gh` resolves GitHub App auth before execution and falls back to inherited `GH_TOKEN` / `GITHUB_PAT` when no installation token is available.
