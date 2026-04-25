@@ -1,0 +1,25 @@
+docs/plan/2026042406_command-policy-consolidation.md
+  a699f0b9da0318ee 224,226-228
+docs/plan/2026041503_github-app-auth.md
+  a699f0b9da0318ee 243-250
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b5fd3cff7777e78f46aa56f925affb7cb9e36a78",
+  "prompts": {
+    "a699f0b9da0318ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f77ceed5-cc32-4464-834e-5ca79c8e1042",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 1,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}
