@@ -1,0 +1,29 @@
+packages/remote-cli/src/github-app-auth.ts
+  a699f0b9da0318ee 26-27,98-100,106,109,113,227,363
+README.md
+  a699f0b9da0318ee 164
+docs/examples/workspace-config.example.json
+  a699f0b9da0318ee 14,20
+packages/remote-cli/src/github-app-auth.test.ts
+  a699f0b9da0318ee 70,73-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "292d1a2d84f2f18c60353b88774e322899e310fd",
+  "prompts": {
+    "a699f0b9da0318ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f77ceed5-cc32-4464-834e-5ca79c8e1042",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 108,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    }
+  }
+}
