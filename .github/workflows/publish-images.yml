@@ -2,18 +2,10 @@ name: Publish Images
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "deploy/**"
     tags: ["v*"]
-    paths:
-      - ".github/workflows/publish-images.yml"
-      - "Dockerfile"
-      - "docker/**"
-      - "packages/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "tsconfig.base.json"
-      - "tsup.config.ts"
   workflow_dispatch:
 
 permissions:
