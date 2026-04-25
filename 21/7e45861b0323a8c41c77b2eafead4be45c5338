@@ -1,0 +1,23 @@
+.github/workflows/publish-images.yml
+  a1d59f4fea72eaa5 1-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "217e45861b0323a8c41c77b2eafead4be45c5338",
+  "prompts": {
+    "a1d59f4fea72eaa5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51ebda91-e311-4528-b886-a4bb507a4f79",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 128,
+      "total_deletions": 4,
+      "accepted_lines": 124,
+      "overriden_lines": 0
+    }
+  }
+}
