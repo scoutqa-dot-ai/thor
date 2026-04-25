@@ -1,0 +1,23 @@
+docs/daytona.md
+  02d11794cafc5e5c 111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "fe663ea08c51f0284f07d73e458459e82faad7e0",
+  "prompts": {
+    "02d11794cafc5e5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dc065f17-b6a7-47c4-9c3d-568c2888d09d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
