@@ -55,6 +55,10 @@ const MEMORY_DIR = "/workspace/memory";
 /** Root memory file — injected into every new or stale session prompt. */
 const ROOT_MEMORY_PATH = `${MEMORY_DIR}/README.md`;
 
+const TaskDelegateInputSchema = z.object({
+  subagent_type: z.string().trim().min(1),
+});
+
 const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
 /** Shared event buses — one SSE connection per directory, dispatches to per-session listeners. */
@@ -578,9 +582,7 @@ app.post("/trigger", async (req, res) => {
         ...(event.type === "memory"
           ? { action: event.action, path: event.path, source: event.source }
           : {}),
-        ...(event.type === "delegate"
-          ? { agent: event.agent, description: event.description }
-          : {}),
+        ...(event.type === "delegate" ? { agent: event.agent } : {}),
         ...(event.type === "done"
           ? { status: event.status, durationMs: (event as { durationMs?: number }).durationMs }
           : {}),
@@ -622,23 +624,17 @@ app.post("/trigger", async (req, res) => {
       if (toolPart.tool !== "task") return;
 
       const input = (toolPart.state as { input?: unknown }).input;
-      if (!input || typeof input !== "object") return;
-
-      const inputRecord = input as Record<string, unknown>;
-      const agent =
-        typeof inputRecord.subagent_type === "string" ? inputRecord.subagent_type.trim() : "";
-      if (!agent) return;
+      const parsed = TaskDelegateInputSchema.safeParse(input);
+      if (!parsed.success) return;
 
       const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
       if (emittedTaskDelegates.has(key)) return;
       emittedTaskDelegates.add(key);
 
-      const description =
-        typeof inputRecord.description === "string" ? inputRecord.description.trim() : "";
+      const { subagent_type: agent } = parsed.data;
       emit({
         type: "delegate",
         agent,
-        ...(description ? { description } : {}),
       });
     }
 
