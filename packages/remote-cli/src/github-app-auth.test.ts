@@ -2,51 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  resolveOrgFromArgs,
-  parseOrgFromRemoteUrl,
-  resolveInstallation,
-  generateAppJWT,
-} from "./github-app-auth.js";
+import { parseOrgFromRemoteUrl, resolveInstallation, generateAppJWT } from "./github-app-auth.js";
 import { loadWorkspaceConfig } from "@thor/common";
-
-// ── Org resolution from args ─────────────────────────────────────────────────
-
-describe("resolveOrgFromArgs", () => {
-  it("extracts org from -R owner/repo", () => {
-    expect(resolveOrgFromArgs(["pr", "create", "-R", "acme/web"])).toBe("acme");
-  });
-
-  it("extracts org from --repo=owner/repo", () => {
-    expect(resolveOrgFromArgs(["pr", "view", "--repo=acme/web"])).toBe("acme");
-  });
-
-  it("extracts org from --repo owner/repo", () => {
-    expect(resolveOrgFromArgs(["pr", "view", "--repo", "acme/web"])).toBe("acme");
-  });
-
-  it("returns undefined when no -R flag", () => {
-    expect(resolveOrgFromArgs(["pr", "list"])).toBeUndefined();
-  });
-
-  it("returns undefined when -R has no value", () => {
-    expect(resolveOrgFromArgs(["pr", "create", "-R"])).toBeUndefined();
-  });
-
-  it("returns undefined for -R with no slash", () => {
-    expect(resolveOrgFromArgs(["-R", "just-a-name"])).toBeUndefined();
-  });
-
-  it("falls through to undefined for positional owner/repo (resolved via cwd instead)", () => {
-    expect(resolveOrgFromArgs(["repo", "view", "acme/web", "--json", "name"])).toBeUndefined();
-  });
-
-  it("does not misparse --body content as org", () => {
-    expect(
-      resolveOrgFromArgs(["pr", "create", "--body", "## Summary\nFixes org/issue-123"]),
-    ).toBeUndefined();
-  });
-});
 
 // ── Org resolution from remote URL ───────────────────────────────────────────
 

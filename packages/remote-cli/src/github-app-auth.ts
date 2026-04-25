@@ -24,6 +24,7 @@ const GITHUB_APP_DIR = process.env.GITHUB_APP_DIR ?? "/var/lib/remote-cli/github
 const DEFAULT_PRIVATE_KEY_PATH = join(GITHUB_APP_DIR, "private-key.pem");
 const CACHE_DIR = join(GITHUB_APP_DIR, "cache");
 const DEFAULT_API_URL = "https://api.github.com";
+const GITHUB_HOST = "github.com";
 
 /** Refresh token when less than this many seconds remain. */
 const EARLY_REFRESH_SECONDS = 300; // 5 minutes
@@ -47,35 +48,6 @@ interface CachedToken {
 // ── Org resolution ───────────────────────────────────────────────────────────
 
 /**
- * Extract org from command args.
- * Only checks the explicit -R / --repo flag; everything else falls through
- * to resolveOrgFromRemote(cwd).  The previous "second pass" that scanned
- * positional args for owner/repo patterns was fragile — flag values like
- * --body content could be mis-identified as an org.
- */
-export function resolveOrgFromArgs(args: string[]): string | undefined {
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "-R" && i + 1 < args.length) {
-      const ownerRepo = args[i + 1];
-      const slash = ownerRepo.indexOf("/");
-      if (slash > 0) return ownerRepo.slice(0, slash);
-    }
-    if (args[i] === "--repo" && i + 1 < args.length) {
-      const ownerRepo = args[i + 1];
-      const slash = ownerRepo.indexOf("/");
-      if (slash > 0) return ownerRepo.slice(0, slash);
-    }
-    if (args[i]?.startsWith("--repo=")) {
-      const ownerRepo = args[i].slice("--repo=".length);
-      const slash = ownerRepo.indexOf("/");
-      if (slash > 0) return ownerRepo.slice(0, slash);
-    }
-  }
-
-  return undefined;
-}
-
-/**
  * Extract org from the git remote URL of the current repo.
  * Supports HTTPS (https://github.com/org/repo.git) and SSH (git@github.com:org/repo.git).
  */
@@ -94,16 +66,22 @@ export function resolveOrgFromRemote(cwd: string): string | undefined {
 }
 
 /**
- * Parse the org (owner) from a GitHub remote URL.
+ * Parse the org (owner) from a github.com remote URL.
+ * Non-github.com hosts return undefined so a malicious remote URL never
+ * resolves to a real installation.
  */
 export function parseOrgFromRemoteUrl(url: string): string | undefined {
   // SSH: git@github.com:org/repo.git
-  const sshMatch = url.match(/^git@[^:]+:([^/]+)\//);
-  if (sshMatch) return sshMatch[1];
+  const sshMatch = url.match(/^git@([^:]+):([^/]+)\//);
+  if (sshMatch) {
+    return sshMatch[1].trim().toLowerCase() === GITHUB_HOST ? sshMatch[2] : undefined;
+  }
 
-  // HTTPS: https://github.com/org/repo or https://github.com/org/repo.git
+  // HTTPS: https://github.com/org/repo[.git]
   try {
     const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return undefined;
+    if (parsed.hostname.trim().toLowerCase() !== GITHUB_HOST) return undefined;
     const parts = parsed.pathname.split("/").filter(Boolean);
     if (parts.length >= 2) return parts[0];
   } catch {
@@ -114,15 +92,14 @@ export function parseOrgFromRemoteUrl(url: string): string | undefined {
 }
 
 /**
- * Resolve the target org for a git/gh command.
- * Priority: explicit -R flag > git remote origin.
- * Returns undefined if org cannot be determined.
+ * Resolve the target org for a git/gh command from the cwd's git remote.
+ * Returns undefined if cwd is missing or its origin is not a github.com URL.
+ *
+ * Note: arg-based resolution (-R / --repo) is intentionally absent — the gh
+ * policy denies those flags, so they can never reach this code path.
  */
-export function resolveOrg(args: string[], cwd?: string): string | undefined {
-  const fromArgs = resolveOrgFromArgs(args);
-  if (fromArgs) return fromArgs;
-  if (cwd) return resolveOrgFromRemote(cwd);
-  return undefined;
+export function resolveOrg(_args: string[], cwd?: string): string | undefined {
+  return cwd ? resolveOrgFromRemote(cwd) : undefined;
 }
 
 // ── Config lookup ────────────────────────────────────────────────────────────
