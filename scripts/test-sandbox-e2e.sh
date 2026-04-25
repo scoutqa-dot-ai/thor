@@ -506,13 +506,9 @@ else
       2>/dev/null >/dev/null
 
     # Python: install 3.11 on-demand, then verify it is usable
-    sbx_py_install_body=$(jq -nc \
-      --arg cwd "$SBX_WORKTREE_DIR" \
-      --arg cmd 'export PYENV_ROOT="$HOME/.pyenv" && export PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH" && eval "$(pyenv init -)" && pyenv install -s 3.11' \
-      '{mode:"exec",args:["bash","-lc",$cmd],cwd:$cwd}')
     sbx_py_set=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "$sbx_py_install_body" \
+      -d "{\"mode\":\"exec\",\"args\":[\"pyenv\",\"install\",\"-s\",\"3.11\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
       2>/dev/null)
     sbx_py_set_exit=$(echo "$sbx_py_set" | sandbox_exec_exit)
     assert '[[ "$sbx_py_set_exit" == "0" ]]' "on-demand Python 3.11 install succeeded" "exitCode='$sbx_py_set_exit'"
