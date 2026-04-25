@@ -742,17 +742,21 @@ else
     assert 'false' "Trigger #3: session became available" "still busy after 60s"
   fi
 
-  # Clean up: remove worktree and delete the test branch
+  # Best-effort cleanup of the test worktree/branch via policy. Both
+  # `git worktree remove --force` and `git branch -D` are intentionally outside
+  # the policy allowlist (destructive verbs), so these calls may return 4xx —
+  # that's fine. The script wipes the entire repo dir at exit anyway, so
+  # leftover branches/worktrees never persist across CI runs.
   echo ""
-  echo "  Cleaning up test worktree and branch..."
-  curl -sf -X POST "$REMOTE_CLI_URL/exec/git" \
+  echo "  Cleaning up test worktree and branch (best-effort)..."
+  curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
     -H 'Content-Type: application/json' \
-    -d "{\"args\":[\"worktree\",\"remove\",\"--force\",\"$ALIAS_WORKTREE\"],\"cwd\":\"$ALIAS_DIR\"}" \
-    2>/dev/null >/dev/null
-  curl -sf -X POST "$REMOTE_CLI_URL/exec/git" \
+    -d "{\"args\":[\"worktree\",\"remove\",\"$ALIAS_WORKTREE\"],\"cwd\":\"$ALIAS_DIR\"}" \
+    >/dev/null 2>&1 || true
+  curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
     -H 'Content-Type: application/json' \
-    -d "{\"args\":[\"branch\",\"-D\",\"$ALIAS_BRANCH\"],\"cwd\":\"$ALIAS_DIR\"}" \
-    2>/dev/null >/dev/null
+    -d "{\"args\":[\"worktree\",\"prune\"],\"cwd\":\"$ALIAS_DIR\"}" \
+    >/dev/null 2>&1 || true
 fi
 
 # ── Results ─────────────────────────────────────────────────────────────────
