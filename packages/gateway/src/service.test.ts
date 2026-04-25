@@ -128,6 +128,17 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       JSON.stringify({ type: "tool", tool: "read", status: "completed" }),
       JSON.stringify({ type: "tool", tool: "write", status: "completed" }),
       JSON.stringify({
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/my-repo/README.md",
+        source: "bootstrap",
+      }),
+      JSON.stringify({
+        type: "delegate",
+        agent: "research-agent",
+        description: "collect incidents",
+      }),
+      JSON.stringify({
         type: "done",
         sessionId: "s1",
         resumed: false,
@@ -157,6 +168,15 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     expect(slackUrls).toContain("https://slack.com/api/chat.postMessage");
     expect(slackUrls).toContain("https://slack.com/api/chat.update");
     expect(slackUrls).toContain("https://slack.com/api/chat.delete");
+    const updateBodies = mockSlackFetch.mock.calls
+      .filter((c: [string]) => c[0] === "https://slack.com/api/chat.update")
+      .map((c) => JSON.parse((c[1] as { body: string }).body));
+    expect(
+      updateBodies.some((body: { text: string }) => body.text.includes("memory: README.md")),
+    ).toBe(true);
+    expect(
+      updateBodies.some((body: { text: string }) => body.text.includes("agents: research-agent")),
+    ).toBe(true);
   });
 
   it("posts approval_required events with v3 button payload format", async () => {

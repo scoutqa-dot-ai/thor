@@ -1,0 +1,210 @@
+name: Sandbox E2E
+
+on:
+  push:
+    paths:
+      - "docker/sandbox/**"
+      - "scripts/test-sandbox-e2e.sh"
+      - ".github/workflows/sandbox-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: sandbox-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sandbox-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      GITHUB_APP_ID: ${{ vars.THOR_GITHUB_APP_ID }}
+      GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/private-key.pem
+      THOR_GITHUB_APP_PRIVATE_KEY: ${{ secrets.THOR_GITHUB_APP_PRIVATE_KEY }}
+      THOR_GITHUB_APP_INSTALLATION_ID: ${{ vars.THOR_GITHUB_APP_INSTALLATION_ID }}
+      # Fakes: services not exercised by sandbox e2e, but referenced at compose startup.
+      SLACK_BOT_TOKEN: ci-fake
+      SLACK_BOT_USER_ID: U000000000
+      SLACK_SIGNING_SECRET: ci-fake
+      GRAFANA_URL: http://grafana-mcp:8000
+      GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
+      ATLASSIAN_AUTH: ci-fake
+      POSTHOG_API_KEY: ci-fake
+      LANGFUSE_PUBLIC_KEY: ci-fake
+      LANGFUSE_SECRET_KEY: ci-fake
+      LANGFUSE_HOST: https://us.cloud.langfuse.com
+      METABASE_URL: http://localhost
+      METABASE_API_KEY: ci-fake
+      METABASE_DATABASE_ID: "1"
+      METABASE_ALLOWED_SCHEMAS: public
+      VOUCH_GOOGLE_CLIENT_ID: ci-fake
+      VOUCH_GOOGLE_CLIENT_SECRET: ci-fake
+      VOUCH_JWT_SECRET: ci-fake
+      VOUCH_WHITELIST: ci@localhost
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/thor-sandbox
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Build and push sandbox image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: docker/sandbox
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create Daytona snapshot from new image
+        id: snapshot
+        run: |
+          set -euo pipefail
+          snapshot_name="thor-snapshot"
+          image_name="ghcr.io/${{ github.repository_owner }}/thor-sandbox:sha-${GITHUB_SHA}"
+          api="https://app.daytona.io/api/snapshots"
+          auth=(-H "Authorization: Bearer $DAYTONA_API_KEY")
+
+          # Delete any stale snapshot with this name (may be in error state).
+          # DELETE endpoint requires UUID, so resolve name -> id first.
+          echo "Looking up existing snapshot $snapshot_name..."
+          existing_id=$(curl -sS "${auth[@]}" "$api/$snapshot_name" | jq -r '.id // empty')
+          if [[ -n "$existing_id" ]]; then
+            echo "Deleting existing snapshot (id=$existing_id)..."
+            curl -sS -X DELETE "${auth[@]}" "$api/$existing_id"
+            echo
+            # DELETE is async — poll until the name is free (404).
+            for attempt in $(seq 1 30); do
+              status=$(curl -sS -o /dev/null -w '%{http_code}' "${auth[@]}" "$api/$snapshot_name")
+              echo "  attempt $attempt: GET $snapshot_name -> $status"
+              [[ "$status" == "404" ]] && break
+              sleep 2
+            done
+            if [[ "$status" != "404" ]]; then
+              echo "snapshot still present after delete (status=$status)" >&2
+              exit 1
+            fi
+          else
+            echo "No existing snapshot found."
+          fi
+
+          echo "Creating snapshot $snapshot_name from $image_name"
+          curl -sS --fail-with-body -X POST "${auth[@]}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg name "$snapshot_name" --arg image "$image_name" \
+                 '{name: $name, imageName: $image}')" \
+            "$api"
+          echo
+
+          # Poll until active (or timeout).
+          echo "Waiting for snapshot to become active..."
+          for attempt in $(seq 1 60); do
+            state=$(curl -sS "${auth[@]}" "$api/$snapshot_name" | jq -r '.state')
+            echo "  attempt $attempt: state=$state"
+            case "$state" in
+              active) break ;;
+              error|build_failed)
+                echo "snapshot entered terminal failure state: $state" >&2
+                curl -sS "${auth[@]}" "$api/$snapshot_name" | jq .
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          if [[ "$state" != "active" ]]; then
+            echo "snapshot did not become active in time (last state: $state)" >&2
+            exit 1
+          fi
+
+          echo "name=$snapshot_name" >> "$GITHUB_OUTPUT"
+
+      - name: Bring up remote-cli stack
+        env:
+          DAYTONA_SNAPSHOT: ${{ steps.snapshot.outputs.name }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p \
+            docker-volumes/workspace/repos \
+            docker-volumes/opencode \
+            docker-volumes/github-app \
+            docker-volumes/home/thor
+          chmod 777 docker-volumes/home/thor
+
+          printf '%s' "$THOR_GITHUB_APP_PRIVATE_KEY" > docker-volumes/github-app/private-key.pem
+          chmod 600 docker-volumes/github-app/private-key.pem
+
+          # data service requires env_file: .env — create an empty one.
+          : > .env
+
+          export CRON_SECRET="$(openssl rand -hex 32)"
+          export RESOLVE_SECRET="$(openssl rand -hex 32)"
+          {
+            echo "CRON_SECRET=$CRON_SECRET"
+            echo "RESOLVE_SECRET=$RESOLVE_SECRET"
+            echo "DAYTONA_SNAPSHOT=$DAYTONA_SNAPSHOT"
+          } >> "$GITHUB_ENV"
+
+          cat > docker-volumes/workspace/config.json <<EOF
+          {
+            "repos": {},
+            "github_app": {
+              "installations": [
+                {
+                  "org": "${{ github.repository_owner }}",
+                  "installation_id": ${THOR_GITHUB_APP_INSTALLATION_ID}
+                }
+              ]
+            }
+          }
+          EOF
+
+          docker compose up --build --wait -d remote-cli
+
+      - name: Run sandbox e2e
+        run: pnpm test:sandbox-e2e
+
+      - name: Compose status (on failure)
+        if: failure()
+        run: docker compose ps
+
+      - name: Compose logs (on failure)
+        if: failure()
+        run: docker compose logs --no-color --timestamps

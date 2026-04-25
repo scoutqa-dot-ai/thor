@@ -3,7 +3,7 @@
 # Polyglot image with version managers: nvm (Node), SDKMAN (Java), pyenv (Python),
 # plus Docker CE for running containers (docker compose, testcontainers, etc.).
 #
-# Published to ghcr.io/scoutqa-dot-ai/thor-sandbox via .github/workflows/sandbox-image.yml.
+# Published to ghcr.io/scoutqa-dot-ai/thor-sandbox via .github/workflows/sandbox-e2e.yml.
 # An admin then creates a Daytona snapshot from the published image and sets
 # DAYTONA_SNAPSHOT to the snapshot name.
 #
@@ -18,14 +18,10 @@ ARG DOCKER_VERSION=28.5.1
 ARG NVM_INSTALL_TAG=v0.40.4
 ARG NODE_22_VERSION=22.22.2
 ARG NODE_20_VERSION=20.20.2
-ARG NODE_24_VERSION=24.14.1
 ARG JAVA_21_VERSION=21.0.10-tem
 ARG JAVA_17_VERSION=17.0.18-tem
 ARG PYENV_INSTALL_TAG=v2.6.27
-ARG PYTHON_3_11_VERSION=3.11.15
 ARG PYTHON_3_12_VERSION=3.12.13
-ARG PYTHON_3_13_VERSION=3.13.13
-ARG PYTHON_3_14_VERSION=3.14.4
 ARG UV_VERSION=0.11.7
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -95,17 +91,15 @@ USER thor
 RUN curl --retry 5 --retry-all-errors --retry-delay 2 -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_INSTALL_TAG}/install.sh" | bash \
     && test -s "$NVM_DIR/nvm.sh"
 
-# Preinstall common Node versions (22 = default, 20 = LTS, 24 = emerging)
+# Preinstall Node versions (22 = default, 20 = LTS)
 RUN bash -c '. "$NVM_DIR/nvm.sh" \
     && nvm install "$NODE_22_VERSION" \
     && nvm install "$NODE_20_VERSION" \
-    && nvm install "$NODE_24_VERSION" \
     && nvm alias default "$NODE_22_VERSION" \
     && nvm use default \
     && corepack enable && corepack prepare pnpm@latest --activate \
     && nvm exec 22 node --version | grep -Fx "v$NODE_22_VERSION" >/dev/null \
     && nvm exec 20 node --version | grep -Fx "v$NODE_20_VERSION" >/dev/null \
-    && nvm exec 24 node --version | grep -Fx "v$NODE_24_VERSION" >/dev/null \
     && nvm current | grep -Fx "v$NODE_22_VERSION" >/dev/null \
     && node --version | grep -Fx "v$NODE_22_VERSION" >/dev/null \
     && pnpm --version'
@@ -149,17 +143,11 @@ ENV PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"
 RUN curl --retry 5 --retry-all-errors --retry-delay 2 -fsSL https://pyenv.run | PYENV_GIT_TAG="$PYENV_INSTALL_TAG" bash \
     && command -v pyenv >/dev/null
 
-# Preinstall common Python versions (3.12 = default, 3.11 = active, 3.13 = established, 3.14 = latest stable)
+# Preinstall Python default runtime (3.12)
 RUN bash -c 'export PATH="$PYENV_ROOT/bin:$PATH" && eval "$(pyenv init -)" \
     && pyenv install "$PYTHON_3_12_VERSION" \
-    && pyenv install "$PYTHON_3_11_VERSION" \
-    && pyenv install "$PYTHON_3_13_VERSION" \
-    && pyenv install "$PYTHON_3_14_VERSION" \
     && pyenv global "$PYTHON_3_12_VERSION" \
     && PYENV_VERSION=3.12 pyenv exec python --version 2>&1 | grep -Fx "Python $PYTHON_3_12_VERSION" >/dev/null \
-    && PYENV_VERSION=3.11 pyenv exec python --version 2>&1 | grep -Fx "Python $PYTHON_3_11_VERSION" >/dev/null \
-    && PYENV_VERSION=3.13 pyenv exec python --version 2>&1 | grep -Fx "Python $PYTHON_3_13_VERSION" >/dev/null \
-    && PYENV_VERSION=3.14 pyenv exec python --version 2>&1 | grep -Fx "Python $PYTHON_3_14_VERSION" >/dev/null \
     && [[ "$(pyenv global)" == "$PYTHON_3_12_VERSION" ]] \
     && [[ "$(pyenv which python)" == "$PYENV_ROOT/versions/$PYTHON_3_12_VERSION/bin/python" ]] \
     && python --version 2>&1 | grep -Fx "Python $PYTHON_3_12_VERSION" >/dev/null'
