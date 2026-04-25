@@ -134,11 +134,6 @@ services:
       context: .
       target: opencode
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: ${OPENCODE_MEMORY_LIMIT:-4g}
-          cpus: "${OPENCODE_CPU_LIMIT:-3}"
     ports:
       - "127.0.0.1:4096:4096"
     working_dir: /workspace
