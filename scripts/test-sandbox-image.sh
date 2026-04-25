@@ -101,7 +101,6 @@ assert '[[ "$node_version" == v22.* ]]' "Default Node is v22.x" "got: $node_vers
 
 nvm_list=$(run nvm ls --no-colors)
 assert '[[ "$nvm_list" == *"v20."* ]]' "Node 20 installed" "nvm ls: $nvm_list"
-assert '[[ "$nvm_list" == *"v24."* ]]' "Node 24 installed" "nvm ls: $nvm_list"
 
 nvm_switch=$(run 'nvm use 20 >/dev/null && node --version')
 assert '[[ "$nvm_switch" == v20.* ]]' "nvm use 20 switches to v20.x" "got: $nvm_switch"
@@ -117,7 +116,7 @@ echo "=== Java / SDKMAN ==="
 java_version=$(run java -version 2>&1 | head -1)
 assert '[[ "$java_version" == *"21"* ]]' "Default Java is 21" "got: $java_version"
 
-sdk_switch=$(run 'sdk use java 17.0.15-tem >/dev/null 2>&1 && java -version 2>&1 | head -1')
+sdk_switch=$(run 'sdk use java 17.0.18-tem >/dev/null 2>&1 && java -version 2>&1 | head -1')
 assert '[[ "$sdk_switch" == *"17"* ]]' "sdk use java 17 switches to JDK 17" "got: $sdk_switch"
 
 mvn_version=$(run mvn --version | head -1)
@@ -135,11 +134,7 @@ python_version=$(run python3 --version)
 assert '[[ "$python_version" == *"3.12"* ]]' "Default Python is 3.12" "got: $python_version"
 
 pyenv_versions=$(run pyenv versions --bare)
-assert '[[ "$pyenv_versions" == *"3.11"* ]]' "Python 3.11 installed" "versions: $pyenv_versions"
-assert '[[ "$pyenv_versions" == *"3.13"* ]]' "Python 3.13 installed" "versions: $pyenv_versions"
-
-pyenv_switch=$(run 'pyenv shell 3.11 && python3 --version')
-assert '[[ "$pyenv_switch" == *"3.11"* ]]' "pyenv shell 3.11 switches to 3.11" "got: $pyenv_switch"
+assert '[[ "$pyenv_versions" == *"3.12"* ]]' "Python 3.12 installed" "versions: $pyenv_versions"
 
 uv_version=$(run uv --version)
 assert '[[ "$uv_version" == *"uv"* ]]' "uv installed" "got: $uv_version"

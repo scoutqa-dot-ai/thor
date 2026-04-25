@@ -1,6 +1,6 @@
 ---
 name: sandbox
-description: Run project commands (build, test, lint) in a cloud sandbox with full language runtimes.
+description: Run project commands (build, test, lint) in a cloud sandbox with common runtimes and on-demand toolchains.
 ---
 
 ## When to use
@@ -70,12 +70,48 @@ sandbox ./gradlew spotlessCheck        # same sandbox, different command
 
 ## Pre-installed runtimes
 
-The sandbox comes with version managers and common runtimes ready to use:
+The sandbox image is intentionally slim. Preinstalled by default:
 
-- **Node**: 22 (default), 20, 24 via nvm. pnpm available via corepack.
+- **Node**: 22 (default), 20 via nvm. pnpm available via corepack.
 - **Java**: 21 (default), 17 (Temurin) via SDKMAN. Maven and Gradle included.
-- **Python**: 3.12 (default), 3.11, 3.13, 3.14 via pyenv. `uv` available for fast installs.
+- **Python**: 3.12 (default) via pyenv. `uv` available for fast installs.
 - **Docker**: Docker CE with docker compose. Start the daemon with `sudo dockerd &` before use.
+
+Install less-common toolchains on demand per task.
+
+The helper script below runs from the Thor/opencode environment and installs into
+the current worktree's sandbox via the `sandbox` wrapper. Run it from the
+worktree you want to affect.
+
+Helper script:
+
+```bash
+/home/thor/.config/opencode/skills/sandbox/install-common-toolchains.sh <target> [version]
+```
+
+Common examples:
+
+```bash
+# Node 19
+/home/thor/.config/opencode/skills/sandbox/install-common-toolchains.sh node 19
+sandbox bash -lc 'source ~/.nvm/nvm.sh && nvm use 19 && node --version'
+
+# Python 3.11
+/home/thor/.config/opencode/skills/sandbox/install-common-toolchains.sh python 3.11
+sandbox bash -lc 'PYENV_VERSION=3.11 python3 --version'
+
+# Go 1.25.8
+/home/thor/.config/opencode/skills/sandbox/install-common-toolchains.sh go 1.25.8
+sandbox bash -lc 'export PATH="$HOME/.local/go/1.25.8/bin:$HOME/.local/bin:$PATH" && go version'
+
+# Rust stable
+/home/thor/.config/opencode/skills/sandbox/install-common-toolchains.sh rust stable
+sandbox bash -lc '. "$HOME/.cargo/env" && rustc --version && cargo --version'
+
+# IaC stack (terraform 1.10.4, terragrunt 0.99.4, sops 3.9.4, aws cli v2)
+/home/thor/.config/opencode/skills/sandbox/install-common-toolchains.sh iac
+sandbox bash -lc 'export PATH="$HOME/.local/bin:$PATH" && terraform version && terragrunt --version && sops --version && aws --version'
+```
 
 To use a non-default version, either set it permanently or inline it with your command:
 
