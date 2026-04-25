@@ -132,8 +132,6 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `METABASE_API_KEY`                  | No       | `remote-cli`              | Metabase API key                                                    |
 | `METABASE_DATABASE_ID`              | No       | `remote-cli`              | Metabase database ID                                                |
 | `METABASE_URL`                      | No       | `remote-cli`              | Metabase instance URL                                               |
-| `OPENCODE_CPU_LIMIT`                | No       | `opencode`                | CPU limit for the OpenCode container                                |
-| `OPENCODE_MEMORY_LIMIT`             | No       | `opencode`                | Memory limit for the OpenCode container                             |
 | `POSTHOG_API_KEY`                   | Yes      | `remote-cli`              | PostHog MCP auth                                                    |
 | `RESOLVE_SECRET`                    | Yes      | `remote-cli`, `gateway`   | Secret-gates approval resolution                                    |
 | `SESSION_CWD`                       | No       | `runner`                  | Working directory for new sessions                                  |

@@ -1,6 +1,6 @@
 ---
 name: sandbox
-description: Run project commands (build, test, lint) in a cloud sandbox with full language runtimes.
+description: Run project commands (build, test, lint) in a cloud sandbox with common runtimes and on-demand toolchains.
 ---
 
 ## When to use
@@ -70,12 +70,17 @@ sandbox ./gradlew spotlessCheck        # same sandbox, different command
 
 ## Pre-installed runtimes
 
-The sandbox comes with version managers and common runtimes ready to use:
+The sandbox image is intentionally slim. Preinstalled by default:
 
-- **Node**: 22 (default), 20, 24 via nvm. pnpm available via corepack.
+- **Node**: 22 (default), 20 via nvm. pnpm available via corepack.
 - **Java**: 21 (default), 17 (Temurin) via SDKMAN. Maven and Gradle included.
-- **Python**: 3.12 (default), 3.11, 3.13, 3.14 via pyenv. `uv` available for fast installs.
+- **Python**: 3.12 (default) via pyenv. `uv` available for fast installs.
 - **Docker**: Docker CE with docker compose. Start the daemon with `sudo dockerd &` before use.
+
+Install less-common toolchains on demand per task by running the appropriate
+installer inside the sandbox (for example via `nvm`, `pyenv`, `rustup`, or by
+downloading a release tarball into `$HOME/.local`). Use `sandbox bash -lc '...'`
+to run install commands, then invoke the toolchain the same way.
 
 To use a non-default version, either set it permanently or inline it with your command:
 
