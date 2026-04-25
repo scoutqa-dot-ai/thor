@@ -30,7 +30,7 @@ For the same reason, `gh pr checkout <N>` is also denied — it would mutate the
 
 ### `gh pr create`
 
-One of: `--title`/`-t` plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`), OR `--fill` (no title/body needed; derived from commits). Optional: `--base`/`-B`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). `-F <path>` must point at a file under the current working directory. Blocked: `--head`, `--editor`, `--web`, `--repo`/`-R`, and combining `--fill` with `--title`/`--body`/`-F`.
+One of: `--title`/`-t` plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`), OR `--fill` (no title/body needed; derived from commits). Optional: `--base`/`-B`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). Blocked: `--head`, `--editor`, `--web`, `--repo`/`-R`, and combining `--fill` with `--title`/`--body`/`-F`.
 
 ### `gh issue create`
 
@@ -38,7 +38,7 @@ Required: `--title`/`-t`, `--body`/`-b`. Optional: `--label`/`-l` (repeatable). 
 
 ### `gh pr comment`
 
-Required: numeric PR selector plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`). `-F <path>` must point at a file under the current working directory. Blocked: non-numeric selectors, edit/delete modes, `--editor`, and `--repo`/`-R`.
+Required: numeric PR selector plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`). Blocked: non-numeric selectors, edit/delete modes, `--editor`, and `--repo`/`-R`.
 
 ### `gh issue comment`
 
@@ -54,7 +54,7 @@ Required: numeric run ID. Optional: `--failed` (rerun only failed jobs), `--debu
 
 ### `gh run download`
 
-Required: numeric run ID. Optional: `--dir`/`-D <path>` (must be under the current working directory), `--name`/`-n <artifact>` (repeatable), `--pattern`/`-p <glob>` (repeatable). Blocked: `--repo`/`-R`.
+Required: numeric run ID. Optional: `--dir`/`-D <path>`, `--name`/`-n <artifact>` (repeatable), `--pattern`/`-p <glob>` (repeatable). Blocked: `--repo`/`-R`.
 
 ### `gh workflow run`
 

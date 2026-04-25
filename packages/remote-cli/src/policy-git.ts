@@ -7,7 +7,7 @@
  */
 
 import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
-import { isPathUnderCwd, normalizePath } from "./policy-paths.js";
+import { normalizePath } from "./policy-paths.js";
 
 const DIGITS_ONLY = /^\d+$/;
 
@@ -54,7 +54,7 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
 
 const PROTECTED_PUSH_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
 
-export function resolveGitArgs(args: string[], cwd?: string): ResolvedGitArgs {
+export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
   if (!Array.isArray(args) || args.length === 0) {
     return { error: "args must be a non-empty array" };
   }
@@ -114,7 +114,7 @@ export function resolveGitArgs(args: string[], cwd?: string): ResolvedGitArgs {
     case "add":
       return wrap(validateAdd(args), args);
     case "commit":
-      return wrap(validateCommit(args, cwd), args);
+      return wrap(validateCommit(args), args);
     case "worktree":
       return wrap(validateWorktree(args), args);
     case "push":
@@ -319,10 +319,10 @@ function validateAdd(args: string[]): string | null {
   return null;
 }
 
-function validateCommit(args: string[], cwd: string | undefined): string | null {
+function validateCommit(args: string[]): string | null {
   // Supported shapes (exactly one body source):
-  //   `git commit -m <msg> [-m <msg>...]`          — one or more -m messages
-  //   `git commit -F <path>` / `-F=<path>`          — message from a file under cwd
+  //   `git commit -m <msg> [-m <msg>...]`     — one or more -m messages
+  //   `git commit -F <path>` / `--file=<path>` — message from a file
   // The two forms are mutually exclusive. No other flags are accepted.
   const parsed = scanPolicyArgs(args, 1, [
     { name: "message", kind: "value", aliases: ["-m", "--message"] },
@@ -336,10 +336,6 @@ function validateCommit(args: string[], cwd: string | undefined): string | null 
   if (messages.length > 0 && files.length > 0) return denyMessage("git commit");
   if (files.length > 1) return denyMessage("git commit");
   if (messages.length === 0 && files.length === 0) return denyMessage("git commit");
-
-  if (files.length === 1 && !isPathUnderCwd(files[0], cwd)) {
-    return denyMessage("git commit");
-  }
 
   return null;
 }

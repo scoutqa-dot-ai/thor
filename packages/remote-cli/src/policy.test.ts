@@ -171,12 +171,11 @@ describe("validateGitArgs", () => {
       }
     });
 
-    it("allows git commit -F with a body file under cwd", () => {
-      const CWD = "/workspace/repos/my-repo";
-      expect(validateGitArgs(["commit", "-F", "msg.txt"], CWD)).toBeNull();
-      expect(validateGitArgs(["commit", "--file", "docs/msg.md"], CWD)).toBeNull();
-      expect(validateGitArgs(["commit", "-F", "/workspace/repos/my-repo/msg.txt"], CWD)).toBeNull();
-      expect(validateGitArgs(["commit", "--file=msg.txt"], CWD)).toBeNull();
+    it("allows git commit -F with a body file path", () => {
+      expect(validateGitArgs(["commit", "-F", "msg.txt"])).toBeNull();
+      expect(validateGitArgs(["commit", "--file", "docs/msg.md"])).toBeNull();
+      expect(validateGitArgs(["commit", "-F", "/tmp/msg.txt"])).toBeNull();
+      expect(validateGitArgs(["commit", "--file=msg.txt"])).toBeNull();
     });
 
     it("returns explicit push args unchanged", () => {
@@ -372,8 +371,7 @@ describe("validateGitArgs", () => {
       expectGitDenied(["push", "origin", "HEAD:refs/heads/foo:bar"]);
     });
 
-    it("blocks malformed commit forms and body-file escapes", () => {
-      const CWD = "/workspace/repos/my-repo";
+    it("blocks malformed commit forms", () => {
       // Interactive / unsafe shapes
       expectGitDenied(["commit"]);
       expectGitDenied(["commit", "-m"]);
@@ -386,13 +384,8 @@ describe("validateGitArgs", () => {
       expectGitDenied(["commit", "some-path"]);
       // Mutually exclusive body sources
       expectGitDenied(["commit", "-m", "x", "-F", "msg.txt"]);
-      // -F path must resolve under cwd
-      expect(validateGitArgs(["commit", "-F", "/etc/passwd"], CWD)).not.toBeNull();
-      expect(validateGitArgs(["commit", "-F", "../escape.md"], CWD)).not.toBeNull();
-      // -F with no cwd cannot validate
-      expect(validateGitArgs(["commit", "-F", "msg.txt"])).not.toBeNull();
       // Duplicate -F
-      expect(validateGitArgs(["commit", "-F", "a.md", "--file", "b.md"], CWD)).not.toBeNull();
+      expectGitDenied(["commit", "-F", "a.md", "--file", "b.md"]);
     });
 
     it("blocks malformed restore forms", () => {
@@ -534,7 +527,6 @@ describe("validateGhArgs", () => {
     });
 
     it("allows pr create with --fill and creation-time metadata", () => {
-      const CWD = "/workspace/repos/my-repo";
       expect(validateGhArgs(["pr", "create", "--fill"])).toBeNull();
       expect(validateGhArgs(["pr", "create", "--fill", "--draft"])).toBeNull();
       expect(
@@ -557,27 +549,22 @@ describe("validateGhArgs", () => {
           "carol",
         ]),
       ).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "body.md"], CWD)).toBeNull();
+      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "body.md"])).toBeNull();
       expect(
-        validateGhArgs(["pr", "create", "--title", "x", "--body-file", "docs/pr-body.md"], CWD),
+        validateGhArgs(["pr", "create", "--title", "x", "--body-file", "docs/pr-body.md"]),
       ).toBeNull();
-      expect(
-        validateGhArgs(
-          ["pr", "create", "--title", "x", "-F", "/workspace/repos/my-repo/body.md"],
-          CWD,
-        ),
-      ).toBeNull();
+      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "/tmp/body.md"])).toBeNull();
     });
 
     it("allows gh run rerun / run download / workflow run within policy", () => {
-      const CWD = "/workspace/repos/my-repo";
       expect(validateGhArgs(["run", "rerun", "123"])).toBeNull();
       expect(validateGhArgs(["run", "rerun", "123", "--failed"])).toBeNull();
       expect(validateGhArgs(["run", "rerun", "123", "--failed", "--debug"])).toBeNull();
-      expect(validateGhArgs(["run", "download", "123"], CWD)).toBeNull();
-      expect(validateGhArgs(["run", "download", "123", "--dir", "artifacts"], CWD)).toBeNull();
+      expect(validateGhArgs(["run", "download", "123"])).toBeNull();
+      expect(validateGhArgs(["run", "download", "123", "--dir", "artifacts"])).toBeNull();
+      expect(validateGhArgs(["run", "download", "123", "--dir", "/tmp/artifacts"])).toBeNull();
       expect(
-        validateGhArgs(["run", "download", "123", "--name", "logs", "--name", "coverage"], CWD),
+        validateGhArgs(["run", "download", "123", "--name", "logs", "--name", "coverage"]),
       ).toBeNull();
       expect(validateGhArgs(["workflow", "run", "ci.yml"])).toBeNull();
       expect(validateGhArgs(["workflow", "run", "ci.yml", "--ref", "main"])).toBeNull();
@@ -615,11 +602,10 @@ describe("validateGhArgs", () => {
     });
 
     it("allows append-only pr/issue comments with explicit body", () => {
-      const CWD = "/workspace/repos/my-repo";
       expect(validateGhArgs(["pr", "comment", "123", "--body", "noted"])).toBeNull();
       expect(validateGhArgs(["pr", "comment", "123", "-b", "noted"])).toBeNull();
       expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toBeNull();
-      expect(validateGhArgs(["pr", "comment", "123", "-F", "comment.md"], CWD)).toBeNull();
+      expect(validateGhArgs(["pr", "comment", "123", "-F", "comment.md"])).toBeNull();
     });
 
     it("allows append-only pr reviews for comment/request-changes", () => {
@@ -704,59 +690,35 @@ describe("validateGhArgs", () => {
       expectGhDenied(["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"]);
     });
 
-    it("blocks conflicting pr create body sources and escaping body-file paths", () => {
-      const CWD = "/workspace/repos/my-repo";
+    it("blocks conflicting pr create body sources", () => {
       // --fill is exclusive with --title/--body/-F
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--fill"]);
       expectGhDenied(["pr", "create", "--fill", "--title", "x"]);
       expectGhDenied(["pr", "create", "--fill", "-F", "body.md"]);
       // --body and -F are mutually exclusive
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "-F", "body.md"]);
-      // -F must resolve under cwd
-      expect(
-        validateGhArgs(["pr", "create", "--title", "x", "-F", "/etc/passwd"], CWD),
-      ).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "create", "--title", "x", "-F", "../other-repo/body.md"], CWD),
-      ).not.toBeNull();
-      // -F with no cwd is always denied
-      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "body.md"])).not.toBeNull();
       // Title still required when -F supplies body
-      expect(validateGhArgs(["pr", "create", "-F", "body.md"], CWD)).not.toBeNull();
+      expectGhDenied(["pr", "create", "-F", "body.md"]);
       // Duplicate -F
-      expect(
-        validateGhArgs(["pr", "create", "--title", "x", "-F", "a.md", "--body-file", "b.md"], CWD),
-      ).not.toBeNull();
+      expectGhDenied(["pr", "create", "--title", "x", "-F", "a.md", "--body-file", "b.md"]);
     });
 
-    it("blocks pr comment body-file escapes and issue comment -F entirely", () => {
-      const CWD = "/workspace/repos/my-repo";
-      expect(validateGhArgs(["pr", "comment", "123", "-F", "/etc/passwd"], CWD)).not.toBeNull();
-      expect(validateGhArgs(["pr", "comment", "123", "-F", "../sneaky.md"], CWD)).not.toBeNull();
-      expect(
-        validateGhArgs(["pr", "comment", "123", "--body", "x", "-F", "body.md"], CWD),
-      ).not.toBeNull();
+    it("blocks pr comment double-source and issue comment -F entirely", () => {
+      // pr comment: -F and --body cannot be combined
+      expectGhDenied(["pr", "comment", "123", "--body", "x", "-F", "body.md"]);
       // issue comment does not support -F
-      expect(validateGhArgs(["issue", "comment", "42", "-F", "body.md"], CWD)).not.toBeNull();
+      expectGhDenied(["issue", "comment", "42", "-F", "body.md"]);
     });
 
     it("blocks unsafe run rerun / run download / workflow run shapes", () => {
-      const CWD = "/workspace/repos/my-repo";
       // Non-numeric selectors
       expectGhDenied(["run", "rerun"]);
       expectGhDenied(["run", "rerun", "abc"]);
       expectGhDenied(["run", "download", "abc"]);
       // Unsupported rerun flags
       expectGhDenied(["run", "rerun", "123", "--job", "456"]);
-      // Download --dir escapes cwd
-      expect(validateGhArgs(["run", "download", "123", "--dir", "/etc"], CWD)).not.toBeNull();
-      expect(validateGhArgs(["run", "download", "123", "--dir", "../escape"], CWD)).not.toBeNull();
-      // Download with no cwd cannot validate --dir
-      expect(validateGhArgs(["run", "download", "123", "--dir", "artifacts"])).not.toBeNull();
       // Duplicate --dir
-      expect(
-        validateGhArgs(["run", "download", "123", "--dir", "a", "--dir", "b"], CWD),
-      ).not.toBeNull();
+      expectGhDenied(["run", "download", "123", "--dir", "a", "--dir", "b"]);
       // Workflow run: missing selector / flag selector / URL selector / -F file input
       expectGhDenied(["workflow", "run"]);
       expectGhDenied(["workflow", "run", "--ref", "main"]);
