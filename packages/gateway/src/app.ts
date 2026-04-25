@@ -253,11 +253,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
         if (plan.kind === "reroute") {
           const now = Date.now();
+          const resolvedKey = resolveCorrelationKeys([plan.toCorrelationKey]);
           for (const [index, event] of githubEvents.entries()) {
             queue.enqueue({
               ...event,
               id: `${event.id}:resolved`,
-              correlationKey: plan.toCorrelationKey,
+              correlationKey: resolvedKey,
               payload: plan.githubEvents[index],
               receivedAt: new Date(now).toISOString(),
               readyAt: now,
@@ -267,7 +268,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           ack();
           logInfo(log, "github_events_rerouted", {
             fromCorrelationKey: plan.fromCorrelationKey,
-            toCorrelationKey: plan.toCorrelationKey,
+            toCorrelationKey: resolvedKey,
             batchSize: githubEvents.length,
           });
           return;
@@ -730,7 +731,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const sourceTs = sourceTsFromPayload ?? getGitHubDeliveryFallbackSourceTs(deliveryId);
     const delayMs = normalized.mention ? githubMentionDelay : githubNonMentionDelay;
     const correlationKey = normalized.branch
-      ? buildCorrelationKey(normalized.localRepo, normalized.branch)
+      ? resolveCorrelationKeys([buildCorrelationKey(normalized.localRepo, normalized.branch)])
       : `pending:branch-resolve:${normalized.localRepo}:${normalized.number}`;
 
     queue.enqueue({
