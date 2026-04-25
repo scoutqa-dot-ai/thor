@@ -11,15 +11,20 @@ All `gh` commands go through Thor's remote-cli which enforces:
 - **Repo-targeting flags are blocked.** `--repo`/`-R` is not part of the supported surface.
 - **`gh api` is a tiny read-only subset.** REST only, implicit GET only, output-shaping flags only.
 - **PR approval is a human gate.** `gh pr review --approve` is denied.
+- **PR review requires a worktree.** `gh pr diff` and `gh pr checkout` are denied — see "Reviewing a PR" below.
 
-## Common redirect
+## Reviewing a PR
 
-Instead of `gh pr checkout <N>`:
+When asked to review or critique a PR, the first action is always to check out the branch to a worktree:
 
 ```
 git fetch origin pull/<N>/head:pr-<N>
-git worktree add -b pr-<N> /workspace/worktrees/<repo>/pr-<N> pr-<N>
+git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>
 ```
+
+Then `cd` into the worktree for every subsequent action — diffs, code search, tests, builds, file reads. Reviewing through `gh pr diff`, `git show <ref>` of an unfetched commit, or `gh api repos/.../pulls/<N>/files` produces shallow reviews because you can't run tests, can't grep beyond the diff, and can't reproduce the build.
+
+For the same reason, `gh pr checkout <N>` is also denied — it would mutate the current worktree's branch state. Use the fetch + worktree-add pattern instead.
 
 ## Structured commands
 
@@ -67,7 +72,6 @@ Implicit GET only. Required: REST endpoint as the first positional argument. Opt
 - `gh issue view`
 - `gh label list`
 - `gh pr checks`
-- `gh pr diff`
 - `gh pr list`
 - `gh pr status`
 - `gh pr view` (numeric selectors and PR URLs are both allowed on the read path)

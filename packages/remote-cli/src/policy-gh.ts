@@ -21,7 +21,6 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "search repos",
   "search code",
   "pr view",
-  "pr diff",
   "pr list",
   "pr status",
   "pr checks",

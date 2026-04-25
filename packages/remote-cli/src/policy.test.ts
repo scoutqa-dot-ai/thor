@@ -461,7 +461,6 @@ describe("validateGhArgs", () => {
         ["pr", "list", "--search", "is:open", "--limit", "10"],
         ["pr", "status"],
         ["pr", "checks", "123", "--watch"],
-        ["pr", "diff", "123", "--patch"],
         ["issue", "view", "42"],
         ["issue", "view", "42", "--json", "title", "--jq", ".title"],
         ["issue", "list", "--limit", "10"],
@@ -684,7 +683,9 @@ describe("validateGhArgs", () => {
       expectGhDenied(["secret", "set", "FOO"]);
     });
 
-    it("blocks gh pr checkout", () => {
+    it("blocks gh pr diff and gh pr checkout to force worktree-based review", () => {
+      expectGhDenied(["pr", "diff", "2984"]);
+      expectGhDenied(["pr", "diff", "2984", "--patch"]);
       expectGhDenied(["pr", "checkout", "2984"]);
     });
 
