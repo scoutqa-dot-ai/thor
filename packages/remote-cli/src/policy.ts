@@ -3,10 +3,10 @@
  *
  * All validation happens here — the OpenCode wrapper scripts are untrusted.
  *
- * Git and gh policy live in policy-git.ts and policy-gh.ts respectively,
- * driven by the declarative command-spec engine in policy-spec.ts. The
- * smaller validators (scoutqa, langfuse, ldcli, metabase) stay inline
- * until/unless they grow enough to benefit from the spec shape.
+ * Git and gh policy live in policy-git.ts and policy-gh.ts respectively, each
+ * an explicit allowlist of supported workflows that share a small token-scanning
+ * helper in policy-args.ts. The smaller validators (scoutqa, langfuse, ldcli,
+ * metabase) stay inline below.
  */
 
 export { resolveGitArgs, validateGitArgs, type ResolvedGitArgs } from "./policy-git.js";
