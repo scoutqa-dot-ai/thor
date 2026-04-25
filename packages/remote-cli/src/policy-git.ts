@@ -92,13 +92,12 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
     case "cat-file":
     case "name-rev":
     case "describe":
+    case "rev-parse":
       return { args: [...args] };
     case "merge-base":
       return wrap(validateMergeBase(args), args);
     case "branch":
       return wrap(validateBranch(args), args);
-    case "rev-parse":
-      return wrap(validateRevParse(args), args);
     case "remote":
       return wrap(validateRemote(args), args);
     case "fetch":
@@ -190,26 +189,6 @@ function validateBranch(args: string[]): string | null {
   }
 
   return null;
-}
-
-function validateRevParse(args: string[]): string | null {
-  const EXACT_FORMS: readonly (readonly string[])[] = [
-    ["rev-parse", "--abbrev-ref", "HEAD"],
-    ["rev-parse", "HEAD"],
-    ["rev-parse", "--short", "HEAD"],
-    ["rev-parse", "--show-toplevel"],
-    ["rev-parse", "--git-dir"],
-    ["rev-parse", "--is-inside-work-tree"],
-  ];
-  for (const expected of EXACT_FORMS) {
-    if (matchesExactArgs(args, expected)) return null;
-  }
-  // `rev-parse --short=<N> HEAD`
-  if (args.length === 3 && args[2] === "HEAD" && args[1].startsWith("--short=")) {
-    const n = args[1].slice("--short=".length);
-    if (n.length > 0 && DIGITS_ONLY.test(n)) return null;
-  }
-  return denyMessage("git rev-parse");
 }
 
 function validateRemote(args: string[]): string | null {

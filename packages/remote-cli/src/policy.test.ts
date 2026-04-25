@@ -116,10 +116,12 @@ describe("validateGitArgs", () => {
         ["stash", "show", "stash@{0}"],
         ["rev-parse", "HEAD"],
         ["rev-parse", "--short", "HEAD"],
-        ["rev-parse", "--short=12", "HEAD"],
         ["rev-parse", "--show-toplevel"],
-        ["rev-parse", "--git-dir"],
-        ["rev-parse", "--is-inside-work-tree"],
+        ["rev-parse", "origin/main"],
+        ["rev-parse", "--verify", "--quiet", "refs/heads/feat/x"],
+        ["rev-parse", "--abbrev-ref", "@{upstream}"],
+        ["rev-parse", "HEAD~3"],
+        ["rev-parse", "HEAD:packages/remote-cli/src/policy.ts"],
         ["merge-base", "--is-ancestor", "HEAD", "origin/main"],
         ["merge-base", "--fork-point", "origin/main"],
         ["merge-base", "--fork-point", "origin/main", "HEAD"],
@@ -249,17 +251,6 @@ describe("validateGitArgs", () => {
       expectGitDenied(["branch", "--list", "feat/*", "fix/*"]);
       expectGitDenied(["branch", "-a", "feat/*"]);
       expectGitDenied(["branch", "--show-current", "--list"]);
-    });
-
-    it("blocks rev-parse forms outside the exact introspection allowlist", () => {
-      expectGitDenied(["rev-parse"]);
-      expectGitDenied(["rev-parse", "--abbrev-ref", "origin/main"]);
-      expectGitDenied(["rev-parse", "origin/main"]);
-      expectGitDenied(["rev-parse", "--verify", "HEAD"]);
-      expectGitDenied(["rev-parse", "--short=", "HEAD"]);
-      expectGitDenied(["rev-parse", "--short=abc", "HEAD"]);
-      expectGitDenied(["rev-parse", "--short", "origin/main"]);
-      expectGitDenied(["rev-parse", "--show-cdup"]);
     });
 
     it("blocks merge-base shapes outside the allowed forms", () => {
