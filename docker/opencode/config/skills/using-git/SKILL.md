@@ -83,12 +83,11 @@ Non-interactive only. Exactly one body source must be provided:
 
 Supported subcommands:
 
-- `git worktree add` with:
-  - one `-b <branch>`
-  - a worktree `<path>` under `/workspace/worktrees/`
-  - an optional `<start-point>`
+- `git worktree add` in either shape:
+  - `git worktree add -b <new-branch> <path> [<start-point>]` — create a new branch in a new worktree.
+  - `git worktree add <path> <existing-branch>` — check out an existing branch (e.g. one just created by `git fetch origin pull/<N>/head:<branch>`) into a new worktree.
 
-  Those safe arguments may appear in any order that Git accepts.
+  In both shapes, `<path>` must be under `/workspace/worktrees/` and **must end with `/<branch>`** — the branch is inferred from the worktree path for correlation-key routing, so the two have to match. Approved arguments may appear in any order that Git accepts.
 
 - `git worktree list [--porcelain]` — read-only enumeration.
 - `git worktree remove <path>` — `<path>` must be under `/workspace/worktrees/`. `--force` is denied; clean uncommitted state first.

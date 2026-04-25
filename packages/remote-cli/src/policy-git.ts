@@ -357,7 +357,14 @@ function validateWorktreePrune(args: string[]): string | null {
 }
 
 function validateWorktreeAdd(args: string[]): string | null {
-  if (args.length < 5 || args.length > 6) {
+  // Two supported shapes:
+  //   `git worktree add -b <new-branch> <path> [<start-point>]` — create branch
+  //   `git worktree add <path> <existing-branch>`                — check out existing
+  // In both cases:
+  //   * the path lives under /workspace/worktrees/
+  //   * the path ends with the branch name (corr-key routing relies on this:
+  //     the branch is inferred from the worktree path).
+  if (args.length < 4 || args.length > 6) {
     return denyMessage("git worktree add");
   }
 
@@ -366,19 +373,37 @@ function validateWorktreeAdd(args: string[]): string | null {
     return denyMessage("git worktree add");
   }
 
-  const branches = valueFlagValues(parsed, "branch");
-  if (branches.length !== 1 || parsed.positionals.length < 1 || parsed.positionals.length > 2) {
+  const branchFlag = valueFlagValues(parsed, "branch");
+  let branch: string;
+  let path: string;
+
+  if (branchFlag.length === 1) {
+    // -b form: positionals are [path] or [path, start-point].
+    if (parsed.positionals.length < 1 || parsed.positionals.length > 2) {
+      return denyMessage("git worktree add");
+    }
+    branch = branchFlag[0];
+    path = parsed.positionals[0];
+  } else if (branchFlag.length === 0) {
+    // No -b: positionals are [path, existing-branch].
+    if (parsed.positionals.length !== 2) {
+      return denyMessage("git worktree add");
+    }
+    path = parsed.positionals[0];
+    branch = parsed.positionals[1];
+  } else {
     return denyMessage("git worktree add");
   }
 
-  const branch = branches[0];
   if (!branch || branch.startsWith("-")) {
     return denyMessage("git worktree add");
   }
 
-  const path = parsed.positionals[0];
   const normalizedPath = normalizePath(path);
   if (!normalizedPath.startsWith(WORKTREE_PREFIX)) {
+    return denyMessage("git worktree add");
+  }
+  if (!normalizedPath.endsWith("/" + branch)) {
     return denyMessage("git worktree add");
   }
 
