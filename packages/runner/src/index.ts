@@ -39,6 +39,7 @@ import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { buildToolInstructions } from "./tool-instructions.js";
 import { getMemoryProgressEvents } from "./memory-progress.js";
+import { createDelegateProgressState, getDelegateProgressEvents } from "./delegate-progress.js";
 
 const log = createLogger("runner");
 
@@ -615,6 +616,8 @@ app.post("/trigger", async (req, res) => {
 
     // Track child session IDs for progress forwarding.
     const childSessionIds = new Set<string>();
+    // Dedupe task delegate emissions across repeated part updates.
+    const delegateProgressState = createDelegateProgressState();
 
     await withNdjsonHeartbeat(emit, async () => {
       for await (const event of subscription) {
@@ -630,6 +633,9 @@ app.post("/trigger", async (req, res) => {
             childSessionIds.has(event.properties.part.sessionID)
           ) {
             const part = event.properties.part;
+            for (const delegateEvent of getDelegateProgressEvents(part, delegateProgressState)) {
+              emit(delegateEvent);
+            }
             if (part.type === "tool") {
               const toolPart = part as ToolPart;
               const status = toolPart.state.status;
@@ -649,6 +655,10 @@ app.post("/trigger", async (req, res) => {
 
           // Stdout logging (selective)
           logPartToStdout(sessionId, part);
+
+          for (const delegateEvent of getDelegateProgressEvents(part, delegateProgressState)) {
+            emit(delegateEvent);
+          }
 
           // Accumulate data for response regardless of filtering
           if (part.type === "text") {
@@ -713,18 +723,6 @@ app.post("/trigger", async (req, res) => {
             totalTokens.cache.read += stepFinish.tokens.cache.read;
             totalTokens.cache.write += stepFinish.tokens.cache.write;
             lastMessageId = stepFinish.messageID;
-          } else if (part.type === "subtask") {
-            const subtaskPart = part as Part & {
-              type: "subtask";
-              description: string;
-              agent: string;
-            };
-            const description = subtaskPart.description?.trim();
-            emit({
-              type: "delegate",
-              agent: subtaskPart.agent,
-              ...(description ? { description } : {}),
-            });
           }
         } else if (event.type === "session.error") {
           const errorProps = event.properties;
