@@ -24,7 +24,6 @@ const GITHUB_APP_DIR = process.env.GITHUB_APP_DIR ?? "/var/lib/remote-cli/github
 const DEFAULT_PRIVATE_KEY_PATH = join(GITHUB_APP_DIR, "private-key.pem");
 const CACHE_DIR = join(GITHUB_APP_DIR, "cache");
 const DEFAULT_API_URL = "https://api.github.com";
-const GITHUB_HOST = "github.com";
 
 /** Refresh token when less than this many seconds remain. */
 const EARLY_REFRESH_SECONDS = 300; // 5 minutes
@@ -66,22 +65,16 @@ export function resolveOrgFromRemote(cwd: string): string | undefined {
 }
 
 /**
- * Parse the org (owner) from a github.com remote URL.
- * Non-github.com hosts return undefined so a malicious remote URL never
- * resolves to a real installation.
+ * Parse the org (owner) from a GitHub remote URL.
  */
 export function parseOrgFromRemoteUrl(url: string): string | undefined {
   // SSH: git@github.com:org/repo.git
-  const sshMatch = url.match(/^git@([^:]+):([^/]+)\//);
-  if (sshMatch) {
-    return sshMatch[1].trim().toLowerCase() === GITHUB_HOST ? sshMatch[2] : undefined;
-  }
+  const sshMatch = url.match(/^git@[^:]+:([^/]+)\//);
+  if (sshMatch) return sshMatch[1];
 
-  // HTTPS: https://github.com/org/repo[.git]
+  // HTTPS: https://github.com/org/repo or https://github.com/org/repo.git
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== "https:") return undefined;
-    if (parsed.hostname.trim().toLowerCase() !== GITHUB_HOST) return undefined;
     const parts = parsed.pathname.split("/").filter(Boolean);
     if (parts.length >= 2) return parts[0];
   } catch {

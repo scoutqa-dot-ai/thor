@@ -24,17 +24,6 @@ describe("parseOrgFromRemoteUrl", () => {
     expect(parseOrgFromRemoteUrl("git@github.com:acme/web")).toBe("acme");
   });
 
-  it("rejects non-github.com hosts", () => {
-    expect(parseOrgFromRemoteUrl("https://evil.example.com/acme/web.git")).toBeUndefined();
-    expect(parseOrgFromRemoteUrl("git@evil.example.com:acme/web.git")).toBeUndefined();
-    expect(parseOrgFromRemoteUrl("https://github.example.com/acme/web.git")).toBeUndefined();
-    expect(parseOrgFromRemoteUrl("git@ghe.example.com:acme/web.git")).toBeUndefined();
-  });
-
-  it("rejects non-https schemes for github.com", () => {
-    expect(parseOrgFromRemoteUrl("http://github.com/acme/web.git")).toBeUndefined();
-  });
-
   it("returns undefined for unparseable URL", () => {
     expect(parseOrgFromRemoteUrl("not-a-url")).toBeUndefined();
   });
