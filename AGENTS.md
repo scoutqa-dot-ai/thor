@@ -76,6 +76,7 @@ thor/
 - **Package manager**: pnpm with workspaces
 - **Runtime**: Node.js 22+
 - **Formatting**: Default TypeScript/ESLint conventions. No custom config until needed.
+- **OpenCode version alignment**: When bumping `@opencode-ai/sdk`, also bump the OpenCode server/package version in the Dockerfile in the same change so the client and server stay aligned.
 - **No frameworks unless justified** — Express for HTTP, raw TypeScript for everything else. Every added dependency should have a reason in the plan.
 
 ## Context for New Sessions

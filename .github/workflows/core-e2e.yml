@@ -6,6 +6,8 @@ on:
       - ".github/workflows/core-e2e.yml"
       - "scripts/test-e2e.sh"
       - "packages/**"
+      - pnpm-lock.yaml
+      - docker-compose.yml
   workflow_dispatch:
 
 permissions:

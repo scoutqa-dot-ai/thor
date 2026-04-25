@@ -646,6 +646,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         case "query":
           result = await executeQuery(args[1]);
           break;
+        case "question":
+          result = await getQuestion(args[1]);
+          break;
       }
 
       res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
