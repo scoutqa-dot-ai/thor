@@ -67,37 +67,15 @@ describe("parseOrgFromRemoteUrl", () => {
     expect(parseOrgFromRemoteUrl("git@github.com:acme/web")).toBe("acme");
   });
 
-  it("parses GitHub Enterprise HTTPS remote when host is derived from GITHUB_API_URL", () => {
-    const prev = process.env.GITHUB_API_URL;
-    process.env.GITHUB_API_URL = "https://api.github.example.com";
-    try {
-      expect(parseOrgFromRemoteUrl("https://github.example.com/acme/web.git")).toBe("acme");
-    } finally {
-      if (prev === undefined) {
-        delete process.env.GITHUB_API_URL;
-      } else {
-        process.env.GITHUB_API_URL = prev;
-      }
-    }
-  });
-
-  it("parses GitHub Enterprise SSH remote when host is derived from GITHUB_API_URL", () => {
-    const prev = process.env.GITHUB_API_URL;
-    process.env.GITHUB_API_URL = "https://ghe.example.com/api/v3";
-    try {
-      expect(parseOrgFromRemoteUrl("git@ghe.example.com:acme/web.git")).toBe("acme");
-    } finally {
-      if (prev === undefined) {
-        delete process.env.GITHUB_API_URL;
-      } else {
-        process.env.GITHUB_API_URL = prev;
-      }
-    }
-  });
-
-  it("rejects non-GitHub hosts", () => {
+  it("rejects non-github.com hosts", () => {
     expect(parseOrgFromRemoteUrl("https://evil.example.com/acme/web.git")).toBeUndefined();
     expect(parseOrgFromRemoteUrl("git@evil.example.com:acme/web.git")).toBeUndefined();
+    expect(parseOrgFromRemoteUrl("https://github.example.com/acme/web.git")).toBeUndefined();
+    expect(parseOrgFromRemoteUrl("git@ghe.example.com:acme/web.git")).toBeUndefined();
+  });
+
+  it("rejects non-https schemes for github.com", () => {
+    expect(parseOrgFromRemoteUrl("http://github.com/acme/web.git")).toBeUndefined();
   });
 
   it("returns undefined for unparseable URL", () => {
@@ -119,7 +97,6 @@ describe("findInstallation", () => {
     rmSync(configDir, { recursive: true, force: true });
     delete process.env.GITHUB_APP_ID;
     delete process.env.GITHUB_APP_PRIVATE_KEY_FILE;
-    delete process.env.GITHUB_API_URL;
   });
 
   // findInstallation reads from WORKSPACE_CONFIG_PATH which is hardcoded.
@@ -129,19 +106,16 @@ describe("findInstallation", () => {
   it("resolveInstallation applies defaults from env", () => {
     process.env.GITHUB_APP_ID = "999";
     process.env.GITHUB_APP_PRIVATE_KEY_FILE = "/keys/app.pem";
-    process.env.GITHUB_API_URL = "https://ghe.example.com/api/v3";
 
     const result = resolveInstallation({
       org: "acme",
       installation_id: 12345,
       app_id: "",
       private_key_path: "",
-      api_url: "",
     });
 
     expect(result.appId).toBe("999");
     expect(result.privateKeyPath).toBe("/keys/app.pem");
-    expect(result.apiUrl).toBe("https://ghe.example.com/api/v3");
   });
 
   it("resolveInstallation prefers explicit config over env", () => {
@@ -152,12 +126,10 @@ describe("findInstallation", () => {
       installation_id: 12345,
       app_id: "111",
       private_key_path: "/custom/key.pem",
-      api_url: "https://custom.api.github.com",
     });
 
     expect(result.appId).toBe("111");
     expect(result.privateKeyPath).toBe("/custom/key.pem");
-    expect(result.apiUrl).toBe("https://custom.api.github.com");
   });
 
   it("resolveInstallation uses defaults when no env set", () => {
@@ -166,11 +138,9 @@ describe("findInstallation", () => {
       installation_id: 12345,
       app_id: "777",
       private_key_path: "",
-      api_url: "",
     });
 
     expect(result.privateKeyPath).toBe("/var/lib/remote-cli/github-app/private-key.pem");
-    expect(result.apiUrl).toBe("https://api.github.com");
   });
 
   it("resolveInstallation throws when no app_id anywhere", () => {
@@ -180,7 +150,6 @@ describe("findInstallation", () => {
         installation_id: 12345,
         app_id: "",
         private_key_path: "",
-        api_url: "",
       }),
     ).toThrow('No app_id for org "acme"');
   });

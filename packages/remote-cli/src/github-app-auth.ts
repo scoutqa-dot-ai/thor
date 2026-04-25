@@ -23,8 +23,8 @@ import {
 const GITHUB_APP_DIR = process.env.GITHUB_APP_DIR ?? "/var/lib/remote-cli/github-app";
 const DEFAULT_PRIVATE_KEY_PATH = join(GITHUB_APP_DIR, "private-key.pem");
 const CACHE_DIR = join(GITHUB_APP_DIR, "cache");
-const DEFAULT_API_URL = "https://api.github.com";
-const DEFAULT_GITHUB_HOST = "github.com";
+const GITHUB_API_URL = "https://api.github.com";
+const GITHUB_HOST = "github.com";
 
 /** Refresh token when less than this many seconds remain. */
 const EARLY_REFRESH_SECONDS = 300; // 5 minutes
@@ -95,25 +95,22 @@ export function resolveOrgFromRemote(cwd: string): string | undefined {
 }
 
 /**
- * Parse the org (owner) from a GitHub remote URL.
+ * Parse the org (owner) from a github.com remote URL.
+ * Non-github.com hosts return undefined so a malicious remote URL never
+ * resolves to a real installation.
  */
 export function parseOrgFromRemoteUrl(url: string): string | undefined {
-  const allowedHosts = deriveAllowedGitHosts();
-
   // SSH: git@github.com:org/repo.git
   const sshMatch = url.match(/^git@([^:]+):([^/]+)\//);
   if (sshMatch) {
-    const host = normalizeHost(sshMatch[1]);
-    if (!allowedHosts.has(host)) return undefined;
-    return sshMatch[2];
+    return sshMatch[1].trim().toLowerCase() === GITHUB_HOST ? sshMatch[2] : undefined;
   }
 
-  // HTTPS: https://github.com/org/repo or https://github.com/org/repo.git
+  // HTTPS: https://github.com/org/repo[.git]
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:") return undefined;
-    const host = normalizeHost(parsed.hostname);
-    if (!allowedHosts.has(host)) return undefined;
+    if (parsed.hostname.trim().toLowerCase() !== GITHUB_HOST) return undefined;
     const parts = parsed.pathname.split("/").filter(Boolean);
     if (parts.length >= 2) return parts[0];
   } catch {
@@ -121,48 +118,6 @@ export function parseOrgFromRemoteUrl(url: string): string | undefined {
   }
 
   return undefined;
-}
-
-function normalizeHost(host: string): string {
-  return host.trim().toLowerCase();
-}
-
-function deriveAllowedGitHosts(): Set<string> {
-  const hosts = new Set<string>([DEFAULT_GITHUB_HOST]);
-
-  addGitHostsFromApiUrl(process.env.GITHUB_API_URL, hosts);
-
-  try {
-    const config = loadWorkspaceConfig(WORKSPACE_CONFIG_PATH);
-    for (const installation of config.github_app?.installations ?? []) {
-      addGitHostsFromApiUrl(installation.api_url, hosts);
-    }
-  } catch {
-    // Ignore config load errors here and fall back to default host allowlist.
-  }
-
-  return hosts;
-}
-
-function addGitHostsFromApiUrl(apiUrl: string | undefined, hosts: Set<string>): void {
-  if (!apiUrl) return;
-  try {
-    const parsed = new URL(apiUrl);
-    const host = normalizeHost(parsed.hostname);
-    if (!host) return;
-    hosts.add(host);
-
-    // Common API host forms:
-    // - api.github.com -> github.com
-    // - api.<ghe-host> -> <ghe-host>
-    if (host === "api.github.com") {
-      hosts.add(DEFAULT_GITHUB_HOST);
-    } else if (host.startsWith("api.")) {
-      hosts.add(host.slice("api.".length));
-    }
-  } catch {
-    // Ignore invalid URLs.
-  }
 }
 
 /**
@@ -204,7 +159,6 @@ export function resolveInstallation(inst: GitHubAppInstallation): {
   installationId: number;
   appId: string;
   privateKeyPath: string;
-  apiUrl: string;
 } {
   const appId = inst.app_id || process.env.GITHUB_APP_ID || "";
   if (!appId) {
@@ -216,14 +170,11 @@ export function resolveInstallation(inst: GitHubAppInstallation): {
   const privateKeyPath =
     inst.private_key_path || process.env.GITHUB_APP_PRIVATE_KEY_FILE || DEFAULT_PRIVATE_KEY_PATH;
 
-  const apiUrl = inst.api_url || process.env.GITHUB_API_URL || DEFAULT_API_URL;
-
   return {
     org: inst.org,
     installationId: inst.installation_id,
     appId,
     privateKeyPath,
-    apiUrl,
   };
 }
 
@@ -272,9 +223,8 @@ function base64url(str: string): string {
 export async function mintInstallationToken(
   installationId: number,
   appJwt: string,
-  apiUrl: string,
 ): Promise<CachedToken> {
-  const url = `${apiUrl}/app/installations/${installationId}/access_tokens`;
+  const url = `${GITHUB_API_URL}/app/installations/${installationId}/access_tokens`;
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -410,7 +360,7 @@ export async function getInstallationToken(org: string): Promise<TokenResult> {
   try {
     process.stderr.write(`${TAG} Minting installation token for org "${org}"...\n`);
     const jwt = generateAppJWT(resolved.appId, resolved.privateKeyPath);
-    const token = await mintInstallationToken(resolved.installationId, jwt, resolved.apiUrl);
+    const token = await mintInstallationToken(resolved.installationId, jwt);
     writeCache(org, token);
     process.stderr.write(`${TAG} Token cached for org "${org}" (expires ${token.expires_at})\n`);
     return { token: token.token, org };
