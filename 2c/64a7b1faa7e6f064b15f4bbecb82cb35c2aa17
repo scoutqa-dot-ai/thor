@@ -1,0 +1,23 @@
+packages/admin/railway.json
+  a1d59f4fea72eaa5 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2c64a7b1faa7e6f064b15f4bbecb82cb35c2aa17",
+  "prompts": {
+    "a1d59f4fea72eaa5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51ebda91-e311-4528-b886-a4bb507a4f79",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
