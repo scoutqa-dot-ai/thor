@@ -1,0 +1,110 @@
+name: Publish Images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - ".github/workflows/publish-images.yml"
+      - "Dockerfile"
+      - "docker/**"
+      - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      - "tsup.config.ts"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/thor
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: gateway
+            context: .
+            dockerfile: Dockerfile
+            target: gateway
+          - service: admin
+            context: .
+            dockerfile: Dockerfile
+            target: admin
+          - service: runner
+            context: .
+            dockerfile: Dockerfile
+            target: runner
+          - service: slack-mcp
+            context: .
+            dockerfile: Dockerfile
+            target: slack-mcp
+          - service: remote-cli
+            context: .
+            dockerfile: Dockerfile
+            target: remote-cli
+          - service: opencode
+            context: .
+            dockerfile: Dockerfile
+            target: opencode
+          - service: mitmproxy
+            context: .
+            dockerfile: Dockerfile
+            target: mitmproxy
+          - service: cron
+            context: ./docker/cron
+            dockerfile: ./docker/cron/Dockerfile
+            target: ""
+          - service: ingress
+            context: ./docker/ingress
+            dockerfile: ./docker/ingress/Dockerfile
+            target: ""
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+          provenance: false
