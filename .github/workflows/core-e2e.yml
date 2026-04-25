@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/core-e2e.yml"
       - "scripts/test-e2e.sh"
+      - "packages/**"
   workflow_dispatch:
 
 permissions:
