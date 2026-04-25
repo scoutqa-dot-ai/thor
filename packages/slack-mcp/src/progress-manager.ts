@@ -341,9 +341,9 @@ class ProgressSession {
     } else {
       this.lastToolGroups.push({ name: toolName, count: 1 });
     }
-    // Keep only the last 3 groups
-    if (this.lastToolGroups.length > 3) {
-      this.lastToolGroups = this.lastToolGroups.slice(-3);
+    // Keep up to 5 groups; flush() decides how many to render
+    if (this.lastToolGroups.length > 5) {
+      this.lastToolGroups = this.lastToolGroups.slice(-5);
     }
 
     if (!this.thresholdMet) {
@@ -441,11 +441,22 @@ class ProgressSession {
 
   private async flush(): Promise<void> {
     const elapsed = formatDuration(Date.now() - this.startTime);
-    const lines = [`⏳ Working... ${this.toolCallCount} tool calls | ${elapsed} elapsed`];
+    const hasExtras = this.recentMemory.length > 0 || this.recentDelegates.length > 0;
+    const toolLimit = hasExtras ? 5 : 3;
+    const toolGroups = this.lastToolGroups.slice(-toolLimit);
 
-    if (this.lastToolGroups.length > 0) {
-      lines.push(`• tools: ${formatToolGroups(this.lastToolGroups)}`);
+    const header = `⏳ Working... ${this.toolCallCount} tool calls | ${elapsed} elapsed`;
+    const lines: string[] = [];
+
+    if (toolGroups.length > 0 && hasExtras) {
+      lines.push(header);
+      lines.push(`• tools: ${formatToolGroups(toolGroups)}`);
+    } else if (toolGroups.length > 0) {
+      lines.push(`${header} | latest: ${formatToolGroups(toolGroups)}`);
+    } else {
+      lines.push(header);
     }
+
     if (this.recentMemory.length > 0) {
       lines.push(`• memory: ${formatMemoryActivities(this.recentMemory)}`);
     }
