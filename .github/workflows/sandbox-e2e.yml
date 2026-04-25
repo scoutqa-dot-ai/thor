@@ -26,6 +26,12 @@ jobs:
       GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/private-key.pem
       THOR_GITHUB_APP_PRIVATE_KEY: ${{ secrets.THOR_GITHUB_APP_PRIVATE_KEY }}
       THOR_GITHUB_APP_INSTALLATION_ID: ${{ vars.THOR_GITHUB_APP_INSTALLATION_ID }}
+      # GitHub App identity — required by docker-compose since the webhook plan.
+      # Sandbox e2e does not exercise webhook intake; ci-fake values satisfy
+      # compose interpolation and remote-cli boot checks.
+      GITHUB_APP_SLUG: thor-ci
+      GITHUB_APP_BOT_ID: "1"
+      GITHUB_WEBHOOK_SECRET: ci-fake
       # Fakes: services not exercised by sandbox e2e, but referenced at compose startup.
       SLACK_BOT_TOKEN: ci-fake
       SLACK_BOT_USER_ID: U000000000
@@ -185,13 +191,10 @@ jobs:
           cat > docker-volumes/workspace/config.json <<EOF
           {
             "repos": {},
-            "github_app": {
-              "installations": [
-                {
-                  "org": "${{ github.repository_owner }}",
-                  "installation_id": ${THOR_GITHUB_APP_INSTALLATION_ID}
-                }
-              ]
+            "orgs": {
+              "${{ github.repository_owner }}": {
+                "github_app_installation_id": ${THOR_GITHUB_APP_INSTALLATION_ID}
+              }
             }
           }
           EOF

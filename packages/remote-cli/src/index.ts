@@ -61,7 +61,7 @@ export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env)
   requireEnv("GITHUB_APP_ID", env);
   requireEnv("GITHUB_APP_SLUG", env);
   requireEnv("GITHUB_APP_BOT_ID", env);
-  requireEnv("GITHUB_APP_PRIVATE_KEY_PATH", env);
+  requireEnv("GITHUB_APP_PRIVATE_KEY_FILE", env);
 }
 
 function deriveBotGitIdentity(env: NodeJS.ProcessEnv = process.env): {
@@ -316,7 +316,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     const apiUrl = process.env.GITHUB_API_URL || GITHUB_API_URL;
     try {
       const appId = requireEnv("GITHUB_APP_ID");
-      const privateKeyPath = requireEnv("GITHUB_APP_PRIVATE_KEY_PATH");
+      const privateKeyPath = requireEnv("GITHUB_APP_PRIVATE_KEY_FILE");
       const appJwt = generateAppJWT(appId, privateKeyPath);
       const installationToken = await mintInstallationToken(installation, appJwt, apiUrl);
 

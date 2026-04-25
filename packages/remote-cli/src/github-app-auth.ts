@@ -12,11 +12,7 @@ import { readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync } from "no
 import { join } from "node:path";
 import { createSign } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import {
-  getInstallationIdForOrg,
-  loadWorkspaceConfig,
-  WORKSPACE_CONFIG_PATH,
-} from "@thor/common";
+import { getInstallationIdForOrg, loadWorkspaceConfig, WORKSPACE_CONFIG_PATH } from "@thor/common";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -154,10 +150,10 @@ function resolveGitHubAppEnv(): { appId: string; privateKeyPath: string; apiUrl:
     );
   }
 
-  const privateKeyPath = process.env.GITHUB_APP_PRIVATE_KEY_PATH || "";
+  const privateKeyPath = process.env.GITHUB_APP_PRIVATE_KEY_FILE || "";
   if (!privateKeyPath) {
     throw new Error(
-      `${TAG} Missing required env var GITHUB_APP_PRIVATE_KEY_PATH. ` +
+      `${TAG} Missing required env var GITHUB_APP_PRIVATE_KEY_FILE. ` +
         `Set GitHub App identity env vars in remote-cli bootstrap.`,
     );
   }

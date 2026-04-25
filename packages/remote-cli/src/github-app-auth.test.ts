@@ -103,8 +103,8 @@ describe("getInstallationToken", () => {
     mockedWorkspace.configPath = join(configDir, "config.json");
     process.env.GITHUB_APP_DIR = tempDir;
     process.env.GITHUB_APP_ID = "123";
-    process.env.GITHUB_APP_PRIVATE_KEY_PATH = join(tempDir, "private-key.pem");
-    writeFileSync(process.env.GITHUB_APP_PRIVATE_KEY_PATH, "not-used-in-cache-hit");
+    process.env.GITHUB_APP_PRIVATE_KEY_FILE = join(tempDir, "private-key.pem");
+    writeFileSync(process.env.GITHUB_APP_PRIVATE_KEY_FILE, "not-used-in-cache-hit");
 
     writeFileSync(
       mockedWorkspace.configPath,
@@ -122,7 +122,7 @@ describe("getInstallationToken", () => {
     mockedWorkspace.configPath = "";
     delete process.env.GITHUB_APP_DIR;
     delete process.env.GITHUB_APP_ID;
-    delete process.env.GITHUB_APP_PRIVATE_KEY_PATH;
+    delete process.env.GITHUB_APP_PRIVATE_KEY_FILE;
     delete process.env.GITHUB_API_URL;
   });
 
@@ -151,7 +151,7 @@ describe("getInstallationToken", () => {
     mkdirSync(keyDir, { recursive: true });
     const { execFileSync } = await import("node:child_process");
     execFileSync("openssl", ["genrsa", "-out", keyPath, "2048"], { stdio: "pipe" });
-    process.env.GITHUB_APP_PRIVATE_KEY_PATH = keyPath;
+    process.env.GITHUB_APP_PRIVATE_KEY_FILE = keyPath;
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -182,7 +182,7 @@ describe("getInstallationToken", () => {
     mkdirSync(keyDir, { recursive: true });
     const { execFileSync } = await import("node:child_process");
     execFileSync("openssl", ["genrsa", "-out", keyPath, "2048"], { stdio: "pipe" });
-    process.env.GITHUB_APP_PRIVATE_KEY_PATH = keyPath;
+    process.env.GITHUB_APP_PRIVATE_KEY_FILE = keyPath;
 
     const cacheDir = join(tempDir, "cache");
     mkdirSync(cacheDir, { recursive: true });

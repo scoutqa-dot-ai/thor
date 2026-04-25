@@ -86,7 +86,7 @@ One GitHub App across the whole deployment. App-level identity lives in env; per
 | `GITHUB_APP_ID`               | Numeric App ID. Used as JWT `iss` claim.                     | `3387270`               |
 | `GITHUB_APP_SLUG`             | App slug. Used for mention detection + git author name.      | `thor`                  |
 | `GITHUB_APP_BOT_ID`           | Numeric bot user ID. Used for git author email.              | `49699333`              |
-| `GITHUB_APP_PRIVATE_KEY_PATH` | PEM file path for JWT signing. Owned by remote-cli only.     | `/secrets/thor-app.pem` |
+| `GITHUB_APP_PRIVATE_KEY_FILE` | PEM file path for JWT signing. Owned by remote-cli only.     | `/secrets/thor-app.pem` |
 | `GITHUB_WEBHOOK_SECRET`       | HMAC secret for webhook verification. Owned by gateway only. | (32+ random bytes)      |
 
 A new top-level `orgs` block in workspace-config holds per-org installation IDs:
@@ -167,7 +167,7 @@ When GitHub omits payload timestamps, the queue fallback should be derived deter
 
 ### Auth boundary
 
-Gateway reads `GITHUB_WEBHOOK_SECRET` and `GITHUB_APP_SLUG`. Nothing else. The App private key stays in remote-cli (`GITHUB_APP_PRIVATE_KEY_PATH`). All installation-token minting and GitHub API calls happen in remote-cli.
+Gateway reads `GITHUB_WEBHOOK_SECRET` and `GITHUB_APP_SLUG`. Nothing else. The App private key stays in remote-cli (`GITHUB_APP_PRIVATE_KEY_FILE`). All installation-token minting and GitHub API calls happen in remote-cli.
 
 One new internal remote-cli endpoint:
 
@@ -186,7 +186,7 @@ Two paths:
 1. Resolves `org` from the repo's origin — already done by `resolveOrgFromRemote()` at `packages/remote-cli/src/github-app-auth.ts:77`.
 2. Reads `installation_id` from `config.orgs[org].github_app_installation_id` (via `loadWorkspaceConfig()`). This is an exact org-key lookup today. Missing org entry → fail with a clear error naming the unconfigured org and the list of configured ones.
 3. Checks the existing disk cache at `/var/lib/remote-cli/github-app/cache/<org>.json` for a fresh token (existing early-refresh logic, 5 min before `expires_at`).
-4. On cache miss: mints a JWT from `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY_PATH` (reuses `generateAppJWT()` at line 179), mints the installation token via `POST /app/installations/{id}/access_tokens` (reuses `mintInstallationToken()` at line 215), writes `{ token, expires_at }` to the cache file.
+4. On cache miss: mints a JWT from `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY_FILE` (reuses `generateAppJWT()` at line 179), mints the installation token via `POST /app/installations/{id}/access_tokens` (reuses `mintInstallationToken()` at line 215), writes `{ token, expires_at }` to the cache file.
 5. On 401/403 from token minting (installation uninstalled), unlink the cache file and re-raise with `reason: "installation_gone"`.
 6. Returns the token to the git/gh wrapper via `git-askpass` / `GH_TOKEN`.
 
@@ -224,7 +224,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
    - `generateAppJWT()`, `mintInstallationToken()`, and the existing disk-cache logic are unchanged.
 4. Remove every reference to the old `GIT_USER_NAME` / `GIT_USER_EMAIL` env vars. Derive identity from `GITHUB_APP_SLUG` + `GITHUB_APP_BOT_ID` at remote-cli boot. Concrete edits:
    - `packages/remote-cli/entrypoint.sh:29-30` — replace with derived values; fail fast if either `GITHUB_APP_SLUG` or `GITHUB_APP_BOT_ID` is unset.
-   - `docker-compose.yml:37-38` — drop the `GIT_USER_EMAIL` / `GIT_USER_NAME` passthrough; add `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_WEBHOOK_SECRET`.
+   - `docker-compose.yml:37-38` — drop the `GIT_USER_EMAIL` / `GIT_USER_NAME` passthrough; add `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_FILE`, `GITHUB_WEBHOOK_SECRET`.
    - `.env.example:24-25` — drop the commented-out `GIT_USER_NAME` / `GIT_USER_EMAIL` entries; add the 5 new `GITHUB_APP_*` vars with placeholder values.
    - `README.md:79-80` — drop both env-var table rows; add rows for the 5 new vars plus a note about `orgs.<name>.github_app_installation_id` in workspace-config.
    - `docs/plan/2026032101_mention-interrupt.md:20,87` — historical plan references are superseded by this one. Leave as-is (historical record), but this plan's Decision Log supersedes.
@@ -239,8 +239,8 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - [ ] Mention detection is case-insensitive and word-boundary-safe (`@thorbot` ≠ `@thor`).
 - [ ] Correlation key format matches `computeGitAlias()` byte-for-byte.
 - [ ] Basename resolution returns the expected `localRepo` for a known clone and rejects unknown basenames with `repo_not_mapped`.
-- [ ] Gateway boot fails with a clear error naming the missing var when `GITHUB_APP_SLUG` or `GITHUB_WEBHOOK_SECRET` is missing or empty. Gateway does NOT check remote-cli-only vars (`GITHUB_APP_ID`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`).
-- [ ] Remote-cli boot fails with a clear error naming the missing var when `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, or `GITHUB_APP_PRIVATE_KEY_PATH` is missing or empty.
+- [ ] Gateway boot fails with a clear error naming the missing var when `GITHUB_APP_SLUG` or `GITHUB_WEBHOOK_SECRET` is missing or empty. Gateway does NOT check remote-cli-only vars (`GITHUB_APP_ID`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_FILE`).
+- [ ] Remote-cli boot fails with a clear error naming the missing var when `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, or `GITHUB_APP_PRIVATE_KEY_FILE` is missing or empty.
 - [ ] Workspace-config with an `orgs.<name>.github_app_installation_id` that isn't a positive integer fails validation with a specific error pointing to the offending path.
 - [ ] Remote-cli reads `installation_id` from `config.orgs[org].github_app_installation_id` and mints tokens into the existing disk cache. Missing org fails with a clear error naming the unconfigured org and the list of configured ones. On 401/403 from mint, the cache file is unlinked. Unit tests cover cache hit, cache miss, unknown-org, and uninstall eviction.
 - [ ] `packages/remote-cli/entrypoint.sh` sets `user.name` = `${GITHUB_APP_SLUG}[bot]` and `user.email` = `${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com`.
@@ -293,7 +293,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 
 1. Update `docs/examples/workspace-config.example.json` — remove the `github_app.installations` block; show the new top-level `orgs` block with a single example entry: `{"orgs": {"scoutqa-dot-ai": {"github_app_installation_id": 126669985}}}`.
 2. Write `docs/github-app-webhooks.md` with:
-   - **Env var matrix** — `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_WEBHOOK_SECRET`. Where each value lives in GitHub's UI (App settings page for the first four; webhook settings for the secret).
+   - **Env var matrix** — `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_FILE`, `GITHUB_WEBHOOK_SECRET`. Where each value lives in GitHub's UI (App settings page for the first four; webhook settings for the secret).
    - **Config block** — `orgs.<name>.github_app_installation_id` in workspace-config, with instructions for finding the ID in the Install page URL (e.g. `https://github.com/organizations/<org>/settings/installations/<id>`).
    - **Permission matrix** — `issues: read`, `pull_requests: read`, `contents: read`, `metadata: read`.
    - **Event subscriptions** — "Issue comment", "Pull request review", "Pull request review comment".

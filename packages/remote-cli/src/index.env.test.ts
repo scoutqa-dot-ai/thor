@@ -8,7 +8,7 @@ describe("validateRemoteCliGitHubEnv", () => {
         GITHUB_APP_ID: "123",
         GITHUB_APP_SLUG: "thor",
         GITHUB_APP_BOT_ID: "456",
-        GITHUB_APP_PRIVATE_KEY_PATH: "/secrets/thor-app.pem",
+        GITHUB_APP_PRIVATE_KEY_FILE: "/secrets/thor-app.pem",
       }),
     ).not.toThrow();
   });
@@ -20,6 +20,6 @@ describe("validateRemoteCliGitHubEnv", () => {
         GITHUB_APP_SLUG: "thor",
         GITHUB_APP_BOT_ID: "456",
       }),
-    ).toThrow("Missing required env var GITHUB_APP_PRIVATE_KEY_PATH");
+    ).toThrow("Missing required env var GITHUB_APP_PRIVATE_KEY_FILE");
   });
 });

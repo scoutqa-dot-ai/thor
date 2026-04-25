@@ -22,7 +22,7 @@ describe("remote-cli github pr-head endpoint", () => {
   const originalFetch = global.fetch;
   const originalEnv = {
     GITHUB_APP_ID: process.env.GITHUB_APP_ID,
-    GITHUB_APP_PRIVATE_KEY_PATH: process.env.GITHUB_APP_PRIVATE_KEY_PATH,
+    GITHUB_APP_PRIVATE_KEY_FILE: process.env.GITHUB_APP_PRIVATE_KEY_FILE,
     GITHUB_API_URL: process.env.GITHUB_API_URL,
   };
 
@@ -40,7 +40,7 @@ describe("remote-cli github pr-head endpoint", () => {
 
   beforeEach(async () => {
     process.env.GITHUB_APP_ID = "12345";
-    process.env.GITHUB_APP_PRIVATE_KEY_PATH = "/tmp/github-app.pem";
+    process.env.GITHUB_APP_PRIVATE_KEY_FILE = "/tmp/github-app.pem";
     process.env.GITHUB_API_URL = "https://api.github.test";
 
     generateAppJWTMock.mockReset().mockReturnValue("app-jwt");

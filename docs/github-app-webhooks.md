@@ -11,13 +11,13 @@ Set these in `.env` (or your deployment secret store):
 | `GITHUB_APP_ID`               | Yes      | `remote-cli`            | Numeric GitHub App ID (JWT `iss`)                   | GitHub App settings page (`App ID`)                                                                           |
 | `GITHUB_APP_SLUG`             | Yes      | `remote-cli`, `gateway` | App slug; used for bot identity + mention detection | GitHub App settings page (`App slug`)                                                                         |
 | `GITHUB_APP_BOT_ID`           | Yes      | `remote-cli`            | Numeric bot user ID for commit email derivation     | Run `gh api /users/<slug>[bot] --jq .id` or open `https://api.github.com/users/<slug>%5Bbot%5D` and read `id` |
-| `GITHUB_APP_PRIVATE_KEY_PATH` | Yes      | `remote-cli`            | Filesystem path to App private key PEM              | GitHub App settings (`Private keys`)                                                                          |
+| `GITHUB_APP_PRIVATE_KEY_FILE` | Yes      | `remote-cli`            | Filesystem path to App private key PEM              | GitHub App settings (`Private keys`)                                                                          |
 | `GITHUB_WEBHOOK_SECRET`       | Yes      | `gateway`               | HMAC secret used to verify `X-Hub-Signature-256`    | GitHub App webhook settings (`Secret`)                                                                        |
 
 Notes:
 
 - Gateway requires only `GITHUB_APP_SLUG` + `GITHUB_WEBHOOK_SECRET`.
-- Remote-cli requires `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`.
+- Remote-cli requires `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_FILE`.
 - Example bot-id lookup for slug `thor`: `gh api /users/thor[bot] --jq .id`
 
 ## 2) Workspace config: installation IDs
