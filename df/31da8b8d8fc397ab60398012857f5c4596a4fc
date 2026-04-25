@@ -1,0 +1,23 @@
+Dockerfile
+  1ce70eaa290375d8 123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "df31da8b8d8fc397ab60398012857f5c4596a4fc",
+  "prompts": {
+    "1ce70eaa290375d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5a35c9d-cd00-4264-a5bc-12b4ca1be92e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Conductor <conductor@noreply>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
