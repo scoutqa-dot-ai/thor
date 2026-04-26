@@ -3,6 +3,8 @@
 **Date**: 2026-04-23
 **Status**: Ready to implement
 
+> **Post-implementation note (2026-04-26):** the workspace-config block was renamed `orgs` → `owners` in commit `3d050bc3` to match GitHub's `owner` terminology (an installation can belong to a user or an org). References to `orgs.<name>.github_app_installation_id` below now read `owners.<name>.github_app_installation_id` in shipped code.
+
 ## Goal
 
 Add GitHub App webhook intake to the gateway so Thor wakes up on PR code-flow activity, routes the event to the correct local repo, and continues the right session.
