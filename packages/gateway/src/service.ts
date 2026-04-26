@@ -651,7 +651,9 @@ export async function resolveGitHubPrHead(
 
   for (let attempt = 0; attempt <= GITHUB_PR_HEAD_RETRIES; attempt++) {
     try {
-      const response = await fetchWithTimeout(url, GITHUB_PR_HEAD_TIMEOUT_MS, fetchImpl);
+      const response = await getFetch(fetchImpl)(url, {
+        signal: AbortSignal.timeout(GITHUB_PR_HEAD_TIMEOUT_MS),
+      });
       if (response.ok) {
         const body = (await response.json()) as { ref?: string; headRepoFullName?: string };
         const ref = body.ref?.trim();
@@ -691,7 +693,7 @@ export async function resolveGitHubPrHead(
       if (error instanceof TerminalGitHubDispatchError) {
         throw error;
       }
-      if (error instanceof Error && error.name === "AbortError") {
+      if (error instanceof Error && error.name === "TimeoutError") {
         if (attempt < GITHUB_PR_HEAD_RETRIES) {
           continue;
         }
@@ -717,20 +719,6 @@ export async function resolveGitHubPrHead(
     "branch_lookup_failed",
     "Remote-cli /github/pr-head failed",
   );
-}
-
-async function fetchWithTimeout(
-  url: string,
-  timeoutMs: number,
-  fetchImpl?: typeof fetch,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await getFetch(fetchImpl)(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 function renderGitHubPrompt(events: NormalizedGitHubEvent[]): string {

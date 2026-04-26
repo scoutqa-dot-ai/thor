@@ -615,9 +615,9 @@ describe("triggerRunnerGitHub", () => {
   });
 
   it("maps exhausted timeout retries to terminal branch_lookup_failed", async () => {
-    const abortError = new Error("aborted");
-    abortError.name = "AbortError";
-    mockFetch.mockRejectedValue(abortError);
+    const timeoutError = new Error("timed out");
+    timeoutError.name = "TimeoutError";
+    mockFetch.mockRejectedValue(timeoutError);
     const onRejected = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.js");
