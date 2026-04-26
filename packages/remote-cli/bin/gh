@@ -7,16 +7,7 @@ set -e
 
 REAL_GH="/usr/bin/gh"
 TAG="[thor-github-app]"
-CONFIG_HELPER="/usr/local/lib/thor/bin/github-app-config.sh"
-
-thor_has_github_app_config() {
-  config_path="$1"
-  [ -f "$config_path" ] && grep -q '"github_app_installation_id"' "$config_path" 2>/dev/null
-}
-
-if [ -r "$CONFIG_HELPER" ]; then
-  . "$CONFIG_HELPER"
-fi
+. /usr/local/lib/thor/bin/github-app-config.sh
 
 # If no GitHub App config exists, pass through to real gh unchanged
 if ! thor_has_github_app_config /workspace/config.json; then
