@@ -630,7 +630,6 @@ export async function triggerRunnerGitHub(
   remoteCliUrl: string,
   interrupt?: boolean,
   onAccepted?: () => void,
-  _reposMap?: Map<string, string>,
   onRejected?: (reason: string) => void,
 ): Promise<TriggerResult> {
   if (events.length === 0) return { busy: false };

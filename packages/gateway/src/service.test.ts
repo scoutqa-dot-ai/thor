@@ -533,7 +533,6 @@ describe("triggerRunnerGitHub", () => {
       "http://remote-cli:3004",
       false,
       onAccepted,
-      undefined,
       vi.fn(),
     );
 
@@ -565,7 +564,6 @@ describe("triggerRunnerGitHub", () => {
       "http://remote-cli:3004",
       false,
       undefined,
-      undefined,
       onRejected,
     );
 
@@ -585,7 +583,6 @@ describe("triggerRunnerGitHub", () => {
       deps,
       "http://remote-cli:3004",
       false,
-      undefined,
       undefined,
       onRejected,
     );
@@ -609,7 +606,6 @@ describe("triggerRunnerGitHub", () => {
       "http://remote-cli:3004",
       false,
       undefined,
-      undefined,
       onRejected,
     );
 
@@ -632,7 +628,6 @@ describe("triggerRunnerGitHub", () => {
       "http://remote-cli:3004",
       false,
       undefined,
-      undefined,
       onRejected,
     );
 
@@ -652,7 +647,6 @@ describe("triggerRunnerGitHub", () => {
       deps,
       "http://remote-cli:3004",
       false,
-      undefined,
       undefined,
       onRejected,
     );
