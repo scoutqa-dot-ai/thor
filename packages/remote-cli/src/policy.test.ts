@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { realpathSync } from "node:fs";
+import { normalize as normalizePosix } from "node:path/posix";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import {
   resolveGitArgs,
   validateCwd,
@@ -8,6 +10,14 @@ import {
   validateLangfuseArgs,
   validateMetabaseArgs,
 } from "./policy.js";
+
+beforeEach(() => {
+  vi.spyOn(realpathSync, "native").mockImplementation((path) => normalizePosix(String(path)));
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 // ── cwd validation ──────────────────────────────────────────────────────────
 
@@ -39,6 +49,15 @@ describe("validateCwd", () => {
   it("rejects traversal attempts", () => {
     expect(validateCwd("/workspace/repos/../../etc/passwd")).not.toBeNull();
     expect(validateCwd("/workspace/worktrees/../../../tmp")).not.toBeNull();
+  });
+
+  it("rejects paths whose realpath escapes allowed prefixes", () => {
+    vi.mocked(realpathSync.native).mockImplementation((path) => {
+      if (String(path) === "/workspace/repos/link") return "/tmp/escaped";
+      return normalizePosix(String(path));
+    });
+
+    expect(validateCwd("/workspace/repos/link")).not.toBeNull();
   });
 });
 
@@ -218,6 +237,7 @@ describe("validateGitArgs", () => {
       expectGitDenied(["worktree", "add", "-b", "feat", "/tmp/evil"]);
       expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/repos/sneaky"]);
       expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/worktrees/../repos/escape"]);
+      expectGitDenied(["worktree", "add", "-b", "feat", "workspace/worktrees/repo/feat"]);
     });
 
     it("blocks worktree add when the path does not end with the branch name", () => {
@@ -244,8 +264,18 @@ describe("validateGitArgs", () => {
       expectGitDenied(["worktree", "remove", "/tmp/evil"]);
       expectGitDenied(["worktree", "remove", "/workspace/repos/sneaky"]);
       expectGitDenied(["worktree", "remove", "/workspace/worktrees/../etc"]);
+      expectGitDenied(["worktree", "remove", "workspace/worktrees/repo/feat"]);
       expectGitDenied(["worktree", "remove", "--force", "/workspace/worktrees/repo/feat"]);
       expectGitDenied(["worktree", "remove"]);
+    });
+
+    it("blocks worktree remove when realpath escapes /workspace/worktrees/", () => {
+      vi.mocked(realpathSync.native).mockImplementation((path) => {
+        if (String(path) === "/workspace/worktrees/repo/link") return "/tmp/escaped";
+        return normalizePosix(String(path));
+      });
+
+      expectGitDenied(["worktree", "remove", "/workspace/worktrees/repo/link"]);
     });
 
     it("blocks unsupported worktree subcommands and flag shapes", () => {

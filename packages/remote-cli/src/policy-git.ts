@@ -7,7 +7,8 @@
  */
 
 import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
-import { normalizePath } from "./policy-paths.js";
+import { realpathSync } from "node:fs";
+import { isAbsolute, normalize as normalizePosix } from "node:path/posix";
 
 const DIGITS_ONLY = /^\d+$/;
 
@@ -19,7 +20,8 @@ interface ResolvedGitArgsFailure {
 }
 export type ResolvedGitArgs = ResolvedGitArgsSuccess | ResolvedGitArgsFailure;
 
-const WORKTREE_PREFIX = "/workspace/worktrees/";
+const WORKTREE_ROOT = "/workspace/worktrees";
+const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const USING_GIT_HINT = "Load skill using-git for the supported command patterns.";
 
 const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
@@ -339,11 +341,11 @@ function validateWorktreeRemove(args: string[]): string | null {
   // `git worktree remove <path>` — path must be under /workspace/worktrees/.
   // --force is denied: callers should handle the "has uncommitted changes" case
   // explicitly rather than nuke blindly.
-  if (args.length !== 3 || args[2].startsWith("-")) {
+  if (args.length !== 3 || args[2].startsWith("-") || !isAbsolute(args[2])) {
     return denyMessage("git worktree remove");
   }
-  const normalized = normalizePath(args[2]);
-  if (!normalized.startsWith(WORKTREE_PREFIX)) {
+  const realPath = realpathOrNull(args[2]);
+  if (!realPath || !realPath.startsWith(WORKTREE_PREFIX)) {
     return denyMessage("git worktree remove");
   }
   return null;
@@ -399,8 +401,8 @@ function validateWorktreeAdd(args: string[]): string | null {
     return denyMessage("git worktree add");
   }
 
-  const normalizedPath = normalizePath(path);
-  if (!normalizedPath.startsWith(WORKTREE_PREFIX)) {
+  const normalizedPath = normalizeWorktreeAddPath(path);
+  if (!normalizedPath) {
     return denyMessage("git worktree add");
   }
   if (!normalizedPath.endsWith("/" + branch)) {
@@ -408,6 +410,20 @@ function validateWorktreeAdd(args: string[]): string | null {
   }
 
   return null;
+}
+
+function normalizeWorktreeAddPath(path: string): string | null {
+  if (!isAbsolute(path)) return null;
+  const normalized = normalizePosix(path);
+  return normalized.startsWith(WORKTREE_PREFIX) ? normalized : null;
+}
+
+function realpathOrNull(path: string): string | null {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return null;
+  }
 }
 
 function validatePush(args: string[]): string | null {

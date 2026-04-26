@@ -12,7 +12,7 @@
 export { resolveGitArgs, validateGitArgs, type ResolvedGitArgs } from "./policy-git.js";
 export { validateGhArgs } from "./policy-gh.js";
 
-import { normalizePath } from "./policy-paths.js";
+import { realpathSync } from "node:fs";
 
 // ── cwd validation ──────────────────────────────────────────────────────────
 
@@ -23,11 +23,13 @@ export function validateCwd(cwd: string): string | null {
     return "cwd must be an absolute path";
   }
 
-  // Normalize to prevent traversal via /workspace/repos/../../etc
-  const normalized = normalizePath(cwd);
+  const realCwd = realpathOrNull(cwd);
+  if (!realCwd) {
+    return `cwd must be under ${ALLOWED_CWD_PREFIXES.join(" or ")}`;
+  }
 
   const allowed = ALLOWED_CWD_PREFIXES.some(
-    (prefix) => normalized === prefix || normalized.startsWith(prefix + "/"),
+    (prefix) => realCwd === prefix || realCwd.startsWith(prefix + "/"),
   );
 
   if (!allowed) {
@@ -35,6 +37,14 @@ export function validateCwd(cwd: string): string | null {
   }
 
   return null;
+}
+
+function realpathOrNull(path: string): string | null {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return null;
+  }
 }
 
 // ── scoutqa policy ──────────────────────────────────────────────────────────
