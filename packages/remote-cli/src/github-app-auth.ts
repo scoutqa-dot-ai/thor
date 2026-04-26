@@ -47,30 +47,6 @@ interface CachedToken {
 // ── Org resolution ───────────────────────────────────────────────────────────
 
 /**
- * Extract org from command args.
- * Only checks the explicit -R / --repo flag; everything else falls through
- * to resolveOrgFromRemote(cwd).  The previous "second pass" that scanned
- * positional args for owner/repo patterns was fragile — flag values like
- * --body content could be mis-identified as an org.
- */
-export function resolveOrgFromArgs(args: string[]): string | undefined {
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "-R" && i + 1 < args.length) {
-      const ownerRepo = args[i + 1];
-      const slash = ownerRepo.indexOf("/");
-      if (slash > 0) return ownerRepo.slice(0, slash);
-    }
-    if (args[i]?.startsWith("--repo=")) {
-      const ownerRepo = args[i].slice("--repo=".length);
-      const slash = ownerRepo.indexOf("/");
-      if (slash > 0) return ownerRepo.slice(0, slash);
-    }
-  }
-
-  return undefined;
-}
-
-/**
  * Extract org from the git remote URL of the current repo.
  * Supports HTTPS (https://github.com/org/repo.git) and SSH (git@github.com:org/repo.git).
  */
@@ -109,15 +85,14 @@ export function parseOrgFromRemoteUrl(url: string): string | undefined {
 }
 
 /**
- * Resolve the target org for a git/gh command.
- * Priority: explicit -R flag > git remote origin.
- * Returns undefined if org cannot be determined.
+ * Resolve the target org for a git/gh command from the cwd's git remote.
+ * Returns undefined if cwd is missing or its origin is not a github.com URL.
+ *
+ * Note: arg-based resolution (-R / --repo) is intentionally absent — the gh
+ * policy denies those flags, so they can never reach this code path.
  */
-export function resolveOrg(args: string[], cwd?: string): string | undefined {
-  const fromArgs = resolveOrgFromArgs(args);
-  if (fromArgs) return fromArgs;
-  if (cwd) return resolveOrgFromRemote(cwd);
-  return undefined;
+export function resolveOrg(_args: string[], cwd?: string): string | undefined {
+  return cwd ? resolveOrgFromRemote(cwd) : undefined;
 }
 
 // ── Config lookup ────────────────────────────────────────────────────────────
@@ -147,7 +122,6 @@ export function resolveInstallation(inst: GitHubAppInstallation): {
   installationId: number;
   appId: string;
   privateKeyPath: string;
-  apiUrl: string;
 } {
   const appId = inst.app_id || process.env.GITHUB_APP_ID || "";
   if (!appId) {
@@ -159,14 +133,11 @@ export function resolveInstallation(inst: GitHubAppInstallation): {
   const privateKeyPath =
     inst.private_key_path || process.env.GITHUB_APP_PRIVATE_KEY_FILE || DEFAULT_PRIVATE_KEY_PATH;
 
-  const apiUrl = inst.api_url || process.env.GITHUB_API_URL || DEFAULT_API_URL;
-
   return {
     org: inst.org,
     installationId: inst.installation_id,
     appId,
     privateKeyPath,
-    apiUrl,
   };
 }
 
@@ -215,9 +186,8 @@ function base64url(str: string): string {
 export async function mintInstallationToken(
   installationId: number,
   appJwt: string,
-  apiUrl: string,
 ): Promise<CachedToken> {
-  const url = `${apiUrl}/app/installations/${installationId}/access_tokens`;
+  const url = `${DEFAULT_API_URL}/app/installations/${installationId}/access_tokens`;
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -353,7 +323,7 @@ export async function getInstallationToken(org: string): Promise<TokenResult> {
   try {
     process.stderr.write(`${TAG} Minting installation token for org "${org}"...\n`);
     const jwt = generateAppJWT(resolved.appId, resolved.privateKeyPath);
-    const token = await mintInstallationToken(resolved.installationId, jwt, resolved.apiUrl);
+    const token = await mintInstallationToken(resolved.installationId, jwt);
     writeCache(org, token);
     process.stderr.write(`${TAG} Token cached for org "${org}" (expires ${token.expires_at})\n`);
     return { token: token.token, org };

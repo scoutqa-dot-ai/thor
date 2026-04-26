@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { once } from "node:events";
+import { realpathSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { normalize as normalizePosix } from "node:path/posix";
 import type { WorkspaceConfig } from "@thor/common";
 
 interface FakeSandbox {
@@ -78,6 +80,8 @@ describe("/exec/sandbox", () => {
   let baseUrl: string;
 
   beforeEach(async () => {
+    vi.spyOn(realpathSync, "native").mockImplementation((path) => normalizePosix(String(path)));
+
     daytonaState.sandboxes.clear();
     daytonaState.createCalls = [];
     daytonaState.idCounter = 1;
@@ -148,6 +152,7 @@ describe("/exec/sandbox", () => {
 
     await closeRemoteCli();
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   it("syncs, streams, and returns exit code on happy path", async () => {

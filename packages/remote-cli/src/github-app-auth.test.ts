@@ -1,49 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  resolveOrgFromArgs,
-  parseOrgFromRemoteUrl,
-  findInstallation,
-  resolveInstallation,
-  generateAppJWT,
-} from "./github-app-auth.js";
+import { parseOrgFromRemoteUrl, resolveInstallation, generateAppJWT } from "./github-app-auth.js";
 import { loadWorkspaceConfig } from "@thor/common";
-
-// ── Org resolution from args ─────────────────────────────────────────────────
-
-describe("resolveOrgFromArgs", () => {
-  it("extracts org from -R owner/repo", () => {
-    expect(resolveOrgFromArgs(["pr", "create", "-R", "acme/web"])).toBe("acme");
-  });
-
-  it("extracts org from --repo=owner/repo", () => {
-    expect(resolveOrgFromArgs(["pr", "view", "--repo=acme/web"])).toBe("acme");
-  });
-
-  it("returns undefined when no -R flag", () => {
-    expect(resolveOrgFromArgs(["pr", "list"])).toBeUndefined();
-  });
-
-  it("returns undefined when -R has no value", () => {
-    expect(resolveOrgFromArgs(["pr", "create", "-R"])).toBeUndefined();
-  });
-
-  it("returns undefined for -R with no slash", () => {
-    expect(resolveOrgFromArgs(["-R", "just-a-name"])).toBeUndefined();
-  });
-
-  it("falls through to undefined for positional owner/repo (resolved via cwd instead)", () => {
-    expect(resolveOrgFromArgs(["repo", "view", "acme/web", "--json", "name"])).toBeUndefined();
-  });
-
-  it("does not misparse --body content as org", () => {
-    expect(
-      resolveOrgFromArgs(["pr", "create", "--body", "## Summary\nFixes org/issue-123"]),
-    ).toBeUndefined();
-  });
-});
 
 // ── Org resolution from remote URL ───────────────────────────────────────────
 
@@ -62,14 +22,6 @@ describe("parseOrgFromRemoteUrl", () => {
 
   it("parses SSH remote without .git suffix", () => {
     expect(parseOrgFromRemoteUrl("git@github.com:acme/web")).toBe("acme");
-  });
-
-  it("parses GitHub Enterprise HTTPS remote", () => {
-    expect(parseOrgFromRemoteUrl("https://github.example.com/acme/web.git")).toBe("acme");
-  });
-
-  it("parses GitHub Enterprise SSH remote", () => {
-    expect(parseOrgFromRemoteUrl("git@github.example.com:acme/web.git")).toBe("acme");
   });
 
   it("returns undefined for unparseable URL", () => {
@@ -91,7 +43,6 @@ describe("findInstallation", () => {
     rmSync(configDir, { recursive: true, force: true });
     delete process.env.GITHUB_APP_ID;
     delete process.env.GITHUB_APP_PRIVATE_KEY_FILE;
-    delete process.env.GITHUB_API_URL;
   });
 
   // findInstallation reads from WORKSPACE_CONFIG_PATH which is hardcoded.
@@ -101,19 +52,16 @@ describe("findInstallation", () => {
   it("resolveInstallation applies defaults from env", () => {
     process.env.GITHUB_APP_ID = "999";
     process.env.GITHUB_APP_PRIVATE_KEY_FILE = "/keys/app.pem";
-    process.env.GITHUB_API_URL = "https://ghe.example.com/api/v3";
 
     const result = resolveInstallation({
       org: "acme",
       installation_id: 12345,
       app_id: "",
       private_key_path: "",
-      api_url: "",
     });
 
     expect(result.appId).toBe("999");
     expect(result.privateKeyPath).toBe("/keys/app.pem");
-    expect(result.apiUrl).toBe("https://ghe.example.com/api/v3");
   });
 
   it("resolveInstallation prefers explicit config over env", () => {
@@ -124,12 +72,10 @@ describe("findInstallation", () => {
       installation_id: 12345,
       app_id: "111",
       private_key_path: "/custom/key.pem",
-      api_url: "https://custom.api.github.com",
     });
 
     expect(result.appId).toBe("111");
     expect(result.privateKeyPath).toBe("/custom/key.pem");
-    expect(result.apiUrl).toBe("https://custom.api.github.com");
   });
 
   it("resolveInstallation uses defaults when no env set", () => {
@@ -138,11 +84,9 @@ describe("findInstallation", () => {
       installation_id: 12345,
       app_id: "777",
       private_key_path: "",
-      api_url: "",
     });
 
     expect(result.privateKeyPath).toBe("/var/lib/remote-cli/github-app/private-key.pem");
-    expect(result.apiUrl).toBe("https://api.github.com");
   });
 
   it("resolveInstallation throws when no app_id anywhere", () => {
@@ -152,7 +96,6 @@ describe("findInstallation", () => {
         installation_id: 12345,
         app_id: "",
         private_key_path: "",
-        api_url: "",
       }),
     ).toThrow('No app_id for org "acme"');
   });
