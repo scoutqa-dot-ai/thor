@@ -1,5 +1,7 @@
 # GitHub App Auth via Thor `git` / `gh` Wrappers
 
+> **Superseded note (2026-04-24):** parts of this plan are now outdated. The implemented config model uses `owners.<owner>.github_app_installation_id` instead of `github_app.installations`, and the runtime env naming is documented in `docs/github-app-webhooks.md`, `README.md`, and `docs/plan/2026042301_github-app-webhooks.md`. Use those documents as the current source of truth.
+
 **Date**: 2026-04-15
 **Status**: Draft
 
