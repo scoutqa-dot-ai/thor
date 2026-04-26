@@ -1,0 +1,29 @@
+packages/common/src/env.ts
+  514bd7aa007ea05c 1-7
+packages/remote-cli/src/index.ts
+  514bd7aa007ea05c 11
+packages/gateway/src/env.ts
+  514bd7aa007ea05c 1
+packages/common/src/index.ts
+  514bd7aa007ea05c 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b669c456b0900ef28760c2b5f527eced211417f7",
+  "prompts": {
+    "514bd7aa007ea05c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "127d0fcb-15c2-43ea-8657-4615277d2ddf",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 122,
+      "total_deletions": 138,
+      "accepted_lines": 110,
+      "overriden_lines": 0
+    }
+  }
+}
