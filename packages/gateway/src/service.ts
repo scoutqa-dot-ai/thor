@@ -109,6 +109,8 @@ export interface TriggerResult {
   busy: boolean;
   /** True when the batch was terminally rejected (dead-lettered). */
   rejected?: boolean;
+  /** Human-readable rejection reason; set when `rejected` is true. */
+  reason?: string;
 }
 
 export interface GitHubPrHeadResult {
@@ -273,8 +275,9 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
   if (!response.ok) {
     const text = await response.text();
     if (options.reject4xx && response.status >= 400 && response.status < 500) {
-      options.onRejected?.(`Runner returned ${response.status}: ${text}`);
-      return { busy: false, rejected: true };
+      const reason = `Runner returned ${response.status}: ${text}`;
+      options.onRejected?.(reason);
+      return { busy: false, rejected: true, reason };
     }
     throw new Error(`Runner returned ${response.status}: ${text}`);
   }
@@ -451,7 +454,7 @@ async function dispatchBatch(input: BatchDispatchInput): Promise<TriggerResult> 
     const plan = await planBatchDispatch(currentInput);
     if (plan.kind === "drop") {
       currentInput.onRejected?.(plan.reason);
-      return { busy: false, rejected: true };
+      return { busy: false, rejected: true, reason: plan.reason };
     }
     if (plan.kind === "reroute") {
       currentInput = {

@@ -274,7 +274,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         if (result.busy) {
           logTrigger(plan.logPrefix, "busy");
         } else if (result.rejected) {
-          logTrigger(plan.logPrefix, "dropped");
+          logTrigger(plan.logPrefix, "dropped", result.reason);
         } else {
           logTrigger(plan.logPrefix, "fired");
         }

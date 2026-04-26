@@ -564,7 +564,7 @@ describe("triggerRunnerGitHub", () => {
       onRejected,
     );
 
-    expect(result).toEqual({ busy: false, rejected: true });
+    expect(result).toEqual({ busy: false, rejected: true, reason: "branch_not_found" });
     expect(onRejected).toHaveBeenCalledWith("branch_not_found");
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
@@ -586,7 +586,7 @@ describe("triggerRunnerGitHub", () => {
       onRejected,
     );
 
-    expect(result).toEqual({ busy: false, rejected: true });
+    expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
     expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
@@ -608,7 +608,7 @@ describe("triggerRunnerGitHub", () => {
       onRejected,
     );
 
-    expect(result).toEqual({ busy: false, rejected: true });
+    expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
     expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
@@ -628,7 +628,7 @@ describe("triggerRunnerGitHub", () => {
       onRejected,
     );
 
-    expect(result).toEqual({ busy: false, rejected: true });
+    expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
     expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
