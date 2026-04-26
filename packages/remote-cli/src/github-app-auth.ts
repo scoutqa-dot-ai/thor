@@ -1,12 +1,5 @@
-/**
- * GitHub App authentication for Thor git/gh wrappers.
- *
- * Resolves a target owner, looks up the installation from workspace config,
- * mints (or reads from cache) an installation token, and returns it.
- *
- * Cache is disk-backed under /var/lib/remote-cli/github-app/cache/ because
- * wrapper binaries run as separate processes that cannot share memory.
- */
+// Cache is disk-backed because wrapper binaries run as separate processes
+// that cannot share memory.
 
 import { readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -54,11 +47,8 @@ class GitHubApiError extends Error {
 
 // ── Owner resolution ─────────────────────────────────────────────────────────
 
-/**
- * Extract owner from `-R` / `--repo=` flags only.
- * Positional args are not scanned because flag values like `--body` content
- * can resemble owner/repo and would be mis-identified.
- */
+// Positional args are not scanned because flag values like `--body` content
+// can resemble owner/repo and would be mis-identified.
 export function resolveOwnerFromArgs(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "-R" && i + 1 < args.length) {
@@ -76,10 +66,6 @@ export function resolveOwnerFromArgs(args: string[]): string | undefined {
   return undefined;
 }
 
-/**
- * Extract owner from the git remote URL of the current repo.
- * Supports HTTPS (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git).
- */
 export function resolveOwnerFromRemote(cwd: string): string | undefined {
   let remoteUrl: string;
   try {
@@ -94,9 +80,6 @@ export function resolveOwnerFromRemote(cwd: string): string | undefined {
   return parseOwnerFromRemoteUrl(remoteUrl);
 }
 
-/**
- * Parse the owner from a GitHub remote URL.
- */
 export function parseOwnerFromRemoteUrl(url: string): string | undefined {
   // SSH: git@github.com:owner/repo.git
   const sshMatch = url.match(/^git@[^:]+:([^/]+)\//);
@@ -114,11 +97,7 @@ export function parseOwnerFromRemoteUrl(url: string): string | undefined {
   return undefined;
 }
 
-/**
- * Resolve the target owner for a git/gh command.
- * Priority: explicit -R flag > git remote origin.
- * Returns undefined if owner cannot be determined.
- */
+// Priority: explicit -R flag > git remote origin.
 export function resolveOwner(args: string[], cwd?: string): string | undefined {
   const fromArgs = resolveOwnerFromArgs(args);
   if (fromArgs) return fromArgs;
@@ -154,10 +133,7 @@ function resolveGitHubAppEnv(): { appId: string; privateKeyPath: string; apiUrl:
 
 // ── JWT generation ───────────────────────────────────────────────────────────
 
-/**
- * Generate a GitHub App JWT for authenticating as the app.
- * Valid for up to 10 minutes (we use 9 to allow clock skew).
- */
+// Valid for up to 10 minutes — we use 9 to allow clock skew.
 export function generateAppJWT(appId: string, privateKeyPath: string): string {
   let privateKey: string;
   try {
@@ -191,9 +167,6 @@ function base64url(str: string): string {
 
 // ── Token minting ────────────────────────────────────────────────────────────
 
-/**
- * Mint an installation token from the GitHub API.
- */
 export async function mintInstallationToken(
   installationId: number,
   appJwt: string,
@@ -223,7 +196,7 @@ export async function mintInstallationToken(
 
 // ── Disk cache ───────────────────────────────────────────────────────────────
 
-/** Sanitize owner name for use as a filename (defense in depth). */
+// Sanitize owner name for use as a filename (defense in depth).
 function safeOwnerName(owner: string): string {
   return owner.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
@@ -281,10 +254,7 @@ function writeCache(owner: string, cached: CachedToken): void {
   }
 }
 
-/**
- * Simple file-based lock with stale detection.
- * Returns true if we acquired the lock, false if another process holds it.
- */
+// Returns true if we acquired the lock, false if another process holds it.
 function acquireLock(owner: string): boolean {
   ensureCacheDir();
   const lp = lockPath(owner);
@@ -317,10 +287,6 @@ function releaseLock(owner: string): void {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/**
- * Get a valid installation token for the given owner.
- * Reads from cache if available, mints a new one if not.
- */
 export async function getInstallationToken(owner: string): Promise<TokenResult> {
   const installationId = getInstallationIdFromWorkspace(owner);
   const { appId, privateKeyPath, apiUrl } = resolveGitHubAppEnv();
