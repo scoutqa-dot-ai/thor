@@ -14,10 +14,14 @@ import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
 import {
   addSlackReaction,
+  buildDispatchLogContext,
   executeBatchDispatchPlan,
+  getBatchLogPrefix,
   planBatchDispatch,
   resolveApproval,
   updateSlackMessage,
+  type BatchLogPrefix,
+  type BatchSource,
   type RunnerDeps,
   type SlackMcpDeps,
 } from "./service.js";
@@ -192,40 +196,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const remoteCliHost = config.remoteCliHost ?? "remote-cli";
   const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;
 
-  const getDispatchLogPrefix = (sources: string[]): "slack" | "cron" | "github" | "mixed" => {
-    if (sources.length === 1) {
-      const source = sources[0];
-      if (source === "slack" || source === "cron" || source === "github") {
-        return source;
-      }
-    }
-    return "mixed";
-  };
-
-  const buildDispatchLogContext = (input: {
-    logPrefix: "slack" | "cron" | "github" | "mixed";
-    correlationKey?: string;
-    batchSize: number;
-    interrupt: boolean;
-    sources: string[];
-    reason?: string;
-  }) => {
-    const context: Record<string, unknown> = {
-      correlationKey: input.correlationKey,
-      batchSize: input.batchSize,
-    };
-    if (input.logPrefix === "github" || input.logPrefix === "mixed") {
-      context.interrupt = input.interrupt;
-    }
-    if (input.logPrefix === "mixed") {
-      context.sources = input.sources;
-    }
-    if (input.reason) {
-      context.reason = input.reason;
-    }
-    return context;
-  };
-
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
     disableInterval: config.disableQueueInterval === true,
@@ -233,12 +203,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       const slackEvents = events.filter(isSlackEvent);
       const cronEvents = events.filter(isCronEvent);
       const githubEvents = events.filter(isGitHubEvent);
-      const sources = [...new Set(events.map((event) => event.source))].sort();
-      const logPrefix = getDispatchLogPrefix(sources);
+      const sources = [...new Set(events.map((event) => event.source))].sort() as BatchSource[];
+      const logPrefix = getBatchLogPrefix(sources);
       const correlationKey = events[events.length - 1]?.correlationKey;
       const hasInterrupt = events.some((event) => event.interrupt);
       const logTrigger = (
-        prefix: "slack" | "cron" | "github" | "mixed",
+        prefix: BatchLogPrefix,
         outcome: "busy" | "dropped" | "fired",
         reason?: string,
       ) => {

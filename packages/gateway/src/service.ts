@@ -169,8 +169,32 @@ function getBatchSources(input: BatchDispatchInput): BatchSource[] {
   return sources;
 }
 
-function getBatchLogPrefix(sources: BatchSource[]): BatchLogPrefix {
+export function getBatchLogPrefix(sources: BatchSource[]): BatchLogPrefix {
   return sources.length === 1 ? sources[0] : "mixed";
+}
+
+export function buildDispatchLogContext(input: {
+  logPrefix: BatchLogPrefix;
+  correlationKey?: string;
+  batchSize: number;
+  interrupt: boolean;
+  sources: BatchSource[];
+  reason?: string;
+}): Record<string, unknown> {
+  const context: Record<string, unknown> = {
+    correlationKey: input.correlationKey,
+    batchSize: input.batchSize,
+  };
+  if (input.logPrefix === "github" || input.logPrefix === "mixed") {
+    context.interrupt = input.interrupt;
+  }
+  if (input.logPrefix === "mixed") {
+    context.sources = input.sources;
+  }
+  if (input.reason) {
+    context.reason = input.reason;
+  }
+  return context;
 }
 
 function buildProgressTarget(
