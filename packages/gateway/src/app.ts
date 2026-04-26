@@ -308,6 +308,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   app.use(
     express.json({
+      // GitHub webhook payloads can be up to 25 MB
+      // https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap
+      limit: "25mb",
       verify: (req, _res, buf) => {
         (req as RawBodyRequest).rawBody = buf.toString("utf8");
         (req as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
