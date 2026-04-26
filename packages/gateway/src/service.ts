@@ -104,10 +104,6 @@ function getFetch(fetchImpl?: typeof fetch): typeof fetch {
   return fetchImpl ?? fetch;
 }
 
-/**
- * Trigger the runner and consume its NDJSON progress stream.
- * Forwards progress events to slack-mcp for Slack updates.
- */
 export interface TriggerResult {
   /** True when the runner reported session busy and interrupt was false. */
   busy: boolean;
@@ -509,9 +505,6 @@ export async function triggerRunnerSlack(
   });
 }
 
-/**
- * Reads an NDJSON response body line by line and forwards events to slack-mcp.
- */
 async function consumeNdjsonStream(
   response: Response,
   channel: string,

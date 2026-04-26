@@ -54,11 +54,9 @@ class GitHubApiError extends Error {
 // ── Owner resolution ─────────────────────────────────────────────────────────
 
 /**
- * Extract owner from command args.
- * Only checks the explicit -R / --repo flag; everything else falls through
- * to resolveOwnerFromRemote(cwd).  The previous "second pass" that scanned
- * positional args for owner/repo patterns was fragile — flag values like
- * --body content could be mis-identified as an owner.
+ * Extract owner from `-R` / `--repo=` flags only.
+ * Positional args are not scanned because flag values like `--body` content
+ * can resemble owner/repo and would be mis-identified.
  */
 export function resolveOwnerFromArgs(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {
