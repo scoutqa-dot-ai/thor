@@ -11,7 +11,11 @@ import {
 import type { ProgressEvent } from "@thor/common";
 import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
-import { buildCorrelationKey, type NormalizedGitHubEvent } from "./github.js";
+import {
+  buildCorrelationKey,
+  isPendingBranchResolveKey,
+  type NormalizedGitHubEvent,
+} from "./github.js";
 
 const log = createLogger("gateway-service");
 const GITHUB_PR_HEAD_TIMEOUT_MS = 3000;
@@ -310,7 +314,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   const sources = getBatchSources(input);
   const logPrefix = getBatchLogPrefix(sources);
 
-  if (input.githubEvents.length > 0 && input.correlationKey.startsWith("pending:branch-resolve:")) {
+  if (input.githubEvents.length > 0 && isPendingBranchResolveKey(input.correlationKey)) {
     if (!input.remoteCliUrl) {
       throw new Error("remoteCliUrl is required for pending GitHub branch resolution");
     }

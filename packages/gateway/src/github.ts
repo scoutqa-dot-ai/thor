@@ -151,6 +151,16 @@ export function buildCorrelationKey(localRepo: string, branch: string): string {
   return `git:branch:${localRepo}:${branch}`;
 }
 
+const PENDING_BRANCH_RESOLVE_PREFIX = "pending:branch-resolve:";
+
+export function buildPendingBranchResolveKey(localRepo: string, number: number): string {
+  return `${PENDING_BRANCH_RESOLVE_PREFIX}${localRepo}:${number}`;
+}
+
+export function isPendingBranchResolveKey(key: string): boolean {
+  return key.startsWith(PENDING_BRANCH_RESOLVE_PREFIX);
+}
+
 export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number | undefined {
   const iso = isIssueCommentEvent(raw)
     ? raw.comment.created_at

@@ -34,9 +34,11 @@ import {
 import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.js";
 import {
   buildCorrelationKey,
+  buildPendingBranchResolveKey,
   getGitHubDeliveryFallbackSourceTs,
   getGitHubEventSourceTs,
   GitHubWebhookEnvelopeSchema,
+  isPendingBranchResolveKey,
   type NormalizedGitHubEvent,
   normalizeGitHubEvent,
   verifyGitHubSignature,
@@ -307,7 +309,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           logTrigger(plan.logPrefix, "fired");
         }
       } catch (error) {
-        if (logPrefix === "github" && correlationKey?.startsWith("pending:branch-resolve:")) {
+        if (logPrefix === "github" && correlationKey && isPendingBranchResolveKey(correlationKey)) {
           logError(log, "github_branch_resolution_retryable", error, {
             correlationKey,
             batchSize: githubEvents.length,
@@ -709,7 +711,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const delayMs = normalized.mention ? githubMentionDelay : githubNonMentionDelay;
     const correlationKey = normalized.branch
       ? resolveCorrelationKeys([buildCorrelationKey(normalized.localRepo, normalized.branch)])
-      : `pending:branch-resolve:${normalized.localRepo}:${normalized.number}`;
+      : buildPendingBranchResolveKey(normalized.localRepo, normalized.number);
 
     queue.enqueue({
       id: deliveryId,
