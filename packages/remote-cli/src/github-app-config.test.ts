@@ -37,10 +37,10 @@ function helperResult(configPath: string): string {
 }
 
 describe("thor_has_github_app_config", () => {
-  it("returns true for migrated org installation config", () => {
+  it("returns true for migrated owner installation config", () => {
     const configPath = writeConfig({
       repos: { thor: {} },
-      orgs: { acme: { github_app_installation_id: 123456 } },
+      owners: { acme: { github_app_installation_id: 123456 } },
     });
 
     expect(helperResult(configPath)).toBe("true");
@@ -54,10 +54,10 @@ describe("thor_has_github_app_config", () => {
     expect(helperResult(configPath)).toBe("false");
   });
 
-  it("returns false when orgs is present but empty", () => {
+  it("returns false when owners is present but empty", () => {
     const configPath = writeConfig({
       repos: { thor: {} },
-      orgs: {},
+      owners: {},
     });
 
     expect(helperResult(configPath)).toBe("false");

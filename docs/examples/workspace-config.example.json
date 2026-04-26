@@ -5,7 +5,7 @@
       "proxies": ["atlassian", "grafana", "slack"]
     }
   },
-  "orgs": {
+  "owners": {
     "scoutqa-dot-ai": {
       "github_app_installation_id": 126669985
     }

@@ -2,7 +2,7 @@
 # Git credential setup for the remote-cli container.
 #
 # Two auth modes:
-#   1. GitHub App (preferred): config.json has orgs.<org>.github_app_installation_id.
+#   1. GitHub App (preferred): config.json has owners.<owner>.github_app_installation_id.
 #      Thor git/gh wrappers handle per-invocation token minting.
 #      PAT env vars below act as fallback if the wrapper fails.
 #   2. PAT (legacy): GITHUB_PAT env var configures GIT_ASKPASS + GH_TOKEN.

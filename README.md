@@ -155,11 +155,11 @@ Use [`docs/github-app-webhooks.md`](docs/github-app-webhooks.md) for GitHub App 
 
 Thor uses a shared workspace config file at `/workspace/config.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config.json`. Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point, and use [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
 
-GitHub App installation entries live under `orgs.<org>.github_app_installation_id` in that config:
+GitHub App installation entries live under `owners.<owner>.github_app_installation_id` in that config:
 
 ```json
 {
-  "orgs": {
+  "owners": {
     "acme": {
       "github_app_installation_id": 12345678
     }
@@ -229,7 +229,7 @@ Rules match by exact host or suffix first, then by optional `path_prefix`.
 - OpenCode does not get direct API credentials for MCP upstreams.
 - `remote-cli` enforces MCP allow/approve policy server-side and stores approvals under `/workspace/data/approvals`.
 - Approval resolution is only available through `POST /exec/mcp` with `x-thor-resolve-secret`.
-- `git` uses GitHub App installation tokens through `GIT_ASKPASS` when `orgs.<org>.github_app_installation_id` is configured and the target org can be resolved; `GITHUB_PAT` is only a fallback during command execution.
+- `git` uses GitHub App installation tokens through `GIT_ASKPASS` when `owners.<owner>.github_app_installation_id` is configured and the target owner can be resolved; `GITHUB_PAT` is only a fallback during command execution.
 - `gh` resolves GitHub App auth before execution and can fall back to inherited `GH_TOKEN` / `GITHUB_PAT` when no installation token is available, but the service itself still requires GitHub App env at startup.
 - Source repos are mounted read-only into OpenCode; edits happen in `/workspace/worktrees`.
 - Tool calls are audit-logged under `/workspace/worklog`.

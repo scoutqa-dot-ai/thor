@@ -22,11 +22,11 @@ Notes:
 
 ## 2) Workspace config: installation IDs
 
-Thor resolves installation IDs from `orgs.<name>.github_app_installation_id` in `/workspace/config.json`:
+Thor resolves installation IDs from `owners.<name>.github_app_installation_id` in `/workspace/config.json`:
 
 ```json
 {
-  "orgs": {
+  "owners": {
     "scoutqa-dot-ai": {
       "github_app_installation_id": 126669985
     }
@@ -36,10 +36,10 @@ Thor resolves installation IDs from `orgs.<name>.github_app_installation_id` in 
 
 How to find installation ID:
 
-1. Open your org's installation settings page.
+1. Open the owner's installation settings page.
 2. Read the ID from the URL:
-   `https://github.com/organizations/<org>/settings/installations/<id>`
-3. Copy `<id>` into `orgs.<org>.github_app_installation_id`.
+   `https://github.com/organizations/<owner>/settings/installations/<id>`
+3. Copy `<id>` into `owners.<owner>.github_app_installation_id`.
 
 ## 3) Required app permissions
 

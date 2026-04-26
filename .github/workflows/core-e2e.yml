@@ -107,7 +107,7 @@ jobs:
                 "proxies": ["atlassian"]
               }
             },
-            "orgs": {
+            "owners": {
               "${{ github.repository_owner }}": {
                 "github_app_installation_id": ${THOR_GITHUB_APP_INSTALLATION_ID}
               }

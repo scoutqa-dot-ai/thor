@@ -10,7 +10,7 @@ export {
   WORKSPACE_CONFIG_PATH,
   extractRepoFromCwd,
   getRepoUpstreams,
-  getInstallationIdForOrg,
+  getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";
@@ -21,7 +21,7 @@ export type {
   ProxyConfig,
   ProxyUpstream,
   ConfigLoader,
-  OrgConfig,
+  OwnerConfig,
   ValidationIssue,
   ValidationResult,
 } from "./workspace-config.js";

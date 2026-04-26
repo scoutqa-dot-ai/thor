@@ -15,38 +15,38 @@ vi.mock("@thor/common", async (importOriginal) => {
 });
 
 import {
-  parseOrgFromRemoteUrl,
-  resolveOrgFromArgs,
+  parseOwnerFromRemoteUrl,
+  resolveOwnerFromArgs,
   generateAppJWT,
   getInstallationIdFromWorkspace,
   getInstallationToken,
 } from "./github-app-auth.js";
 
-describe("resolveOrgFromArgs", () => {
-  it("extracts org from -R owner/repo", () => {
-    expect(resolveOrgFromArgs(["pr", "create", "-R", "acme/web"])).toBe("acme");
+describe("resolveOwnerFromArgs", () => {
+  it("extracts owner from -R owner/repo", () => {
+    expect(resolveOwnerFromArgs(["pr", "create", "-R", "acme/web"])).toBe("acme");
   });
 
-  it("extracts org from --repo=owner/repo", () => {
-    expect(resolveOrgFromArgs(["pr", "view", "--repo=acme/web"])).toBe("acme");
+  it("extracts owner from --repo=owner/repo", () => {
+    expect(resolveOwnerFromArgs(["pr", "view", "--repo=acme/web"])).toBe("acme");
   });
 
   it("returns undefined when repo flag is absent", () => {
-    expect(resolveOrgFromArgs(["pr", "list"])).toBeUndefined();
+    expect(resolveOwnerFromArgs(["pr", "list"])).toBeUndefined();
   });
 });
 
-describe("parseOrgFromRemoteUrl", () => {
+describe("parseOwnerFromRemoteUrl", () => {
   it("parses HTTPS remote", () => {
-    expect(parseOrgFromRemoteUrl("https://github.com/acme/web.git")).toBe("acme");
+    expect(parseOwnerFromRemoteUrl("https://github.com/acme/web.git")).toBe("acme");
   });
 
   it("parses SSH remote", () => {
-    expect(parseOrgFromRemoteUrl("git@github.com:acme/web.git")).toBe("acme");
+    expect(parseOwnerFromRemoteUrl("git@github.com:acme/web.git")).toBe("acme");
   });
 
   it("returns undefined for unparseable URL", () => {
-    expect(parseOrgFromRemoteUrl("not-a-url")).toBeUndefined();
+    expect(parseOwnerFromRemoteUrl("not-a-url")).toBeUndefined();
   });
 });
 
@@ -63,24 +63,24 @@ describe("getInstallationIdFromWorkspace", () => {
     mockedWorkspace.configPath = "";
   });
 
-  it("reads installation ID from config.orgs", () => {
+  it("reads installation ID from config.owners", () => {
     writeFileSync(
       mockedWorkspace.configPath,
       JSON.stringify({
         repos: { thor: {} },
-        orgs: { acme: { github_app_installation_id: 123456 } },
+        owners: { acme: { github_app_installation_id: 123456 } },
       }),
     );
 
     expect(getInstallationIdFromWorkspace("acme")).toBe(123456);
   });
 
-  it("throws with configured org list when org is missing", () => {
+  it("throws with configured owner list when owner is missing", () => {
     writeFileSync(
       mockedWorkspace.configPath,
       JSON.stringify({
         repos: { thor: {} },
-        orgs: {
+        owners: {
           alpha: { github_app_installation_id: 1 },
           zeta: { github_app_installation_id: 2 },
         },
@@ -88,7 +88,7 @@ describe("getInstallationIdFromWorkspace", () => {
     );
 
     expect(() => getInstallationIdFromWorkspace("acme")).toThrow(
-      "Configured orgs: alpha, zeta. Add orgs.acme.github_app_installation_id",
+      "Configured owners: alpha, zeta. Add owners.acme.github_app_installation_id",
     );
   });
 });
@@ -110,7 +110,7 @@ describe("getInstallationToken", () => {
       mockedWorkspace.configPath,
       JSON.stringify({
         repos: { thor: {} },
-        orgs: { acme: { github_app_installation_id: 999 } },
+        owners: { acme: { github_app_installation_id: 999 } },
       }),
     );
   });
@@ -140,7 +140,7 @@ describe("getInstallationToken", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     await expect(getInstallationToken("acme")).resolves.toEqual({
       token: "cached-token",
-      org: "acme",
+      owner: "acme",
     });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -165,7 +165,7 @@ describe("getInstallationToken", () => {
 
     await expect(getInstallationToken("acme")).resolves.toEqual({
       token: "minted-token",
-      org: "acme",
+      owner: "acme",
     });
 
     const cached = JSON.parse(readFileSync(join(tempDir, "cache", "acme.json"), "utf8")) as {
@@ -193,7 +193,9 @@ describe("getInstallationToken", () => {
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("forbidden", { status: 403 }));
 
-    await expect(getInstallationToken("acme")).rejects.toThrow('installation_gone for org "acme"');
+    await expect(getInstallationToken("acme")).rejects.toThrow(
+      'installation_gone for owner "acme"',
+    );
     expect(() => readFileSync(join(cacheDir, "acme.json"), "utf8")).toThrow();
 
     rmSync(keyDir, { recursive: true, force: true });

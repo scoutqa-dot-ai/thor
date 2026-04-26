@@ -11,7 +11,7 @@ const RepoConfigSchema = z.object({
   proxies: z.array(z.string()).optional(),
 });
 
-const OrgConfigSchema = z.object({
+const OwnerConfigSchema = z.object({
   github_app_installation_id: z.number().int().positive(),
 });
 
@@ -51,7 +51,7 @@ const MitmproxyPassthroughHostSchema = z.string().refine((value) => {
 export const WorkspaceConfigSchema = z
   .object({
     repos: z.record(z.string(), RepoConfigSchema),
-    orgs: z.record(z.string(), OrgConfigSchema).optional(),
+    owners: z.record(z.string(), OwnerConfigSchema).optional(),
     mitmproxy: z.array(MitmproxyRuleSchema).optional(),
     mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
   })
@@ -59,7 +59,7 @@ export const WorkspaceConfigSchema = z
 
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;
-export type OrgConfig = z.infer<typeof OrgConfigSchema>;
+export type OwnerConfig = z.infer<typeof OwnerConfigSchema>;
 
 export interface ProxyUpstream {
   url: string;
@@ -324,10 +324,13 @@ export function getRepoUpstreams(config: WorkspaceConfig, repoName: string): str
 }
 
 /**
- * Lookup GitHub App installation ID for a configured org.
+ * Lookup GitHub App installation ID for a configured owner.
  */
-export function getInstallationIdForOrg(config: WorkspaceConfig, org: string): number | undefined {
-  return config.orgs?.[org]?.github_app_installation_id;
+export function getInstallationIdForOwner(
+  config: WorkspaceConfig,
+  owner: string,
+): number | undefined {
+  return config.owners?.[owner]?.github_app_installation_id;
 }
 
 const ALLOWED_PREFIXES = ["/workspace/repos/"];

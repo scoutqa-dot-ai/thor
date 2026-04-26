@@ -3,7 +3,7 @@
  *
  * Authentication is resolved per-invocation by the Thor git/gh wrapper
  * binaries (see bin/git, bin/gh). When workspace config includes
- * `orgs.<org>.github_app_installation_id`, wrappers mint installation
+ * `owners.<owner>.github_app_installation_id`, wrappers mint installation
  * tokens. Otherwise they fall back to PAT auth via GIT_ASKPASS +
  * GH_TOKEN set in entrypoint.sh.
  */

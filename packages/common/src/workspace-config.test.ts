@@ -9,7 +9,7 @@ import {
   getChannelRepoMap,
   extractRepoFromCwd,
   getRepoUpstreams,
-  getInstallationIdForOrg,
+  getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";
@@ -50,18 +50,18 @@ describe("loadWorkspaceConfig", () => {
   });
 
   it("throws on schema violation (missing repos)", () => {
-    const path = writeConfig("config.json", { orgs: {} });
+    const path = writeConfig("config.json", { owners: {} });
     expect(() => loadWorkspaceConfig(path)).toThrow("Invalid workspace config");
   });
 
-  it("rejects non-positive org installation IDs with path details", () => {
+  it("rejects non-positive owner installation IDs with path details", () => {
     const path = writeConfig("config.json", {
       repos: { "my-repo": {} },
-      orgs: {
+      owners: {
         acme: { github_app_installation_id: 0 },
       },
     });
-    expect(() => loadWorkspaceConfig(path)).toThrow("orgs.acme.github_app_installation_id");
+    expect(() => loadWorkspaceConfig(path)).toThrow("owners.acme.github_app_installation_id");
   });
 
   it("rejects the legacy top-level proxies block with a migration hint", () => {
@@ -106,7 +106,7 @@ describe("loadWorkspaceConfig", () => {
 
     expect(config.repos["your-repo"]).toBeDefined();
     expect(config.repos["your-repo"].proxies).toEqual(["atlassian", "grafana", "slack"]);
-    expect(config.orgs).toEqual({
+    expect(config.owners).toEqual({
       "scoutqa-dot-ai": { github_app_installation_id: 126669985 },
     });
   });
@@ -346,26 +346,26 @@ describe("getRepoUpstreams", () => {
   });
 });
 
-describe("getInstallationIdForOrg", () => {
-  it("returns installation id for known org", () => {
+describe("getInstallationIdForOwner", () => {
+  it("returns installation id for known owner", () => {
     expect(
-      getInstallationIdForOrg(
+      getInstallationIdForOwner(
         {
           repos: {},
-          orgs: { acme: { github_app_installation_id: 12345 } },
+          owners: { acme: { github_app_installation_id: 12345 } },
         },
         "acme",
       ),
     ).toBe(12345);
   });
 
-  it("returns undefined for unknown or missing org map", () => {
-    expect(getInstallationIdForOrg({ repos: {} }, "acme")).toBeUndefined();
+  it("returns undefined for unknown or missing owner map", () => {
+    expect(getInstallationIdForOwner({ repos: {} }, "acme")).toBeUndefined();
     expect(
-      getInstallationIdForOrg(
+      getInstallationIdForOwner(
         {
           repos: {},
-          orgs: { other: { github_app_installation_id: 1 } },
+          owners: { other: { github_app_installation_id: 1 } },
         },
         "acme",
       ),
