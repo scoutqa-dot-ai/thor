@@ -1,0 +1,23 @@
+packages/remote-cli/src/github-app-auth.ts
+  514bd7aa007ea05c 18,148-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "55fa083275c8ada1affc737e169f6927807f2b8f",
+  "prompts": {
+    "514bd7aa007ea05c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "127d0fcb-15c2-43ea-8657-4615277d2ddf",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 28,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}
