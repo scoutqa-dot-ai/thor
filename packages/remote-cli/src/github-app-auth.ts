@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process";
 import {
   getInstallationIdForOwner,
   loadWorkspaceConfig,
+  requireEnv,
   WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 
@@ -144,23 +145,11 @@ export function getInstallationIdFromWorkspace(owner: string): number {
 }
 
 function resolveGitHubAppEnv(): { appId: string; privateKeyPath: string; apiUrl: string } {
-  const appId = process.env.GITHUB_APP_ID || "";
-  if (!appId) {
-    throw new Error(
-      `${TAG} Missing required env var GITHUB_APP_ID. ` +
-        `Set GitHub App identity env vars in remote-cli bootstrap.`,
-    );
-  }
-
-  const privateKeyPath = process.env.GITHUB_APP_PRIVATE_KEY_FILE || "";
-  if (!privateKeyPath) {
-    throw new Error(
-      `${TAG} Missing required env var GITHUB_APP_PRIVATE_KEY_FILE. ` +
-        `Set GitHub App identity env vars in remote-cli bootstrap.`,
-    );
-  }
-
-  return { appId, privateKeyPath, apiUrl: process.env.GITHUB_API_URL || DEFAULT_API_URL };
+  return {
+    appId: requireEnv("GITHUB_APP_ID"),
+    privateKeyPath: requireEnv("GITHUB_APP_PRIVATE_KEY_FILE"),
+    apiUrl: process.env.GITHUB_API_URL || DEFAULT_API_URL,
+  };
 }
 
 // ── JWT generation ───────────────────────────────────────────────────────────
