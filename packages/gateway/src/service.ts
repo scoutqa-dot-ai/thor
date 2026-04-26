@@ -136,21 +136,29 @@ class TerminalGitHubDispatchError extends Error {
   }
 }
 
+function renderHeadedSection(label: string, events: unknown[], body: string): string {
+  const heading = events.length === 1 ? `${label} event` : `${label} events`;
+  return `${heading}:\n\n${body}`;
+}
+
 function renderSlackPrompt(events: SlackThreadEvent[]): string {
-  return events.length === 1
-    ? `Slack event:\n\n${JSON.stringify(events[0])}`
-    : `Slack events:\n\n${JSON.stringify(events)}`;
+  return renderHeadedSection(
+    "Slack",
+    events,
+    JSON.stringify(events.length === 1 ? events[0] : events),
+  );
 }
 
 function renderCronPrompt(events: CronPayload[]): string {
-  return events.length === 1
-    ? `Cron event:\n\n${events[0].prompt}`
-    : `Cron events:\n\n${events.map((event) => event.prompt).join("\n\n")}`;
+  return renderHeadedSection(
+    "Cron",
+    events,
+    events.length === 1 ? events[0].prompt : events.map((event) => event.prompt).join("\n\n"),
+  );
 }
 
 function renderGitHubPromptSection(events: NormalizedGitHubEvent[]): string {
-  const heading = events.length === 1 ? "GitHub event" : "GitHub events";
-  return `${heading}:\n\n${renderGitHubPrompt(events)}`;
+  return renderHeadedSection("GitHub", events, renderGitHubPrompt(events));
 }
 
 function getBatchSources(input: BatchDispatchInput): BatchSource[] {
