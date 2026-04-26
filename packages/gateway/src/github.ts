@@ -89,7 +89,7 @@ type IgnoreReason =
   | "fork_pr_unsupported"
   | "bot_sender"
   | "empty_review_body"
-  | "unsupported_action";
+  | "event_unsupported";
 
 export interface NormalizedGitHubEvent {
   source: "github";
@@ -186,7 +186,7 @@ export function normalizeGitHubEvent(
 
   if (isIssueCommentEvent(raw)) {
     if (raw.action !== "created") {
-      return { ignored: true, reason: "unsupported_action" };
+      return { ignored: true, reason: "event_unsupported" };
     }
     if (!raw.issue.pull_request) {
       return { ignored: true, reason: "pure_issue_comment_unsupported" };
@@ -212,7 +212,7 @@ export function normalizeGitHubEvent(
 
   if (isPullRequestReviewCommentEvent(raw)) {
     if (raw.action !== "created") {
-      return { ignored: true, reason: "unsupported_action" };
+      return { ignored: true, reason: "event_unsupported" };
     }
     if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
       return { ignored: true, reason: "fork_pr_unsupported" };
@@ -237,7 +237,7 @@ export function normalizeGitHubEvent(
   }
 
   if (raw.action !== "submitted") {
-    return { ignored: true, reason: "unsupported_action" };
+    return { ignored: true, reason: "event_unsupported" };
   }
   if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
     return { ignored: true, reason: "fork_pr_unsupported" };

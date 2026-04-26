@@ -650,14 +650,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       mentionLogins: githubMentionLogins,
     });
     if ("ignored" in normalized) {
-      const reason =
-        normalized.reason === "unsupported_action" ? "event_unsupported" : normalized.reason;
       logGitHubIgnored({
         deliveryId,
         repoFullName,
         eventType: eventTypeHeader,
         action: parsed.data.action,
-        reason,
+        reason: normalized.reason,
       });
       res.status(200).json({ ok: true, ignored: true });
       return;

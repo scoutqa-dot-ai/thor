@@ -130,7 +130,7 @@ describe("normalizeGitHubEvent", () => {
       },
       options,
     );
-    expect(unsupported).toEqual({ ignored: true, reason: "unsupported_action" });
+    expect(unsupported).toEqual({ ignored: true, reason: "event_unsupported" });
   });
 
   it("ignores empty pull_request_review body", () => {
