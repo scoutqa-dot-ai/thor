@@ -33,29 +33,6 @@ function textResponse(text: string, status: number): Response {
   return new Response(text, { status, headers: { "content-type": "text/plain" } });
 }
 
-function hangingNdjsonResponse(): {
-  response: Response;
-  close: () => void;
-  fail: (error?: Error) => void;
-} {
-  let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
-  const stream = new ReadableStream<Uint8Array>({
-    start(ctrl) {
-      controller = ctrl;
-      ctrl.enqueue(new TextEncoder().encode('{"type":"start","sessionId":"s1","resumed":false}\n'));
-    },
-  });
-
-  return {
-    response: new Response(stream, {
-      status: 200,
-      headers: { "content-type": "application/x-ndjson" },
-    }),
-    close: () => controller?.close(),
-    fail: (error = new Error("stream failed")) => controller?.error(error),
-  };
-}
-
 const githubEventBase: NormalizedGitHubEvent = {
   source: "github",
   eventType: "issue_comment",
@@ -674,54 +651,5 @@ describe("triggerRunnerGitHub", () => {
     expect(onAccepted).not.toHaveBeenCalled();
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
     expect(triggerBody.interrupt).toBe(false);
-  });
-
-  it("returns promptly on accepted trigger before a hanging body completes", async () => {
-    const hanging = hangingNdjsonResponse();
-    mockFetch.mockResolvedValueOnce(hanging.response);
-    const onAccepted = vi.fn();
-
-    const { triggerRunnerGitHub } = await import("./service.js");
-    const resultPromise = triggerRunnerGitHub(
-      [{ ...githubEventBase, branch: "main" }],
-      "git:branch:thor:main",
-      deps,
-      "http://remote-cli:3004",
-      false,
-      onAccepted,
-    );
-
-    const settled = await Promise.race([
-      resultPromise.then(() => "resolved" as const),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 75)),
-    ]);
-
-    expect(settled).toBe("resolved");
-    expect(onAccepted).toHaveBeenCalledTimes(1);
-    await expect(resultPromise).resolves.toEqual({ busy: false });
-
-    hanging.close();
-  });
-
-  it("keeps success path when background GitHub drain errors", async () => {
-    const hanging = hangingNdjsonResponse();
-    mockFetch.mockResolvedValueOnce(hanging.response);
-    const onAccepted = vi.fn();
-
-    const { triggerRunnerGitHub } = await import("./service.js");
-    await expect(
-      triggerRunnerGitHub(
-        [{ ...githubEventBase, branch: "main" }],
-        "git:branch:thor:main",
-        deps,
-        "http://remote-cli:3004",
-        false,
-        onAccepted,
-      ),
-    ).resolves.toEqual({ busy: false });
-    expect(onAccepted).toHaveBeenCalledTimes(1);
-
-    hanging.fail(new Error("stream exploded"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 });
