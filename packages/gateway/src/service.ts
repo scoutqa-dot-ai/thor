@@ -418,7 +418,12 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   }
 
   const progressTarget = buildProgressTarget(input.slackEvents, input.slackMcpDeps);
-  const backgroundDrain = !progressTarget && !(sources.length === 1 && sources[0] === "cron");
+  const isCronOnly = sources.length === 1 && sources[0] === "cron";
+  const backgroundDrain = !progressTarget && !isCronOnly;
+  const drainLogEventByPrefix: Partial<Record<BatchLogPrefix, string>> = {
+    github: "github_response_drain_error",
+    mixed: "mixed_response_drain_error",
+  };
   const prompt =
     parts.length === 1 ? parts[0].singlePrompt : parts.map((part) => part.mixedPrompt).join("\n\n");
 
@@ -436,11 +441,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       reject4xx: input.slackEvents.length === 0,
       progressTarget,
       backgroundDrain,
-      backgroundDrainLogEvent: backgroundDrain
-        ? logPrefix === "github"
-          ? "github_response_drain_error"
-          : "mixed_response_drain_error"
-        : undefined,
+      backgroundDrainLogEvent: backgroundDrain ? drainLogEventByPrefix[logPrefix] : undefined,
     },
   };
 }
