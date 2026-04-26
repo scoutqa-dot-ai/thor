@@ -179,69 +179,55 @@ function buildProgressTarget(
   };
 }
 
-function resolveSlackBatchDirectory(
-  events: SlackThreadEvent[],
-  channelRepos?: Map<string, string>,
+function collectBatchDirectory<T>(
+  label: string,
+  events: T[],
+  resolveOne: (event: T) => { directory?: string; reason?: string },
 ): { directory?: string; reason?: string } {
   if (events.length === 0) return {};
 
   const directories = new Set<string>();
   for (const event of events) {
-    const repo = channelRepos?.get(event.channel);
-    if (!repo) {
-      return { reason: `channel ${event.channel} has no repo mapping` };
-    }
-    const directory = resolveRepoDirectory(repo);
-    if (!directory) {
-      return { reason: `repo directory not found for ${repo}` };
-    }
-    directories.add(directory);
+    const result = resolveOne(event);
+    if (result.reason) return { reason: result.reason };
+    directories.add(result.directory!);
   }
 
   if (directories.size > 1) {
     return {
-      reason: `Slack events for one correlation key resolved to multiple directories: ${[...directories].join(", ")}`,
+      reason: `${label} events for one correlation key resolved to multiple directories: ${[...directories].join(", ")}`,
     };
   }
 
   return { directory: [...directories][0] };
+}
+
+function resolveSlackBatchDirectory(
+  events: SlackThreadEvent[],
+  channelRepos?: Map<string, string>,
+): { directory?: string; reason?: string } {
+  return collectBatchDirectory("Slack", events, (event) => {
+    const repo = channelRepos?.get(event.channel);
+    if (!repo) return { reason: `channel ${event.channel} has no repo mapping` };
+    const directory = resolveRepoDirectory(repo);
+    if (!directory) return { reason: `repo directory not found for ${repo}` };
+    return { directory };
+  });
 }
 
 function resolveGitHubBatchDirectory(events: NormalizedGitHubEvent[]): {
   directory?: string;
   reason?: string;
 } {
-  if (events.length === 0) return {};
-
-  const directories = new Set<string>();
-  for (const event of events) {
+  return collectBatchDirectory("GitHub", events, (event) => {
     const directory = resolveRepoDirectory(event.localRepo);
-    if (!directory) {
-      return { reason: `repo directory not found for ${event.localRepo}` };
-    }
-    directories.add(directory);
-  }
-
-  if (directories.size > 1) {
-    return {
-      reason: `GitHub events for one correlation key resolved to multiple directories: ${[...directories].join(", ")}`,
-    };
-  }
-
-  return { directory: [...directories][0] };
+    if (!directory) return { reason: `repo directory not found for ${event.localRepo}` };
+    return { directory };
+  });
 }
 
 function resolveCronBatchDirectory(events: CronPayload[]): { directory?: string; reason?: string } {
-  if (events.length === 0) return {};
-
-  const directories = new Set(events.map((event) => event.directory));
-  if (directories.size > 1) {
-    return {
-      reason: `Cron events for one correlation key resolved to multiple directories: ${[...directories].join(", ")}`,
-    };
-  }
-
-  return { directory: [...directories][0] };
+  return collectBatchDirectory("Cron", events, (event) => ({ directory: event.directory }));
 }
 
 async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<TriggerResult> {
