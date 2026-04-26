@@ -1,0 +1,27 @@
+docs/github-app-webhooks.md
+  514bd7aa007ea05c 120-132
+packages/gateway/src/service.test.ts
+  514bd7aa007ea05c 577-598,617,621,640,644,661
+packages/gateway/src/service.ts
+  514bd7aa007ea05c 120-122,650,665,674,688,694,706-707
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5deffd43f9aa4765175c50d6f71cc89e05069017",
+  "prompts": {
+    "514bd7aa007ea05c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "127d0fcb-15c2-43ea-8657-4615277d2ddf",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 56,
+      "total_deletions": 13,
+      "accepted_lines": 52,
+      "overriden_lines": 0
+    }
+  }
+}
