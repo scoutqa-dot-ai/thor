@@ -16,6 +16,18 @@ const TOOL_CALL_THRESHOLD = 3;
 /** Minimum interval between Slack message updates (ms). */
 const UPDATE_INTERVAL_MS = 10_000;
 
+/** Base ticker cadence: refresh elapsed timer in Slack when no events arrive. */
+const TICK_INTERVAL_MS = 10_000;
+
+/** Pick ticker delay based on how long the session has been running.
+ * Long-running sessions tick less often so we don't waste Slack updates on
+ * a counter ticking up by tiny relative increments. */
+function tickDelayForElapsed(elapsedMs: number): number {
+  if (elapsedMs > 60 * 60_000) return 60_000; // >60m → 1m
+  if (elapsedMs > 10 * 60_000) return 30_000; // >10m → 30s
+  return TICK_INTERVAL_MS; // 10s
+}
+
 function threadKey(channel: string, threadTs: string): string {
   return `${channel}:${threadTs}`;
 }
@@ -314,6 +326,7 @@ class ProgressSession {
   private lastUpdateTime = 0;
   private thresholdMet = false;
   private finished = false;
+  private tickTimer?: ReturnType<typeof setTimeout>;
 
   constructor(channel: string, threadTs: string, deps: SlackDeps, sourceTs: string) {
     this.channel = channel;
@@ -321,6 +334,33 @@ class ProgressSession {
     this.deps = deps;
     this.sourceTs = sourceTs;
     this.startTime = Date.now();
+    // Tick the elapsed timer even when no events arrive (e.g. one slow tool
+    // call running for minutes). Recursive setTimeout (rather than setInterval)
+    // ensures the next tick is scheduled only after the previous one resolves,
+    // and the cadence can adapt to the session's elapsed time.
+    this.scheduleNextTick();
+  }
+
+  private scheduleNextTick(): void {
+    if (this.finished) return;
+    const delay = tickDelayForElapsed(Date.now() - this.startTime);
+    this.tickTimer = setTimeout(() => {
+      void this.onTick();
+    }, delay);
+  }
+
+  private async onTick(): Promise<void> {
+    this.tickTimer = undefined;
+    if (this.finished) return;
+    try {
+      if (this.thresholdMet && this.messageTs) {
+        if (Date.now() - this.lastUpdateTime >= UPDATE_INTERVAL_MS) {
+          await this.flush();
+        }
+      }
+    } finally {
+      this.scheduleNextTick();
+    }
   }
 
   setSourceTs(sourceTs: string): void {
@@ -404,6 +444,10 @@ class ProgressSession {
     });
     if (this.finished) return;
     this.finished = true;
+    if (this.tickTimer) {
+      clearTimeout(this.tickTimer);
+      this.tickTimer = undefined;
+    }
 
     // Treat aborts as successful completions — the session was intentionally
     // interrupted (e.g. new message arrived) and will be re-triggered.
@@ -472,13 +516,16 @@ class ProgressSession {
 
     const text = lines.join("\n");
 
+    // Set before the awaited network call so concurrent flushes (e.g. a
+    // heartbeat tick and an incoming tool event firing in the same turn) see
+    // the updated timestamp and throttle correctly.
+    this.lastUpdateTime = Date.now();
+
     if (this.messageTs) {
       await this.update(text);
     } else {
       await this.post(text);
     }
-
-    this.lastUpdateTime = Date.now();
   }
 
   private async post(text: string): Promise<void> {
