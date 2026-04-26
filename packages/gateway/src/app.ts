@@ -235,6 +235,24 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       const logPrefix = getDispatchLogPrefix(sources);
       const correlationKey = events[events.length - 1]?.correlationKey;
       const hasInterrupt = events.some((event) => event.interrupt);
+      const logTrigger = (
+        prefix: "slack" | "cron" | "github" | "mixed",
+        outcome: "busy" | "dropped" | "fired",
+        reason?: string,
+      ) => {
+        logInfo(
+          log,
+          `${prefix}_trigger_${outcome}`,
+          buildDispatchLogContext({
+            logPrefix: prefix,
+            correlationKey,
+            batchSize: events.length,
+            interrupt: hasInterrupt,
+            sources,
+            reason,
+          }),
+        );
+      };
 
       try {
         const plan = await planBatchDispatch({
@@ -276,58 +294,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
         if (plan.kind === "drop") {
           reject(plan.reason);
-          logInfo(
-            log,
-            `${plan.logPrefix}_trigger_dropped`,
-            buildDispatchLogContext({
-              logPrefix: plan.logPrefix,
-              correlationKey,
-              batchSize: events.length,
-              interrupt: hasInterrupt,
-              sources,
-              reason: plan.reason,
-            }),
-          );
+          logTrigger(plan.logPrefix, "dropped", plan.reason);
           return;
         }
 
         const result = await executeBatchDispatchPlan(plan);
         if (result.busy) {
-          logInfo(
-            log,
-            `${plan.logPrefix}_trigger_busy`,
-            buildDispatchLogContext({
-              logPrefix: plan.logPrefix,
-              correlationKey,
-              batchSize: events.length,
-              interrupt: hasInterrupt,
-              sources,
-            }),
-          );
+          logTrigger(plan.logPrefix, "busy");
         } else if (result.rejected) {
-          logInfo(
-            log,
-            `${plan.logPrefix}_trigger_dropped`,
-            buildDispatchLogContext({
-              logPrefix: plan.logPrefix,
-              correlationKey,
-              batchSize: events.length,
-              interrupt: hasInterrupt,
-              sources,
-            }),
-          );
+          logTrigger(plan.logPrefix, "dropped");
         } else {
-          logInfo(
-            log,
-            `${plan.logPrefix}_trigger_fired`,
-            buildDispatchLogContext({
-              logPrefix: plan.logPrefix,
-              correlationKey,
-              batchSize: events.length,
-              interrupt: hasInterrupt,
-              sources,
-            }),
-          );
+          logTrigger(plan.logPrefix, "fired");
         }
       } catch (error) {
         if (logPrefix === "github" && correlationKey?.startsWith("pending:branch-resolve:")) {

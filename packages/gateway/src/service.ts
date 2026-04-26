@@ -90,8 +90,7 @@ export type BatchDispatchPlan =
       githubEvents: NormalizedGitHubEvent[];
     };
 
-interface SourceContribution {
-  source: BatchSource;
+interface DispatchPart {
   directory: string;
   singlePrompt: string;
   mixedPrompt: string;
@@ -129,12 +128,6 @@ class TerminalGitHubDispatchError extends Error {
   }
 }
 
-export function getTerminalGitHubRejectReason(
-  error: unknown,
-): TerminalGitHubRejectReason | undefined {
-  return error instanceof TerminalGitHubDispatchError ? error.reason : undefined;
-}
-
 function renderSlackPrompt(events: SlackThreadEvent[]): string {
   return events.length === 1
     ? `Slack event:\n\n${JSON.stringify(events[0])}`
@@ -164,32 +157,6 @@ function getBatchLogPrefix(sources: BatchSource[]): BatchLogPrefix {
   return sources.length === 1 ? sources[0] : "mixed";
 }
 
-function buildDispatchPrompt(contributions: SourceContribution[]): string {
-  if (contributions.length === 1) {
-    return contributions[0].singlePrompt;
-  }
-  return contributions.map((contribution) => contribution.mixedPrompt).join("\n\n");
-}
-
-function resolveDispatchDirectory(
-  contributions: SourceContribution[],
-  logPrefix: BatchLogPrefix,
-): { directory?: string; reason?: string } {
-  const directories = [...new Set(contributions.map((contribution) => contribution.directory))];
-  if (directories.length === 0) {
-    return { reason: "no directory resolved for batch" };
-  }
-  if (directories.length > 1) {
-    return {
-      reason:
-        logPrefix === "mixed"
-          ? `mixed-source batch resolved to multiple directories: ${directories.join(", ")}`
-          : `${logPrefix} events for one correlation key resolved to multiple directories: ${directories.join(", ")}`,
-    };
-  }
-  return { directory: directories[0] };
-}
-
 function buildProgressTarget(
   slackEvents: SlackThreadEvent[],
   slackMcpDeps: SlackMcpDeps,
@@ -201,54 +168,6 @@ function buildProgressTarget(
     threadTs: getSlackThreadTs(lastSlackEvent),
     triggerTs: lastSlackEvent.ts,
     slackMcpDeps,
-  };
-}
-
-function planSlackContribution(
-  events: SlackThreadEvent[],
-  channelRepos?: Map<string, string>,
-): { contribution?: SourceContribution; reason?: string } {
-  const directory = resolveSlackBatchDirectory(events, channelRepos);
-  if (directory.reason) return directory;
-  return {
-    contribution: {
-      source: "slack",
-      directory: directory.directory!,
-      singlePrompt: renderSlackPrompt(events),
-      mixedPrompt: renderSlackPrompt(events),
-    },
-  };
-}
-
-function planCronContribution(events: CronPayload[]): {
-  contribution?: SourceContribution;
-  reason?: string;
-} {
-  const directory = resolveCronBatchDirectory(events);
-  if (directory.reason) return directory;
-  return {
-    contribution: {
-      source: "cron",
-      directory: directory.directory!,
-      singlePrompt: events.length === 1 ? events[0].prompt : renderCronPrompt(events),
-      mixedPrompt: renderCronPrompt(events),
-    },
-  };
-}
-
-function planGitHubContribution(events: NormalizedGitHubEvent[]): {
-  contribution?: SourceContribution;
-  reason?: string;
-} {
-  const directory = resolveGitHubBatchDirectory(events);
-  if (directory.reason) return directory;
-  return {
-    contribution: {
-      source: "github",
-      directory: directory.directory!,
-      singlePrompt: renderGitHubPrompt(events),
-      mixedPrompt: renderGitHubPromptSection(events),
-    },
   };
 }
 
@@ -418,47 +337,72 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     }
   }
 
-  const contributions: SourceContribution[] = [];
+  const parts: DispatchPart[] = [];
 
   if (input.slackEvents.length > 0) {
-    const slack = planSlackContribution(input.slackEvents, input.channelRepos);
-    if (slack.reason) {
-      return { kind: "drop", logPrefix, reason: slack.reason };
+    const slackDirectory = resolveSlackBatchDirectory(input.slackEvents, input.channelRepos);
+    if (slackDirectory.reason) {
+      return { kind: "drop", logPrefix, reason: slackDirectory.reason };
     }
-    contributions.push(slack.contribution!);
+    const prompt = renderSlackPrompt(input.slackEvents);
+    parts.push({
+      directory: slackDirectory.directory!,
+      singlePrompt: prompt,
+      mixedPrompt: prompt,
+    });
   }
 
   if (input.githubEvents.length > 0) {
-    const github = planGitHubContribution(input.githubEvents);
-    if (github.reason) {
-      return { kind: "drop", logPrefix, reason: github.reason };
+    const githubDirectory = resolveGitHubBatchDirectory(input.githubEvents);
+    if (githubDirectory.reason) {
+      return { kind: "drop", logPrefix, reason: githubDirectory.reason };
     }
-    contributions.push(github.contribution!);
+    parts.push({
+      directory: githubDirectory.directory!,
+      singlePrompt: renderGitHubPrompt(input.githubEvents),
+      mixedPrompt: renderGitHubPromptSection(input.githubEvents),
+    });
   }
 
   if (input.cronEvents.length > 0) {
-    const cron = planCronContribution(input.cronEvents);
-    if (cron.reason) {
-      return { kind: "drop", logPrefix, reason: cron.reason };
+    const cronDirectory = resolveCronBatchDirectory(input.cronEvents);
+    if (cronDirectory.reason) {
+      return { kind: "drop", logPrefix, reason: cronDirectory.reason };
     }
-    contributions.push(cron.contribution!);
+    parts.push({
+      directory: cronDirectory.directory!,
+      singlePrompt:
+        input.cronEvents.length === 1
+          ? input.cronEvents[0].prompt
+          : renderCronPrompt(input.cronEvents),
+      mixedPrompt: renderCronPrompt(input.cronEvents),
+    });
   }
 
-  const directory = resolveDispatchDirectory(contributions, logPrefix);
-  if (directory.reason) {
-    return { kind: "drop", logPrefix, reason: directory.reason };
+  const directories = [...new Set(parts.map((part) => part.directory))];
+  if (directories.length === 0) {
+    return { kind: "drop", logPrefix, reason: "no directory resolved for batch" };
+  }
+  if (directories.length > 1) {
+    const reason =
+      logPrefix === "mixed"
+        ? `mixed-source batch resolved to multiple directories: ${directories.join(", ")}`
+        : `${logPrefix} events for one correlation key resolved to multiple directories: ${directories.join(", ")}`;
+    return { kind: "drop", logPrefix, reason };
   }
 
   const progressTarget = buildProgressTarget(input.slackEvents, input.slackMcpDeps);
   const backgroundDrain = !progressTarget && !(sources.length === 1 && sources[0] === "cron");
+  const prompt =
+    parts.length === 1 ? parts[0].singlePrompt : parts.map((part) => part.mixedPrompt).join("\n\n");
 
   return {
     kind: "dispatch",
     logPrefix,
     options: {
-      prompt: buildDispatchPrompt(contributions),
+      prompt,
       correlationKey: input.correlationKey,
-      directory: directory.directory!,
+      directory: directories[0],
       deps: input.deps,
       interrupt: input.interrupt,
       onAccepted: input.onAccepted,
@@ -650,10 +594,6 @@ export async function triggerRunnerCron(
     onAccepted,
     onRejected,
   });
-}
-
-export async function triggerRunnerMixedBatch(input: BatchDispatchInput): Promise<TriggerResult> {
-  return dispatchBatch(input);
 }
 
 export async function triggerRunnerGitHub(
