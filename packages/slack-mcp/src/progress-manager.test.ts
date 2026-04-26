@@ -102,9 +102,9 @@ describe("ProgressManager", () => {
       "1710000000.001",
       {
         type: "memory",
-        action: "read",
+        action: "write",
         path: "/workspace/memory/my-repo/README.md",
-        source: "bootstrap",
+        source: "tool",
       },
       deps,
       "",
@@ -115,7 +115,6 @@ describe("ProgressManager", () => {
       {
         type: "delegate",
         agent: "research-agent",
-        description: "investigate flaky tests",
       },
       deps,
       "",
@@ -127,7 +126,35 @@ describe("ProgressManager", () => {
     expect(postCall.text).toContain("3 tool calls");
     expect(postCall.text).toContain("memory: README.md");
     expect(postCall.text).toContain("agents: research-agent");
-    expect(postCall.text).not.toContain("investigate flaky tests");
+  });
+
+  it("renders delegate context from task-derived delegate events", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "delegate",
+        agent: "research-agent",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "delegate",
+        agent: "research-agent",
+      },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).toContain("agents: research-agent x2");
   });
 
   it("collapses consecutive duplicate agents using run semantics", async () => {
@@ -136,14 +163,14 @@ describe("ProgressManager", () => {
     await handleProgressEvent(
       "C123",
       "1710000000.001",
-      { type: "delegate", agent: "research-agent", description: "first" },
+      { type: "delegate", agent: "research-agent" },
       deps,
       "",
     );
     await handleProgressEvent(
       "C123",
       "1710000000.001",
-      { type: "delegate", agent: "research-agent", description: "second" },
+      { type: "delegate", agent: "research-agent" },
       deps,
       "",
     );
@@ -176,7 +203,7 @@ describe("ProgressManager", () => {
       {
         type: "memory",
         action: "read",
-        path: "/workspace/memory/service-a/README.md",
+        path: "/workspace/memory/service-a/notes.md",
         source: "bootstrap",
       },
       deps,
@@ -197,7 +224,7 @@ describe("ProgressManager", () => {
     await sendTools(deps, 3);
 
     const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
-    expect(postCall.text).toContain("memory: service-a/README.md, service-b/README.md");
+    expect(postCall.text).toContain("memory: notes.md, README.md");
     expect(postCall.text).not.toContain("(boot)");
     expect(postCall.text).not.toContain("read ");
     expect(postCall.text).not.toContain("write ");
@@ -258,6 +285,40 @@ describe("ProgressManager", () => {
 
     const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
     expect(postCall.text).toContain("memory: read x3, write x1");
+  });
+
+  it("excludes README.md reads from memory tracking", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/my-repo/README.md",
+        source: "bootstrap",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/my-repo/notes.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).toContain("memory: notes.md");
+    expect(postCall.text).not.toContain("README.md");
   });
 
   it("does not count memory/delegate events toward tool threshold", async () => {

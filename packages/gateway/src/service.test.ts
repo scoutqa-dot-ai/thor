@@ -164,7 +164,6 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       JSON.stringify({
         type: "delegate",
         agent: "research-agent",
-        description: "collect incidents",
       }),
       JSON.stringify({
         type: "done",
