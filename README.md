@@ -1,4 +1,4 @@
-# Thor
+# Thor xxx
 
 An event-driven AI team member that watches Slack and scheduled jobs, resumes OpenCode sessions through the runner, and reaches external systems through `remote-cli` and `slack-mcp`.
 
