@@ -422,6 +422,7 @@ describe("gateway", () => {
           comment: {
             body: "hello",
             html_url: "https://github.com/acme/thor/issues/12#issuecomment-1",
+            created_at: "2026-04-24T11:00:00Z",
           },
         });
 
@@ -465,6 +466,7 @@ describe("gateway", () => {
           comment: {
             body: "please review",
             html_url: "https://github.com/acme/thor/pull/12#issuecomment-1",
+            created_at: "2026-04-24T11:00:00Z",
           },
         });
 

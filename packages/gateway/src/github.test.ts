@@ -4,7 +4,6 @@ import { computeGitAlias } from "@thor/common";
 import {
   buildCorrelationKey,
   detectMention,
-  getGitHubDeliveryFallbackSourceTs,
   GitHubWebhookEnvelopeSchema,
   normalizeGitHubEvent,
   verifyGitHubSignature,
@@ -29,6 +28,7 @@ function baseReviewCommentEvent(): GitHubWebhookEnvelope {
     comment: {
       body: "Looks good @thor",
       html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+      created_at: "2026-04-24T11:00:00Z",
     },
   };
 }
@@ -92,6 +92,7 @@ describe("normalizeGitHubEvent", () => {
         comment: {
           body: "hello",
           html_url: "https://github.com/acme/repo/issues/12#issuecomment-1",
+          created_at: "2026-04-24T11:00:00Z",
         },
       },
       options,
@@ -148,6 +149,7 @@ describe("normalizeGitHubEvent", () => {
         review: {
           body: "   ",
           html_url: "https://github.com/acme/repo/pull/12#pullrequestreview-1",
+          submitted_at: "2026-04-24T11:00:00Z",
         },
       },
       options,
@@ -160,13 +162,6 @@ describe("mention and correlation helpers", () => {
   it("mention matching is case-insensitive and boundary-safe", () => {
     expect(detectMention("Please check @Thor", ["thor"])).toBe(true);
     expect(detectMention("Please check @thorbot", ["thor"])).toBe(false);
-  });
-
-  it("delivery fallback source timestamp is stable for the same delivery id", () => {
-    expect(getGitHubDeliveryFallbackSourceTs("delivery-1")).toBe(
-      getGitHubDeliveryFallbackSourceTs("delivery-1"),
-    );
-    expect(Number.isSafeInteger(getGitHubDeliveryFallbackSourceTs("delivery-1"))).toBe(true);
   });
 
   it("buildCorrelationKey matches computeGitAlias format", () => {

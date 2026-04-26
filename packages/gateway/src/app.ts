@@ -39,7 +39,6 @@ import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from ".
 import {
   buildCorrelationKey,
   buildPendingBranchResolveKey,
-  getGitHubDeliveryFallbackSourceTs,
   getGitHubEventSourceTs,
   GitHubWebhookEnvelopeSchema,
   isPendingBranchResolveKey,
@@ -673,9 +672,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const now = Date.now();
-    const sourceTsFromPayload = getGitHubEventSourceTs(parsed.data);
-    const sourceTs = sourceTsFromPayload ?? getGitHubDeliveryFallbackSourceTs(deliveryId);
+    const sourceTs = getGitHubEventSourceTs(parsed.data);
     const delayMs = normalized.mention ? githubMentionDelay : githubNonMentionDelay;
     const correlationKey = normalized.branch
       ? resolveCorrelationKeys([buildCorrelationKey(normalized.localRepo, normalized.branch)])
@@ -686,9 +683,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       source: "github",
       correlationKey,
       payload: normalized,
-      receivedAt: new Date(now).toISOString(),
+      receivedAt: new Date().toISOString(),
       sourceTs,
-      readyAt: (sourceTsFromPayload ?? now) + delayMs,
+      readyAt: sourceTs + delayMs,
       delayMs,
       interrupt: normalized.mention,
     });

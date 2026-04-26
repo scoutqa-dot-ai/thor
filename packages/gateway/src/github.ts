@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 
 const GitHubSenderSchema = z.object({
@@ -19,6 +19,10 @@ const GitHubPullRequestRefSchema = z.object({
   repo: z.object({ full_name: z.string() }),
 });
 
+const IsoDateTimeSchema = z
+  .string()
+  .refine((s) => Number.isFinite(Date.parse(s)), { message: "expected ISO-8601 timestamp" });
+
 const IssueCommentEnvelopeSchema = z.object({
   action: z.string(),
   installation: GitHubInstallationSchema,
@@ -31,7 +35,7 @@ const IssueCommentEnvelopeSchema = z.object({
   comment: z.object({
     body: z.string(),
     html_url: z.string(),
-    created_at: z.string().optional(),
+    created_at: IsoDateTimeSchema,
   }),
 });
 
@@ -48,7 +52,7 @@ const PullRequestReviewCommentEnvelopeSchema = z.object({
   comment: z.object({
     body: z.string(),
     html_url: z.string(),
-    created_at: z.string().optional(),
+    created_at: IsoDateTimeSchema,
   }),
 });
 
@@ -65,7 +69,7 @@ const PullRequestReviewEnvelopeSchema = z.object({
   review: z.object({
     body: z.string().nullable().optional(),
     html_url: z.string(),
-    submitted_at: z.string().optional(),
+    submitted_at: IsoDateTimeSchema,
   }),
 });
 
@@ -161,20 +165,13 @@ export function isPendingBranchResolveKey(key: string): boolean {
   return key.startsWith(PENDING_BRANCH_RESOLVE_PREFIX);
 }
 
-export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number | undefined {
+export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number {
   const iso = isIssueCommentEvent(raw)
     ? raw.comment.created_at
     : isPullRequestReviewCommentEvent(raw)
       ? raw.comment.created_at
       : raw.review.submitted_at;
-
-  if (!iso) return undefined;
-  const parsed = Date.parse(iso);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-export function getGitHubDeliveryFallbackSourceTs(deliveryId: string): number {
-  return createHash("sha256").update(deliveryId).digest().readUIntBE(0, 6);
+  return Date.parse(iso);
 }
 
 export function normalizeGitHubEvent(

@@ -317,14 +317,14 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - Release accepted GitHub triggers immediately: once the runner accepts, stop awaiting the response body inline and drain or cancel it asynchronously so later interrupting same-branch events can reach the runner.
 - Treat exhausted PR-head lookup failures as terminal: after the defined retry budget, timeout/5xx/network lookup failures dead-letter once as `branch_unresolved` instead of retrying forever.
 - Keep wrapper gating aligned with the migrated config shape: `git` / `gh` wrappers should detect the `orgs`-based workspace config so GitHub App auth stays enabled after removing `github_app.installations`.
-- Preserve delivery-level dedupe when GitHub omits timestamps: derive the fallback `sourceTs` deterministically from `X-GitHub-Delivery` so retried deliveries still collapse to one queue file.
+- Require payload timestamps (`comment.created_at` / `review.submitted_at`) at the schema level so `sourceTs` is always derived from a real event time and redeliveries collapse to one queue file deterministically.
 
 **Exit criteria:**
 
 - [ ] Accepted GitHub triggers return before body completion and later interrupting same-branch events can still reach the runner.
 - [ ] Exhausted PR-head lookup failures dead-letter once as `branch_unresolved`.
 - [ ] `git` / `gh` wrapper auth still activates for migrated `orgs` configs.
-- [ ] Same-delivery retries without payload timestamps overwrite the same queued event.
+- [ ] Webhooks missing `created_at` / `submitted_at` are rejected by the envelope schema and logged as `event_unsupported`.
 
 ## Decision Log
 
@@ -348,7 +348,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 | 15  | Mention detection is body-text substring match                                                     | GitHub has no dedicated "bot mentioned" webhook; body-scan is the only signal.                                                                                                                                                                                    |
 | 16  | Compact one-liner prompt shape per event                                                           | Keeps token budget predictable; runner can fetch more via `gh` when needed.                                                                                                                                                                                       |
 | 17  | `X-GitHub-Delivery` is the queue event ID                                                          | Best available dedupe key for webhook deliveries; aligns with the existing queue overwrite model.                                                                                                                                                                 |
-| 18  | Derive missing-timestamp queue fallback from `X-GitHub-Delivery`                                   | Queue dedupe filenames include `sourceTs`, so retries without payload timestamps still need a stable overwrite key.                                                                                                                                               |
+| 18  | Require payload timestamps in the envelope schema                                                  | `comment.created_at` / `review.submitted_at` are always present in real GitHub deliveries; making them required removes the synthetic delivery-ID-hash fallback for `sourceTs` and keeps `readyAt` stable across redeliveries.                                    |
 | 19  | Same-key mixed-source batches dispatch as one runner trigger                                       | `git:branch:*` is intentionally shared across Slack, cron, and GitHub. Dispatching one composite prompt per ready batch preserves every event under a single queue ack and avoids source-priority drops when multiple intake paths hit the same branch together.  |
 | 20  | Centralize queue dispatch behind one batch planner + executor                                      | Single-source and mixed-source batches now share one decision path (`dispatch` / `reroute` / `drop`). Source-specific rules stay local, while queue handling stops duplicating routing policy across Slack, cron, and GitHub branches.                            |
 
