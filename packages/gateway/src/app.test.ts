@@ -48,10 +48,6 @@ function signGitHub(body: string, secret: string): string {
   return `sha256=${createHmac("sha256", secret).update(Buffer.from(body)).digest("hex")}`;
 }
 
-function textResponse(text: string, status: number): Response {
-  return new Response(text, { status, headers: { "content-type": "text/plain" } });
-}
-
 function readQueuedEvents(queueDir: string): Array<Record<string, unknown>> {
   return readdirSync(queueDir)
     .filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
