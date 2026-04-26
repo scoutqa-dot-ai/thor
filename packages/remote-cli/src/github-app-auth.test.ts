@@ -31,6 +31,10 @@ describe("resolveOwnerFromArgs", () => {
     expect(resolveOwnerFromArgs(["pr", "view", "--repo=acme/web"])).toBe("acme");
   });
 
+  it("extracts owner from --repo owner/repo", () => {
+    expect(resolveOwnerFromArgs(["pr", "view", "--repo", "acme/web"])).toBe("acme");
+  });
+
   it("returns undefined when repo flag is absent", () => {
     expect(resolveOwnerFromArgs(["pr", "list"])).toBeUndefined();
   });

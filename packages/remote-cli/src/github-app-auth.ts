@@ -51,7 +51,7 @@ class GitHubApiError extends Error {
 // can resemble owner/repo and would be mis-identified.
 export function resolveOwnerFromArgs(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "-R" && i + 1 < args.length) {
+    if ((args[i] === "-R" || args[i] === "--repo") && i + 1 < args.length) {
       const ownerRepo = args[i + 1];
       const slash = ownerRepo.indexOf("/");
       if (slash > 0) return ownerRepo.slice(0, slash);
