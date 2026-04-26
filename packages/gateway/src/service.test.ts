@@ -388,8 +388,29 @@ describe("triggerRunnerSlack edge cases", () => {
     expect(result.busy).toBe(true);
   });
 
-  it("throws when runner returns non-ok", async () => {
+  it("rejects with onRejected for 4xx errors (dead-letter)", async () => {
     mockRunnerFetch.mockResolvedValue(textResponse("bad request", 400));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerSlack } = await import("./service.js");
+    const result = await triggerRunnerSlack(
+      [slackEvent],
+      "key1",
+      runnerDeps,
+      slackMcpDeps,
+      false,
+      undefined,
+      new Map([["C123", "repo"]]),
+      onRejected,
+    );
+
+    expect(result.busy).toBe(false);
+    expect(result.rejected).toBe(true);
+    expect(onRejected).toHaveBeenCalledWith(expect.stringContaining("400"));
+  });
+
+  it("throws for 5xx errors (retryable)", async () => {
+    mockRunnerFetch.mockResolvedValue(textResponse("internal error", 500));
 
     const { triggerRunnerSlack } = await import("./service.js");
     await expect(
@@ -402,7 +423,7 @@ describe("triggerRunnerSlack edge cases", () => {
         undefined,
         new Map([["C123", "repo"]]),
       ),
-    ).rejects.toThrow("Runner returned 400");
+    ).rejects.toThrow("Runner returned 500");
   });
 });
 

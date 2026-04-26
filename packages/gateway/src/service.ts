@@ -55,7 +55,6 @@ export interface RunnerTriggerOptions {
   interrupt?: boolean;
   onAccepted?: () => void;
   onRejected?: (reason: string) => void;
-  reject4xx?: boolean;
   progressTarget?: ProgressRelayTarget;
   backgroundDrain?: boolean;
   backgroundDrainLogEvent?: string;
@@ -274,7 +273,7 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
 
   if (!response.ok) {
     const text = await response.text();
-    if (options.reject4xx && response.status >= 400 && response.status < 500) {
+    if (response.status >= 400 && response.status < 500) {
       const reason = `Runner returned ${response.status}: ${text}`;
       options.onRejected?.(reason);
       return { busy: false, rejected: true, reason };
@@ -433,7 +432,6 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       interrupt: input.interrupt,
       onAccepted: input.onAccepted,
       onRejected: input.onRejected,
-      reject4xx: input.slackEvents.length === 0,
       progressTarget,
       backgroundDrain,
       backgroundDrainLogEvent: backgroundDrain ? `${logPrefix}_response_drain_error` : undefined,
