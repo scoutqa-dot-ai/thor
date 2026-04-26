@@ -744,12 +744,8 @@ function renderGitHubPrompt(events: NormalizedGitHubEvent[]): string {
 }
 
 function renderGitHubPromptLine(event: NormalizedGitHubEvent): string {
-  const body = truncate(singleLine(event.body), GITHUB_PROMPT_EVENT_BODY_MAX);
+  const body = truncate(event.body.replace(/\s+/g, " ").trim(), GITHUB_PROMPT_EVENT_BODY_MAX);
   return `[${event.senderLogin}] ${event.action} on ${event.repoFullName}#${event.number} (${event.eventType}): ${body}\n${event.htmlUrl}`;
-}
-
-function singleLine(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
 }
 
 async function forwardApprovalNotification(
