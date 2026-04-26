@@ -1,0 +1,25 @@
+packages/remote-cli/bin/gh
+  01386bfcf662de64 10
+packages/remote-cli/bin/git
+  01386bfcf662de64 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "33a15a0fae6ee684abe96b026029bf4e630948d1",
+  "prompts": {
+    "01386bfcf662de64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8ed07a11-5ca8-46bc-9d04-fe30d5e34810",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 25,
+      "total_deletions": 99,
+      "accepted_lines": 22,
+      "overriden_lines": 0
+    }
+  }
+}
