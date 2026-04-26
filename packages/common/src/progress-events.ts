@@ -13,7 +13,7 @@ export const ProgressStartSchema = z.object({
 export const ProgressToolSchema = z.object({
   type: z.literal("tool"),
   tool: z.string(),
-  status: z.enum(["completed", "error"]),
+  status: z.enum(["running", "completed", "error"]),
 });
 
 export const ProgressMemorySchema = z.object({
