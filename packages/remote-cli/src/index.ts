@@ -33,8 +33,8 @@ import {
   THOR_SHA_LABEL,
 } from "./sandbox.js";
 import {
+  resolveGitArgs,
   validateCwd,
-  validateGitArgs,
   validateGhArgs,
   validateLdcliArgs,
   validateLangfuseArgs,
@@ -267,16 +267,22 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      const argsError = validateGitArgs(args);
-      if (argsError) {
-        res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
+      const gitResolution = resolveGitArgs(args, cwd);
+      if ("error" in gitResolution) {
+        res.status(400).json({ stdout: "", stderr: gitResolution.error, exitCode: 1 });
         return;
       }
+      const effectiveArgs = gitResolution.args;
 
-      logInfo(log, "exec_git", { args, cwd, ...thorIds(req) });
-      const result = await execCommand("git", args, cwd);
+      logInfo(log, "exec_git", {
+        args,
+        ...(JSON.stringify(effectiveArgs) !== JSON.stringify(args) ? { effectiveArgs } : {}),
+        cwd,
+        ...thorIds(req),
+      });
+      const result = await execCommand("git", effectiveArgs, cwd);
       if ((result.exitCode ?? 0) === 0) {
-        const alias = computeGitAlias("git", args, cwd);
+        const alias = computeGitAlias("git", effectiveArgs, cwd);
         if (alias) result.stdout = (result.stdout || "") + formatThorMeta(alias);
       }
       res.json(result);
@@ -301,7 +307,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      const argsError = validateGhArgs(args);
+      const argsError = validateGhArgs(args, cwd);
       if (argsError) {
         res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
         return;

@@ -16,7 +16,6 @@ const GitHubAppInstallationSchema = z.object({
   installation_id: z.number().int().positive(),
   app_id: z.string().optional().default(""),
   private_key_path: z.string().optional().default(""),
-  api_url: z.string().optional().default(""),
 });
 
 const GitHubAppConfigSchema = z.object({

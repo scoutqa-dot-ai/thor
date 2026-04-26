@@ -120,7 +120,6 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `GIT_USER_EMAIL`                    | No       | `remote-cli`              | Git author email                                                    |
 | `GIT_USER_NAME`                     | No       | `remote-cli`              | Git author name                                                     |
 | `GITHUB_APP_ID`                     | No       | `remote-cli`              | GitHub App ID for GitHub App auth                                   |
-| `GITHUB_API_URL`                    | No       | `remote-cli`              | GitHub API base URL override                                        |
 | `GITHUB_APP_PRIVATE_KEY_FILE`       | No       | `remote-cli`              | GitHub App private key path                                         |
 | `GITHUB_PAT`                        | No       | `remote-cli`              | Fallback token for `git` / `gh` when GitHub App auth is unavailable |
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | `grafana-mcp`             | Grafana service account token                                       |
@@ -160,8 +159,7 @@ GitHub App installation entries live under `github_app.installations` in that co
         "org": "acme",
         "installation_id": 12345678,
         "app_id": "",
-        "private_key_path": "",
-        "api_url": ""
+        "private_key_path": ""
       }
     ]
   }
