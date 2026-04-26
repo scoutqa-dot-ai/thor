@@ -7,16 +7,21 @@ import {
   hasSlackReply,
   getAllowedChannelIds,
   getChannelRepoMap,
+  resolveRepoDirectory,
   type ConfigLoader,
 } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
 import {
   addSlackReaction,
-  triggerRunnerSlack,
-  triggerRunnerCron,
+  buildDispatchLogContext,
+  executeBatchDispatchPlan,
+  getBatchLogPrefix,
+  planBatchDispatch,
   resolveApproval,
   updateSlackMessage,
+  type BatchLogPrefix,
+  type BatchSource,
   type RunnerDeps,
   type SlackMcpDeps,
 } from "./service.js";
@@ -31,6 +36,17 @@ import {
   type SlackThreadEvent,
 } from "./slack.js";
 import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.js";
+import {
+  buildCorrelationKey,
+  buildPendingBranchResolveKey,
+  getGitHubDeliveryFallbackSourceTs,
+  getGitHubEventSourceTs,
+  GitHubWebhookEnvelopeSchema,
+  isPendingBranchResolveKey,
+  type NormalizedGitHubEvent,
+  normalizeGitHubEvent,
+  verifyGitHubSignature,
+} from "./github.js";
 
 interface SlackQueuedEvent extends QueuedEvent<SlackThreadEvent> {
   source: "slack";
@@ -38,6 +54,10 @@ interface SlackQueuedEvent extends QueuedEvent<SlackThreadEvent> {
 
 interface CronQueuedEvent extends QueuedEvent<CronPayload> {
   source: "cron";
+}
+
+interface GitHubQueuedEvent extends QueuedEvent<NormalizedGitHubEvent> {
+  source: "github";
 }
 
 function isSlackEvent(e: QueuedEvent): e is SlackQueuedEvent {
@@ -48,14 +68,35 @@ function isCronEvent(e: QueuedEvent): e is CronQueuedEvent {
   return e.source === "cron";
 }
 
+function isGitHubEvent(e: QueuedEvent): e is GitHubQueuedEvent {
+  return e.source === "github";
+}
+
 const log = createLogger("gateway");
 
 interface RawBodyRequest extends Request {
   rawBody?: string;
+  rawBodyBuffer?: Buffer;
 }
 
 /** Short debounce delay for mentions and engaged threads (ms). */
 const SHORT_DELAY_MS = 3000;
+const GITHUB_MENTION_DELAY_MS = 3000;
+const GITHUB_NON_MENTION_DELAY_MS = 60000;
+const GITHUB_SUPPORTED_EVENTS = new Set([
+  "issue_comment",
+  "pull_request_review_comment",
+  "pull_request_review",
+]);
+
+type GitHubIgnoreReason =
+  | "signature_invalid"
+  | "event_unsupported"
+  | "repo_not_mapped"
+  | "pure_issue_comment_unsupported"
+  | "fork_pr_unsupported"
+  | "bot_sender"
+  | "empty_review_body";
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
@@ -75,12 +116,22 @@ export interface GatewayAppConfig extends RunnerDeps {
   disableQueueInterval?: boolean;
   /** Short debounce delay for mentions and engaged threads (ms). Default: 3000. */
   shortDelayMs?: number;
+  /** Long debounce delay for non-mentions (ms). Default: 60000. */
+  longDelayMs?: number;
   /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
   cronSecret?: string;
   /** Dynamic workspace config loader — re-reads config.json on each request. */
   getConfig?: ConfigLoader;
   /** Path to opencode auth.json for Codex usage check. */
   openaiAuthPath?: string;
+  /** GitHub webhook HMAC secret. */
+  githubWebhookSecret?: string;
+  /** Allowlisted mention logins used for GitHub mention detection. */
+  githubMentionLogins?: string[];
+  /** GitHub mention debounce delay in ms. Default: 3000. */
+  githubMentionDelayMs?: number;
+  /** GitHub non-mention debounce delay in ms. Default: 60000. */
+  githubNonMentionDelayMs?: number;
 }
 
 const InteractivityBodySchema = z.object({
@@ -103,6 +154,25 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   const selfUserId = config.slackBotUserId;
   const shortDelay = config.shortDelayMs ?? SHORT_DELAY_MS;
+  const githubMentionDelay = config.githubMentionDelayMs ?? GITHUB_MENTION_DELAY_MS;
+  const githubNonMentionDelay = config.githubNonMentionDelayMs ?? GITHUB_NON_MENTION_DELAY_MS;
+  const githubMentionLogins = config.githubMentionLogins ?? [];
+
+  const logGitHubIgnored = (input: {
+    deliveryId: string;
+    repoFullName?: string;
+    eventType?: string;
+    action?: string;
+    reason: GitHubIgnoreReason;
+  }) => {
+    logInfo(log, "github_event_ignored", {
+      deliveryId: input.deliveryId,
+      repoFullName: input.repoFullName,
+      eventType: input.eventType,
+      action: input.action,
+      reason: input.reason,
+    });
+  };
 
   /** Read allowed channels dynamically from config on each call. */
   const isChannelAllowed = (channel: string): boolean => {
@@ -131,71 +201,104 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     disableInterval: config.disableQueueInterval === true,
     handler: async (events: QueuedEvent[], ack: () => void, reject: (reason: string) => void) => {
       const slackEvents = events.filter(isSlackEvent);
-
-      if (slackEvents.length > 0) {
-        const lastEvent = slackEvents[slackEvents.length - 1];
-        const hasInterrupt = events.some((e) => e.interrupt);
-
-        // Await the trigger so the queue keeps the per-key processing lock
-        // until the runner responds. triggerRunnerSlack returns as soon as
-        // the runner accepts (NDJSON stream is consumed in the background).
-        try {
-          const result = await triggerRunnerSlack(
-            slackEvents.map((e) => e.payload),
-            lastEvent.correlationKey,
-            runnerDeps,
-            slackMcpDeps,
-            hasInterrupt,
-            ack,
-            getChannelRepos(),
-            reject,
-          );
-          if (result.busy) {
-            logInfo(log, "slack_trigger_busy", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: slackEvents.length,
-            });
-          } else {
-            logInfo(log, "slack_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
-              batchSize: slackEvents.length,
-            });
-          }
-        } catch (error) {
-          logError(log, "slack_trigger_failed", error, {
-            correlationKey: lastEvent.correlationKey,
-          });
-        }
-        return;
-      }
-
       const cronEvents = events.filter(isCronEvent);
-      if (cronEvents.length > 0) {
-        const lastEvent = cronEvents[cronEvents.length - 1];
+      const githubEvents = events.filter(isGitHubEvent);
+      const sources = [...new Set(events.map((event) => event.source))].sort() as BatchSource[];
+      const logPrefix = getBatchLogPrefix(sources);
+      const correlationKey = events[events.length - 1]?.correlationKey;
+      const hasInterrupt = events.some((event) => event.interrupt);
+      const logTrigger = (
+        prefix: BatchLogPrefix,
+        outcome: "busy" | "dropped" | "fired",
+        reason?: string,
+      ) => {
+        logInfo(
+          log,
+          `${prefix}_trigger_${outcome}`,
+          buildDispatchLogContext({
+            logPrefix: prefix,
+            correlationKey,
+            batchSize: events.length,
+            interrupt: hasInterrupt,
+            sources,
+            reason,
+          }),
+        );
+      };
 
-        try {
-          const result = await triggerRunnerCron(
-            lastEvent.payload,
-            lastEvent.correlationKey,
-            runnerDeps,
-            false,
-            ack,
-            reject,
-          );
-          if (result.busy) {
-            logInfo(log, "cron_trigger_busy", {
-              correlationKey: lastEvent.correlationKey,
-            });
-          } else {
-            logInfo(log, "cron_trigger_fired", {
-              correlationKey: lastEvent.correlationKey,
+      try {
+        const plan = await planBatchDispatch({
+          slackEvents: slackEvents.map((event) => event.payload),
+          cronEvents: cronEvents.map((event) => event.payload),
+          githubEvents: githubEvents.map((event) => event.payload),
+          correlationKey: correlationKey ?? "",
+          deps: runnerDeps,
+          slackMcpDeps,
+          remoteCliUrl,
+          interrupt: hasInterrupt,
+          onAccepted: ack,
+          onRejected: reject,
+          channelRepos: getChannelRepos(),
+        });
+
+        if (plan.kind === "reroute") {
+          const now = Date.now();
+          const resolvedKey = resolveCorrelationKeys([plan.toCorrelationKey]);
+          for (const [index, event] of githubEvents.entries()) {
+            queue.enqueue({
+              ...event,
+              id: `${event.id}:resolved`,
+              correlationKey: resolvedKey,
+              payload: plan.githubEvents[index],
+              receivedAt: new Date(now).toISOString(),
+              readyAt: now,
+              delayMs: 0,
             });
           }
-        } catch (error) {
-          logError(log, "cron_trigger_failed", error, {
-            correlationKey: lastEvent.correlationKey,
+          ack();
+          logInfo(log, "github_events_rerouted", {
+            fromCorrelationKey: plan.fromCorrelationKey,
+            toCorrelationKey: resolvedKey,
+            batchSize: githubEvents.length,
           });
+          return;
         }
+
+        if (plan.kind === "drop") {
+          reject(plan.reason);
+          logTrigger(plan.logPrefix, "dropped", plan.reason);
+          return;
+        }
+
+        const result = await executeBatchDispatchPlan(plan);
+        if (result.busy) {
+          logTrigger(plan.logPrefix, "busy");
+        } else if (result.rejected) {
+          logTrigger(plan.logPrefix, "dropped");
+        } else {
+          logTrigger(plan.logPrefix, "fired");
+        }
+      } catch (error) {
+        if (logPrefix === "github" && correlationKey && isPendingBranchResolveKey(correlationKey)) {
+          logError(log, "github_branch_resolution_retryable", error, {
+            correlationKey,
+            batchSize: githubEvents.length,
+          });
+          return;
+        }
+
+        logError(
+          log,
+          `${logPrefix}_trigger_failed`,
+          error,
+          buildDispatchLogContext({
+            logPrefix,
+            correlationKey,
+            batchSize: events.length,
+            interrupt: hasInterrupt,
+            sources,
+          }),
+        );
       }
     },
   });
@@ -208,6 +311,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     express.json({
       verify: (req, _res, buf) => {
         (req as RawBodyRequest).rawBody = buf.toString("utf8");
+        (req as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
       },
     }),
   );
@@ -216,6 +320,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       extended: false,
       verify: (req, _res, buf) => {
         (req as RawBodyRequest).rawBody = buf.toString("utf8");
+        (req as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
       },
     }),
   );
@@ -483,6 +588,125 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     res.status(200).json({ ok: true, ignored: true, interactionType });
+  });
+
+  // --- GitHub webhook ---
+
+  app.post("/github/webhook", (req: Request, res: Response) => {
+    const rawRequest = req as RawBodyRequest;
+    const deliveryId = req.header("x-github-delivery") ?? "unknown";
+    const eventTypeHeader = (req.header("x-github-event") ?? "").toLowerCase();
+    const signature = req.header("x-hub-signature-256");
+
+    const verified = verifyGitHubSignature({
+      secret: config.githubWebhookSecret ?? "",
+      rawBody: rawRequest.rawBodyBuffer ?? Buffer.from(""),
+      header: signature,
+    });
+    if (!verified) {
+      logGitHubIgnored({
+        deliveryId,
+        eventType: eventTypeHeader || undefined,
+        reason: "signature_invalid",
+      });
+      res.status(401).json({ error: "Invalid GitHub signature" });
+      return;
+    }
+
+    if (!GITHUB_SUPPORTED_EVENTS.has(eventTypeHeader)) {
+      logGitHubIgnored({
+        deliveryId,
+        eventType: eventTypeHeader || undefined,
+        reason: "event_unsupported",
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const parsed = GitHubWebhookEnvelopeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      logGitHubIgnored({ deliveryId, eventType: eventTypeHeader, reason: "event_unsupported" });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const repoFullName = parsed.data.repository.full_name;
+    const parts = repoFullName.split("/");
+    const localRepo = parts[parts.length - 1];
+    if (!localRepo || !resolveRepoDirectory(localRepo)) {
+      logGitHubIgnored({
+        deliveryId,
+        repoFullName,
+        eventType: eventTypeHeader,
+        action: parsed.data.action,
+        reason: "repo_not_mapped",
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const normalized = normalizeGitHubEvent(parsed.data, {
+      localRepo,
+      mentionLogins: githubMentionLogins,
+    });
+    if ("ignored" in normalized) {
+      const reason =
+        normalized.reason === "unsupported_action" ? "event_unsupported" : normalized.reason;
+      logGitHubIgnored({
+        deliveryId,
+        repoFullName,
+        eventType: eventTypeHeader,
+        action: parsed.data.action,
+        reason,
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    if (normalized.eventType !== eventTypeHeader) {
+      logGitHubIgnored({
+        deliveryId,
+        repoFullName,
+        eventType: eventTypeHeader,
+        action: normalized.action,
+        reason: "event_unsupported",
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const now = Date.now();
+    const sourceTsFromPayload = getGitHubEventSourceTs(parsed.data);
+    const sourceTs = sourceTsFromPayload ?? getGitHubDeliveryFallbackSourceTs(deliveryId);
+    const delayMs = normalized.mention ? githubMentionDelay : githubNonMentionDelay;
+    const correlationKey = normalized.branch
+      ? resolveCorrelationKeys([buildCorrelationKey(normalized.localRepo, normalized.branch)])
+      : buildPendingBranchResolveKey(normalized.localRepo, normalized.number);
+
+    queue.enqueue({
+      id: deliveryId,
+      source: "github",
+      correlationKey,
+      payload: normalized,
+      receivedAt: new Date(now).toISOString(),
+      sourceTs,
+      readyAt: (sourceTsFromPayload ?? now) + delayMs,
+      delayMs,
+      interrupt: normalized.mention,
+    });
+
+    logInfo(log, "github_event_accepted", {
+      deliveryId,
+      repoFullName: normalized.repoFullName,
+      localRepo: normalized.localRepo,
+      eventType: normalized.eventType,
+      action: normalized.action,
+      correlationKey,
+      interrupt: normalized.mention,
+      delayMs,
+    });
+
+    res.status(200).json({ ok: true });
   });
 
   // --- Cron trigger ---

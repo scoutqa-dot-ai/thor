@@ -11,15 +11,8 @@ const RepoConfigSchema = z.object({
   proxies: z.array(z.string()).optional(),
 });
 
-const GitHubAppInstallationSchema = z.object({
-  org: z.string(),
-  installation_id: z.number().int().positive(),
-  app_id: z.string().optional().default(""),
-  private_key_path: z.string().optional().default(""),
-});
-
-const GitHubAppConfigSchema = z.object({
-  installations: z.array(GitHubAppInstallationSchema),
+const OwnerConfigSchema = z.object({
+  github_app_installation_id: z.number().int().positive(),
 });
 
 const MitmproxyRuleSchema = z
@@ -58,7 +51,7 @@ const MitmproxyPassthroughHostSchema = z.string().refine((value) => {
 export const WorkspaceConfigSchema = z
   .object({
     repos: z.record(z.string(), RepoConfigSchema),
-    github_app: GitHubAppConfigSchema.optional(),
+    owners: z.record(z.string(), OwnerConfigSchema).optional(),
     mitmproxy: z.array(MitmproxyRuleSchema).optional(),
     mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
   })
@@ -66,8 +59,7 @@ export const WorkspaceConfigSchema = z
 
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;
-export type GitHubAppInstallation = z.infer<typeof GitHubAppInstallationSchema>;
-export type GitHubAppConfig = z.infer<typeof GitHubAppConfigSchema>;
+export type OwnerConfig = z.infer<typeof OwnerConfigSchema>;
 
 export interface ProxyUpstream {
   url: string;
@@ -329,6 +321,16 @@ export function getRepoUpstreams(config: WorkspaceConfig, repoName: string): str
   const repo = config.repos[repoName];
   if (!repo) return undefined;
   return repo.proxies ?? [];
+}
+
+/**
+ * Lookup GitHub App installation ID for a configured owner.
+ */
+export function getInstallationIdForOwner(
+  config: WorkspaceConfig,
+  owner: string,
+): number | undefined {
+  return config.owners?.[owner]?.github_app_installation_id;
 }
 
 const ALLOWED_PREFIXES = ["/workspace/repos/"];

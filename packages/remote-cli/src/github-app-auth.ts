@@ -1,7 +1,7 @@
 /**
  * GitHub App authentication for Thor git/gh wrappers.
  *
- * Resolves a target org, looks up the installation from workspace config,
+ * Resolves a target owner, looks up the installation from workspace config,
  * mints (or reads from cache) an installation token, and returns it.
  *
  * Cache is disk-backed under /var/lib/remote-cli/github-app/cache/ because
@@ -13,16 +13,14 @@ import { join } from "node:path";
 import { createSign } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
+  getInstallationIdForOwner,
   loadWorkspaceConfig,
+  requireEnv,
   WORKSPACE_CONFIG_PATH,
-  type GitHubAppInstallation,
 } from "@thor/common";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const GITHUB_APP_DIR = process.env.GITHUB_APP_DIR ?? "/var/lib/remote-cli/github-app";
-const DEFAULT_PRIVATE_KEY_PATH = join(GITHUB_APP_DIR, "private-key.pem");
-const CACHE_DIR = join(GITHUB_APP_DIR, "cache");
 const DEFAULT_API_URL = "https://api.github.com";
 
 /** Refresh token when less than this many seconds remain. */
@@ -36,7 +34,7 @@ const TAG = "[thor-github-app]";
 
 export interface TokenResult {
   token: string;
-  org: string;
+  owner: string;
 }
 
 interface CachedToken {
@@ -44,13 +42,45 @@ interface CachedToken {
   expires_at: string; // ISO 8601
 }
 
-// ── Org resolution ───────────────────────────────────────────────────────────
+class GitHubApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "GitHubApiError";
+  }
+}
+
+// ── Owner resolution ─────────────────────────────────────────────────────────
 
 /**
- * Extract org from the git remote URL of the current repo.
- * Supports HTTPS (https://github.com/org/repo.git) and SSH (git@github.com:org/repo.git).
+ * Extract owner from `-R` / `--repo=` flags only.
+ * Positional args are not scanned because flag values like `--body` content
+ * can resemble owner/repo and would be mis-identified.
  */
-export function resolveOrgFromRemote(cwd: string): string | undefined {
+export function resolveOwnerFromArgs(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-R" && i + 1 < args.length) {
+      const ownerRepo = args[i + 1];
+      const slash = ownerRepo.indexOf("/");
+      if (slash > 0) return ownerRepo.slice(0, slash);
+    }
+    if (args[i]?.startsWith("--repo=")) {
+      const ownerRepo = args[i].slice("--repo=".length);
+      const slash = ownerRepo.indexOf("/");
+      if (slash > 0) return ownerRepo.slice(0, slash);
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Extract owner from the git remote URL of the current repo.
+ * Supports HTTPS (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git).
+ */
+export function resolveOwnerFromRemote(cwd: string): string | undefined {
   let remoteUrl: string;
   try {
     remoteUrl = execFileSync("/usr/bin/git", ["remote", "get-url", "origin"], {
@@ -61,18 +91,18 @@ export function resolveOrgFromRemote(cwd: string): string | undefined {
   } catch {
     return undefined;
   }
-  return parseOrgFromRemoteUrl(remoteUrl);
+  return parseOwnerFromRemoteUrl(remoteUrl);
 }
 
 /**
- * Parse the org (owner) from a GitHub remote URL.
+ * Parse the owner from a GitHub remote URL.
  */
-export function parseOrgFromRemoteUrl(url: string): string | undefined {
-  // SSH: git@github.com:org/repo.git
+export function parseOwnerFromRemoteUrl(url: string): string | undefined {
+  // SSH: git@github.com:owner/repo.git
   const sshMatch = url.match(/^git@[^:]+:([^/]+)\//);
   if (sshMatch) return sshMatch[1];
 
-  // HTTPS: https://github.com/org/repo or https://github.com/org/repo.git
+  // HTTPS: https://github.com/owner/repo or https://github.com/owner/repo.git
   try {
     const parsed = new URL(url);
     const parts = parsed.pathname.split("/").filter(Boolean);
@@ -85,59 +115,40 @@ export function parseOrgFromRemoteUrl(url: string): string | undefined {
 }
 
 /**
- * Resolve the target org for a git/gh command from the cwd's git remote.
- * Returns undefined if cwd is missing or its origin is not a github.com URL.
- *
- * Note: arg-based resolution (-R / --repo) is intentionally absent — the gh
- * policy denies those flags, so they can never reach this code path.
+ * Resolve the target owner for a git/gh command.
+ * Priority: explicit -R flag > git remote origin.
+ * Returns undefined if owner cannot be determined.
  */
-export function resolveOrg(_args: string[], cwd?: string): string | undefined {
-  return cwd ? resolveOrgFromRemote(cwd) : undefined;
+export function resolveOwner(args: string[], cwd?: string): string | undefined {
+  const fromArgs = resolveOwnerFromArgs(args);
+  if (fromArgs) return fromArgs;
+  if (cwd) return resolveOwnerFromRemote(cwd);
+  return undefined;
 }
 
 // ── Config lookup ────────────────────────────────────────────────────────────
 
-/**
- * Find the installation config for a given org.
- * Throws if no matching installation is found.
- */
-export function findInstallation(org: string): GitHubAppInstallation {
+export function getInstallationIdFromWorkspace(owner: string): number {
   const config = loadWorkspaceConfig(WORKSPACE_CONFIG_PATH);
-  const installations = config.github_app?.installations ?? [];
-  const match = installations.find((i) => i.org === org);
-  if (!match) {
-    throw new Error(
-      `${TAG} No GitHub App installation configured for org "${org}". ` +
-        `Add it to github_app.installations in ${WORKSPACE_CONFIG_PATH}.`,
-    );
+  const installationId = getInstallationIdForOwner(config, owner);
+  if (installationId !== undefined) {
+    return installationId;
   }
-  return match;
+
+  const configuredOwners = Object.keys(config.owners ?? {}).sort();
+  const configured = configuredOwners.length > 0 ? configuredOwners.join(", ") : "(none)";
+  throw new Error(
+    `${TAG} No GitHub App installation configured for owner "${owner}". ` +
+      `Configured owners: ${configured}. ` +
+      `Add owners.${owner}.github_app_installation_id in ${WORKSPACE_CONFIG_PATH}.`,
+  );
 }
 
-/**
- * Resolve effective values for an installation, applying env/default fallbacks.
- */
-export function resolveInstallation(inst: GitHubAppInstallation): {
-  org: string;
-  installationId: number;
-  appId: string;
-  privateKeyPath: string;
-} {
-  const appId = inst.app_id || process.env.GITHUB_APP_ID || "";
-  if (!appId) {
-    throw new Error(
-      `${TAG} No app_id for org "${inst.org}". Set it in config.json or GITHUB_APP_ID env.`,
-    );
-  }
-
-  const privateKeyPath =
-    inst.private_key_path || process.env.GITHUB_APP_PRIVATE_KEY_FILE || DEFAULT_PRIVATE_KEY_PATH;
-
+function resolveGitHubAppEnv(): { appId: string; privateKeyPath: string; apiUrl: string } {
   return {
-    org: inst.org,
-    installationId: inst.installation_id,
-    appId,
-    privateKeyPath,
+    appId: requireEnv("GITHUB_APP_ID"),
+    privateKeyPath: requireEnv("GITHUB_APP_PRIVATE_KEY_FILE"),
+    apiUrl: process.env.GITHUB_API_URL || DEFAULT_API_URL,
   };
 }
 
@@ -186,8 +197,9 @@ function base64url(str: string): string {
 export async function mintInstallationToken(
   installationId: number,
   appJwt: string,
+  apiUrl: string,
 ): Promise<CachedToken> {
-  const url = `${DEFAULT_API_URL}/app/installations/${installationId}/access_tokens`;
+  const url = `${apiUrl}/app/installations/${installationId}/access_tokens`;
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -199,7 +211,8 @@ export async function mintInstallationToken(
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    throw new Error(
+    throw new GitHubApiError(
+      response.status,
       `${TAG} GitHub API ${response.status} minting token for installation ${installationId}: ${body}`,
     );
   }
@@ -210,30 +223,38 @@ export async function mintInstallationToken(
 
 // ── Disk cache ───────────────────────────────────────────────────────────────
 
-/** Sanitize org name for use as a filename (defense in depth). */
-function safeOrgName(org: string): string {
-  return org.replace(/[^a-zA-Z0-9._-]/g, "_");
+/** Sanitize owner name for use as a filename (defense in depth). */
+function safeOwnerName(owner: string): string {
+  return owner.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-function cachePath(org: string): string {
-  return join(CACHE_DIR, `${safeOrgName(org)}.json`);
+function cachePath(owner: string): string {
+  return join(getCacheDir(), `${safeOwnerName(owner)}.json`);
 }
 
-function lockPath(org: string): string {
-  return join(CACHE_DIR, `${safeOrgName(org)}.lock`);
+function lockPath(owner: string): string {
+  return join(getCacheDir(), `${safeOwnerName(owner)}.lock`);
+}
+
+function getGitHubAppDir(): string {
+  return process.env.GITHUB_APP_DIR ?? "/var/lib/remote-cli/github-app";
+}
+
+function getCacheDir(): string {
+  return join(getGitHubAppDir(), "cache");
 }
 
 function ensureCacheDir(): void {
   try {
-    mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+    mkdirSync(getCacheDir(), { recursive: true, mode: 0o700 });
   } catch {
     // Ignore if exists
   }
 }
 
-function readCache(org: string): CachedToken | null {
+function readCache(owner: string): CachedToken | null {
   try {
-    const raw = readFileSync(cachePath(org), "utf8");
+    const raw = readFileSync(cachePath(owner), "utf8");
     const cached = JSON.parse(raw) as CachedToken;
     if (!cached.token || !cached.expires_at) return null;
 
@@ -248,14 +269,14 @@ function readCache(org: string): CachedToken | null {
   }
 }
 
-function writeCache(org: string, cached: CachedToken): void {
+function writeCache(owner: string, cached: CachedToken): void {
   try {
     ensureCacheDir();
-    writeFileSync(cachePath(org), JSON.stringify(cached), { mode: 0o600 });
+    writeFileSync(cachePath(owner), JSON.stringify(cached), { mode: 0o600 });
   } catch (err) {
     // Graceful degradation: log but don't fail
     process.stderr.write(
-      `${TAG} Warning: failed to write token cache for ${org}: ${err instanceof Error ? err.message : String(err)}\n`,
+      `${TAG} Warning: failed to write token cache for ${owner}: ${err instanceof Error ? err.message : String(err)}\n`,
     );
   }
 }
@@ -264,9 +285,9 @@ function writeCache(org: string, cached: CachedToken): void {
  * Simple file-based lock with stale detection.
  * Returns true if we acquired the lock, false if another process holds it.
  */
-function acquireLock(org: string): boolean {
+function acquireLock(owner: string): boolean {
   ensureCacheDir();
-  const lp = lockPath(org);
+  const lp = lockPath(owner);
   try {
     // Check for stale lock
     try {
@@ -286,9 +307,9 @@ function acquireLock(org: string): boolean {
   }
 }
 
-function releaseLock(org: string): void {
+function releaseLock(owner: string): void {
   try {
-    unlinkSync(lockPath(org));
+    unlinkSync(lockPath(owner));
   } catch {
     // Ignore
   }
@@ -297,37 +318,49 @@ function releaseLock(org: string): void {
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Get a valid installation token for the given org.
+ * Get a valid installation token for the given owner.
  * Reads from cache if available, mints a new one if not.
  */
-export async function getInstallationToken(org: string): Promise<TokenResult> {
-  const inst = findInstallation(org);
-  const resolved = resolveInstallation(inst);
+export async function getInstallationToken(owner: string): Promise<TokenResult> {
+  const installationId = getInstallationIdFromWorkspace(owner);
+  const { appId, privateKeyPath, apiUrl } = resolveGitHubAppEnv();
 
   // Check cache first
-  const cached = readCache(org);
+  const cached = readCache(owner);
   if (cached) {
-    return { token: cached.token, org };
+    return { token: cached.token, owner };
   }
 
-  // Acquire lock for this org
-  const locked = acquireLock(org);
+  // Acquire lock for this owner
+  const locked = acquireLock(owner);
   if (!locked) {
     // Another process is minting. Wait briefly and check cache again.
     await new Promise((r) => setTimeout(r, 2000));
-    const recheck = readCache(org);
-    if (recheck) return { token: recheck.token, org };
+    const recheck = readCache(owner);
+    if (recheck) return { token: recheck.token, owner };
     // If still no cache, mint anyway (lock may be stale)
   }
 
   try {
-    process.stderr.write(`${TAG} Minting installation token for org "${org}"...\n`);
-    const jwt = generateAppJWT(resolved.appId, resolved.privateKeyPath);
-    const token = await mintInstallationToken(resolved.installationId, jwt);
-    writeCache(org, token);
-    process.stderr.write(`${TAG} Token cached for org "${org}" (expires ${token.expires_at})\n`);
-    return { token: token.token, org };
+    process.stderr.write(`${TAG} Minting installation token for owner "${owner}"...\n`);
+    const jwt = generateAppJWT(appId, privateKeyPath);
+    const token = await mintInstallationToken(installationId, jwt, apiUrl);
+    writeCache(owner, token);
+    process.stderr.write(
+      `${TAG} Token cached for owner "${owner}" (expires ${token.expires_at})\n`,
+    );
+    return { token: token.token, owner };
+  } catch (error) {
+    if (error instanceof GitHubApiError && (error.status === 401 || error.status === 403)) {
+      try {
+        unlinkSync(cachePath(owner));
+      } catch {
+        // Ignore missing/unlink errors during eviction.
+      }
+      throw new Error(`${TAG} installation_gone for owner "${owner}"`);
+    }
+    throw error;
   } finally {
-    if (locked) releaseLock(org);
+    if (locked) releaseLock(owner);
   }
 }

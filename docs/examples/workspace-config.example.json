@@ -5,21 +5,10 @@
       "proxies": ["atlassian", "grafana", "slack"]
     }
   },
-  "github_app": {
-    "installations": [
-      {
-        "org": "acme",
-        "installation_id": 12345678,
-        "app_id": "",
-        "private_key_path": ""
-      },
-      {
-        "org": "acme-labs",
-        "installation_id": 23456789,
-        "app_id": "",
-        "private_key_path": ""
-      }
-    ]
+  "owners": {
+    "scoutqa-dot-ai": {
+      "github_app_installation_id": 126669985
+    }
   },
   "mitmproxy": [
     {
