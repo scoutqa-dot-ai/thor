@@ -574,7 +574,28 @@ describe("triggerRunnerGitHub", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("maps exhausted 5xx branch lookup retries to terminal branch_unresolved", async () => {
+  it("maps branch lookup 404 to terminal branch_not_found rejection", async () => {
+    mockFetch.mockResolvedValueOnce(textResponse("not found", 404));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      undefined,
+      undefined,
+      onRejected,
+    );
+
+    expect(result).toEqual({ busy: false, rejected: true });
+    expect(onRejected).toHaveBeenCalledWith("branch_not_found");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps exhausted 5xx branch lookup retries to terminal branch_lookup_failed", async () => {
     mockFetch
       .mockResolvedValueOnce(textResponse("upstream error", 500))
       .mockResolvedValueOnce(textResponse("upstream error", 500));
@@ -593,11 +614,11 @@ describe("triggerRunnerGitHub", () => {
     );
 
     expect(result).toEqual({ busy: false, rejected: true });
-    expect(onRejected).toHaveBeenCalledWith("branch_unresolved");
+    expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("maps exhausted timeout retries to terminal branch_unresolved", async () => {
+  it("maps exhausted timeout retries to terminal branch_lookup_failed", async () => {
     const abortError = new Error("aborted");
     abortError.name = "AbortError";
     mockFetch.mockRejectedValue(abortError);
@@ -616,11 +637,11 @@ describe("triggerRunnerGitHub", () => {
     );
 
     expect(result).toEqual({ busy: false, rejected: true });
-    expect(onRejected).toHaveBeenCalledWith("branch_unresolved");
+    expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("maps exhausted network lookup retries to terminal branch_unresolved", async () => {
+  it("maps exhausted network lookup retries to terminal branch_lookup_failed", async () => {
     mockFetch.mockRejectedValue(new TypeError("fetch failed"));
     const onRejected = vi.fn();
 
@@ -637,7 +658,7 @@ describe("triggerRunnerGitHub", () => {
     );
 
     expect(result).toEqual({ busy: false, rejected: true });
-    expect(onRejected).toHaveBeenCalledWith("branch_unresolved");
+    expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 

@@ -117,6 +117,19 @@ npx smee-client --url https://smee.io/<channel-id> --path /github/webhook --port
 | `bot_sender`                     | Sender is a bot (or Thor app identity)               | Trigger from a human account                                                       |
 | `empty_review_body`              | Submitted review body was blank                      | Include text in the review body                                                    |
 
+### Dead-letter reasons (`github_trigger_dropped`)
+
+Queue-handler-side terminal rejections happen after the event passed intake. These show up as `github_trigger_dropped` with a `reason` field:
+
+| Reason                 | What it means                                                              | How to fix                                                                      |
+| ---------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `installation_gone`    | Remote-cli returned 401/403 minting an installation token                  | Reinstall the GitHub App on the affected owner; verify private key + app ID env |
+| `branch_not_found`     | Remote-cli `/github/pr-head` returned 404 (PR/branch missing on GitHub)    | Confirm the PR still exists; replay the delivery if it was a transient race     |
+| `branch_lookup_failed` | `/github/pr-head` 5xx, timeout, or network error after retries (transport) | Check remote-cli health and connectivity; replay the delivery once recovered    |
+| `fork_pr_unsupported`  | PR head repo differs from base repo (caught after branch resolve)          | Use same-repo branch PRs                                                        |
+
+`branch_not_found` is permanent (the branch is gone, replay won't help). `branch_lookup_failed` is operationally transient — the failure was infra, the underlying PR may still be valid; redeliver after fixing the transport.
+
 ## 10) Trust boundary for `remote-cli`
 
 The `remote-cli` service owns the GitHub App private key and mints installation tokens on demand (`/github/pr-head` for the webhook branch-resolution path; the `git` / `gh` wrappers for agent commands). Its endpoints have no per-request auth header — they rely on the docker network being the trust boundary:

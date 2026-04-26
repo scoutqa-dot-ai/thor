@@ -116,7 +116,11 @@ export interface GitHubPrHeadResult {
   headRepoFullName: string;
 }
 
-type TerminalGitHubRejectReason = "installation_gone" | "branch_unresolved" | "fork_pr_unsupported";
+type TerminalGitHubRejectReason =
+  | "installation_gone"
+  | "branch_not_found"
+  | "branch_lookup_failed"
+  | "fork_pr_unsupported";
 
 class TerminalGitHubDispatchError extends Error {
   constructor(
@@ -643,7 +647,7 @@ export async function resolveGitHubPrHead(
         const headRepoFullName = body.headRepoFullName?.trim();
         if (!ref || !headRepoFullName) {
           throw new TerminalGitHubDispatchError(
-            "branch_unresolved",
+            "branch_lookup_failed",
             "Remote-cli /github/pr-head returned incomplete PR head info",
           );
         }
@@ -658,7 +662,7 @@ export async function resolveGitHubPrHead(
       }
       if (response.status === 404) {
         throw new TerminalGitHubDispatchError(
-          "branch_unresolved",
+          "branch_not_found",
           "Remote-cli /github/pr-head returned 404",
         );
       }
@@ -667,7 +671,7 @@ export async function resolveGitHubPrHead(
           continue;
         }
         throw new TerminalGitHubDispatchError(
-          "branch_unresolved",
+          "branch_lookup_failed",
           `Remote-cli /github/pr-head returned ${response.status} after retries`,
         );
       }
@@ -681,13 +685,13 @@ export async function resolveGitHubPrHead(
           continue;
         }
         throw new TerminalGitHubDispatchError(
-          "branch_unresolved",
+          "branch_lookup_failed",
           "Remote-cli /github/pr-head timed out after retries",
         );
       }
       if (error instanceof TypeError && attempt >= GITHUB_PR_HEAD_RETRIES) {
         throw new TerminalGitHubDispatchError(
-          "branch_unresolved",
+          "branch_lookup_failed",
           `Remote-cli /github/pr-head request failed after retries: ${error.message}`,
         );
       }
@@ -698,7 +702,10 @@ export async function resolveGitHubPrHead(
     }
   }
 
-  throw new TerminalGitHubDispatchError("branch_unresolved", "Remote-cli /github/pr-head failed");
+  throw new TerminalGitHubDispatchError(
+    "branch_lookup_failed",
+    "Remote-cli /github/pr-head failed",
+  );
 }
 
 async function fetchWithTimeout(
