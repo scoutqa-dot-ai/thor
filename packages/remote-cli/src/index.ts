@@ -8,6 +8,7 @@ import {
   formatThorMeta,
   logError,
   logInfo,
+  requireEnv,
   type ConfigLoader,
   type ExecStreamEvent,
   WORKSPACE_CONFIG_PATH,
@@ -41,11 +42,32 @@ import {
   validateMetabaseArgs,
   validateScoutqaArgs,
 } from "./policy.js";
+import { generateAppJWT, mintInstallationToken } from "./github-app-auth.js";
 
 const log = createLogger("remote-cli");
 
 const PORT = parseInt(process.env.PORT || "3004", 10);
 const LDCLI_MAX_OUTPUT = 1024 * 1024;
+const GITHUB_API_URL = "https://api.github.com";
+
+export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
+  requireEnv("GITHUB_APP_ID", env);
+  requireEnv("GITHUB_APP_SLUG", env);
+  requireEnv("GITHUB_APP_BOT_ID", env);
+  requireEnv("GITHUB_APP_PRIVATE_KEY_FILE", env);
+}
+
+function deriveBotGitIdentity(env: NodeJS.ProcessEnv = process.env): {
+  name: string;
+  email: string;
+} {
+  const slug = requireEnv("GITHUB_APP_SLUG", env);
+  const botId = requireEnv("GITHUB_APP_BOT_ID", env);
+  return {
+    name: `${slug}[bot]`,
+    email: `${botId}+${slug}[bot]@users.noreply.github.com`,
+  };
+}
 
 export interface RemoteCliAppConfig {
   getConfig?: ConfigLoader;
@@ -255,6 +277,88 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", service: "remote-cli", mcp: mcpService.getHealth() });
+  });
+
+  app.get("/github/pr-head", async (req, res) => {
+    const installationRaw = req.query.installation;
+    const repoRaw = req.query.repo;
+    const numberRaw = req.query.number;
+
+    const installation =
+      typeof installationRaw === "string" ? Number.parseInt(installationRaw, 10) : Number.NaN;
+    const number = typeof numberRaw === "string" ? Number.parseInt(numberRaw, 10) : Number.NaN;
+    const repo = typeof repoRaw === "string" ? repoRaw.trim() : "";
+
+    if (!Number.isInteger(installation) || installation <= 0) {
+      res.status(400).json({ error: "installation must be a positive integer" });
+      return;
+    }
+    const slash = repo.indexOf("/");
+    const owner = slash > 0 ? repo.slice(0, slash) : "";
+    const name = slash > 0 ? repo.slice(slash + 1) : "";
+    const repoSegmentRe = /^[A-Za-z0-9._-]+$/;
+    if (!owner || !name || !repoSegmentRe.test(owner) || !repoSegmentRe.test(name)) {
+      res.status(400).json({ error: "repo must be owner/repo" });
+      return;
+    }
+    if (!Number.isInteger(number) || number <= 0) {
+      res.status(400).json({ error: "number must be a positive integer" });
+      return;
+    }
+
+    const apiUrl = process.env.GITHUB_API_URL || GITHUB_API_URL;
+    try {
+      const appId = requireEnv("GITHUB_APP_ID");
+      const privateKeyPath = requireEnv("GITHUB_APP_PRIVATE_KEY_FILE");
+      const appJwt = generateAppJWT(appId, privateKeyPath);
+      const installationToken = await mintInstallationToken(installation, appJwt, apiUrl);
+
+      const pullUrl = `${apiUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}`;
+      const pullResponse = await fetch(pullUrl, {
+        headers: {
+          Authorization: `token ${installationToken.token}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      });
+
+      if (pullResponse.status === 401 || pullResponse.status === 403) {
+        res.status(pullResponse.status).json({ error: "installation_gone" });
+        return;
+      }
+      if (pullResponse.status === 404) {
+        res.status(404).json({ error: "not_found" });
+        return;
+      }
+      if (!pullResponse.ok) {
+        const body = await pullResponse.text().catch(() => "");
+        res.status(502).json({ error: `github_api_${pullResponse.status}`, details: body });
+        return;
+      }
+
+      const pull = (await pullResponse.json()) as {
+        head?: { ref?: string; repo?: { full_name?: string | null } | null };
+      };
+      const ref = pull.head?.ref?.trim();
+      const headRepoFullName = pull.head?.repo?.full_name?.trim();
+      if (!ref || !headRepoFullName) {
+        res.status(404).json({ error: "not_found" });
+        return;
+      }
+
+      res.json({ ref, headRepoFullName });
+    } catch (error) {
+      const status =
+        error && typeof error === "object" && "status" in error
+          ? Number((error as { status?: unknown }).status)
+          : undefined;
+      if (status === 401 || status === 403) {
+        res.status(status).json({ error: "installation_gone" });
+        return;
+      }
+      logError(log, "github_pr_head_error", error instanceof Error ? error.message : String(error));
+      res.status(500).json({ error: "internal_error" });
+    }
   });
 
   app.post("/exec/git", async (req, res) => {
@@ -724,8 +828,14 @@ function hasLdcliOutputOverride(args: string[]): boolean {
 }
 
 export async function startRemoteCliServer(): Promise<void> {
+  validateRemoteCliGitHubEnv();
+  const gitIdentity = deriveBotGitIdentity();
   const remoteCli = createRemoteCliApp();
-  logInfo(log, "remote_cli_starting", { port: PORT });
+  logInfo(log, "remote_cli_starting", {
+    port: PORT,
+    gitIdentityName: gitIdentity.name,
+    gitIdentityEmail: gitIdentity.email,
+  });
   const server = remoteCli.app.listen(PORT, () => {
     logInfo(log, "remote_cli_listening", { port: PORT });
   });

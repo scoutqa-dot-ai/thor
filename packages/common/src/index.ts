@@ -10,18 +10,19 @@ export {
   WORKSPACE_CONFIG_PATH,
   extractRepoFromCwd,
   getRepoUpstreams,
+  getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";
 export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.js";
+export { requireEnv } from "./env.js";
 export type {
   WorkspaceConfig,
   RepoConfig,
   ProxyConfig,
   ProxyUpstream,
   ConfigLoader,
-  GitHubAppInstallation,
-  GitHubAppConfig,
+  OwnerConfig,
   ValidationIssue,
   ValidationResult,
 } from "./workspace-config.js";
