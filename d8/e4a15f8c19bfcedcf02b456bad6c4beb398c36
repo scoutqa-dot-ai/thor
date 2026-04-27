@@ -1,0 +1,31 @@
+packages/gateway/src/github.test.ts
+  cfb505039a6d3a02 117-118,121,125,137-160
+packages/gateway/src/app.ts
+  cfb505039a6d3a02 96
+docs/plan/2026042701_drop-non-mention-github-comments.md
+  cfb505039a6d3a02 36,77
+packages/gateway/src/github.ts
+  cfb505039a6d3a02 93,148-149,180,189-190,217-218,222,252-253,257
+docs/github-app-webhooks.md
+  cfb505039a6d3a02 117,119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d8e4a15f8c19bfcedcf02b456bad6c4beb398c36",
+  "prompts": {
+    "cfb505039a6d3a02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8bc0a7e7-5815-437b-abbd-7616a18c28b5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 47,
+      "total_deletions": 25,
+      "accepted_lines": 47,
+      "overriden_lines": 0
+    }
+  }
+}
