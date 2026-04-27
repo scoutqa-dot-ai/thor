@@ -15,11 +15,11 @@ services:
       - "127.0.0.1:3004:3004"
     environment:
       - NODE_ENV=production
-      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-thor@localhost}
-      - GIT_USER_NAME=${GIT_USER_NAME:-thor}
       - GITHUB_PAT=${GITHUB_PAT:-}
-      - GITHUB_APP_ID=${GITHUB_APP_ID:-}
-      - GITHUB_APP_PRIVATE_KEY_FILE=${GITHUB_APP_PRIVATE_KEY_FILE:-}
+      - GITHUB_APP_ID=${GITHUB_APP_ID:?set GITHUB_APP_ID}
+      - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:?set GITHUB_APP_SLUG}
+      - GITHUB_APP_BOT_ID=${GITHUB_APP_BOT_ID:?set GITHUB_APP_BOT_ID}
+      - GITHUB_APP_PRIVATE_KEY_FILE=${GITHUB_APP_PRIVATE_KEY_FILE:?set GITHUB_APP_PRIVATE_KEY_FILE}
       - GITHUB_API_URL=${GITHUB_API_URL:-}
       - ATLASSIAN_AUTH=${ATLASSIAN_AUTH}
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
@@ -54,7 +54,7 @@ services:
       retries: 10
 
   grafana-mcp:
-    image: grafana/mcp-grafana:0.11.3
+    image: grafana/mcp-grafana:0.12.0
     restart: unless-stopped
     entrypoint:
       [
@@ -113,11 +113,6 @@ services:
       context: .
       target: opencode
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: ${OPENCODE_MEMORY_LIMIT:-4g}
-          cpus: "${OPENCODE_CPU_LIMIT:-3}"
     ports:
       - "127.0.0.1:4096:4096"
     working_dir: /workspace
@@ -185,9 +180,11 @@ services:
     environment:
       - NODE_ENV=production
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:?set SLACK_BOT_TOKEN}
       - SLACK_BOT_USER_ID=${SLACK_BOT_USER_ID:?set SLACK_BOT_USER_ID}
       - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
+      - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:?set GITHUB_APP_SLUG}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:?set GITHUB_WEBHOOK_SECRET}
       - OPENAI_AUTH_PATH=/opencode/auth.json
       - REMOTE_CLI_HOST=remote-cli
       - REMOTE_CLI_PORT=3004

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { once } from "node:events";
+import { realpathSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { normalize as normalizePosix } from "node:path/posix";
 import type { WorkspaceConfig } from "@thor/common";
 
 interface FakeSandbox {
@@ -78,6 +80,8 @@ describe("/exec/sandbox", () => {
   let baseUrl: string;
 
   beforeEach(async () => {
+    vi.spyOn(realpathSync, "native").mockImplementation((path) => normalizePosix(String(path)));
+
     daytonaState.sandboxes.clear();
     daytonaState.createCalls = [];
     daytonaState.idCounter = 1;
@@ -148,6 +152,7 @@ describe("/exec/sandbox", () => {
 
     await closeRemoteCli();
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   it("syncs, streams, and returns exit code on happy path", async () => {
@@ -210,6 +215,38 @@ describe("/exec/sandbox", () => {
 
     expect(events1.at(-1)).toEqual({ type: "exit", exitCode: 0 });
     expect(events2.at(-1)).toEqual({ type: "exit", exitCode: 0 });
+  });
+
+  it("allows sandbox-only subdirectory cwd under a valid worktree", async () => {
+    vi.mocked(realpathSync.native).mockImplementation((path) => {
+      const normalized = normalizePosix(String(path));
+      if (normalized === `${CWD}/pulltest`) {
+        throw new Error("ENOENT");
+      }
+      return normalized;
+    });
+
+    const response = await postJson("/exec/sandbox", {
+      args: ["bash", "-c", "echo pull-content-e2e > created.txt"],
+      cwd: `${CWD}/pulltest`,
+    });
+
+    expect(response.status).toBe(200);
+    const events = await readNdjson(response);
+    expect(events.at(-1)).toEqual({ type: "exit", exitCode: 0 });
+    expect(getExecutedCommand()).toContain("pulltest");
+    expect(getExecutedCommand()).toContain("echo pull-content-e2e > created.txt");
+  });
+
+  it("rejects sandbox cwd traversal before ancestor fallback", async () => {
+    const response = await postJson("/exec/sandbox", {
+      args: ["true"],
+      cwd: `${CWD}/../evil`,
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { stderr: string };
+    expect(body.stderr).toContain("cwd must be under /workspace/worktrees");
   });
 
   it("reports pullback failures as exec failures", async () => {

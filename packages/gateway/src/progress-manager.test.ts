@@ -79,6 +79,240 @@ describe("ProgressManager", () => {
     expect(postBody.thread_ts).toBe("1710000000.001");
   });
 
+  it("includes memory and delegated agents in progress context", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/my-repo/README.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "delegate",
+        agent: "research-agent",
+        description: "investigate flaky tests",
+      },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    expect(callsTo(deps, "chat.postMessage")).toHaveLength(1);
+    const postBody = JSON.parse(String(callsTo(deps, "chat.postMessage")[0][1]?.body));
+    expect(postBody.text).toContain("3 tool calls");
+    expect(postBody.text).toContain("memory: README.md");
+    expect(postBody.text).toContain("agents: research-agent");
+    expect(postBody.text).not.toContain("investigate flaky tests");
+  });
+
+  it("collapses consecutive duplicate agents using run semantics", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "delegate", agent: "research-agent", description: "first" },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "delegate", agent: "research-agent", description: "second" },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "delegate", agent: "coding-agent" },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      { type: "delegate", agent: "research-agent" },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    const postBody = JSON.parse(String(callsTo(deps, "chat.postMessage")[0][1]?.body));
+    expect(postBody.text).toContain("agents: research-agent x2, coding-agent, research-agent");
+  });
+
+  it("shows compact memory file labels when fewer than 3 distinct files are present", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/service-a/notes.md",
+        source: "bootstrap",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/service-b/README.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    const postBody = JSON.parse(String(callsTo(deps, "chat.postMessage")[0][1]?.body));
+    expect(postBody.text).toContain("memory: notes.md, README.md");
+    expect(postBody.text).not.toContain("(boot)");
+    expect(postBody.text).not.toContain("read ");
+    expect(postBody.text).not.toContain("write ");
+  });
+
+  it("summarizes memory activity counts when 3+ distinct files are present", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/a.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/b.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/c.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/a.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    const postBody = JSON.parse(String(callsTo(deps, "chat.postMessage")[0][1]?.body));
+    expect(postBody.text).toContain("memory: read x3, write x1");
+  });
+
+  it("does not count memory/delegate events toward tool threshold", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 2);
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/README.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "delegate",
+        agent: "coding-agent",
+      },
+      deps,
+      "",
+    );
+
+    expect(callsTo(deps, "chat.postMessage")).toHaveLength(0);
+  });
+
+  it("updates immediately when memory/delegate context arrives after threshold is reached", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+
+    expect(callsTo(deps, "chat.postMessage")).toHaveLength(1);
+    expect(callsTo(deps, "chat.update")).toHaveLength(0);
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/README.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    expect(callsTo(deps, "chat.update")).toHaveLength(1);
+    let updateBody = JSON.parse(String(callsTo(deps, "chat.update")[0][1]?.body));
+    expect(updateBody.text).toContain("memory: README.md");
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "delegate",
+        agent: "coding-agent",
+      },
+      deps,
+      "",
+    );
+    expect(callsTo(deps, "chat.update")).toHaveLength(2);
+    updateBody = JSON.parse(String(callsTo(deps, "chat.update")[1][1]?.body));
+    expect(updateBody.text).toContain("agents: coding-agent");
+  });
+
   it("throttles updates to 10s intervals", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
@@ -143,6 +377,45 @@ describe("ProgressManager", () => {
     const updateBody = JSON.parse(String(callsTo(deps, "chat.update")[0][1]?.body));
     expect(updateBody.text).toContain("Done");
     expect(updateBody.text).not.toContain("Failed");
+  });
+
+  it("suppresses abort errors even below threshold", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 1);
+
+    const abortEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "error",
+      error: "Aborted",
+      response: "",
+      toolCalls: [],
+      durationMs: 200,
+    };
+    await handleProgressEvent("C123", "1710000000.001", abortEvent, deps, "");
+
+    expect(callsTo(deps, "chat.postMessage")).toHaveLength(0);
+    expect(callsTo(deps, "chat.update")).toHaveLength(0);
+  });
+
+  it("produces no Slack messages for short completed runs below threshold", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 2);
+
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 1000,
+    };
+    await handleProgressEvent("C123", "1710000000.001", doneEvent, deps, "");
+
+    expect(callsTo(deps, "chat.postMessage")).toHaveLength(0);
+    expect(callsTo(deps, "chat.update")).toHaveLength(0);
   });
 
   it("adds x reaction instead of posting a first-time failure message", async () => {

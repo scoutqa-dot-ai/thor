@@ -1,5 +1,7 @@
 # Mention Interrupt — 2026-03-21-01
 
+> **Superseded note (2026-04-24):** the GitHub-specific mention details in this historical plan are outdated. GitHub mention detection now derives identities from `GITHUB_APP_SLUG` (`<slug>` and `<slug>[bot]`), not `GIT_USER_NAME`. Keep this document as historical design context only; use the current GitHub webhook docs/plan for live behavior.
+
 > Mentions (`@thor`) should interrupt a running opencode session. Non-mention messages should never interrupt — they wait until the session is idle.
 
 ## Architecture

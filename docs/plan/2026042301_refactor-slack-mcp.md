@@ -56,18 +56,18 @@ From the current codebase:
 
 ## Feature preservation matrix
 
-| Capability | Current owner | Target owner |
-| --- | --- | --- |
-| Post Slack reply / start new thread | `slack-mcp` MCP tool | OpenCode direct `curl` with mitmproxy in-band metadata injection |
-| Read thread replies | `slack-mcp` MCP tool | OpenCode direct `conversations.replies` |
-| Read channel history | `slack-mcp` MCP tool | OpenCode direct `conversations.history` |
-| Read Slack file | `slack-mcp` MCP tool | OpenCode direct `files.info` + private file download |
-| Upload file | `slack-upload` helper | unchanged |
-| Eyes reaction on accepted mention | `slack-mcp` REST | `gateway` direct Slack API |
-| Progress message lifecycle | `slack-mcp` REST + in-memory registry | `gateway` in-process |
-| Approval cards with buttons | `slack-mcp` REST | `gateway` direct Slack API |
-| Approval message update after click | `slack-mcp` REST | `gateway` direct Slack API |
-| Slack thread alias registration for new thread posts | MCP `post_message` metadata | mitmproxy-injected in-band `thor-meta-key` on `chat.postMessage` JSON |
+| Capability                                           | Current owner                         | Target owner                                                          |
+| ---------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------- |
+| Post Slack reply / start new thread                  | `slack-mcp` MCP tool                  | OpenCode direct `curl` with mitmproxy in-band metadata injection      |
+| Read thread replies                                  | `slack-mcp` MCP tool                  | OpenCode direct `conversations.replies`                               |
+| Read channel history                                 | `slack-mcp` MCP tool                  | OpenCode direct `conversations.history`                               |
+| Read Slack file                                      | `slack-mcp` MCP tool                  | OpenCode direct `files.info` + private file download                  |
+| Upload file                                          | `slack-upload` helper                 | unchanged                                                             |
+| Eyes reaction on accepted mention                    | `slack-mcp` REST                      | `gateway` direct Slack API                                            |
+| Progress message lifecycle                           | `slack-mcp` REST + in-memory registry | `gateway` in-process                                                  |
+| Approval cards with buttons                          | `slack-mcp` REST                      | `gateway` direct Slack API                                            |
+| Approval message update after click                  | `slack-mcp` REST                      | `gateway` direct Slack API                                            |
+| Slack thread alias registration for new thread posts | MCP `post_message` metadata           | mitmproxy-injected in-band `thor-meta-key` on `chat.postMessage` JSON |
 
 ## Target shape
 
@@ -104,18 +104,20 @@ normal `curl` or built-in `fetch`.
 
 ## Decision Log
 
-| # | Decision | Rationale |
-| --- | --- | --- |
-| D1 | Move all system-side Slack API calls into `packages/gateway` | Gateway already owns Slack webhooks, channel filtering, and approval interactivity routing. It is the natural place for reactions, progress, and approval cards. |
-| D2 | Keep agent Slack traffic on real Slack URLs over mitmproxy | That path already exists, matches the current OpenCode instructions, and removes the main reason for a dedicated Slack service. |
-| D3 | Do not replace `slack-mcp` with a general-purpose Slack CLI | A full wrapper would just recreate the MCP surface in another form. The repo already has `curl`, the Slack skill, and `slack-upload`. |
-| D4 | Inject Slack thread correlation in-band via mitmproxy response mutation | `chat.postMessage` already returns JSON; adding a top-level `thor-meta-key` preserves raw JSON usability and removes wrapper-specific stderr metadata plumbing. |
-| D5 | Keep service-side Slack writes off the mitmproxy allowlist | `chat.update`, `chat.delete`, and `reactions.add` are system-only methods. Keeping them in gateway avoids widening the OpenCode Slack proxy surface. |
-| D6 | Reuse the proven Slack progress and approval formatting code instead of rewriting behavior at the same time | The operational risk is in changing ownership, not in changing UX. Move the logic first; simplify internals later if still useful. |
-| D7 | Remove `slack` from repo proxy config immediately | This is a greenfield project. Carrying compatibility-only validation and prompt logic adds noise without protecting a real deployed population. |
-| D8 | Route approval outcomes back to OpenCode through the gateway queue | A direct non-interrupt runner trigger can return `busy`. Queue-backed replay preserves ordering and retries until the session can accept the announcement. |
-| D9 | Carry thread-routing context in the approval button payload | Slack interactivity gives us the approval message timestamp, not a guaranteed root-thread correlation key in our current parser. The button payload should carry enough data to re-enter the originating thread deterministically. |
-| D10 | Remove wrapper-only request-header policy for `chat.postMessage` | Slack writes should work with plain `curl`; correlation metadata is now injected by mitmproxy after inspecting request+response payloads rather than enforcing wrapper transport headers. |
+| #   | Decision                                                                                                    | Rationale                                                                                                                                                                                                                          |
+| --- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Move all system-side Slack API calls into `packages/gateway`                                                | Gateway already owns Slack webhooks, channel filtering, and approval interactivity routing. It is the natural place for reactions, progress, and approval cards.                                                                   |
+| D2  | Keep agent Slack traffic on real Slack URLs over mitmproxy                                                  | That path already exists, matches the current OpenCode instructions, and removes the main reason for a dedicated Slack service.                                                                                                    |
+| D3  | Do not replace `slack-mcp` with a general-purpose Slack CLI                                                 | A full wrapper would just recreate the MCP surface in another form. The repo already has `curl`, the Slack skill, and `slack-upload`.                                                                                              |
+| D4  | Inject Slack thread correlation in-band via mitmproxy response mutation                                     | `chat.postMessage` already returns JSON; adding a top-level `thor-meta-key` preserves raw JSON usability and removes wrapper-specific stderr metadata plumbing.                                                                    |
+| D5  | Keep service-side Slack writes off the mitmproxy allowlist                                                  | `chat.update`, `chat.delete`, and `reactions.add` are system-only methods. Keeping them in gateway avoids widening the OpenCode Slack proxy surface.                                                                               |
+| D6  | Reuse the proven Slack progress and approval formatting code instead of rewriting behavior at the same time | The operational risk is in changing ownership, not in changing UX. Move the logic first; simplify internals later if still useful.                                                                                                 |
+| D7  | Remove `slack` from repo proxy config immediately                                                           | This is a greenfield project. Carrying compatibility-only validation and prompt logic adds noise without protecting a real deployed population.                                                                                    |
+| D8  | Route approval outcomes back to OpenCode through the gateway queue                                          | A direct non-interrupt runner trigger can return `busy`. Queue-backed replay preserves ordering and retries until the session can accept the announcement.                                                                         |
+| D9  | Carry thread-routing context in the approval button payload                                                 | Slack interactivity gives us the approval message timestamp, not a guaranteed root-thread correlation key in our current parser. The button payload should carry enough data to re-enter the originating thread deterministically. |
+| D10 | Remove wrapper-only request-header policy for `chat.postMessage`                                            | Slack writes should work with plain `curl`; correlation metadata is now injected by mitmproxy after inspecting request+response payloads rather than enforcing wrapper transport headers.                                          |
+| D11 | Fail gateway startup when `SLACK_BOT_TOKEN` is missing                                                      | Gateway now owns all Slack side effects. Starting without the bot token only creates a half-configured service that will accept work and then fail at runtime.                                                                     |
+| D12 | Drain accepted approval-outcome runner responses in the background                                          | Approval re-entry shares the same per-thread queue key as normal Slack traffic. Once runner accepts the event, gateway should release the queue lock immediately instead of waiting for the resumed session to finish.             |
 
 ## Phases
 
@@ -334,6 +336,19 @@ Files likely affected:
 - repo build and targeted tests pass with `packages/slack-mcp` removed
 - there are no runtime references to `http://slack-mcp:3003`
 - the architecture doc no longer shows Slack as an MCP service
+
+## Review Fixes
+
+- 2026-04-27: Approval outcome re-entry resolves `slack:thread:*` aliases before
+  enqueueing, so approval clicks resume the canonical session when a Slack thread
+  is an alias for a GitHub or cron correlation key.
+- 2026-04-27: Approved-action execution failures from remote-cli are treated as
+  delivered approval outcomes. Gateway updates the Slack card with the failure
+  summary and re-enters the agent session with non-interrupt failure guidance.
+- 2026-04-27: Direct Slack writes through mitmproxy now enforce the configured
+  Slack channel allowlist before bot-token injection. `chat.postMessage` and
+  `files.completeUploadExternal` fail closed when the channel is missing or not
+  configured.
 
 ## Verification matrix
 

@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -29,11 +29,16 @@ function fakeConfigLoader(
 }
 
 let mockHasSlackReply = false;
+let mappedRepos = new Set<string>(["test-repo", "thor"]);
+let correlationKeyAliases = new Map<string, string>();
 vi.mock("@thor/common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@thor/common")>();
   return {
     ...actual,
-    resolveRepoDirectory: (repoName: string) => `/workspace/repos/${repoName}`,
+    resolveRepoDirectory: (repoName: string) =>
+      mappedRepos.has(repoName) ? `/workspace/repos/${repoName}` : undefined,
+    resolveCorrelationKeys: (rawKeys: string[]) =>
+      correlationKeyAliases.get(rawKeys[0] ?? "") ?? rawKeys[0] ?? "",
     hasSlackReply: () => mockHasSlackReply,
   };
 });
@@ -42,9 +47,21 @@ function sign(body: string, secret: string, timestamp: string): string {
   return `v0=${createHmac("sha256", secret).update(`v0:${timestamp}:${body}`).digest("hex")}`;
 }
 
+function signGitHub(body: string, secret: string): string {
+  return `sha256=${createHmac("sha256", secret).update(Buffer.from(body)).digest("hex")}`;
+}
+
+function readQueuedEvents(queueDir: string): Array<Record<string, unknown>> {
+  return readdirSync(queueDir)
+    .filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
+    .map(
+      (entry) => JSON.parse(readFileSync(join(queueDir, entry), "utf8")) as Record<string, unknown>,
+    );
+}
+
 async function withServer<T>(
   fetchImpl: typeof fetch,
-  run: (baseUrl: string, queue: EventQueue) => Promise<T>,
+  run: (baseUrl: string, queue: EventQueue, queueDir: string) => Promise<T>,
   extraConfig?: Partial<GatewayAppConfig>,
 ): Promise<T> {
   const queueDir = mkdtempSync(join(tmpdir(), "gateway-test-"));
@@ -72,7 +89,7 @@ async function withServer<T>(
   }
 
   try {
-    return await run(`http://127.0.0.1:${address.port}`, queue);
+    return await run(`http://127.0.0.1:${address.port}`, queue, queueDir);
   } finally {
     queue.close();
     await new Promise<void>((resolve, reject) =>
@@ -85,9 +102,31 @@ async function withServer<T>(
 afterEach(() => {
   vi.restoreAllMocks();
   mockHasSlackReply = false;
+  mappedRepos = new Set(["test-repo", "thor"]);
+  correlationKeyAliases = new Map();
 });
 
 describe("gateway", () => {
+  it("fails fast when slack bot token is missing", () => {
+    const queueDir = mkdtempSync(join(tmpdir(), "gateway-config-test-"));
+
+    try {
+      expect(() =>
+        createGatewayApp({
+          signingSecret: "signing-secret",
+          slackBotToken: "",
+          slackBotUserId: "U0BOTEXAMPLE",
+          runnerUrl: "http://runner.test",
+          fetchImpl: vi.fn<typeof fetch>(),
+          queueDir,
+          disableQueueInterval: true,
+        }),
+      ).toThrow("SLACK_BOT_TOKEN is required");
+    } finally {
+      rmSync(queueDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns filtered Codex status from /health", async () => {
     const authDir = mkdtempSync(join(tmpdir(), "gateway-auth-"));
     const authPath = join(authDir, "auth.json");
@@ -287,6 +326,198 @@ describe("gateway", () => {
       expect(await response.json()).toEqual({ challenge: "challenge-token" });
       expect(fetchImpl).not.toHaveBeenCalled();
     });
+  });
+
+  it("enqueues valid GitHub webhook with branch correlation and mention delay", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir) => {
+        const body = JSON.stringify({
+          action: "created",
+          installation: { id: 126669985 },
+          repository: { full_name: "scoutqa-dot-ai/thor" },
+          sender: { login: "alice", type: "User" },
+          pull_request: {
+            number: 42,
+            head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
+            base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+          },
+          comment: {
+            body: "Please check this @thor",
+            html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+            created_at: "2026-04-24T11:00:00Z",
+          },
+        });
+
+        const response = await fetch(`${baseUrl}/github/webhook`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+            "X-GitHub-Delivery": "delivery-1",
+            "X-GitHub-Event": "pull_request_review_comment",
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        const queued = readQueuedEvents(queueDir);
+        expect(queued).toHaveLength(1);
+        expect(queued[0]).toMatchObject({
+          id: "delivery-1",
+          source: "github",
+          correlationKey: "git:branch:thor:feature/refactor",
+          delayMs: 3000,
+          interrupt: true,
+          payload: {
+            source: "github",
+            eventType: "pull_request_review_comment",
+            repoFullName: "scoutqa-dot-ai/thor",
+            localRepo: "thor",
+            branch: "feature/refactor",
+            mention: true,
+          },
+        });
+        expect(fetchImpl).not.toHaveBeenCalled();
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
+  it("returns 401 and does not enqueue for invalid GitHub signature", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir) => {
+        const body = JSON.stringify({ action: "created", repository: { full_name: "acme/thor" } });
+
+        const response = await fetch(`${baseUrl}/github/webhook`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": signGitHub(body, "wrong-secret"),
+            "X-GitHub-Delivery": "delivery-bad-sig",
+            "X-GitHub-Event": "pull_request_review_comment",
+          },
+          body,
+        });
+
+        expect(response.status).toBe(401);
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+        expect(fetchImpl).not.toHaveBeenCalled();
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
+  it("ignores pure issue comments and does not enqueue", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir) => {
+        const body = JSON.stringify({
+          action: "created",
+          installation: { id: 1 },
+          repository: { full_name: "acme/thor" },
+          sender: { login: "alice", type: "User" },
+          issue: { number: 12, pull_request: null },
+          comment: {
+            body: "hello",
+            html_url: "https://github.com/acme/thor/issues/12#issuecomment-1",
+            created_at: "2026-04-24T11:00:00Z",
+          },
+        });
+
+        const response = await fetch(`${baseUrl}/github/webhook`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+            "X-GitHub-Delivery": "delivery-pure-issue",
+            "X-GitHub-Event": "issue_comment",
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, ignored: true });
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
+  });
+
+  it("enqueues issue_comment PR events with pending branch-resolve correlation key", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir) => {
+        const body = JSON.stringify({
+          action: "created",
+          installation: { id: 1 },
+          repository: { full_name: "acme/thor" },
+          sender: { login: "alice", type: "User" },
+          issue: {
+            number: 12,
+            pull_request: { html_url: "https://github.com/acme/thor/pull/12" },
+          },
+          comment: {
+            body: "please review",
+            html_url: "https://github.com/acme/thor/pull/12#issuecomment-1",
+            created_at: "2026-04-24T11:00:00Z",
+          },
+        });
+
+        const response = await fetch(`${baseUrl}/github/webhook`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+            "X-GitHub-Delivery": "delivery-branch-pending",
+            "X-GitHub-Event": "issue_comment",
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        const queued = readQueuedEvents(queueDir);
+        expect(queued).toHaveLength(1);
+        expect(queued[0]).toMatchObject({
+          id: "delivery-branch-pending",
+          source: "github",
+          correlationKey: "pending:branch-resolve:thor:12",
+          delayMs: 60000,
+          interrupt: false,
+          payload: {
+            eventType: "issue_comment",
+            branch: null,
+            mention: false,
+          },
+        });
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
   });
 
   it("acknowledges subscribed non-app_mention events without triggering runner calls", async () => {
@@ -1137,6 +1368,80 @@ describe("gateway", () => {
     expect(runnerBody.interrupt).toBe(false);
   });
 
+  it("resolves approval outcome correlation keys through registered aliases", async () => {
+    correlationKeyAliases.set(
+      "slack:thread:1710000000.001",
+      "git:branch:test-repo:feature/from-slack",
+    );
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({
+              status: "approved",
+              tool: "merge_pull_request",
+              upstream: "github",
+            }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100", thread_ts: "1710000000.001" },
+            actions: [
+              {
+                action_id: "approval_approve",
+                value: "v3:act-1:github:1710000000.001",
+              },
+            ],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        resolveSecret: "resolve-secret",
+      },
+    );
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeDefined();
+    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.correlationKey).toBe("git:branch:test-repo:feature/from-slack");
+  });
+
   it("retries queued approval outcome re-entry when runner is busy", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -1218,6 +1523,81 @@ describe("gateway", () => {
     expect(firstBody.correlationKey).toBe("slack:thread:1710000000.001");
     expect(firstBody.prompt).toContain("human approved action `act-1`");
     expect(firstBody.prompt).toContain("continue the workflow");
+  });
+
+  it("updates Slack and re-enters the session when an approved action fails during execution", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: "",
+            stderr: 'Error calling "merge_pull_request": upstream unavailable\n',
+            exitCode: 1,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100", thread_ts: "1710000000.001" },
+            actions: [
+              {
+                action_id: "approval_approve",
+                value: "v3:act-1:github:1710000000.001",
+              },
+            ],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        resolveSecret: "resolve-secret",
+      },
+    );
+
+    const updateCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "https://slack.com/api/chat.update",
+    );
+    expect(updateCall).toBeDefined();
+    const updateBody = JSON.parse(String(updateCall?.[1]?.body));
+    expect(updateBody.text).toContain("Approved, resolution failed");
+    expect(updateBody.text).toContain("upstream unavailable");
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeDefined();
+    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.prompt).toContain("approval resolution reported a failure");
+    expect(runnerBody.prompt).toContain("upstream unavailable");
   });
 
   it("fails closed for v2 approval buttons when thread context is missing", async () => {

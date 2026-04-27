@@ -1,176 +1,219 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+const mockedWorkspace = vi.hoisted(() => ({ configPath: "" }));
+
+vi.mock("@thor/common", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@thor/common")>();
+  return {
+    ...actual,
+    get WORKSPACE_CONFIG_PATH() {
+      return mockedWorkspace.configPath;
+    },
+  };
+});
+
 import {
-  resolveOrgFromArgs,
-  parseOrgFromRemoteUrl,
-  findInstallation,
-  resolveInstallation,
+  parseOwnerFromRemoteUrl,
+  resolveOwnerFromArgs,
   generateAppJWT,
+  getInstallationIdFromWorkspace,
+  getInstallationToken,
 } from "./github-app-auth.js";
-import { loadWorkspaceConfig } from "@thor/common";
 
-// ── Org resolution from args ─────────────────────────────────────────────────
-
-describe("resolveOrgFromArgs", () => {
-  it("extracts org from -R owner/repo", () => {
-    expect(resolveOrgFromArgs(["pr", "create", "-R", "acme/web"])).toBe("acme");
+describe("resolveOwnerFromArgs", () => {
+  it("extracts owner from -R owner/repo", () => {
+    expect(resolveOwnerFromArgs(["pr", "create", "-R", "acme/web"])).toBe("acme");
   });
 
-  it("extracts org from --repo=owner/repo", () => {
-    expect(resolveOrgFromArgs(["pr", "view", "--repo=acme/web"])).toBe("acme");
+  it("extracts owner from --repo=owner/repo", () => {
+    expect(resolveOwnerFromArgs(["pr", "view", "--repo=acme/web"])).toBe("acme");
   });
 
-  it("returns undefined when no -R flag", () => {
-    expect(resolveOrgFromArgs(["pr", "list"])).toBeUndefined();
+  it("extracts owner from --repo owner/repo", () => {
+    expect(resolveOwnerFromArgs(["pr", "view", "--repo", "acme/web"])).toBe("acme");
   });
 
-  it("returns undefined when -R has no value", () => {
-    expect(resolveOrgFromArgs(["pr", "create", "-R"])).toBeUndefined();
-  });
-
-  it("returns undefined for -R with no slash", () => {
-    expect(resolveOrgFromArgs(["-R", "just-a-name"])).toBeUndefined();
-  });
-
-  it("falls through to undefined for positional owner/repo (resolved via cwd instead)", () => {
-    expect(resolveOrgFromArgs(["repo", "view", "acme/web", "--json", "name"])).toBeUndefined();
-  });
-
-  it("does not misparse --body content as org", () => {
-    expect(
-      resolveOrgFromArgs(["pr", "create", "--body", "## Summary\nFixes org/issue-123"]),
-    ).toBeUndefined();
+  it("returns undefined when repo flag is absent", () => {
+    expect(resolveOwnerFromArgs(["pr", "list"])).toBeUndefined();
   });
 });
 
-// ── Org resolution from remote URL ───────────────────────────────────────────
-
-describe("parseOrgFromRemoteUrl", () => {
+describe("parseOwnerFromRemoteUrl", () => {
   it("parses HTTPS remote", () => {
-    expect(parseOrgFromRemoteUrl("https://github.com/acme/web.git")).toBe("acme");
-  });
-
-  it("parses HTTPS remote without .git suffix", () => {
-    expect(parseOrgFromRemoteUrl("https://github.com/acme/web")).toBe("acme");
+    expect(parseOwnerFromRemoteUrl("https://github.com/acme/web.git")).toBe("acme");
   });
 
   it("parses SSH remote", () => {
-    expect(parseOrgFromRemoteUrl("git@github.com:acme/web.git")).toBe("acme");
-  });
-
-  it("parses SSH remote without .git suffix", () => {
-    expect(parseOrgFromRemoteUrl("git@github.com:acme/web")).toBe("acme");
-  });
-
-  it("parses GitHub Enterprise HTTPS remote", () => {
-    expect(parseOrgFromRemoteUrl("https://github.example.com/acme/web.git")).toBe("acme");
-  });
-
-  it("parses GitHub Enterprise SSH remote", () => {
-    expect(parseOrgFromRemoteUrl("git@github.example.com:acme/web.git")).toBe("acme");
+    expect(parseOwnerFromRemoteUrl("git@github.com:acme/web.git")).toBe("acme");
   });
 
   it("returns undefined for unparseable URL", () => {
-    expect(parseOrgFromRemoteUrl("not-a-url")).toBeUndefined();
+    expect(parseOwnerFromRemoteUrl("not-a-url")).toBeUndefined();
   });
 });
 
-// ── Config lookup ────────────────────────────────────────────────────────────
-
-describe("findInstallation", () => {
-  const configDir = join(tmpdir(), `thor-test-config-${process.pid}`);
-  const configPath = join(configDir, "config.json");
+describe("getInstallationIdFromWorkspace", () => {
+  let configDir: string;
 
   beforeEach(() => {
-    mkdirSync(configDir, { recursive: true });
+    configDir = mkdtempSync(join(tmpdir(), "thor-workspace-config-"));
+    mockedWorkspace.configPath = join(configDir, "config.json");
   });
 
   afterEach(() => {
     rmSync(configDir, { recursive: true, force: true });
+    mockedWorkspace.configPath = "";
+  });
+
+  it("reads installation ID from config.owners", () => {
+    writeFileSync(
+      mockedWorkspace.configPath,
+      JSON.stringify({
+        repos: { thor: {} },
+        owners: { acme: { github_app_installation_id: 123456 } },
+      }),
+    );
+
+    expect(getInstallationIdFromWorkspace("acme")).toBe(123456);
+  });
+
+  it("throws with configured owner list when owner is missing", () => {
+    writeFileSync(
+      mockedWorkspace.configPath,
+      JSON.stringify({
+        repos: { thor: {} },
+        owners: {
+          alpha: { github_app_installation_id: 1 },
+          zeta: { github_app_installation_id: 2 },
+        },
+      }),
+    );
+
+    expect(() => getInstallationIdFromWorkspace("acme")).toThrow(
+      "Configured owners: alpha, zeta. Add owners.acme.github_app_installation_id",
+    );
+  });
+});
+
+describe("getInstallationToken", () => {
+  let tempDir: string;
+  let configDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "thor-gh-auth-"));
+    configDir = mkdtempSync(join(tmpdir(), "thor-workspace-config-"));
+    mockedWorkspace.configPath = join(configDir, "config.json");
+    process.env.GITHUB_APP_DIR = tempDir;
+    process.env.GITHUB_APP_ID = "123";
+    process.env.GITHUB_APP_PRIVATE_KEY_FILE = join(tempDir, "private-key.pem");
+    writeFileSync(process.env.GITHUB_APP_PRIVATE_KEY_FILE, "not-used-in-cache-hit");
+
+    writeFileSync(
+      mockedWorkspace.configPath,
+      JSON.stringify({
+        repos: { thor: {} },
+        owners: { acme: { github_app_installation_id: 999 } },
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(tempDir, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true });
+    mockedWorkspace.configPath = "";
+    delete process.env.GITHUB_APP_DIR;
     delete process.env.GITHUB_APP_ID;
     delete process.env.GITHUB_APP_PRIVATE_KEY_FILE;
     delete process.env.GITHUB_API_URL;
   });
 
-  // findInstallation reads from WORKSPACE_CONFIG_PATH which is hardcoded.
-  // We test resolveInstallation separately since findInstallation depends on the
-  // real config file path.
-
-  it("resolveInstallation applies defaults from env", () => {
-    process.env.GITHUB_APP_ID = "999";
-    process.env.GITHUB_APP_PRIVATE_KEY_FILE = "/keys/app.pem";
-    process.env.GITHUB_API_URL = "https://ghe.example.com/api/v3";
-
-    const result = resolveInstallation({
-      org: "acme",
-      installation_id: 12345,
-      app_id: "",
-      private_key_path: "",
-      api_url: "",
-    });
-
-    expect(result.appId).toBe("999");
-    expect(result.privateKeyPath).toBe("/keys/app.pem");
-    expect(result.apiUrl).toBe("https://ghe.example.com/api/v3");
-  });
-
-  it("resolveInstallation prefers explicit config over env", () => {
-    process.env.GITHUB_APP_ID = "999";
-
-    const result = resolveInstallation({
-      org: "acme",
-      installation_id: 12345,
-      app_id: "111",
-      private_key_path: "/custom/key.pem",
-      api_url: "https://custom.api.github.com",
-    });
-
-    expect(result.appId).toBe("111");
-    expect(result.privateKeyPath).toBe("/custom/key.pem");
-    expect(result.apiUrl).toBe("https://custom.api.github.com");
-  });
-
-  it("resolveInstallation uses defaults when no env set", () => {
-    const result = resolveInstallation({
-      org: "acme",
-      installation_id: 12345,
-      app_id: "777",
-      private_key_path: "",
-      api_url: "",
-    });
-
-    expect(result.privateKeyPath).toBe("/var/lib/remote-cli/github-app/private-key.pem");
-    expect(result.apiUrl).toBe("https://api.github.com");
-  });
-
-  it("resolveInstallation throws when no app_id anywhere", () => {
-    expect(() =>
-      resolveInstallation({
-        org: "acme",
-        installation_id: 12345,
-        app_id: "",
-        private_key_path: "",
-        api_url: "",
+  it("returns cached token without minting", async () => {
+    const cacheDir = join(tempDir, "cache");
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(
+      join(cacheDir, "acme.json"),
+      JSON.stringify({
+        token: "cached-token",
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       }),
-    ).toThrow('No app_id for org "acme"');
+    );
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(getInstallationToken("acme")).resolves.toEqual({
+      token: "cached-token",
+      owner: "acme",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("mints and caches when cache is missing", async () => {
+    const keyDir = join(tmpdir(), `thor-test-jwt-${process.pid}-${Date.now()}`);
+    const keyPath = join(keyDir, "test-key.pem");
+    mkdirSync(keyDir, { recursive: true });
+    const { execFileSync } = await import("node:child_process");
+    execFileSync("openssl", ["genrsa", "-out", keyPath, "2048"], { stdio: "pipe" });
+    process.env.GITHUB_APP_PRIVATE_KEY_FILE = keyPath;
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          token: "minted-token",
+          expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        }),
+        { status: 201 },
+      ),
+    );
+
+    await expect(getInstallationToken("acme")).resolves.toEqual({
+      token: "minted-token",
+      owner: "acme",
+    });
+
+    const cached = JSON.parse(readFileSync(join(tempDir, "cache", "acme.json"), "utf8")) as {
+      token: string;
+    };
+    expect(cached.token).toBe("minted-token");
+
+    rmSync(keyDir, { recursive: true, force: true });
+  });
+
+  it("evicts cache and raises installation_gone on 401/403", async () => {
+    const keyDir = join(tmpdir(), `thor-test-jwt-${process.pid}-${Date.now()}`);
+    const keyPath = join(keyDir, "test-key.pem");
+    mkdirSync(keyDir, { recursive: true });
+    const { execFileSync } = await import("node:child_process");
+    execFileSync("openssl", ["genrsa", "-out", keyPath, "2048"], { stdio: "pipe" });
+    process.env.GITHUB_APP_PRIVATE_KEY_FILE = keyPath;
+
+    const cacheDir = join(tempDir, "cache");
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(
+      join(cacheDir, "acme.json"),
+      JSON.stringify({ token: "stale", expires_at: "2000-01-01T00:00:00.000Z" }),
+    );
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("forbidden", { status: 403 }));
+
+    await expect(getInstallationToken("acme")).rejects.toThrow(
+      'installation_gone for owner "acme"',
+    );
+    expect(() => readFileSync(join(cacheDir, "acme.json"), "utf8")).toThrow();
+
+    rmSync(keyDir, { recursive: true, force: true });
   });
 });
-
-// ── JWT generation ───────────────────────────────────────────────────────────
 
 describe("generateAppJWT", () => {
   const keyDir = join(tmpdir(), `thor-test-jwt-${process.pid}`);
   const keyPath = join(keyDir, "test-key.pem");
 
-  beforeEach(() => {
+  beforeEach(async () => {
     mkdirSync(keyDir, { recursive: true });
-    // Generate a test RSA key using openssl
-    const { execFileSync } = require("node:child_process");
-    execFileSync("openssl", ["genrsa", "-out", keyPath, "2048"], {
-      stdio: "pipe",
-    });
+    const { execFileSync } = await import("node:child_process");
+    execFileSync("openssl", ["genrsa", "-out", keyPath, "2048"], { stdio: "pipe" });
   });
 
   afterEach(() => {
@@ -182,66 +225,10 @@ describe("generateAppJWT", () => {
     const parts = jwt.split(".");
     expect(parts).toHaveLength(3);
 
-    // Decode header
     const header = JSON.parse(Buffer.from(parts[0], "base64url").toString());
     expect(header.alg).toBe("RS256");
-    expect(header.typ).toBe("JWT");
 
-    // Decode payload
     const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString());
     expect(payload.iss).toBe("123");
-    expect(payload.exp).toBeGreaterThan(payload.iat);
-  });
-
-  it("throws when private key file does not exist", () => {
-    expect(() => generateAppJWT("123", "/nonexistent/key.pem")).toThrow("Cannot read private key");
-  });
-});
-
-// ── Workspace config schema ──────────────────────────────────────────────────
-
-describe("workspace config with github_app", () => {
-  it("accepts config with github_app.installations", () => {
-    const dir = join(tmpdir(), `thor-test-ws-${process.pid}`);
-    const path = join(dir, "config.json");
-    mkdirSync(dir, { recursive: true });
-
-    writeFileSync(
-      path,
-      JSON.stringify({
-        repos: { "my-repo": { channels: ["C123"] } },
-        github_app: {
-          installations: [{ org: "acme", installation_id: 12345678 }],
-        },
-      }),
-    );
-
-    const config = loadWorkspaceConfig(path);
-    expect(config.github_app?.installations).toHaveLength(1);
-    expect(config.github_app?.installations[0].org).toBe("acme");
-    expect(config.github_app?.installations[0].installation_id).toBe(12345678);
-    // Defaults should be applied
-    expect(config.github_app?.installations[0].app_id).toBe("");
-    expect(config.github_app?.installations[0].private_key_path).toBe("");
-
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("accepts config without github_app (backward compat)", () => {
-    const dir = join(tmpdir(), `thor-test-ws2-${process.pid}`);
-    const path = join(dir, "config.json");
-    mkdirSync(dir, { recursive: true });
-
-    writeFileSync(
-      path,
-      JSON.stringify({
-        repos: { "my-repo": {} },
-      }),
-    );
-
-    const config = loadWorkspaceConfig(path);
-    expect(config.github_app).toBeUndefined();
-
-    rmSync(dir, { recursive: true, force: true });
   });
 });

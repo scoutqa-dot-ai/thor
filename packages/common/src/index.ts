@@ -10,18 +10,19 @@ export {
   WORKSPACE_CONFIG_PATH,
   extractRepoFromCwd,
   getRepoUpstreams,
+  getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";
 export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.js";
+export { requireEnv } from "./env.js";
 export type {
   WorkspaceConfig,
   RepoConfig,
   ProxyConfig,
   ProxyUpstream,
   ConfigLoader,
-  GitHubAppInstallation,
-  GitHubAppConfig,
+  OwnerConfig,
   ValidationIssue,
   ValidationResult,
 } from "./workspace-config.js";
@@ -68,6 +69,8 @@ export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,
+  ProgressMemorySchema,
+  ProgressDelegateSchema,
   ProgressDoneSchema,
   ProgressErrorSchema,
   ProgressApprovalRequiredSchema,
@@ -79,6 +82,8 @@ export {
 export type {
   ProgressStart,
   ProgressTool,
+  ProgressMemory,
+  ProgressDelegate,
   ProgressDone,
   ProgressError,
   ProgressApprovalRequired,

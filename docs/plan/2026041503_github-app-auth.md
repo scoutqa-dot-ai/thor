@@ -1,5 +1,7 @@
 # GitHub App Auth via Thor `git` / `gh` Wrappers
 
+> **Superseded note (2026-04-24):** parts of this plan are now outdated. The implemented config model uses `owners.<owner>.github_app_installation_id` instead of `github_app.installations`, and the runtime env naming is documented in `docs/github-app-webhooks.md`, `README.md`, and `docs/plan/2026042301_github-app-webhooks.md`. Use those documents as the current source of truth.
+
 **Date**: 2026-04-15
 **Status**: Draft
 
@@ -240,3 +242,11 @@ Key trade-offs for review:
 | 10  | CEO   | Stale lock detection with mtime timeout (30s)         | Mechanical     | P5        | Prevents DoS from hung processes                                              | No stale detection                                               |
 | 11  | CEO   | Add 5 additional test cases (forks, expiry, rotation) | Mechanical     | P1        | Completeness of test coverage                                                 | Skip edge cases                                                  |
 | 12  | CEO   | File permissions: 0600 for private key and cache      | Mechanical     | P5        | Principle of least privilege for secrets at rest                              | Default permissions                                              |
+
+## Follow-up Updates
+
+Tracked here so this doc remains an honest record of what shipped vs. what was later reversed. Trace details live on the `gh-cli-append-only-policy` branch.
+
+- **GitHub Enterprise support removed.** The `api_url` installation field, the `GITHUB_API_URL` env var, and the `deriveAllowedGitHosts` / `addGitHostsFromApiUrl` machinery have been dropped. Thor only targets `github.com` cloud. The token-mint URL is now hardcoded to `https://api.github.com`. ~50 lines and one config field gone.
+- **Arg-based org resolution removed.** `resolveOrgFromArgs` (the `-R` / `--repo` parser referenced in this doc's Phase 1 tests) was unreachable because `validateGhArgs.hasRepoOverride` denies all four shapes (`-R`, `-Rfoo`, `--repo`, `--repo=foo`) before the auth helper ever runs. `resolveOrg` now defers entirely to the cwd's git remote.
+- **Host check on `parseOrgFromRemoteUrl` dropped.** Defends only against admin compromise of the clone path, which already implies broader compromise. Trusted admin workflow makes the check noise.

@@ -24,7 +24,7 @@ Talk to Slack through real upstream URLs:
 - `https://files.slack.com/files-pri/...`
 
 Authentication is injected by `mitmproxy`. Do not pass `Authorization`
-manually.
+manually. Slack writes are limited to the configured allowed channel IDs.
 
 Use direct `curl` for Slack reads and writes. For `chat.postMessage`, keep the
 raw JSON response on stdout so Thor can read in-band thread correlation metadata
@@ -195,7 +195,8 @@ Common failures to report as-is:
   `mktemp -d` when you need a stable filename inside a unique temp directory.
 - Use `slack-upload` for uploads; it wraps `files.getUploadURLExternal`,
   the raw `files.slack.com/upload/v1/...` upload, and
-  `files.completeUploadExternal`.
+  `files.completeUploadExternal`. It requires `--channel` with an allowed Slack
+  channel ID.
 - `/tmp` is the default location for temporary Slack artifacts. Treat
   `/workspace/worktrees` as persistent storage and use it only when
   persistence is explicitly requested.

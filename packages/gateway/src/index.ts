@@ -1,11 +1,14 @@
 import {
   createLogger,
+  logError,
   logInfo,
   createConfigLoader,
   getAllowedChannelIds,
   WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 import { createGatewayApp } from "./app.js";
+import { validateGatewayGitHubEnv } from "./env.js";
+import { buildMentionLogins } from "./github.js";
 
 const log = createLogger("gateway");
 
@@ -28,7 +31,14 @@ const REMOTE_CLI_HOST = process.env.REMOTE_CLI_HOST || "remote-cli";
 const REMOTE_CLI_PORT = parseInt(process.env.REMOTE_CLI_PORT || "3004", 10);
 const RESOLVE_SECRET = process.env.RESOLVE_SECRET || "";
 const OPENAI_AUTH_PATH = process.env.OPENAI_AUTH_PATH || "";
+const githubEnv = validateGatewayGitHubEnv();
+const githubMentionLogins = buildMentionLogins(githubEnv.githubAppSlug);
 const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
+
+if (!SLACK_BOT_TOKEN.trim()) {
+  logError(log, "missing_env", "SLACK_BOT_TOKEN is required");
+  process.exit(1);
+}
 
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
@@ -44,6 +54,8 @@ const { app } = createGatewayApp({
   cronSecret: CRON_SECRET || undefined,
   getConfig,
   openaiAuthPath: OPENAI_AUTH_PATH || undefined,
+  githubWebhookSecret: githubEnv.githubWebhookSecret,
+  githubMentionLogins,
 });
 
 app.listen(PORT, () => {
@@ -64,6 +76,8 @@ app.listen(PORT, () => {
     remoteCliHost: REMOTE_CLI_HOST,
     queueDir: QUEUE_DIR,
     configured: Boolean(SLACK_SIGNING_SECRET && SLACK_BOT_TOKEN),
+    githubAppSlug: githubEnv.githubAppSlug,
+    githubMentionLogins,
     ...configSummary,
   });
 });

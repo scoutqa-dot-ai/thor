@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunnerDeps } from "./service.js";
 import type { SlackDeps } from "./slack-api.js";
+import type { NormalizedGitHubEvent } from "./github.js";
 
 function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
   const text = lines.join("\n") + "\n";
@@ -29,6 +30,21 @@ function jsonResponse(body: unknown, status = 200): Response {
 function textResponse(text: string, status: number): Response {
   return new Response(text, { status, headers: { "content-type": "text/plain" } });
 }
+
+const githubEventBase: NormalizedGitHubEvent = {
+  source: "github",
+  eventType: "issue_comment",
+  action: "created",
+  installationId: 126669985,
+  repoFullName: "scoutqa-dot-ai/thor",
+  localRepo: "thor",
+  senderLogin: "alice",
+  htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+  number: 42,
+  body: "please review this branch",
+  branch: null,
+  mention: false,
+};
 
 describe("resolveApproval", () => {
   it("posts resolve requests to remote-cli with the secret header", async () => {
@@ -79,6 +95,27 @@ describe("resolveApproval", () => {
 
     expect(result).toBeUndefined();
   });
+
+  it("returns nonzero results when an approved upstream call fails after resolution", async () => {
+    const failedResult = {
+      stdout: "",
+      stderr: 'Error calling "merge_pull_request": upstream unavailable\n',
+      exitCode: 1,
+    };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(failedResult));
+
+    const { resolveApproval } = await import("./service.js");
+    const result = await resolveApproval(
+      "act-1",
+      "approved",
+      "U123",
+      "http://remote-cli:3004",
+      "resolve-secret",
+      fetchImpl,
+    );
+
+    expect(result).toEqual(failedResult);
+  });
 });
 
 describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
@@ -128,6 +165,16 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       JSON.stringify({ type: "tool", tool: "read", status: "completed" }),
       JSON.stringify({ type: "tool", tool: "write", status: "completed" }),
       JSON.stringify({
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/my-repo/README.md",
+        source: "tool",
+      }),
+      JSON.stringify({
+        type: "delegate",
+        agent: "research-agent",
+      }),
+      JSON.stringify({
         type: "done",
         sessionId: "s1",
         resumed: false,
@@ -157,6 +204,15 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     expect(slackUrls).toContain("https://slack.com/api/chat.postMessage");
     expect(slackUrls).toContain("https://slack.com/api/chat.update");
     expect(slackUrls).toContain("https://slack.com/api/chat.delete");
+    const updateBodies = mockSlackFetch.mock.calls
+      .filter((c: [string]) => c[0] === "https://slack.com/api/chat.update")
+      .map((c) => JSON.parse((c[1] as { body: string }).body));
+    expect(
+      updateBodies.some((body: { text: string }) => body.text.includes("memory: README.md")),
+    ).toBe(true);
+    expect(
+      updateBodies.some((body: { text: string }) => body.text.includes("agents: research-agent")),
+    ).toBe(true);
   });
 
   it("posts approval_required events with v3 button payload format", async () => {
@@ -361,8 +417,29 @@ describe("triggerRunnerSlack edge cases", () => {
     expect(result.busy).toBe(true);
   });
 
-  it("throws when runner returns non-ok", async () => {
+  it("rejects with onRejected for 4xx errors (dead-letter)", async () => {
     mockRunnerFetch.mockResolvedValue(textResponse("bad request", 400));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerSlack } = await import("./service.js");
+    const result = await triggerRunnerSlack(
+      [slackEvent],
+      "key1",
+      runnerDeps,
+      slackDeps,
+      false,
+      undefined,
+      new Map([["C123", "repo"]]),
+      onRejected,
+    );
+
+    expect(result.busy).toBe(false);
+    expect(result.rejected).toBe(true);
+    expect(onRejected).toHaveBeenCalledWith(expect.stringContaining("400"));
+  });
+
+  it("throws for 5xx errors (retryable)", async () => {
+    mockRunnerFetch.mockResolvedValue(textResponse("internal error", 500));
 
     const { triggerRunnerSlack } = await import("./service.js");
     await expect(
@@ -375,7 +452,7 @@ describe("triggerRunnerSlack edge cases", () => {
         undefined,
         new Map([["C123", "repo"]]),
       ),
-    ).rejects.toThrow("Runner returned 400");
+    ).rejects.toThrow("Runner returned 500");
   });
 });
 
@@ -436,6 +513,195 @@ describe("triggerRunnerCron", () => {
     expect(result.busy).toBe(false);
     expect(onAccepted).toHaveBeenCalled();
   });
+
+  it("batches multiple cron payloads that share a correlation key", async () => {
+    mockFetch.mockResolvedValue(ndjsonResponse(["line1"]));
+
+    const { triggerRunnerCron } = await import("./service.js");
+    const result = await triggerRunnerCron(
+      [
+        { prompt: "do something", directory: "/workspace/repos/test" },
+        { prompt: "do the follow-up", directory: "/workspace/repos/test" },
+      ],
+      "cron-1",
+      deps,
+    );
+
+    expect(result.busy).toBe(false);
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
+    expect(triggerBody.prompt).toBe("Cron events:\n\ndo something\n\ndo the follow-up");
+  });
+});
+
+describe("triggerRunnerGitHub", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+  let deps: RunnerDeps;
+
+  beforeEach(() => {
+    mockFetch = vi.fn();
+    deps = { runnerUrl: "http://runner:3000", fetchImpl: mockFetch };
+  });
+
+  it("resolves pending branch then dispatches runner with canonical correlation key", async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        jsonResponse({ ref: "feature/refactor", headRepoFullName: "scoutqa-dot-ai/thor" }),
+      )
+      .mockResolvedValueOnce(
+        ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
+      );
+
+    const onAccepted = vi.fn();
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      onAccepted,
+      vi.fn(),
+    );
+
+    expect(result.busy).toBe(false);
+    expect(mockFetch.mock.calls[0][0]).toContain(
+      "/github/pr-head?installation=126669985&repo=scoutqa-dot-ai%2Fthor&number=42",
+    );
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[1][1]?.body));
+    expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
+    expect(triggerBody.directory).toBe("/workspace/repos/my-repo");
+    expect(triggerBody.prompt).toContain(
+      "[alice] created on scoutqa-dot-ai/thor#42 (issue_comment): please review this",
+    );
+    expect(triggerBody.prompt).toContain(
+      "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+    );
+    expect(onAccepted).toHaveBeenCalled();
+  });
+
+  it("maps branch lookup 403 to terminal installation_gone rejection", async () => {
+    mockFetch.mockResolvedValueOnce(textResponse("forbidden", 403));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      undefined,
+      onRejected,
+    );
+
+    expect(result.busy).toBe(false);
+    expect(onRejected).toHaveBeenCalledWith("installation_gone");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps branch lookup 404 to terminal branch_not_found rejection", async () => {
+    mockFetch.mockResolvedValueOnce(textResponse("not found", 404));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      undefined,
+      onRejected,
+    );
+
+    expect(result).toEqual({ busy: false, rejected: true, reason: "branch_not_found" });
+    expect(onRejected).toHaveBeenCalledWith("branch_not_found");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps exhausted 5xx branch lookup retries to terminal branch_lookup_failed", async () => {
+    mockFetch
+      .mockResolvedValueOnce(textResponse("upstream error", 500))
+      .mockResolvedValueOnce(textResponse("upstream error", 500));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      undefined,
+      onRejected,
+    );
+
+    expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
+    expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps exhausted timeout retries to terminal branch_lookup_failed", async () => {
+    const timeoutError = new Error("timed out");
+    timeoutError.name = "TimeoutError";
+    mockFetch.mockRejectedValue(timeoutError);
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      undefined,
+      onRejected,
+    );
+
+    expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
+    expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps exhausted network lookup retries to terminal branch_lookup_failed", async () => {
+    mockFetch.mockRejectedValue(new TypeError("fetch failed"));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      undefined,
+      onRejected,
+    );
+
+    expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
+    expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns busy without ack for non-mention events", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ busy: true }));
+    const onAccepted = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [{ ...githubEventBase, branch: "main" }],
+      "git:branch:thor:main",
+      deps,
+      "http://remote-cli:3004",
+      false,
+      onAccepted,
+    );
+
+    expect(result.busy).toBe(true);
+    expect(onAccepted).not.toHaveBeenCalled();
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
+    expect(triggerBody.interrupt).toBe(false);
+  });
 });
 
 describe("approval outcome prompts", () => {
@@ -468,6 +734,30 @@ describe("approval outcome prompts", () => {
     expect(prompt).toContain("human rejected action `act-2`");
     expect(prompt).toContain("do not retry the same write blindly");
     expect(prompt).toContain("Resolution summary: missing approval reason");
+  });
+
+  it("builds failure guidance when approval resolution returns a nonzero exit", async () => {
+    const { buildApprovalOutcomePrompt } = await import("./service.js");
+    const prompt = buildApprovalOutcomePrompt([
+      {
+        actionId: "act-1",
+        decision: "approved",
+        reviewer: "U123",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        upstreamName: "github",
+        resolutionExitCode: 1,
+        resolutionSummary: 'Error calling "merge_pull_request": upstream unavailable',
+      },
+    ]);
+
+    expect(prompt).toContain(
+      "human approved action `act-1`, but approval resolution reported a failure",
+    );
+    expect(prompt).toContain("choose the next safe action");
+    expect(prompt).toContain(
+      'Resolution summary: Error calling "merge_pull_request": upstream unavailable',
+    );
   });
 
   it("includes approval guidance when slack events and approval outcomes share a batch", async () => {
@@ -541,5 +831,53 @@ describe("triggerRunnerApprovalOutcomes", () => {
     const body = JSON.parse(req.body);
     expect(body.interrupt).toBe(false);
     expect(body.correlationKey).toBe("slack:thread:1710000000.001");
+  });
+
+  it("returns after acceptance without waiting for the runner body to finish", async () => {
+    let closeStream: (() => void) | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("pending"));
+        closeStream = () => controller.close();
+      },
+    });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { "content-type": "application/x-ndjson" },
+      }),
+    );
+    const onAccepted = vi.fn();
+    const { triggerRunnerApprovalOutcomes } = await import("./service.js");
+
+    const resultPromise = triggerRunnerApprovalOutcomes(
+      [
+        {
+          actionId: "act-1",
+          decision: "approved",
+          reviewer: "U123",
+          channel: "C123",
+          threadTs: "1710000000.001",
+        },
+      ],
+      "slack:thread:1710000000.001",
+      { runnerUrl: "http://runner:3000", fetchImpl },
+      false,
+      onAccepted,
+      new Map([["C123", "my-repo"]]),
+    );
+
+    const outcome = await Promise.race([
+      resultPromise.then((result) => ({ kind: "resolved" as const, result })),
+      new Promise<{ kind: "timeout" }>((resolve) =>
+        setTimeout(() => resolve({ kind: "timeout" }), 25),
+      ),
+    ]);
+
+    expect(outcome).toEqual({ kind: "resolved", result: { busy: false } });
+    expect(onAccepted).toHaveBeenCalledTimes(1);
+
+    closeStream?.();
+    await resultPromise;
   });
 });

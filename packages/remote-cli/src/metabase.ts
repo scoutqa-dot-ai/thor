@@ -8,24 +8,20 @@
  *   METABASE_ALLOWED_SCHEMAS — comma-separated schema allowlist (UX filtering only)
  */
 
-// ── Config (read once at startup, cached) ──────────────────────────────────
+import { requireEnv } from "@thor/common";
 
-function env(key: string): string {
-  const val = process.env[key];
-  if (!val) throw new Error(`Missing required env var: ${key}`);
-  return val;
-}
+// ── Config (read once at startup, cached) ──────────────────────────────────
 
 let _config: { url: string; apiKey: string; dbId: number; schemas: Set<string> } | null = null;
 
 function config() {
   if (!_config) {
     _config = {
-      url: env("METABASE_URL").replace(/\/+$/, ""),
-      apiKey: env("METABASE_API_KEY"),
-      dbId: parseInt(env("METABASE_DATABASE_ID"), 10),
+      url: requireEnv("METABASE_URL").replace(/\/+$/, ""),
+      apiKey: requireEnv("METABASE_API_KEY"),
+      dbId: parseInt(requireEnv("METABASE_DATABASE_ID"), 10),
       schemas: new Set(
-        env("METABASE_ALLOWED_SCHEMAS")
+        requireEnv("METABASE_ALLOWED_SCHEMAS")
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
@@ -85,6 +81,13 @@ export interface QueryResult {
   columns: string[];
   rows: unknown[][];
   row_count: number;
+}
+
+export interface QuestionInfo {
+  id: number;
+  name: string;
+  description: string | null;
+  sql: string;
 }
 
 /**
@@ -155,6 +158,37 @@ export async function executeQuery(sql: string): Promise<QueryResult> {
     columns: result.data.cols.map((c) => c.name),
     rows: result.data.rows,
     row_count: result.row_count,
+  };
+}
+
+/**
+ * Fetch the native SQL from a saved Metabase question (card).
+ * Accepts either a numeric string or a slug-like card ref such as
+ * "7751-daily-log-web-pages-paths", which Metabase resolves directly.
+ */
+export async function getQuestion(questionRef: string): Promise<QuestionInfo> {
+  const card = await mbGet<{
+    id: number;
+    name: string;
+    description: string | null;
+    dataset_query: {
+      type: string;
+      native?: { query: string };
+    };
+  }>(`/api/card/${encodeURIComponent(questionRef)}`);
+
+  if (card.dataset_query.type !== "native" || !card.dataset_query.native?.query) {
+    throw new Error(
+      `Question ${questionRef} is not a native SQL question (type: ${card.dataset_query.type}). ` +
+        `Only native SQL questions are supported.`,
+    );
+  }
+
+  return {
+    id: card.id,
+    name: card.name,
+    description: card.description,
+    sql: card.dataset_query.native.query,
   };
 }
 

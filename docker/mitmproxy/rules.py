@@ -50,6 +50,7 @@ class PolicyDecision:
 class RuleSet:
     rules: list[InjectRule]
     passthrough: list[str]
+    allowed_slack_channels: frozenset[str]
 
     def classify(self, host: str, path: str = "/") -> PolicyDecision:
         host = normalize_host(host)
@@ -141,7 +142,11 @@ BUILTIN_PASSTHROUGH = [
 ]
 
 
-EMPTY_RULESET = RuleSet(rules=BUILTIN_RULES.copy(), passthrough=BUILTIN_PASSTHROUGH.copy())
+EMPTY_RULESET = RuleSet(
+    rules=BUILTIN_RULES.copy(),
+    passthrough=BUILTIN_PASSTHROUGH.copy(),
+    allowed_slack_channels=frozenset(),
+)
 
 
 def normalize_host(host: str) -> str:
@@ -197,10 +202,37 @@ def resolve_headers(headers: Mapping[str, str], env: Mapping[str, str] | None = 
     return {name: interpolate_env(value, env=env) for name, value in headers.items()}
 
 
+def parse_allowed_slack_channels(config: dict[str, object]) -> frozenset[str]:
+    raw_repos = config.get("repos", {})
+    if raw_repos is None:
+        raw_repos = {}
+    if not isinstance(raw_repos, dict):
+        raise ValueError('"repos" must be an object')
+
+    channels: set[str] = set()
+    for repo_name, raw_repo in raw_repos.items():
+        if not isinstance(raw_repo, dict):
+            raise ValueError(f"repos.{repo_name} must be an object")
+        raw_channels = raw_repo.get("channels", [])
+        if raw_channels is None:
+            raw_channels = []
+        if not isinstance(raw_channels, list):
+            raise ValueError(f"repos.{repo_name}.channels must be an array")
+        for idx, channel in enumerate(raw_channels):
+            if not isinstance(channel, str) or not channel.strip():
+                raise ValueError(
+                    f"repos.{repo_name}.channels[{idx}] must be a non-empty string"
+                )
+            channels.add(channel.strip())
+
+    return frozenset(channels)
+
+
 def parse_ruleset(config: object) -> RuleSet:
     if not isinstance(config, dict):
         raise ValueError("workspace config must be a JSON object")
 
+    allowed_slack_channels = parse_allowed_slack_channels(config)
     raw_rules = config.get("mitmproxy", [])
     raw_passthrough = config.get("mitmproxy_passthrough", [])
 
@@ -277,7 +309,11 @@ def parse_ruleset(config: object) -> RuleSet:
     merged_rules = rules + BUILTIN_RULES
     merged_passthrough = passthrough + BUILTIN_PASSTHROUGH
 
-    return RuleSet(rules=merged_rules, passthrough=merged_passthrough)
+    return RuleSet(
+        rules=merged_rules,
+        passthrough=merged_passthrough,
+        allowed_slack_channels=allowed_slack_channels,
+    )
 
 
 class RuleStore:
