@@ -465,11 +465,30 @@ function validatePushRefspec(refspec: string): string | null {
 }
 
 function validateMerge(args: string[]): string | null {
-  // Passthrough: merge's own safety surface (push to protected branches, force,
-  // commit hooks for non-merge commits) is already enforced elsewhere. Only
-  // `--no-verify` is denied, mirroring `git commit` — repo merge hooks are the
-  // last line of defense against unintended merges into release lines.
-  return args.includes("--no-verify") ? denyMessage("git merge") : null;
+  // Three supported shapes (workflow-oriented, not grammar-oriented):
+  //   `git merge --abort`               — recover from an in-progress merge
+  //   `git merge --continue`            — finish a merge after conflict resolution
+  //   `git merge origin/<branch>`       — merge a remote-tracking ref (with optional
+  //                                       --ff-only / --no-edit / --no-ff)
+  // Anything else (custom strategies, --squash, --allow-unrelated-histories,
+  // arbitrary local refs, --no-verify, multiple refs) widens the merge
+  // surface beyond Thor workflows and is denied.
+  if (matchesExactArgs(args, ["merge", "--abort"])) return null;
+  if (matchesExactArgs(args, ["merge", "--continue"])) return null;
+
+  const parsed = scanPolicyArgs(args, 1, [
+    { name: "ff-only", kind: "boolean", aliases: ["--ff-only"] },
+    { name: "no-edit", kind: "boolean", aliases: ["--no-edit"] },
+    { name: "no-ff", kind: "boolean", aliases: ["--no-ff"] },
+  ]);
+  if (!parsed) return denyMessage("git merge");
+  if (parsed.positionals.length !== 1) return denyMessage("git merge");
+
+  const ref = parsed.positionals[0];
+  if (!ref.startsWith("origin/")) return denyMessage("git merge");
+  if (ref.length === "origin/".length) return denyMessage("git merge");
+
+  return null;
 }
 
 function validateLsRemote(args: string[]): string | null {
