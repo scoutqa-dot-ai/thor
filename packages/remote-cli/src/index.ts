@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import { access } from "node:fs/promises";
+import { dirname, normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import {
   computeGitAlias,
@@ -49,6 +50,8 @@ const log = createLogger("remote-cli");
 const PORT = parseInt(process.env.PORT || "3004", 10);
 const LDCLI_MAX_OUTPUT = 1024 * 1024;
 const GITHUB_API_URL = "https://api.github.com";
+const WORKTREE_ROOT = "/workspace/worktrees";
+const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   requireEnv("GITHUB_APP_ID", env);
@@ -126,12 +129,15 @@ function parseSandboxMode(input: unknown): SandboxMode | null {
 }
 
 function buildSandboxName(cwd: string): string {
-  // Use the full cwd path (unique per worktree) to avoid name collisions.
-  // e.g. /workspace/worktrees/katalon-g5/fix-bug → thor-katalon-g5-fix-bug
-  const segments = cwd.split("/").filter(Boolean);
-  // Take the last two path segments for a readable name
+  // Worktree roots are /workspace/worktrees/<repo>/<branch...> (branch may
+  // contain slashes). Keep repo + full branch path in the name for readability.
+  // Fallback for non-worktree paths: last two segments.
+  const worktreeSegments = cwd.startsWith(WORKTREE_PREFIX)
+    ? cwd.slice(WORKTREE_PREFIX.length).split("/").filter(Boolean)
+    : [];
+  const segments = worktreeSegments.length >= 2 ? worktreeSegments : cwd.split("/").filter(Boolean);
+
   const slug = segments
-    .slice(-2)
     .join("-")
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
@@ -150,7 +156,7 @@ async function resolveWorktreeRoot(cwd: string): Promise<{ root: string; subpath
   // (e.g. node_modules/, build/). Find the deepest existing ancestor
   // to run git from — access() is a single syscall per level, no process spawn.
   let gitCwd = cwd;
-  while (gitCwd.length > "/workspace/worktrees".length) {
+  while (gitCwd.length > WORKTREE_ROOT.length) {
     try {
       await access(gitCwd);
       break;
@@ -167,8 +173,83 @@ async function resolveWorktreeRoot(cwd: string): Promise<{ root: string; subpath
     );
   }
   const root = result.stdout.trim();
+  if (!isValidWorktreeTopLevel(root)) {
+    throw new SandboxError(
+      "Failed to resolve worktree root",
+      `git toplevel is not a valid worktree path: ${root}`,
+    );
+  }
+
+  const containingRoot = await findContainingWorktreeRoot(root);
+  if (containingRoot) {
+    throw new SandboxError(
+      "Failed to resolve worktree root",
+      `git toplevel is nested under another working tree: ${root} (parent ${containingRoot})`,
+    );
+  }
+
   const subpath = cwd.startsWith(root + "/") ? cwd.slice(root.length + 1) : "";
   return { root, subpath };
+}
+
+async function findContainingWorktreeRoot(root: string): Promise<string | null> {
+  let current = dirname(root);
+
+  while (current.length > WORKTREE_ROOT.length && current.startsWith(WORKTREE_PREFIX)) {
+    const result = await execCommand("git", ["rev-parse", "--show-toplevel"], current);
+    if ((result.exitCode ?? 0) === 0) {
+      const candidate = result.stdout.trim();
+      if (
+        candidate &&
+        candidate !== root &&
+        isValidWorktreeTopLevel(candidate) &&
+        root.startsWith(candidate + "/")
+      ) {
+        return candidate;
+      }
+    }
+
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return null;
+}
+
+function isValidWorktreeTopLevel(root: string): boolean {
+  if (!root.startsWith(WORKTREE_PREFIX) || root.includes("\0")) return false;
+
+  const normalized = normalizePosix(root);
+  if (normalized !== root) return false;
+
+  const relative = root.slice(WORKTREE_PREFIX.length);
+  if (!relative || relative.startsWith("/") || relative.endsWith("/")) return false;
+
+  const segments = relative.split("/");
+  if (segments.length < 2) return false;
+  if (segments.some((segment) => segment.length === 0 || segment === "..")) return false;
+
+  return true;
+}
+
+function validateSandboxCwd(cwd: unknown): string | null {
+  if (typeof cwd !== "string" || !cwd.startsWith("/")) {
+    return "cwd must be an absolute path";
+  }
+  if (cwd.includes("\0")) {
+    return `cwd must be under ${WORKTREE_ROOT}`;
+  }
+
+  const normalized = normalizePosix(cwd);
+  if (normalized !== cwd) {
+    return `cwd must be under ${WORKTREE_ROOT}`;
+  }
+  if (!cwd.startsWith(WORKTREE_PREFIX)) {
+    return "Sandbox requires a worktree. Create one first with: git worktree add -b <branch> /workspace/worktrees/<repo>/<branch-with-slashes> HEAD";
+  }
+
+  return null;
 }
 
 async function prepareSandbox(
@@ -497,19 +578,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       if (mode !== "list") {
-        const cwdError = validateCwd(cwd);
+        const cwdError = validateSandboxCwd(cwd);
         if (cwdError) {
           res.status(400).json({ stdout: "", stderr: cwdError, exitCode: 1 });
-          return;
-        }
-
-        if (!cwd.startsWith("/workspace/worktrees/")) {
-          res.status(400).json({
-            stdout: "",
-            stderr:
-              "Sandbox requires a worktree. Create one first with: git worktree add -b <branch> /workspace/worktrees/<repo>/<branch> HEAD",
-            exitCode: 1,
-          });
           return;
         }
       }
@@ -578,7 +649,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       // Resolve the worktree root for all sandbox operations — cwd may
-      // be a subdirectory (e.g. /workspace/worktrees/repo/branch/sub/path).
+      // be a subdirectory (e.g. /workspace/worktrees/repo/feat/auth/sub/path).
       const { root: worktreeRoot } = await resolveWorktreeRoot(cwd);
 
       if (mode === "stop") {
