@@ -1,0 +1,25 @@
+packages/gateway/src/approval.ts
+  cc7f4e1d8be08672 56-61
+packages/gateway/src/approval.test.ts
+  cc7f4e1d8be08672 95-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "6d782506308b845f0813de63bb9a51886b85d386",
+  "prompts": {
+    "cc7f4e1d8be08672": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8912ffd9-bff5-4516-a3cd-166f53c01af5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 10,
+      "total_deletions": 13,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}
