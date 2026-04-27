@@ -1,0 +1,29 @@
+packages/remote-cli/src/policy.test.ts
+  2e2250850906b356 502-503,508,765,768-769,774-775,780-781,785,789-790,792-803,806-810,815,817,822-823,825-841
+docs/plan/2026042406_command-policy-consolidation.md
+  2e2250850906b356 139
+packages/remote-cli/src/policy-gh.ts
+  2e2250850906b356 9,15,52,73,154,177-182,189-190,363-373
+docker/opencode/config/skills/using-gh/SKILL.md
+  2e2250850906b356 33-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ea0bd0611ef25655e177ffd5e927441e8b605a70",
+  "prompts": {
+    "2e2250850906b356": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "817a1928-cd78-4b00-9443-a505a8a4a67d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 160,
+      "total_deletions": 106,
+      "accepted_lines": 80,
+      "overriden_lines": 0
+    }
+  }
+}
