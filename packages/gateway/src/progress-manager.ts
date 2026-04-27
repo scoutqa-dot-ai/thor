@@ -268,16 +268,27 @@ async function cleanupProgressMessages(channel: string, threadTs: string): Promi
 
   const deletions: Promise<void>[] = [];
 
+  // Drop entries from the registry only after chat.delete confirms (or after a
+  // permanent message_not_found). Transient Slack failures keep the entry so
+  // the next session-end cleanup can retry. Without this, a failed delete
+  // would leave the message visible in Slack forever with no record to retry
+  // from.
   for (const [messageTs, entry] of thread) {
     if (entry.status === "error") continue;
 
-    thread.delete(messageTs);
     deletions.push(
       deleteMessage(channel, messageTs, entry.deps)
-        .then(() => logInfo(log, "progress_deleted", { channel, ts: messageTs, threadTs }))
-        .catch((err) =>
-          logError(log, "delete_error", err instanceof Error ? err.message : String(err)),
-        ),
+        .then(() => {
+          thread.delete(messageTs);
+          logInfo(log, "progress_deleted", { channel, ts: messageTs, threadTs });
+        })
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          if (message.includes("message_not_found")) {
+            thread.delete(messageTs);
+          }
+          logError(log, "delete_error", message);
+        }),
     );
   }
 
