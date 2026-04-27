@@ -190,7 +190,13 @@ const InteractivityBodySchema = z.object({
 function parseInteractivityPayload(body: unknown) {
   const parsed = InteractivityBodySchema.safeParse(body);
   if (!parsed.success) return undefined;
-  return SlackInteractivityPayloadSchema.safeParse(JSON.parse(parsed.data.payload));
+  let raw: unknown;
+  try {
+    raw = JSON.parse(parsed.data.payload);
+  } catch {
+    return undefined;
+  }
+  return SlackInteractivityPayloadSchema.safeParse(raw);
 }
 
 export interface GatewayApp {
