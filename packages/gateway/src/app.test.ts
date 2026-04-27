@@ -324,9 +324,10 @@ describe("gateway", () => {
           action: "created",
           installation: { id: 126669985 },
           repository: { full_name: "scoutqa-dot-ai/thor" },
-          sender: { login: "alice", type: "User" },
+          sender: { id: 1001, login: "alice", type: "User" },
           pull_request: {
             number: 42,
+            user: { id: 1001, login: "alice" },
             head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
             base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
           },
@@ -365,7 +366,6 @@ describe("gateway", () => {
             repoFullName: "scoutqa-dot-ai/thor",
             localRepo: "thor",
             branch: "feature/refactor",
-            mention: true,
           },
         });
         expect(fetchImpl).not.toHaveBeenCalled();
@@ -373,6 +373,7 @@ describe("gateway", () => {
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });
@@ -403,6 +404,7 @@ describe("gateway", () => {
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });
@@ -417,7 +419,7 @@ describe("gateway", () => {
           action: "created",
           installation: { id: 1 },
           repository: { full_name: "acme/thor" },
-          sender: { login: "alice", type: "User" },
+          sender: { id: 1001, login: "alice", type: "User" },
           issue: { number: 12, pull_request: null },
           comment: {
             body: "hello",
@@ -444,6 +446,54 @@ describe("gateway", () => {
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
+      },
+    );
+  });
+
+  it("ignores PR comments that do not mention the configured app", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir) => {
+        const body = JSON.stringify({
+          action: "created",
+          installation: { id: 126669985 },
+          repository: { full_name: "scoutqa-dot-ai/thor" },
+          sender: { id: 1001, login: "alice", type: "User" },
+          pull_request: {
+            number: 42,
+            user: { id: 1001, login: "alice" },
+            head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
+            base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+          },
+          comment: {
+            body: "@codex review",
+            html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r9",
+            created_at: "2026-04-24T11:00:00Z",
+          },
+        });
+
+        const response = await fetch(`${baseUrl}/github/webhook`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+            "X-GitHub-Delivery": "delivery-non-mention",
+            "X-GitHub-Event": "pull_request_review_comment",
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, ignored: true });
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });
@@ -458,13 +508,13 @@ describe("gateway", () => {
           action: "created",
           installation: { id: 1 },
           repository: { full_name: "acme/thor" },
-          sender: { login: "alice", type: "User" },
+          sender: { id: 1001, login: "alice", type: "User" },
           issue: {
             number: 12,
             pull_request: { html_url: "https://github.com/acme/thor/pull/12" },
           },
           comment: {
-            body: "please review",
+            body: "@thor please review",
             html_url: "https://github.com/acme/thor/pull/12#issuecomment-1",
             created_at: "2026-04-24T11:00:00Z",
           },
@@ -490,18 +540,18 @@ describe("gateway", () => {
           id: "delivery-branch-pending",
           source: "github",
           correlationKey: "pending:branch-resolve:thor:12",
-          delayMs: 60000,
-          interrupt: false,
+          delayMs: 3000,
+          interrupt: true,
           payload: {
             eventType: "issue_comment",
             branch: null,
-            mention: false,
           },
         });
       },
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });

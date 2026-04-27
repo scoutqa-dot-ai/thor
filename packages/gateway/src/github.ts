@@ -2,8 +2,14 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 
 const GitHubSenderSchema = z.object({
+  id: z.number().int().positive(),
   login: z.string(),
   type: z.string(),
+});
+
+const GitHubUserSchema = z.object({
+  id: z.number().int().positive(),
+  login: z.string(),
 });
 
 const GitHubInstallationSchema = z.object({
@@ -39,16 +45,19 @@ const IssueCommentEnvelopeSchema = z.object({
   }),
 });
 
+const PullRequestObjectSchema = z.object({
+  number: z.number().int().positive(),
+  user: GitHubUserSchema,
+  head: GitHubPullRequestRefSchema,
+  base: z.object({ repo: z.object({ full_name: z.string() }) }),
+});
+
 const PullRequestReviewCommentEnvelopeSchema = z.object({
   action: z.string(),
   installation: GitHubInstallationSchema,
   repository: GitHubRepositorySchema,
   sender: GitHubSenderSchema,
-  pull_request: z.object({
-    number: z.number().int().positive(),
-    head: GitHubPullRequestRefSchema,
-    base: z.object({ repo: z.object({ full_name: z.string() }) }),
-  }),
+  pull_request: PullRequestObjectSchema,
   comment: z.object({
     body: z.string(),
     html_url: z.string(),
@@ -61,11 +70,7 @@ const PullRequestReviewEnvelopeSchema = z.object({
   installation: GitHubInstallationSchema,
   repository: GitHubRepositorySchema,
   sender: GitHubSenderSchema,
-  pull_request: z.object({
-    number: z.number().int().positive(),
-    head: GitHubPullRequestRefSchema,
-    base: z.object({ repo: z.object({ full_name: z.string() }) }),
-  }),
+  pull_request: PullRequestObjectSchema,
   review: z.object({
     body: z.string().nullable().optional(),
     html_url: z.string(),
@@ -91,8 +96,9 @@ type PullRequestReviewEnvelope = z.infer<typeof PullRequestReviewEnvelopeSchema>
 type IgnoreReason =
   | "pure_issue_comment_unsupported"
   | "fork_pr_unsupported"
-  | "bot_sender"
+  | "self_sender"
   | "empty_review_body"
+  | "non_mention_comment"
   | "event_unsupported";
 
 export interface NormalizedGitHubEvent {
@@ -107,7 +113,6 @@ export interface NormalizedGitHubEvent {
   number: number;
   body: string;
   branch: string | null;
-  mention: boolean;
 }
 
 export function verifyGitHubSignature(input: {
@@ -146,11 +151,6 @@ export function buildMentionLogins(appSlug: string): string[] {
   return [slug, `${slug}[bot]`];
 }
 
-function isBotSender(senderType: string, senderLogin: string, mentionLogins: string[]): boolean {
-  if (senderType.toLowerCase() === "bot") return true;
-  return mentionLogins.map((login) => login.toLowerCase()).includes(senderLogin.toLowerCase());
-}
-
 export function buildCorrelationKey(localRepo: string, branch: string): string {
   return `git:branch:${localRepo}:${branch}`;
 }
@@ -176,10 +176,10 @@ export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number {
 
 export function normalizeGitHubEvent(
   raw: GitHubWebhookEnvelope,
-  options: { localRepo: string; mentionLogins: string[] },
+  options: { localRepo: string; mentionLogins: string[]; botId: number },
 ): NormalizedGitHubEvent | { ignored: true; reason: IgnoreReason } {
   const senderLogin = raw.sender.login.toLowerCase();
-  const isBot = isBotSender(raw.sender.type, senderLogin, options.mentionLogins);
+  const isSelf = raw.sender.id === options.botId;
 
   if (isIssueCommentEvent(raw)) {
     if (raw.action !== "created") {
@@ -188,8 +188,11 @@ export function normalizeGitHubEvent(
     if (!raw.issue.pull_request) {
       return { ignored: true, reason: "pure_issue_comment_unsupported" };
     }
-    if (isBot) {
-      return { ignored: true, reason: "bot_sender" };
+    if (isSelf) {
+      return { ignored: true, reason: "self_sender" };
+    }
+    if (!detectMention(raw.comment.body, options.mentionLogins)) {
+      return { ignored: true, reason: "non_mention_comment" };
     }
     return {
       source: "github",
@@ -203,7 +206,6 @@ export function normalizeGitHubEvent(
       number: raw.issue.number,
       body: raw.comment.body,
       branch: null,
-      mention: detectMention(raw.comment.body, options.mentionLogins),
     };
   }
 
@@ -214,8 +216,14 @@ export function normalizeGitHubEvent(
     if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
       return { ignored: true, reason: "fork_pr_unsupported" };
     }
-    if (isBot) {
-      return { ignored: true, reason: "bot_sender" };
+    if (isSelf) {
+      return { ignored: true, reason: "self_sender" };
+    }
+    if (
+      !detectMention(raw.comment.body, options.mentionLogins) &&
+      raw.pull_request.user.id !== options.botId
+    ) {
+      return { ignored: true, reason: "non_mention_comment" };
     }
     return {
       source: "github",
@@ -229,7 +237,6 @@ export function normalizeGitHubEvent(
       number: raw.pull_request.number,
       body: raw.comment.body,
       branch: raw.pull_request.head.ref,
-      mention: detectMention(raw.comment.body, options.mentionLogins),
     };
   }
 
@@ -244,8 +251,11 @@ export function normalizeGitHubEvent(
   if (!body) {
     return { ignored: true, reason: "empty_review_body" };
   }
-  if (isBot) {
-    return { ignored: true, reason: "bot_sender" };
+  if (isSelf) {
+    return { ignored: true, reason: "self_sender" };
+  }
+  if (!detectMention(body, options.mentionLogins) && raw.pull_request.user.id !== options.botId) {
+    return { ignored: true, reason: "non_mention_comment" };
   }
 
   return {
@@ -260,7 +270,6 @@ export function normalizeGitHubEvent(
     number: raw.pull_request.number,
     body,
     branch: raw.pull_request.head.ref,
-    mention: detectMention(body, options.mentionLogins),
   };
 }
 
