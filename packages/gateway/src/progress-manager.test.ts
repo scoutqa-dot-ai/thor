@@ -1,11 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProgressEvent } from "@thor/common";
-import {
-  handleProgressEvent,
-  onBotReply,
-  getRegistrySize,
-  clearRegistry,
-} from "./progress-manager.js";
+import { handleProgressEvent, getRegistrySize, clearRegistry } from "./progress-manager.js";
 import type { SlackDeps } from "./slack-api.js";
 
 function mockSlackDeps() {
@@ -445,27 +440,5 @@ describe("ProgressManager", () => {
     expect(callsTo(deps, "chat.update")).toHaveLength(0);
     const reactionBody = JSON.parse(String(callsTo(deps, "reactions.add")[0][1]?.body));
     expect(reactionBody).toEqual({ channel: "C123", timestamp: "1710000000.123", name: "x" });
-  });
-});
-
-describe("onBotReply", () => {
-  it("skips deletion when session is still active", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 3);
-    expect(getRegistrySize()).toBe(1);
-
-    await onBotReply("C123", "1710000000.001");
-
-    expect(callsTo(deps, "chat.delete")).toHaveLength(0);
-    expect(getRegistrySize()).toBe(1);
-  });
-
-  it("is a no-op for unknown threads", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 3);
-
-    await onBotReply("C123", "9999999999.999");
-
-    expect(callsTo(deps, "chat.delete")).toHaveLength(0);
   });
 });

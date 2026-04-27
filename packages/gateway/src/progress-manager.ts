@@ -225,16 +225,11 @@ function updateProgressStatus(
  * Delete all non-error progress messages for a thread.
  * Skips deletion if there is still an active session running.
  */
-async function cleanupProgressMessages(
-  channel: string,
-  threadTs: string,
-  trigger: "bot_reply" | "session_end",
-): Promise<void> {
+async function cleanupProgressMessages(channel: string, threadTs: string): Promise<void> {
   const key = threadKey(channel, threadTs);
   const thread = progressMessages.get(key);
   const hasActiveSession = activeSessions.has(key);
   logInfo(log, "cleanup_progress", {
-    trigger,
     key,
     progressCount: thread?.size ?? 0,
     statuses: thread ? [...thread.values()].map((e) => e.status) : [],
@@ -246,7 +241,7 @@ async function cleanupProgressMessages(
   // If there's still an active session, don't delete progress messages —
   // the session is still running and will update/clean up its own message.
   if (hasActiveSession) {
-    logInfo(log, "skip_delete_active_session", { trigger, key });
+    logInfo(log, "skip_delete_active_session", { key });
     return;
   }
 
@@ -258,7 +253,7 @@ async function cleanupProgressMessages(
     thread.delete(messageTs);
     deletions.push(
       deleteMessage(channel, messageTs, entry.deps)
-        .then(() => logInfo(log, "progress_deleted", { trigger, channel, ts: messageTs, threadTs }))
+        .then(() => logInfo(log, "progress_deleted", { channel, ts: messageTs, threadTs }))
         .catch((err) =>
           logError(log, "delete_error", err instanceof Error ? err.message : String(err)),
         ),
@@ -273,21 +268,8 @@ async function cleanupProgressMessages(
   }
 }
 
-/**
- * Called when the bot posts a reply to a thread.
- * Attempts cleanup — will skip if session is still active.
- */
-export async function onBotReply(channel: string, threadTs: string): Promise<void> {
-  await cleanupProgressMessages(channel, threadTs, "bot_reply");
-}
-
-/**
- * Called when a progress session ends (done/error event received).
- * All bot replies have already been sent via the faster MCP path,
- * so this is the reliable cleanup point.
- */
 async function onSessionEnd(channel: string, threadTs: string): Promise<void> {
-  await cleanupProgressMessages(channel, threadTs, "session_end");
+  await cleanupProgressMessages(channel, threadTs);
 }
 
 /** Visible for testing. */
