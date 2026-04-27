@@ -77,7 +77,6 @@ describe("normalizeGitHubEvent", () => {
 
     expect(normalized.eventType).toBe("pull_request_review_comment");
     expect(normalized.repoFullName).toBe("scoutqa-dot-ai/thor");
-    expect(normalized.mention).toBe(true);
     expect(normalized.branch).toBe("feature/refactor");
   });
 
@@ -132,6 +131,66 @@ describe("normalizeGitHubEvent", () => {
       options,
     );
     expect(unsupported).toEqual({ ignored: true, reason: "event_unsupported" });
+  });
+
+  it("ignores issue_comment without app mention", () => {
+    const result = normalizeGitHubEvent(
+      {
+        action: "created",
+        installation: { id: 1 },
+        repository: { full_name: "acme/repo" },
+        sender: { login: "alice", type: "User" },
+        issue: {
+          number: 12,
+          pull_request: { html_url: "https://github.com/acme/repo/pull/12" },
+        },
+        comment: {
+          body: "@codex review",
+          html_url: "https://github.com/acme/repo/pull/12#issuecomment-1",
+          created_at: "2026-04-24T11:00:00Z",
+        },
+      },
+      options,
+    );
+    expect(result).toEqual({ ignored: true, reason: "non_mention_comment" });
+  });
+
+  it("ignores pull_request_review_comment without app mention", () => {
+    const result = normalizeGitHubEvent(
+      {
+        ...baseReviewCommentEvent(),
+        comment: {
+          body: "@codex please look",
+          html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r2",
+          created_at: "2026-04-24T11:00:00Z",
+        },
+      },
+      options,
+    );
+    expect(result).toEqual({ ignored: true, reason: "non_mention_comment" });
+  });
+
+  it("ignores pull_request_review without app mention", () => {
+    const result = normalizeGitHubEvent(
+      {
+        action: "submitted",
+        installation: { id: 1 },
+        repository: { full_name: "acme/repo" },
+        sender: { login: "alice", type: "User" },
+        pull_request: {
+          number: 12,
+          head: { ref: "main", repo: { full_name: "acme/repo" } },
+          base: { repo: { full_name: "acme/repo" } },
+        },
+        review: {
+          body: "looks good to me",
+          html_url: "https://github.com/acme/repo/pull/12#pullrequestreview-1",
+          submitted_at: "2026-04-24T11:00:00Z",
+        },
+      },
+      options,
+    );
+    expect(result).toEqual({ ignored: true, reason: "non_mention_comment" });
   });
 
   it("ignores empty pull_request_review body", () => {

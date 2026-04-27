@@ -81,7 +81,6 @@ interface RawBodyRequest extends Request {
 /** Short debounce delay for mentions and engaged threads (ms). */
 const SHORT_DELAY_MS = 3000;
 const GITHUB_MENTION_DELAY_MS = 3000;
-const GITHUB_NON_MENTION_DELAY_MS = 60000;
 const GITHUB_SUPPORTED_EVENTS = new Set([
   "issue_comment",
   "pull_request_review_comment",
@@ -95,7 +94,8 @@ type GitHubIgnoreReason =
   | "pure_issue_comment_unsupported"
   | "fork_pr_unsupported"
   | "bot_sender"
-  | "empty_review_body";
+  | "empty_review_body"
+  | "non_mention_comment";
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
@@ -129,8 +129,6 @@ export interface GatewayAppConfig extends RunnerDeps {
   githubMentionLogins?: string[];
   /** GitHub mention debounce delay in ms. Default: 3000. */
   githubMentionDelayMs?: number;
-  /** GitHub non-mention debounce delay in ms. Default: 60000. */
-  githubNonMentionDelayMs?: number;
 }
 
 const InteractivityBodySchema = z.object({
@@ -154,7 +152,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const selfUserId = config.slackBotUserId;
   const shortDelay = config.shortDelayMs ?? SHORT_DELAY_MS;
   const githubMentionDelay = config.githubMentionDelayMs ?? GITHUB_MENTION_DELAY_MS;
-  const githubNonMentionDelay = config.githubNonMentionDelayMs ?? GITHUB_NON_MENTION_DELAY_MS;
   const githubMentionLogins = config.githubMentionLogins ?? [];
 
   const logGitHubIgnored = (input: {
@@ -676,7 +673,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     const sourceTs = getGitHubEventSourceTs(parsed.data);
-    const delayMs = normalized.mention ? githubMentionDelay : githubNonMentionDelay;
+    const delayMs = githubMentionDelay;
     const correlationKey = normalized.branch
       ? resolveCorrelationKeys([buildCorrelationKey(normalized.localRepo, normalized.branch)])
       : buildPendingBranchResolveKey(normalized.localRepo, normalized.number);
@@ -690,7 +687,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       sourceTs,
       readyAt: sourceTs + delayMs,
       delayMs,
-      interrupt: normalized.mention,
+      interrupt: true,
     });
 
     logInfo(log, "github_event_accepted", {
@@ -700,7 +697,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       eventType: normalized.eventType,
       action: normalized.action,
       correlationKey,
-      interrupt: normalized.mention,
+      interrupt: true,
       delayMs,
     });
 

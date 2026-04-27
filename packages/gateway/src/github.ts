@@ -93,6 +93,7 @@ type IgnoreReason =
   | "fork_pr_unsupported"
   | "bot_sender"
   | "empty_review_body"
+  | "non_mention_comment"
   | "event_unsupported";
 
 export interface NormalizedGitHubEvent {
@@ -107,7 +108,6 @@ export interface NormalizedGitHubEvent {
   number: number;
   body: string;
   branch: string | null;
-  mention: boolean;
 }
 
 export function verifyGitHubSignature(input: {
@@ -191,6 +191,9 @@ export function normalizeGitHubEvent(
     if (isBot) {
       return { ignored: true, reason: "bot_sender" };
     }
+    if (!detectMention(raw.comment.body, options.mentionLogins)) {
+      return { ignored: true, reason: "non_mention_comment" };
+    }
     return {
       source: "github",
       eventType: "issue_comment",
@@ -203,7 +206,6 @@ export function normalizeGitHubEvent(
       number: raw.issue.number,
       body: raw.comment.body,
       branch: null,
-      mention: detectMention(raw.comment.body, options.mentionLogins),
     };
   }
 
@@ -217,6 +219,9 @@ export function normalizeGitHubEvent(
     if (isBot) {
       return { ignored: true, reason: "bot_sender" };
     }
+    if (!detectMention(raw.comment.body, options.mentionLogins)) {
+      return { ignored: true, reason: "non_mention_comment" };
+    }
     return {
       source: "github",
       eventType: "pull_request_review_comment",
@@ -229,7 +234,6 @@ export function normalizeGitHubEvent(
       number: raw.pull_request.number,
       body: raw.comment.body,
       branch: raw.pull_request.head.ref,
-      mention: detectMention(raw.comment.body, options.mentionLogins),
     };
   }
 
@@ -247,6 +251,9 @@ export function normalizeGitHubEvent(
   if (isBot) {
     return { ignored: true, reason: "bot_sender" };
   }
+  if (!detectMention(body, options.mentionLogins)) {
+    return { ignored: true, reason: "non_mention_comment" };
+  }
 
   return {
     source: "github",
@@ -260,7 +267,6 @@ export function normalizeGitHubEvent(
     number: raw.pull_request.number,
     body,
     branch: raw.pull_request.head.ref,
-    mention: detectMention(body, options.mentionLogins),
   };
 }
 
