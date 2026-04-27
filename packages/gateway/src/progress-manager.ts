@@ -191,6 +191,13 @@ interface ProgressEntry {
 /** Map<threadKey, Map<messageTs, ProgressEntry>> */
 const progressMessages = new Map<string, Map<string, ProgressEntry>>();
 
+/** Cap retained error entries per thread. Without this, every failed session
+ * leaves a permanent entry and the per-thread map keeps the threadKey alive
+ * across the process lifetime. The most recent N errors are sufficient for
+ * users to inspect; older ones are forgotten from the registry but stay
+ * visible in Slack. */
+const MAX_ERROR_ENTRIES_PER_THREAD = 5;
+
 function registerProgress(
   channel: string,
   threadTs: string,
@@ -207,6 +214,17 @@ function registerProgress(
   thread.set(messageTs, { status, deps });
 }
 
+function evictExcessErrors(thread: Map<string, ProgressEntry>): void {
+  const errorTimestamps: string[] = [];
+  for (const [ts, entry] of thread) {
+    if (entry.status === "error") errorTimestamps.push(ts);
+  }
+  while (errorTimestamps.length > MAX_ERROR_ENTRIES_PER_THREAD) {
+    const oldest = errorTimestamps.shift()!;
+    thread.delete(oldest);
+  }
+}
+
 function updateProgressStatus(
   channel: string,
   threadTs: string,
@@ -218,6 +236,9 @@ function updateProgressStatus(
   const entry = thread?.get(messageTs);
   if (entry) {
     entry.status = status;
+    if (status === "error" && thread) {
+      evictExcessErrors(thread);
+    }
   }
 }
 
@@ -262,7 +283,10 @@ async function cleanupProgressMessages(channel: string, threadTs: string): Promi
 
   await Promise.all(deletions);
 
-  // Clean up thread entry if empty
+  // Cap any error entries we left behind so the per-thread map cannot grow
+  // unbounded across the process lifetime.
+  evictExcessErrors(thread);
+
   if (thread.size === 0) {
     progressMessages.delete(key);
   }
