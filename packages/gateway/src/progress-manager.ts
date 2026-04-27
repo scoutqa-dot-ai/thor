@@ -292,6 +292,7 @@ export function clearRegistry(): void {
 // ---------------------------------------------------------------------------
 
 class ProgressSession {
+  readonly sessionId: string | undefined;
   private channel: string;
   private threadTs: string;
   private deps: SlackDeps;
@@ -311,17 +312,35 @@ class ProgressSession {
   private finished = false;
   private tickTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(channel: string, threadTs: string, deps: SlackDeps, sourceTs: string) {
+  constructor(
+    channel: string,
+    threadTs: string,
+    deps: SlackDeps,
+    sourceTs: string,
+    sessionId?: string,
+  ) {
     this.channel = channel;
     this.threadTs = threadTs;
     this.deps = deps;
     this.sourceTs = sourceTs;
+    this.sessionId = sessionId;
     this.startTime = Date.now();
-    // Tick the elapsed timer even when no events arrive (e.g. one slow tool
-    // call running for minutes). Recursive setTimeout (rather than setInterval)
-    // ensures the next tick is scheduled only after the previous one resolves,
-    // and the cadence can adapt to the session's elapsed time.
     this.scheduleNextTick();
+  }
+
+  /**
+   * Stop ticking and refuse further updates without posting any final state.
+   * Used when this session is superseded by a newer one (e.g. a duplicate
+   * `start` arrives) so the orphaned tickTimer chain doesn't keep editing
+   * messages owned by the new session.
+   */
+  abandon(): void {
+    if (this.finished) return;
+    this.finished = true;
+    if (this.tickTimer) {
+      clearTimeout(this.tickTimer);
+      this.tickTimer = undefined;
+    }
   }
 
   private scheduleNextTick(): void {
@@ -568,8 +587,15 @@ export async function handleProgressEvent(
   });
 
   if (event.type === "start") {
-    // New session — replace any existing one
-    activeSessions.set(key, new ProgressSession(channel, threadTs, deps, sourceTs));
+    // Abandon any prior session on this thread so its tickTimer stops and it
+    // can no longer post or edit messages — otherwise the orphan keeps
+    // editing the OLD progress message while the new session runs.
+    const prior = activeSessions.get(key);
+    if (prior) prior.abandon();
+    activeSessions.set(
+      key,
+      new ProgressSession(channel, threadTs, deps, sourceTs, event.sessionId),
+    );
     return;
   }
 
