@@ -9,6 +9,11 @@
 import { normalize as normalizePosix } from "node:path/posix";
 import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
 
+interface DenyGuidance {
+  reason: string;
+  instead?: string;
+}
+
 const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
 const DIGITS_ONLY = /^\d+$/;
 const PROTECTED_PR_HEAD_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
@@ -49,6 +54,85 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
 
 const HELP_FLAGS: ReadonlySet<string> = new Set(["-h", "--help"]);
 
+const DEFAULT_GH_DENY_GUIDANCE: DenyGuidance = {
+  reason: "this command shape is outside Thor's allowed gh workflows.",
+};
+
+const REPO_OVERRIDE_DENY_GUIDANCE: DenyGuidance = {
+  reason: "repo-targeting flags are blocked so writes and auth stay scoped to the current repo.",
+  instead: "cd into the intended repo or worktree and rerun the command without -R or --repo",
+};
+
+const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
+  "gh auth status": {
+    reason: "only auth status inspection is allowed; login/logout/token mutation is blocked.",
+    instead: "gh auth status",
+  },
+  "gh pr checkout": {
+    reason: "pr checkout would switch the current worktree branch.",
+    instead:
+      "git fetch origin pull/<N>/head:pr-<N> && git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>",
+  },
+  "gh pr diff": {
+    reason:
+      "PR review should happen from a fetched worktree so tests and code search are available.",
+    instead:
+      "git fetch origin pull/<N>/head:pr-<N> && git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>",
+  },
+  "gh pr create": {
+    reason:
+      "PR creation is limited to the current worktree branch and one non-interactive body source.",
+    instead:
+      "gh pr create --title <title> --body <body> or gh pr create --fill; omit --head unless it matches the current worktree branch",
+  },
+  "gh issue create": {
+    reason: "issue creation must be non-interactive and include a title plus body.",
+    instead: "gh issue create --title <title> --body <body>",
+  },
+  "gh pr comment": {
+    reason: "PR comments must target a numeric PR and provide exactly one body source.",
+    instead: "gh pr comment <number> --body <text> or gh pr comment <number> -F <path>",
+  },
+  "gh issue comment": {
+    reason: "issue comments must target a numeric issue and provide an inline body.",
+    instead: "gh issue comment <number> --body <text>",
+  },
+  "gh pr review": {
+    reason: "reviews must be append-only comments or request-changes reviews with an inline body.",
+    instead: "gh pr review <number> --comment --body <text>",
+  },
+  "gh run rerun": {
+    reason: "run rerun requires a numeric run ID and only supports --failed and --debug.",
+    instead: "gh run rerun <run-id> [--failed] [--debug]",
+  },
+  "gh run download": {
+    reason: "run download requires a numeric run ID and only supports artifact filter flags.",
+    instead: "gh run download <run-id> [--dir <path>] [--name <artifact>]",
+  },
+  "gh workflow view": {
+    reason: "workflow view requires a workflow selector.",
+    instead: "gh workflow view <workflow>",
+  },
+  "gh workflow run": {
+    reason: "workflow dispatch requires a workflow selector and at most one ref.",
+    instead: "gh workflow run <workflow> [--ref <branch>] [-f key=value]",
+  },
+  "gh release view": {
+    reason: "release view requires a tag or latest selector.",
+    instead: "gh release view <tag|latest>",
+  },
+  "gh release download": {
+    reason:
+      "release download has local filesystem side effects and is outside Thor's release surface.",
+    instead: "gh release view <tag|latest>",
+  },
+  "gh api": {
+    reason:
+      "gh api is limited to implicit GET requests against REST endpoints with output-shaping flags only.",
+    instead: "gh api <endpoint> --jq <filter> or use a first-class gh read command",
+  },
+};
+
 export function validateGhArgs(args: string[], cwd?: string): string | null {
   if (!Array.isArray(args)) return "args must be an array";
   if (args.length === 0) return null;
@@ -57,7 +141,7 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
   if (isHelpRequest(args)) return null;
 
   const command = ghCommandLabel(args);
-  if (hasRepoOverride(args)) return denyMessage(command);
+  if (hasRepoOverride(args)) return denyMessage(command, REPO_OVERRIDE_DENY_GUIDANCE);
 
   const key = ghCommandKey(args);
   if (!key || !ALLOWED_GH_COMMANDS.has(key)) {
@@ -129,8 +213,12 @@ function ghCommandLabel(args: string[]): string {
   return `gh ${args[0]}`;
 }
 
-function denyMessage(command: string): string {
-  return `"${command}" is not allowed. ${USING_GH_HINT}`;
+function denyMessage(command: string, guidance?: DenyGuidance): string {
+  const details = guidance ?? GH_DENY_GUIDANCE[command] ?? DEFAULT_GH_DENY_GUIDANCE;
+  const lines = [`"${command}" is not allowed.`, `Reason: ${details.reason}`];
+  if (details.instead) lines.push(`Try instead: ${details.instead}`);
+  lines.push(`Details: ${USING_GH_HINT}`);
+  return lines.join("\n");
 }
 
 function validateRequiredNumericSelector(args: string[], command: string): string | null {
@@ -180,16 +268,46 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
   // makes it the explicit form of the default — no way to PR from a different
   // branch, fork, or protected branch via --head. Cross-fork (`<owner>:<branch>`)
   // and protected branches (main/master) fall out as side effects.
-  if (heads.length > 1) return denyMessage("gh pr create");
+  if (heads.length > 1) {
+    return denyMessage("gh pr create", {
+      reason: "multiple --head values are ambiguous.",
+      instead:
+        "provide at most one --head value, or omit --head and use the current worktree branch",
+    });
+  }
   if (heads.length === 1) {
     const head = heads[0];
-    if (
-      !head ||
-      head.startsWith("-") ||
-      PROTECTED_PR_HEAD_BRANCHES.has(head) ||
-      head !== branchFromCwd(cwd)
-    ) {
-      return denyMessage("gh pr create");
+    if (!head || head.startsWith("-")) {
+      return denyMessage("gh pr create", {
+        reason: `--head "${head}" is not a valid branch value.`,
+        instead: "omit --head and use the current worktree branch",
+      });
+    }
+    if (PROTECTED_PR_HEAD_BRANCHES.has(head)) {
+      return denyMessage("gh pr create", {
+        reason: `--head "${head}" targets a protected branch.`,
+        instead: "create the PR from a feature worktree branch instead",
+      });
+    }
+    if (head.includes(":")) {
+      return denyMessage("gh pr create", {
+        reason: `--head "${head}" uses a cross-fork selector, which Thor blocks.`,
+        instead: "cd into the local branch worktree and omit --head",
+      });
+    }
+
+    const cwdBranch = branchFromCwd(cwd);
+    if (!cwdBranch) {
+      return denyMessage("gh pr create", {
+        reason: `--head "${head}" cannot be checked because cwd is not a branch worktree.`,
+        instead: "cd into /workspace/worktrees/<repo>/<branch> or omit --head",
+      });
+    }
+    if (head !== cwdBranch) {
+      return denyMessage("gh pr create", {
+        reason: `--head "${head}" does not match cwd branch "${cwdBranch}".`,
+        instead: `cd into /workspace/worktrees/<repo>/${head} or omit --head`,
+      });
     }
   }
 
