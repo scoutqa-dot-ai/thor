@@ -176,6 +176,12 @@ describe("gateway", () => {
             service: "gateway",
             runnerUrl: "http://runner.test",
             configured: true,
+            queue: {
+              status: "ok",
+              pendingCount: 0,
+              staleThresholdMs: 900000,
+              staleEventCount: 0,
+            },
             services: {
               runner: { status: "ok", service: "runner" },
               "slack-mcp": { status: "ok", service: "slack-mcp" },
@@ -257,6 +263,12 @@ describe("gateway", () => {
           expect(response.status).toBe(200);
           expect(await response.json()).toMatchObject({
             status: "ok",
+            queue: {
+              status: "ok",
+              pendingCount: 0,
+              staleThresholdMs: 900000,
+              staleEventCount: 0,
+            },
             codex: {
               status: "no_auth",
               authenticated: false,
@@ -274,6 +286,243 @@ describe("gateway", () => {
     } finally {
       rmSync(authDir, { recursive: true, force: true });
     }
+  });
+
+  it("returns 503 when queue has stale pending events", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const staleReceivedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+      queue.enqueue({
+        id: "stale-event",
+        source: "cron",
+        correlationKey: "cron:stale",
+        payload: { prompt: "stale" },
+        receivedAt: staleReceivedAt,
+        sourceTs: Date.now(),
+        readyAt: Date.now() + 60_000,
+      });
+
+      const response = await fetch(`${baseUrl}/health`);
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        status: "error",
+        queue: {
+          status: "error",
+          pendingCount: 1,
+          staleThresholdMs: 900000,
+          staleEventCount: 1,
+          oldestPendingReceivedAt: staleReceivedAt,
+        },
+      });
+    });
+  });
+
+  it("keeps HTTP 200 when dependencies fail but queue is not stale", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "error", error: "runner down" }), {
+          status: 503,
+        });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await withServer(fetchImpl, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/health`);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        status: "error",
+        queue: {
+          status: "ok",
+          pendingCount: 0,
+          staleThresholdMs: 900000,
+          staleEventCount: 0,
+        },
+        services: {
+          runner: {
+            status: "error",
+            error: "HTTP 503",
+          },
+        },
+      });
+    });
+  });
+
+  it("returns 503 when queue snapshot cannot be read", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await withServer(fetchImpl, async (baseUrl, _queue, queueDir) => {
+      rmSync(queueDir, { recursive: true, force: true });
+
+      const response = await fetch(`${baseUrl}/health`);
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        status: "error",
+        queue: {
+          status: "error",
+          pendingCount: 0,
+          staleThresholdMs: 900000,
+          staleEventCount: 0,
+          error: expect.stringContaining("queue snapshot failed:"),
+        },
+      });
+    });
+  });
+
+  it("preserves receivedAt when GitHub pending-branch events are rerouted", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      if (url.startsWith("http://remote-cli:3004/github/pr-head?")) {
+        return new Response(
+          JSON.stringify({ ref: "feature/refactor", headRepoFullName: "acme/thor" }),
+          { status: 200 },
+        );
+      }
+      if (url === "http://runner.test/trigger" && init?.method === "POST") {
+        return new Response(JSON.stringify({ busy: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue, queueDir) => {
+        const body = JSON.stringify({
+          action: "created",
+          installation: { id: 1 },
+          repository: { full_name: "acme/thor" },
+          sender: { login: "alice", type: "User" },
+          issue: {
+            number: 12,
+            pull_request: { html_url: "https://github.com/acme/thor/pull/12" },
+          },
+          comment: {
+            body: "please review",
+            html_url: "https://github.com/acme/thor/pull/12#issuecomment-1",
+            created_at: "2026-04-24T11:00:00Z",
+          },
+        });
+
+        const webhookResponse = await fetch(`${baseUrl}/github/webhook`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+            "X-GitHub-Delivery": "delivery-reroute-stale",
+            "X-GitHub-Event": "issue_comment",
+          },
+          body,
+        });
+
+        expect(webhookResponse.status).toBe(200);
+
+        const queueFiles = readdirSync(queueDir).filter(
+          (entry) => entry.endsWith(".json") && !entry.startsWith("."),
+        );
+        expect(queueFiles).toHaveLength(1);
+
+        const queuedPath = join(queueDir, queueFiles[0]);
+        const queuedEvent = JSON.parse(readFileSync(queuedPath, "utf8")) as Record<string, unknown>;
+        const staleReceivedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+        writeFileSync(
+          queuedPath,
+          JSON.stringify({
+            ...queuedEvent,
+            receivedAt: staleReceivedAt,
+          }),
+          "utf8",
+        );
+
+        await queue.flush();
+
+        const queuedAfterReroute = readQueuedEvents(queueDir);
+        expect(queuedAfterReroute).toHaveLength(1);
+        expect(queuedAfterReroute[0]).toMatchObject({
+          id: "delivery-reroute-stale:resolved",
+          correlationKey: "git:branch:thor:feature/refactor",
+          receivedAt: staleReceivedAt,
+        });
+
+        const healthResponse = await fetch(`${baseUrl}/health`);
+        expect(healthResponse.status).toBe(503);
+        expect(await healthResponse.json()).toMatchObject({
+          status: "error",
+          queue: {
+            status: "error",
+            pendingCount: 1,
+            staleEventCount: 1,
+            oldestPendingReceivedAt: staleReceivedAt,
+          },
+        });
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
   });
 
   it("returns a placeholder response for the configured redirect URL", async () => {
