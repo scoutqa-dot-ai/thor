@@ -3,6 +3,11 @@ import { createLogger, logWarn } from "@thor/common";
 const log = createLogger("gateway-slack-api");
 
 const DEFAULT_SLACK_API_BASE_URL = "https://slack.com/api";
+/** Hard cap for any single Slack Web API call. Slack publishes p99 latencies
+ * well under 1s; we set this to 10s so a hung request cannot stall the NDJSON
+ * progress consumer indefinitely (which would block all subsequent events
+ * for the same session). */
+const SLACK_API_TIMEOUT_MS = 10_000;
 
 export type SlackBlock = Record<string, unknown>;
 
@@ -35,17 +40,23 @@ async function callSlackApi<T extends SlackApiResponse>(
     throw new Error(`Slack API ${method} failed: bot token not configured`);
   }
 
-  const response = await getFetch(deps.fetchImpl)(
-    `${getApiBaseUrl(deps.slackApiBaseUrl)}/${method}`,
-    {
+  let response: Response;
+  try {
+    response = await getFetch(deps.fetchImpl)(`${getApiBaseUrl(deps.slackApiBaseUrl)}/${method}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${deps.botToken}`,
         "Content-Type": "application/json; charset=utf-8",
       },
       body: JSON.stringify(payload),
-    },
-  );
+      signal: AbortSignal.timeout(SLACK_API_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(`Slack API ${method} timed out after ${SLACK_API_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  }
 
   if (!response.ok) {
     throw new Error(`Slack API ${method} failed with HTTP ${response.status}`);
