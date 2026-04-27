@@ -145,9 +145,9 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       JSON.stringify({ type: "tool", tool: "write", status: "completed" }),
       JSON.stringify({
         type: "memory",
-        action: "read",
+        action: "write",
         path: "/workspace/memory/my-repo/README.md",
-        source: "bootstrap",
+        source: "tool",
       }),
       JSON.stringify({
         type: "delegate",

@@ -478,9 +478,9 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   }
 
   const progressTarget = buildProgressTarget(input.slackEvents, input.slackDeps);
-  // Cron-only and approval-only batches have no Slack progress relay; drain
-  // in foreground so callers can rely on cleanup happening before return.
-  const isSilentOnly = sources.length === 1 && (sources[0] === "cron" || sources[0] === "approval");
+  // Cron-only batches have no Slack progress relay; drain in foreground so
+  // callers can rely on cleanup happening before return.
+  const isSilentOnly = sources.length === 1 && sources[0] === "cron";
   const backgroundDrain = !progressTarget && !isSilentOnly;
   const prompt =
     parts.length === 1 ? parts[0].singlePrompt : parts.map((part) => part.mixedPrompt).join("\n\n");

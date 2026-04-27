@@ -87,9 +87,9 @@ describe("ProgressManager", () => {
       "1710000000.001",
       {
         type: "memory",
-        action: "read",
+        action: "write",
         path: "/workspace/memory/my-repo/README.md",
-        source: "bootstrap",
+        source: "tool",
       },
       deps,
       "",
@@ -161,7 +161,7 @@ describe("ProgressManager", () => {
       {
         type: "memory",
         action: "read",
-        path: "/workspace/memory/service-a/README.md",
+        path: "/workspace/memory/service-a/notes.md",
         source: "bootstrap",
       },
       deps,
@@ -182,7 +182,7 @@ describe("ProgressManager", () => {
     await sendTools(deps, 3);
 
     const postBody = JSON.parse(String(callsTo(deps, "chat.postMessage")[0][1]?.body));
-    expect(postBody.text).toContain("memory: service-a/README.md, service-b/README.md");
+    expect(postBody.text).toContain("memory: notes.md, README.md");
     expect(postBody.text).not.toContain("(boot)");
     expect(postBody.text).not.toContain("read ");
     expect(postBody.text).not.toContain("write ");
