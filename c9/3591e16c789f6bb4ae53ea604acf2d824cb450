@@ -1,0 +1,23 @@
+docs/plan/2026042406_command-policy-consolidation.md
+  37d754bb0cbf9ce5 77-78,234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "c93591e16c789f6bb4ae53ea604acf2d824cb450",
+  "prompts": {
+    "37d754bb0cbf9ce5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d747613-87de-44d0-8b03-e5239a7023a5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
