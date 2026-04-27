@@ -224,6 +224,211 @@ export interface GatewayApp {
   queue: EventQueue;
 }
 
+interface SlackBlockAction {
+  action_id?: string;
+  value?: string;
+}
+
+interface SlackBlockActionsPayload {
+  user?: { id?: string };
+  channel?: { id?: string };
+  message?: { ts?: string; thread_ts?: string };
+  container?: { message_ts?: string; thread_ts?: string; channel_id?: string };
+}
+
+interface ApprovalActionContext {
+  res: Response;
+  action: SlackBlockAction;
+  payload: SlackBlockActionsPayload;
+  slackDeps: SlackDeps;
+  remoteCliUrl: string;
+  resolveSecret: string | undefined;
+  fetchImpl: typeof fetch | undefined;
+  queue: EventQueue;
+}
+
+/**
+ * Handle a single Slack approval button click. Acks Slack synchronously,
+ * then resolves the approval, updates the original card, and re-enters the
+ * originating session via the queue. Returns true when the action belonged
+ * to this handler (so the caller stops iterating).
+ */
+function handleApprovalAction(ctx: ApprovalActionContext): boolean {
+  const { res, action, payload, slackDeps, remoteCliUrl, resolveSecret, fetchImpl, queue } = ctx;
+  const decision = action.action_id === "approval_approve" ? "approved" : "rejected";
+  const reviewer = payload.user?.id ?? "unknown";
+  if (!action.value) return false;
+  const route = parseApprovalButtonValue(action.value);
+  const channel = payload.channel?.id ?? payload.container?.channel_id;
+  const messageTs = payload.message?.ts ?? payload.container?.message_ts;
+  const threadTs = route?.threadTs ?? payload.message?.thread_ts ?? payload.container?.thread_ts;
+
+  if (!route) {
+    logError(log, "approval_resolve_failed", "Unrecognized button value format", {
+      value: action.value,
+    });
+    res.status(200).json({ ok: true });
+    return true;
+  }
+
+  if (!threadTs) {
+    logError(log, "approval_resolve_failed", "Unable to determine originating thread", {
+      actionId: route.actionId,
+      value: action.value,
+    });
+    res.status(200).json({ ok: true });
+    return true;
+  }
+
+  logInfo(log, "approval_action", {
+    actionId: route.actionId,
+    upstreamName: route.upstreamName,
+    decision,
+    reviewer,
+    threadTs,
+    remoteCliUrl,
+  });
+
+  // Slack interactivity requires a reply within 3s. Ack now and finish in the
+  // background — the resolveApproval call retries on transient remote-cli
+  // failures and surfaces a Slack-visible error message if it ultimately fails.
+  res.status(200).json({ ok: true });
+
+  void resolveApprovalAndReenter({
+    route,
+    decision,
+    reviewer,
+    channel,
+    messageTs,
+    threadTs,
+    slackDeps,
+    remoteCliUrl,
+    resolveSecret,
+    fetchImpl,
+    queue,
+  }).catch((error) => {
+    logError(log, "approval_background_error", error, { actionId: route.actionId });
+  });
+  return true;
+}
+
+interface ApprovalReentryContext {
+  route: { actionId: string; upstreamName?: string };
+  decision: "approved" | "rejected";
+  reviewer: string;
+  channel: string | undefined;
+  messageTs: string | undefined;
+  threadTs: string;
+  slackDeps: SlackDeps;
+  remoteCliUrl: string;
+  resolveSecret: string | undefined;
+  fetchImpl: typeof fetch | undefined;
+  queue: EventQueue;
+}
+
+async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<void> {
+  const {
+    route,
+    decision,
+    reviewer,
+    channel,
+    messageTs,
+    threadTs,
+    slackDeps,
+    remoteCliUrl,
+    resolveSecret,
+    fetchImpl,
+    queue,
+  } = ctx;
+
+  const resolved = await resolveApproval(
+    route.actionId,
+    decision,
+    reviewer,
+    remoteCliUrl,
+    resolveSecret,
+    fetchImpl,
+  );
+  if (!resolved) {
+    logError(log, "approval_resolve_failed", "remote-cli returned error", {
+      actionId: route.actionId,
+    });
+    if (channel && messageTs) {
+      const failureText = `⚠️ *${decision.charAt(0).toUpperCase()}${decision.slice(1)}, but resolution failed* by <@${reviewer}> · \`${route.actionId}\`\n>remote-cli did not respond after retries; please retry the approval action`;
+      await updateSlackMessage(channel, messageTs, failureText, slackDeps);
+    }
+    return;
+  }
+
+  const resolution = summarizeResolutionOutput(resolved.stdout, resolved.stderr);
+  const resolutionFailed = resolved.exitCode !== 0;
+  const statusEmoji = resolutionFailed ? "⚠️" : decision === "approved" ? "✅" : "❌";
+  const baseDecisionLabel = decision.charAt(0).toUpperCase() + decision.slice(1);
+  const decisionLabel = resolutionFailed
+    ? `${baseDecisionLabel}, resolution failed`
+    : baseDecisionLabel;
+  const target = [route.upstreamName ?? resolution.upstream, resolution.tool]
+    .filter(Boolean)
+    .join("/");
+  const summarySuffix = resolution.summary ? `\n>${truncate(resolution.summary, 180)}` : "";
+  const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}> · \`${route.actionId}\`${target ? ` (${target})` : ""}${summarySuffix}`;
+
+  if (channel && messageTs) {
+    await updateSlackMessage(channel, messageTs, text, slackDeps);
+  }
+
+  if (!channel) {
+    logError(log, "approval_reentry_enqueue_failed", "Missing channel for approval outcome", {
+      actionId: route.actionId,
+      threadTs,
+    });
+    return;
+  }
+
+  const outcomePayload: ApprovalOutcomeEventPayload = {
+    actionId: route.actionId,
+    decision,
+    reviewer,
+    channel,
+    threadTs,
+    upstreamName: route.upstreamName ?? resolution.upstream,
+    tool: resolution.tool,
+    messageTs,
+    resolutionStatus: resolutionFailed ? "error" : resolution.status,
+    resolutionSummary: resolution.summary,
+    resolutionExitCode: resolved.exitCode,
+  };
+
+  const rawCorrelationKey = `slack:thread:${threadTs}`;
+  const outcomeCorrelationKey = resolveCorrelationKeys([rawCorrelationKey]);
+  if (outcomeCorrelationKey !== rawCorrelationKey) {
+    logInfo(log, "corr_key_resolved", {
+      rawKey: rawCorrelationKey,
+      correlationKey: outcomeCorrelationKey,
+    });
+  }
+
+  queue.enqueue({
+    id: `approval-${route.actionId}-${decision}-${Date.now()}`,
+    source: "approval",
+    correlationKey: outcomeCorrelationKey,
+    payload: outcomePayload,
+    receivedAt: new Date().toISOString(),
+    sourceTs: Date.now(),
+    readyAt: Date.now(),
+    delayMs: 0,
+    interrupt: false,
+  });
+
+  logInfo(log, "approval_outcome_enqueued", {
+    actionId: route.actionId,
+    decision,
+    channel,
+    threadTs,
+    correlationKey: outcomeCorrelationKey,
+  });
+}
+
 export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   if (!config.slackBotToken.trim()) {
     throw new Error("SLACK_BOT_TOKEN is required");
@@ -615,147 +820,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           (action.action_id === "approval_approve" || action.action_id === "approval_reject") &&
           action.value
         ) {
-          const decision = action.action_id === "approval_approve" ? "approved" : "rejected";
-          const reviewer = payload.user?.id ?? "unknown";
-          const route = parseApprovalButtonValue(action.value);
-          const channel = payload.channel?.id ?? payload.container?.channel_id;
-          const messageTs = payload.message?.ts ?? payload.container?.message_ts;
-          const threadTs =
-            route?.threadTs ?? payload.message?.thread_ts ?? payload.container?.thread_ts;
-
-          if (!route) {
-            logError(log, "approval_resolve_failed", "Unrecognized button value format", {
-              value: action.value,
-            });
-            res.status(200).json({ ok: true });
-            return;
-          }
-
-          if (!threadTs) {
-            logError(log, "approval_resolve_failed", "Unable to determine originating thread", {
-              actionId: route.actionId,
-              value: action.value,
-            });
-            res.status(200).json({ ok: true });
-            return;
-          }
-
-          logInfo(log, "approval_action", {
-            actionId: route.actionId,
-            upstreamName: route.upstreamName,
-            decision,
-            reviewer,
-            threadTs,
+          const handled = handleApprovalAction({
+            res,
+            action,
+            payload,
+            slackDeps,
             remoteCliUrl,
+            resolveSecret: config.resolveSecret,
+            fetchImpl: config.fetchImpl,
+            queue,
           });
-
-          // Respond immediately to Slack (must reply within 3s)
-          res.status(200).json({ ok: true });
-
-          void (async () => {
-            const resolved = await resolveApproval(
-              route.actionId,
-              decision,
-              reviewer,
-              remoteCliUrl,
-              config.resolveSecret,
-              config.fetchImpl,
-            );
-            if (!resolved) {
-              logError(log, "approval_resolve_failed", "remote-cli returned error", {
-                actionId: route.actionId,
-              });
-              // Don't silently drop the click. Update the original card so the
-              // human knows their decision didn't take effect — without this
-              // the approval is forever pending in remote-cli with no way
-              // for the user to retry from Slack.
-              if (channel && messageTs) {
-                const failureText = `⚠️ *${decision.charAt(0).toUpperCase()}${decision.slice(1)}, but resolution failed* by <@${reviewer}> · \`${route.actionId}\`\n>remote-cli did not respond after retries; please retry the approval action`;
-                await updateSlackMessage(channel, messageTs, failureText, slackDeps);
-              }
-              return;
-            }
-
-            const resolution = summarizeResolutionOutput(resolved.stdout, resolved.stderr);
-            const resolutionFailed = resolved.exitCode !== 0;
-            const statusEmoji = resolutionFailed ? "⚠️" : decision === "approved" ? "✅" : "❌";
-            const baseDecisionLabel = decision.charAt(0).toUpperCase() + decision.slice(1);
-            const decisionLabel = resolutionFailed
-              ? `${baseDecisionLabel}, resolution failed`
-              : baseDecisionLabel;
-            const target = [route.upstreamName ?? resolution.upstream, resolution.tool]
-              .filter(Boolean)
-              .join("/");
-            const summarySuffix = resolution.summary
-              ? `\n>${truncate(resolution.summary, 180)}`
-              : "";
-            const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}> · \`${route.actionId}\`${target ? ` (${target})` : ""}${summarySuffix}`;
-
-            if (channel && messageTs) {
-              await updateSlackMessage(channel, messageTs, text, slackDeps);
-            }
-
-            if (!channel) {
-              logError(
-                log,
-                "approval_reentry_enqueue_failed",
-                "Missing channel for approval outcome",
-                {
-                  actionId: route.actionId,
-                  threadTs,
-                },
-              );
-              return;
-            }
-
-            const outcomePayload: ApprovalOutcomeEventPayload = {
-              actionId: route.actionId,
-              decision,
-              reviewer,
-              channel,
-              threadTs,
-              upstreamName: route.upstreamName ?? resolution.upstream,
-              tool: resolution.tool,
-              messageTs,
-              resolutionStatus: resolutionFailed ? "error" : resolution.status,
-              resolutionSummary: resolution.summary,
-              resolutionExitCode: resolved.exitCode,
-            };
-
-            const rawCorrelationKey = `slack:thread:${threadTs}`;
-            const outcomeCorrelationKey = resolveCorrelationKeys([rawCorrelationKey]);
-            if (outcomeCorrelationKey !== rawCorrelationKey) {
-              logInfo(log, "corr_key_resolved", {
-                rawKey: rawCorrelationKey,
-                correlationKey: outcomeCorrelationKey,
-              });
-            }
-
-            queue.enqueue({
-              id: `approval-${route.actionId}-${decision}-${Date.now()}`,
-              source: "approval",
-              correlationKey: outcomeCorrelationKey,
-              payload: outcomePayload,
-              receivedAt: new Date().toISOString(),
-              sourceTs: Date.now(),
-              readyAt: Date.now(),
-              delayMs: 0,
-              interrupt: false,
-            });
-
-            logInfo(log, "approval_outcome_enqueued", {
-              actionId: route.actionId,
-              decision,
-              channel,
-              threadTs,
-              correlationKey: outcomeCorrelationKey,
-            });
-          })().catch((error) => {
-            logError(log, "approval_background_error", error, {
-              actionId: route.actionId,
-            });
-          });
-          return;
+          if (handled) return;
         }
       }
     }
