@@ -106,6 +106,10 @@ function buildRawBodyFields(
   };
 }
 
+function isRawWebhookRoute(path: string): boolean {
+  return /^\/(?:slack\/events|github\/webhook)\/?$/.test(path);
+}
+
 /** Short debounce delay for mentions and engaged threads (ms). */
 const SHORT_DELAY_MS = 3000;
 const GITHUB_MENTION_DELAY_MS = 3000;
@@ -354,36 +358,38 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     limit: "25mb",
     type: "*/*",
   });
+  const jsonParser = express.json({
+    // GitHub webhook payloads can be up to 25 MB
+    // https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap
+    limit: "25mb",
+    verify: (request, _response, buf) => {
+      (request as RawBodyRequest).rawBody = buf.toString("utf8");
+      (request as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
+    },
+  });
+  const urlencodedParser = express.urlencoded({
+    extended: false,
+    verify: (request, _response, buf) => {
+      (request as RawBodyRequest).rawBody = buf.toString("utf8");
+      (request as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
+    },
+  });
 
   app.use((req, res, next) => {
-    if (req.path === "/slack/events" || req.path === "/github/webhook") {
+    if (isRawWebhookRoute(req.path)) {
       next();
       return;
     }
 
-    express.json({
-      // GitHub webhook payloads can be up to 25 MB
-      // https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap
-      limit: "25mb",
-      verify: (request, _response, buf) => {
-        (request as RawBodyRequest).rawBody = buf.toString("utf8");
-        (request as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
-      },
-    })(req, res, next);
+    jsonParser(req, res, next);
   });
   app.use((req, res, next) => {
-    if (req.path === "/slack/events" || req.path === "/github/webhook") {
+    if (isRawWebhookRoute(req.path)) {
       next();
       return;
     }
 
-    express.urlencoded({
-      extended: false,
-      verify: (request, _response, buf) => {
-        (request as RawBodyRequest).rawBody = buf.toString("utf8");
-        (request as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
-      },
-    })(req, res, next);
+    urlencodedParser(req, res, next);
   });
 
   app.get("/health", async (_req, res) => {

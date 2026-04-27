@@ -441,6 +441,39 @@ describe("gateway", () => {
     });
   });
 
+  it("preserves raw Slack webhook handling on trailing-slash route", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(fetchImpl, async (baseUrl) => {
+        const body = JSON.stringify({ type: "event_callback", event_id: "EvSlash", event: {} });
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events/`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "wrong-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(401);
+
+        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          route: "/slack/events",
+          provider: "slack",
+          signatureVerified: false,
+          reason: "signature_invalid",
+          rawBodyUtf8: body,
+        });
+      });
+    });
+  });
+
   it("archives Slack malformed JSON payloads", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
@@ -579,6 +612,51 @@ describe("gateway", () => {
           });
           expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
           expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("preserves raw GitHub webhook handling on trailing-slash route", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = JSON.stringify({
+            action: "created",
+            repository: { full_name: "acme/thor" },
+          });
+
+          const response = await fetch(`${baseUrl}/github/webhook/`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "wrong-secret"),
+              "X-GitHub-Delivery": "delivery-trailing-slash-bad-sig",
+              "X-GitHub-Event": "issue_comment",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(401);
+
+          const entries = readGitHubIgnoredEntries(worklogDir);
+          expect(entries).toHaveLength(1);
+          expect(entries[0]).toMatchObject({
+            route: "/github/webhook",
+            provider: "github",
+            signatureVerified: false,
+            requestId: "delivery-trailing-slash-bad-sig",
+            reason: "signature_invalid",
+            rawBodyUtf8: body,
+          });
         },
         {
           githubWebhookSecret: "github-secret",
