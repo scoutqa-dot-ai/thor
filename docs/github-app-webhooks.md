@@ -6,17 +6,17 @@ This runbook covers the minimum setup for GitHub App webhook intake in Thor (`PO
 
 Set these in `.env` (or your deployment secret store):
 
-| Variable                      | Required | Used by                 | What it is                                          | Where to find it in GitHub UI                                                                                 |
-| ----------------------------- | -------- | ----------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `GITHUB_APP_ID`               | Yes      | `remote-cli`            | Numeric GitHub App ID (JWT `iss`)                   | GitHub App settings page (`App ID`)                                                                           |
-| `GITHUB_APP_SLUG`             | Yes      | `remote-cli`, `gateway` | App slug; used for bot identity + mention detection | GitHub App settings page (`App slug`)                                                                         |
-| `GITHUB_APP_BOT_ID`           | Yes      | `remote-cli`            | Numeric bot user ID for commit email derivation     | Run `gh api /users/<slug>[bot] --jq .id` or open `https://api.github.com/users/<slug>%5Bbot%5D` and read `id` |
-| `GITHUB_APP_PRIVATE_KEY_FILE` | Yes      | `remote-cli`            | Filesystem path to App private key PEM              | GitHub App settings (`Private keys`)                                                                          |
-| `GITHUB_WEBHOOK_SECRET`       | Yes      | `gateway`               | HMAC secret used to verify `X-Hub-Signature-256`    | GitHub App webhook settings (`Secret`)                                                                        |
+| Variable                      | Required | Used by                 | What it is                                           | Where to find it in GitHub UI                                                                                 |
+| ----------------------------- | -------- | ----------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_APP_ID`               | Yes      | `remote-cli`            | Numeric GitHub App ID (JWT `iss`)                    | GitHub App settings page (`App ID`)                                                                           |
+| `GITHUB_APP_SLUG`             | Yes      | `remote-cli`, `gateway` | App slug; used for bot identity + mention detection  | GitHub App settings page (`App slug`)                                                                         |
+| `GITHUB_APP_BOT_ID`           | Yes      | `remote-cli`, `gateway` | Numeric bot user ID — commit email + self-loop guard | Run `gh api /users/<slug>[bot] --jq .id` or open `https://api.github.com/users/<slug>%5Bbot%5D` and read `id` |
+| `GITHUB_APP_PRIVATE_KEY_FILE` | Yes      | `remote-cli`            | Filesystem path to App private key PEM               | GitHub App settings (`Private keys`)                                                                          |
+| `GITHUB_WEBHOOK_SECRET`       | Yes      | `gateway`               | HMAC secret used to verify `X-Hub-Signature-256`     | GitHub App webhook settings (`Secret`)                                                                        |
 
 Notes:
 
-- Gateway requires only `GITHUB_APP_SLUG` + `GITHUB_WEBHOOK_SECRET`.
+- Gateway requires `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_WEBHOOK_SECRET`.
 - Remote-cli requires `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_FILE`.
 - Example bot-id lookup for slug `thor`: `gh api /users/thor[bot] --jq .id`
 
@@ -107,15 +107,16 @@ npx smee-client --url https://smee.io/<channel-id> --path /github/webhook --port
 
 ## 9) Troubleshooting (`github_event_ignored`)
 
-| Reason                           | What it means                                        | How to fix                                                                         |
-| -------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `signature_invalid`              | HMAC verification failed or signature header missing | Verify `GITHUB_WEBHOOK_SECRET`; ensure JSON payload is unmodified in transit       |
-| `event_unsupported`              | Event/action is outside Thor allowlist               | Ensure subscription list is correct and action is expected (`created`/`submitted`) |
-| `repo_not_mapped`                | Repo basename has no matching local clone            | Clone under `/workspace/repos/<basename>`; keep basename aligned                   |
-| `pure_issue_comment_unsupported` | `issue_comment` came from an issue, not a PR         | Comment on a PR thread                                                             |
-| `fork_pr_unsupported`            | PR head repo differs from base repo                  | Use same-repo branch PRs                                                           |
-| `bot_sender`                     | Sender is a bot (or Thor app identity)               | Trigger from a human account                                                       |
-| `empty_review_body`              | Submitted review body was blank                      | Include text in the review body                                                    |
+| Reason                           | What it means                                                                                  | How to fix                                                                         |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `signature_invalid`              | HMAC verification failed or signature header missing                                           | Verify `GITHUB_WEBHOOK_SECRET`; ensure JSON payload is unmodified in transit       |
+| `event_unsupported`              | Event/action is outside Thor allowlist                                                         | Ensure subscription list is correct and action is expected (`created`/`submitted`) |
+| `repo_not_mapped`                | Repo basename has no matching local clone                                                      | Clone under `/workspace/repos/<basename>`; keep basename aligned                   |
+| `pure_issue_comment_unsupported` | `issue_comment` came from an issue, not a PR                                                   | Comment on a PR thread                                                             |
+| `fork_pr_unsupported`            | PR head repo differs from base repo                                                            | Use same-repo branch PRs                                                           |
+| `self_sender`                    | Sender's numeric user ID matches `GITHUB_APP_BOT_ID`                                           | Self-loop guard — expected when Thor comments/reviews                              |
+| `empty_review_body`              | Submitted review body was blank                                                                | Include text in the review body                                                    |
+| `non_mention_comment`            | Comment/review does not mention the app, and (for review events) the PR was not opened by Thor | Mention `@${GITHUB_APP_SLUG}` to act, or open the PR from Thor                     |
 
 ### Dead-letter reasons (`github_trigger_dropped`)
 

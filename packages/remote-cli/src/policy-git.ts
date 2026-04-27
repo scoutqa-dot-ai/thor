@@ -20,6 +20,11 @@ interface ResolvedGitArgsFailure {
 }
 export type ResolvedGitArgs = ResolvedGitArgsSuccess | ResolvedGitArgsFailure;
 
+interface DenyGuidance {
+  reason: string;
+  instead?: string;
+}
+
 const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const USING_GIT_HINT = "Load skill using-git for the supported command patterns.";
@@ -56,6 +61,101 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 const PROTECTED_PUSH_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
+
+const DEFAULT_GIT_DENY_GUIDANCE: DenyGuidance = {
+  reason: "this command shape is outside Thor's allowed git workflows.",
+};
+
+const GIT_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
+  "git --version": {
+    reason: "git --version does not accept extra arguments in Thor.",
+    instead: "git --version",
+  },
+  "git checkout": {
+    reason: "checkout can switch branches in the current worktree, which Thor blocks.",
+    instead:
+      "for branch work, use git worktree add /workspace/worktrees/<repo>/<branch> <branch>; for file restore, use git restore [--source <tree>] -- <path>",
+  },
+  "git switch": {
+    reason: "switch changes the current worktree branch, which Thor blocks.",
+    instead: "git worktree add /workspace/worktrees/<repo>/<branch> <branch>",
+  },
+  "git merge-base": {
+    reason: "merge-base is limited to explicit comparison helpers.",
+    instead: "git merge-base <left> <right> or git merge-base --is-ancestor <left> <right>",
+  },
+  "git branch": {
+    reason: "branch mutation is blocked; only read-only branch inspection is allowed.",
+    instead: "git branch --show-current or git branch --list [<pattern>]",
+  },
+  "git remote": {
+    reason: "remote mutation is blocked; Thor only allows reading the configured origin.",
+    instead: "git remote -v or git remote get-url origin",
+  },
+  "git fetch": {
+    reason: "fetch must avoid config-dependent or arbitrary remote behavior.",
+    instead: "git fetch origin <branch> or git fetch --all",
+  },
+  "git restore": {
+    reason: "restore must name paths after a -- separator and use only supported flags.",
+    instead: "git restore [--source <tree>] [--staged] -- <path>",
+  },
+  "git add": {
+    reason: "add is limited to explicit paths or the full-worktree -A form.",
+    instead: "git add <path...> or git add -A",
+  },
+  "git commit": {
+    reason: "commit must be non-interactive and cannot bypass hooks or amend history.",
+    instead: "git commit -m <message> or git commit -F <path>",
+  },
+  "git worktree": {
+    reason: "only Thor's worktree add/list/remove/prune workflows are allowed.",
+    instead: "git worktree add /workspace/worktrees/<repo>/<branch> <branch>",
+  },
+  "git worktree list": {
+    reason: "worktree list only supports the default output or porcelain output.",
+    instead: "git worktree list or git worktree list --porcelain",
+  },
+  "git worktree remove": {
+    reason: "worktree removal must target an existing path under /workspace/worktrees/.",
+    instead: "git worktree remove /workspace/worktrees/<repo>/<branch>",
+  },
+  "git worktree prune": {
+    reason: "worktree prune only supports the default cleanup or a dry run.",
+    instead: "git worktree prune or git worktree prune --dry-run",
+  },
+  "git worktree add": {
+    reason: "worktree paths must live under /workspace/worktrees/ and end with the branch name.",
+    instead:
+      "git worktree add /workspace/worktrees/<repo>/<branch> <branch> or git worktree add -b <branch> /workspace/worktrees/<repo>/<branch> <start-point>",
+  },
+  "git push": {
+    reason:
+      "pushes must target origin with an explicit HEAD refspec and cannot target main or master.",
+    instead: "git push origin HEAD:refs/heads/<branch>",
+  },
+  "git merge": {
+    reason: "merge is allowed except for hook-bypass flags.",
+    instead: "git merge origin/<branch>",
+  },
+  "git ls-remote": {
+    reason: "ls-remote must read from origin, not arbitrary remotes or URLs.",
+    instead: "git ls-remote origin [<ref-pattern>...]",
+  },
+  "git tag": {
+    reason: "tag creation, deletion, signing, and moving are blocked; listing is allowed.",
+    instead: "git tag --list [<pattern>]",
+  },
+  "git stash": {
+    reason: "stash mutation is blocked; only stash inspection is allowed.",
+    instead: "git stash list or git stash show <stash>",
+  },
+  "git pull": {
+    reason:
+      "pull depends on local upstream/config and can silently choose merge or rebase behavior.",
+    instead: "git fetch origin <branch> && git merge origin/<branch>",
+  },
+};
 
 export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
   if (!Array.isArray(args) || args.length === 0) {
@@ -137,12 +237,16 @@ function wrap(err: string | null, args: string[]): ResolvedGitArgs {
   return err ? { error: err } : { args: [...args] };
 }
 
-function deny(command: string): ResolvedGitArgsFailure {
-  return { error: denyMessage(command) };
+function deny(command: string, guidance?: DenyGuidance): ResolvedGitArgsFailure {
+  return { error: denyMessage(command, guidance) };
 }
 
-function denyMessage(command: string): string {
-  return `"${command}" is not allowed. ${USING_GIT_HINT}`;
+function denyMessage(command: string, guidance?: DenyGuidance): string {
+  const details = guidance ?? GIT_DENY_GUIDANCE[command] ?? DEFAULT_GIT_DENY_GUIDANCE;
+  const lines = [`"${command}" is not allowed.`, `Reason: ${details.reason}`];
+  if (details.instead) lines.push(`Try instead: ${details.instead}`);
+  lines.push(`Details: ${USING_GIT_HINT}`);
+  return lines.join("\n");
 }
 
 function validateMergeBase(args: string[]): string | null {
