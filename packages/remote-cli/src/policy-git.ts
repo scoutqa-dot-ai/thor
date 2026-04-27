@@ -471,8 +471,8 @@ function validateWorktreeAdd(args: string[]): string | null {
   //   `git worktree add <path> <existing-branch>`                — check out existing
   // In both cases:
   //   * the path lives under /workspace/worktrees/
-  //   * the path ends with the branch name (corr-key routing relies on this:
-  //     the branch is inferred from the worktree path).
+  //   * the path portion under /workspace/worktrees/<repo>/ equals the branch
+  //     string verbatim (including slash-separated branch segments).
   if (args.length < 4 || args.length > 6) {
     return denyMessage("git worktree add");
   }
@@ -504,25 +504,48 @@ function validateWorktreeAdd(args: string[]): string | null {
     return denyMessage("git worktree add");
   }
 
-  if (!branch || branch.startsWith("-")) {
+  if (!branch || branch.startsWith("-") || !isValidWorktreeBranchPathPart(branch)) {
     return denyMessage("git worktree add");
   }
 
-  const normalizedPath = normalizeWorktreeAddPath(path);
-  if (!normalizedPath) {
-    return denyMessage("git worktree add");
-  }
-  if (!normalizedPath.endsWith("/" + branch)) {
+  const pathBranch = parseWorktreeAddBranchFromPath(path);
+  if (!pathBranch || pathBranch !== branch) {
     return denyMessage("git worktree add");
   }
 
   return null;
 }
 
-function normalizeWorktreeAddPath(path: string): string | null {
-  if (!isAbsolute(path)) return null;
+function parseWorktreeAddBranchFromPath(path: string): string | null {
+  if (typeof path !== "string" || path.length === 0) return null;
+  if (path.includes("\0") || !isAbsolute(path) || !path.startsWith(WORKTREE_PREFIX)) return null;
+
   const normalized = normalizePosix(path);
-  return normalized.startsWith(WORKTREE_PREFIX) ? normalized : null;
+  if (normalized !== path) return null;
+
+  const relative = path.slice(WORKTREE_PREFIX.length);
+  if (!isValidWorktreeBranchPathPart(relative)) return null;
+
+  const segments = relative.split("/");
+  if (segments.length < 2) return null;
+
+  const repo = segments[0];
+  if (!repo) return null;
+
+  const branch = segments.slice(1).join("/");
+  return isValidWorktreeBranchPathPart(branch) ? branch : null;
+}
+
+function isValidWorktreeBranchPathPart(value: string): boolean {
+  if (!value) return false;
+  if (value.includes("\0")) return false;
+  if (isAbsolute(value)) return false;
+  if (value.startsWith("/") || value.endsWith("/")) return false;
+
+  const segments = value.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "..")) return false;
+
+  return true;
 }
 
 function realpathOrNull(path: string): string | null {
