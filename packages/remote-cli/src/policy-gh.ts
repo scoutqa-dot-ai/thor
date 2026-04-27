@@ -6,11 +6,13 @@
  * every denied shape points the user at the `using-gh` skill.
  */
 
+import { normalize as normalizePosix } from "node:path/posix";
 import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
 
 const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
 const DIGITS_ONLY = /^\d+$/;
 const PROTECTED_PR_HEAD_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
+const WORKTREE_PREFIX = "/workspace/worktrees/";
 
 const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "api",
@@ -47,7 +49,7 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
 
 const HELP_FLAGS: ReadonlySet<string> = new Set(["-h", "--help"]);
 
-export function validateGhArgs(args: string[], _cwd?: string): string | null {
+export function validateGhArgs(args: string[], cwd?: string): string | null {
   if (!Array.isArray(args)) return "args must be an array";
   if (args.length === 0) return null;
 
@@ -68,7 +70,7 @@ export function validateGhArgs(args: string[], _cwd?: string): string | null {
     case "auth status":
       return matchesExactArgs(args, ["auth", "status"]) ? null : denyMessage("gh auth status");
     case "pr create":
-      return validateGhPrCreateArgs(args);
+      return validateGhPrCreateArgs(args, cwd);
     case "pr comment":
       return validateGhCommentArgs(args, "gh pr comment", true);
     case "pr review":
@@ -149,7 +151,7 @@ function validateReleaseViewArgs(args: string[]): string | null {
   return null;
 }
 
-function validateGhPrCreateArgs(args: string[]): string | null {
+function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
   const parsed = scanPolicyArgs(args, 2, [
     { name: "draft", kind: "boolean", aliases: ["--draft"] },
     { name: "fill", kind: "boolean", aliases: ["--fill"] },
@@ -172,18 +174,20 @@ function validateGhPrCreateArgs(args: string[]): string | null {
   const heads = valueFlagValues(parsed, "head");
   const fill = booleanFlagCount(parsed, "fill") > 0;
 
-  // --head must be a single in-repo branch name, mirroring `git push`'s refspec
-  // constraints (policy-git.ts validatePushRefspec). The colon-form
-  // `<owner>:<branch>` would let the agent open a PR from a fork it didn't
-  // produce, escaping the push-policy chain that scopes writes to this repo.
+  // --head must match the branch implied by cwd. The cwd is the agent's worktree
+  // (/workspace/worktrees/<repo>/<branch>), so the branch it would PR from
+  // implicitly is fixed. Allowing --head only when it equals that same branch
+  // makes it the explicit form of the default — no way to PR from a different
+  // branch, fork, or protected branch via --head. Cross-fork (`<owner>:<branch>`)
+  // and protected branches (main/master) fall out as side effects.
   if (heads.length > 1) return denyMessage("gh pr create");
   if (heads.length === 1) {
     const head = heads[0];
     if (
       !head ||
       head.startsWith("-") ||
-      head.includes(":") ||
-      PROTECTED_PR_HEAD_BRANCHES.has(head)
+      PROTECTED_PR_HEAD_BRANCHES.has(head) ||
+      head !== branchFromCwd(cwd)
     ) {
       return denyMessage("gh pr create");
     }
@@ -355,4 +359,15 @@ function validateGhApiArgs(args: string[]): string | null {
 
 function matchesExactArgs(args: string[], expected: readonly string[]): boolean {
   return args.length === expected.length && args.every((arg, idx) => arg === expected[idx]);
+}
+
+function branchFromCwd(cwd: string | undefined): string | null {
+  if (!cwd) return null;
+  const normalized = normalizePosix(cwd);
+  if (!normalized.startsWith(WORKTREE_PREFIX)) return null;
+  const tail = normalized.slice(WORKTREE_PREFIX.length);
+  const slash = tail.indexOf("/");
+  if (slash <= 0) return null;
+  const branch = tail.slice(slash + 1);
+  return branch.length > 0 ? branch : null;
 }

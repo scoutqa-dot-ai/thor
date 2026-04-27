@@ -499,11 +499,13 @@ describe("validateGitArgs", () => {
 // ── gh policy ───────────────────────────────────────────────────────────────
 
 describe("validateGhArgs", () => {
-  function expectGhDenied(args: string[]): string {
-    const error = validateGhArgs(args);
+  function expectGhDenied(args: string[], cwd?: string): string {
+    const error = validateGhArgs(args, cwd);
     expect(error).toContain("Load skill using-gh");
     return error ?? "";
   }
+
+  const HEAD_CWD = "/workspace/worktrees/myrepo/feat/test";
 
   describe("allowed commands", () => {
     it("allows common gh read-only workflows", () => {
@@ -760,49 +762,84 @@ describe("validateGhArgs", () => {
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--editor"]);
     });
 
-    it("allows --head with an in-repo branch name", () => {
+    it("allows --head only when it matches the branch implied by cwd", () => {
       expect(
-        validateGhArgs(["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"]),
+        validateGhArgs(
+          ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+          HEAD_CWD,
+        ),
       ).toBeNull();
       expect(
-        validateGhArgs(["pr", "create", "-H", "feat/test", "--title", "x", "--body", "y"]),
+        validateGhArgs(
+          ["pr", "create", "-H", "feat/test", "--title", "x", "--body", "y"],
+          HEAD_CWD,
+        ),
       ).toBeNull();
       expect(
-        validateGhArgs(["pr", "create", "--head=feat/test", "--title", "x", "--body", "y"]),
+        validateGhArgs(
+          ["pr", "create", "--head=feat/test", "--title", "x", "--body", "y"],
+          HEAD_CWD,
+        ),
       ).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--fill", "--head", "feat/test"])).toBeNull();
+      expect(
+        validateGhArgs(["pr", "create", "--fill", "--head", "feat/test"], HEAD_CWD),
+      ).toBeNull();
     });
 
-    it("blocks unsafe --head shapes", () => {
-      // Cross-fork form would PR from someone else's fork
-      expectGhDenied([
-        "pr",
-        "create",
-        "--head",
-        "monalisa:feat/test",
-        "--title",
-        "x",
-        "--body",
-        "y",
-      ]);
-      // Protected branches mirror git push policy
-      expectGhDenied(["pr", "create", "--head", "main", "--title", "x", "--body", "y"]);
-      expectGhDenied(["pr", "create", "--head", "master", "--title", "x", "--body", "y"]);
-      // Repeated --head is ambiguous
-      expectGhDenied([
-        "pr",
-        "create",
-        "--head",
-        "feat/a",
-        "--head",
-        "feat/b",
-        "--title",
-        "x",
-        "--body",
-        "y",
-      ]);
-      // Argument-injection-shaped values
-      expectGhDenied(["pr", "create", "--head", "-rm", "--title", "x", "--body", "y"]);
+    it("blocks --head when it does not match cwd's branch", () => {
+      // Different branch in the same repo
+      expectGhDenied(
+        ["pr", "create", "--head", "feat/other", "--title", "x", "--body", "y"],
+        HEAD_CWD,
+      );
+      // Cross-fork form: monalisa:feat/test cannot match cwd's branch (feat/test)
+      expectGhDenied(
+        ["pr", "create", "--head", "monalisa:feat/test", "--title", "x", "--body", "y"],
+        HEAD_CWD,
+      );
+      // Protected branches deny early even if cwd were to claim them
+      expectGhDenied(
+        ["pr", "create", "--head", "main", "--title", "x", "--body", "y"],
+        "/workspace/worktrees/myrepo/main",
+      );
+      expectGhDenied(
+        ["pr", "create", "--head", "master", "--title", "x", "--body", "y"],
+        "/workspace/worktrees/myrepo/master",
+      );
+      // Repeated --head is ambiguous regardless of values
+      expectGhDenied(
+        [
+          "pr",
+          "create",
+          "--head",
+          "feat/test",
+          "--head",
+          "feat/test",
+          "--title",
+          "x",
+          "--body",
+          "y",
+        ],
+        HEAD_CWD,
+      );
+      // Argument-injection-shaped values are rejected before the cwd check
+      expectGhDenied(["pr", "create", "--head", "-rm", "--title", "x", "--body", "y"], HEAD_CWD);
+    });
+
+    it("blocks --head when cwd is outside /workspace/worktrees/", () => {
+      expectGhDenied(
+        ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+        "/workspace/repos/myrepo",
+      );
+      expectGhDenied(
+        ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+        undefined,
+      );
+      // cwd at the worktrees root with no branch segment
+      expectGhDenied(
+        ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+        "/workspace/worktrees/myrepo",
+      );
     });
 
     it("blocks conflicting pr create body sources", () => {
