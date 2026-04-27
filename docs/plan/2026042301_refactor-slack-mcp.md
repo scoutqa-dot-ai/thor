@@ -349,6 +349,9 @@ Files likely affected:
   Slack channel allowlist before bot-token injection. `chat.postMessage` and
   `files.completeUploadExternal` fail closed when the channel is missing or not
   configured.
+- 2026-04-27: Removed the no-op OpenCode `curl` wrapper after Slack metadata
+  injection moved into mitmproxy. The OpenCode image now uses the apt-installed
+  `/usr/bin/curl` directly.
 
 ## Verification matrix
 

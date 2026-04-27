@@ -1,6 +1,0 @@
-#!/bin/sh
-set -eu
-
-REAL_CURL_BIN="${THOR_REAL_CURL_BIN:-/usr/bin/curl}"
-
-exec "$REAL_CURL_BIN" "$@"
