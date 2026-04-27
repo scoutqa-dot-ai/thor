@@ -1,0 +1,23 @@
+packages/gateway/src/service.ts
+  cc7f4e1d8be08672 630-635,645-651
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "0275d3fa3e909636a571980ab2a33d412f6b53ba",
+  "prompts": {
+    "cc7f4e1d8be08672": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8912ffd9-bff5-4516-a3cd-166f53c01af5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 0,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    }
+  }
+}
