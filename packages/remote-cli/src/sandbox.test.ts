@@ -217,6 +217,38 @@ describe("/exec/sandbox", () => {
     expect(events2.at(-1)).toEqual({ type: "exit", exitCode: 0 });
   });
 
+  it("allows sandbox-only subdirectory cwd under a valid worktree", async () => {
+    vi.mocked(realpathSync.native).mockImplementation((path) => {
+      const normalized = normalizePosix(String(path));
+      if (normalized === `${CWD}/pulltest`) {
+        throw new Error("ENOENT");
+      }
+      return normalized;
+    });
+
+    const response = await postJson("/exec/sandbox", {
+      args: ["bash", "-c", "echo pull-content-e2e > created.txt"],
+      cwd: `${CWD}/pulltest`,
+    });
+
+    expect(response.status).toBe(200);
+    const events = await readNdjson(response);
+    expect(events.at(-1)).toEqual({ type: "exit", exitCode: 0 });
+    expect(getExecutedCommand()).toContain("pulltest");
+    expect(getExecutedCommand()).toContain("echo pull-content-e2e > created.txt");
+  });
+
+  it("rejects sandbox cwd traversal before ancestor fallback", async () => {
+    const response = await postJson("/exec/sandbox", {
+      args: ["true"],
+      cwd: `${CWD}/../evil`,
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { stderr: string };
+    expect(body.stderr).toContain("cwd must be under /workspace/worktrees");
+  });
+
   it("reports pullback failures as exec failures", async () => {
     const sandbox = makeSandbox("sbx-1", "thor-acme", {
       [THOR_MANAGED_LABEL]: "true",

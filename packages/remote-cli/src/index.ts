@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import { access } from "node:fs/promises";
+import { normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import {
   computeGitAlias,
@@ -49,6 +50,7 @@ const log = createLogger("remote-cli");
 const PORT = parseInt(process.env.PORT || "3004", 10);
 const LDCLI_MAX_OUTPUT = 1024 * 1024;
 const GITHUB_API_URL = "https://api.github.com";
+const WORKTREE_CWD_PREFIX = "/workspace/worktrees";
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   requireEnv("GITHUB_APP_ID", env);
@@ -122,6 +124,42 @@ function parseSandboxMode(input: unknown): SandboxMode | null {
   if (input === "exec" || input === "create" || input === "stop" || input === "list") {
     return input;
   }
+  return null;
+}
+
+function stripTrailingSlashes(path: string): string {
+  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+}
+
+function normalizeCwdPath(cwd: string): string {
+  return stripTrailingSlashes(normalizePosix(cwd));
+}
+
+function isPathAtOrBelow(path: string, root: string): boolean {
+  return path === root || path.startsWith(root + "/");
+}
+
+function validateSandboxCwdPath(cwd: unknown): string | null {
+  if (typeof cwd !== "string" || !cwd.startsWith("/")) {
+    return "cwd must be an absolute path";
+  }
+
+  if (cwd.includes("\0")) {
+    return "cwd must be an absolute path";
+  }
+
+  const normalizedCwd = normalizeCwdPath(cwd);
+  if (normalizedCwd !== stripTrailingSlashes(cwd)) {
+    return `cwd must be under ${WORKTREE_CWD_PREFIX}`;
+  }
+
+  if (
+    !isPathAtOrBelow(normalizedCwd, WORKTREE_CWD_PREFIX) ||
+    normalizedCwd === WORKTREE_CWD_PREFIX
+  ) {
+    return "Sandbox requires a worktree. Create one first with: git worktree add -b <branch> /workspace/worktrees/<repo>/<branch> HEAD";
+  }
+
   return null;
 }
 
@@ -497,19 +535,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       if (mode !== "list") {
-        const cwdError = validateCwd(cwd);
+        const cwdError = validateSandboxCwdPath(cwd);
         if (cwdError) {
           res.status(400).json({ stdout: "", stderr: cwdError, exitCode: 1 });
-          return;
-        }
-
-        if (!cwd.startsWith("/workspace/worktrees/")) {
-          res.status(400).json({
-            stdout: "",
-            stderr:
-              "Sandbox requires a worktree. Create one first with: git worktree add -b <branch> /workspace/worktrees/<repo>/<branch> HEAD",
-            exitCode: 1,
-          });
           return;
         }
       }
@@ -580,6 +608,19 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       // Resolve the worktree root for all sandbox operations — cwd may
       // be a subdirectory (e.g. /workspace/worktrees/repo/branch/sub/path).
       const { root: worktreeRoot } = await resolveWorktreeRoot(cwd);
+      const worktreeRootError = validateCwd(worktreeRoot);
+      if (worktreeRootError) {
+        res.status(400).json({ stdout: "", stderr: worktreeRootError, exitCode: 1 });
+        return;
+      }
+      if (!isPathAtOrBelow(normalizeCwdPath(cwd), normalizeCwdPath(worktreeRoot))) {
+        res.status(400).json({
+          stdout: "",
+          stderr: "cwd must be inside the resolved worktree",
+          exitCode: 1,
+        });
+        return;
+      }
 
       if (mode === "stop") {
         const sandbox = await findSandboxForCwd(worktreeRoot);
