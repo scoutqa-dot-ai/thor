@@ -1,0 +1,23 @@
+packages/gateway/src/progress-manager.ts
+  cc7f4e1d8be08672 228,244,256,272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2b99b042d52f7cd5792b6730a049c7fbd5dcd502",
+  "prompts": {
+    "cc7f4e1d8be08672": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8912ffd9-bff5-4516-a3cd-166f53c01af5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 49,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
