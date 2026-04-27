@@ -41,9 +41,8 @@ const githubEventBase: NormalizedGitHubEvent = {
   senderLogin: "alice",
   htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
   number: 42,
-  body: "please review this branch",
+  body: "@thor please review this branch",
   branch: null,
-  mention: false,
 };
 
 describe("resolveApproval", () => {
@@ -571,7 +570,7 @@ describe("triggerRunnerGitHub", () => {
     expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
     expect(triggerBody.directory).toBe("/workspace/repos/my-repo");
     expect(triggerBody.prompt).toContain(
-      "[alice] created on scoutqa-dot-ai/thor#42 (issue_comment): please review this",
+      "[alice] created on scoutqa-dot-ai/thor#42 (issue_comment): @thor please review this",
     );
     expect(triggerBody.prompt).toContain(
       "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",

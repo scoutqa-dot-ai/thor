@@ -56,6 +56,7 @@ const { app } = createGatewayApp({
   openaiAuthPath: OPENAI_AUTH_PATH || undefined,
   githubWebhookSecret: githubEnv.githubWebhookSecret,
   githubMentionLogins,
+  githubAppBotId: githubEnv.githubAppBotId,
 });
 
 app.listen(PORT, () => {
@@ -77,6 +78,7 @@ app.listen(PORT, () => {
     queueDir: QUEUE_DIR,
     configured: Boolean(SLACK_SIGNING_SECRET && SLACK_BOT_TOKEN),
     githubAppSlug: githubEnv.githubAppSlug,
+    githubAppBotId: githubEnv.githubAppBotId,
     githubMentionLogins,
     ...configSummary,
   });
