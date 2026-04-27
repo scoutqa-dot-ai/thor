@@ -190,6 +190,14 @@ Behavior to preserve:
 - approval cards render with the same button payload format
 - approval outcome updates still edit the original Slack message
 
+Known behavior (expected, not a bug):
+
+- if a channel is removed from `config.json` while a Slack-triggered run is
+  already in progress, that in-flight run may continue posting progress updates
+  to the original channel until the stream finishes
+- channel allowlist changes apply to new inbound Slack events and new runs; they
+  do not retroactively interrupt an active session's progress relay
+
 Implementation note:
 
 - bot-reply cleanup can become best-effort from the Slack event echo
