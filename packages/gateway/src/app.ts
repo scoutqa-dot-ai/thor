@@ -645,6 +645,14 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               logError(log, "approval_resolve_failed", "remote-cli returned error", {
                 actionId: route.actionId,
               });
+              // Don't silently drop the click. Update the original card so the
+              // human knows their decision didn't take effect — without this
+              // the approval is forever pending in remote-cli with no way
+              // for the user to retry from Slack.
+              if (channel && messageTs) {
+                const failureText = `⚠️ *${decision.charAt(0).toUpperCase()}${decision.slice(1)}, but resolution failed* by <@${reviewer}> · \`${route.actionId}\`\n>remote-cli did not respond after retries; please retry the approval action`;
+                await updateSlackMessage(channel, messageTs, failureText, slackDeps);
+              }
               return;
             }
 

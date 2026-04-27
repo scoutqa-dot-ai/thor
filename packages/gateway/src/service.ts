@@ -919,8 +919,16 @@ async function forwardApprovalNotification(
   }
 }
 
+const APPROVAL_RESOLVE_MAX_ATTEMPTS = 3;
+const APPROVAL_RESOLVE_BACKOFF_MS = [200, 800];
+
 /**
  * Resolve an approval action through the remote-cli MCP endpoint.
+ *
+ * Retries on transient failures (timeouts, 5xx, network errors). Without
+ * retries a single remote-cli blip silently drops the human's approval
+ * click — Slack already saw 200 from /slack/interactivity, so the click
+ * cannot be replayed.
  */
 export async function resolveApproval(
   actionId: string,
@@ -935,41 +943,55 @@ export async function resolveApproval(
   const args = ["resolve", actionId, decision, reviewer];
   if (reason) args.push(reason);
 
-  try {
-    const response = await fetchFn(`${remoteCliUrl}/exec/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(resolveSecret ? { "x-thor-resolve-secret": resolveSecret } : {}),
-      },
-      body: JSON.stringify({ args }),
-    });
-    const body = ExecResultSchema.parse(await response.json());
-    if (!response.ok) {
-      logError(
-        log,
-        "approval_resolve_error",
-        `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
-        { remoteCliUrl },
-      );
+  for (let attempt = 0; attempt < APPROVAL_RESOLVE_MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetchFn(`${remoteCliUrl}/exec/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(resolveSecret ? { "x-thor-resolve-secret": resolveSecret } : {}),
+        },
+        body: JSON.stringify({ args }),
+      });
+      const body = ExecResultSchema.parse(await response.json());
+      if (!response.ok) {
+        logError(
+          log,
+          "approval_resolve_error",
+          `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
+          { remoteCliUrl, attempt },
+        );
+        if (response.status >= 500 && attempt + 1 < APPROVAL_RESOLVE_MAX_ATTEMPTS) {
+          await delay(APPROVAL_RESOLVE_BACKOFF_MS[attempt] ?? 0);
+          continue;
+        }
+        return undefined;
+      }
+      if (body.exitCode !== 0) {
+        logError(
+          log,
+          "approval_resolve_error",
+          `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
+          { remoteCliUrl, attempt },
+        );
+        return isResolvedApprovalExecutionFailure(body) ? body : undefined;
+      }
+      return body;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError(log, "approval_resolve_error", message, { remoteCliUrl, attempt });
+      if (attempt + 1 < APPROVAL_RESOLVE_MAX_ATTEMPTS) {
+        await delay(APPROVAL_RESOLVE_BACKOFF_MS[attempt] ?? 0);
+        continue;
+      }
       return undefined;
     }
-    if (body.exitCode !== 0) {
-      logError(
-        log,
-        "approval_resolve_error",
-        `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
-        { remoteCliUrl },
-      );
-      return isResolvedApprovalExecutionFailure(body) ? body : undefined;
-    }
-    return body;
-  } catch (err) {
-    logError(log, "approval_resolve_error", err instanceof Error ? err.message : String(err), {
-      remoteCliUrl,
-    });
-    return undefined;
   }
+  return undefined;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isResolvedApprovalExecutionFailure(body: ExecResult): boolean {
