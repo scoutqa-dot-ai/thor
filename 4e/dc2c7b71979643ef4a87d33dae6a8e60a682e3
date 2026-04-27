@@ -1,0 +1,37 @@
+packages/gateway/src/github.ts
+  cfb505039a6d3a02 5,10-12,50
+docs/github-app-webhooks.md
+  cfb505039a6d3a02 13,19,117
+packages/gateway/src/app.ts
+  cfb505039a6d3a02 130-131,158,653
+packages/gateway/src/env.ts
+  cfb505039a6d3a02 5,8-12,15
+packages/gateway/src/github.test.ts
+  cfb505039a6d3a02 22,25,72-74,78-79,97,128,148,158,170-178,187,224,244,247,269,272,293,296
+packages/gateway/src/app.test.ts
+  cfb505039a6d3a02 327,330,376,407,422,449,464,467,496,511,554
+docker-compose.yml
+  cfb505039a6d3a02 207
+packages/gateway/src/index.ts
+  cfb505039a6d3a02 48,70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4edc2c7b71979643ef4a87d33dae6a8e60a682e3",
+  "prompts": {
+    "cfb505039a6d3a02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8bc0a7e7-5815-437b-abbd-7616a18c28b5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 72,
+      "total_deletions": 32,
+      "accepted_lines": 69,
+      "overriden_lines": 0
+    }
+  }
+}
