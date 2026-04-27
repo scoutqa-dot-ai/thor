@@ -70,6 +70,14 @@ describe("validateGitArgs", () => {
     return error ?? "";
   }
 
+  function expectGitDeniedWith(args: string[], expected: string[], cwd?: string): void {
+    const error = expectGitDenied(args, cwd);
+    expect(error).toContain("Reason:");
+    for (const text of expected) {
+      expect(error).toContain(text);
+    }
+  }
+
   describe("allowed commands", () => {
     it("allows a representative read command", () => {
       expect(validateGitArgs(["status"])).toBeNull();
@@ -247,6 +255,45 @@ describe("validateGitArgs", () => {
       expectGitDenied(["checkout", "main"]);
       expectGitDenied(["switch", "feature"]);
       expectGitDenied(["checkout", "-b", "feat/test", "origin/main"]);
+    });
+
+    it("returns actionable denial guidance for common blocked git workflows", () => {
+      expectGitDeniedWith(
+        ["checkout", "main"],
+        [
+          "checkout can switch branches",
+          "git worktree add /workspace/worktrees/<repo>/<branch> <branch>",
+        ],
+      );
+      expectGitDeniedWith(
+        ["switch", "feature"],
+        [
+          "switch changes the current worktree branch",
+          "git worktree add /workspace/worktrees/<repo>/<branch> <branch>",
+        ],
+      );
+      expectGitDeniedWith(
+        ["pull", "origin", "feat/x"],
+        [
+          "pull depends on local upstream/config",
+          "git fetch origin <branch> && git merge origin/<branch>",
+        ],
+      );
+      expectGitDeniedWith(
+        ["push", "origin", "feat/x"],
+        ["explicit HEAD refspec", "git push origin HEAD:refs/heads/<branch>"],
+      );
+      expectGitDeniedWith(
+        ["restore", "package.json"],
+        ["paths after a -- separator", "git restore [--source <tree>] [--staged] -- <path>"],
+      );
+      expectGitDeniedWith(
+        ["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/other"],
+        [
+          "end with the branch name",
+          "git worktree add /workspace/worktrees/<repo>/<branch> <branch>",
+        ],
+      );
     });
 
     it("blocks worktree add outside /workspace/worktrees/", () => {
@@ -499,11 +546,21 @@ describe("validateGitArgs", () => {
 // ── gh policy ───────────────────────────────────────────────────────────────
 
 describe("validateGhArgs", () => {
-  function expectGhDenied(args: string[]): string {
-    const error = validateGhArgs(args);
+  function expectGhDenied(args: string[], cwd?: string): string {
+    const error = validateGhArgs(args, cwd);
     expect(error).toContain("Load skill using-gh");
     return error ?? "";
   }
+
+  function expectGhDeniedWith(args: string[], expected: string[], cwd?: string): void {
+    const error = expectGhDenied(args, cwd);
+    expect(error).toContain("Reason:");
+    for (const text of expected) {
+      expect(error).toContain(text);
+    }
+  }
+
+  const HEAD_CWD = "/workspace/worktrees/myrepo/feat/test";
 
   describe("allowed commands", () => {
     it("allows common gh read-only workflows", () => {
@@ -746,6 +803,40 @@ describe("validateGhArgs", () => {
       expectGhDenied(["pr", "checkout", "2984"]);
     });
 
+    it("returns actionable denial guidance for common blocked gh workflows", () => {
+      expectGhDeniedWith(
+        ["pr", "checkout", "2984"],
+        ["would switch the current worktree branch", "git fetch origin pull/<N>/head:pr-<N>"],
+      );
+      expectGhDeniedWith(
+        ["pr", "diff", "2984"],
+        [
+          "PR review should happen from a fetched worktree",
+          "git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>",
+        ],
+      );
+      expectGhDeniedWith(
+        ["pr", "view", "123", "--repo", "owner/repo"],
+        ["repo-targeting flags are blocked", "cd into the intended repo or worktree"],
+      );
+      expectGhDeniedWith(
+        ["pr", "create", "--head", "feat/other", "--title", "x", "--body", "y"],
+        [
+          '--head "feat/other" does not match cwd branch "feat/test".',
+          "cd into /workspace/worktrees/<repo>/feat/other or omit --head",
+        ],
+        HEAD_CWD,
+      );
+      expectGhDeniedWith(
+        ["api", "repos/org/repo", "--method", "GET"],
+        ["implicit GET requests", "gh api <endpoint> --jq <filter>"],
+      );
+      expectGhDeniedWith(
+        ["pr", "comment", "123"],
+        ["numeric PR", "gh pr comment <number> --body <text>"],
+      );
+    });
+
     it("blocks repo-targeting flags across the gh surface", () => {
       expectGhDenied(["pr", "view", "123", "--repo", "owner/repo"]);
       expectGhDenied(["issue", "view", "42", "-R", "owner/repo"]);
@@ -758,7 +849,101 @@ describe("validateGhArgs", () => {
     it("blocks removed pr create forms", () => {
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--web"]);
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--editor"]);
-      expectGhDenied(["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"]);
+    });
+
+    it("allows --head only when it matches the branch implied by cwd", () => {
+      expect(
+        validateGhArgs(
+          ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+          HEAD_CWD,
+        ),
+      ).toBeNull();
+      expect(
+        validateGhArgs(
+          ["pr", "create", "-H", "feat/test", "--title", "x", "--body", "y"],
+          HEAD_CWD,
+        ),
+      ).toBeNull();
+      expect(
+        validateGhArgs(
+          ["pr", "create", "--head=feat/test", "--title", "x", "--body", "y"],
+          HEAD_CWD,
+        ),
+      ).toBeNull();
+      expect(
+        validateGhArgs(["pr", "create", "--fill", "--head", "feat/test"], HEAD_CWD),
+      ).toBeNull();
+    });
+
+    it("blocks --head when it does not match cwd's branch", () => {
+      // Different branch in the same repo
+      expectGhDeniedWith(
+        ["pr", "create", "--head", "feat/other", "--title", "x", "--body", "y"],
+        [
+          '--head "feat/other" does not match cwd branch "feat/test".',
+          "cd into /workspace/worktrees/<repo>/feat/other or omit --head",
+        ],
+        HEAD_CWD,
+      );
+      // Cross-fork form: monalisa:feat/test cannot match cwd's branch (feat/test)
+      expectGhDeniedWith(
+        ["pr", "create", "--head", "monalisa:feat/test", "--title", "x", "--body", "y"],
+        ['--head "monalisa:feat/test" uses a cross-fork selector', "omit --head"],
+        HEAD_CWD,
+      );
+      // Protected branches deny early even if cwd were to claim them
+      expectGhDeniedWith(
+        ["pr", "create", "--head", "main", "--title", "x", "--body", "y"],
+        ['--head "main" targets a protected branch.', "feature worktree branch"],
+        "/workspace/worktrees/myrepo/main",
+      );
+      expectGhDeniedWith(
+        ["pr", "create", "--head", "master", "--title", "x", "--body", "y"],
+        ['--head "master" targets a protected branch.', "feature worktree branch"],
+        "/workspace/worktrees/myrepo/master",
+      );
+      // Repeated --head is ambiguous regardless of values
+      expectGhDeniedWith(
+        [
+          "pr",
+          "create",
+          "--head",
+          "feat/test",
+          "--head",
+          "feat/test",
+          "--title",
+          "x",
+          "--body",
+          "y",
+        ],
+        ["multiple --head values are ambiguous.", "provide at most one --head value"],
+        HEAD_CWD,
+      );
+      // Argument-injection-shaped values are rejected before the cwd check
+      expectGhDeniedWith(
+        ["pr", "create", "--head", "-rm", "--title", "x", "--body", "y"],
+        ['--head "-rm" is not a valid branch value.', "omit --head"],
+        HEAD_CWD,
+      );
+    });
+
+    it("blocks --head when cwd is outside /workspace/worktrees/", () => {
+      expectGhDeniedWith(
+        ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+        ['--head "feat/test" cannot be checked because cwd is not a branch worktree.'],
+        "/workspace/repos/myrepo",
+      );
+      expectGhDeniedWith(
+        ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+        ['--head "feat/test" cannot be checked because cwd is not a branch worktree.'],
+        undefined,
+      );
+      // cwd at the worktrees root with no branch segment
+      expectGhDeniedWith(
+        ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+        ['--head "feat/test" cannot be checked because cwd is not a branch worktree.'],
+        "/workspace/worktrees/myrepo",
+      );
     });
 
     it("blocks conflicting pr create body sources", () => {

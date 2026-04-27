@@ -136,7 +136,7 @@ Notable exclusions:
 
 - `-R` / `--repo` across the GH surface
 - URL and branch selectors on the write path
-- `--head` on `gh pr create`
+- `--head` on `gh pr create` whose value does not match the branch implied by cwd (`/workspace/worktrees/<repo>/<branch>`) — `--head` is allowed only as the explicit form of the cwd-derived default, which keeps cross-fork forms, protected branches, and arbitrary-branch PRs out by construction
 - `gh pr checkout`
 - editor/browser/body-file modes
 - PR approval, merge, edit, delete-last, and similar mutating shortcuts
@@ -232,6 +232,7 @@ Notable exclusions:
 - Passthrough `git rev-parse`: every ref `rev-parse` could resolve is already exposed via `show-ref`, `for-each-ref`, `cat-file`, `name-rev`, and `log` (all passthrough), and `rev-parse` is read-only by design (no writes, no fetches, no hooks). The eight-exact-form gate was asymmetric friction without a corresponding security boundary. Drop `validateRevParse`, route `rev-parse` to the same passthrough switch case as the other read commands, drop the `### git rev-parse` section from `using-git`, and add `git rev-parse` to its passthrough list. Unlocks idiomatic shapes like `rev-parse origin/main`, `rev-parse --verify --quiet`, `rev-parse --abbrev-ref @{upstream}`, `rev-parse HEAD~3`, and `rev-parse HEAD:<path>`. Status: Completed.
 - Passthrough `gh workflow run` inputs: the prior policy denied `-F` entirely and rejected `-f key=@file`, in the name of "no local-file exfil via dispatch payload." But the same exfil channel exists via committing a workflow that reads files and posts them, then dispatching it via `gh workflow run --ref <branch>` (both allowed). Two-step instead of one-step, same outcome. Trade the theatre for typed-input ergonomics: accept `-f`, `-F`, `--raw-field`, `--field` as repeatable workflow inputs with no key/value validation. Selector and duplicate-`--ref` guards stay. Note that the parallel `=@` rejection on `gh api -f`/`-F` is left in place since `gh api` talks straight to the GitHub API rather than dispatching a workflow we control. Status: Completed.
 - Passthrough `git merge`: agents need to integrate upstream changes into a feature branch (the workflow `git pull` would do), but `pull` itself stays denied because it depends on local upstream config — same Decision #4 reasoning as implicit push. Add `merge` to the allowlist as a near-passthrough that only blocks `--no-verify` (mirrors the `git commit` deny, since merge runs `pre-merge-commit` and `commit-msg` hooks). Other merge flags (`--squash`, `-s`/`-X` strategies, `--allow-unrelated-histories`, `--signoff`, octopus, `--abort`/`--continue`/`--quit`) carry no boundary that isn't already enforced by the push protected-branch rule. Replaces `git pull` with the redirect `git fetch origin <branch>` + `git merge origin/<branch>`. Status: Completed.
+- Actionable deny messages: keep the existing string-returning policy API, but enrich Git/GH denials with stable plaintext `Reason`, `Try instead`, and `Details` lines. Cover common recovery paths for blocked branch switching, restore, pull, push, worktree, PR checkout/diff, repo override, PR creation, comments, reviews, workflow dispatch, releases, and `gh api`. Status: Completed.
 
 ## Verification
 
@@ -260,6 +261,7 @@ pnpm -r typecheck
 | 14  | Refactor only the structured validators that already scan tokens                                | That is where reuse improves clarity without changing the policy shape or forcing passthrough tuple checks into a parser abstraction.                                                                     | Rewrite passthrough tuple checks to fit the shared helper                                       |
 | 15  | Broaden the Git read-only surface with narrowly bounded ownership and ref-inspection helpers    | `shortlog`, `ls-files`, and `show-ref` are read-only and useful enough to allow broadly, while `branch --list` and `rev-parse --abbrev-ref HEAD` stay constrained to avoid reopening generic parser work. | Keep the narrower surface and force agents into workarounds, or allow broad `rev-parse` grammar |
 | 16  | Broaden the GH read-only surface for investigation, but keep release side effects blocked       | `search`, `label list`, and selected `release` reads improve investigation workflows with much lower risk than widening write selectors or allowing local-file side effects like `release download`.      | Keep the narrower GH read-only surface, or allow broader release operations including download  |
+| 17  | Enrich deny stderr as structured plaintext instead of changing the validator API                | OpenCode consumes stderr today; adding reason and recovery hints in the same string improves behavior without touching `/exec/git`, `/exec/gh`, `validateGitArgs`, `resolveGitArgs`, or `validateGhArgs`. | Return JSON/object errors or add a new policy result type                                       |
 
 ## References
 
