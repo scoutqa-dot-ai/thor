@@ -43,6 +43,7 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "commit",
   "worktree",
   "push",
+  "merge",
   "blame",
   "reflog",
   "grep",
@@ -120,6 +121,8 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
       return wrap(validateWorktree(args), args);
     case "push":
       return wrap(validatePush(args), args);
+    case "merge":
+      return wrap(validateMerge(args), args);
     default:
       return deny(`git ${first}`);
   }
@@ -459,6 +462,14 @@ function validatePushRefspec(refspec: string): string | null {
   }
 
   return null;
+}
+
+function validateMerge(args: string[]): string | null {
+  // Passthrough: merge's own safety surface (push to protected branches, force,
+  // commit hooks for non-merge commits) is already enforced elsewhere. Only
+  // `--no-verify` is denied, mirroring `git commit` — repo merge hooks are the
+  // last line of defense against unintended merges into release lines.
+  return args.includes("--no-verify") ? denyMessage("git merge") : null;
 }
 
 function validateLsRemote(args: string[]): string | null {

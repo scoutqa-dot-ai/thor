@@ -188,6 +188,22 @@ describe("validateGitArgs", () => {
         ["push", "origin", "-u", "HEAD:refs/heads/feat/x"],
         ["push", "--set-upstream", "origin", "HEAD:refs/heads/feat/x"],
         ["push", "origin", "HEAD:refs/heads/feat/x", "--set-upstream"],
+        ["merge", "origin/main"],
+        ["merge", "feat/sibling"],
+        ["merge", "abc1234"],
+        ["merge", "FETCH_HEAD"],
+        ["merge", "--ff-only", "origin/main"],
+        ["merge", "--no-ff", "--no-edit", "origin/main"],
+        ["merge", "--squash", "feat/sibling"],
+        ["merge", "-X", "ours", "origin/main"],
+        ["merge", "--strategy=ours", "origin/main"],
+        ["merge", "-m", "merge origin/main", "origin/main"],
+        ["merge", "--allow-unrelated-histories", "origin/main"],
+        ["merge", "origin/feat-a", "origin/feat-b"],
+        ["merge"],
+        ["merge", "--abort"],
+        ["merge", "--continue"],
+        ["merge", "--quit"],
       ];
 
       for (const args of allowedCommands) {
@@ -413,6 +429,12 @@ describe("validateGitArgs", () => {
       expectGitDenied(["push", "origin", "HEAD:refs/tags/v1"]);
       expectGitDenied(["push", "origin", ":main"]);
       expectGitDenied(["push", "origin", "HEAD:refs/heads/foo:bar"]);
+    });
+
+    it("blocks merge --no-verify (hook bypass)", () => {
+      expectGitDenied(["merge", "--no-verify", "origin/main"]);
+      expectGitDenied(["merge", "origin/main", "--no-verify"]);
+      expectGitDenied(["merge", "--no-ff", "--no-verify", "origin/main"]);
     });
 
     it("blocks malformed commit forms", () => {
