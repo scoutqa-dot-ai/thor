@@ -233,16 +233,32 @@ export function buildDispatchLogContext(input: {
 
 function buildProgressTarget(
   slackEvents: SlackThreadEvent[],
+  approvalOutcomes: ApprovalOutcomeEventPayload[],
   slackDeps: SlackDeps,
 ): ProgressRelayTarget | undefined {
   const lastSlackEvent = slackEvents[slackEvents.length - 1];
-  if (!lastSlackEvent) return undefined;
-  return {
-    channel: lastSlackEvent.channel,
-    threadTs: getSlackThreadTs(lastSlackEvent),
-    triggerTs: lastSlackEvent.ts,
-    slackDeps,
-  };
+  if (lastSlackEvent) {
+    return {
+      channel: lastSlackEvent.channel,
+      threadTs: getSlackThreadTs(lastSlackEvent),
+      triggerTs: lastSlackEvent.ts,
+      slackDeps,
+    };
+  }
+  // Approval-outcome batches resume an existing Slack thread session — without
+  // a progress target the resumed run goes silent (no progress, no further
+  // approval cards) because triggerRunnerPrompt would background-drain the
+  // NDJSON instead of forwarding events to Slack.
+  const lastApproval = approvalOutcomes[approvalOutcomes.length - 1];
+  if (lastApproval) {
+    return {
+      channel: lastApproval.channel,
+      threadTs: lastApproval.threadTs,
+      triggerTs: lastApproval.messageTs ?? lastApproval.threadTs,
+      slackDeps,
+    };
+  }
+  return undefined;
 }
 
 function collectBatchDirectory<T>(
@@ -481,7 +497,11 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     return { kind: "drop", logPrefix, reason };
   }
 
-  const progressTarget = buildProgressTarget(input.slackEvents, input.slackDeps);
+  const progressTarget = buildProgressTarget(
+    input.slackEvents,
+    input.approvalOutcomes,
+    input.slackDeps,
+  );
   // Cron-only batches have no Slack progress relay; drain in foreground so
   // callers can rely on cleanup happening before return.
   const isSilentOnly = sources.length === 1 && sources[0] === "cron";
@@ -727,6 +747,7 @@ export async function triggerRunnerApprovalOutcomes(
   events: ApprovalOutcomeEventPayload[],
   correlationKey: string,
   deps: RunnerDeps,
+  slackDeps: SlackDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
   channelRepos?: Map<string, string>,
@@ -753,7 +774,7 @@ export async function triggerRunnerApprovalOutcomes(
     approvalOutcomes: events,
     correlationKey,
     deps,
-    slackDeps: { botToken: "", fetchImpl: deps.fetchImpl },
+    slackDeps,
     interrupt,
     onAccepted,
     onRejected: handleRejected,
