@@ -337,7 +337,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       fetchImpl: config.fetchImpl,
       queueSnapshot: queue.snapshotPending(),
     });
-    const statusCode = result.status === "error" ? 503 : 200;
+    const statusCode = result.queue?.status === "error" ? 503 : 200;
     res.status(statusCode).json({
       ...result,
       runnerUrl: config.runnerUrl,

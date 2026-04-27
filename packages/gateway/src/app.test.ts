@@ -335,6 +335,49 @@ describe("gateway", () => {
     });
   });
 
+  it("keeps HTTP 200 when dependencies fail but queue is not stale", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "error", error: "runner down" }), {
+          status: 503,
+        });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await withServer(fetchImpl, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/health`);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        status: "error",
+        queue: {
+          status: "ok",
+          pendingCount: 0,
+          staleThresholdMs: 900000,
+          staleEventCount: 0,
+        },
+        services: {
+          runner: {
+            status: "error",
+            error: "HTTP 503",
+          },
+        },
+      });
+    });
+  });
+
   it("returns a placeholder response for the configured redirect URL", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
