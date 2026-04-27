@@ -329,6 +329,15 @@ Files likely affected:
 - there are no runtime references to `http://slack-mcp:3003`
 - the architecture doc no longer shows Slack as an MCP service
 
+## Review Fixes
+
+- 2026-04-27: Approval outcome re-entry resolves `slack:thread:*` aliases before
+  enqueueing, so approval clicks resume the canonical session when a Slack thread
+  is an alias for a GitHub or cron correlation key.
+- 2026-04-27: Approved-action execution failures from remote-cli are treated as
+  delivered approval outcomes. Gateway updates the Slack card with the failure
+  summary and re-enters the agent session with non-interrupt failure guidance.
+
 ## Verification matrix
 
 Run these checks before considering the migration complete:

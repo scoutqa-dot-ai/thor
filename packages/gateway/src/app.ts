@@ -643,8 +643,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             }
 
             const resolution = summarizeResolutionOutput(resolved.stdout, resolved.stderr);
-            const statusEmoji = decision === "approved" ? "✅" : "❌";
-            const decisionLabel = decision.charAt(0).toUpperCase() + decision.slice(1);
+            const resolutionFailed = resolved.exitCode !== 0;
+            const statusEmoji = resolutionFailed ? "⚠️" : decision === "approved" ? "✅" : "❌";
+            const baseDecisionLabel = decision.charAt(0).toUpperCase() + decision.slice(1);
+            const decisionLabel = resolutionFailed
+              ? `${baseDecisionLabel}, resolution failed`
+              : baseDecisionLabel;
             const target = [route.upstreamName ?? resolution.upstream, resolution.tool]
               .filter(Boolean)
               .join("/");
@@ -679,14 +683,24 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               upstreamName: route.upstreamName ?? resolution.upstream,
               tool: resolution.tool,
               messageTs,
-              resolutionStatus: resolution.status,
+              resolutionStatus: resolutionFailed ? "error" : resolution.status,
               resolutionSummary: resolution.summary,
+              resolutionExitCode: resolved.exitCode,
             };
+
+            const rawCorrelationKey = `slack:thread:${threadTs}`;
+            const outcomeCorrelationKey = resolveCorrelationKeys([rawCorrelationKey]);
+            if (outcomeCorrelationKey !== rawCorrelationKey) {
+              logInfo(log, "corr_key_resolved", {
+                rawKey: rawCorrelationKey,
+                correlationKey: outcomeCorrelationKey,
+              });
+            }
 
             queue.enqueue({
               id: `approval-${route.actionId}-${decision}-${Date.now()}`,
               source: "approval",
-              correlationKey: `slack:thread:${threadTs}`,
+              correlationKey: outcomeCorrelationKey,
               payload: outcomePayload,
               receivedAt: new Date().toISOString(),
               sourceTs: Date.now(),
@@ -700,6 +714,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               decision,
               channel,
               threadTs,
+              correlationKey: outcomeCorrelationKey,
             });
           })().catch((error) => {
             logError(log, "approval_background_error", error, {

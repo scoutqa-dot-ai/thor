@@ -95,6 +95,27 @@ describe("resolveApproval", () => {
 
     expect(result).toBeUndefined();
   });
+
+  it("returns nonzero results when an approved upstream call fails after resolution", async () => {
+    const failedResult = {
+      stdout: "",
+      stderr: 'Error calling "merge_pull_request": upstream unavailable\n',
+      exitCode: 1,
+    };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(failedResult));
+
+    const { resolveApproval } = await import("./service.js");
+    const result = await resolveApproval(
+      "act-1",
+      "approved",
+      "U123",
+      "http://remote-cli:3004",
+      "resolve-secret",
+      fetchImpl,
+    );
+
+    expect(result).toEqual(failedResult);
+  });
 });
 
 describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
@@ -713,6 +734,30 @@ describe("approval outcome prompts", () => {
     expect(prompt).toContain("human rejected action `act-2`");
     expect(prompt).toContain("do not retry the same write blindly");
     expect(prompt).toContain("Resolution summary: missing approval reason");
+  });
+
+  it("builds failure guidance when approval resolution returns a nonzero exit", async () => {
+    const { buildApprovalOutcomePrompt } = await import("./service.js");
+    const prompt = buildApprovalOutcomePrompt([
+      {
+        actionId: "act-1",
+        decision: "approved",
+        reviewer: "U123",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        upstreamName: "github",
+        resolutionExitCode: 1,
+        resolutionSummary: 'Error calling "merge_pull_request": upstream unavailable',
+      },
+    ]);
+
+    expect(prompt).toContain(
+      "human approved action `act-1`, but approval resolution reported a failure",
+    );
+    expect(prompt).toContain("choose the next safe action");
+    expect(prompt).toContain(
+      'Resolution summary: Error calling "merge_pull_request": upstream unavailable',
+    );
   });
 
   it("includes approval guidance when slack events and approval outcomes share a batch", async () => {

@@ -30,12 +30,15 @@ function fakeConfigLoader(
 
 let mockHasSlackReply = false;
 let mappedRepos = new Set<string>(["test-repo", "thor"]);
+let correlationKeyAliases = new Map<string, string>();
 vi.mock("@thor/common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@thor/common")>();
   return {
     ...actual,
     resolveRepoDirectory: (repoName: string) =>
       mappedRepos.has(repoName) ? `/workspace/repos/${repoName}` : undefined,
+    resolveCorrelationKeys: (rawKeys: string[]) =>
+      correlationKeyAliases.get(rawKeys[0] ?? "") ?? rawKeys[0] ?? "",
     hasSlackReply: () => mockHasSlackReply,
   };
 });
@@ -100,6 +103,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   mockHasSlackReply = false;
   mappedRepos = new Set(["test-repo", "thor"]);
+  correlationKeyAliases = new Map();
 });
 
 describe("gateway", () => {
@@ -1364,6 +1368,80 @@ describe("gateway", () => {
     expect(runnerBody.interrupt).toBe(false);
   });
 
+  it("resolves approval outcome correlation keys through registered aliases", async () => {
+    correlationKeyAliases.set(
+      "slack:thread:1710000000.001",
+      "git:branch:test-repo:feature/from-slack",
+    );
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({
+              status: "approved",
+              tool: "merge_pull_request",
+              upstream: "github",
+            }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100", thread_ts: "1710000000.001" },
+            actions: [
+              {
+                action_id: "approval_approve",
+                value: "v3:act-1:github:1710000000.001",
+              },
+            ],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        resolveSecret: "resolve-secret",
+      },
+    );
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeDefined();
+    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.correlationKey).toBe("git:branch:test-repo:feature/from-slack");
+  });
+
   it("retries queued approval outcome re-entry when runner is busy", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -1445,6 +1523,81 @@ describe("gateway", () => {
     expect(firstBody.correlationKey).toBe("slack:thread:1710000000.001");
     expect(firstBody.prompt).toContain("human approved action `act-1`");
     expect(firstBody.prompt).toContain("continue the workflow");
+  });
+
+  it("updates Slack and re-enters the session when an approved action fails during execution", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: "",
+            stderr: 'Error calling "merge_pull_request": upstream unavailable\n',
+            exitCode: 1,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100", thread_ts: "1710000000.001" },
+            actions: [
+              {
+                action_id: "approval_approve",
+                value: "v3:act-1:github:1710000000.001",
+              },
+            ],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        resolveSecret: "resolve-secret",
+      },
+    );
+
+    const updateCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "https://slack.com/api/chat.update",
+    );
+    expect(updateCall).toBeDefined();
+    const updateBody = JSON.parse(String(updateCall?.[1]?.body));
+    expect(updateBody.text).toContain("Approved, resolution failed");
+    expect(updateBody.text).toContain("upstream unavailable");
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeDefined();
+    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.prompt).toContain("approval resolution reported a failure");
+    expect(runnerBody.prompt).toContain("upstream unavailable");
   });
 
   it("fails closed for v2 approval buttons when thread context is missing", async () => {

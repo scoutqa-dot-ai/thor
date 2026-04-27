@@ -8,7 +8,7 @@ import {
   ProgressEventSchema,
   resolveRepoDirectory,
 } from "@thor/common";
-import type { ProgressEvent } from "@thor/common";
+import type { ExecResult, ProgressEvent } from "@thor/common";
 import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
 import {
@@ -71,6 +71,7 @@ export interface ApprovalOutcomeEventPayload {
   messageTs?: string;
   resolutionStatus?: string;
   resolutionSummary?: string;
+  resolutionExitCode?: number;
 }
 
 export interface BatchDispatchInput {
@@ -175,8 +176,11 @@ function renderGitHubPromptSection(events: NormalizedGitHubEvent[]): string {
 export function buildApprovalOutcomePrompt(events: ApprovalOutcomeEventPayload[]): string {
   const lines = events.map((event, index) => {
     const target = [event.upstreamName, event.tool].filter(Boolean).join("/") || "unknown tool";
-    const guidance =
-      event.decision === "approved"
+    const resolutionFailed =
+      typeof event.resolutionExitCode === "number" && event.resolutionExitCode !== 0;
+    const guidance = resolutionFailed
+      ? `human ${event.decision} action \`${event.actionId}\`, but approval resolution reported a failure; inspect approval status/output, explain the implication, and choose the next safe action`
+      : event.decision === "approved"
         ? `human approved action \`${event.actionId}\`; continue the workflow, fetch approval status if needed, and finish the next safe step`
         : `human rejected action \`${event.actionId}\`; do not retry the same write blindly, explain the implication, and choose the next safe action`;
 
@@ -892,7 +896,7 @@ export async function resolveApproval(
   resolveSecret: string | undefined,
   fetchImpl?: typeof fetch,
   reason?: string,
-): Promise<{ stdout: string; stderr: string; exitCode: number } | undefined> {
+): Promise<ExecResult | undefined> {
   const fetchFn = getFetch(fetchImpl);
   const args = ["resolve", actionId, decision, reviewer];
   if (reason) args.push(reason);
@@ -907,7 +911,7 @@ export async function resolveApproval(
       body: JSON.stringify({ args }),
     });
     const body = ExecResultSchema.parse(await response.json());
-    if (!response.ok || body.exitCode !== 0) {
+    if (!response.ok) {
       logError(
         log,
         "approval_resolve_error",
@@ -916,6 +920,15 @@ export async function resolveApproval(
       );
       return undefined;
     }
+    if (body.exitCode !== 0) {
+      logError(
+        log,
+        "approval_resolve_error",
+        `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
+        { remoteCliUrl },
+      );
+      return isResolvedApprovalExecutionFailure(body) ? body : undefined;
+    }
     return body;
   } catch (err) {
     logError(log, "approval_resolve_error", err instanceof Error ? err.message : String(err), {
@@ -923,6 +936,13 @@ export async function resolveApproval(
     });
     return undefined;
   }
+}
+
+function isResolvedApprovalExecutionFailure(body: ExecResult): boolean {
+  return (
+    body.exitCode !== 0 &&
+    (/^Error calling "/m.test(body.stderr) || /^Unknown upstream "/m.test(body.stderr))
+  );
 }
 
 export async function updateSlackMessage(
