@@ -127,6 +127,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   githubWebhookSecret?: string;
   /** Allowlisted mention logins used for GitHub mention detection. */
   githubMentionLogins?: string[];
+  /** Numeric GitHub user ID of our App's bot user. Used as the canonical self-identity check. */
+  githubAppBotId?: number;
   /** GitHub mention debounce delay in ms. Default: 3000. */
   githubMentionDelayMs?: number;
 }
@@ -153,6 +155,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const shortDelay = config.shortDelayMs ?? SHORT_DELAY_MS;
   const githubMentionDelay = config.githubMentionDelayMs ?? GITHUB_MENTION_DELAY_MS;
   const githubMentionLogins = config.githubMentionLogins ?? [];
+  const githubAppBotId = config.githubAppBotId ?? 0;
 
   const logGitHubIgnored = (input: {
     deliveryId: string;
@@ -647,6 +650,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const normalized = normalizeGitHubEvent(parsed.data, {
       localRepo,
       mentionLogins: githubMentionLogins,
+      botId: githubAppBotId,
     });
     if ("ignored" in normalized) {
       logGitHubIgnored({

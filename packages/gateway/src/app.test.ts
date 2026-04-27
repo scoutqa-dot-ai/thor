@@ -324,10 +324,10 @@ describe("gateway", () => {
           action: "created",
           installation: { id: 126669985 },
           repository: { full_name: "scoutqa-dot-ai/thor" },
-          sender: { login: "alice", type: "User" },
+          sender: { id: 1001, login: "alice", type: "User" },
           pull_request: {
             number: 42,
-            user: { login: "alice" },
+            user: { id: 1001, login: "alice" },
             head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
             base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
           },
@@ -373,6 +373,7 @@ describe("gateway", () => {
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });
@@ -403,6 +404,7 @@ describe("gateway", () => {
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });
@@ -417,7 +419,7 @@ describe("gateway", () => {
           action: "created",
           installation: { id: 1 },
           repository: { full_name: "acme/thor" },
-          sender: { login: "alice", type: "User" },
+          sender: { id: 1001, login: "alice", type: "User" },
           issue: { number: 12, pull_request: null },
           comment: {
             body: "hello",
@@ -444,6 +446,7 @@ describe("gateway", () => {
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });
@@ -458,10 +461,10 @@ describe("gateway", () => {
           action: "created",
           installation: { id: 126669985 },
           repository: { full_name: "scoutqa-dot-ai/thor" },
-          sender: { login: "alice", type: "User" },
+          sender: { id: 1001, login: "alice", type: "User" },
           pull_request: {
             number: 42,
-            user: { login: "alice" },
+            user: { id: 1001, login: "alice" },
             head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
             base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
           },
@@ -490,6 +493,7 @@ describe("gateway", () => {
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });
@@ -504,7 +508,7 @@ describe("gateway", () => {
           action: "created",
           installation: { id: 1 },
           repository: { full_name: "acme/thor" },
-          sender: { login: "alice", type: "User" },
+          sender: { id: 1001, login: "alice", type: "User" },
           issue: {
             number: 12,
             pull_request: { html_url: "https://github.com/acme/thor/pull/12" },
@@ -547,6 +551,7 @@ describe("gateway", () => {
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });

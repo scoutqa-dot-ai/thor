@@ -96,7 +96,8 @@ opencode to act on a PR comment must mention `@${GITHUB_APP_SLUG}`.
 
 **Exit criteria**
 
-- `pnpm --filter @thor/gateway test` passes.
+- `pnpm exec vitest run packages/gateway/src/github.test.ts packages/gateway/src/app.test.ts packages/gateway/src/service.test.ts`
+  passes.
 - New unit tests assert the drop for all three event types.
 - `mention` field is no longer referenced in gateway sources (grep clean).
 - Ignored events emit a structured log including

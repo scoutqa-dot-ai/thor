@@ -19,10 +19,10 @@ function baseReviewCommentEvent(): GitHubWebhookEnvelope {
     action: "created",
     installation: { id: 123 },
     repository: { full_name: "scoutqa-dot-ai/thor" },
-    sender: { login: "alice", type: "User" },
+    sender: { id: 1001, login: "alice", type: "User" },
     pull_request: {
       number: 42,
-      user: { login: "alice" },
+      user: { id: 1001, login: "alice" },
       head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
       base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
     },
@@ -69,8 +69,15 @@ describe("GitHubWebhookEnvelopeSchema", () => {
   });
 });
 
+const THOR_BOT_ID = 7777;
+const OTHER_BOT_ID = 9999;
+
 describe("normalizeGitHubEvent", () => {
-  const options = { localRepo: "thor", mentionLogins: ["thor", "thor[bot]"] };
+  const options = {
+    localRepo: "thor",
+    mentionLogins: ["thor", "thor[bot]"],
+    botId: THOR_BOT_ID,
+  };
 
   it("normalizes pull_request_review_comment and detects mention", () => {
     const normalized = normalizeGitHubEvent(baseReviewCommentEvent(), options);
@@ -87,7 +94,7 @@ describe("normalizeGitHubEvent", () => {
         action: "created",
         installation: { id: 1 },
         repository: { full_name: "acme/repo" },
-        sender: { login: "alice", type: "User" },
+        sender: { id: 1001, login: "alice", type: "User" },
         issue: { number: 12, pull_request: null },
         comment: {
           body: "hello",
@@ -118,7 +125,7 @@ describe("normalizeGitHubEvent", () => {
     const self = normalizeGitHubEvent(
       {
         ...baseReviewCommentEvent(),
-        sender: { login: "thor[bot]", type: "Bot" },
+        sender: { id: THOR_BOT_ID, login: "thor[bot]", type: "Bot" },
       },
       options,
     );
@@ -138,7 +145,7 @@ describe("normalizeGitHubEvent", () => {
     const otherBotMention = normalizeGitHubEvent(
       {
         ...baseReviewCommentEvent(),
-        sender: { login: "codex[bot]", type: "Bot" },
+        sender: { id: OTHER_BOT_ID, login: "codex[bot]", type: "Bot" },
       },
       options,
     );
@@ -148,7 +155,7 @@ describe("normalizeGitHubEvent", () => {
     const otherBotNoMention = normalizeGitHubEvent(
       {
         ...baseReviewCommentEvent(),
-        sender: { login: "codex[bot]", type: "Bot" },
+        sender: { id: OTHER_BOT_ID, login: "codex[bot]", type: "Bot" },
         comment: {
           body: "no @mention here",
           html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r4",
@@ -160,13 +167,24 @@ describe("normalizeGitHubEvent", () => {
     expect(otherBotNoMention).toEqual({ ignored: true, reason: "non_mention_comment" });
   });
 
+  it("ignores self senders even when login does not match (id is canonical)", () => {
+    const result = normalizeGitHubEvent(
+      {
+        ...baseReviewCommentEvent(),
+        sender: { id: THOR_BOT_ID, login: "renamed-thor[bot]", type: "Bot" },
+      },
+      options,
+    );
+    expect(result).toEqual({ ignored: true, reason: "self_sender" });
+  });
+
   it("ignores issue_comment without app mention", () => {
     const result = normalizeGitHubEvent(
       {
         action: "created",
         installation: { id: 1 },
         repository: { full_name: "acme/repo" },
-        sender: { login: "alice", type: "User" },
+        sender: { id: 1001, login: "alice", type: "User" },
         issue: {
           number: 12,
           pull_request: { html_url: "https://github.com/acme/repo/pull/12" },
@@ -203,7 +221,7 @@ describe("normalizeGitHubEvent", () => {
         ...baseReviewCommentEvent(),
         pull_request: {
           ...baseReviewCommentEvent().pull_request,
-          user: { login: "thor[bot]" },
+          user: { id: THOR_BOT_ID, login: "thor[bot]" },
         },
         comment: {
           body: "looks good, no @ mention here",
@@ -223,10 +241,10 @@ describe("normalizeGitHubEvent", () => {
         action: "submitted",
         installation: { id: 1 },
         repository: { full_name: "acme/repo" },
-        sender: { login: "alice", type: "User" },
+        sender: { id: 1001, login: "alice", type: "User" },
         pull_request: {
           number: 12,
-          user: { login: "thor[bot]" },
+          user: { id: THOR_BOT_ID, login: "thor[bot]" },
           head: { ref: "main", repo: { full_name: "acme/repo" } },
           base: { repo: { full_name: "acme/repo" } },
         },
@@ -248,10 +266,10 @@ describe("normalizeGitHubEvent", () => {
         action: "submitted",
         installation: { id: 1 },
         repository: { full_name: "acme/repo" },
-        sender: { login: "alice", type: "User" },
+        sender: { id: 1001, login: "alice", type: "User" },
         pull_request: {
           number: 12,
-          user: { login: "alice" },
+          user: { id: 1001, login: "alice" },
           head: { ref: "main", repo: { full_name: "acme/repo" } },
           base: { repo: { full_name: "acme/repo" } },
         },
@@ -272,10 +290,10 @@ describe("normalizeGitHubEvent", () => {
         action: "submitted",
         installation: { id: 1 },
         repository: { full_name: "acme/repo" },
-        sender: { login: "alice", type: "User" },
+        sender: { id: 1001, login: "alice", type: "User" },
         pull_request: {
           number: 12,
-          user: { login: "alice" },
+          user: { id: 1001, login: "alice" },
           head: { ref: "main", repo: { full_name: "acme/repo" } },
           base: { repo: { full_name: "acme/repo" } },
         },

@@ -2,8 +2,14 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 
 const GitHubSenderSchema = z.object({
+  id: z.number().int().positive(),
   login: z.string(),
   type: z.string(),
+});
+
+const GitHubUserSchema = z.object({
+  id: z.number().int().positive(),
+  login: z.string(),
 });
 
 const GitHubInstallationSchema = z.object({
@@ -41,7 +47,7 @@ const IssueCommentEnvelopeSchema = z.object({
 
 const PullRequestObjectSchema = z.object({
   number: z.number().int().positive(),
-  user: z.object({ login: z.string() }),
+  user: GitHubUserSchema,
   head: GitHubPullRequestRefSchema,
   base: z.object({ repo: z.object({ full_name: z.string() }) }),
 });
@@ -145,10 +151,6 @@ export function buildMentionLogins(appSlug: string): string[] {
   return [slug, `${slug}[bot]`];
 }
 
-function isSelfLogin(login: string, mentionLogins: string[]): boolean {
-  return mentionLogins.map((m) => m.toLowerCase()).includes(login.toLowerCase());
-}
-
 export function buildCorrelationKey(localRepo: string, branch: string): string {
   return `git:branch:${localRepo}:${branch}`;
 }
@@ -174,10 +176,10 @@ export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number {
 
 export function normalizeGitHubEvent(
   raw: GitHubWebhookEnvelope,
-  options: { localRepo: string; mentionLogins: string[] },
+  options: { localRepo: string; mentionLogins: string[]; botId: number },
 ): NormalizedGitHubEvent | { ignored: true; reason: IgnoreReason } {
   const senderLogin = raw.sender.login.toLowerCase();
-  const isSelf = isSelfLogin(senderLogin, options.mentionLogins);
+  const isSelf = raw.sender.id === options.botId;
 
   if (isIssueCommentEvent(raw)) {
     if (raw.action !== "created") {
@@ -219,7 +221,7 @@ export function normalizeGitHubEvent(
     }
     if (
       !detectMention(raw.comment.body, options.mentionLogins) &&
-      !isSelfLogin(raw.pull_request.user.login, options.mentionLogins)
+      raw.pull_request.user.id !== options.botId
     ) {
       return { ignored: true, reason: "non_mention_comment" };
     }
@@ -252,10 +254,7 @@ export function normalizeGitHubEvent(
   if (isSelf) {
     return { ignored: true, reason: "self_sender" };
   }
-  if (
-    !detectMention(body, options.mentionLogins) &&
-    !isSelfLogin(raw.pull_request.user.login, options.mentionLogins)
-  ) {
+  if (!detectMention(body, options.mentionLogins) && raw.pull_request.user.id !== options.botId) {
     return { ignored: true, reason: "non_mention_comment" };
   }
 
