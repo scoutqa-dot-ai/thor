@@ -19,6 +19,7 @@ import {
 import {
   buildApprovalButtonValue,
   buildInlineApprovalBlocks,
+  extractApprovalFailureCategory,
   formatApprovalArgs,
 } from "./approval.js";
 import { addReaction, updateMessage, postMessage, type SlackDeps } from "./slack-api.js";
@@ -995,10 +996,7 @@ function delay(ms: number): Promise<void> {
 }
 
 function isResolvedApprovalExecutionFailure(body: ExecResult): boolean {
-  return (
-    body.exitCode !== 0 &&
-    (/^Error calling "/m.test(body.stderr) || /^Unknown upstream "/m.test(body.stderr))
-  );
+  return body.exitCode !== 0 && extractApprovalFailureCategory(body.stderr) !== undefined;
 }
 
 export async function updateSlackMessage(

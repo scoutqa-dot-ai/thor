@@ -99,6 +99,8 @@ export type SlackReactionEvent = z.infer<typeof SlackReactionEventSchema>;
 export type SlackBotEvent = z.infer<typeof SlackBotEventSchema>;
 export type SlackEventEnvelope = z.infer<typeof SlackEventEnvelopeSchema>;
 export type SlackUrlVerification = z.infer<typeof SlackUrlVerificationSchema>;
+export type SlackInteractivityPayload = z.infer<typeof SlackInteractivityPayloadSchema>;
+export type SlackInteractivityAction = NonNullable<SlackInteractivityPayload["actions"]>[number];
 
 export function verifySlackSignature(input: {
   signingSecret: string;

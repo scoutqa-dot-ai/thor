@@ -35,10 +35,16 @@ import {
   SlackInteractivityPayloadSchema,
   SlackUrlVerificationSchema,
   verifySlackSignature,
+  type SlackInteractivityAction,
+  type SlackInteractivityPayload,
   type SlackThreadEvent,
 } from "./slack.js";
 import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.js";
-import { parseApprovalButtonValue } from "./approval.js";
+import {
+  extractApprovalFailureCategory,
+  parseApprovalButtonValue,
+  type ApprovalButtonRoute,
+} from "./approval.js";
 import {
   buildCorrelationKey,
   buildPendingBranchResolveKey,
@@ -96,13 +102,9 @@ function summarizeResolutionOutput(
   let tool: string | undefined;
   let upstream: string | undefined;
 
-  // Surface fields that come from a structured remote-cli response, plus a
-  // sanitized failure category from stderr. Raw stdout/stderr (and arbitrary
-  // `result` payloads) can contain tool-side response data — including data
-  // the approved tool returned — which we must not echo verbatim into Slack
-  // where the approval card lives. The categorical extractors below capture
-  // the kind of failure (e.g. "Error calling \"<tool>\"") without including
-  // the raw error body that follows.
+  // Avoid echoing raw stdout/stderr — both can contain upstream tool response
+  // data, which the approval card must not leak. Only surface structured fields
+  // and a sanitized failure category.
   try {
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     if (typeof parsed.status === "string") status = parsed.status;
@@ -114,30 +116,14 @@ function summarizeResolutionOutput(
       summary = parsed.reason;
     }
   } catch {
-    // Non-JSON stdout: deliberately no fall-through to raw text.
+    // non-JSON stdout: drop, do not surface
   }
 
   if (!summary) {
-    const category = extractStderrFailureCategory(stderr);
-    if (category) summary = category;
+    summary = extractApprovalFailureCategory(stderr);
   }
 
   return { status, summary, tool, upstream };
-}
-
-/**
- * Extract the high-level failure category from remote-cli stderr without
- * including the upstream tool's response body. Recognized shapes:
- *   `Error calling "<tool>": <details>`  → `Error calling "<tool>"`
- *   `Unknown upstream "<name>"`          → as-is
- * Anything else returns undefined so we don't leak unstructured stderr.
- */
-function extractStderrFailureCategory(stderr: string): string | undefined {
-  const errorCalling = stderr.match(/^Error calling "[^"]+"/m);
-  if (errorCalling) return errorCalling[0];
-  const unknownUpstream = stderr.match(/^Unknown upstream "[^"]+"/m);
-  if (unknownUpstream) return unknownUpstream[0];
-  return undefined;
 }
 
 const log = createLogger("gateway");
@@ -224,22 +210,16 @@ export interface GatewayApp {
   queue: EventQueue;
 }
 
-interface SlackBlockAction {
-  action_id?: string;
-  value?: string;
-}
+type ApprovalDecision = "approved" | "rejected";
 
-interface SlackBlockActionsPayload {
-  user?: { id?: string };
-  channel?: { id?: string };
-  message?: { ts?: string; thread_ts?: string };
-  container?: { message_ts?: string; thread_ts?: string; channel_id?: string };
-}
+const DECISION_LABEL: Record<ApprovalDecision, string> = {
+  approved: "Approved",
+  rejected: "Rejected",
+};
 
-interface ApprovalActionContext {
-  res: Response;
-  action: SlackBlockAction;
-  payload: SlackBlockActionsPayload;
+type ApprovalAction = SlackInteractivityAction & { value: string };
+
+interface ApprovalDeps {
   slackDeps: SlackDeps;
   remoteCliUrl: string;
   resolveSecret: string | undefined;
@@ -247,17 +227,26 @@ interface ApprovalActionContext {
   queue: EventQueue;
 }
 
-/**
- * Handle a single Slack approval button click. Acks Slack synchronously,
- * then resolves the approval, updates the original card, and re-enters the
- * originating session via the queue. Returns true when the action belonged
- * to this handler (so the caller stops iterating).
- */
-function handleApprovalAction(ctx: ApprovalActionContext): boolean {
-  const { res, action, payload, slackDeps, remoteCliUrl, resolveSecret, fetchImpl, queue } = ctx;
-  const decision = action.action_id === "approval_approve" ? "approved" : "rejected";
+interface ApprovalActionContext extends ApprovalDeps {
+  res: Response;
+  action: ApprovalAction;
+  payload: SlackInteractivityPayload;
+}
+
+interface ApprovalReentryContext extends ApprovalDeps {
+  route: ApprovalButtonRoute;
+  decision: ApprovalDecision;
+  reviewer: string;
+  channel: string | undefined;
+  messageTs: string | undefined;
+  threadTs: string;
+}
+
+function handleApprovalAction(ctx: ApprovalActionContext): void {
+  const { res, action, payload } = ctx;
+  const decision: ApprovalDecision =
+    action.action_id === "approval_approve" ? "approved" : "rejected";
   const reviewer = payload.user?.id ?? "unknown";
-  if (!action.value) return false;
   const route = parseApprovalButtonValue(action.value);
   const channel = payload.channel?.id ?? payload.container?.channel_id;
   const messageTs = payload.message?.ts ?? payload.container?.message_ts;
@@ -268,7 +257,7 @@ function handleApprovalAction(ctx: ApprovalActionContext): boolean {
       value: action.value,
     });
     res.status(200).json({ ok: true });
-    return true;
+    return;
   }
 
   if (!threadTs) {
@@ -277,7 +266,7 @@ function handleApprovalAction(ctx: ApprovalActionContext): boolean {
       value: action.value,
     });
     res.status(200).json({ ok: true });
-    return true;
+    return;
   }
 
   logInfo(log, "approval_action", {
@@ -286,44 +275,23 @@ function handleApprovalAction(ctx: ApprovalActionContext): boolean {
     decision,
     reviewer,
     threadTs,
-    remoteCliUrl,
+    remoteCliUrl: ctx.remoteCliUrl,
   });
 
-  // Slack interactivity requires a reply within 3s. Ack now and finish in the
-  // background — the resolveApproval call retries on transient remote-cli
-  // failures and surfaces a Slack-visible error message if it ultimately fails.
+  // Slack requires the interactivity ack within 3s; finish in the background.
   res.status(200).json({ ok: true });
 
   void resolveApprovalAndReenter({
+    ...ctx,
     route,
     decision,
     reviewer,
     channel,
     messageTs,
     threadTs,
-    slackDeps,
-    remoteCliUrl,
-    resolveSecret,
-    fetchImpl,
-    queue,
   }).catch((error) => {
     logError(log, "approval_background_error", error, { actionId: route.actionId });
   });
-  return true;
-}
-
-interface ApprovalReentryContext {
-  route: { actionId: string; upstreamName?: string };
-  decision: "approved" | "rejected";
-  reviewer: string;
-  channel: string | undefined;
-  messageTs: string | undefined;
-  threadTs: string;
-  slackDeps: SlackDeps;
-  remoteCliUrl: string;
-  resolveSecret: string | undefined;
-  fetchImpl: typeof fetch | undefined;
-  queue: EventQueue;
 }
 
 async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<void> {
@@ -354,7 +322,7 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
       actionId: route.actionId,
     });
     if (channel && messageTs) {
-      const failureText = `⚠️ *${decision.charAt(0).toUpperCase()}${decision.slice(1)}, but resolution failed* by <@${reviewer}> · \`${route.actionId}\`\n>remote-cli did not respond after retries; please retry the approval action`;
+      const failureText = `⚠️ *${DECISION_LABEL[decision]}, but resolution failed* by <@${reviewer}> · \`${route.actionId}\`\n>remote-cli did not respond after retries; please retry the approval action`;
       await updateSlackMessage(channel, messageTs, failureText, slackDeps);
     }
     return;
@@ -363,19 +331,14 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
   const resolution = summarizeResolutionOutput(resolved.stdout, resolved.stderr);
   const resolutionFailed = resolved.exitCode !== 0;
   const statusEmoji = resolutionFailed ? "⚠️" : decision === "approved" ? "✅" : "❌";
-  const baseDecisionLabel = decision.charAt(0).toUpperCase() + decision.slice(1);
   const decisionLabel = resolutionFailed
-    ? `${baseDecisionLabel}, resolution failed`
-    : baseDecisionLabel;
+    ? `${DECISION_LABEL[decision]}, resolution failed`
+    : DECISION_LABEL[decision];
   const target = [route.upstreamName ?? resolution.upstream, resolution.tool]
     .filter(Boolean)
     .join("/");
   const summarySuffix = resolution.summary ? `\n>${truncate(resolution.summary, 180)}` : "";
   const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}> · \`${route.actionId}\`${target ? ` (${target})` : ""}${summarySuffix}`;
-
-  if (channel && messageTs) {
-    await updateSlackMessage(channel, messageTs, text, slackDeps);
-  }
 
   if (!channel) {
     logError(log, "approval_reentry_enqueue_failed", "Missing channel for approval outcome", {
@@ -408,6 +371,8 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     });
   }
 
+  // Enqueue before the Slack card update — re-entering the runner is the
+  // load-bearing operation; a failed chat.update must not block it.
   queue.enqueue({
     id: `approval-${route.actionId}-${decision}-${Date.now()}`,
     source: "approval",
@@ -427,6 +392,10 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     threadTs,
     correlationKey: outcomeCorrelationKey,
   });
+
+  if (messageTs) {
+    await updateSlackMessage(channel, messageTs, text, slackDeps);
+  }
 }
 
 export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
@@ -811,27 +780,26 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const interactionType = result.success ? (result.data.type ?? "unknown") : "unknown";
     logInfo(log, "interactivity_received", { interactionType });
 
-    // Handle approval button clicks
-    if (result.success && result.data.type === "block_actions" && result.data.actions) {
+    if (result.success && result.data.type === "block_actions") {
       const payload = result.data;
-      const actions = payload.actions ?? [];
-      for (const action of actions) {
-        if (
-          (action.action_id === "approval_approve" || action.action_id === "approval_reject") &&
-          action.value
-        ) {
-          const handled = handleApprovalAction({
-            res,
-            action,
-            payload,
-            slackDeps,
-            remoteCliUrl,
-            resolveSecret: config.resolveSecret,
-            fetchImpl: config.fetchImpl,
-            queue,
-          });
-          if (handled) return;
-        }
+      const approvalAction = (payload.actions ?? []).find(
+        (a): a is ApprovalAction =>
+          (a.action_id === "approval_approve" || a.action_id === "approval_reject") &&
+          typeof a.value === "string" &&
+          a.value.length > 0,
+      );
+      if (approvalAction) {
+        handleApprovalAction({
+          res,
+          action: approvalAction,
+          payload,
+          slackDeps,
+          remoteCliUrl,
+          resolveSecret: config.resolveSecret,
+          fetchImpl: config.fetchImpl,
+          queue,
+        });
+        return;
       }
     }
     res.status(200).json({ ok: true, ignored: true, interactionType });

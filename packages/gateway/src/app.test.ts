@@ -1639,8 +1639,6 @@ describe("gateway", () => {
     expect(updateCall).toBeDefined();
     const updateBody = JSON.parse(String(updateCall?.[1]?.body));
     expect(updateBody.text).toContain("Approved, resolution failed");
-    // Sanitized failure category — names the failed tool but does not leak the
-    // raw upstream error body ("upstream unavailable" must not appear).
     expect(updateBody.text).toContain('Error calling "merge_pull_request"');
     expect(updateBody.text).not.toContain("upstream unavailable");
 
@@ -1650,7 +1648,6 @@ describe("gateway", () => {
     expect(runnerCall).toBeDefined();
     const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
     expect(runnerBody.prompt).toContain("approval resolution reported a failure");
-    // Runner prompt also uses the sanitized failure category, not raw stderr.
     expect(runnerBody.prompt).toContain('Error calling "merge_pull_request"');
     expect(runnerBody.prompt).not.toContain("upstream unavailable");
   });

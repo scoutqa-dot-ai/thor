@@ -45,6 +45,17 @@ export function buildApprovalButtonValue(input: {
   return actionId;
 }
 
+/**
+ * Extract a categorical failure prefix from remote-cli stderr without echoing
+ * the upstream tool's response body — Slack approval cards must not leak raw
+ * tool output. Returns undefined for unrecognized stderr.
+ */
+export function extractApprovalFailureCategory(stderr: string): string | undefined {
+  return (
+    stderr.match(/^Error calling "[^"]+"/m)?.[0] ?? stderr.match(/^Unknown upstream "[^"]+"/m)?.[0]
+  );
+}
+
 export function parseApprovalButtonValue(value: string): ApprovalButtonRoute | undefined {
   const parts = value.split(":");
 
