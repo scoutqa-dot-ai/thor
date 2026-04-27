@@ -318,7 +318,6 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - Treat exhausted PR-head lookup failures as terminal: after the defined retry budget, timeout/5xx/network lookup failures dead-letter once as `branch_unresolved` instead of retrying forever.
 - Keep wrapper gating aligned with the migrated config shape: `git` / `gh` wrappers should detect the `orgs`-based workspace config so GitHub App auth stays enabled after removing `github_app.installations`.
 - Require payload timestamps (`comment.created_at` / `review.submitted_at`) at the schema level so `sourceTs` is always derived from a real event time and redeliveries collapse to one queue file deterministically.
-- Gateway `/health` should fail closed when pending queue events are stale (older than 15 minutes by `receivedAt`) so monitoring catches a stuck dispatcher quickly.
 
 **Exit criteria:**
 
