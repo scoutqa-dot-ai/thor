@@ -408,8 +408,15 @@ export function extractThorMeta(output: string): ThorMeta[] {
 /**
  * Extract Slack alias from bash output that contains raw Slack JSON.
  *
- * chat.postMessage successful responses may include a top-level
+ * chat.postMessage successful responses include a top-level
  * `thor-meta-key: slack:thread:<ts>` field injected by mitmproxy.
+ *
+ * The parser only trusts JSON that also looks like a real chat.postMessage
+ * response (`ok: true` plus a non-empty `ts`). Without those shape guards
+ * an agent could `echo '{"thor-meta-key":"slack:thread:HIJACK"}'` from any
+ * bash command to register an arbitrary alias, since the JSON would
+ * otherwise be read straight from untrusted agent stdout with no way to
+ * verify it came from Slack via mitmproxy.
  */
 export function extractSlackAliasFromBashOutput(output: string): ExtractedAlias | undefined {
   const candidates = [output.trim(), ...output.split(/\r?\n/).map((line) => line.trim())].filter(
@@ -421,10 +428,16 @@ export function extractSlackAliasFromBashOutput(output: string): ExtractedAlias 
       const parsed = JSON.parse(candidate) as unknown;
       if (!parsed || typeof parsed !== "object") continue;
 
-      const metaKey = (parsed as Record<string, unknown>)[THOR_META_KEY];
+      const record = parsed as Record<string, unknown>;
+      const metaKey = record[THOR_META_KEY];
       if (typeof metaKey !== "string" || !metaKey.startsWith("slack:thread:")) continue;
 
-      const channel = (parsed as Record<string, unknown>).channel;
+      // mitmproxy only injects thor-meta-key on ok=true responses with a
+      // non-empty ts. Reject anything that doesn't carry both markers.
+      if (record.ok !== true) continue;
+      if (typeof record.ts !== "string" || !record.ts.trim()) continue;
+
+      const channel = record.channel;
       return {
         alias: metaKey,
         context:
