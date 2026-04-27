@@ -70,7 +70,6 @@ describe("approval formatting", () => {
   });
 });
 
-
 describe("approval button routing", () => {
   it("encodes v3 payloads with thread routing data", () => {
     const value = buildApprovalButtonValue({
@@ -81,7 +80,6 @@ describe("approval button routing", () => {
 
     expect(value).toBe("v3:act-1:github:1710000000.001");
     expect(parseApprovalButtonValue(value)).toEqual({
-      version: "v3",
       actionId: "act-1",
       upstreamName: "github",
       threadTs: "1710000000.001",
@@ -90,9 +88,12 @@ describe("approval button routing", () => {
 
   it("parses legacy v2 payloads for compatibility", () => {
     expect(parseApprovalButtonValue("v2:act-1:atlassian")).toEqual({
-      version: "v2",
       actionId: "act-1",
       upstreamName: "atlassian",
     });
+  });
+
+  it("returns undefined for malformed v3 upstream encoding", () => {
+    expect(parseApprovalButtonValue("v3:act-1:%ZZ:1710000000.001")).toBeUndefined();
   });
 });

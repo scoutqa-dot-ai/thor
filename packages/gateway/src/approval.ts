@@ -25,7 +25,6 @@ type TrimStep = {
 };
 
 export interface ApprovalButtonRoute {
-  version: "legacy" | "v2" | "v3";
   actionId: string;
   upstreamName?: string;
   threadTs?: string;
@@ -54,9 +53,13 @@ export function parseApprovalButtonValue(value: string): ApprovalButtonRoute | u
     const upstreamRaw = parts[2] ?? "";
     const threadTs = parts.slice(3).join(":");
     if (!actionId || !threadTs) return undefined;
-    const upstreamName = decodeURIComponent(upstreamRaw);
+    let upstreamName: string;
+    try {
+      upstreamName = decodeURIComponent(upstreamRaw);
+    } catch {
+      return undefined;
+    }
     return {
-      version: "v3",
       actionId,
       upstreamName: upstreamName || undefined,
       threadTs,
@@ -68,16 +71,8 @@ export function parseApprovalButtonValue(value: string): ApprovalButtonRoute | u
     const upstreamName = parts.slice(2).join(":");
     if (!actionId || !upstreamName) return undefined;
     return {
-      version: "v2",
       actionId,
       upstreamName,
-    };
-  }
-
-  if (value.trim().length > 0) {
-    return {
-      version: "legacy",
-      actionId: value.trim(),
     };
   }
 
