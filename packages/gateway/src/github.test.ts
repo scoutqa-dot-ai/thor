@@ -114,15 +114,15 @@ describe("normalizeGitHubEvent", () => {
     expect(result).toEqual({ ignored: true, reason: "fork_pr_unsupported" });
   });
 
-  it("ignores bot senders and unsupported actions", () => {
-    const bot = normalizeGitHubEvent(
+  it("ignores self senders and unsupported actions", () => {
+    const self = normalizeGitHubEvent(
       {
         ...baseReviewCommentEvent(),
-        sender: { login: "thor[bot]", type: "User" },
+        sender: { login: "thor[bot]", type: "Bot" },
       },
       options,
     );
-    expect(bot).toEqual({ ignored: true, reason: "bot_sender" });
+    expect(self).toEqual({ ignored: true, reason: "self_sender" });
 
     const unsupported = normalizeGitHubEvent(
       {
@@ -132,6 +132,32 @@ describe("normalizeGitHubEvent", () => {
       options,
     );
     expect(unsupported).toEqual({ ignored: true, reason: "event_unsupported" });
+  });
+
+  it("does not auto-drop other bots — falls through to mention/bot-PR checks", () => {
+    const otherBotMention = normalizeGitHubEvent(
+      {
+        ...baseReviewCommentEvent(),
+        sender: { login: "codex[bot]", type: "Bot" },
+      },
+      options,
+    );
+    if ("ignored" in otherBotMention) throw new Error("expected normalized event");
+    expect(otherBotMention.senderLogin).toBe("codex[bot]");
+
+    const otherBotNoMention = normalizeGitHubEvent(
+      {
+        ...baseReviewCommentEvent(),
+        sender: { login: "codex[bot]", type: "Bot" },
+        comment: {
+          body: "no @mention here",
+          html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r4",
+          created_at: "2026-04-24T11:00:00Z",
+        },
+      },
+      options,
+    );
+    expect(otherBotNoMention).toEqual({ ignored: true, reason: "non_mention_comment" });
   });
 
   it("ignores issue_comment without app mention", () => {

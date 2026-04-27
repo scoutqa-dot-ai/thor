@@ -90,7 +90,7 @@ type PullRequestReviewEnvelope = z.infer<typeof PullRequestReviewEnvelopeSchema>
 type IgnoreReason =
   | "pure_issue_comment_unsupported"
   | "fork_pr_unsupported"
-  | "bot_sender"
+  | "self_sender"
   | "empty_review_body"
   | "non_mention_comment"
   | "event_unsupported";
@@ -145,13 +145,8 @@ export function buildMentionLogins(appSlug: string): string[] {
   return [slug, `${slug}[bot]`];
 }
 
-function isBotSender(senderType: string, senderLogin: string, mentionLogins: string[]): boolean {
-  if (senderType.toLowerCase() === "bot") return true;
-  return mentionLogins.map((login) => login.toLowerCase()).includes(senderLogin.toLowerCase());
-}
-
-function isOurPr(prAuthorLogin: string, mentionLogins: string[]): boolean {
-  return mentionLogins.map((login) => login.toLowerCase()).includes(prAuthorLogin.toLowerCase());
+function isSelfLogin(login: string, mentionLogins: string[]): boolean {
+  return mentionLogins.map((m) => m.toLowerCase()).includes(login.toLowerCase());
 }
 
 export function buildCorrelationKey(localRepo: string, branch: string): string {
@@ -182,7 +177,7 @@ export function normalizeGitHubEvent(
   options: { localRepo: string; mentionLogins: string[] },
 ): NormalizedGitHubEvent | { ignored: true; reason: IgnoreReason } {
   const senderLogin = raw.sender.login.toLowerCase();
-  const isBot = isBotSender(raw.sender.type, senderLogin, options.mentionLogins);
+  const isSelf = isSelfLogin(senderLogin, options.mentionLogins);
 
   if (isIssueCommentEvent(raw)) {
     if (raw.action !== "created") {
@@ -191,8 +186,8 @@ export function normalizeGitHubEvent(
     if (!raw.issue.pull_request) {
       return { ignored: true, reason: "pure_issue_comment_unsupported" };
     }
-    if (isBot) {
-      return { ignored: true, reason: "bot_sender" };
+    if (isSelf) {
+      return { ignored: true, reason: "self_sender" };
     }
     if (!detectMention(raw.comment.body, options.mentionLogins)) {
       return { ignored: true, reason: "non_mention_comment" };
@@ -219,12 +214,12 @@ export function normalizeGitHubEvent(
     if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
       return { ignored: true, reason: "fork_pr_unsupported" };
     }
-    if (isBot) {
-      return { ignored: true, reason: "bot_sender" };
+    if (isSelf) {
+      return { ignored: true, reason: "self_sender" };
     }
     if (
       !detectMention(raw.comment.body, options.mentionLogins) &&
-      !isOurPr(raw.pull_request.user.login, options.mentionLogins)
+      !isSelfLogin(raw.pull_request.user.login, options.mentionLogins)
     ) {
       return { ignored: true, reason: "non_mention_comment" };
     }
@@ -254,12 +249,12 @@ export function normalizeGitHubEvent(
   if (!body) {
     return { ignored: true, reason: "empty_review_body" };
   }
-  if (isBot) {
-    return { ignored: true, reason: "bot_sender" };
+  if (isSelf) {
+    return { ignored: true, reason: "self_sender" };
   }
   if (
     !detectMention(body, options.mentionLogins) &&
-    !isOurPr(raw.pull_request.user.login, options.mentionLogins)
+    !isSelfLogin(raw.pull_request.user.login, options.mentionLogins)
   ) {
     return { ignored: true, reason: "non_mention_comment" };
   }

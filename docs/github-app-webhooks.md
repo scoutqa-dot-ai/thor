@@ -107,15 +107,16 @@ npx smee-client --url https://smee.io/<channel-id> --path /github/webhook --port
 
 ## 9) Troubleshooting (`github_event_ignored`)
 
-| Reason                           | What it means                                        | How to fix                                                                         |
-| -------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `signature_invalid`              | HMAC verification failed or signature header missing | Verify `GITHUB_WEBHOOK_SECRET`; ensure JSON payload is unmodified in transit       |
-| `event_unsupported`              | Event/action is outside Thor allowlist               | Ensure subscription list is correct and action is expected (`created`/`submitted`) |
-| `repo_not_mapped`                | Repo basename has no matching local clone            | Clone under `/workspace/repos/<basename>`; keep basename aligned                   |
-| `pure_issue_comment_unsupported` | `issue_comment` came from an issue, not a PR         | Comment on a PR thread                                                             |
-| `fork_pr_unsupported`            | PR head repo differs from base repo                  | Use same-repo branch PRs                                                           |
-| `bot_sender`                     | Sender is a bot (or Thor app identity)               | Trigger from a human account                                                       |
-| `empty_review_body`              | Submitted review body was blank                      | Include text in the review body                                                    |
+| Reason                           | What it means                                                                                  | How to fix                                                                         |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `signature_invalid`              | HMAC verification failed or signature header missing                                           | Verify `GITHUB_WEBHOOK_SECRET`; ensure JSON payload is unmodified in transit       |
+| `event_unsupported`              | Event/action is outside Thor allowlist                                                         | Ensure subscription list is correct and action is expected (`created`/`submitted`) |
+| `repo_not_mapped`                | Repo basename has no matching local clone                                                      | Clone under `/workspace/repos/<basename>`; keep basename aligned                   |
+| `pure_issue_comment_unsupported` | `issue_comment` came from an issue, not a PR                                                   | Comment on a PR thread                                                             |
+| `fork_pr_unsupported`            | PR head repo differs from base repo                                                            | Use same-repo branch PRs                                                           |
+| `self_sender`                    | Sender is Thor's own app identity                                                              | Self-loop guard — expected when Thor comments/reviews                              |
+| `empty_review_body`              | Submitted review body was blank                                                                | Include text in the review body                                                    |
+| `non_mention_comment`            | Comment/review does not mention the app, and (for review events) the PR was not opened by Thor | Mention `@${GITHUB_APP_SLUG}` to act, or open the PR from Thor                     |
 
 ### Dead-letter reasons (`github_trigger_dropped`)
 

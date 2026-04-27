@@ -33,7 +33,7 @@ the runner. Other comments are dropped at the gateway with a structured log.
 
 Treat "non-mention GitHub comment" as another **early-ignore** reason in the
 normalizer, alongside `pure_issue_comment_unsupported` /
-`fork_pr_unsupported` / `bot_sender` / `empty_review_body` /
+`fork_pr_unsupported` / `self_sender` / `empty_review_body` /
 `event_unsupported`.
 
 Per-event-type rule:
@@ -74,7 +74,7 @@ opencode to act on a PR comment must mention `@${GITHUB_APP_SLUG}`.
   - In `normalizeGitHubEvent()`, after computing `mention`, return
     `{ ignored: true, reason: "non_mention_comment" }` when `mention` is
     false. Apply to all three event branches. Place the check **after**
-    `bot_sender` / `fork_pr_unsupported` / `empty_review_body` so existing
+    `self_sender` / `fork_pr_unsupported` / `empty_review_body` so existing
     drop reasons keep priority and stay observable.
   - Remove `mention` from `NormalizedGitHubEvent` (always true once we reach
     normalization success). Update consumers that read `.mention`:
