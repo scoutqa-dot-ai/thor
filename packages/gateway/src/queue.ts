@@ -85,6 +85,7 @@ export interface PendingQueueEventSnapshot {
 export interface PendingQueueSnapshot {
   pending: PendingQueueEventSnapshot[];
   pendingCount: number;
+  readError?: string;
 }
 
 export class EventQueue {
@@ -165,8 +166,12 @@ export class EventQueue {
       files = readdirSync(this.dir)
         .filter((f) => f.endsWith(".json") && !f.startsWith(".") && f !== "dead-letter")
         .sort();
-    } catch {
-      return { pending: [], pendingCount: 0 };
+    } catch (error) {
+      return {
+        pending: [],
+        pendingCount: 0,
+        readError: error instanceof Error ? error.message : String(error),
+      };
     }
 
     const pending: PendingQueueEventSnapshot[] = [];

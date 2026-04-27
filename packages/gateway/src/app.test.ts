@@ -378,6 +378,44 @@ describe("gateway", () => {
     });
   });
 
+  it("returns 503 when queue snapshot cannot be read", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await withServer(fetchImpl, async (baseUrl, _queue, queueDir) => {
+      rmSync(queueDir, { recursive: true, force: true });
+
+      const response = await fetch(`${baseUrl}/health`);
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        status: "error",
+        queue: {
+          status: "error",
+          pendingCount: 0,
+          staleThresholdMs: 900000,
+          staleEventCount: 0,
+          error: expect.stringContaining("queue snapshot failed:"),
+        },
+      });
+    });
+  });
+
   it("preserves receivedAt when GitHub pending-branch events are rerouted", async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input);

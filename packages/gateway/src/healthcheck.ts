@@ -33,6 +33,7 @@ interface QueueHealth {
   pendingCount: number;
   staleThresholdMs: number;
   staleEventCount: number;
+  error?: string;
   oldestPendingReceivedAt?: string;
   oldestPendingAgeMs?: number;
 }
@@ -241,6 +242,16 @@ function checkQueueHealth(
   staleThresholdMs: number,
 ): QueueHealth | undefined {
   if (!snapshot) return undefined;
+
+  if (snapshot.readError) {
+    return {
+      status: "error",
+      pendingCount: snapshot.pendingCount,
+      staleThresholdMs,
+      staleEventCount: 0,
+      error: `queue snapshot failed: ${snapshot.readError}`,
+    };
+  }
 
   const now = Date.now();
   let staleEventCount = 0;

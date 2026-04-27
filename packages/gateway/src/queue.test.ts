@@ -240,6 +240,21 @@ describe("EventQueue", () => {
     });
   });
 
+  it("reports snapshot read failures explicitly", () => {
+    const handler = ackHandler();
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    rmSync(queueDir, { recursive: true, force: true });
+
+    const snapshot = queue.snapshotPending();
+
+    expect(snapshot).toMatchObject({
+      pending: [],
+      pendingCount: 0,
+      readError: expect.any(String),
+    });
+  });
+
   it("handles corrupt files without crashing", async () => {
     const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
