@@ -1,0 +1,25 @@
+packages/remote-cli/src/policy-git.ts
+  cc7f4e1d8be08672 468-491
+packages/remote-cli/src/policy.test.ts
+  cc7f4e1d8be08672 423-424,428-445
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e54b8bdd63d323e04ff48aee24becea25df58d60",
+  "prompts": {
+    "cc7f4e1d8be08672": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8912ffd9-bff5-4516-a3cd-166f53c01af5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 44,
+      "total_deletions": 17,
+      "accepted_lines": 44,
+      "overriden_lines": 0
+    }
+  }
+}
