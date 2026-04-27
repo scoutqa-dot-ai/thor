@@ -337,6 +337,10 @@ Files likely affected:
 - 2026-04-27: Approved-action execution failures from remote-cli are treated as
   delivered approval outcomes. Gateway updates the Slack card with the failure
   summary and re-enters the agent session with non-interrupt failure guidance.
+- 2026-04-27: Direct Slack writes through mitmproxy now enforce the configured
+  Slack channel allowlist before bot-token injection. `chat.postMessage` and
+  `files.completeUploadExternal` fail closed when the channel is missing or not
+  configured.
 
 ## Verification matrix
 

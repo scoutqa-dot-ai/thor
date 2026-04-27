@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 try:
     from mitmproxy import http
@@ -32,6 +32,7 @@ from rules import (
 
 HEALTH_HOST = "__health.thor"
 SLACK_POST_MESSAGE_PATH = "/api/chat.postMessage"
+SLACK_COMPLETE_UPLOAD_PATH = "/api/files.completeUploadExternal"
 THOR_META_KEY = "thor-meta-key"
 
 
@@ -95,28 +96,100 @@ def _set_response_text(response: Any, text: str) -> None:
     response.content = text.encode("utf-8")
 
 
-def _extract_request_thread_ts(request: Any) -> str | None:
+def _request_content_type(request: Any) -> str:
     headers = getattr(request, "headers", {})
-    content_type = str(headers.get("content-type", headers.get("Content-Type", ""))).lower()
+    return str(headers.get("content-type", headers.get("Content-Type", ""))).lower()
+
+
+def _merge_fields(
+    target: dict[str, list[str]],
+    source: dict[str, list[str]],
+) -> None:
+    for key, values in source.items():
+        target.setdefault(key, []).extend(values)
+
+
+def _parse_request_fields(request: Any) -> dict[str, list[str]]:
+    fields: dict[str, list[str]] = {}
+    raw_path = str(getattr(request, "path", ""))
+    query = urlsplit(raw_path).query
+    if query:
+        _merge_fields(fields, parse_qs(query, keep_blank_values=True))
+
+    content_type = _request_content_type(request)
     body = _get_request_text(request)
 
     if "application/json" in content_type:
         try:
             parsed = json.loads(body)
-            thread_ts = parsed.get("thread_ts") if isinstance(parsed, dict) else None
-            if isinstance(thread_ts, str) and thread_ts.strip():
-                return thread_ts.strip()
         except Exception:
-            return None
+            return fields
+
+        if not isinstance(parsed, dict):
+            return fields
+
+        for key, value in parsed.items():
+            if isinstance(key, str) and isinstance(value, str):
+                fields.setdefault(key, []).append(value)
+            elif isinstance(key, str) and isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str):
+                        fields.setdefault(key, []).append(item)
+        return fields
 
     if "application/x-www-form-urlencoded" in content_type or body:
         try:
-            params = parse_qs(body, keep_blank_values=True)
-            values = params.get("thread_ts")
-            if values and isinstance(values[0], str) and values[0].strip():
-                return values[0].strip()
+            _merge_fields(fields, parse_qs(body, keep_blank_values=True))
         except Exception:
-            return None
+            return fields
+
+    return fields
+
+
+def _request_field_values(fields: dict[str, list[str]], *names: str) -> list[str]:
+    values: list[str] = []
+    for name in names:
+        values.extend(fields.get(name, []))
+    return values
+
+
+def _split_channel_values(values: list[str]) -> list[str]:
+    channels: list[str] = []
+    for value in values:
+        for channel in value.split(","):
+            channel = channel.strip()
+            if channel:
+                channels.append(channel)
+    return channels
+
+
+def _extract_request_thread_ts(request: Any) -> str | None:
+    values = _request_field_values(_parse_request_fields(request), "thread_ts")
+    if values and values[0].strip():
+        return values[0].strip()
+    return None
+
+
+def _slack_write_channel_error(
+    path: str,
+    request: Any,
+    allowed_channels: frozenset[str],
+) -> str | None:
+    if path == SLACK_POST_MESSAGE_PATH:
+        channel_fields = ("channel",)
+    elif path == SLACK_COMPLETE_UPLOAD_PATH:
+        channel_fields = ("channel_id", "channel", "channels", "channel_ids")
+    else:
+        return None
+
+    fields = _parse_request_fields(request)
+    channels = _split_channel_values(_request_field_values(fields, *channel_fields))
+    if not channels:
+        return "thor proxy Slack write requires an allowed channel"
+
+    for channel in channels:
+        if channel not in allowed_channels:
+            return f"thor proxy denied Slack channel: {channel}"
 
     return None
 
@@ -142,7 +215,8 @@ class ThorMitmAddon:
             flow.response = _response(200, "ok")
             return
 
-        decision = self._store.get().classify(host, path)
+        ruleset = self._store.get()
+        decision = ruleset.classify(host, path)
 
         if decision.action == "deny":
             flow.response = _response(403, f"thor proxy denied host/path: {host}{path}")
@@ -161,6 +235,16 @@ class ThorMitmAddon:
                 f"thor proxy readonly rule blocked method {request.method} for host: {host}",
             )
             return
+
+        if host == "slack.com":
+            channel_error = _slack_write_channel_error(
+                path,
+                request,
+                ruleset.allowed_slack_channels,
+            )
+            if channel_error is not None:
+                flow.response = _response(403, channel_error)
+                return
 
         try:
             resolved_headers = resolve_headers(decision.rule.headers)

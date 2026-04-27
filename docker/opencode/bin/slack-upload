@@ -10,7 +10,7 @@ Upload a file to Slack using Slack's external upload flow.
 Authentication is injected by mitmproxy; do not pass a token manually.
 
 Options:
-  --channel <id>     Share the file in channel ID C...
+  --channel <id>     Share the file in allowed channel ID C... (required)
   --thread-ts <ts>   Reply in an existing thread; requires --channel
   --title <title>    Slack file title; defaults to the file basename
   --comment <text>   Initial comment when sharing; requires --channel
@@ -90,6 +90,7 @@ fi
 [ -n "$file" ] || die "file path is required"
 [ -f "$file" ] || die "file not found: $file"
 [ -r "$file" ] || die "file is not readable: $file"
+[ -n "$channel" ] || die "--channel is required"
 
 if [ -n "$thread_ts" ] && [ -z "$channel" ]; then
   die "--thread-ts requires --channel"
