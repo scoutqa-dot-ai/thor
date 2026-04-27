@@ -620,11 +620,23 @@ export async function handleProgressEvent(
         ...(event.description ? { description: event.description } : {}),
       });
       break;
-    case "done":
+    case "done": {
+      // A late `done` from a superseded stream must not finish the current
+      // session. Match the event's sessionId to the active session — if they
+      // differ, this `done` belongs to an older stream and is ignored.
+      if (session.sessionId && event.sessionId && session.sessionId !== event.sessionId) {
+        logInfo(log, "done_session_mismatch", {
+          key,
+          eventSessionId: event.sessionId,
+          activeSessionId: session.sessionId,
+        });
+        return;
+      }
       await session.finish(event.status === "completed" ? "completed" : "error", event.error);
       activeSessions.delete(key);
       await onSessionEnd(channel, threadTs);
       break;
+    }
     case "error":
       await session.finish("error", event.error);
       activeSessions.delete(key);
