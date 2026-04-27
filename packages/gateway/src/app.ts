@@ -249,7 +249,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               id: `${event.id}:resolved`,
               correlationKey: resolvedKey,
               payload: plan.githubEvents[index],
-              receivedAt: new Date(now).toISOString(),
               readyAt: now,
               delayMs: 0,
             });
@@ -335,8 +334,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       remoteCliPort: config.remoteCliPort ?? 3004,
       openaiAuthPath: config.openaiAuthPath,
       fetchImpl: config.fetchImpl,
+      queueSnapshot: queue.snapshotPending(),
     });
-    res.json({
+    const statusCode = result.status === "error" ? 503 : 200;
+    res.status(statusCode).json({
       ...result,
       runnerUrl: config.runnerUrl,
       configured: Boolean(config.signingSecret),

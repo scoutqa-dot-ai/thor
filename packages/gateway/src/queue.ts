@@ -71,6 +71,22 @@ export interface EventQueueOptions {
   disableInterval?: boolean;
 }
 
+export interface PendingQueueEventSnapshot {
+  id: string;
+  source: string;
+  correlationKey: string;
+  receivedAt: string;
+  sourceTs: number;
+  readyAt: number;
+  delayMs?: number;
+  interrupt?: boolean;
+}
+
+export interface PendingQueueSnapshot {
+  pending: PendingQueueEventSnapshot[];
+  pendingCount: number;
+}
+
 export class EventQueue {
   private readonly dir: string;
   private readonly deadLetterDir: string;
@@ -140,6 +156,43 @@ export class EventQueue {
       clearInterval(this.interval);
       this.interval = null;
     }
+  }
+
+  /** Read-only snapshot of current live pending events (no payloads). */
+  snapshotPending(): PendingQueueSnapshot {
+    let files: string[];
+    try {
+      files = readdirSync(this.dir)
+        .filter((f) => f.endsWith(".json") && !f.startsWith(".") && f !== "dead-letter")
+        .sort();
+    } catch {
+      return { pending: [], pendingCount: 0 };
+    }
+
+    const pending: PendingQueueEventSnapshot[] = [];
+    for (const file of files) {
+      try {
+        const raw = readFileSync(join(this.dir, file), "utf8");
+        const event = QueuedEventSchema.parse(JSON.parse(raw));
+        pending.push({
+          id: event.id,
+          source: event.source,
+          correlationKey: event.correlationKey,
+          receivedAt: event.receivedAt,
+          sourceTs: event.sourceTs,
+          readyAt: event.readyAt,
+          ...(event.delayMs !== undefined ? { delayMs: event.delayMs } : {}),
+          ...(event.interrupt !== undefined ? { interrupt: event.interrupt } : {}),
+        });
+      } catch {
+        // Ignore unreadable/corrupt files for snapshot purposes.
+      }
+    }
+
+    return {
+      pending,
+      pendingCount: pending.length,
+    };
   }
 
   // ---------------------------------------------------------------------------
