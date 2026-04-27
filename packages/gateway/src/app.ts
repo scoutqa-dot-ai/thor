@@ -96,6 +96,13 @@ function summarizeResolutionOutput(
   let tool: string | undefined;
   let upstream: string | undefined;
 
+  // Surface fields that come from a structured remote-cli response, plus a
+  // sanitized failure category from stderr. Raw stdout/stderr (and arbitrary
+  // `result` payloads) can contain tool-side response data — including data
+  // the approved tool returned — which we must not echo verbatim into Slack
+  // where the approval card lives. The categorical extractors below capture
+  // the kind of failure (e.g. "Error calling \"<tool>\"") without including
+  // the raw error body that follows.
   try {
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     if (typeof parsed.status === "string") status = parsed.status;
@@ -105,19 +112,32 @@ function summarizeResolutionOutput(
       summary = parsed.error;
     } else if (typeof parsed.reason === "string" && parsed.reason) {
       summary = parsed.reason;
-    } else if (typeof parsed.result === "string" && parsed.result) {
-      summary = parsed.result;
     }
   } catch {
-    // Ignore JSON parse errors — fall back to text output below.
+    // Non-JSON stdout: deliberately no fall-through to raw text.
   }
 
   if (!summary) {
-    const text = stdout.trim() || stderr.trim();
-    if (text) summary = truncate(text.replace(/\s+/g, " "), 240);
+    const category = extractStderrFailureCategory(stderr);
+    if (category) summary = category;
   }
 
   return { status, summary, tool, upstream };
+}
+
+/**
+ * Extract the high-level failure category from remote-cli stderr without
+ * including the upstream tool's response body. Recognized shapes:
+ *   `Error calling "<tool>": <details>`  → `Error calling "<tool>"`
+ *   `Unknown upstream "<name>"`          → as-is
+ * Anything else returns undefined so we don't leak unstructured stderr.
+ */
+function extractStderrFailureCategory(stderr: string): string | undefined {
+  const errorCalling = stderr.match(/^Error calling "[^"]+"/m);
+  if (errorCalling) return errorCalling[0];
+  const unknownUpstream = stderr.match(/^Unknown upstream "[^"]+"/m);
+  if (unknownUpstream) return unknownUpstream[0];
+  return undefined;
 }
 
 const log = createLogger("gateway");

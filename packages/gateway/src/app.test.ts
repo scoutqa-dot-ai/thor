@@ -1589,7 +1589,10 @@ describe("gateway", () => {
     expect(updateCall).toBeDefined();
     const updateBody = JSON.parse(String(updateCall?.[1]?.body));
     expect(updateBody.text).toContain("Approved, resolution failed");
-    expect(updateBody.text).toContain("upstream unavailable");
+    // Sanitized failure category — names the failed tool but does not leak the
+    // raw upstream error body ("upstream unavailable" must not appear).
+    expect(updateBody.text).toContain('Error calling "merge_pull_request"');
+    expect(updateBody.text).not.toContain("upstream unavailable");
 
     const runnerCall = fetchImpl.mock.calls.find(
       ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
@@ -1597,7 +1600,9 @@ describe("gateway", () => {
     expect(runnerCall).toBeDefined();
     const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
     expect(runnerBody.prompt).toContain("approval resolution reported a failure");
-    expect(runnerBody.prompt).toContain("upstream unavailable");
+    // Runner prompt also uses the sanitized failure category, not raw stderr.
+    expect(runnerBody.prompt).toContain('Error calling "merge_pull_request"');
+    expect(runnerBody.prompt).not.toContain("upstream unavailable");
   });
 
   it("fails closed for v2 approval buttons when thread context is missing", async () => {
