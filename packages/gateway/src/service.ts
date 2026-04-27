@@ -627,6 +627,12 @@ async function drainResponseBody(response: Response): Promise<void> {
   }
 }
 
+/** Maximum bytes the newlineStream buffer is allowed to grow before forcing
+ * a flush. Caps adversarial / runaway inputs that would otherwise OOM the
+ * gateway (a single multi-MB NDJSON line). 1 MiB is well above any legitimate
+ * progress event payload. */
+const NDJSON_LINE_BYTE_LIMIT = 1 * 1024 * 1024;
+
 /** TransformStream that splits chunks on newlines. */
 function newlineStream(): TransformStream<string, string> {
   let buffer = "";
@@ -636,6 +642,13 @@ function newlineStream(): TransformStream<string, string> {
       const parts = buffer.split("\n");
       buffer = parts.pop() ?? "";
       for (const part of parts) controller.enqueue(part);
+      if (buffer.length > NDJSON_LINE_BYTE_LIMIT) {
+        // Drop the oversized partial line and reset; the next newline starts
+        // a fresh line. The truncated event will fail JSON.parse downstream
+        // and be skipped via the existing parse-error log.
+        logWarn(log, "ndjson_line_too_large", { bufferedBytes: buffer.length });
+        buffer = "";
+      }
     },
     flush(controller) {
       if (buffer) controller.enqueue(buffer);
