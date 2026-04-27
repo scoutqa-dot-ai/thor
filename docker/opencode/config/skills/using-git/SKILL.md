@@ -10,6 +10,7 @@ All `git` commands go through Thor's remote-cli which enforces:
 - **No branch switching in-place.** `git checkout <ref>` and `git switch` are denied — use `git worktree add <path> <ref>` instead.
 - **No force-push or implicit push resolution.** Pushes must target `origin HEAD:refs/heads/<branch>` explicitly.
 - **Pushes only to `origin`**, never to protected branches `main` or `master`.
+- **No `git pull`.** It depends on local upstream/config and can silently rebase. Run `git fetch origin <branch>` then `git merge origin/<branch>` instead.
 - **No config helpers.** `git config` and `git symbolic-ref` are denied.
 - **Use `git restore` for file restore.** `git checkout -- <path>` is not part of the supported surface.
 
@@ -96,6 +97,14 @@ Supported subcommands:
 ### `git push`
 
 Only `git push origin HEAD:refs/heads/<branch>` is supported, with optional `--dry-run` and either `-u` or `--set-upstream`. Those approved flags may appear in any order that Git accepts. Force, implicit upstream resolution, and pushes to protected branches (`main`, `master`) are denied.
+
+### `git merge`
+
+Passthrough — any merge shape is accepted (FF, no-FF, squash, strategies, octopus, `--abort`/`--continue`/`--quit`, custom messages, merging local or remote refs). The merge target is whatever you're currently checked out on, so the existing protected-branch and force-push rules on `git push` cover the only externally-visible damage.
+
+The only denied flag is `--no-verify`, which would skip `pre-merge-commit` / `commit-msg` hooks (mirrors the same deny on `git commit`).
+
+To pick up upstream changes, run `git fetch origin <branch>` then `git merge origin/<branch>`. This replaces `git pull`.
 
 ## Passthrough subcommands (any arguments accepted)
 
