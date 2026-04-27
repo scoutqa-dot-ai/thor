@@ -39,16 +39,19 @@ const IssueCommentEnvelopeSchema = z.object({
   }),
 });
 
+const PullRequestObjectSchema = z.object({
+  number: z.number().int().positive(),
+  user: z.object({ login: z.string() }),
+  head: GitHubPullRequestRefSchema,
+  base: z.object({ repo: z.object({ full_name: z.string() }) }),
+});
+
 const PullRequestReviewCommentEnvelopeSchema = z.object({
   action: z.string(),
   installation: GitHubInstallationSchema,
   repository: GitHubRepositorySchema,
   sender: GitHubSenderSchema,
-  pull_request: z.object({
-    number: z.number().int().positive(),
-    head: GitHubPullRequestRefSchema,
-    base: z.object({ repo: z.object({ full_name: z.string() }) }),
-  }),
+  pull_request: PullRequestObjectSchema,
   comment: z.object({
     body: z.string(),
     html_url: z.string(),
@@ -61,11 +64,7 @@ const PullRequestReviewEnvelopeSchema = z.object({
   installation: GitHubInstallationSchema,
   repository: GitHubRepositorySchema,
   sender: GitHubSenderSchema,
-  pull_request: z.object({
-    number: z.number().int().positive(),
-    head: GitHubPullRequestRefSchema,
-    base: z.object({ repo: z.object({ full_name: z.string() }) }),
-  }),
+  pull_request: PullRequestObjectSchema,
   review: z.object({
     body: z.string().nullable().optional(),
     html_url: z.string(),
@@ -151,6 +150,10 @@ function isBotSender(senderType: string, senderLogin: string, mentionLogins: str
   return mentionLogins.map((login) => login.toLowerCase()).includes(senderLogin.toLowerCase());
 }
 
+function isOurPr(prAuthorLogin: string, mentionLogins: string[]): boolean {
+  return mentionLogins.map((login) => login.toLowerCase()).includes(prAuthorLogin.toLowerCase());
+}
+
 export function buildCorrelationKey(localRepo: string, branch: string): string {
   return `git:branch:${localRepo}:${branch}`;
 }
@@ -219,7 +222,10 @@ export function normalizeGitHubEvent(
     if (isBot) {
       return { ignored: true, reason: "bot_sender" };
     }
-    if (!detectMention(raw.comment.body, options.mentionLogins)) {
+    if (
+      !detectMention(raw.comment.body, options.mentionLogins) &&
+      !isOurPr(raw.pull_request.user.login, options.mentionLogins)
+    ) {
       return { ignored: true, reason: "non_mention_comment" };
     }
     return {
@@ -251,7 +257,10 @@ export function normalizeGitHubEvent(
   if (isBot) {
     return { ignored: true, reason: "bot_sender" };
   }
-  if (!detectMention(body, options.mentionLogins)) {
+  if (
+    !detectMention(body, options.mentionLogins) &&
+    !isOurPr(raw.pull_request.user.login, options.mentionLogins)
+  ) {
     return { ignored: true, reason: "non_mention_comment" };
   }
 

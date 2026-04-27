@@ -36,14 +36,18 @@ normalizer, alongside `pure_issue_comment_unsupported` /
 `fork_pr_unsupported` / `bot_sender` / `empty_review_body` /
 `event_unsupported`.
 
-Apply to all three supported event types:
+Per-event-type rule:
 
-- `issue_comment.created` (PR-scoped)
-- `pull_request_review_comment.created`
-- `pull_request_review.submitted`
+- `issue_comment.created` (PR-scoped) — drop unless mention.
+- `pull_request_review_comment.created` — drop unless mention **or** PR
+  was opened by us (`pull_request.user.login` ∈ `mentionLogins`).
+- `pull_request_review.submitted` — drop unless mention **or** PR was
+  opened by us.
 
-If `detectMention(body, mentionLogins) === false`, return
-`{ ignored: true, reason: "non_mention_comment" }`.
+The bot-PR exception keeps the natural review loop: when opencode opens a
+PR, every reviewer comment / review on that PR is feedback aimed at it, so
+no `@mention` should be required. For human-opened PRs, the contract stays
+"mention me to act."
 
 ### Why at the gateway, not the runner
 
@@ -117,12 +121,13 @@ opencode to act on a PR comment must mention `@${GITHUB_APP_SLUG}`.
 
 ## Decision Log
 
-| Decision                                                         | Choice             | Rationale                                                                                           |
-| ---------------------------------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------- |
-| Where to filter                                                  | Gateway normalizer | Cheapest, single chokepoint, matches existing ignore-reason pattern.                                |
-| Keep passive context for non-mention comments?                   | No                 | Avoids ambiguity about what counts as an instruction; opencode acts only when explicitly addressed. |
-| Keep `mention` field on the normalized event?                    | Drop it            | After this change every forwarded GitHub event is a mention, so the field is dead weight.           |
-| Denylist of other-bot mentions (`@codex`, `@claude`, …) instead? | Rejected           | Maintenance burden and brittle; "mention me to act" is a stronger contract.                         |
+| Decision                                                         | Choice             | Rationale                                                                                                                                                                                            |
+| ---------------------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Where to filter                                                  | Gateway normalizer | Cheapest, single chokepoint, matches existing ignore-reason pattern.                                                                                                                                 |
+| Keep passive context for non-mention comments?                   | No                 | Avoids ambiguity about what counts as an instruction; opencode acts only when explicitly addressed.                                                                                                  |
+| Keep `mention` field on the normalized event?                    | Drop it            | After this change every forwarded GitHub event is a mention, so the field is dead weight.                                                                                                            |
+| Denylist of other-bot mentions (`@codex`, `@claude`, …) instead? | Rejected           | Maintenance burden and brittle; "mention me to act" is a stronger contract.                                                                                                                          |
+| Bot-PR exception for review events?                              | Yes — review-only  | When opencode opened the PR, all reviews/inline review comments on it are feedback aimed at it. Not extended to `issue_comment` because those are easier to address to other bots (`@codex review`). |
 
 ## Out of Scope
 

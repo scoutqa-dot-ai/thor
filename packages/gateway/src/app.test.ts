@@ -327,6 +327,7 @@ describe("gateway", () => {
           sender: { login: "alice", type: "User" },
           pull_request: {
             number: 42,
+            user: { login: "alice" },
             head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
             base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
           },
@@ -460,6 +461,7 @@ describe("gateway", () => {
           sender: { login: "alice", type: "User" },
           pull_request: {
             number: 42,
+            user: { login: "alice" },
             head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
             base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
           },

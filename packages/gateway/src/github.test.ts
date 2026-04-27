@@ -22,6 +22,7 @@ function baseReviewCommentEvent(): GitHubWebhookEnvelope {
     sender: { login: "alice", type: "User" },
     pull_request: {
       number: 42,
+      user: { login: "alice" },
       head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
       base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
     },
@@ -170,6 +171,51 @@ describe("normalizeGitHubEvent", () => {
     expect(result).toEqual({ ignored: true, reason: "non_mention_comment" });
   });
 
+  it("forwards pull_request_review_comment without mention when PR was opened by us", () => {
+    const result = normalizeGitHubEvent(
+      {
+        ...baseReviewCommentEvent(),
+        pull_request: {
+          ...baseReviewCommentEvent().pull_request,
+          user: { login: "thor[bot]" },
+        },
+        comment: {
+          body: "looks good, no @ mention here",
+          html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r3",
+          created_at: "2026-04-24T11:00:00Z",
+        },
+      },
+      options,
+    );
+    if ("ignored" in result) throw new Error("expected normalized event");
+    expect(result.eventType).toBe("pull_request_review_comment");
+  });
+
+  it("forwards pull_request_review without mention when PR was opened by us", () => {
+    const result = normalizeGitHubEvent(
+      {
+        action: "submitted",
+        installation: { id: 1 },
+        repository: { full_name: "acme/repo" },
+        sender: { login: "alice", type: "User" },
+        pull_request: {
+          number: 12,
+          user: { login: "thor[bot]" },
+          head: { ref: "main", repo: { full_name: "acme/repo" } },
+          base: { repo: { full_name: "acme/repo" } },
+        },
+        review: {
+          body: "looks good to me",
+          html_url: "https://github.com/acme/repo/pull/12#pullrequestreview-2",
+          submitted_at: "2026-04-24T11:00:00Z",
+        },
+      },
+      options,
+    );
+    if ("ignored" in result) throw new Error("expected normalized event");
+    expect(result.eventType).toBe("pull_request_review");
+  });
+
   it("ignores pull_request_review without app mention", () => {
     const result = normalizeGitHubEvent(
       {
@@ -179,6 +225,7 @@ describe("normalizeGitHubEvent", () => {
         sender: { login: "alice", type: "User" },
         pull_request: {
           number: 12,
+          user: { login: "alice" },
           head: { ref: "main", repo: { full_name: "acme/repo" } },
           base: { repo: { full_name: "acme/repo" } },
         },
@@ -202,6 +249,7 @@ describe("normalizeGitHubEvent", () => {
         sender: { login: "alice", type: "User" },
         pull_request: {
           number: 12,
+          user: { login: "alice" },
           head: { ref: "main", repo: { full_name: "acme/repo" } },
           base: { repo: { full_name: "acme/repo" } },
         },
