@@ -30,7 +30,7 @@ For the same reason, `gh pr checkout <N>` is also denied — it would mutate the
 
 ### `gh pr create`
 
-One of: `--title`/`-t` plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`), OR `--fill` (no title/body needed; derived from commits). Optional: `--base`/`-B`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). Blocked: `--head`, `--editor`, `--web`, `--repo`/`-R`, and combining `--fill` with `--title`/`--body`/`-F`.
+One of: `--title`/`-t` plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`), OR `--fill` (no title/body needed; derived from commits). Optional: `--base`/`-B`, `--head`/`-H` (in-repo branch name only — the cross-fork `<owner>:<branch>` form is rejected, as are `main`/`master`), `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). Blocked: `--editor`, `--web`, `--repo`/`-R`, and combining `--fill` with `--title`/`--body`/`-F`.
 
 ### `gh issue create`
 

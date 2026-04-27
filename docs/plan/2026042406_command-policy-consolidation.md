@@ -136,7 +136,7 @@ Notable exclusions:
 
 - `-R` / `--repo` across the GH surface
 - URL and branch selectors on the write path
-- `--head` on `gh pr create`
+- cross-fork `--head <owner>:<branch>` and protected-branch `--head main/master` on `gh pr create` (in-repo branch names are allowed, mirroring `git push`'s refspec constraints)
 - `gh pr checkout`
 - editor/browser/body-file modes
 - PR approval, merge, edit, delete-last, and similar mutating shortcuts

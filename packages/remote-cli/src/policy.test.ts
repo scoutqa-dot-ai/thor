@@ -758,7 +758,51 @@ describe("validateGhArgs", () => {
     it("blocks removed pr create forms", () => {
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--web"]);
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--editor"]);
-      expectGhDenied(["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"]);
+    });
+
+    it("allows --head with an in-repo branch name", () => {
+      expect(
+        validateGhArgs(["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"]),
+      ).toBeNull();
+      expect(
+        validateGhArgs(["pr", "create", "-H", "feat/test", "--title", "x", "--body", "y"]),
+      ).toBeNull();
+      expect(
+        validateGhArgs(["pr", "create", "--head=feat/test", "--title", "x", "--body", "y"]),
+      ).toBeNull();
+      expect(validateGhArgs(["pr", "create", "--fill", "--head", "feat/test"])).toBeNull();
+    });
+
+    it("blocks unsafe --head shapes", () => {
+      // Cross-fork form would PR from someone else's fork
+      expectGhDenied([
+        "pr",
+        "create",
+        "--head",
+        "monalisa:feat/test",
+        "--title",
+        "x",
+        "--body",
+        "y",
+      ]);
+      // Protected branches mirror git push policy
+      expectGhDenied(["pr", "create", "--head", "main", "--title", "x", "--body", "y"]);
+      expectGhDenied(["pr", "create", "--head", "master", "--title", "x", "--body", "y"]);
+      // Repeated --head is ambiguous
+      expectGhDenied([
+        "pr",
+        "create",
+        "--head",
+        "feat/a",
+        "--head",
+        "feat/b",
+        "--title",
+        "x",
+        "--body",
+        "y",
+      ]);
+      // Argument-injection-shaped values
+      expectGhDenied(["pr", "create", "--head", "-rm", "--title", "x", "--body", "y"]);
     });
 
     it("blocks conflicting pr create body sources", () => {

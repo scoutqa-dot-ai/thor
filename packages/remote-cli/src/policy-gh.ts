@@ -10,6 +10,7 @@ import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args
 
 const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
 const DIGITS_ONLY = /^\d+$/;
+const PROTECTED_PR_HEAD_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
 
 const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "api",
@@ -156,6 +157,7 @@ function validateGhPrCreateArgs(args: string[]): string | null {
     { name: "body", kind: "value", aliases: ["-b", "--body"] },
     { name: "body-file", kind: "value", aliases: ["-F", "--body-file"] },
     { name: "base", kind: "value", aliases: ["-B", "--base"] },
+    { name: "head", kind: "value", aliases: ["-H", "--head"] },
     { name: "label", kind: "value", aliases: ["-l", "--label"] },
     { name: "assignee", kind: "value", aliases: ["-a", "--assignee"] },
     { name: "reviewer", kind: "value", aliases: ["-r", "--reviewer"] },
@@ -167,7 +169,25 @@ function validateGhPrCreateArgs(args: string[]): string | null {
   const titles = valueFlagValues(parsed, "title");
   const bodies = valueFlagValues(parsed, "body");
   const bodyFiles = valueFlagValues(parsed, "body-file");
+  const heads = valueFlagValues(parsed, "head");
   const fill = booleanFlagCount(parsed, "fill") > 0;
+
+  // --head must be a single in-repo branch name, mirroring `git push`'s refspec
+  // constraints (policy-git.ts validatePushRefspec). The colon-form
+  // `<owner>:<branch>` would let the agent open a PR from a fork it didn't
+  // produce, escaping the push-policy chain that scopes writes to this repo.
+  if (heads.length > 1) return denyMessage("gh pr create");
+  if (heads.length === 1) {
+    const head = heads[0];
+    if (
+      !head ||
+      head.startsWith("-") ||
+      head.includes(":") ||
+      PROTECTED_PR_HEAD_BRANCHES.has(head)
+    ) {
+      return denyMessage("gh pr create");
+    }
+  }
 
   // --fill is mutually exclusive with explicit title/body/-F.
   if (fill && (titles.length > 0 || bodies.length > 0 || bodyFiles.length > 0)) {
