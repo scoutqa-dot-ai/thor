@@ -1,0 +1,29 @@
+packages/gateway/src/app.ts
+  345dcb5e65765bc8 38-39,44-46,105-107,119,123,213,215-217,220-222,230-238,245,247,278,281,285,325,335-336,374-375,395-398,783,785-791,794,801-802
+packages/gateway/src/service.ts
+  345dcb5e65765bc8 22,999
+packages/gateway/src/slack.ts
+  345dcb5e65765bc8 102-103
+packages/gateway/src/approval.ts
+  345dcb5e65765bc8 48-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4ac2a2302d3ee686accab0b79beb6f930e395374",
+  "prompts": {
+    "345dcb5e65765bc8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3a7c7108-b624-4785-b44c-2f6ce1361b74",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 89,
+      "total_deletions": 112,
+      "accepted_lines": 69,
+      "overriden_lines": 0
+    }
+  }
+}
