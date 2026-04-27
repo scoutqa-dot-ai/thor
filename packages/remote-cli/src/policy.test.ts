@@ -174,6 +174,16 @@ describe("validateGitArgs", () => {
         // No -b: check out an existing branch into a worktree (PR review flow).
         ["worktree", "add", "/workspace/worktrees/repo/pr-123", "pr-123"],
         ["worktree", "add", "/workspace/worktrees/repo/feat/auth", "feat/auth"],
+        ["worktree", "add", "-b", "feat/auth/api", "/workspace/worktrees/repo/feat/auth/api"],
+        ["worktree", "add", "/workspace/worktrees/repo/feat/auth/api", "feat/auth/api"],
+        [
+          "worktree",
+          "add",
+          "-b",
+          "feat/auth/api",
+          "/workspace/worktrees/repo/feat/auth/api",
+          "origin/main",
+        ],
         ["worktree", "list"],
         ["worktree", "list", "--porcelain"],
         ["worktree", "remove", "/workspace/worktrees/repo/feat"],
@@ -256,15 +266,31 @@ describe("validateGitArgs", () => {
       expectGitDenied(["worktree", "add", "-b", "feat", "workspace/worktrees/repo/feat"]);
     });
 
-    it("blocks worktree add when the path does not end with the branch name", () => {
-      // -b form: branch is "feat", path basename is "other"
+    it("blocks worktree add when path branch does not equal branch arg", () => {
+      // -b form: branch is "feat", path branch is "other"
       expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/other"]);
-      // No-b form: branch is "pr-123", path basename is "review"
+      // No-b form: branch is "pr-123", path branch is "review"
       expectGitDenied(["worktree", "add", "/workspace/worktrees/repo/review", "pr-123"]);
-      // Slashy branch with mismatched suffix
+      // Slashy branch with mismatched branch path
       expectGitDenied(["worktree", "add", "-b", "feat/auth", "/workspace/worktrees/repo/auth"]);
-      // Branch is "a", path ends with "/aa" (substring, not suffix segment)
+      // Branch is "a", path branch is "aa" (substring mismatch)
       expectGitDenied(["worktree", "add", "/workspace/worktrees/repo/aa", "a"]);
+      // Branch must match the full path under /workspace/worktrees/<repo>/
+      expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/feat/sub"]);
+    });
+
+    it("blocks invalid worktree add branch/path values", () => {
+      expectGitDenied(["worktree", "add", "-b", "", "/workspace/worktrees/repo/feat"]);
+      expectGitDenied(["worktree", "add", "-b", "/feat", "/workspace/worktrees/repo/feat"]);
+      expectGitDenied(["worktree", "add", "-b", "feat/", "/workspace/worktrees/repo/feat/"]);
+      expectGitDenied(["worktree", "add", "-b", "feat//x", "/workspace/worktrees/repo/feat//x"]);
+      expectGitDenied(["worktree", "add", "-b", "feat/../x", "/workspace/worktrees/repo/feat/../x"]);
+      expectGitDenied(["worktree", "add", "-b", "feat\u0000x", "/workspace/worktrees/repo/feat\u0000x"]);
+
+      expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/worktrees//feat"]);
+      expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/"]);
+      expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/worktrees/repo//feat"]);
+      expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/../feat"]);
     });
 
     it("blocks malformed worktree add shapes", () => {
