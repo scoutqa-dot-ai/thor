@@ -249,7 +249,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               id: `${event.id}:resolved`,
               correlationKey: resolvedKey,
               payload: plan.githubEvents[index],
-              receivedAt: new Date(now).toISOString(),
               readyAt: now,
               delayMs: 0,
             });
