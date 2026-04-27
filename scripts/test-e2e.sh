@@ -538,7 +538,7 @@ flag_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
 flag_exit=$(json_field "$flag_raw" "exitCode")
 flag_stderr=$(json_field "$flag_raw" "stderr")
 assert '[[ "$flag_exit" == "1" ]]' "git leading flags are blocked" "exitCode='$flag_exit'"
-assert '[[ "$flag_stderr" == *"leading flags"* ]]' "leading flags error is descriptive" "stderr='${flag_stderr:0:200}'"
+assert '[[ "$flag_stderr" == *"Load skill using-git"* ]]' "leading flags error points to using-git" "stderr='${flag_stderr:0:200}'"
 
 # 6d. git push to non-origin remote should be blocked
 push_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
@@ -548,7 +548,7 @@ push_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
 push_exit=$(json_field "$push_raw" "exitCode")
 push_stderr=$(json_field "$push_raw" "stderr")
 assert '[[ "$push_exit" == "1" ]]' "git push to non-origin is blocked" "exitCode='$push_exit'"
-assert '[[ "$push_stderr" == *"origin"* ]]' "push error mentions origin restriction" "stderr='${push_stderr:0:200}'"
+assert '[[ "$push_stderr" == *"Load skill using-git"* ]]' "push error points to using-git" "stderr='${push_stderr:0:200}'"
 
 # 6e. cwd outside /workspace should be blocked
 cwd_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
@@ -558,17 +558,25 @@ cwd_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
 cwd_exit=$(json_field "$cwd_raw" "exitCode")
 assert '[[ "$cwd_exit" == "1" ]]' "git cwd outside /workspace is blocked" "exitCode='$cwd_exit'"
 
-# 6f. gh api should be blocked
+# 6f. unsafe gh api shapes should be blocked
 gh_api_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
   -H 'Content-Type: application/json' \
-  -d "{\"args\":[\"api\",\"repos\"],\"cwd\":\"$POLICY_CWD\"}" \
+  -d "{\"args\":[\"api\",\"repos/{owner}/{repo}\",\"--method\",\"GET\"],\"cwd\":\"$POLICY_CWD\"}" \
   2>/dev/null || echo '{}')
 gh_api_exit=$(json_field "$gh_api_raw" "exitCode")
 gh_api_stderr=$(json_field "$gh_api_raw" "stderr")
-assert '[[ "$gh_api_exit" == "1" ]]' "gh api is blocked" "exitCode='$gh_api_exit'"
+assert '[[ "$gh_api_exit" == "1" ]]' "unsafe gh api shapes are blocked" "exitCode='$gh_api_exit'"
 assert '[[ "$gh_api_stderr" == *"not allowed"* ]]' "gh api error mentions not allowed" "stderr='${gh_api_stderr:0:200}'"
 
-# 6g. gh pr checkout should be blocked
+# 6g. gh api help should be allowed
+gh_api_help_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"api\",\"--help\"],\"cwd\":\"$POLICY_CWD\"}" \
+  2>/dev/null || echo '{}')
+gh_api_help_exit=$(json_field "$gh_api_help_raw" "exitCode")
+assert '[[ "$gh_api_help_exit" == "0" ]]' "gh api help succeeds" "exitCode='$gh_api_help_exit'"
+
+# 6h. gh pr checkout should be blocked
 gh_prco_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
   -H 'Content-Type: application/json' \
   -d "{\"args\":[\"pr\",\"checkout\",\"1\"],\"cwd\":\"$POLICY_CWD\"}" \
@@ -576,7 +584,7 @@ gh_prco_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
 gh_prco_exit=$(json_field "$gh_prco_raw" "exitCode")
 assert '[[ "$gh_prco_exit" == "1" ]]' "gh pr checkout is blocked" "exitCode='$gh_prco_exit'"
 
-# 6h. Allowed read commands should succeed
+# 6i. Allowed read commands should succeed
 status_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
   -H 'Content-Type: application/json' \
   -d "{\"args\":[\"status\"],\"cwd\":\"$POLICY_CWD\"}" \
@@ -734,17 +742,21 @@ else
     assert 'false' "Trigger #3: session became available" "still busy after 60s"
   fi
 
-  # Clean up: remove worktree and delete the test branch
+  # Best-effort cleanup of the test worktree/branch via policy. Both
+  # `git worktree remove --force` and `git branch -D` are intentionally outside
+  # the policy allowlist (destructive verbs), so these calls may return 4xx —
+  # that's fine. The script wipes the entire repo dir at exit anyway, so
+  # leftover branches/worktrees never persist across CI runs.
   echo ""
-  echo "  Cleaning up test worktree and branch..."
-  curl -sf -X POST "$REMOTE_CLI_URL/exec/git" \
+  echo "  Cleaning up test worktree and branch (best-effort)..."
+  curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
     -H 'Content-Type: application/json' \
-    -d "{\"args\":[\"worktree\",\"remove\",\"--force\",\"$ALIAS_WORKTREE\"],\"cwd\":\"$ALIAS_DIR\"}" \
-    2>/dev/null >/dev/null
-  curl -sf -X POST "$REMOTE_CLI_URL/exec/git" \
+    -d "{\"args\":[\"worktree\",\"remove\",\"$ALIAS_WORKTREE\"],\"cwd\":\"$ALIAS_DIR\"}" \
+    >/dev/null 2>&1 || true
+  curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
     -H 'Content-Type: application/json' \
-    -d "{\"args\":[\"branch\",\"-D\",\"$ALIAS_BRANCH\"],\"cwd\":\"$ALIAS_DIR\"}" \
-    2>/dev/null >/dev/null
+    -d "{\"args\":[\"worktree\",\"prune\"],\"cwd\":\"$ALIAS_DIR\"}" \
+    >/dev/null 2>&1 || true
 fi
 
 # ── Results ─────────────────────────────────────────────────────────────────

@@ -7,9 +7,10 @@ set -e
 
 REAL_GH="/usr/bin/gh"
 TAG="[thor-github-app]"
+. /usr/local/lib/thor/bin/github-app-config.sh
 
 # If no GitHub App config exists, pass through to real gh unchanged
-if [ ! -f /workspace/config.json ] || ! grep -q '"github_app"' /workspace/config.json 2>/dev/null; then
+if ! thor_has_github_app_config /workspace/config.json; then
   exec "$REAL_GH" "$@"
 fi
 

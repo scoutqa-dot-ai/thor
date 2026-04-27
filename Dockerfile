@@ -99,10 +99,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 RUN npm i -g @scoutqa/cli@latest langfuse-cli@0.0.8 @launchdarkly/ldcli@2.2.0
 COPY packages/remote-cli/entrypoint.sh /entrypoint.sh
 # Thor git/gh wrappers for GitHub App auth
+COPY packages/remote-cli/bin/github-app-config.sh /usr/local/lib/thor/bin/github-app-config.sh
 COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git
 COPY packages/remote-cli/bin/gh /usr/local/lib/thor/bin/gh
 COPY packages/remote-cli/bin/git-askpass /usr/local/lib/thor/bin/git-askpass
-RUN chmod +x /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh /usr/local/lib/thor/bin/git-askpass
+RUN chmod +x /usr/local/lib/thor/bin/github-app-config.sh /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh /usr/local/lib/thor/bin/git-askpass
 RUN mkdir -p /var/lib/remote-cli/github-app/cache && chown -R thor:thor /var/lib/remote-cli
 USER thor
 RUN mkdir -p /workspace/repos

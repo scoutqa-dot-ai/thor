@@ -4,23 +4,23 @@
  *
  * Usage:
  *   node auth-helper.js <binary> [args...]
- *     Resolves org from args or git remote, prints {"token":"...","org":"..."}.
+ *     Resolves owner from args or git remote, prints {"token":"...","owner":"..."}.
  *     Used by the gh wrapper.
  *
  *   node auth-helper.js git-askpass "<prompt>"
  *     Called by git via GIT_ASKPASS. Parses the URL out of git's prompt
  *     and prints the raw token for git to read as the password.
  *
- * If org resolution fails or no installation is configured, exits silently
+ * If owner resolution fails or no installation is configured, exits silently
  * (exit 0, no stdout) so the caller falls back to existing auth.
  */
 
 import { fileURLToPath } from "node:url";
 import {
   getInstallationToken,
-  parseOrgFromRemoteUrl,
-  resolveOrg,
-  resolveOrgFromRemote,
+  parseOwnerFromRemoteUrl,
+  resolveOwner,
+  resolveOwnerFromRemote,
 } from "./github-app-auth.js";
 import { formatAuthHelperError } from "./auth-helper-format.js";
 
@@ -31,10 +31,10 @@ export function parseRemoteUrlFromAskpassPrompt(prompt: string): string | undefi
   return match?.[1];
 }
 
-export function resolveOrgFromAskpassPrompt(prompt: string, cwd: string): string | undefined {
+export function resolveOwnerFromAskpassPrompt(prompt: string, cwd: string): string | undefined {
   const remoteUrl = parseRemoteUrlFromAskpassPrompt(prompt);
-  const fromPrompt = remoteUrl ? parseOrgFromRemoteUrl(remoteUrl) : undefined;
-  return fromPrompt ?? resolveOrgFromRemote(cwd);
+  const fromPrompt = remoteUrl ? parseOwnerFromRemoteUrl(remoteUrl) : undefined;
+  return fromPrompt ?? resolveOwnerFromRemote(cwd);
 }
 
 async function main(): Promise<void> {
@@ -42,15 +42,17 @@ async function main(): Promise<void> {
   const cwd = process.cwd();
 
   const askpassMode = binary === "git-askpass";
-  const org = askpassMode ? resolveOrgFromAskpassPrompt(args[0] ?? "", cwd) : resolveOrg(args, cwd);
+  const owner = askpassMode
+    ? resolveOwnerFromAskpassPrompt(args[0] ?? "", cwd)
+    : resolveOwner(args, cwd);
 
-  if (!org) {
-    // Cannot determine org — silent exit, caller falls back to existing auth
+  if (!owner) {
+    // Cannot determine owner — silent exit, caller falls back to existing auth
     return;
   }
 
   try {
-    const result = await getInstallationToken(org);
+    const result = await getInstallationToken(owner);
     if (askpassMode) {
       process.stdout.write(result.token);
     } else {

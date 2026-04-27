@@ -55,6 +55,10 @@ const MEMORY_DIR = "/workspace/memory";
 /** Root memory file — injected into every new or stale session prompt. */
 const ROOT_MEMORY_PATH = `${MEMORY_DIR}/README.md`;
 
+const TaskDelegateInputSchema = z.object({
+  subagent_type: z.string().trim().min(1),
+});
+
 const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
 /** Shared event buses — one SSE connection per directory, dispatches to per-session listeners. */
@@ -578,9 +582,7 @@ app.post("/trigger", async (req, res) => {
         ...(event.type === "memory"
           ? { action: event.action, path: event.path, source: event.source }
           : {}),
-        ...(event.type === "delegate"
-          ? { agent: event.agent, description: event.description }
-          : {}),
+        ...(event.type === "delegate" ? { agent: event.agent } : {}),
         ...(event.type === "done"
           ? { status: event.status, durationMs: (event as { durationMs?: number }).durationMs }
           : {}),
@@ -615,6 +617,36 @@ app.post("/trigger", async (req, res) => {
 
     // Track child session IDs for progress forwarding.
     const childSessionIds = new Set<string>();
+    // Dedupe task delegate emissions across repeated part updates.
+    const emittedTaskDelegates = new Set<string>();
+    // Dedupe tool progress emissions — emit once per call when it starts running.
+    const emittedToolStarts = new Set<string>();
+
+    function emitToolProgress(toolPart: ToolPart, status: "running" | "completed" | "error"): void {
+      const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
+      if (emittedToolStarts.has(key)) return;
+      emittedToolStarts.add(key);
+      const displayName = toolDisplayName(toolPart);
+      emit({ type: "tool", tool: displayName, status });
+    }
+
+    function emitTaskDelegateProgress(toolPart: ToolPart): void {
+      if (toolPart.tool !== "task") return;
+
+      const input = (toolPart.state as { input?: unknown }).input;
+      const parsed = TaskDelegateInputSchema.safeParse(input);
+      if (!parsed.success) return;
+
+      const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
+      if (emittedTaskDelegates.has(key)) return;
+      emittedTaskDelegates.add(key);
+
+      const { subagent_type: agent } = parsed.data;
+      emit({
+        type: "delegate",
+        agent,
+      });
+    }
 
     await withNdjsonHeartbeat(emit, async () => {
       for await (const event of subscription) {
@@ -632,10 +664,12 @@ app.post("/trigger", async (req, res) => {
             const part = event.properties.part;
             if (part.type === "tool") {
               const toolPart = part as ToolPart;
+              emitTaskDelegateProgress(toolPart);
               const status = toolPart.state.status;
-              if (status === "completed" || status === "error") {
-                const displayName = toolDisplayName(toolPart);
-                emit({ type: "tool", tool: displayName, status });
+              if (status === "running") {
+                emitToolProgress(toolPart, "running");
+              } else if (status === "completed" || status === "error") {
+                emitToolProgress(toolPart, status);
                 emitMemoryEventsFromToolPart(toolPart, emit);
               }
             }
@@ -657,6 +691,7 @@ app.post("/trigger", async (req, res) => {
             lastMessageId = textPart.messageID;
           } else if (part.type === "tool") {
             const toolPart = part as ToolPart;
+            emitTaskDelegateProgress(toolPart);
             const status = toolPart.state.status;
 
             // Discover child sessions when a task tool starts running.
@@ -674,10 +709,14 @@ app.post("/trigger", async (req, res) => {
                 .catch(() => {});
             }
 
+            if (status === "running") {
+              emitToolProgress(toolPart, "running");
+            }
+
             if (status === "completed" || status === "error") {
               const displayName = toolDisplayName(toolPart);
               collectedToolCalls.push({ tool: displayName, state: status });
-              emit({ type: "tool", tool: displayName, status });
+              emitToolProgress(toolPart, status);
               emitMemoryEventsFromToolPart(toolPart, emit);
 
               // Detect approval-required tool results and emit approval event.
@@ -713,18 +752,6 @@ app.post("/trigger", async (req, res) => {
             totalTokens.cache.read += stepFinish.tokens.cache.read;
             totalTokens.cache.write += stepFinish.tokens.cache.write;
             lastMessageId = stepFinish.messageID;
-          } else if (part.type === "subtask") {
-            const subtaskPart = part as Part & {
-              type: "subtask";
-              description: string;
-              agent: string;
-            };
-            const description = subtaskPart.description?.trim();
-            emit({
-              type: "delegate",
-              agent: subtaskPart.agent,
-              ...(description ? { description } : {}),
-            });
           }
         } else if (event.type === "session.error") {
           const errorProps = event.properties;

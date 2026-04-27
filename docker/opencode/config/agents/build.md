@@ -110,9 +110,26 @@ Rules:
 
 - Worktree directory must match the branch: `/workspace/worktrees/<repo>/<branch>`. Do not invent other naming schemes.
 - Reuse an existing worktree for the same branch across sessions. Check `/workspace/worktrees/` before creating a new one.
-- For PR reviews: infer the branch name from the PR first, then create or reuse the worktree at `/workspace/worktrees/<repo>/<branch>` before reviewing code.
 - Recover prior context from `/workspace/worklog/` before re-investigating a task from a previous session.
 - Verify the intended branch before making code-state conclusions — do not assume `main` is the right source of truth when repos have active side branches.
+
+### PR review protocol
+
+When asked to review or critique a PR, the first action is always to check out the branch to a worktree:
+
+```
+git fetch origin pull/<N>/head:pr-<N>
+git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>
+```
+
+Then `cd` into the worktree for every subsequent action — diffs, code search, tests, builds, file reads. Reviewing through `gh pr diff`, `git show <ref>` of an unfetched commit, or `gh api repos/.../pulls/<N>/files` is forbidden. Those produce shallow reviews because:
+
+- you can't run the test suite or type checks against the PR state,
+- you can't grep beyond the changed lines for callers, related tests, or pattern matches,
+- you can't cross-reference unchanged code that the change depends on,
+- you can't reproduce the build to verify the change actually compiles.
+
+If a worktree for the PR's branch already exists at `/workspace/worktrees/<repo>/<branch>`, reuse it instead of creating `pr-<N>`. Infer the branch name from the PR first.
 
 ### Investigation protocol
 

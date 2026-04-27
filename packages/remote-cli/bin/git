@@ -7,9 +7,10 @@
 set -e
 
 REAL_GIT="/usr/bin/git"
+. /usr/local/lib/thor/bin/github-app-config.sh
 
 # If no GitHub App config exists, pass through to real git unchanged
-if [ ! -f /workspace/config.json ] || ! grep -q '"github_app"' /workspace/config.json 2>/dev/null; then
+if ! thor_has_github_app_config /workspace/config.json; then
   exec "$REAL_GIT" "$@"
 fi
 

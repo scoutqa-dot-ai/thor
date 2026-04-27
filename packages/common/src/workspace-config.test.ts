@@ -9,6 +9,7 @@ import {
   getChannelRepoMap,
   extractRepoFromCwd,
   getRepoUpstreams,
+  getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
 } from "./workspace-config.js";
@@ -49,8 +50,18 @@ describe("loadWorkspaceConfig", () => {
   });
 
   it("throws on schema violation (missing repos)", () => {
-    const path = writeConfig("config.json", { github_app: {} });
+    const path = writeConfig("config.json", { owners: {} });
     expect(() => loadWorkspaceConfig(path)).toThrow("Invalid workspace config");
+  });
+
+  it("rejects non-positive owner installation IDs with path details", () => {
+    const path = writeConfig("config.json", {
+      repos: { "my-repo": {} },
+      owners: {
+        acme: { github_app_installation_id: 0 },
+      },
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow("owners.acme.github_app_installation_id");
   });
 
   it("rejects the legacy top-level proxies block with a migration hint", () => {
@@ -105,10 +116,9 @@ describe("loadWorkspaceConfig", () => {
 
     expect(config.repos["your-repo"]).toBeDefined();
     expect(config.repos["your-repo"].proxies).toEqual(["atlassian", "grafana"]);
-    expect(config.github_app?.installations.map((installation) => installation.org)).toEqual([
-      "acme",
-      "acme-labs",
-    ]);
+    expect(config.owners).toEqual({
+      "scoutqa-dot-ai": { github_app_installation_id: 126669985 },
+    });
   });
 
   it("accepts mitmproxy rules and passthrough host list", () => {
@@ -343,5 +353,32 @@ describe("getRepoUpstreams", () => {
   it("returns undefined for unknown repo", () => {
     const config = loadWorkspaceConfig(writeConfig("config.json", { repos: {} }));
     expect(getRepoUpstreams(config, "unknown")).toBeUndefined();
+  });
+});
+
+describe("getInstallationIdForOwner", () => {
+  it("returns installation id for known owner", () => {
+    expect(
+      getInstallationIdForOwner(
+        {
+          repos: {},
+          owners: { acme: { github_app_installation_id: 12345 } },
+        },
+        "acme",
+      ),
+    ).toBe(12345);
+  });
+
+  it("returns undefined for unknown or missing owner map", () => {
+    expect(getInstallationIdForOwner({ repos: {} }, "acme")).toBeUndefined();
+    expect(
+      getInstallationIdForOwner(
+        {
+          repos: {},
+          owners: { other: { github_app_installation_id: 1 } },
+        },
+        "acme",
+      ),
+    ).toBeUndefined();
   });
 });
