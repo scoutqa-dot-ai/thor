@@ -1,0 +1,27 @@
+packages/remote-cli/src/policy-git.ts
+  37d754bb0cbf9ce5 46,124-125,467-474
+docker/opencode/config/skills/using-git/SKILL.md
+  37d754bb0cbf9ce5 13,101-108
+packages/remote-cli/src/policy.test.ts
+  37d754bb0cbf9ce5 191-206,434-439
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "dddce49f126f3b51999214afe2d85b6c4538ff93",
+  "prompts": {
+    "37d754bb0cbf9ce5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d747613-87de-44d0-8b03-e5239a7023a5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 111,
+      "total_deletions": 69,
+      "accepted_lines": 42,
+      "overriden_lines": 0
+    }
+  }
+}
