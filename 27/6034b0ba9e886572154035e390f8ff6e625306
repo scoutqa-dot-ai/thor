@@ -1,0 +1,23 @@
+docs/plan/2026042301_refactor-slack-mcp.md
+  52ea01375045a29c 355-405
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "276034b0ba9e886572154035e390f8ff6e625306",
+  "prompts": {
+    "52ea01375045a29c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7ed8f272-fe81-4736-add5-baadba169b79",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 51,
+      "total_deletions": 0,
+      "accepted_lines": 51,
+      "overriden_lines": 0
+    }
+  }
+}
