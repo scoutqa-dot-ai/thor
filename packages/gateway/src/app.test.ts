@@ -1225,6 +1225,14 @@ describe("gateway", () => {
 
   it("enqueues check_suite events only when the branch has an existing notes-backed session", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
+      .mockResolvedValueOnce({
+        stdout: "49699333+thor[bot]@users.noreply.github.com\n",
+        stderr: "",
+        exitCode: 0,
+      });
 
     await withWorklogDir(async (worklogDir) => {
       notesKeys.add("git:branch:thor:feature/refactor");
@@ -1283,10 +1291,97 @@ describe("gateway", () => {
           githubWebhookSecret: "github-secret",
           githubMentionLogins: ["thor", "thor[bot]"],
           githubAppBotId: 7777,
+          githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+          internalExec,
         },
       );
     });
+
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "git",
+      args: ["cat-file", "-e", "abc123def456"],
+      cwd: "/workspace/repos/thor",
+    });
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "git",
+      args: ["log", "-1", "--format=%ae", "abc123def456"],
+      cwd: "/workspace/repos/thor",
+    });
   });
+
+  it.each([
+    {
+      gateReason: "sha_missing",
+      execResults: [{ stdout: "", stderr: "missing", exitCode: 128 }],
+    },
+    {
+      gateReason: "author_mismatch",
+      execResults: [
+        { stdout: "", stderr: "", exitCode: 0 },
+        { stdout: "alice@example.com\n", stderr: "", exitCode: 0 },
+      ],
+    },
+    {
+      gateReason: "exec_failed",
+      execResults: [new Error("timeout")],
+    },
+  ])(
+    "ignores check_suite events when the git gate returns $gateReason",
+    async ({ gateReason, execResults }) => {
+      const fetchImpl = vi.fn<typeof fetch>();
+      const internalExec = vi.fn();
+      for (const result of execResults) {
+        if (result instanceof Error) {
+          internalExec.mockRejectedValueOnce(result);
+        } else {
+          internalExec.mockResolvedValueOnce(result);
+        }
+      }
+
+      await withWorklogDir(async (worklogDir) => {
+        notesKeys.add("git:branch:thor:feature/refactor");
+
+        await withServer(
+          fetchImpl,
+          async (baseUrl, _queue, queueDir) => {
+            const body = checkSuiteWebhookBody();
+            const response = await fetch(`${baseUrl}/github/webhook`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+                "X-GitHub-Delivery": `delivery-check-suite-${gateReason}`,
+                "X-GitHub-Event": "check_suite",
+              },
+              body,
+            });
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({ ok: true, ignored: true });
+            expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+            const ignored = readGitHubIgnoredEntries(worklogDir);
+            expect(ignored).toHaveLength(1);
+            expect(ignored[0]).toMatchObject({
+              reason: "check_suite_gate_failed",
+              eventType: "check_suite",
+              metadata: {
+                headSha: "abc123def456",
+                gateReason,
+              },
+            });
+          },
+          {
+            githubWebhookSecret: "github-secret",
+            githubMentionLogins: ["thor", "thor[bot]"],
+            githubAppBotId: 7777,
+            githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+            internalExec,
+          },
+        );
+      });
+    },
+  );
 
   it("ignores check_suite events without an existing notes-backed session", async () => {
     const fetchImpl = vi.fn<typeof fetch>();

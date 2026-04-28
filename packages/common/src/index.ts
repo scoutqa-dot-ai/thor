@@ -66,6 +66,8 @@ export type {
 } from "./notes.js";
 export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
 export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
+export { deriveGitHubAppBotIdentity } from "./github-identity.js";
+export type { GitHubAppBotIdentity, GitHubAppBotIdentityInput } from "./github-identity.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,

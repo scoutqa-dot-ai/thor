@@ -22,6 +22,7 @@ import {
 const log = createLogger("gateway-service");
 const GITHUB_PR_HEAD_TIMEOUT_MS = 3000;
 const GITHUB_PR_HEAD_RETRIES = 1;
+const INTERNAL_EXEC_TIMEOUT_MS = 5000;
 
 // --- Runner deps (internal HTTP, testable via fetchImpl) ---
 
@@ -117,6 +118,18 @@ export interface GitHubPrHeadResult {
   ref: string;
   headRepoFullName: string;
 }
+
+export interface InternalExecRequest {
+  bin: string;
+  args: string[];
+  cwd: string;
+}
+
+export type InternalExecClient = (request: InternalExecRequest) => Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}>;
 
 type TerminalGitHubRejectReason =
   | "installation_gone"
@@ -740,6 +753,34 @@ export async function resolveGitHubPrHead(
     "branch_lookup_failed",
     "Remote-cli /github/pr-head failed",
   );
+}
+
+export function createInternalExecClient(input: {
+  remoteCliUrl: string;
+  internalSecret?: string;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}): InternalExecClient {
+  const fetchFn = getFetch(input.fetchImpl);
+  const timeoutMs = input.timeoutMs ?? INTERNAL_EXEC_TIMEOUT_MS;
+
+  return async (request) => {
+    const response = await fetchFn(`${input.remoteCliUrl}/internal/exec`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(input.internalSecret ? { "x-thor-internal-secret": input.internalSecret } : {}),
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Remote-cli /internal/exec returned ${response.status}`);
+    }
+
+    return ExecResultSchema.parse(await response.json());
+  };
 }
 
 function renderGitHubPrompt(events: GitHubQueuedPayload[]): string {

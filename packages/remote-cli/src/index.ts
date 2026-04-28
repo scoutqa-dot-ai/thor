@@ -7,6 +7,7 @@ import {
   computeGitAlias,
   createConfigLoader,
   createLogger,
+  deriveGitHubAppBotIdentity,
   formatThorMeta,
   logError,
   logInfo,
@@ -71,12 +72,10 @@ function deriveBotGitIdentity(env: NodeJS.ProcessEnv = process.env): {
   name: string;
   email: string;
 } {
-  const slug = requireEnv("GITHUB_APP_SLUG", env);
-  const botId = requireEnv("GITHUB_APP_BOT_ID", env);
-  return {
-    name: `${slug}[bot]`,
-    email: `${botId}+${slug}[bot]@users.noreply.github.com`,
-  };
+  return deriveGitHubAppBotIdentity({
+    slug: requireEnv("GITHUB_APP_SLUG", env),
+    botId: requireEnv("GITHUB_APP_BOT_ID", env),
+  });
 }
 
 export interface RemoteCliAppConfig {

@@ -1,5 +1,6 @@
 import {
   createLogger,
+  deriveGitHubAppBotIdentity,
   logInfo,
   createConfigLoader,
   getAllowedChannelIds,
@@ -29,6 +30,10 @@ const THOR_INTERNAL_SECRET = requireEnv("THOR_INTERNAL_SECRET");
 const OPENAI_AUTH_PATH = process.env.OPENAI_AUTH_PATH || "";
 const githubEnv = validateGatewayGitHubEnv();
 const githubMentionLogins = buildMentionLogins(githubEnv.githubAppSlug);
+const githubAppBotIdentity = deriveGitHubAppBotIdentity({
+  slug: githubEnv.githubAppSlug,
+  botId: githubEnv.githubAppBotId,
+});
 const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
 const { app } = createGatewayApp({
@@ -47,6 +52,7 @@ const { app } = createGatewayApp({
   githubWebhookSecret: githubEnv.githubWebhookSecret,
   githubMentionLogins,
   githubAppBotId: githubEnv.githubAppBotId,
+  githubAppBotEmail: githubAppBotIdentity.email,
 });
 
 app.listen(PORT, () => {

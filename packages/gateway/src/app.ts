@@ -23,12 +23,15 @@ import {
   getBatchLogPrefix,
   planBatchDispatch,
   resolveApproval,
+  createInternalExecClient,
   updateSlackMessage,
   type BatchLogPrefix,
   type BatchSource,
+  type InternalExecClient,
   type RunnerDeps,
   type SlackMcpDeps,
 } from "./service.js";
+import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKey,
@@ -155,7 +158,8 @@ type GitHubIgnoreReason =
   | "empty_review_body"
   | "non_mention_comment"
   | "check_suite_branch_missing"
-  | "correlation_key_unresolved";
+  | "correlation_key_unresolved"
+  | "check_suite_gate_failed";
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
@@ -192,6 +196,10 @@ export interface GatewayAppConfig extends RunnerDeps {
   githubMentionLogins?: string[];
   /** Numeric GitHub user ID of our App's bot user. Used as the canonical self-identity check. */
   githubAppBotId?: number;
+  /** Git author email derived from the GitHub App bot identity. */
+  githubAppBotEmail?: string;
+  /** Internal exec client override for tests. */
+  internalExec?: InternalExecClient;
   /** GitHub mention debounce delay in ms. Default: 3000. */
   githubMentionDelayMs?: number;
 }
@@ -267,6 +275,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   };
   const remoteCliHost = config.remoteCliHost ?? "remote-cli";
   const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;
+  const internalExec =
+    config.internalExec ??
+    createInternalExecClient({
+      remoteCliUrl,
+      internalSecret: config.internalSecret,
+      fetchImpl: config.fetchImpl,
+    });
 
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
@@ -794,7 +809,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   // --- GitHub webhook ---
 
-  app.post("/github/webhook", webhookRawParser, (req: Request, res: Response) => {
+  app.post("/github/webhook", webhookRawParser, async (req: Request, res: Response) => {
     const rawBodyBuffer = getRawBufferFromBody(req.body);
     const { rawBodyUtf8, rawBodyBase64 } = buildRawBodyFields(rawBodyBuffer);
     const deliveryId = req.header("x-github-delivery") ?? "unknown";
@@ -1035,6 +1050,42 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           eventType: eventTypeHeader,
           action: parsed.data.action,
           reason: "correlation_key_unresolved",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      const directory = resolveRepoDirectory(localRepo);
+      const gate = directory
+        ? await verifyThorAuthoredSha({
+            internalExec,
+            directory,
+            sha: parsed.data.check_suite.head_sha,
+            expectedEmail: config.githubAppBotEmail ?? "",
+          })
+        : { ok: false as const, reason: "exec_failed" as const };
+      if (!gate.ok) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "check_suite_gate_failed",
+          metadata: {
+            repoFullName,
+            localRepo,
+            rawKey,
+            resolvedKey,
+            headSha: parsed.data.check_suite.head_sha,
+            gateReason: gate.reason,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_gate_failed",
         });
         res.status(200).json({ ok: true, ignored: true });
         return;
