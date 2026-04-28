@@ -13,11 +13,8 @@ import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
 import {
   buildCorrelationKey,
-  getGitHubEventNumber,
-  getGitHubEventType,
   isIssueCommentEvent,
   isPendingBranchResolveKey,
-  isPullRequestReviewCommentEvent,
   type GitHubQueuedPayload,
   type IssueCommentEvent,
 } from "./github.js";
@@ -25,8 +22,6 @@ import {
 const log = createLogger("gateway-service");
 const GITHUB_PR_HEAD_TIMEOUT_MS = 3000;
 const GITHUB_PR_HEAD_RETRIES = 1;
-const GITHUB_PROMPT_LIMIT_BYTES = 8 * 1024;
-const GITHUB_PROMPT_EVENT_BODY_MAX = 280;
 
 // --- Runner deps (internal HTTP, testable via fetchImpl) ---
 
@@ -748,44 +743,7 @@ export async function resolveGitHubPrHead(
 }
 
 function renderGitHubPrompt(events: GitHubQueuedPayload[]): string {
-  const lines = events.map((payload) => renderGitHubPromptLine(payload));
-  let selected = [...lines];
-  let prompt = selected.join("\n\n");
-
-  while (selected.length > 1 && Buffer.byteLength(prompt, "utf8") > GITHUB_PROMPT_LIMIT_BYTES) {
-    selected = selected.slice(1);
-    prompt = selected.join("\n\n");
-  }
-
-  if (selected.length < lines.length) {
-    logInfo(log, "github_prompt_truncated", {
-      originalCount: lines.length,
-      retainedCount: selected.length,
-      droppedCount: lines.length - selected.length,
-      bytes: Buffer.byteLength(prompt, "utf8"),
-    });
-  }
-
-  return prompt;
-}
-
-function renderGitHubPromptLine(payload: GitHubQueuedPayload): string {
-  const { event } = payload;
-  const senderLogin = event.sender.login.toLowerCase();
-  const eventType = getGitHubEventType(event);
-  const number = getGitHubEventNumber(event);
-  const rawBody = isIssueCommentEvent(event)
-    ? event.comment.body
-    : isPullRequestReviewCommentEvent(event)
-      ? event.comment.body
-      : (event.review.body?.trim() ?? "");
-  const htmlUrl = isIssueCommentEvent(event)
-    ? event.comment.html_url
-    : isPullRequestReviewCommentEvent(event)
-      ? event.comment.html_url
-      : event.review.html_url;
-  const body = truncate(rawBody.replace(/\s+/g, " ").trim(), GITHUB_PROMPT_EVENT_BODY_MAX);
-  return `[${senderLogin}] ${event.action} on ${event.repository.full_name}#${number} (${eventType}): ${body}\n${htmlUrl}`;
+  return JSON.stringify(events.length === 1 ? events[0].event : events.map((p) => p.event));
 }
 
 async function forwardApprovalNotification(

@@ -576,12 +576,7 @@ describe("triggerRunnerGitHub", () => {
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[1][1]?.body));
     expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
     expect(triggerBody.directory).toBe("/workspace/repos/my-repo");
-    expect(triggerBody.prompt).toContain(
-      "[alice] created on scoutqa-dot-ai/thor#42 (issue_comment): @thor please review this",
-    );
-    expect(triggerBody.prompt).toContain(
-      "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
-    );
+    expect(JSON.parse(triggerBody.prompt)).toEqual(githubEventBase.event);
     expect(onAccepted).toHaveBeenCalled();
   });
 
@@ -608,7 +603,7 @@ describe("triggerRunnerGitHub", () => {
     });
   });
 
-  it("renders pull_request_review_comment prompt bytes from the parsed envelope", async () => {
+  it("renders single GitHub events as the parsed JSON envelope", async () => {
     mockFetch.mockResolvedValueOnce(
       ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
     );
@@ -623,9 +618,28 @@ describe("triggerRunnerGitHub", () => {
 
     expect(result.busy).toBe(false);
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
-    expect(triggerBody.prompt).toBe(
-      "[alice] created on scoutqa-dot-ai/thor#42 (pull_request_review_comment): Please check this @thor\nhttps://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+    expect(JSON.parse(triggerBody.prompt)).toEqual(githubReviewCommentPayload().event);
+  });
+
+  it("renders multiple GitHub events as a JSON array of parsed envelopes", async () => {
+    mockFetch.mockResolvedValueOnce(
+      ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
     );
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubReviewCommentPayload(), githubEventBase],
+      "git:branch:thor:feature/refactor",
+      deps,
+      "http://remote-cli:3004",
+    );
+
+    expect(result.busy).toBe(false);
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
+    expect(JSON.parse(triggerBody.prompt)).toEqual([
+      githubReviewCommentPayload().event,
+      githubEventBase.event,
+    ]);
   });
 
   it("maps branch lookup 403 to terminal installation_gone rejection", async () => {
