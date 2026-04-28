@@ -1,0 +1,27 @@
+docker/opencode/config/agents/build.md
+  7746a8426a25be10 101,109,114,116,123,141,143-145,161-163,169
+docker/opencode/config/agents/thinker.md
+  7746a8426a25be10 20,22,29,31,33-34
+docker/opencode/config/agents/coder.md
+  7746a8426a25be10 18,20,27,29,31,33,37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4374c8207fa9bc6e6ae0d3dc4335fe48d4e19f17",
+  "prompts": {
+    "7746a8426a25be10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7004af61-16bc-4dda-b56a-a6fecc540c05",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 50,
+      "total_deletions": 59,
+      "accepted_lines": 27,
+      "overriden_lines": 0
+    }
+  }
+}
