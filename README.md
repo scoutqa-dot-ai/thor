@@ -1,6 +1,6 @@
 # Thor
 
-An event-driven AI team member that watches Slack and scheduled jobs, resumes OpenCode sessions through the runner, and reaches external systems through `remote-cli` plus direct Slack Web API access.
+An event-driven AI team member that watches Slack and scheduled jobs, resumes OpenCode sessions through the runner, and reaches external systems through `remote-cli`.
 
 ## Architecture
 
@@ -13,7 +13,6 @@ ingress -> gateway -> runner -> opencode
 - `gateway` accepts Slack, GitHub webhook, and cron events, batches them, and forwards them to the runner.
 - `runner` manages OpenCode session continuity and streams progress back out.
 - `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, langfuse, metabase, MCP tool calls, and approval status/resolution.
-- Slack API calls are split between `gateway` (system-side side effects like progress/reactions/approvals) and OpenCode tools over mitmproxy (agent-driven reads/writes).
 
 ## Services
 
@@ -114,8 +113,6 @@ Thor ships with generic defaults. A new deployment typically needs:
 | ----------------------------------- | -------- | ------------------------- | ----------------------------------------------------------------- |
 | `ATLASSIAN_AUTH`                    | Yes      | `remote-cli`, `mitmproxy` | Atlassian MCP auth header value and mitmproxy default injection   |
 | `CRON_SECRET`                       | Yes      | `gateway`, `cron`         | Shared secret for cron endpoint auth                              |
-| `GIT_USER_EMAIL`                    | No       | `remote-cli`              | Git author email                                                  |
-| `GIT_USER_NAME`                     | No       | `remote-cli`              | Git author name                                                   |
 | `GITHUB_APP_ID`                     | Yes      | `remote-cli`              | GitHub App ID for GitHub App auth                                 |
 | `GITHUB_APP_BOT_ID`                 | Yes      | `remote-cli`              | GitHub App bot user ID (used for commit identity)                 |
 | `GITHUB_APP_SLUG`                   | Yes      | `remote-cli`, `gateway`   | GitHub App slug (commit identity + mention detection)             |
