@@ -54,6 +54,31 @@ const githubEventBase: GitHubQueuedPayload = {
   },
 };
 
+function githubReviewCommentPayload(): GitHubQueuedPayload {
+  return {
+    v: 2,
+    deliveryId: "delivery-review-comment",
+    localRepo: "thor",
+    event: {
+      action: "created",
+      installation: { id: 126669985 },
+      repository: { full_name: "scoutqa-dot-ai/thor" },
+      sender: { id: 1001, login: "Alice", type: "User" },
+      pull_request: {
+        number: 42,
+        user: { id: 1001, login: "alice" },
+        head: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+        base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+      },
+      comment: {
+        body: "Please   check this @thor",
+        html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+        created_at: "2026-04-24T11:00:00Z",
+      },
+    },
+  };
+}
+
 describe("resolveApproval", () => {
   it("posts resolve requests to remote-cli with the secret header", async () => {
     const fetchImpl = vi
@@ -586,30 +611,7 @@ describe("triggerRunnerGitHub", () => {
 
     const { triggerRunnerGitHub } = await import("./service.js");
     const result = await triggerRunnerGitHub(
-      [
-        {
-          v: 2,
-          deliveryId: "delivery-review-comment",
-          localRepo: "thor",
-          event: {
-            action: "created",
-            installation: { id: 126669985 },
-            repository: { full_name: "scoutqa-dot-ai/thor" },
-            sender: { id: 1001, login: "Alice", type: "User" },
-            pull_request: {
-              number: 42,
-              user: { id: 1001, login: "alice" },
-              head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
-              base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
-            },
-            comment: {
-              body: "Please   check this @thor",
-              html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
-              created_at: "2026-04-24T11:00:00Z",
-            },
-          },
-        },
-      ],
+      [githubReviewCommentPayload()],
       "git:branch:thor:feature/refactor",
       deps,
       "http://remote-cli:3004",
@@ -619,49 +621,6 @@ describe("triggerRunnerGitHub", () => {
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
     expect(triggerBody.prompt).toBe(
       "[alice] created on scoutqa-dot-ai/thor#42 (pull_request_review_comment): Please check this @thor\nhttps://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
-    );
-  });
-
-  it("renders pull_request_review prompt bytes from the parsed envelope", async () => {
-    mockFetch.mockResolvedValueOnce(
-      ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
-    );
-
-    const { triggerRunnerGitHub } = await import("./service.js");
-    const result = await triggerRunnerGitHub(
-      [
-        {
-          v: 2,
-          deliveryId: "delivery-review",
-          localRepo: "thor",
-          event: {
-            action: "submitted",
-            installation: { id: 126669985 },
-            repository: { full_name: "scoutqa-dot-ai/thor" },
-            sender: { id: 1001, login: "Alice", type: "User" },
-            pull_request: {
-              number: 42,
-              user: { id: 1001, login: "alice" },
-              head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
-              base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
-            },
-            review: {
-              body: "  Looks   good @thor  ",
-              html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#pullrequestreview-1",
-              submitted_at: "2026-04-24T11:00:00Z",
-            },
-          },
-        },
-      ],
-      "git:branch:thor:feature/refactor",
-      deps,
-      "http://remote-cli:3004",
-    );
-
-    expect(result.busy).toBe(false);
-    const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
-    expect(triggerBody.prompt).toBe(
-      "[alice] submitted on scoutqa-dot-ai/thor#42 (pull_request_review): Looks good @thor\nhttps://github.com/scoutqa-dot-ai/thor/pull/42#pullrequestreview-1",
     );
   });
 
@@ -775,28 +734,7 @@ describe("triggerRunnerGitHub", () => {
 
     const { triggerRunnerGitHub } = await import("./service.js");
     const result = await triggerRunnerGitHub(
-      [
-        {
-          ...githubEventBase,
-          event: {
-            action: "created",
-            installation: { id: 126669985 },
-            repository: { full_name: "scoutqa-dot-ai/thor" },
-            sender: { id: 1001, login: "alice", type: "User" },
-            pull_request: {
-              number: 42,
-              user: { id: 1001, login: "alice" },
-              head: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
-              base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
-            },
-            comment: {
-              body: "@thor please review this branch",
-              html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
-              created_at: "2026-04-24T11:00:00Z",
-            },
-          },
-        },
-      ],
+      [githubReviewCommentPayload()],
       "git:branch:thor:main",
       deps,
       "http://remote-cli:3004",

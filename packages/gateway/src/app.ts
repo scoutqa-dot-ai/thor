@@ -44,13 +44,8 @@ import {
   getGitHubEventSourceTs,
   getGitHubEventType,
   GitHubWebhookEnvelopeSchema,
-  isIssueCommentEvent,
   isPendingBranchResolveKey,
-  isPullRequestReviewCommentEvent,
-  isPullRequestReviewEvent,
-  shouldIgnoreIssueCommentEvent,
-  shouldIgnorePullRequestReviewCommentEvent,
-  shouldIgnorePullRequestReviewEvent,
+  shouldIgnoreGitHubEvent,
   type GitHubQueuedPayload,
   verifyGitHubSignature,
 } from "./github.js";
@@ -692,22 +687,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const ignoreReason = isIssueCommentEvent(parsed.data)
-      ? shouldIgnoreIssueCommentEvent(parsed.data, {
-          mentionLogins: githubMentionLogins,
-          botId: githubAppBotId,
-        })
-      : isPullRequestReviewCommentEvent(parsed.data)
-        ? shouldIgnorePullRequestReviewCommentEvent(parsed.data, {
-            mentionLogins: githubMentionLogins,
-            botId: githubAppBotId,
-          })
-        : isPullRequestReviewEvent(parsed.data)
-          ? shouldIgnorePullRequestReviewEvent(parsed.data, {
-              mentionLogins: githubMentionLogins,
-              botId: githubAppBotId,
-            })
-          : "event_unsupported";
+    const ignoreReason = shouldIgnoreGitHubEvent(parsed.data, {
+      mentionLogins: githubMentionLogins,
+      botId: githubAppBotId,
+    });
     if (ignoreReason) {
       logGitHubIgnored({
         deliveryId,

@@ -48,22 +48,11 @@ function signGitHub(body: string, secret: string): string {
   return `sha256=${createHmac("sha256", secret).update(Buffer.from(body)).digest("hex")}`;
 }
 
-function readQueuedEvents(queueDir: string): Array<Record<string, unknown>> {
-  return readdirSync(queueDir)
+function readQueuedEvents(queueDir: string, subdir?: string): Array<Record<string, unknown>> {
+  const dir = subdir ? join(queueDir, subdir) : queueDir;
+  return readdirSync(dir)
     .filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
-    .map(
-      (entry) => JSON.parse(readFileSync(join(queueDir, entry), "utf8")) as Record<string, unknown>,
-    );
-}
-
-function readDeadLetterEvents(queueDir: string): Array<Record<string, unknown>> {
-  const deadLetterDir = join(queueDir, "dead-letter");
-  return readdirSync(deadLetterDir)
-    .filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
-    .map(
-      (entry) =>
-        JSON.parse(readFileSync(join(deadLetterDir, entry), "utf8")) as Record<string, unknown>,
-    );
+    .map((entry) => JSON.parse(readFileSync(join(dir, entry), "utf8")) as Record<string, unknown>);
 }
 
 async function withServer<T>(
@@ -591,26 +580,14 @@ describe("gateway", () => {
           sourceTs: 0,
           readyAt: 0,
           interrupt: true,
-          payload: {
-            source: "github",
-            eventType: "issue_comment",
-            action: "created",
-            installationId: 126669985,
-            repoFullName: "scoutqa-dot-ai/thor",
-            localRepo: "thor",
-            senderLogin: "alice",
-            htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
-            number: 42,
-            body: "@thor please review this branch",
-            branch: "main",
-          },
+          payload: { eventType: "issue_comment" },
         }),
       );
 
       await queue.flush();
 
       expect(readQueuedEvents(queueDir)).toHaveLength(0);
-      const deadLetters = readDeadLetterEvents(queueDir);
+      const deadLetters = readQueuedEvents(queueDir, "dead-letter");
       expect(deadLetters).toHaveLength(1);
       expect(deadLetters[0]).toMatchObject({
         id: "legacy-github",

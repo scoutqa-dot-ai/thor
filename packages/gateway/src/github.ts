@@ -248,6 +248,17 @@ export function shouldIgnorePullRequestReviewEvent(
   return null;
 }
 
+export function shouldIgnoreGitHubEvent(
+  raw: GitHubWebhookEvent,
+  options: { mentionLogins: string[]; botId: number },
+): GitHubIgnoreReason | null {
+  if (isIssueCommentEvent(raw)) return shouldIgnoreIssueCommentEvent(raw, options);
+  if (isPullRequestReviewCommentEvent(raw)) {
+    return shouldIgnorePullRequestReviewCommentEvent(raw, options);
+  }
+  return shouldIgnorePullRequestReviewEvent(raw, options);
+}
+
 export function isIssueCommentEvent(raw: GitHubWebhookEvent): raw is IssueCommentEvent {
   return "issue" in raw;
 }
