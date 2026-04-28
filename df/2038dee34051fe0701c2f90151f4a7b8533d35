@@ -1,0 +1,29 @@
+docker/opencode/config/agents/thinker.md
+  1da2ebac4f7992ec 31-34,45-46
+scripts/lint-runs-protocol.mjs
+  1da2ebac4f7992ec 70-74
+docker/opencode/config/agents/build.md
+  1da2ebac4f7992ec 116,153-159
+docker/opencode/config/agents/coder.md
+  1da2ebac4f7992ec 29-32,46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "df2038dee34051fe0701c2f90151f4a7b8533d35",
+  "prompts": {
+    "1da2ebac4f7992ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d40531f-4798-4033-907f-e913c030b233",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 13,
+      "accepted_lines": 24,
+      "overriden_lines": 0
+    }
+  }
+}
