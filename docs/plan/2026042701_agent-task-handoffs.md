@@ -122,11 +122,11 @@ Anything else the subagent needs (available tools, MCP upstreams, skills, enviro
 
 Five steps, each reads and updates the README:
 
-1. **Frame** — orchestrator creates `/workspace/runs/<id>/README.md` with header + goal via `runs init`. One source of truth.
-2. **Plan** — orchestrator invokes `thinker` with role `plan`. Thinker reads the README, plans the change, writes `plan.md` if useful, links it from the README's Artifacts table, appends to Log via `runs log`.
-3. **Implement** — orchestrator invokes `coder`. Coder reads README and any linked artifacts, edits the worktree, appends to Log.
-4. **Test** — coder runs targeted tests in the sandbox (per `build.md` testing policy) and records exact commands + outcomes via `runs log`. Never the full suite — CI handles that on push.
-5. **Review** — orchestrator invokes `thinker` with role `review`. Thinker reads README + follows links + reads test results, then sets `Verdict:` via `runs verdict`; adds `review.md` only if findings warrant prose.
+1. **Frame** — orchestrator creates `/workspace/runs/<id>/README.md` from `run-readme.template.md` with header + goal filled in. One source of truth.
+2. **Plan** — orchestrator invokes `thinker` with role `plan`. Thinker reads the README, plans the change, writes `plan.md` if useful, links it from the README's Artifacts table, appends a Log line.
+3. **Implement** — orchestrator invokes `coder`. Coder reads README and any linked artifacts, edits the worktree, appends a Log line.
+4. **Test** — coder runs targeted tests in the sandbox (per `build.md` testing policy) and records exact commands + outcomes in the Log. Never the full suite — CI handles that on push.
+5. **Review** — orchestrator invokes `thinker` with role `review`. Thinker reads README + follows links + reads test results, then replaces the `Verdict:` line; adds `review.md` only if findings warrant prose.
 
 Iteration: on `BLOCK` or `SUBSTANTIVE`, re-invoke `coder`. Each retry appends a Log entry; supporting files are overwritten or replaced as the agent sees fit. No enforced `iterations/<n>/` split.
 
@@ -153,22 +153,20 @@ The phase set was restructured after `/autoplan` review (2026-04-27). The origin
 
 **Exit criteria:** `docker compose up` succeeds; `mkdir /workspace/runs/_smoke && rmdir /workspace/runs/_smoke` works inside the `opencode` container.
 
-### Phase 2 — Schema + helper CLI foundation
+### Phase 2 — Schema foundation
 
 Lock the contract before any agent code reads it.
 
 - Add `docker/opencode/config/run-readme.template.md` as the canonical README schema. Required fields, exact field-prefix lines, section order, glossary — all live here. Other agent files reference this template and never duplicate the spec.
-- Add a small `runs-cli` helper (a TypeScript CLI under `packages/opencode-cli/` or a shell script shipped into the opencode image) with verbs:
-  - `runs init <run-id> --repo <r> --branch <b> --worktree <path> --goal <text>` — creates the run dir + README header + Goal section.
-  - `runs log <run-id> <agent> <message>` — appends a single timestamped Log entry (atomic write-tmp-and-rename).
-  - `runs verdict <run-id> <BLOCK|SUBSTANTIVE|NIT|MERGED>` — replaces the `Verdict:` line; rejects values outside the enum.
-  - `runs lifecycle <run-id> <open|merged|abandoned>` — replaces the `Lifecycle:` line.
-  - `runs artifact <run-id> <relpath> <description>` — upserts a row in the Artifacts table.
-  - `runs cat <run-id>` — prints the README to stdout (read path subagents use).
-- All `runs-cli` writes are atomic (write-tmp + rename) and validate against the template schema; ill-formed inputs exit non-zero and write nothing.
-- Free-form artifacts (`plan.md`, `review.md`, `verify.sh`, `fixtures/`) are written directly by subagents. Only the structured fields go through the helper.
+- Subagents and the orchestrator edit the README directly using their existing file-edit tools:
+  - **Frame (run init)** — orchestrator copies the template, fills `Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, sets `Lifecycle: open`, leaves `Verdict:` empty, fills the Goal section.
+  - **Log appends** — shell append (`echo "<timestamp> <agent>: <message>" >> README.md`) or the agent's Edit tool. Append-only; never rewrite the Log section.
+  - **Verdict / Lifecycle** — replace the existing field-prefix line in place. Never duplicate it.
+  - **Artifacts** — insert a new row into the table; never rewrite the table.
+- No helper CLI in v1. Drift is bounded (worst case: 1–2 wasted subagent iterations per drift event; the load-bearing `Verdict:` field is protected by the orchestrator-side validator in Phase 3). If recurrent drift is observed in Phase 6 or in production, add `runs-cli` as a Phase 7 follow-up.
+- Free-form artifacts (`plan.md`, `review.md`, `verify.sh`, `fixtures/`) are written directly by subagents.
 
-**Exit criteria:** `runs init`, `log`, `verdict`, `lifecycle`, `artifact`, `cat` all work end-to-end against a temp dir; verdict / lifecycle outside their enums exit non-zero; concurrent `runs log` calls produce two distinct lines (no lost updates).
+**Exit criteria:** template file exists at `docker/opencode/config/run-readme.template.md`; a sample populated README satisfies the field-prefix order, required sections, and verdict/lifecycle enums when checked by the static validator script (Phase 5 T2).
 
 ### Phase 3 — Build.md rewrite (orchestrator)
 
@@ -177,7 +175,7 @@ Lock the contract before any agent code reads it.
 - Document the run-dir layout, run-id scheme (`YYYYMMDD-HHMMSS-<slug>[-<thread-ts>]`), README schema (referencing `run-readme.template.md`), header field-prefix lines, glossary.
 - Specify the subagent invocation contract verbatim: regex for `Run dir:` / `Role:`, defaults table, `ERROR:`-prefix structured failure return.
 - Add the rules block (subagent prompts pass only run-dir + role + ephemeral runtime hints; per-repo conventions win for durable plan docs; trivial changes skip the protocol entirely with the heuristic spelled out — single-file change ≤ 30 lines, no new deps, no schema/migration change).
-- Add the orchestrator-side verdict validator: after each `task()` call to `thinker review`, the orchestrator runs `runs cat <id>` and asserts `Verdict:` is in the enum; on miss, retry once with a corrective prompt, then escalate.
+- Add the orchestrator-side verdict validator: after each `task()` call to `thinker review`, the orchestrator reads `<run-dir>/README.md` and asserts the `Verdict:` line is in the enum; on miss, retry once with a corrective prompt, then escalate. This is the load-bearing check that lets the helper CLI stay deferred.
 - Add the orchestrator post-condition check: after each `task()` call, assert a Log line was appended for the expected role; on miss, escalate.
 
 **Exit criteria:** `build.md` is internally consistent: every step references the README + helper; no step relies on re-narrated task content; the path table matches the mount; verdict and post-condition validators are described.
@@ -188,14 +186,14 @@ Bring the subagents into the protocol. **The exact post-edit text for each file 
 
 - `coder.md` additions:
   - Header parsing (regex spec) and `realpath` check.
-  - "Read README via `runs cat <id>` first; never act on `Run dir:` alone."
-  - "Edit the worktree, then run targeted tests, then `runs log <id> coder '<one-line summary + test result>'`."
+  - "Read `<run-dir>/README.md` first; never act on `Run dir:` alone."
+  - "Edit the worktree, then run targeted tests, then append a single Log line: `<timestamp> coder: <one-line summary + test result>`."
   - Fail-fast contract: missing fields → `ERROR: ...` reply, no guessing.
-  - Forbid free-form rewrites of the README; structured fields only via `runs-cli`.
+  - Mutation rules: append to Log; replace `Verdict:` / `Lifecycle:` lines in place; insert (never rewrite) Artifacts rows. Forbid wholesale rewrites of the README.
 - `thinker.md` additions:
   - Header parsing + `realpath` check (same).
-  - Role split: `Role: plan` writes `plan.md` if useful, calls `runs artifact` to register it, calls `runs log` to record progress; `Role: review` reads README + linked artifacts + worktree diff, calls `runs verdict <id> <BLOCK|SUBSTANTIVE|NIT>`, optionally writes `review.md`.
-  - Same fail-fast contract.
+  - Role split: `Role: plan` writes `plan.md` if useful, inserts an Artifacts row linking to it, appends a Log line; `Role: review` reads README + linked artifacts + worktree diff, replaces the `Verdict:` line with one of `BLOCK|SUBSTANTIVE|NIT`, optionally writes `review.md`.
+  - Same fail-fast contract and same mutation rules.
 - A static lint in CI (or a one-shot script in `scripts/`) checks all three files (`build.md`, `coder.md`, `thinker.md`) for the magic strings: `Run dir:`, `Role:`, the verdict enum, the lifecycle enum. If any of the three drift, CI fails.
 
 **Exit criteria:** both subagent files contain the documented contract; the lint passes; a manual prompt-paste smoke ("Run dir: /tmp/x\nRole: plan\n\nfoo") returns the expected `ERROR: README not found at /tmp/x/README.md` from each subagent's behavior.
@@ -207,24 +205,24 @@ Land verification before the integration phase, not as part of it.
 - T1. Static lint: build.md / coder.md / thinker.md all reference the same magic strings (run via `scripts/lint-runs-protocol.sh` or similar).
 - T2. Schema validator: parse `run-readme.template.md` and a sample populated README, assert required fields present and enums valid.
 - T3. Container smoke: Phase 1's `mkdir/rmdir` test, automated.
-- T4. Concurrency unit test: spawn two `runs log` background calls → assert both lines land, no truncation.
-- T5. Mount audit: verify (or document) which services have RW on `/workspace/runs/`. If only `opencode` should write, narrow the bind on other services; otherwise document the dual-writer rule.
-- T6. Subagent contract test (no Slack): stub a fake README missing `Goal`, dispatch `thinker plan` → assert `ERROR:` reply.
-- T7. Subagent log-append test: dispatch `coder` against a valid run dir → assert exactly one Log line was appended (via `runs cat` diff), no duplicate sections, no rewritten artifact rows.
-- T8. Verdict enum test: dispatch `thinker review` → assert `Verdict:` line matches enum; force a fault by stubbing the model's reply with `Verdict: NEEDS_WORK` → assert orchestrator retries once.
-- T9. Re-narration regression: dispatch `coder` with prompt = only `Run dir:` + `Role:` + a one-word task → assert it does NOT respond "I need more context"; it reads the README.
-- T10. Path traversal: dispatch with `Run dir: /workspace/memory/../../etc` → assert subagent rejects.
+- T4. Mount audit: verify (or document) which services have RW on `/workspace/runs/`. If only `opencode` should write, narrow the bind on other services; otherwise document the dual-writer rule.
+- T5. Subagent contract test (no Slack): stub a fake README missing `Goal`, dispatch `thinker plan` → assert `ERROR:` reply.
+- T6. Subagent log-append test: dispatch `coder` against a valid run dir → assert exactly one Log line was appended (file diff before/after), no duplicate sections, no rewritten artifact rows.
+- T7. Verdict enum test: dispatch `thinker review` → assert `Verdict:` line matches enum; force a fault by stubbing the model's reply with `Verdict: NEEDS_WORK` → assert orchestrator retries once.
+- T8. Re-narration regression: dispatch `coder` with prompt = only `Run dir:` + `Role:` + a one-word task → assert it does NOT respond "I need more context"; it reads the README.
+- T9. Path traversal: dispatch with `Run dir: /workspace/memory/../../etc` → assert subagent rejects.
 
-**Exit criteria:** T1–T10 all green in CI or via a single make target.
+**Exit criteria:** T1–T9 all green in CI or via a single make target.
 
 ### Phase 6 — Integration verification
 
 - Push the branch and let the relevant workflow run (or dispatch manually).
 - Drive a real non-trivial Slack task and confirm:
-  - Orchestrator creates `/workspace/runs/<id>/README.md` via `runs init`.
-  - `thinker` and `coder` update the README via `runs-cli` and add supporting files only when warranted.
+  - Orchestrator creates `/workspace/runs/<id>/README.md` from the template.
+  - `thinker` and `coder` update the README directly (Log appends, Artifacts rows, field-prefix lines) and add supporting files only when warranted.
   - The `Verdict:` line drives iterate-vs-stop and the orchestrator's validator passes.
   - One iteration loop on a forced `BLOCK` works end-to-end.
+  - Watch for drift — duplicate sections, dropped Artifacts rows, lost Log lines, malformed `Verdict:`. If observed, capture as evidence to motivate a follow-up `runs-cli` helper.
 - Open a PR against `main` once push checks are green.
 
 **Exit criteria:** one end-to-end task completes through the new loop with a populated README, valid `Verdict:`, and only the supporting files that were useful.
@@ -233,6 +231,7 @@ Land verification before the integration phase, not as part of it.
 
 Tracked here so they don't get lost; not part of this PR.
 
+- **`runs-cli` helper for atomic structured-field writes.** Speced and then cut from v1 after worst-case-drift analysis: realistic worst case is 1–2 wasted subagent iterations per drift event, the load-bearing `Verdict:` field is already protected by the orchestrator-side validator, PRs still get human review, and run dirs are scratch (no durable consumer). Add only if Phase 6 integration or production usage shows recurrent drift.
 - **Runner-owned worktree lease.** Today the orchestrator mints run-ids and worktree reuse is shared across runs (`build.md:113`). A runner-owned lease (1 active run per worktree) is the correct long-term shape per CEO + Eng review. Defer until we observe a real concurrency incident or migrate to runner-owned task state.
 - **Runner-issued opaque run IDs.** Same parent decision: when the runner owns task state, it owns ID minting. Keep the seconds-granularity scheme until then.
 - **Generalize to `kind:` (investigate, qa, pr-review).** Original "Future" section. Land coding first, generalize from evidence.
@@ -257,11 +256,11 @@ Tracked here so they don't get lost; not part of this PR.
 | Per-repo plan/feat conventions take precedence | Repos already define plan format, location, and decision-log schema in their own `AGENTS.md`. The run dir holds inter-agent scratch; durable plans stay where the repo expects them. |
 | Mount layout: `docker-volumes/workspace/runs:/workspace/runs` (not `docker-volumes/runs/`) | Keep the established `docker-volumes/workspace/<dir>` pattern. Caught by /autoplan eng review (2026-04-27). |
 | 5-step loop with explicit `Test` step (not 4-step) | Existing `build.md:102` testing policy is load-bearing — coder runs targeted tests before review. Folding it into Implement loses the explicit gate. /autoplan eng review (Codex + subagent) flagged High regression. |
-| `runs-cli` helper for structured fields; subagents own free-form artifacts | Repeated LLM mutation of structured markdown drifts (duplicate sections, dropped rows, lost-update from stale snapshots). A small helper with atomic write-tmp-rename + schema validation contains the failure surface without changing file format. /autoplan cross-phase consensus. Alternative considered: `state.json` sidecar generated from helper output — rejected for v1 because it doubles the file count without buying more than what atomic helper writes already buy. |
+| No helper CLI in v1; subagents edit the README directly | The CLI was speced (`runs init`, `log`, `verdict`, `lifecycle`, `artifact`, `cat`) but cut after worst-case-drift analysis. Realistic worst case is one wasted subagent iteration (~1–2 min, a few thousand tokens) when a stale-snapshot rewrite drops a Log line or Artifacts row. The load-bearing `Verdict:` field is already protected by the orchestrator-side validator (Phase 3); PRs still get human review; run dirs are scratch with no durable consumer. Building the CLI before observing drift was speculative. Revisit as a Phase 7 follow-up if Phase 6 integration or production shows recurrent drift. /autoplan cross-phase consensus + measurement-first override. |
 | `Lifecycle:` (open/merged/abandoned) and `Verdict:` (BLOCK/SUBSTANTIVE/NIT/MERGED) are different fields | Earlier draft had a single `Status` field overloaded across both. /autoplan DX review (both voices) flagged High — `MERGED` semantically overlapped with header lifecycle. Splitting also makes both fields independently grep-able. |
 | Required literal field prefixes at top of README (`Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, `Lifecycle:`, `Verdict:`) | "Short, structured, scannable" was prose-only. Locked literal prefixes give deterministic `grep -l` for "all open runs" / "all blocked runs" without parsing markdown. /autoplan DX review. |
 | Run-id at seconds granularity (`YYYYMMDD-HHMMSS`), not minutes | Minute granularity collides on concurrent Slack mentions or retries; dropping `<repo>` from the path made it worse. Seconds + slug + optional thread-ts is sufficient until runner-owned IDs land in Phase 7. /autoplan CEO + Eng review. |
-| `runs verdict` validates the enum in the helper; orchestrator double-checks after `task()` | Either layer alone is insufficient: helper-only fails when a subagent edits the file by hand; orchestrator-only fails on a buggy helper. Belt-and-suspenders for a load-bearing field. |
+| Orchestrator-side `Verdict:` enum validator after every `task()` call | Without the helper CLI, the orchestrator post-condition check is the only gate that protects iterate-vs-stop logic from model drift (`OK`, `NEEDS_WORK`, etc.). Reads the README, asserts the enum, retries once with corrective prompt, then escalates. |
 | Subagent prompt deltas pre-drafted in Phase 4, not freestyled by implementer | The protocol is the contract. Letting Phase 4 invent the contract surface during implementation reintroduces drift across the three files. Pre-draft + lint catches it. |
 | Defer runner-owned worktree lease + opaque run-IDs to Phase 7 | Both are correct long-term but require runner state-model changes that exceed this plan's scope. Seconds-granularity IDs + worktree-reuse-with-best-effort is the v1 risk-budget choice. Revisit on first observed concurrency incident. |
 | Static protocol lint across `build.md`/`coder.md`/`thinker.md` | The 3-way contract lives in three files with no schema. A regex lint for the magic strings (Run dir:, Role:, verdict enum, lifecycle enum) costs ~30 lines and catches the most likely drift. |
@@ -445,7 +444,7 @@ The test plan artifact (T1–T11) lives in this section; if Phase 2 implementati
 | # | Mode | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
 | F8 | Concurrent runs corrupt shared worktree's git state | High in active-thor | Critical | Runner-owned worktree lease |
-| F9 | LLM rewrites README from stale snapshot, drops new Log lines | Medium | High | Helper CLI + atomic field updates |
+| F9 | LLM rewrites README from stale snapshot, drops new Log lines | Medium | Bounded — 1–2 wasted iterations per event | Orchestrator post-condition validator + retry; revisit `runs-cli` if observed recurrently |
 | F10 | Verdict line outside enum, iterate-vs-stop logic breaks | Medium | Medium | Orchestrator validator + retry |
 | F11 | Session `directory` set to /workspace/runs/<id>, runner rejects | Medium (impl error) | Medium | Document explicitly; widen allowlist deliberately or keep at /workspace/repos |
 | F12 | Test step regression: untested code reaches Review | High | High | Restore Test step or mandate verification artifact |
@@ -525,7 +524,7 @@ TTHW current: **5+ cognitive steps, 3+ underspec'd**. Target: 2 steps with expli
 ### Cross-phase themes (concerns flagged in 2+ phases independently)
 
 - **Subagent contract is the load-bearing crack.** CEO + Eng + DX all surfaced it. Already pulled into Phase 2 scope via the premise gate.
-- **Markdown vs typed state.** CEO + Eng + DX all want a `state.json` sidecar OR a `runs-cli` helper. Both reviewers in all three phases independently arrived at this. Highest cross-phase signal.
+- **Markdown vs typed state.** CEO + Eng + DX all wanted a `state.json` sidecar OR a `runs-cli` helper. Cut from v1 after worst-case-drift analysis showed bounded blast radius (1–2 wasted iterations per drift event; load-bearing `Verdict:` field already protected by orchestrator validator). Re-evaluate as a Phase 7 follow-up if Phase 6 integration or production shows recurrent drift.
 - **Run-id collision / locking.** CEO + Eng both raised; runner-owned IDs + worktree leases are the consistent fix.
 - **Status/Verdict semantics + enforcement.** Eng + DX both raised; rename to `Lifecycle:` + `Verdict:` with orchestrator validator.
 - **Test step regression.** Eng (both voices) flagged High; DX implicit.
@@ -541,7 +540,7 @@ TTHW current: **5+ cognitive steps, 3+ underspec'd**. Target: 2 steps with expli
 | 4 | CEO | Bring coder.md/thinker.md edits in scope | Resolved | P1 completeness | User accepted recommendation |
 | 5 | Eng | Add T1–T11 test plan to Phase 3 | Mechanical | P1 + P5 | Tests ARE the verification surface |
 | 6 | Eng | Restore Test step (or fold into Implement w/ verification artifact) | Surfaced | P1 + P3 | Both voices High; surfaced as taste decision |
-| 7 | Eng | Add `runs-cli` helper or `state.json` sidecar | Surfaced | P5 explicit | Both voices High in 3 phases; surfaced as taste decision |
+| 7 | Eng | Cut `runs-cli` helper from v1; subagents edit README directly | Resolved | P5 + measurement-first | User override after worst-case-drift analysis showed bounded blast radius. Revisit as Phase 7 follow-up if drift observed in Phase 6 or production. |
 | 8 | Eng | docker-volumes path → `docker-volumes/workspace/runs/.gitkeep` | Auto-decide | P3 pragmatic | Both voices flagged; existing pattern wins |
 | 9 | Eng | Runner worktree lease | Surfaced | P5 | Runner-owned vs orchestrator-owned is a real architecture choice |
 | 10 | Eng | Verdict enum validator at orchestrator | Auto-decide | P1 + P5 | Both voices flagged; enforce or break |
