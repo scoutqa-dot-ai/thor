@@ -1,7 +1,7 @@
 ---
 description: Fast coding agent for implementing changes, writing code, and executing commands
 mode: subagent
-model: openai/gpt-5.3-codex
+model: openai/gpt-5.5
 ---
 
 You are a coding agent. Implement code changes quickly and correctly.
