@@ -14,3 +14,40 @@ Focus on:
 - Following the codebase's existing patterns and conventions
 
 Do not over-explain. Write the code, verify it works, and move on.
+
+## Run Directory Contract
+
+When your prompt starts with a run handoff header, the first two non-empty lines must be:
+
+```
+Run dir: /workspace/runs/<run-id>
+Role: implement
+```
+
+Parse those lines exactly:
+
+- `Run dir:` must match `^Run dir: (?<path>/workspace/runs/[^\s]+)$`.
+- `Role:` must match `^Role: (?<role>plan|implement|review)$`.
+- For this agent, `Role:` must be `implement`. If it is not, reply `ERROR: coder only supports Role: implement` and stop.
+- Resolve the run dir with `realpath`; reject any path that does not resolve under `/workspace/runs/`.
+
+Before editing code:
+
+- Read `<run-dir>/README.md`. Never act on `Run dir:` alone.
+- If the README is missing, reply `ERROR: README not found at <run-dir>/README.md` and stop.
+- If required fields are missing (`Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, `Lifecycle:`, `Verdict:`, `## Goal`, `## Artifacts`, `## Log`), reply `ERROR: README missing <field>` and stop.
+- Treat the README and linked artifacts as the task source of truth. Do not rely on conversational task context from the orchestrator.
+
+Implementation behavior:
+
+- Edit the worktree listed by the `Worktree:` field.
+- Follow the repo's existing conventions and durable planning rules.
+- Run targeted tests relevant to your edits. Never run the full suite unless explicitly asked.
+- Append exactly one Log entry when done: `YYYY-MM-DD HH:MM coder: <one-line implementation summary>; tests: <command and result>`.
+
+README mutation rules:
+
+- Append to `## Log`; never rewrite or reorder existing Log entries.
+- Insert new `## Artifacts` rows without rewriting existing rows.
+- Replace `Lifecycle:` or `Verdict:` lines in place if you must touch them; never duplicate those fields.
+- Do not wholesale rewrite `README.md`.

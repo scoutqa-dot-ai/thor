@@ -196,7 +196,7 @@ Bring the subagents into the protocol. **The exact post-edit text for each file 
   - Same fail-fast contract and same mutation rules.
 - A static lint in CI (or a one-shot script in `scripts/`) checks all three files (`build.md`, `coder.md`, `thinker.md`) for the magic strings: `Run dir:`, `Role:`, the verdict enum, the lifecycle enum. If any of the three drift, CI fails.
 
-**Exit criteria:** both subagent files contain the documented contract; the lint passes; a manual prompt-paste smoke ("Run dir: /tmp/x\nRole: plan\n\nfoo") returns the expected `ERROR: README not found at /tmp/x/README.md` from each subagent's behavior.
+**Exit criteria:** both subagent files contain the documented contract; the lint passes; a manual prompt-paste smoke ("Run dir: /workspace/runs/_missing\nRole: plan\n\nfoo") returns the expected `ERROR: README not found at /workspace/runs/_missing/README.md` from `thinker`, and `coder` rejects unsupported roles with `ERROR:`.
 
 ### Phase 5 — Static + container test harness
 
@@ -552,5 +552,4 @@ TTHW current: **5+ cognitive steps, 3+ underspec'd**. Target: 2 steps with expli
 | 16 | DX | Defaults table for missing fields | Auto-decide | P1 completeness | Standard contract hygiene |
 | 17 | DX | Glossary for verdict vocabulary in build.md | Auto-decide | P5 | Cheap; both voices flagged |
 | 18 | Cross | Drop `<repo>` segment from run-id (Decision Log line 156) | Re-surfaced | — | Both voices argue this REDUCES uniqueness; revisit |
-
 
