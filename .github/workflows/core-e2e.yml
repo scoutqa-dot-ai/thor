@@ -9,6 +9,14 @@ on:
       - "packages/**"
       - pnpm-lock.yaml
       - docker-compose.yml
+  pull_request:
+    paths:
+      - ".github/workflows/core-e2e.yml"
+      - "scripts/test-e2e.sh"
+      - "scripts/test-opencode-e2e.sh"
+      - "packages/**"
+      - pnpm-lock.yaml
+      - docker-compose.yml
   workflow_dispatch:
 
 permissions:
@@ -136,7 +144,7 @@ jobs:
         run: pnpm test:e2e
 
       - name: Run OpenCode LLM smoke test
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           CI: "true"
         run: pnpm test:opencode-e2e
