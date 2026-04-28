@@ -207,10 +207,21 @@ describe("validateGitArgs", () => {
         ["push", "--set-upstream", "origin", "HEAD:refs/heads/feat/x"],
         ["push", "origin", "HEAD:refs/heads/feat/x", "--set-upstream"],
         ["merge", "origin/main"],
+        ["merge", "feat/sibling"],
+        ["merge", "abc1234"],
+        ["merge", "FETCH_HEAD"],
         ["merge", "--ff-only", "origin/main"],
         ["merge", "--no-ff", "--no-edit", "origin/main"],
+        ["merge", "--squash", "feat/sibling"],
+        ["merge", "-X", "ours", "origin/main"],
+        ["merge", "--strategy=ours", "origin/main"],
+        ["merge", "-m", "merge origin/main", "origin/main"],
+        ["merge", "--allow-unrelated-histories", "origin/main"],
+        ["merge", "origin/feat-a", "origin/feat-b"],
+        ["merge"],
         ["merge", "--abort"],
         ["merge", "--continue"],
+        ["merge", "--quit"],
       ];
 
       for (const args of allowedCommands) {
@@ -505,29 +516,10 @@ describe("validateGitArgs", () => {
       expectGitDenied(["push", "origin", "HEAD:refs/heads/foo:bar"]);
     });
 
-    it("blocks merge shapes outside the allowed Thor workflows", () => {
-      // Hook bypass
+    it("blocks merge --no-verify (hook bypass)", () => {
       expectGitDenied(["merge", "--no-verify", "origin/main"]);
       expectGitDenied(["merge", "origin/main", "--no-verify"]);
       expectGitDenied(["merge", "--no-ff", "--no-verify", "origin/main"]);
-      // Local refs / commit SHAs are not remote-tracking; would couple the
-      // worktree to whatever happens to be on disk.
-      expectGitDenied(["merge", "feat/sibling"]);
-      expectGitDenied(["merge", "abc1234"]);
-      expectGitDenied(["merge", "FETCH_HEAD"]);
-      expectGitDenied(["merge"]);
-      // Anything other than origin remote
-      expectGitDenied(["merge", "upstream/main"]);
-      // Strategies, squash, allow-unrelated-histories, -m widen the surface
-      expectGitDenied(["merge", "--squash", "origin/main"]);
-      expectGitDenied(["merge", "-X", "ours", "origin/main"]);
-      expectGitDenied(["merge", "--strategy=ours", "origin/main"]);
-      expectGitDenied(["merge", "-m", "merge origin/main", "origin/main"]);
-      expectGitDenied(["merge", "--allow-unrelated-histories", "origin/main"]);
-      // Multiple positional refs (octopus)
-      expectGitDenied(["merge", "origin/feat-a", "origin/feat-b"]);
-      // --quit isn't supported (use --abort)
-      expectGitDenied(["merge", "--quit"]);
     });
 
     it("blocks malformed commit forms", () => {
