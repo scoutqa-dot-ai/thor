@@ -17,6 +17,7 @@ const STREAM_TIMEOUT_MS = 300_000; // 5 minutes for streaming commands
 export interface ExecCommandOptions {
   env?: NodeJS.ProcessEnv;
   maxBuffer?: number;
+  timeoutMs?: number;
 }
 
 export function execCommand(
@@ -29,8 +30,10 @@ export function execCommand(
   // outputs before feeding them to the LLM context window. Specific endpoints
   // may opt into a cap when they need tighter control.
   const maxBuffer = options.maxBuffer ?? Infinity;
+  const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
 
   return new Promise((resolve) => {
+    let timedOut = false;
     const child = execFile(
       binary,
       args,
@@ -48,12 +51,16 @@ export function execCommand(
               ? (err as { code: number }).code
               : 1
             : 0,
+          timedOut,
         });
       },
     );
 
-    // Safety: kill after 60 seconds
-    const timeout = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);
+    // Safety: kill after timeout
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
     child.on("exit", () => clearTimeout(timeout));
   });
 }

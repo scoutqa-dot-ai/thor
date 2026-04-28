@@ -3,6 +3,7 @@ import {
   logInfo,
   createConfigLoader,
   getAllowedChannelIds,
+  requireEnv,
   WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 import { createGatewayApp } from "./app.js";
@@ -24,7 +25,7 @@ const SLACK_BOT_USER_ID = process.env.SLACK_BOT_USER_ID || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const REMOTE_CLI_HOST = process.env.REMOTE_CLI_HOST || "remote-cli";
 const REMOTE_CLI_PORT = parseInt(process.env.REMOTE_CLI_PORT || "3004", 10);
-const RESOLVE_SECRET = process.env.RESOLVE_SECRET || "";
+const THOR_INTERNAL_SECRET = requireEnv("THOR_INTERNAL_SECRET");
 const OPENAI_AUTH_PATH = process.env.OPENAI_AUTH_PATH || "";
 const githubEnv = validateGatewayGitHubEnv();
 const githubMentionLogins = buildMentionLogins(githubEnv.githubAppSlug);
@@ -37,7 +38,7 @@ const { app } = createGatewayApp({
   slackBotUserId: SLACK_BOT_USER_ID,
   remoteCliHost: REMOTE_CLI_HOST,
   remoteCliPort: REMOTE_CLI_PORT,
-  resolveSecret: RESOLVE_SECRET,
+  internalSecret: THOR_INTERNAL_SECRET,
   timestampToleranceSeconds: SLACK_TIMESTAMP_TOLERANCE_SECONDS,
   queueDir: QUEUE_DIR,
   cronSecret: CRON_SECRET || undefined,

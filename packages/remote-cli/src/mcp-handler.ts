@@ -50,14 +50,14 @@ export interface McpCommandContext {
   directory?: string;
   sessionId?: string;
   callId?: string;
-  resolveSecret?: string;
+  internalSecret?: string;
 }
 
 export interface McpServiceDeps {
   getConfig: ConfigLoader;
   approvalsDir?: string;
   isProduction?: boolean;
-  resolveSecret?: string;
+  internalSecret?: string;
   connectUpstreamFn?: typeof connectUpstream;
   writeToolCallLogFn?: typeof writeToolCallLog;
 }
@@ -587,10 +587,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     async executeMcp(args: string[], context: McpCommandContext): Promise<McpExecResult> {
       if (args[0] === "resolve") {
         const secretOk =
-          deps.resolveSecret &&
-          context.resolveSecret &&
-          deps.resolveSecret.length === context.resolveSecret.length &&
-          timingSafeEqual(Buffer.from(deps.resolveSecret), Buffer.from(context.resolveSecret));
+          deps.internalSecret &&
+          context.internalSecret &&
+          deps.internalSecret.length === context.internalSecret.length &&
+          timingSafeEqual(Buffer.from(deps.internalSecret), Buffer.from(context.internalSecret));
         if (!secretOk) {
           return fail("Unknown subcommand: resolve\n");
         }

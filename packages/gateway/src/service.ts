@@ -68,6 +68,7 @@ export interface BatchDispatchInput {
   deps: RunnerDeps;
   slackMcpDeps: SlackMcpDeps;
   remoteCliUrl?: string;
+  internalSecret?: string;
   interrupt?: boolean;
   onAccepted?: () => void;
   onRejected?: (reason: string) => void;
@@ -115,6 +116,22 @@ export interface TriggerResult {
 export interface GitHubPrHeadResult {
   ref: string;
   headRepoFullName: string;
+}
+
+export interface InternalExecRequest {
+  bin: string;
+  args: string[];
+  cwd: string;
+  timeoutMs?: number;
+}
+
+export interface InternalExecResult {
+  ok: boolean;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  status?: number;
 }
 
 type TerminalGitHubRejectReason =
@@ -340,6 +357,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       const branchInfo = await resolveGitHubPrHead(
         latest,
         input.remoteCliUrl,
+        input.internalSecret,
         input.deps.fetchImpl,
       );
       if (branchInfo.headRepoFullName !== latest.repoFullName) {
@@ -618,6 +636,7 @@ export async function triggerRunnerGitHub(
   correlationKey: string,
   deps: RunnerDeps,
   remoteCliUrl: string,
+  internalSecret?: string,
   interrupt?: boolean,
   onAccepted?: () => void,
   onRejected?: (reason: string) => void,
@@ -632,6 +651,7 @@ export async function triggerRunnerGitHub(
     deps,
     slackMcpDeps: { slackMcpUrl: "", fetchImpl: deps.fetchImpl },
     remoteCliUrl,
+    internalSecret,
     interrupt,
     onAccepted,
     onRejected,
@@ -641,6 +661,7 @@ export async function triggerRunnerGitHub(
 export async function resolveGitHubPrHead(
   event: NormalizedGitHubEvent,
   remoteCliUrl: string,
+  internalSecret: string | undefined,
   fetchImpl?: typeof fetch,
 ): Promise<GitHubPrHeadResult> {
   const params = new URLSearchParams({
@@ -653,6 +674,9 @@ export async function resolveGitHubPrHead(
   for (let attempt = 0; attempt <= GITHUB_PR_HEAD_RETRIES; attempt++) {
     try {
       const response = await getFetch(fetchImpl)(url, {
+        headers: {
+          ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
+        },
         signal: AbortSignal.timeout(GITHUB_PR_HEAD_TIMEOUT_MS),
       });
       if (response.ok) {
@@ -668,7 +692,13 @@ export async function resolveGitHubPrHead(
         return { ref, headRepoFullName };
       }
 
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401) {
+        throw new TerminalGitHubDispatchError(
+          "branch_lookup_failed",
+          "Remote-cli /github/pr-head rejected the internal credential",
+        );
+      }
+      if (response.status === 403) {
         throw new TerminalGitHubDispatchError(
           "installation_gone",
           `Remote-cli /github/pr-head returned ${response.status}`,
@@ -781,7 +811,7 @@ export async function resolveApproval(
   decision: "approved" | "rejected",
   reviewer: string,
   remoteCliUrl: string,
-  resolveSecret: string | undefined,
+  internalSecret: string | undefined,
   fetchImpl?: typeof fetch,
   reason?: string,
 ): Promise<Record<string, unknown> | undefined> {
@@ -794,7 +824,7 @@ export async function resolveApproval(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(resolveSecret ? { "x-thor-resolve-secret": resolveSecret } : {}),
+        ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
       },
       body: JSON.stringify({ args }),
     });
@@ -814,6 +844,48 @@ export async function resolveApproval(
       remoteCliUrl,
     });
     return undefined;
+  }
+}
+
+export async function internalExec(
+  request: InternalExecRequest,
+  remoteCliUrl: string,
+  internalSecret: string | undefined,
+  fetchImpl?: typeof fetch,
+): Promise<InternalExecResult> {
+  const fetchFn = getFetch(fetchImpl);
+  try {
+    const response = await fetchFn(`${remoteCliUrl}/internal/exec`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
+      },
+      body: JSON.stringify(request),
+    });
+    const body = ExecResultSchema.parse(await response.json());
+    return {
+      ok: response.ok,
+      status: response.status,
+      exitCode: body.exitCode,
+      stdout: body.stdout,
+      stderr: body.stderr,
+      timedOut: body.timedOut,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logError(log, "internal_exec_error", message, {
+      remoteCliUrl,
+      bin: request.bin,
+      cwd: request.cwd,
+    });
+    return {
+      ok: false,
+      exitCode: 1,
+      stdout: "",
+      stderr: message,
+      timedOut: false,
+    };
   }
 }
 

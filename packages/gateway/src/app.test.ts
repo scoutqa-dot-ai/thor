@@ -1373,7 +1373,7 @@ describe("gateway", () => {
       {
         remoteCliHost: "remote-cli.internal",
         remoteCliPort: 3010,
-        resolveSecret: "resolve-secret",
+        internalSecret: "resolve-secret",
       },
     );
 
@@ -1385,7 +1385,7 @@ describe("gateway", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-thor-resolve-secret": "resolve-secret",
+        "x-thor-internal-secret": "resolve-secret",
       },
       body: JSON.stringify({ args: ["resolve", "act-1", "approved", "U123"] }),
     });

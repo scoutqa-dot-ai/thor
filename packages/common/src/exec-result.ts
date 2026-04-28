@@ -5,6 +5,7 @@ export const ExecResultSchema = z.object({
   stdout: z.string(),
   stderr: z.string(),
   exitCode: z.number(),
+  timedOut: z.boolean().default(false),
 });
 export type ExecResult = z.infer<typeof ExecResultSchema>;
 

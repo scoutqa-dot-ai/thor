@@ -1,4 +1,5 @@
 import express, { type Express } from "express";
+import { timingSafeEqual } from "node:crypto";
 import { access } from "node:fs/promises";
 import { dirname, normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
@@ -52,12 +53,17 @@ const LDCLI_MAX_OUTPUT = 1024 * 1024;
 const GITHUB_API_URL = "https://api.github.com";
 const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
+const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   requireEnv("GITHUB_APP_ID", env);
   requireEnv("GITHUB_APP_SLUG", env);
   requireEnv("GITHUB_APP_BOT_ID", env);
   requireEnv("GITHUB_APP_PRIVATE_KEY_FILE", env);
+}
+
+export function validateRemoteCliInternalEnv(env: NodeJS.ProcessEnv = process.env): void {
+  requireEnv("THOR_INTERNAL_SECRET", env);
 }
 
 function deriveBotGitIdentity(env: NodeJS.ProcessEnv = process.env): {
@@ -116,6 +122,58 @@ function parseArgs(body: unknown): string[] | undefined {
     return undefined;
   }
   return args;
+}
+
+function matchesInternalSecret(
+  expectedSecret: string,
+  providedSecret: string | undefined,
+): boolean {
+  return (
+    Boolean(expectedSecret) &&
+    Boolean(providedSecret) &&
+    expectedSecret.length === providedSecret.length &&
+    timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret))
+  );
+}
+
+function redactInternalExecArgs(args: string[]): string[] {
+  const redactInlineValue = (arg: string): string => `${arg.slice(0, arg.indexOf("="))}=[REDACTED]`;
+  const redactUrlCredentials = (arg: string): string =>
+    arg.replace(/^(https?:\/\/)([^\s/@]+)@/i, "$1[REDACTED]@");
+  let redactNext = false;
+  return args.map((arg) => {
+    if (redactNext) {
+      redactNext = false;
+      return "[REDACTED]";
+    }
+
+    if (
+      /^(?:-H|--header|-u|--user|--token|--auth|--authorization|--password|--passwd|--secret|--api-key|--apikey)$/i.test(
+        arg,
+      )
+    ) {
+      redactNext = true;
+      return arg;
+    }
+
+    if (
+      /^(?:--token|--auth|--authorization|--password|--passwd|--secret|--api-key|--apikey|token|secret|password|api[_-]?key)=/i.test(
+        arg,
+      )
+    ) {
+      return redactInlineValue(arg);
+    }
+
+    if (/^(?:-H|--header)=/i.test(arg)) {
+      return redactInlineValue(arg);
+    }
+
+    if (/^https?:\/\//i.test(arg) || (/:\/\//.test(arg) && /@/.test(arg))) {
+      return redactUrlCredentials(arg);
+    }
+
+    return arg;
+  });
 }
 
 type SandboxMode = "exec" | "create" | "stop" | "list";
@@ -346,9 +404,10 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const getConfig = config.getConfig ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
+  const internalSecret = process.env.THOR_INTERNAL_SECRET || "";
   const mcpService = createMcpService({
     getConfig,
-    resolveSecret: process.env.RESOLVE_SECRET || "",
+    internalSecret,
     isProduction: process.env.NODE_ENV === "production",
     ...config.mcp,
   });
@@ -361,6 +420,12 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   });
 
   app.get("/github/pr-head", async (req, res) => {
+    const providedSecret = req.headers[INTERNAL_SECRET_HEADER] as string | undefined;
+    if (!matchesInternalSecret(internalSecret, providedSecret)) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
     const installationRaw = req.query.installation;
     const repoRaw = req.query.repo;
     const numberRaw = req.query.number;
@@ -404,7 +469,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       });
 
       if (pullResponse.status === 401 || pullResponse.status === 403) {
-        res.status(pullResponse.status).json({ error: "installation_gone" });
+        res.status(403).json({ error: "installation_gone" });
         return;
       }
       if (pullResponse.status === 404) {
@@ -842,9 +907,17 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
+      if (args[0] === "resolve") {
+        const providedSecret = req.headers[INTERNAL_SECRET_HEADER] as string | undefined;
+        if (!matchesInternalSecret(internalSecret, providedSecret)) {
+          res.status(401).json({ error: "Unauthorized" });
+          return;
+        }
+      }
+
       const result = await mcpService.executeMcp(args, {
         directory: typeof req.body?.directory === "string" ? req.body.directory : undefined,
-        resolveSecret: req.headers["x-thor-resolve-secret"] as string | undefined,
+        internalSecret: req.headers[INTERNAL_SECRET_HEADER] as string | undefined,
         ...thorIds(req),
       });
 
@@ -857,6 +930,72 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         thorIds(req),
       );
       res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+    }
+  });
+
+  app.post("/internal/exec", async (req, res) => {
+    const providedSecret = req.headers[INTERNAL_SECRET_HEADER] as string | undefined;
+    if (!matchesInternalSecret(internalSecret, providedSecret)) {
+      res.status(401).json({ stdout: "", stderr: "Unauthorized", exitCode: 1, timedOut: false });
+      return;
+    }
+
+    const { bin, args, cwd, timeoutMs } = req.body ?? {};
+    if (typeof bin !== "string" || !bin.trim()) {
+      res
+        .status(400)
+        .json({ stdout: "", stderr: "bin must be a non-empty string", exitCode: 1, timedOut: false });
+      return;
+    }
+    if (!Array.isArray(args) || !args.every((arg) => typeof arg === "string")) {
+      res
+        .status(400)
+        .json({ stdout: "", stderr: "args must be a string array", exitCode: 1, timedOut: false });
+      return;
+    }
+    if (typeof cwd !== "string" || !cwd.trim()) {
+      res
+        .status(400)
+        .json({ stdout: "", stderr: "cwd must be a non-empty string", exitCode: 1, timedOut: false });
+      return;
+    }
+    if (
+      timeoutMs !== undefined &&
+      (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0)
+    ) {
+      res.status(400).json({
+        stdout: "",
+        stderr: "timeoutMs must be a positive number when provided",
+        exitCode: 1,
+        timedOut: false,
+      });
+      return;
+    }
+
+    const startedAt = Date.now();
+    try {
+      const result = await execCommand(bin, args, cwd, {
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      });
+      logInfo(log, "internal_exec", {
+        bin,
+        args: redactInternalExecArgs(args),
+        cwd,
+        exitCode: result.exitCode,
+        timedOut: result.timedOut,
+        durationMs: Date.now() - startedAt,
+        ...thorIds(req),
+      });
+      res.json(result);
+    } catch (err) {
+      logError(log, "internal_exec_error", err instanceof Error ? err.message : String(err), {
+        bin,
+        args: redactInternalExecArgs(args),
+        cwd,
+        durationMs: Date.now() - startedAt,
+        ...thorIds(req),
+      });
+      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1, timedOut: false });
     }
   });
 
@@ -900,6 +1039,7 @@ function hasLdcliOutputOverride(args: string[]): boolean {
 
 export async function startRemoteCliServer(): Promise<void> {
   validateRemoteCliGitHubEnv();
+  validateRemoteCliInternalEnv();
   const gitIdentity = deriveBotGitIdentity();
   const remoteCli = createRemoteCliApp();
   logInfo(log, "remote_cli_starting", {

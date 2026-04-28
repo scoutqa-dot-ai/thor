@@ -51,7 +51,7 @@ describe("resolveApproval", () => {
   it("posts resolve requests to remote-cli with the secret header", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(jsonResponse({ stdout: "ok", stderr: "", exitCode: 0 }));
+      .mockResolvedValue(jsonResponse({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false }));
 
     const { resolveApproval } = await import("./service.js");
     const result = await resolveApproval(
@@ -59,17 +59,17 @@ describe("resolveApproval", () => {
       "approved",
       "U123",
       "http://remote-cli:3004",
-      "resolve-secret",
+      "internal-secret",
       fetchImpl,
       "ship it",
     );
 
-    expect(result).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false });
     expect(fetchImpl).toHaveBeenCalledWith("http://remote-cli:3004/exec/mcp", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-thor-resolve-secret": "resolve-secret",
+        "x-thor-internal-secret": "internal-secret",
       },
       body: JSON.stringify({
         args: ["resolve", "act-1", "approved", "U123", "ship it"],
@@ -81,7 +81,7 @@ describe("resolveApproval", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValue(
-        jsonResponse({ stdout: "", stderr: "Unknown subcommand: resolve\n", exitCode: 1 }),
+        jsonResponse({ stdout: "", stderr: "Unknown subcommand: resolve\n", exitCode: 1, timedOut: false }),
       );
 
     const { resolveApproval } = await import("./service.js");
@@ -95,6 +95,56 @@ describe("resolveApproval", () => {
     );
 
     expect(result).toBeUndefined();
+  });
+});
+
+describe("internalExec", () => {
+  it("posts to /internal/exec and returns parsed result", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false }));
+
+    const { internalExec } = await import("./service.js");
+    const result = await internalExec(
+      { bin: "echo", args: ["hello"], cwd: "/tmp" },
+      "http://remote-cli:3004",
+      "internal-secret",
+      fetchImpl,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      exitCode: 0,
+      stdout: "ok",
+      stderr: "",
+      timedOut: false,
+    });
+    expect(fetchImpl).toHaveBeenCalledWith("http://remote-cli:3004/internal/exec", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-thor-internal-secret": "internal-secret",
+      },
+      body: JSON.stringify({ bin: "echo", args: ["hello"], cwd: "/tmp" }),
+    });
+  });
+
+  it("returns structured failure when transport fails", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+    const { internalExec } = await import("./service.js");
+    const result = await internalExec(
+      { bin: "echo", args: ["hello"], cwd: "/tmp" },
+      "http://remote-cli:3004",
+      "internal-secret",
+      fetchImpl,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("ECONNREFUSED");
+    expect(result.timedOut).toBe(false);
   });
 });
 
@@ -528,6 +578,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       onAccepted,
       vi.fn(),
@@ -537,6 +588,9 @@ describe("triggerRunnerGitHub", () => {
     expect(mockFetch.mock.calls[0][0]).toContain(
       "/github/pr-head?installation=126669985&repo=scoutqa-dot-ai%2Fthor&number=42",
     );
+    expect(mockFetch.mock.calls[0][1]).toMatchObject({
+      headers: { "x-thor-internal-secret": "internal-secret" },
+    });
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[1][1]?.body));
     expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
     expect(triggerBody.directory).toBe("/workspace/repos/my-repo");
@@ -559,6 +613,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       undefined,
       onRejected,
@@ -579,6 +634,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       undefined,
       onRejected,
@@ -601,6 +657,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       undefined,
       onRejected,
@@ -623,6 +680,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       undefined,
       onRejected,
@@ -643,6 +701,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       undefined,
       onRejected,
@@ -663,6 +722,7 @@ describe("triggerRunnerGitHub", () => {
       "git:branch:thor:main",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       onAccepted,
     );
