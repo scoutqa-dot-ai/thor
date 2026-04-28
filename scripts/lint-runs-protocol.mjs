@@ -1,12 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 
 const files = {
   build: "docker/opencode/config/agents/build.md",
   coder: "docker/opencode/config/agents/coder.md",
   thinker: "docker/opencode/config/agents/thinker.md",
-  template: "docker/opencode/config/run-readme.template.md",
   compose: "docker-compose.yml",
 };
 
@@ -47,10 +44,15 @@ function validateReadme(content, name) {
   }
 }
 
+function extractReadmeSkeleton(buildMd) {
+  const match = buildMd.match(/```\n(Run-ID:[\s\S]*?)\n```/);
+  assert(match, `${files.build} missing README skeleton (no fenced block starts with 'Run-ID:')`);
+  return match[1];
+}
+
 const build = read(files.build);
 const coder = read(files.coder);
 const thinker = read(files.thinker);
-const template = read(files.template);
 const compose = read(files.compose);
 
 const sharedNeedles = [
@@ -74,39 +76,25 @@ const sharedNeedles = [
   "ERROR: README missing",
   "realpath",
   "/workspace/runs/",
+  "## Goal",
+  "## Artifacts",
+  "## Log",
 ];
 
 assertIncludes(files.build, build, sharedNeedles);
 assertIncludes(files.coder, coder, sharedNeedles);
 assertIncludes(files.thinker, thinker, sharedNeedles);
-assertIncludes(files.template, template, [
-  "Run-ID:",
-  "Repo:",
-  "Branch:",
-  "Worktree:",
-  "Lifecycle:",
-  "Verdict:",
-  "## Goal",
-  "## Artifacts",
-  "## Log",
-]);
 
-validateReadme(template, files.template);
+const skeleton = extractReadmeSkeleton(build);
+validateReadme(skeleton, `${files.build} skeleton`);
 
-const scratch = mkdtempSync(join(tmpdir(), "thor-runs-protocol-"));
-try {
-  const samplePath = join(scratch, "README.md");
-  const sampleLines = template.split(/\r?\n/);
-  sampleLines[0] = "Run-ID: 20260428-120000-agent-handoff";
-  sampleLines[1] = "Repo: thor";
-  sampleLines[2] = "Branch: feat/file-handoff";
-  sampleLines[3] = "Worktree: /workspace/worktrees/thor/feat-file-handoff";
-  sampleLines[5] = "Verdict: NIT";
-  writeFileSync(samplePath, sampleLines.join("\n"));
-  validateReadme(read(samplePath), samplePath);
-} finally {
-  rmSync(scratch, { recursive: true, force: true });
-}
+const sampleLines = skeleton.split(/\r?\n/);
+sampleLines[0] = "Run-ID: 20260428-120000-agent-handoff";
+sampleLines[1] = "Repo: thor";
+sampleLines[2] = "Branch: feat/file-handoff";
+sampleLines[3] = "Worktree: /workspace/worktrees/thor/feat-file-handoff";
+sampleLines[5] = "Verdict: NIT";
+validateReadme(sampleLines.join("\n"), "populated sample");
 
 assert(
   compose.includes("./docker-volumes/workspace/runs:/workspace/runs"),

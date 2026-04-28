@@ -113,16 +113,31 @@ Run directory:
 
 Run ID format: `<YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]`, for example `20260427-143052-mcp-approval`. Use a short kebab-case slug. Add the Slack thread ts suffix when the task is tied to a Slack thread.
 
-The canonical README schema is `/workspace/repos/thor/docker/opencode/config/run-readme.template.md` (repo-relative path: `docker/opencode/config/run-readme.template.md`). Copy that template into the run dir and fill the header and Goal. Required top fields, in order:
+The canonical README schema lives in this file. Copy the skeleton below into the run dir, fill the header and the Goal paragraph, and leave Artifacts and Log empty — subagents insert and append:
 
 ```
 Run-ID: <YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]
 Repo: <repo-name>
 Branch: <branch-name>
 Worktree: /workspace/worktrees/<repo>/<branch>
-Lifecycle: open | merged | abandoned
-Verdict: BLOCK | SUBSTANTIVE | NIT | MERGED | empty before first review
+Lifecycle: open
+Verdict:
+
+## Goal
+
+<one-paragraph task description>
+
+## Artifacts
+
+| Path | Description |
+|---|---|
+
+## Log
+
+Append entries only. Format: `YYYY-MM-DD HH:MM <agent>: <one-line summary>`.
 ```
+
+Required top fields, in order: `Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, `Lifecycle:`, `Verdict:`. `Lifecycle:` values: `open`, `merged`, `abandoned`. `Verdict:` is empty before the first review and becomes `BLOCK`, `SUBSTANTIVE`, `NIT`, or `MERGED` after.
 
 Verdict glossary:
 

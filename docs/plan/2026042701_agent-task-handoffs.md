@@ -62,7 +62,7 @@ Run-id: `<YYYYMMDD-HHMMSS>-<slug>` (seconds granularity, e.g. `20260427-143052-m
 
 ### `README.md` shape
 
-Short, structured, scannable. The canonical template lives at `docker/opencode/config/run-readme.template.md` and is the single source of truth for the schema; `build.md`, `coder.md`, and `thinker.md` all reference it instead of duplicating the spec.
+Short, structured, scannable. The canonical schema lives inline in `docker/opencode/config/agents/build.md` (the orchestrator instructions) as a fenced skeleton; `coder.md` and `thinker.md` reference build.md's sections by name instead of duplicating the spec, and the static lint extracts the skeleton from build.md to validate it.
 
 Required literal field prefixes at the top (one per line, in this order, exact case, single space after the colon) so the runs are deterministically grep-able:
 
@@ -122,7 +122,7 @@ Anything else the subagent needs (available tools, MCP upstreams, skills, enviro
 
 Five steps, each reads and updates the README:
 
-1. **Frame** — orchestrator creates `/workspace/runs/<id>/README.md` from `run-readme.template.md` with header + goal filled in. One source of truth.
+1. **Frame** — orchestrator creates `/workspace/runs/<id>/README.md` from the skeleton inlined in `build.md`, with header + goal filled in. One source of truth.
 2. **Plan** — orchestrator invokes `thinker` with role `plan`. Thinker reads the README, plans the change, writes `plan.md` if useful, links it from the README's Artifacts table, appends a Log line.
 3. **Implement** — orchestrator invokes `coder`. Coder reads README and any linked artifacts, edits the worktree, appends a Log line.
 4. **Test** — coder runs targeted tests in the sandbox (per `build.md` testing policy) and records exact commands + outcomes in the Log. Never the full suite — CI handles that on push.
@@ -157,22 +157,22 @@ The phase set was restructured after `/autoplan` review (2026-04-27). The origin
 
 Lock the contract before any agent code reads it.
 
-- Add `docker/opencode/config/run-readme.template.md` as the canonical README schema. Required fields, exact field-prefix lines, section order, glossary — all live here. Other agent files reference this template and never duplicate the spec.
+- Inline the canonical README skeleton (header field-prefix lines plus `## Goal` / `## Artifacts` / `## Log` sections) directly into `docker/opencode/config/agents/build.md`. Required fields, field-prefix order, and glossary live there. `coder.md` and `thinker.md` reference build.md's sections by name instead of duplicating the spec.
 - Subagents and the orchestrator edit the README directly using their existing file-edit tools:
-  - **Frame (run init)** — orchestrator copies the template, fills `Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, sets `Lifecycle: open`, leaves `Verdict:` empty, fills the Goal section.
+  - **Frame (run init)** — orchestrator copies the skeleton from build.md, fills `Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, sets `Lifecycle: open`, leaves `Verdict:` empty, fills the Goal section.
   - **Log appends** — shell append (`echo "<timestamp> <agent>: <message>" >> README.md`) or the agent's Edit tool. Append-only; never rewrite the Log section.
   - **Verdict / Lifecycle** — replace the existing field-prefix line in place. Never duplicate it.
   - **Artifacts** — insert a new row into the table; never rewrite the table.
 - No helper CLI in v1. Drift is bounded (worst case: 1–2 wasted subagent iterations per drift event; the load-bearing `Verdict:` field is protected by the orchestrator-side validator in Phase 3). If recurrent drift is observed in Phase 6 or in production, add `runs-cli` as a Phase 7 follow-up.
 - Free-form artifacts (`plan.md`, `review.md`, `verify.sh`, `fixtures/`) are written directly by subagents.
 
-**Exit criteria:** template file exists at `docker/opencode/config/run-readme.template.md`; a sample populated README satisfies the field-prefix order, required sections, and verdict/lifecycle enums when checked by the static validator script (Phase 5 T2).
+**Exit criteria:** `build.md` contains the README skeleton inline as a single fenced block starting with `Run-ID:`; a sample populated README built from that skeleton satisfies the field-prefix order, required sections, and verdict/lifecycle enums when checked by the static validator script (Phase 5 T2).
 
 ### Phase 3 — Build.md rewrite (orchestrator)
 
 - Add `/workspace/runs` to the path table.
 - Replace the existing "Code change protocol" with the README-centric **5-step loop** (Frame → Plan → Implement → Test → Review). Test is preserved as a first-class step — the existing testing policy in `build.md` does not regress.
-- Document the run-dir layout, run-id scheme (`YYYYMMDD-HHMMSS-<slug>[-<thread-ts>]`), README schema (referencing `run-readme.template.md`), header field-prefix lines, glossary.
+- Document the run-dir layout, run-id scheme (`YYYYMMDD-HHMMSS-<slug>[-<thread-ts>]`), README schema (the inline skeleton), header field-prefix lines, glossary.
 - Specify the subagent invocation contract verbatim: regex for `Run dir:` / `Role:`, defaults table, `ERROR:`-prefix structured failure return.
 - Add the rules block (subagent prompts pass only run-dir + role + ephemeral runtime hints; per-repo conventions win for durable plan docs; trivial changes skip the protocol entirely with the heuristic spelled out — single-file change ≤ 30 lines, no new deps, no schema/migration change).
 - Add the orchestrator-side verdict validator: after each `task()` call to `thinker review`, the orchestrator reads `<run-dir>/README.md` and asserts the `Verdict:` line is in the enum; on miss, retry once with a corrective prompt, then escalate. This is the load-bearing check that lets the helper CLI stay deferred.
@@ -203,11 +203,11 @@ Bring the subagents into the protocol. **The exact post-edit text for each file 
 Land verification before the integration phase, not as part of it.
 
 - T1. Static lint: build.md / coder.md / thinker.md all reference the same magic strings (run via `scripts/lint-runs-protocol.sh` or similar).
-- T2. Schema validator: parse `run-readme.template.md` and a sample populated README, assert required fields present and enums valid.
+- T2. Schema validator: extract the README skeleton from `build.md` (the fenced block starting with `Run-ID:`) and validate both it and a sample populated README built from it; assert required fields present and enums valid.
 - T3. Container smoke: Phase 1's `mkdir/rmdir` test, automated.
 - T4. Mount audit: verify `opencode` has RW on `/workspace/runs/` and document that `runner` also has RW through the existing whole-workspace bind. v1 accepts this dual-writer surface; subagents own README mutations, runner may observe or perform future hard validators.
 - T5. Contract lint: assert `build.md`, `coder.md`, and `thinker.md` all carry the `Run dir:`, `Role:`, `ERROR:`, realpath, verdict, and lifecycle contract strings.
-- T6. Schema validator: generate a sample populated README from the template and assert field order, required sections, and enum values.
+- T6. Schema validator: generate a sample populated README from the build.md skeleton and assert field order, required sections, and enum values.
 - T7. Container smoke: validate the Docker Compose mount wiring statically here; run the live `mkdir/rmdir /workspace/runs/_smoke` check during Phase 6 with the stack up.
 - T8. Manual subagent smoke: with the stack up, dispatch missing-README, log-append, verdict enum, re-narration, and path traversal prompts from Phase 6.
 
@@ -217,7 +217,7 @@ Land verification before the integration phase, not as part of it.
 
 - Push the branch and let the relevant workflow run (or dispatch manually).
 - Drive a real non-trivial Slack task and confirm:
-  - Orchestrator creates `/workspace/runs/<id>/README.md` from the template.
+  - Orchestrator creates `/workspace/runs/<id>/README.md` from the skeleton in build.md.
   - `thinker` and `coder` update the README directly (Log appends, Artifacts rows, field-prefix lines) and add supporting files only when warranted.
   - The `Verdict:` line drives iterate-vs-stop and the orchestrator's validator passes.
   - One iteration loop on a forced `BLOCK` works end-to-end.
@@ -265,6 +265,7 @@ Tracked here so they don't get lost; not part of this PR.
 | Subagent prompt deltas pre-drafted in Phase 4, not freestyled by implementer | The protocol is the contract. Letting Phase 4 invent the contract surface during implementation reintroduces drift across the three files. Pre-draft + lint catches it. |
 | Defer runner-owned worktree lease + opaque run-IDs to Phase 7 | Both are correct long-term but require runner state-model changes that exceed this plan's scope. Seconds-granularity IDs + worktree-reuse-with-best-effort is the v1 risk-budget choice. Revisit on first observed concurrency incident. |
 | Static protocol lint across `build.md`/`coder.md`/`thinker.md` | The 3-way contract lives in three files with no schema. A regex lint for the magic strings (Run dir:, Role:, verdict enum, lifecycle enum) costs ~30 lines and catches the most likely drift. |
+| Inline the README skeleton into `build.md` instead of a separate `run-readme.template.md` file | The earlier /autoplan DX surfaced "no canonical schema source" and proposed a separate template file. Once the orchestrator instructions in build.md already carried the field list, glossary, and section names, the template file became a second copy of the same prose with extra indirection. Inlining keeps build.md self-contained: the orchestrator reads one file to know how to frame a run. The lint extracts the fenced skeleton from build.md and validates it through the same `validateReadme` path as a populated sample, so build.md cannot drift from the schema rules. Subagent files reference build.md's section names instead of a separate file. |
 
 ---
 
