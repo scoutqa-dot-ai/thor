@@ -1,6 +1,7 @@
 import {
   createLogger,
   deriveGitHubAppBotIdentity,
+  logError,
   logInfo,
   createConfigLoader,
   getAllowedChannelIds,
@@ -16,7 +17,11 @@ const log = createLogger("gateway");
 const PORT = parseInt(process.env.PORT || "3002", 10);
 const RUNNER_URL = (process.env.RUNNER_URL || "http://runner:3000").replace(/\/$/, "");
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET || "";
-const SLACK_MCP_URL = (process.env.SLACK_MCP_URL || "http://slack-mcp:3003").replace(/\/$/, "");
+const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";
+const SLACK_API_BASE_URL = (process.env.SLACK_API_BASE_URL || "https://slack.com/api").replace(
+  /\/$/,
+  "",
+);
 const SLACK_TIMESTAMP_TOLERANCE_SECONDS = parseInt(
   process.env.SLACK_TIMESTAMP_TOLERANCE_SECONDS || "300",
   10,
@@ -36,10 +41,16 @@ const githubAppBotIdentity = deriveGitHubAppBotIdentity({
 });
 const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
+if (!SLACK_BOT_TOKEN.trim()) {
+  logError(log, "missing_env", "SLACK_BOT_TOKEN is required");
+  process.exit(1);
+}
+
 const { app } = createGatewayApp({
   runnerUrl: RUNNER_URL,
   signingSecret: SLACK_SIGNING_SECRET,
-  slackMcpUrl: SLACK_MCP_URL,
+  slackBotToken: SLACK_BOT_TOKEN,
+  slackApiBaseUrl: SLACK_API_BASE_URL,
   slackBotUserId: SLACK_BOT_USER_ID,
   remoteCliHost: REMOTE_CLI_HOST,
   remoteCliPort: REMOTE_CLI_PORT,
@@ -69,10 +80,10 @@ app.listen(PORT, () => {
   logInfo(log, "gateway_started", {
     port: PORT,
     runnerUrl: RUNNER_URL,
-    slackMcpUrl: SLACK_MCP_URL,
+    slackApiBaseUrl: SLACK_API_BASE_URL,
     remoteCliHost: REMOTE_CLI_HOST,
     queueDir: QUEUE_DIR,
-    configured: Boolean(SLACK_SIGNING_SECRET),
+    configured: Boolean(SLACK_SIGNING_SECRET && SLACK_BOT_TOKEN),
     githubAppSlug: githubEnv.githubAppSlug,
     githubAppBotId: githubEnv.githubAppBotId,
     githubMentionLogins,

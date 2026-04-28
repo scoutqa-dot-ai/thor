@@ -4,9 +4,9 @@ import { interpolateHeaders } from "./workspace-config.js";
 
 describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {
-    expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "posthog", "slack"]);
+    expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "posthog"]);
     expect(getProxyConfig("atlassian")?.upstream.url).toBe("https://mcp.atlassian.com/v1/mcp");
-    expect(getProxyConfig("slack")?.allow).toContain("post_message");
+    expect(getProxyConfig("posthog")?.allow).toContain("query-run");
     expect(getProxyConfig("unknown")).toBeUndefined();
   });
 

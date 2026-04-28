@@ -1,13 +1,8 @@
 import type { WebClient } from "@slack/web-api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProgressEvent } from "@thor/common";
-import {
-  handleProgressEvent,
-  onBotReply,
-  getRegistrySize,
-  clearRegistry,
-} from "./progress-manager.js";
-import type { SlackDeps } from "./slack.js";
+import { handleProgressEvent, getRegistrySize, clearRegistry } from "./progress-manager.js";
+import type { SlackDeps } from "./slack-api.js";
 
 function mockSlackDeps() {
   return {
@@ -583,30 +578,6 @@ describe("ProgressManager", () => {
       timestamp: "1710000000.123",
       name: "x",
     });
-  });
-});
-
-describe("onBotReply", () => {
-  it("skips deletion when session is still active", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 3);
-    // Message is registered as in_progress immediately on post — session still active
-    expect(getRegistrySize()).toBe(1);
-
-    await onBotReply("C123", "1710000000.001");
-
-    // Should NOT delete — session is still active
-    expect(chat(deps).delete).not.toHaveBeenCalled();
-    expect(getRegistrySize()).toBe(1);
-  });
-
-  it("is a no-op for unknown threads", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 3);
-
-    await onBotReply("C123", "9999999999.999");
-
-    expect(chat(deps).delete).not.toHaveBeenCalled();
   });
 });
 

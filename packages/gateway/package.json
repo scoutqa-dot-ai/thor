@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@slack/types": "2.20.1",
+    "@slack/web-api": "^7.15.1",
     "@thor/common": "workspace:*",
     "express": "^5.1.0",
     "zod": "^4.3.6"

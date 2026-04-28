@@ -2,10 +2,36 @@ import { createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { WebClient } from "@slack/web-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConfigLoader, WorkspaceConfig } from "@thor/common";
 import { createGatewayApp, type GatewayAppConfig } from "./app.js";
 import type { EventQueue } from "./queue.js";
+
+interface MockSlackClient {
+  client: WebClient;
+  postMessage: ReturnType<typeof vi.fn>;
+  update: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
+  reactionsAdd: ReturnType<typeof vi.fn>;
+}
+
+function createMockSlackClient(): MockSlackClient {
+  const postMessage = vi.fn().mockResolvedValue({ ok: true, ts: "msg.001", channel: "C123" });
+  const update = vi.fn().mockResolvedValue({ ok: true });
+  const del = vi.fn().mockResolvedValue({ ok: true });
+  const reactionsAdd = vi.fn().mockResolvedValue({ ok: true });
+  return {
+    client: {
+      chat: { postMessage, update, delete: del },
+      reactions: { add: reactionsAdd },
+    } as unknown as WebClient,
+    postMessage,
+    update,
+    delete: del,
+    reactionsAdd,
+  };
+}
 
 /** Create a fake ConfigLoader from channel IDs and channel→repo map for tests. */
 function fakeConfigLoader(
@@ -30,6 +56,7 @@ function fakeConfigLoader(
 
 let mockHasSlackReply = false;
 let mappedRepos = new Set<string>(["test-repo", "thor"]);
+let correlationKeyAliases = new Map<string, string>();
 let notesKeys = new Set<string>();
 vi.mock("@thor/common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@thor/common")>();
@@ -37,6 +64,8 @@ vi.mock("@thor/common", async (importOriginal) => {
     ...actual,
     resolveRepoDirectory: (repoName: string) =>
       mappedRepos.has(repoName) ? `/workspace/repos/${repoName}` : undefined,
+    resolveCorrelationKeys: (rawKeys: string[]) =>
+      correlationKeyAliases.get(rawKeys[0] ?? "") ?? rawKeys[0] ?? "",
     hasSlackReply: () => mockHasSlackReply,
     findNotesFile: (correlationKey: string) =>
       notesKeys.has(correlationKey) ? `/workspace/worklog/test/${correlationKey}.md` : undefined,
@@ -142,13 +171,14 @@ async function withWorklogDir<T>(run: (worklogDir: string) => Promise<T>): Promi
 
 async function withServer<T>(
   fetchImpl: typeof fetch,
-  run: (baseUrl: string, queue: EventQueue, queueDir: string) => Promise<T>,
+  run: (baseUrl: string, queue: EventQueue, queueDir: string, slack: MockSlackClient) => Promise<T>,
   extraConfig?: Partial<GatewayAppConfig>,
 ): Promise<T> {
   const queueDir = mkdtempSync(join(tmpdir(), "gateway-test-"));
+  const slack = createMockSlackClient();
   const { app, queue } = createGatewayApp({
     signingSecret: "signing-secret",
-    slackMcpUrl: "http://slack-mcp.test",
+    slackBotToken: "xoxb-test",
     slackBotUserId: "U0BOTEXAMPLE",
     runnerUrl: "http://runner.test",
     fetchImpl,
@@ -157,6 +187,7 @@ async function withServer<T>(
     shortDelayMs: 0,
     longDelayMs: 0,
     getConfig: fakeConfigLoader(["C123"], [["C123", "test-repo"]]),
+    slackClient: slack.client,
     ...extraConfig,
   });
 
@@ -169,7 +200,7 @@ async function withServer<T>(
   }
 
   try {
-    return await run(`http://127.0.0.1:${address.port}`, queue, queueDir);
+    return await run(`http://127.0.0.1:${address.port}`, queue, queueDir, slack);
   } finally {
     queue.close();
     await new Promise<void>((resolve, reject) =>
@@ -183,10 +214,31 @@ afterEach(() => {
   vi.restoreAllMocks();
   mockHasSlackReply = false;
   mappedRepos = new Set(["test-repo", "thor"]);
+  correlationKeyAliases = new Map();
   notesKeys = new Set();
 });
 
 describe("gateway", () => {
+  it("fails fast when slack bot token is missing", () => {
+    const queueDir = mkdtempSync(join(tmpdir(), "gateway-config-test-"));
+
+    try {
+      expect(() =>
+        createGatewayApp({
+          signingSecret: "signing-secret",
+          slackBotToken: "",
+          slackBotUserId: "U0BOTEXAMPLE",
+          runnerUrl: "http://runner.test",
+          fetchImpl: vi.fn<typeof fetch>(),
+          queueDir,
+          disableQueueInterval: true,
+        }),
+      ).toThrow("SLACK_BOT_TOKEN is required");
+    } finally {
+      rmSync(queueDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns filtered Codex status from /health", async () => {
     const authDir = mkdtempSync(join(tmpdir(), "gateway-auth-"));
     const authPath = join(authDir, "auth.json");
@@ -196,11 +248,6 @@ describe("gateway", () => {
       const url = String(input);
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
-      }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
       }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
@@ -269,7 +316,6 @@ describe("gateway", () => {
             },
             services: {
               runner: { status: "ok", service: "runner" },
-              "slack-mcp": { status: "ok", service: "slack-mcp" },
               "remote-cli": { status: "ok", service: "remote-cli" },
             },
             codex: {
@@ -326,11 +372,6 @@ describe("gateway", () => {
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
@@ -379,11 +420,6 @@ describe("gateway", () => {
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
@@ -428,11 +464,6 @@ describe("gateway", () => {
           status: 503,
         });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
@@ -469,11 +500,6 @@ describe("gateway", () => {
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
@@ -506,11 +532,6 @@ describe("gateway", () => {
       const url = String(input);
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
-      }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
       }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
@@ -1745,12 +1766,9 @@ describe("gateway", () => {
   it("accepts a signed app mention and fires a trigger to the runner (fire-and-forget)", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // 1st call: POST /reaction to slack-mcp
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      // 2nd call: POST /trigger to runner
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue) => {
+    await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
       const body = JSON.stringify({
         type: "event_callback",
         event_id: "Ev123",
@@ -1780,16 +1798,11 @@ describe("gateway", () => {
 
       await queue.flush();
 
-      // Reaction via slack-mcp
-      const reactionCall = fetchImpl.mock.calls.find(
-        (c) => c[0] === "http://slack-mcp.test/reaction",
-      );
-      expect(reactionCall).toBeDefined();
-      const reactionBody = JSON.parse(String(reactionCall![1]?.body));
-      expect(reactionBody).toEqual({
+      // Reaction via Slack Web API
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
         channel: "C123",
         timestamp: "1710000000.001",
-        reaction: "eyes",
+        name: "eyes",
       });
 
       // Runner trigger via fetchImpl
@@ -2049,14 +2062,9 @@ describe("gateway", () => {
   it("batches 3 rapid app_mention events into a single runner trigger with combined prompt", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // Reaction calls to slack-mcp (3x)
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      // POST /trigger → 200
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue) => {
+    await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
       const timestamp = `${Math.floor(Date.now() / 1000)}`;
 
       // Fire 3 mentions in quick succession (same thread)
@@ -2088,11 +2096,8 @@ describe("gateway", () => {
 
       await queue.flush();
 
-      // 3 reaction calls to slack-mcp
-      const reactionCalls = fetchImpl.mock.calls.filter(
-        (c) => c[0] === "http://slack-mcp.test/reaction",
-      );
-      expect(reactionCalls).toHaveLength(3);
+      // 3 reaction calls to Slack Web API
+      expect(slack.reactionsAdd).toHaveBeenCalledTimes(3);
 
       // 1 runner trigger via fetchImpl — combined prompt with Slack context
       const triggerCalls = fetchImpl.mock.calls.filter(
@@ -2474,45 +2479,51 @@ describe("gateway", () => {
     });
   });
 
-  it("resolves approval actions through remote-cli for current v2 button values", async () => {
+  it("resolves approval actions through remote-cli for legacy v2 button values", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 })))
-      .mockResolvedValueOnce(new Response("ok"));
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({ status: "approved", tool: "deploy", upstream: "slack" }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
 
     await withServer(
       fetchImpl,
-      async (baseUrl) => {
-        const payloads = [
-          {
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
             type: "block_actions",
             user: { id: "U123" },
             channel: { id: "C123" },
-            message: { ts: "1710000000.001" },
+            message: { ts: "1710000000.001", thread_ts: "1710000000.001" },
             actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
           },
-        ];
+          body,
+        });
 
-        for (const payloadData of payloads) {
-          const payload = encodeURIComponent(JSON.stringify(payloadData));
-          const body = `payload=${payload}`;
-          const timestamp = `${Math.floor(Date.now() / 1000)}`;
-
-          const response = await fetch(`${baseUrl}/slack/interactivity`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-              "X-Slack-Request-Timestamp": timestamp,
-              "X-Slack-Signature": sign(body, "signing-secret", timestamp),
-            },
-            body,
-          });
-
-          expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true });
-        }
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
 
         await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
       },
       {
         remoteCliHost: "remote-cli.internal",
@@ -2521,11 +2532,10 @@ describe("gateway", () => {
       },
     );
 
-    const execCalls = fetchImpl.mock.calls.filter(
+    const execCall = fetchImpl.mock.calls.find(
       ([url]) => typeof url === "string" && url === "http://remote-cli.internal:3010/exec/mcp",
     );
-    expect(execCalls).toHaveLength(1);
-    expect(execCalls[0]?.[1]).toMatchObject({
+    expect(execCall?.[1]).toMatchObject({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2533,5 +2543,303 @@ describe("gateway", () => {
       },
       body: JSON.stringify({ args: ["resolve", "act-1", "approved", "U123"] }),
     });
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeDefined();
+    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.correlationKey).toBe("slack:thread:1710000000.001");
+    expect(runnerBody.interrupt).toBe(false);
+  });
+
+  it("resolves approval outcome correlation keys through registered aliases", async () => {
+    correlationKeyAliases.set(
+      "slack:thread:1710000000.001",
+      "git:branch:test-repo:feature/from-slack",
+    );
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({
+              status: "approved",
+              tool: "merge_pull_request",
+              upstream: "github",
+            }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100", thread_ts: "1710000000.001" },
+            actions: [
+              {
+                action_id: "approval_approve",
+                value: "v3:act-1:github:1710000000.001",
+              },
+            ],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        internalSecret: "resolve-secret",
+      },
+    );
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeDefined();
+    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.correlationKey).toBe("git:branch:test-repo:feature/from-slack");
+  });
+
+  it("retries queued approval outcome re-entry when runner is busy", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({
+              status: "approved",
+              tool: "merge_pull_request",
+              upstream: "github",
+              reason: "ship it",
+            }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ busy: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100", thread_ts: "1710000000.001" },
+            actions: [
+              {
+                action_id: "approval_approve",
+                value: "v3:act-1:github:1710000000.001",
+              },
+            ],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        await queue.flush();
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        internalSecret: "resolve-secret",
+      },
+    );
+
+    const runnerCalls = fetchImpl.mock.calls.filter(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCalls).toHaveLength(2);
+
+    const firstBody = JSON.parse(String(runnerCalls[0]?.[1]?.body));
+    expect(firstBody.interrupt).toBe(false);
+    expect(firstBody.correlationKey).toBe("slack:thread:1710000000.001");
+    expect(firstBody.prompt).toContain("human approved action `act-1`");
+    expect(firstBody.prompt).toContain("continue the workflow");
+  });
+
+  it("updates Slack and re-enters the session when an approved action fails during execution", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: "",
+            stderr: 'Error calling "merge_pull_request": upstream unavailable\n',
+            exitCode: 1,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    let capturedSlack: MockSlackClient | undefined;
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue, _queueDir, slack) => {
+        capturedSlack = slack;
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100", thread_ts: "1710000000.001" },
+            actions: [
+              {
+                action_id: "approval_approve",
+                value: "v3:act-1:github:1710000000.001",
+              },
+            ],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        internalSecret: "resolve-secret",
+      },
+    );
+
+    expect(capturedSlack!.update).toHaveBeenCalled();
+    const updateArg = capturedSlack!.update.mock.calls[0][0] as { text: string };
+    expect(updateArg.text).toContain("Approved, resolution failed");
+    expect(updateArg.text).toContain('Error calling "merge_pull_request"');
+    expect(updateArg.text).not.toContain("upstream unavailable");
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeDefined();
+    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.prompt).toContain("approval resolution reported a failure");
+    expect(runnerBody.prompt).toContain('Error calling "merge_pull_request"');
+    expect(runnerBody.prompt).not.toContain("upstream unavailable");
+  });
+
+  it("fails closed for v2 approval buttons when thread context is missing", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({ status: "approved", tool: "deploy", upstream: "slack" }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100" },
+            actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        internalSecret: "resolve-secret",
+      },
+    );
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeUndefined();
   });
 });

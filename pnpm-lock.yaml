@@ -64,6 +64,12 @@ importers:
 
   packages/gateway:
     dependencies:
+      '@slack/types':
+        specifier: 2.20.1
+        version: 2.20.1
+      '@slack/web-api':
+        specifier: ^7.15.1
+        version: 7.15.1
       '@thor/common':
         specifier: workspace:*
         version: link:../common
@@ -145,40 +151,6 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.14.24
         version: 1.14.24
-      '@thor/common':
-        specifier: workspace:*
-        version: link:../common
-      express:
-        specifier: ^5.1.0
-        version: 5.2.1
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-    devDependencies:
-      '@types/express':
-        specifier: ^5.0.2
-        version: 5.0.6
-      '@types/node':
-        specifier: ^24.0.0
-        version: 24.12.2
-      tsx:
-        specifier: ^4.21.0
-        version: 4.21.0
-      typescript:
-        specifier: ^6.0.0
-        version: 6.0.3
-
-  packages/slack-mcp:
-    dependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.27.1
-        version: 1.29.0(zod@4.3.6)
-      '@slack/types':
-        specifier: 2.20.1
-        version: 2.20.1
-      '@slack/web-api':
-        specifier: ^7.15.1
-        version: 7.15.1
       '@thor/common':
         specifier: workspace:*
         version: link:../common
