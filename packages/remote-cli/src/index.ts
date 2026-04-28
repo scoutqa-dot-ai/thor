@@ -129,12 +129,9 @@ function matchesInternalSecret(
   expectedSecret: string,
   providedSecret: string | undefined,
 ): boolean {
-  return (
-    Boolean(expectedSecret) &&
-    Boolean(providedSecret) &&
-    expectedSecret.length === providedSecret.length &&
-    timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret))
-  );
+  if (!expectedSecret || !providedSecret) return false;
+  if (expectedSecret.length !== providedSecret.length) return false;
+  return timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret));
 }
 
 export function redactInternalExecArgs(args: string[]): string[] {
@@ -409,12 +406,11 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const getConfig = config.getConfig ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const internalSecret = config.mcp?.internalSecret ?? (process.env.THOR_INTERNAL_SECRET || "");
+  const internalSecret = process.env.THOR_INTERNAL_SECRET || "";
   const mcpService = createMcpService({
     getConfig,
     isProduction: process.env.NODE_ENV === "production",
     ...config.mcp,
-    internalSecret,
   });
 
   const app = express();
@@ -920,11 +916,8 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         }
       }
 
-      const providedSecret = getInternalSecretHeader(req);
-
       const result = await mcpService.executeMcp(args, {
         directory: typeof req.body?.directory === "string" ? req.body.directory : undefined,
-        internalSecret: providedSecret,
         ...thorIds(req),
       });
 
@@ -943,39 +936,21 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   app.post("/internal/exec", async (req, res) => {
     const providedSecret = getInternalSecretHeader(req);
     if (!matchesInternalSecret(internalSecret, providedSecret)) {
-      res.status(401).json({ stdout: "", stderr: "Unauthorized", exitCode: 1, timedOut: false });
+      res.status(401).json({ stdout: "", stderr: "Unauthorized", exitCode: 1 });
       return;
     }
 
-    const { bin, args, cwd, timeoutMs } = req.body ?? {};
+    const { bin, args, cwd } = req.body ?? {};
     if (typeof bin !== "string" || !bin.trim()) {
-      res
-        .status(400)
-        .json({ stdout: "", stderr: "bin must be a non-empty string", exitCode: 1, timedOut: false });
+      res.status(400).json({ stdout: "", stderr: "bin must be a non-empty string", exitCode: 1 });
       return;
     }
     if (!Array.isArray(args) || !args.every((arg) => typeof arg === "string")) {
-      res
-        .status(400)
-        .json({ stdout: "", stderr: "args must be a string array", exitCode: 1, timedOut: false });
+      res.status(400).json({ stdout: "", stderr: "args must be a string array", exitCode: 1 });
       return;
     }
     if (typeof cwd !== "string" || !cwd.trim()) {
-      res
-        .status(400)
-        .json({ stdout: "", stderr: "cwd must be a non-empty string", exitCode: 1, timedOut: false });
-      return;
-    }
-    if (
-      timeoutMs !== undefined &&
-      (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0)
-    ) {
-      res.status(400).json({
-        stdout: "",
-        stderr: "timeoutMs must be a positive number when provided",
-        exitCode: 1,
-        timedOut: false,
-      });
+      res.status(400).json({ stdout: "", stderr: "cwd must be a non-empty string", exitCode: 1 });
       return;
     }
 
@@ -983,14 +958,12 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     try {
       const result = await execCommand(bin, args, cwd, {
         maxBuffer: INTERNAL_EXEC_MAX_OUTPUT,
-        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
       logInfo(log, "internal_exec", {
         bin,
         args: redactInternalExecArgs(args),
         cwd,
         exitCode: result.exitCode,
-        timedOut: result.timedOut,
         durationMs: Date.now() - startedAt,
         ...thorIds(req),
       });
@@ -1003,7 +976,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         durationMs: Date.now() - startedAt,
         ...thorIds(req),
       });
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1, timedOut: false });
+      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
     }
   });
 

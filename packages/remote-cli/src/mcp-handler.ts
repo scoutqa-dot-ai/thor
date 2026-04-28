@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import {
   computeSlackAlias,
   createLogger,
@@ -50,14 +49,12 @@ export interface McpCommandContext {
   directory?: string;
   sessionId?: string;
   callId?: string;
-  internalSecret?: string;
 }
 
 export interface McpServiceDeps {
   getConfig: ConfigLoader;
   approvalsDir?: string;
   isProduction?: boolean;
-  internalSecret?: string;
   connectUpstreamFn?: typeof connectUpstream;
   writeToolCallLogFn?: typeof writeToolCallLog;
 }
@@ -586,14 +583,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
     async executeMcp(args: string[], context: McpCommandContext): Promise<McpExecResult> {
       if (args[0] === "resolve") {
-        const secretOk =
-          deps.internalSecret &&
-          context.internalSecret &&
-          deps.internalSecret.length === context.internalSecret.length &&
-          timingSafeEqual(Buffer.from(deps.internalSecret), Buffer.from(context.internalSecret));
-        if (!secretOk) {
-          return fail("Unknown subcommand: resolve\n");
-        }
         if (args.length < 4) {
           return fail("Usage: mcp resolve <action-id> <approved|rejected> <reviewer> [reason]\n");
         }

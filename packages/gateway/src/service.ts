@@ -22,8 +22,6 @@ const GITHUB_PR_HEAD_TIMEOUT_MS = 3000;
 const GITHUB_PR_HEAD_RETRIES = 1;
 const GITHUB_PROMPT_LIMIT_BYTES = 8 * 1024;
 const GITHUB_PROMPT_EVENT_BODY_MAX = 280;
-const INTERNAL_EXEC_TIMEOUT_OVERHEAD_MS = 5000;
-const INTERNAL_EXEC_DEFAULT_TIMEOUT_MS = 60_000;
 
 // --- Runner deps (internal HTTP, testable via fetchImpl) ---
 
@@ -118,22 +116,6 @@ export interface TriggerResult {
 export interface GitHubPrHeadResult {
   ref: string;
   headRepoFullName: string;
-}
-
-export interface InternalExecRequest {
-  bin: string;
-  args: string[];
-  cwd: string;
-  timeoutMs?: number;
-}
-
-export interface InternalExecResult {
-  ok: boolean;
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-  status?: number;
 }
 
 type TerminalGitHubRejectReason =
@@ -846,52 +828,6 @@ export async function resolveApproval(
       remoteCliUrl,
     });
     return undefined;
-  }
-}
-
-export async function internalExec(
-  request: InternalExecRequest,
-  remoteCliUrl: string,
-  internalSecret: string | undefined,
-  fetchImpl?: typeof fetch,
-): Promise<InternalExecResult> {
-  const fetchFn = getFetch(fetchImpl);
-  const timeoutMs = (request.timeoutMs ?? INTERNAL_EXEC_DEFAULT_TIMEOUT_MS) + INTERNAL_EXEC_TIMEOUT_OVERHEAD_MS;
-  try {
-    const response = await fetchFn(`${remoteCliUrl}/internal/exec`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
-      },
-      body: JSON.stringify(request),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const body = ExecResultSchema.parse(await response.json());
-    return {
-      ok: response.ok,
-      status: response.status,
-      exitCode: body.exitCode,
-      stdout: body.stdout,
-      stderr: body.stderr,
-      timedOut: body.timedOut,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const timedOut = err instanceof Error && err.name === "TimeoutError";
-    logError(log, "internal_exec_error", message, {
-      remoteCliUrl,
-      bin: request.bin,
-      cwd: request.cwd,
-      timedOut,
-    });
-    return {
-      ok: false,
-      exitCode: 1,
-      stdout: "",
-      stderr: message,
-      timedOut,
-    };
   }
 }
 

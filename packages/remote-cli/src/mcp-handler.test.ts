@@ -64,7 +64,6 @@ describe("remote-cli MCP endpoints", () => {
       mcp: {
         approvalsDir,
         isProduction: true,
-        internalSecret: "resolve-secret",
         writeToolCallLogFn: () => {},
         connectUpstreamFn: async (name: string): Promise<UpstreamConnection> => {
           connectedUpstreams.push(name);
@@ -184,7 +183,6 @@ describe("remote-cli MCP endpoints", () => {
       mcp: {
         approvalsDir,
         isProduction: true,
-        internalSecret: "resolve-secret",
         writeToolCallLogFn: () => {},
         connectUpstreamFn: async (name: string): Promise<UpstreamConnection> => {
           connectedUpstreams.push(name);
@@ -316,7 +314,9 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("returns 401 for /github/pr-head without the internal secret", async () => {
-    const response = await fetch(`${baseUrl}/github/pr-head?installation=1&repo=acme%2Frepo&number=1`);
+    const response = await fetch(
+      `${baseUrl}/github/pr-head?installation=1&repo=acme%2Frepo&number=1`,
+    );
     expect(response.status).toBe(401);
   });
 
@@ -334,35 +334,12 @@ describe("remote-cli MCP endpoints", () => {
       stdout: string;
       stderr: string;
       exitCode: number;
-      timedOut: boolean;
     };
 
     expect(response.status).toBe(200);
     expect(body.exitCode).toBe(0);
     expect(body.stdout.trim()).toBe("hello");
     expect(body.stderr).toBe("");
-    expect(body.timedOut).toBe(false);
-  });
-
-  it("returns timedOut=true for /internal/exec timeout", async () => {
-    const response = await postJson(
-      "/internal/exec",
-      {
-        bin: "node",
-        args: ["-e", "setTimeout(() => {}, 5000)"],
-        cwd: "/tmp",
-        timeoutMs: 100,
-      },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
-    const body = (await response.json()) as {
-      exitCode: number;
-      timedOut: boolean;
-    };
-
-    expect(response.status).toBe(200);
-    expect(body.exitCode).toBe(1);
-    expect(body.timedOut).toBe(true);
   });
 
   async function postJson(

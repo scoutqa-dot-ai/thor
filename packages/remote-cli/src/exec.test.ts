@@ -1,13 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { execCommand, execCommandStream } from "./exec.js";
-import { redactInternalExecArgs } from "./index.js";
 
 describe("execCommand", () => {
   it("captures stdout", async () => {
     const result = await execCommand("echo", ["hello"], "/tmp");
     expect(result.stdout.trim()).toBe("hello");
     expect(result.exitCode).toBe(0);
-    expect(result.timedOut).toBe(false);
   });
 
   it("captures stderr", async () => {
@@ -18,29 +16,11 @@ describe("execCommand", () => {
   it("returns exit code from failing command", async () => {
     const result = await execCommand("node", ["-e", "process.exit(42)"], "/tmp");
     expect(result.exitCode).toBe(42);
-    expect(result.timedOut).toBe(false);
   });
 
   it("returns exit code 1 for missing binary", async () => {
     const result = await execCommand("nonexistent-binary-xyz", [], "/tmp");
     expect(result.exitCode).toBe(1);
-    expect(result.timedOut).toBe(false);
-  });
-
-  it("supports configurable timeoutMs", async () => {
-    const result = await execCommand("node", ["-e", "setTimeout(() => {}, 5000)"], "/tmp", {
-      timeoutMs: 100,
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.timedOut).toBe(true);
-  });
-});
-
-describe("redactInternalExecArgs", () => {
-  it("redacts credentials in non-http URL arguments", () => {
-    expect(redactInternalExecArgs(["postgres://user:secret@example.com/db"])).toEqual([
-      "postgres://[REDACTED]@example.com/db",
-    ]);
   });
 });
 

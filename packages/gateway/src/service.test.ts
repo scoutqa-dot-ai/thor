@@ -51,7 +51,7 @@ describe("resolveApproval", () => {
   it("posts resolve requests to remote-cli with the secret header", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(jsonResponse({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false }));
+      .mockResolvedValue(jsonResponse({ stdout: "ok", stderr: "", exitCode: 0 }));
 
     const { resolveApproval } = await import("./service.js");
     const result = await resolveApproval(
@@ -64,7 +64,7 @@ describe("resolveApproval", () => {
       "ship it",
     );
 
-    expect(result).toEqual({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false });
+    expect(result).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
     expect(fetchImpl).toHaveBeenCalledWith("http://remote-cli:3004/exec/mcp", {
       method: "POST",
       headers: {
@@ -81,7 +81,7 @@ describe("resolveApproval", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValue(
-        jsonResponse({ stdout: "", stderr: "Unknown subcommand: resolve\n", exitCode: 1, timedOut: false }),
+        jsonResponse({ stdout: "", stderr: "Unknown subcommand: resolve\n", exitCode: 1 }),
       );
 
     const { resolveApproval } = await import("./service.js");
@@ -95,75 +95,6 @@ describe("resolveApproval", () => {
     );
 
     expect(result).toBeUndefined();
-  });
-});
-
-describe("internalExec", () => {
-  it("posts to /internal/exec and returns parsed result", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(jsonResponse({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false }));
-
-    const { internalExec } = await import("./service.js");
-    const result = await internalExec(
-      { bin: "echo", args: ["hello"], cwd: "/tmp" },
-      "http://remote-cli:3004",
-      "internal-secret",
-      fetchImpl,
-    );
-
-    expect(result).toEqual({
-      ok: true,
-      status: 200,
-      exitCode: 0,
-      stdout: "ok",
-      stderr: "",
-      timedOut: false,
-    });
-    expect(fetchImpl).toHaveBeenCalledWith("http://remote-cli:3004/internal/exec", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-thor-internal-secret": "internal-secret",
-      },
-      body: JSON.stringify({ bin: "echo", args: ["hello"], cwd: "/tmp" }),
-      signal: expect.any(AbortSignal),
-    });
-  });
-
-  it("returns structured failure when transport fails", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new Error("connect ECONNREFUSED"));
-
-    const { internalExec } = await import("./service.js");
-    const result = await internalExec(
-      { bin: "echo", args: ["hello"], cwd: "/tmp" },
-      "http://remote-cli:3004",
-      "internal-secret",
-      fetchImpl,
-    );
-
-    expect(result.ok).toBe(false);
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("ECONNREFUSED");
-    expect(result.timedOut).toBe(false);
-  });
-
-  it("returns structured timeout failure when remote-cli hangs", async () => {
-    const timeoutError = new Error("The operation was aborted due to timeout");
-    timeoutError.name = "TimeoutError";
-    const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(timeoutError);
-
-    const { internalExec } = await import("./service.js");
-    const result = await internalExec(
-      { bin: "echo", args: ["hello"], cwd: "/tmp", timeoutMs: 100 },
-      "http://remote-cli:3004",
-      "internal-secret",
-      fetchImpl,
-    );
-
-    expect(result.ok).toBe(false);
-    expect(result.exitCode).toBe(1);
-    expect(result.timedOut).toBe(true);
   });
 });
 
