@@ -206,7 +206,11 @@ type GitHubIgnoreReason =
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
-const WORKTREES_ROOT = "/workspace/worktrees";
+const DEFAULT_WORKTREES_ROOT = "/workspace/worktrees";
+
+function getWorktreesRoot(): string {
+  return process.env.THOR_WORKTREES_ROOT || DEFAULT_WORKTREES_ROOT;
+}
 
 function isPathWithin(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
@@ -217,7 +221,7 @@ async function resolveExistingWorktreePath(
   localRepo: string,
   branch: string,
 ): Promise<string | null> {
-  const repoRoot = path.resolve(WORKTREES_ROOT, localRepo);
+  const repoRoot = path.resolve(getWorktreesRoot(), localRepo);
   const candidate = path.resolve(repoRoot, branch);
   if (!isPathWithin(repoRoot, candidate)) return null;
 

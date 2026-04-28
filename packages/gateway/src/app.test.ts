@@ -186,6 +186,23 @@ async function withWorklogDir<T>(run: (worklogDir: string) => Promise<T>): Promi
   }
 }
 
+async function withWorktreesRoot<T>(run: (worktreesRoot: string) => Promise<T>): Promise<T> {
+  const worktreesRoot = mkdtempSync(join(tmpdir(), "gateway-worktrees-test-"));
+  const prev = process.env.THOR_WORKTREES_ROOT;
+  process.env.THOR_WORKTREES_ROOT = worktreesRoot;
+
+  try {
+    return await run(worktreesRoot);
+  } finally {
+    if (prev === undefined) {
+      delete process.env.THOR_WORKTREES_ROOT;
+    } else {
+      process.env.THOR_WORKTREES_ROOT = prev;
+    }
+    rmSync(worktreesRoot, { recursive: true, force: true });
+  }
+}
+
 async function withServer<T>(
   fetchImpl: typeof fetch,
   run: (baseUrl: string, queue: EventQueue, queueDir: string, slack: MockSlackClient) => Promise<T>,
@@ -1471,12 +1488,11 @@ describe("gateway", () => {
   it("fast-forwards existing nested branch worktrees and wakes non-interrupt when notes exist", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
-    const worktreeRoot = "/workspace/worktrees/test-repo";
-    const worktreeDir = `${worktreeRoot}/feat/nested`;
-    rmSync(worktreeRoot, { recursive: true, force: true });
-    mkdirSync(worktreeDir, { recursive: true });
 
-    try {
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeRoot = join(worktreesRoot, "test-repo");
+      const worktreeDir = join(worktreeRoot, "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
       notesKeys.add("git:branch:test-repo:feat/nested");
       await withServer(
         fetchImpl,
@@ -1508,14 +1524,12 @@ describe("gateway", () => {
         },
         { githubWebhookSecret: "github-secret", internalExec },
       );
-    } finally {
-      rmSync(worktreeRoot, { recursive: true, force: true });
-    }
 
-    expect(internalExec).toHaveBeenCalledWith({
-      bin: "git",
-      args: ["pull", "--ff-only", "origin", "feat/nested"],
-      cwd: worktreeDir,
+      expect(internalExec).toHaveBeenCalledWith({
+        bin: "git",
+        args: ["pull", "--ff-only", "origin", "feat/nested"],
+        cwd: worktreeDir,
+      });
     });
   });
 
@@ -1525,12 +1539,11 @@ describe("gateway", () => {
       .fn()
       .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
       .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 });
-    const worktreeRoot = "/workspace/worktrees/test-repo";
-    const worktreeDir = `${worktreeRoot}/feat/nested`;
-    rmSync(worktreeRoot, { recursive: true, force: true });
-    mkdirSync(worktreeDir, { recursive: true });
 
-    try {
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeRoot = join(worktreesRoot, "test-repo");
+      const worktreeDir = join(worktreeRoot, "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
       notesKeys.add("git:branch:test-repo:feat/nested");
       await withServer(
         fetchImpl,
@@ -1557,27 +1570,24 @@ describe("gateway", () => {
         },
         { githubWebhookSecret: "github-secret", internalExec },
       );
-    } finally {
-      rmSync(worktreeRoot, { recursive: true, force: true });
-    }
 
-    expect(internalExec).toHaveBeenCalledWith({ bin: "git", args: ["status", "--porcelain"], cwd: worktreeDir });
-    expect(internalExec).toHaveBeenCalledWith({
-      bin: "git",
-      args: ["worktree", "remove", worktreeDir],
-      cwd: "/workspace/repos/test-repo",
+      expect(internalExec).toHaveBeenCalledWith({ bin: "git", args: ["status", "--porcelain"], cwd: worktreeDir });
+      expect(internalExec).toHaveBeenCalledWith({
+        bin: "git",
+        args: ["worktree", "remove", worktreeDir],
+        cwd: "/workspace/repos/test-repo",
+      });
     });
   });
 
   it("preserves dirty deleted branch worktrees and never wakes", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockResolvedValue({ stdout: " M file.txt\n", stderr: "", exitCode: 0 });
-    const worktreeRoot = "/workspace/worktrees/test-repo";
-    const worktreeDir = `${worktreeRoot}/feat/nested`;
-    rmSync(worktreeRoot, { recursive: true, force: true });
-    mkdirSync(worktreeDir, { recursive: true });
 
-    try {
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeRoot = join(worktreesRoot, "test-repo");
+      const worktreeDir = join(worktreeRoot, "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
       notesKeys.add("git:branch:test-repo:feat/nested");
       await withServer(
         fetchImpl,
@@ -1604,22 +1614,19 @@ describe("gateway", () => {
         },
         { githubWebhookSecret: "github-secret", internalExec },
       );
-    } finally {
-      rmSync(worktreeRoot, { recursive: true, force: true });
-    }
 
-    expect(internalExec).toHaveBeenCalledTimes(1);
+      expect(internalExec).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("returns push_delete_cleanup_failed when cleanup internalExec rejects", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockRejectedValue(new Error("remote-cli unavailable"));
-    const worktreeRoot = "/workspace/worktrees/test-repo";
-    const worktreeDir = `${worktreeRoot}/feat/nested`;
-    rmSync(worktreeRoot, { recursive: true, force: true });
-    mkdirSync(worktreeDir, { recursive: true });
 
-    try {
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeRoot = join(worktreesRoot, "test-repo");
+      const worktreeDir = join(worktreeRoot, "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
       await withWorklogDir(async (worklogDir) => {
         await withServer(
           fetchImpl,
@@ -1653,11 +1660,9 @@ describe("gateway", () => {
           { githubWebhookSecret: "github-secret", internalExec },
         );
       });
-    } finally {
-      rmSync(worktreeRoot, { recursive: true, force: true });
-    }
 
-    expect(internalExec).toHaveBeenCalledTimes(1);
+      expect(internalExec).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("enqueues check_suite events only when the branch has an existing notes-backed session", async () => {
