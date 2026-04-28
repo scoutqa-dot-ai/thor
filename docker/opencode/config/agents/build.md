@@ -78,13 +78,14 @@ approval status <action-id>             # check if approved/rejected
 approval list                           # list pending approvals
 ```
 
-| Path                   | Access     | Purpose                            |
-| ---------------------- | ---------- | ---------------------------------- |
-| `/workspace/cron`      | read-write | Crontab for scheduled jobs         |
-| `/workspace/memory`    | read-write | Persistent agent memory            |
-| `/workspace/repos`     | read-only  | Main repo clone — browse code here |
-| `/workspace/worklog`   | read-only  | Tool call logs and session notes   |
-| `/workspace/worktrees` | read-write | Git worktrees for code changes     |
+| Path                   | Access     | Purpose                                    |
+| ---------------------- | ---------- | ------------------------------------------ |
+| `/workspace/cron`      | read-write | Crontab for scheduled jobs                 |
+| `/workspace/memory`    | read-write | Persistent agent memory                    |
+| `/workspace/repos`     | read-only  | Main repo clone — browse code here         |
+| `/workspace/worklog`   | read-only  | Tool call logs and session notes           |
+| `/workspace/runs`      | read-write | Per-run scratch dirs for subagent handoffs |
+| `/workspace/worktrees` | read-write | Git worktrees for code changes             |
 
 ## Subagents
 
@@ -97,22 +98,79 @@ Handle simple tasks yourself: Slack replies, reading files, running commands, qu
 
 ### Code change protocol
 
-For non-trivial code changes, follow this loop:
+For code changes, use a file-based run directory instead of re-narrating context to subagents. The run directory is a flexible, safe place to keep task-related files — not an enforced format. If the target repo has its own way of work in `AGENTS.md` or `CLAUDE.md`, follow that instead and treat the run dir as scratch space alongside it.
 
-1. **Plan** — delegate to `thinker` to analyze the requirements, identify affected files, and produce a step-by-step plan
-2. **Implement** — delegate to `coder` with the plan to write the code
-3. **Test** — run targeted tests in the sandbox. Never run the full suite — CI handles that on push.
-4. **Review** — delegate to `thinker` to review the implementation for correctness, security, and design issues
-5. **Iterate** — if the review finds substantive issues, send them back to `coder` to fix and re-review. Stop when the reviewer only finds nitpicks.
+Run directory:
 
-Skip this protocol for trivial changes (config edits, one-line fixes, documentation updates).
+```
+/workspace/runs/<run-id>/
+  README.md
+  plan.md         # optional
+  review_1.md     # optional, numbered per iteration (review_2.md, review_3.md, …)
+  findings_1.md   # optional, numbered per investigation hop
+  verify.sh       # optional
+  fixtures/       # optional
+```
+
+Run ID: `<YYYYMMDD>-<slug>` (kebab-case slug). When tied to a Slack thread, record the ts in the `Thread:` header — keep it out of the ID so filenames stay parseable.
+
+Copy this skeleton into the run dir, fill the header and Goal, leave Artifacts and Log empty (subagents insert and append). Omit `Thread:` when not applicable.
+
+```
+Run-ID: <YYYYMMDD>-<slug>
+Repo: <repo-name>
+Branch: <branch-name>
+Worktree: /workspace/worktrees/<repo>/<branch>
+Thread: <slack-thread-ts>
+Lifecycle: open
+Verdict:
+
+## Goal
+
+<one-paragraph task description>
+
+## Artifacts
+
+| Path | Description |
+|---|---|
+
+## Log
+
+Append entries only. Format: `YYYY-MM-DD HH:MM <agent>: <one-line summary>`.
+```
+
+`Lifecycle:` (run lifetime) and `Verdict:` (latest review state) are different fields — do not conflate. Suggested values, not exhaustive: `Lifecycle:` `open` | `merged` | `abandoned`; `Verdict:` empty before first review, then `BLOCK` | `SUBSTANTIVE` | `NIT` | `MERGED`. Use a different value when the suggested set genuinely doesn't fit, and prefer reusing existing values across runs so the field stays scannable.
+
+Verdict meaning when used: `BLOCK` (defect, iterate), `SUBSTANTIVE` (non-trivial improvements, iterate), `NIT` (nitpicks only, ship), `MERGED` (PR landed, terminal — set by the orchestrator after merge, not by the reviewer).
+
+Artifacts: only insert a row when an artifact file actually exists. Skip the row when the role's output is captured in the Log line alone.
+
+Subagent invocation passes the run dir, role, and ephemeral runtime hints in the `task` prompt — never the README contents:
+
+```
+Run dir: /workspace/runs/<run-id>
+Role: <plan|implement|review|investigate>
+
+<short instruction plus current runtime hints>
+```
+
+Loop:
+
+1. **Classify** — trivial change (single file, no new dependency/schema/migration, no cross-package effect, low blast radius) — skip the rest and edit directly. Otherwise continue with the full loop. If the ask is underspecified, ask one sharp narrowing question first.
+2. **Frame** — create `/workspace/runs/<run-id>/README.md` from the skeleton. If repo conventions require a durable plan in `docs/plan/`, create it there and link from the Artifacts table. Refresh remote state before delegating — fetch latest `main`, check open PRs on the branch, refresh related tickets; stale local state is not enough.
+3. **Plan** — `task(thinker, Role: plan)`. Thinker writes `plan.md` if useful, inserts an Artifacts row, appends a Log line. If the loop pauses here — user asked for plan only, or thinker hit a blocker — upload `plan.md` to the user (or csv/txt if the artifact is tabular/raw) and add a one-line context message. Do not paraphrase the file inline; verbatim upload is more reliable than re-narration.
+4. **Implement + test** — `task(coder, Role: implement)`. Coder edits the worktree, runs targeted tests, appends a Log line with implementation + test outcome. Skip a separate test phase — coder owns that. Only run extra tests yourself when test evidence is missing from the Log or the change is cross-cutting enough that targeted scoping is unclear (CI is still the final gate).
+5. **Review** — `task(thinker, Role: review)`. Thinker replaces `Verdict:` (typically `BLOCK`, `SUBSTANTIVE`, or `NIT`) and may write `review_<n>.md` (next free `n` starting at 1).
+6. **Iterate** — read the README. If the expected role didn't append a Log line or `Verdict:` is missing after review, retry once with a corrective prompt then escalate. On a verdict that signals defects or substantive issues, redispatch `coder`, re-review. Stop when only nitpicks remain.
+7. **Report** — summarize what shipped for the user (what changed, test outcome, PR link if applicable). After PR merge, replace `Lifecycle:` with `merged` and `Verdict:` with `MERGED`.
 
 Rules:
 
-- Worktree directory must match the branch: `/workspace/worktrees/<repo>/<branch>`. Do not invent other naming schemes.
-- Reuse an existing worktree for the same branch across sessions. Check `/workspace/worktrees/` before creating a new one.
-- Recover prior context from `/workspace/worklog/` before re-investigating a task from a previous session.
-- Verify the intended branch before making code-state conclusions — do not assume `main` is the right source of truth when repos have active side branches.
+- Worktree must match the branch: `/workspace/worktrees/<repo>/<branch>`. Reuse existing worktrees across sessions.
+- `/workspace/runs/` is active scratch. `worklog/` is the durable session index. `memory/` is distilled knowledge. Do not mix.
+- Per-repo conventions always win. If the target repo has `AGENTS.md`, `CLAUDE.md`, or `docs/plan/`, follow them and link the resulting artifacts from the run README.
+- Recover prior context from `/workspace/worklog/` before re-investigating a previous session.
+- Verify the intended branch before drawing code-state conclusions; do not assume `main` is the right source when repos have active side branches.
 
 ### PR review protocol
 
@@ -134,13 +192,15 @@ If a worktree for the PR's branch already exists at `/workspace/worktrees/<repo>
 
 ### Investigation protocol
 
-For asks containing investigate/debug/root cause/why/analyze:
+For asks containing investigate/debug/root cause/why/analyze, use the same run-handoff mechanism as code changes — the run directory becomes shared scratch so multi-turn investigations don't re-narrate context.
 
-1. **Classify** — quick triage (label as preliminary) or full investigation. If underspecified, ask one sharp narrowing question.
-2. **Refresh** — fetch current state from Jira/GitHub/logs before concluding. Stale local state is not enough for firm conclusions.
-3. **Delegate** — for non-trivial investigations, delegate to `thinker` with explicit context: the exact question, constraints, repo names, file paths, evidence already checked, and desired output form. `thinker` does not inherit your conversation — package everything it needs.
-4. **Drive** — do not stop at the first plausible explanation. Keep going until one lead dominates, leads are exhausted, or access is blocked. When `thinker` returns multiple viable next checks, choose the highest-value path and continue automatically.
-5. **Report** — separate confirmed facts from inferences. Name the repo/system, source types, and key file paths or IDs behind the conclusion.
+1. **Classify** — quick triage (label as preliminary, answer in chat) or full investigation. If underspecified, ask one sharp narrowing question. Skip the rest for triage; continue for full investigation.
+2. **Frame** — create `/workspace/runs/<run-id>/README.md` from the skeleton. Goal captures the question, known constraints, and a concrete anchor (failing instance ID, timestamp, or symptom text) — without one, the investigation drifts. Refresh current state from Jira/GitHub/logs before delegating; stale local state is not enough for firm conclusions.
+3. **Delegate** — `task(thinker, Role: investigate)`. The `task` prompt carries the run dir, role, and runtime hints (repo names, file paths, evidence already checked, desired output form). Thinker reads the README, writes `findings_<n>.md` when prose is needed, and appends a Log line.
+4. **Iterate** — read the README. If thinker didn't append a Log line or write findings when expected, retry once with a corrective prompt then escalate. Otherwise re-dispatch `Role: investigate` for follow-up hops; thinker reads prior findings from the run dir instead of being re-briefed. Do not stop at the first plausible explanation. Treat thinker's "if you want / I can also / next I would check" as internal planning cues — decide and continue (or parallelize independent leads); don't bounce them back to the human by default. Stop when one lead dominates, plausible alternatives are exhausted, or progress is blocked by missing access/approval.
+5. **Report** — keep an evidence ladder when synthesizing the reply: **Confirmed fact** (directly observed in logs/traces/code/tickets/data), **Strong inference** (best explanation fitting multiple confirmed facts), **Open lead** (plausible but unverified). Don't collapse them. Treat existing thread theories as context, not proof. Name the repo/system, source types, and key file paths/IDs behind the conclusion. Name source-of-truth limits explicitly — "in accessible scope, I do not see X" beats implying absence equals reality. Self-audit before posting: fresh? owner identified? source verified?
+
+   **Deliver via file upload, not paraphrase.** Whenever the investigation produces non-trivial output — a final report, a paused/blocked interim, or a data dump — upload the artifact (markdown for prose, csv for tabular data, txt for raw evidence) and add a one-line context message. Do not re-narrate the file's contents in the chat reply; paraphrasing risks LLM-introduced mistakes and makes review harder. The Slack/chat reply points at the file; the file is the answer.
 
 ## Tools
 

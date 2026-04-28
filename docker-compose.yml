@@ -42,7 +42,7 @@ services:
       - GITHUB_API_URL=${GITHUB_API_URL:-}
       - ATLASSIAN_AUTH=${ATLASSIAN_AUTH}
       - POSTHOG_API_KEY=${POSTHOG_API_KEY}
-      - RESOLVE_SECRET=${RESOLVE_SECRET:?set RESOLVE_SECRET}
+      - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
       - SCOUT_API_KEY=${SCOUT_API_KEY:-}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
@@ -156,6 +156,7 @@ services:
       - ./docker-volumes/workspace/repos:/workspace/repos:ro
       - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
       - ./docker-volumes/workspace/cron:/workspace/cron
+      - ./docker-volumes/workspace/runs:/workspace/runs
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
       - ./docker-volumes/mitmproxy/public:/etc/thor/mitmproxy-public:ro
     depends_on:
@@ -209,7 +210,7 @@ services:
       - OPENAI_AUTH_PATH=/opencode/auth.json
       - REMOTE_CLI_HOST=remote-cli
       - REMOTE_CLI_PORT=3004
-      - RESOLVE_SECRET=${RESOLVE_SECRET:?set RESOLVE_SECRET}
+      - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
     volumes:
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/opencode:/opencode:ro

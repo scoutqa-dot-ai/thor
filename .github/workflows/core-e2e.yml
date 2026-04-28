@@ -93,10 +93,10 @@ jobs:
           : > .env
 
           export CRON_SECRET="$(openssl rand -hex 32)"
-          export RESOLVE_SECRET="$(openssl rand -hex 32)"
+          export THOR_INTERNAL_SECRET="$(openssl rand -hex 32)"
           {
             echo "CRON_SECRET=$CRON_SECRET"
-            echo "RESOLVE_SECRET=$RESOLVE_SECRET"
+            echo "THOR_INTERNAL_SECRET=$THOR_INTERNAL_SECRET"
           } >> "$GITHUB_ENV"
 
           cat > docker-volumes/workspace/config.json <<EOF
