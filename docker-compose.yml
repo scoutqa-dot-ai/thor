@@ -67,6 +67,11 @@ services:
         condition: service_healthy
       grafana-mcp:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2G
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3004/health').then(r=>{if(!r.ok)throw 1})"]
@@ -163,6 +168,11 @@ services:
         condition: service_healthy
       mitmproxy:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2G
     healthcheck:
       test:
         [
