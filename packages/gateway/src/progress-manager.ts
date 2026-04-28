@@ -54,7 +54,6 @@ interface MemoryActivity {
 
 interface DelegateActivity {
   agent: string;
-  description?: string;
 }
 
 interface DelegateGroup {
@@ -615,7 +614,7 @@ export async function handleProgressEvent(
     ...(event.type === "memory"
       ? { action: event.action, path: event.path, source: event.source }
       : {}),
-    ...(event.type === "delegate" ? { agent: event.agent, description: event.description } : {}),
+    ...(event.type === "delegate" ? { agent: event.agent } : {}),
     ...(event.type === "done" ? { status: event.status } : {}),
     hasSession: activeSessions.has(key),
     ts: Date.now(),
@@ -650,10 +649,7 @@ export async function handleProgressEvent(
       await session.onMemory({ action: event.action, path: event.path, source: event.source });
       break;
     case "delegate":
-      await session.onDelegate({
-        agent: event.agent,
-        ...(event.description ? { description: event.description } : {}),
-      });
+      await session.onDelegate({ agent: event.agent });
       break;
     case "done": {
       // A late `done` from a superseded stream must not finish the current

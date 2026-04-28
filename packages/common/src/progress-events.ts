@@ -26,7 +26,6 @@ export const ProgressMemorySchema = z.object({
 export const ProgressDelegateSchema = z.object({
   type: z.literal("delegate"),
   agent: z.string(),
-  description: z.string().optional(),
 });
 
 export const ProgressDoneSchema = z.object({
