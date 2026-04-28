@@ -205,14 +205,13 @@ Land verification before the integration phase, not as part of it.
 - T1. Static lint: build.md / coder.md / thinker.md all reference the same magic strings (run via `scripts/lint-runs-protocol.sh` or similar).
 - T2. Schema validator: parse `run-readme.template.md` and a sample populated README, assert required fields present and enums valid.
 - T3. Container smoke: Phase 1's `mkdir/rmdir` test, automated.
-- T4. Mount audit: verify (or document) which services have RW on `/workspace/runs/`. If only `opencode` should write, narrow the bind on other services; otherwise document the dual-writer rule.
-- T5. Subagent contract test (no Slack): stub a fake README missing `Goal`, dispatch `thinker plan` → assert `ERROR:` reply.
-- T6. Subagent log-append test: dispatch `coder` against a valid run dir → assert exactly one Log line was appended (file diff before/after), no duplicate sections, no rewritten artifact rows.
-- T7. Verdict enum test: dispatch `thinker review` → assert `Verdict:` line matches enum; force a fault by stubbing the model's reply with `Verdict: NEEDS_WORK` → assert orchestrator retries once.
-- T8. Re-narration regression: dispatch `coder` with prompt = only `Run dir:` + `Role:` + a one-word task → assert it does NOT respond "I need more context"; it reads the README.
-- T9. Path traversal: dispatch with `Run dir: /workspace/memory/../../etc` → assert subagent rejects.
+- T4. Mount audit: verify `opencode` has RW on `/workspace/runs/` and document that `runner` also has RW through the existing whole-workspace bind. v1 accepts this dual-writer surface; subagents own README mutations, runner may observe or perform future hard validators.
+- T5. Contract lint: assert `build.md`, `coder.md`, and `thinker.md` all carry the `Run dir:`, `Role:`, `ERROR:`, realpath, verdict, and lifecycle contract strings.
+- T6. Schema validator: generate a sample populated README from the template and assert field order, required sections, and enum values.
+- T7. Container smoke: validate the Docker Compose mount wiring statically here; run the live `mkdir/rmdir /workspace/runs/_smoke` check during Phase 6 with the stack up.
+- T8. Manual subagent smoke: with the stack up, dispatch missing-README, log-append, verdict enum, re-narration, and path traversal prompts from Phase 6.
 
-**Exit criteria:** T1–T9 all green in CI or via a single make target.
+**Exit criteria:** deterministic static checks are green via `pnpm test:runs-protocol`; live subagent behavior is verified in Phase 6.
 
 ### Phase 6 — Integration verification
 
@@ -552,4 +551,3 @@ TTHW current: **5+ cognitive steps, 3+ underspec'd**. Target: 2 steps with expli
 | 16 | DX | Defaults table for missing fields | Auto-decide | P1 completeness | Standard contract hygiene |
 | 17 | DX | Glossary for verdict vocabulary in build.md | Auto-decide | P5 | Cheap; both voices flagged |
 | 18 | Cross | Drop `<repo>` segment from run-id (Decision Log line 156) | Re-surfaced | — | Both voices argue this REDUCES uniqueness; revisit |
-

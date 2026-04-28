@@ -146,7 +146,7 @@ The subagent contract is strict:
 
 - `Run dir:` must match `^Run dir: (?<path>/workspace/runs/[^\s]+)$`.
 - `Role:` must match `^Role: (?<role>plan|implement|review)$`.
-- Paths are case-sensitive, absolute, and must resolve under `/workspace/runs/`.
+- Paths are case-sensitive and absolute. Subagents must check `realpath` and reject any path that does not resolve under `/workspace/runs/`.
 - Subagents read `<run-dir>/README.md` as the task source of truth.
 - Runtime-only context such as available tools, MCP upstreams, skills, and environment hints may go in the prompt. Task content stays in the README.
 - Do not paste the README contents into the subagent prompt.

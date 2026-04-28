@@ -49,5 +49,5 @@ README mutation rules:
 
 - Append to `## Log`; never rewrite or reorder existing Log entries.
 - Insert new `## Artifacts` rows without rewriting existing rows.
-- Replace `Lifecycle:` or `Verdict:` lines in place; never duplicate those fields.
+- Replace `Lifecycle:` or `Verdict:` lines in place; never duplicate those fields. Valid `Verdict:` values are `BLOCK`, `SUBSTANTIVE`, `NIT`, and `MERGED`; valid `Lifecycle:` values are `open`, `merged`, and `abandoned`.
 - Do not wholesale rewrite `README.md`.
