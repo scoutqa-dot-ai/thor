@@ -168,8 +168,7 @@ applies. No "woken" flag needed — reruns naturally re-wake.
 
 - Gateway extension is mechanical: extend `GITHUB_SUPPORTED_EVENTS`
   allowlist (`packages/gateway/src/app.ts:137-141`) and add a
-  `check_suite` variant to the zod-discriminated `GitHubQueuedPayload`
-  (`v: 2` envelope).
+  `check_suite` variant to the zod-discriminated parsed GitHub webhook event.
 - Runner is **not modified**. Gate lives entirely in the gateway,
   alongside the existing supported-events check and correlationKey
   resolution in `packages/gateway/src/{app,service}.ts`.
@@ -221,8 +220,8 @@ Files:
 - `packages/gateway/src/service.ts`
   - Replace `renderGitHubPromptLine` + `renderGitHubPrompt` with a single function that mirrors `renderSlackPrompt`:
     ```ts
-    function renderGitHubPrompt(events: GitHubQueuedPayload[]): string {
-      return JSON.stringify(events.length === 1 ? events[0].event : events.map((p) => p.event));
+    function renderGitHubPrompt(events: GitHubWebhookEvent[]): string {
+      return JSON.stringify(events.length === 1 ? events[0] : events);
     }
     ```
   - Drop the byte-limit truncation entirely. Remove `GITHUB_PROMPT_LIMIT_BYTES`, the `while`-loop, and the `github_prompt_truncated` log call. Zod schemas (`github.ts:32-79`) strip unknown keys at parse time, so each event is already a tiny declared subset; the only unbounded field is free-text `comment.body` / `review.body`, and dropping whole events is a worse failure mode than letting one large body through. If field-level bounds become necessary later, cap `body` at parse time rather than reintroducing batch truncation.
@@ -279,7 +278,7 @@ Tests:
   - `CheckSuiteCompletedEventSchema` parses a real GitHub fixture (success and failure conclusions).
   - `getGitHubEventType` / `getGitHubEventBranch` / `getGitHubEventSourceTs` for the new variant.
 - `packages/gateway/src/app.test.ts`
-  - Existing-session path: POST `check_suite` payload with a notes-backed branch key → `writeGitHubWebhookHistory("ingested", …)` and `queue.enqueue` called with `payload.event.check_suite.head_sha` reachable.
+  - Existing-session path: POST `check_suite` payload with a notes-backed branch key → `writeGitHubWebhookHistory("ingested", …)` and `queue.enqueue` called with `payload.check_suite.head_sha` reachable.
   - Unknown-session path: same payload without a matching notes file → ignored with `correlation_key_unresolved`, no enqueue.
 
 Exit criteria:

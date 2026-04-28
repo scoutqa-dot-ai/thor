@@ -13,9 +13,10 @@ import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
 import {
   buildCorrelationKey,
+  getGitHubEventLocalRepo,
   isIssueCommentEvent,
   isPendingBranchResolveKey,
-  type GitHubQueuedPayload,
+  type GitHubWebhookEvent,
   type IssueCommentEvent,
 } from "./github.js";
 
@@ -64,7 +65,7 @@ export interface RunnerTriggerOptions {
 export interface BatchDispatchInput {
   slackEvents: SlackThreadEvent[];
   cronEvents: CronPayload[];
-  githubEvents: GitHubQueuedPayload[];
+  githubEvents: GitHubWebhookEvent[];
   correlationKey: string;
   deps: RunnerDeps;
   slackMcpDeps: SlackMcpDeps;
@@ -92,7 +93,7 @@ export type BatchDispatchPlan =
       logPrefix: "github";
       fromCorrelationKey: string;
       toCorrelationKey: string;
-      githubEvents: GitHubQueuedPayload[];
+      githubEvents: GitHubWebhookEvent[];
     };
 
 interface DispatchPart {
@@ -168,7 +169,7 @@ function renderCronPrompt(events: CronPayload[]): string {
   );
 }
 
-function renderGitHubPromptSection(events: GitHubQueuedPayload[]): string {
+function renderGitHubPromptSection(events: GitHubWebhookEvent[]): string {
   return renderHeadedSection("GitHub", events, renderGitHubPrompt(events));
 }
 
@@ -258,13 +259,15 @@ function resolveSlackBatchDirectory(
   });
 }
 
-function resolveGitHubBatchDirectory(events: GitHubQueuedPayload[]): {
+function resolveGitHubBatchDirectory(events: GitHubWebhookEvent[]): {
   directory?: string;
   reason?: string;
 } {
-  return collectBatchDirectory("GitHub", events, (payload) => {
-    const directory = resolveRepoDirectory(payload.localRepo);
-    if (!directory) return { reason: `repo directory not found for ${payload.localRepo}` };
+  return collectBatchDirectory("GitHub", events, (event) => {
+    const localRepo = getGitHubEventLocalRepo(event);
+    if (!localRepo) return { reason: `repo directory not found for ${event.repository.full_name}` };
+    const directory = resolveRepoDirectory(localRepo);
+    if (!directory) return { reason: `repo directory not found for ${localRepo}` };
     return { directory };
   });
 }
@@ -350,29 +353,30 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     }
 
     const latest = input.githubEvents[input.githubEvents.length - 1];
-    if (!latest || !isIssueCommentEvent(latest.event)) {
+    if (!latest || !isIssueCommentEvent(latest)) {
       return { kind: "drop", logPrefix, reason: "branch_lookup_failed" };
     }
     try {
       const branchInfo = await resolveGitHubPrHead(
-        latest.event,
+        latest,
         input.remoteCliUrl,
         input.internalSecret,
         input.deps.fetchImpl,
       );
-      if (branchInfo.headRepoFullName !== latest.event.repository.full_name) {
+      if (branchInfo.headRepoFullName !== latest.repository.full_name) {
         return { kind: "drop", logPrefix, reason: "fork_pr_unsupported" };
+      }
+      const localRepo = getGitHubEventLocalRepo(latest);
+      if (!localRepo) {
+        return { kind: "drop", logPrefix, reason: "branch_lookup_failed" };
       }
 
       return {
         kind: "reroute",
         logPrefix: "github",
         fromCorrelationKey: input.correlationKey,
-        toCorrelationKey: buildCorrelationKey(latest.localRepo, branchInfo.ref),
-        githubEvents: input.githubEvents.map((payload) => ({
-          ...payload,
-          resolvedBranch: branchInfo.ref,
-        })),
+        toCorrelationKey: buildCorrelationKey(localRepo, branchInfo.ref),
+        githubEvents: input.githubEvents,
       };
     } catch (error) {
       if (error instanceof TerminalGitHubDispatchError) {
@@ -635,7 +639,7 @@ export async function triggerRunnerCron(
 }
 
 export async function triggerRunnerGitHub(
-  events: GitHubQueuedPayload[],
+  events: GitHubWebhookEvent[],
   correlationKey: string,
   deps: RunnerDeps,
   remoteCliUrl: string,
@@ -783,8 +787,8 @@ export function createInternalExecClient(input: {
   };
 }
 
-function renderGitHubPrompt(events: GitHubQueuedPayload[]): string {
-  return JSON.stringify(events.length === 1 ? events[0].event : events.map((p) => p.event));
+function renderGitHubPrompt(events: GitHubWebhookEvent[]): string {
+  return JSON.stringify(events.length === 1 ? events[0] : events);
 }
 
 async function forwardApprovalNotification(

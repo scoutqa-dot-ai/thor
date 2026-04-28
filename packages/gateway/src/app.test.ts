@@ -1200,16 +1200,11 @@ describe("gateway", () => {
           delayMs: 3000,
           interrupt: true,
           payload: {
-            v: 2,
-            deliveryId: "delivery-1",
-            localRepo: "thor",
-            event: {
-              action: "created",
-              repository: { full_name: "scoutqa-dot-ai/thor" },
-              pull_request: {
-                number: 42,
-                head: { ref: "feature/refactor" },
-              },
+            action: "created",
+            repository: { full_name: "scoutqa-dot-ai/thor" },
+            pull_request: {
+              number: 42,
+              head: { ref: "feature/refactor" },
             },
           },
         });
@@ -1264,17 +1259,12 @@ describe("gateway", () => {
             delayMs: 0,
             interrupt: false,
             payload: {
-              v: 2,
-              deliveryId: "delivery-check-suite-ok",
-              localRepo: "thor",
-              event: {
-                event_type: "check_suite",
-                action: "completed",
-                check_suite: {
-                  head_sha: "abc123def456",
-                  head_branch: "feature/refactor",
-                  conclusion: "success",
-                },
+              event_type: "check_suite",
+              action: "completed",
+              check_suite: {
+                head_sha: "abc123def456",
+                head_branch: "feature/refactor",
+                conclusion: "success",
               },
             },
           });
@@ -1632,13 +1622,8 @@ describe("gateway", () => {
           delayMs: 3000,
           interrupt: true,
           payload: {
-            v: 2,
-            deliveryId: "delivery-branch-pending",
-            localRepo: "thor",
-            event: {
-              action: "created",
-              issue: { number: 12 },
-            },
+            action: "created",
+            issue: { number: 12 },
           },
         });
       },
@@ -1648,38 +1633,6 @@ describe("gateway", () => {
         githubAppBotId: 7777,
       },
     );
-  });
-
-  it("dead-letters legacy GitHub queue payloads", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
-
-    await withServer(fetchImpl, async (_baseUrl, queue, queueDir) => {
-      writeFileSync(
-        join(queueDir, "000000000000000_legacy-github.json"),
-        JSON.stringify({
-          id: "legacy-github",
-          source: "github",
-          correlationKey: "git:branch:thor:main",
-          receivedAt: new Date(0).toISOString(),
-          sourceTs: 0,
-          readyAt: 0,
-          interrupt: true,
-          payload: { eventType: "issue_comment" },
-        }),
-      );
-
-      await queue.flush();
-
-      expect(readQueuedEvents(queueDir)).toHaveLength(0);
-      const deadLetters = readQueuedEvents(queueDir, "dead-letter");
-      expect(deadLetters).toHaveLength(1);
-      expect(deadLetters[0]).toMatchObject({
-        id: "legacy-github",
-        source: "github",
-        payload: { eventType: "issue_comment" },
-      });
-      expect(fetchImpl).not.toHaveBeenCalled();
-    });
   });
 
   it("acknowledges subscribed non-app_mention events without triggering runner calls", async () => {

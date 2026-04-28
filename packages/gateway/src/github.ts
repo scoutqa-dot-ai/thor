@@ -174,14 +174,6 @@ export type GitHubIgnoreReason =
   | "correlation_key_unresolved"
   | "event_unsupported";
 
-export type GitHubQueuedPayload = {
-  v: 2;
-  event: GitHubWebhookEvent;
-  deliveryId: string;
-  localRepo: string;
-  resolvedBranch?: string;
-};
-
 export function verifyGitHubSignature(input: {
   secret: string;
   rawBody: Buffer;
@@ -220,6 +212,11 @@ export function buildMentionLogins(appSlug: string): string[] {
 
 export function buildCorrelationKey(localRepo: string, branch: string): string {
   return `git:branch:${localRepo}:${branch}`;
+}
+
+export function getGitHubEventLocalRepo(raw: GitHubWebhookEvent): string | null {
+  const parts = raw.repository.full_name.split("/");
+  return parts[parts.length - 1] || null;
 }
 
 const PENDING_BRANCH_RESOLVE_PREFIX = "pending:branch-resolve:";

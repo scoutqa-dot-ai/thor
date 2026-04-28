@@ -47,6 +47,7 @@ import {
   buildCorrelationKey,
   buildPendingBranchResolveKey,
   getGitHubEventBranch,
+  getGitHubEventLocalRepo,
   getGitHubEventNumber,
   getGitHubEventSourceTs,
   getGitHubEventType,
@@ -54,7 +55,7 @@ import {
   isPendingBranchResolveKey,
   isCheckSuiteCompletedEvent,
   shouldIgnoreGitHubEvent,
-  type GitHubQueuedPayload,
+  type GitHubWebhookEvent,
   verifyGitHubSignature,
 } from "./github.js";
 
@@ -66,7 +67,7 @@ interface CronQueuedEvent extends QueuedEvent<CronPayload> {
   source: "cron";
 }
 
-interface GitHubQueuedEvent extends QueuedEvent<GitHubQueuedPayload> {
+interface GitHubQueuedEvent extends QueuedEvent<GitHubWebhookEvent> {
   source: "github";
 }
 
@@ -80,24 +81,6 @@ function isCronEvent(e: QueuedEvent): e is CronQueuedEvent {
 
 function isGitHubEvent(e: QueuedEvent): e is GitHubQueuedEvent {
   return e.source === "github";
-}
-
-function isGitHubQueuedPayload(payload: unknown): payload is GitHubQueuedPayload {
-  if (!payload || typeof payload !== "object") return false;
-  const candidate = payload as {
-    v?: unknown;
-    event?: unknown;
-    deliveryId?: unknown;
-    localRepo?: unknown;
-    resolvedBranch?: unknown;
-  };
-  return (
-    candidate.v === 2 &&
-    typeof candidate.deliveryId === "string" &&
-    typeof candidate.localRepo === "string" &&
-    (candidate.resolvedBranch === undefined || typeof candidate.resolvedBranch === "string") &&
-    GitHubWebhookEnvelopeSchema.safeParse(candidate.event).success
-  );
 }
 
 const log = createLogger("gateway");
@@ -314,12 +297,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       };
 
       try {
-        if (githubEvents.some((event) => !isGitHubQueuedPayload(event.payload))) {
-          reject("legacy_payload_shape");
-          logTrigger(logPrefix, "dropped", "legacy_payload_shape");
-          return;
-        }
-
         const plan = await planBatchDispatch({
           slackEvents: slackEvents.map((event) => event.payload),
           cronEvents: cronEvents.map((event) => event.payload),
@@ -921,8 +898,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     const repoFullName = parsed.data.repository.full_name;
-    const parts = repoFullName.split("/");
-    const localRepo = parts[parts.length - 1];
+    const localRepo = getGitHubEventLocalRepo(parsed.data);
     if (!localRepo || !resolveRepoDirectory(localRepo)) {
       writeGitHubWebhookHistory("ignored", {
         ...baseEntry,
@@ -1106,7 +1082,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       id: deliveryId,
       source: "github",
       correlationKey,
-      payload: { v: 2, event: parsed.data, deliveryId, localRepo },
+      payload: parsed.data,
       receivedAt: new Date().toISOString(),
       sourceTs,
       readyAt: sourceTs + delayMs,

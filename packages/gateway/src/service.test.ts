@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunnerDeps, SlackMcpDeps } from "./service.js";
-import type { GitHubQueuedPayload } from "./github.js";
+import type { GitHubWebhookEvent } from "./github.js";
 
 // Helper: create a ReadableStream from NDJSON lines
 function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
@@ -33,48 +33,40 @@ function textResponse(text: string, status: number): Response {
   return new Response(text, { status, headers: { "content-type": "text/plain" } });
 }
 
-const githubEventBase: GitHubQueuedPayload = {
-  v: 2,
-  deliveryId: "delivery-1",
-  localRepo: "thor",
-  event: {
-    action: "created",
-    installation: { id: 126669985 },
-    repository: { full_name: "scoutqa-dot-ai/thor" },
-    sender: { id: 1001, login: "alice", type: "User" },
-    issue: {
-      number: 42,
-      pull_request: { html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42" },
-    },
-    comment: {
-      body: "@thor please review this branch",
-      html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
-      created_at: "2026-04-24T11:00:00Z",
-    },
+const githubEventBase: GitHubWebhookEvent = {
+  event_type: "issue_comment",
+  action: "created",
+  installation: { id: 126669985 },
+  repository: { full_name: "scoutqa-dot-ai/thor" },
+  sender: { id: 1001, login: "alice", type: "User" },
+  issue: {
+    number: 42,
+    pull_request: { html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42" },
+  },
+  comment: {
+    body: "@thor please review this branch",
+    html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+    created_at: "2026-04-24T11:00:00Z",
   },
 };
 
-function githubReviewCommentPayload(): GitHubQueuedPayload {
+function githubReviewCommentPayload(): GitHubWebhookEvent {
   return {
-    v: 2,
-    deliveryId: "delivery-review-comment",
-    localRepo: "thor",
-    event: {
-      action: "created",
-      installation: { id: 126669985 },
-      repository: { full_name: "scoutqa-dot-ai/thor" },
-      sender: { id: 1001, login: "Alice", type: "User" },
-      pull_request: {
-        number: 42,
-        user: { id: 1001, login: "alice" },
-        head: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
-        base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
-      },
-      comment: {
-        body: "Please   check this @thor",
-        html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
-        created_at: "2026-04-24T11:00:00Z",
-      },
+    event_type: "pull_request_review_comment",
+    action: "created",
+    installation: { id: 126669985 },
+    repository: { full_name: "scoutqa-dot-ai/thor" },
+    sender: { id: 1001, login: "Alice", type: "User" },
+    pull_request: {
+      number: 42,
+      user: { id: 1001, login: "alice" },
+      head: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+      base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+    },
+    comment: {
+      body: "Please   check this @thor",
+      html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+      created_at: "2026-04-24T11:00:00Z",
     },
   };
 }
@@ -576,11 +568,11 @@ describe("triggerRunnerGitHub", () => {
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[1][1]?.body));
     expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
     expect(triggerBody.directory).toBe("/workspace/repos/my-repo");
-    expect(JSON.parse(triggerBody.prompt)).toEqual(githubEventBase.event);
+    expect(JSON.parse(triggerBody.prompt)).toEqual(githubEventBase);
     expect(onAccepted).toHaveBeenCalled();
   });
 
-  it("returns reroute plan with resolvedBranch on the payload", async () => {
+  it("returns reroute plan with the parsed event payload", async () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse({ ref: "feature/refactor", headRepoFullName: "scoutqa-dot-ai/thor" }),
     );
@@ -599,7 +591,7 @@ describe("triggerRunnerGitHub", () => {
     expect(plan).toMatchObject({
       kind: "reroute",
       toCorrelationKey: "git:branch:thor:feature/refactor",
-      githubEvents: [{ resolvedBranch: "feature/refactor" }],
+      githubEvents: [githubEventBase],
     });
   });
 
@@ -618,7 +610,7 @@ describe("triggerRunnerGitHub", () => {
 
     expect(result.busy).toBe(false);
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
-    expect(JSON.parse(triggerBody.prompt)).toEqual(githubReviewCommentPayload().event);
+    expect(JSON.parse(triggerBody.prompt)).toEqual(githubReviewCommentPayload());
   });
 
   it("renders multiple GitHub events as a JSON array of parsed envelopes", async () => {
@@ -636,10 +628,7 @@ describe("triggerRunnerGitHub", () => {
 
     expect(result.busy).toBe(false);
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
-    expect(JSON.parse(triggerBody.prompt)).toEqual([
-      githubReviewCommentPayload().event,
-      githubEventBase.event,
-    ]);
+    expect(JSON.parse(triggerBody.prompt)).toEqual([githubReviewCommentPayload(), githubEventBase]);
   });
 
   it("maps branch lookup 403 to terminal installation_gone rejection", async () => {
