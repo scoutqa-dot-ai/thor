@@ -1,5 +1,4 @@
 import express, { type Express, type Request, type Response } from "express";
-import { rateLimit } from "express-rate-limit";
 import {
   appendJsonlWorklog,
   createLogger,
@@ -164,8 +163,6 @@ type GitHubIgnoreReason =
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
-const GITHUB_WEBHOOK_RATE_LIMIT_WINDOW_MS = 60_000;
-const GITHUB_WEBHOOK_RATE_LIMIT_MAX = 120;
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
@@ -407,12 +404,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap
     limit: "25mb",
     type: "*/*",
-  });
-  const githubWebhookRateLimit = rateLimit({
-    windowMs: GITHUB_WEBHOOK_RATE_LIMIT_WINDOW_MS,
-    limit: GITHUB_WEBHOOK_RATE_LIMIT_MAX,
-    standardHeaders: true,
-    legacyHeaders: false,
   });
   const jsonParser = express.json({
     // GitHub webhook payloads can be up to 25 MB
@@ -818,342 +809,337 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   // --- GitHub webhook ---
 
-  app.post(
-    "/github/webhook",
-    githubWebhookRateLimit,
-    webhookRawParser,
-    async (req: Request, res: Response) => {
-      const rawBodyBuffer = getRawBufferFromBody(req.body);
-      const { rawBodyUtf8, rawBodyBase64 } = buildRawBodyFields(rawBodyBuffer);
-      const deliveryId = req.header("x-github-delivery") ?? "unknown";
-      const eventTypeHeader = (req.header("x-github-event") ?? "").toLowerCase();
-      const signature = req.header("x-hub-signature-256");
-      const headers = getHeaderSnapshot(req, [
-        "content-type",
-        "user-agent",
-        "x-request-id",
-        "x-github-delivery",
-        "x-github-event",
-        "x-hub-signature-256",
-        "x-github-hook-id",
-        "x-github-hook-installation-target-id",
-        "x-github-hook-installation-target-type",
-      ]);
-      const baseEntry = {
-        timestamp: new Date().toISOString(),
-        route: "/github/webhook",
-        provider: "github",
-        requestId: deliveryId,
+  app.post("/github/webhook", webhookRawParser, async (req: Request, res: Response) => {
+    const rawBodyBuffer = getRawBufferFromBody(req.body);
+    const { rawBodyUtf8, rawBodyBase64 } = buildRawBodyFields(rawBodyBuffer);
+    const deliveryId = req.header("x-github-delivery") ?? "unknown";
+    const eventTypeHeader = (req.header("x-github-event") ?? "").toLowerCase();
+    const signature = req.header("x-hub-signature-256");
+    const headers = getHeaderSnapshot(req, [
+      "content-type",
+      "user-agent",
+      "x-request-id",
+      "x-github-delivery",
+      "x-github-event",
+      "x-hub-signature-256",
+      "x-github-hook-id",
+      "x-github-hook-installation-target-id",
+      "x-github-hook-installation-target-type",
+    ]);
+    const baseEntry = {
+      timestamp: new Date().toISOString(),
+      route: "/github/webhook",
+      provider: "github",
+      requestId: deliveryId,
+      eventType: eventTypeHeader || undefined,
+      headers,
+      rawBodyUtf8,
+      rawBodyBase64,
+    } satisfies Pick<
+      InboundWebhookHistoryEntry,
+      | "timestamp"
+      | "route"
+      | "provider"
+      | "requestId"
+      | "eventType"
+      | "headers"
+      | "rawBodyUtf8"
+      | "rawBodyBase64"
+    >;
+
+    const verified = verifyGitHubSignature({
+      secret: config.githubWebhookSecret ?? "",
+      rawBody: rawBodyBuffer,
+      header: signature,
+    });
+    if (!verified) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: false,
+        parseStatus: "not_parsed",
+        reason: "signature_invalid",
+      });
+      logGitHubIgnored({
+        deliveryId,
         eventType: eventTypeHeader || undefined,
-        headers,
-        rawBodyUtf8,
-        rawBodyBase64,
-      } satisfies Pick<
-        InboundWebhookHistoryEntry,
-        | "timestamp"
-        | "route"
-        | "provider"
-        | "requestId"
-        | "eventType"
-        | "headers"
-        | "rawBodyUtf8"
-        | "rawBodyBase64"
-      >;
-
-      const verified = verifyGitHubSignature({
-        secret: config.githubWebhookSecret ?? "",
-        rawBody: rawBodyBuffer,
-        header: signature,
+        reason: "signature_invalid",
       });
-      if (!verified) {
-        writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
-          signatureVerified: false,
-          parseStatus: "not_parsed",
-          reason: "signature_invalid",
-        });
-        logGitHubIgnored({
-          deliveryId,
-          eventType: eventTypeHeader || undefined,
-          reason: "signature_invalid",
-        });
-        res.status(401).json({ error: "Invalid GitHub signature" });
-        return;
-      }
+      res.status(401).json({ error: "Invalid GitHub signature" });
+      return;
+    }
 
-      if (!GITHUB_SUPPORTED_EVENTS.has(eventTypeHeader)) {
-        writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
-          signatureVerified: true,
-          parseStatus: "not_parsed",
-          reason: "event_unsupported",
-        });
-        logGitHubIgnored({
-          deliveryId,
-          eventType: eventTypeHeader || undefined,
-          reason: "event_unsupported",
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
-      let parsedBody: unknown;
-      try {
-        parsedBody = JSON.parse(rawBodyUtf8);
-      } catch {
-        writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
-          signatureVerified: true,
-          parseStatus: "json_invalid",
-          reason: "json_parse_error",
-        });
-        logGitHubIgnored({
-          deliveryId,
-          eventType: eventTypeHeader || undefined,
-          reason: "json_parse_error",
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
-      const parsed = GitHubWebhookEnvelopeSchema.safeParse(parsedBody);
-      if (!parsed.success) {
-        writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
-          signatureVerified: true,
-          parseStatus: "schema_invalid",
-          reason: "schema_validation_failed",
-        });
-        logGitHubIgnored({
-          deliveryId,
-          eventType: eventTypeHeader || undefined,
-          reason: "schema_validation_failed",
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
-      const repoFullName = parsed.data.repository.full_name;
-      const parts = repoFullName.split("/");
-      const localRepo = parts[parts.length - 1];
-      if (!localRepo || !resolveRepoDirectory(localRepo)) {
-        writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
-          signatureVerified: true,
-          parseStatus: "schema_valid",
-          action: parsed.data.action,
-          reason: "repo_not_mapped",
-          metadata: {
-            repoFullName,
-            localRepo,
-          },
-        });
-        logGitHubIgnored({
-          deliveryId,
-          repoFullName,
-          eventType: eventTypeHeader,
-          action: parsed.data.action,
-          reason: "repo_not_mapped",
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
-      const eventType = getGitHubEventType(parsed.data);
-      if (eventType !== eventTypeHeader) {
-        writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
-          signatureVerified: true,
-          parseStatus: "schema_valid",
-          action: parsed.data.action,
-          reason: "event_unsupported",
-          metadata: {
-            repoFullName,
-            localRepo,
-          },
-        });
-        logGitHubIgnored({
-          deliveryId,
-          repoFullName,
-          eventType: eventTypeHeader,
-          action: parsed.data.action,
-          reason: "event_unsupported",
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
-      const ignoreReason = shouldIgnoreGitHubEvent(parsed.data, {
-        mentionLogins: githubMentionLogins,
-        botId: githubAppBotId,
+    if (!GITHUB_SUPPORTED_EVENTS.has(eventTypeHeader)) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "not_parsed",
+        reason: "event_unsupported",
       });
-      if (ignoreReason) {
-        writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
-          signatureVerified: true,
-          parseStatus: "schema_valid",
-          action: parsed.data.action,
-          reason: ignoreReason,
-          metadata: {
-            repoFullName,
-            localRepo,
-          },
-        });
-        logGitHubIgnored({
-          deliveryId,
-          repoFullName,
-          eventType: eventTypeHeader,
-          action: parsed.data.action,
-          reason: ignoreReason,
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
-      const branch = getGitHubEventBranch(parsed.data);
-      let correlationKey: string;
-      let delayMs = githubMentionDelay;
-      let interrupt = true;
-
-      if (isCheckSuiteCompletedEvent(parsed.data)) {
-        if (!branch) {
-          writeGitHubWebhookHistory("ignored", {
-            ...baseEntry,
-            signatureVerified: true,
-            parseStatus: "schema_valid",
-            action: parsed.data.action,
-            reason: "check_suite_branch_missing",
-            metadata: {
-              repoFullName,
-              localRepo,
-              headSha: parsed.data.check_suite.head_sha,
-            },
-          });
-          logGitHubIgnored({
-            deliveryId,
-            repoFullName,
-            eventType: eventTypeHeader,
-            action: parsed.data.action,
-            reason: "check_suite_branch_missing",
-          });
-          res.status(200).json({ ok: true, ignored: true });
-          return;
-        }
-
-        const rawKey = buildCorrelationKey(localRepo, branch);
-        const resolvedKey = resolveCorrelationKeys([rawKey]);
-        if (!findNotesFile(resolvedKey)) {
-          writeGitHubWebhookHistory("ignored", {
-            ...baseEntry,
-            signatureVerified: true,
-            parseStatus: "schema_valid",
-            action: parsed.data.action,
-            reason: "correlation_key_unresolved",
-            metadata: {
-              repoFullName,
-              localRepo,
-              rawKey,
-              resolvedKey,
-              headSha: parsed.data.check_suite.head_sha,
-            },
-          });
-          logGitHubIgnored({
-            deliveryId,
-            repoFullName,
-            eventType: eventTypeHeader,
-            action: parsed.data.action,
-            reason: "correlation_key_unresolved",
-          });
-          res.status(200).json({ ok: true, ignored: true });
-          return;
-        }
-
-        const directory = resolveRepoDirectory(localRepo);
-        const gate = directory
-          ? await verifyThorAuthoredSha({
-              internalExec,
-              directory,
-              sha: parsed.data.check_suite.head_sha,
-              expectedEmail: config.githubAppBotEmail ?? "",
-            })
-          : { ok: false as const, reason: "exec_failed" as const };
-        if (!gate.ok) {
-          writeGitHubWebhookHistory("ignored", {
-            ...baseEntry,
-            signatureVerified: true,
-            parseStatus: "schema_valid",
-            action: parsed.data.action,
-            reason: "check_suite_gate_failed",
-            metadata: {
-              repoFullName,
-              localRepo,
-              rawKey,
-              resolvedKey,
-              headSha: parsed.data.check_suite.head_sha,
-              gateReason: gate.reason,
-            },
-          });
-          logGitHubIgnored({
-            deliveryId,
-            repoFullName,
-            eventType: eventTypeHeader,
-            action: parsed.data.action,
-            reason: "check_suite_gate_failed",
-          });
-          res.status(200).json({ ok: true, ignored: true });
-          return;
-        }
-
-        correlationKey = resolvedKey;
-        delayMs = 0;
-        interrupt = false;
-      } else {
-        correlationKey = branch
-          ? resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)])
-          : buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
-      }
-
-      const sourceTs = getGitHubEventSourceTs(parsed.data);
-
-      queue.enqueue({
-        id: deliveryId,
-        source: "github",
-        correlationKey,
-        payload: { v: 2, event: parsed.data, deliveryId, localRepo },
-        receivedAt: new Date().toISOString(),
-        sourceTs,
-        readyAt: sourceTs + delayMs,
-        delayMs,
-        interrupt,
+      logGitHubIgnored({
+        deliveryId,
+        eventType: eventTypeHeader || undefined,
+        reason: "event_unsupported",
       });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
 
-      writeGitHubWebhookHistory("ingested", {
+    let parsedBody: unknown;
+    try {
+      parsedBody = JSON.parse(rawBodyUtf8);
+    } catch {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "json_invalid",
+        reason: "json_parse_error",
+      });
+      logGitHubIgnored({
+        deliveryId,
+        eventType: eventTypeHeader || undefined,
+        reason: "json_parse_error",
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const parsed = GitHubWebhookEnvelopeSchema.safeParse(parsedBody);
+    if (!parsed.success) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "schema_invalid",
+        reason: "schema_validation_failed",
+      });
+      logGitHubIgnored({
+        deliveryId,
+        eventType: eventTypeHeader || undefined,
+        reason: "schema_validation_failed",
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const repoFullName = parsed.data.repository.full_name;
+    const parts = repoFullName.split("/");
+    const localRepo = parts[parts.length - 1];
+    if (!localRepo || !resolveRepoDirectory(localRepo)) {
+      writeGitHubWebhookHistory("ignored", {
         ...baseEntry,
         signatureVerified: true,
         parseStatus: "schema_valid",
         action: parsed.data.action,
-        reason: "accepted",
+        reason: "repo_not_mapped",
         metadata: {
           repoFullName,
           localRepo,
-          correlationKey,
         },
       });
-
-      logInfo(log, "github_event_accepted", {
+      logGitHubIgnored({
         deliveryId,
         repoFullName,
-        localRepo,
-        eventType,
+        eventType: eventTypeHeader,
         action: parsed.data.action,
-        correlationKey,
-        interrupt,
-        delayMs,
+        reason: "repo_not_mapped",
       });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
 
-      res.status(200).json({ ok: true });
-    },
-  );
+    const eventType = getGitHubEventType(parsed.data);
+    if (eventType !== eventTypeHeader) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "schema_valid",
+        action: parsed.data.action,
+        reason: "event_unsupported",
+        metadata: {
+          repoFullName,
+          localRepo,
+        },
+      });
+      logGitHubIgnored({
+        deliveryId,
+        repoFullName,
+        eventType: eventTypeHeader,
+        action: parsed.data.action,
+        reason: "event_unsupported",
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const ignoreReason = shouldIgnoreGitHubEvent(parsed.data, {
+      mentionLogins: githubMentionLogins,
+      botId: githubAppBotId,
+    });
+    if (ignoreReason) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "schema_valid",
+        action: parsed.data.action,
+        reason: ignoreReason,
+        metadata: {
+          repoFullName,
+          localRepo,
+        },
+      });
+      logGitHubIgnored({
+        deliveryId,
+        repoFullName,
+        eventType: eventTypeHeader,
+        action: parsed.data.action,
+        reason: ignoreReason,
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const branch = getGitHubEventBranch(parsed.data);
+    let correlationKey: string;
+    let delayMs = githubMentionDelay;
+    let interrupt = true;
+
+    if (isCheckSuiteCompletedEvent(parsed.data)) {
+      if (!branch) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "check_suite_branch_missing",
+          metadata: {
+            repoFullName,
+            localRepo,
+            headSha: parsed.data.check_suite.head_sha,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_branch_missing",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      const rawKey = buildCorrelationKey(localRepo, branch);
+      const resolvedKey = resolveCorrelationKeys([rawKey]);
+      if (!findNotesFile(resolvedKey)) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "correlation_key_unresolved",
+          metadata: {
+            repoFullName,
+            localRepo,
+            rawKey,
+            resolvedKey,
+            headSha: parsed.data.check_suite.head_sha,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "correlation_key_unresolved",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      const directory = resolveRepoDirectory(localRepo);
+      const gate = directory
+        ? await verifyThorAuthoredSha({
+            internalExec,
+            directory,
+            sha: parsed.data.check_suite.head_sha,
+            expectedEmail: config.githubAppBotEmail ?? "",
+          })
+        : { ok: false as const, reason: "exec_failed" as const };
+      if (!gate.ok) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "check_suite_gate_failed",
+          metadata: {
+            repoFullName,
+            localRepo,
+            rawKey,
+            resolvedKey,
+            headSha: parsed.data.check_suite.head_sha,
+            gateReason: gate.reason,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_gate_failed",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      correlationKey = resolvedKey;
+      delayMs = 0;
+      interrupt = false;
+    } else {
+      correlationKey = branch
+        ? resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)])
+        : buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
+    }
+
+    const sourceTs = getGitHubEventSourceTs(parsed.data);
+
+    queue.enqueue({
+      id: deliveryId,
+      source: "github",
+      correlationKey,
+      payload: { v: 2, event: parsed.data, deliveryId, localRepo },
+      receivedAt: new Date().toISOString(),
+      sourceTs,
+      readyAt: sourceTs + delayMs,
+      delayMs,
+      interrupt,
+    });
+
+    writeGitHubWebhookHistory("ingested", {
+      ...baseEntry,
+      signatureVerified: true,
+      parseStatus: "schema_valid",
+      action: parsed.data.action,
+      reason: "accepted",
+      metadata: {
+        repoFullName,
+        localRepo,
+        correlationKey,
+      },
+    });
+
+    logInfo(log, "github_event_accepted", {
+      deliveryId,
+      repoFullName,
+      localRepo,
+      eventType,
+      action: parsed.data.action,
+      correlationKey,
+      interrupt,
+      delayMs,
+    });
+
+    res.status(200).json({ ok: true });
+  });
 
   // --- Cron trigger ---
 

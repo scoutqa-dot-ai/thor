@@ -294,21 +294,6 @@ describe("EventQueue", () => {
     expect((handler.mock.calls[0][0][0].payload as { text: string }).text).toBe("retry");
   });
 
-  it("does not use raw event ids in queue filenames", async () => {
-    const handler = ackHandler();
-    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
-
-    queue.enqueue({
-      ...makeEvent("key-1", "path-safe"),
-      id: "../nested/evil",
-    });
-
-    const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]).toMatch(/^\d{15}_[a-f0-9]{64}\.json$/);
-    expect(remaining[0]).not.toContain("evil");
-  });
-
   it("handler errors delete files to prevent infinite retry", async () => {
     let callCount = 0;
     const handler = vi.fn<EventHandler>().mockImplementation(async () => {

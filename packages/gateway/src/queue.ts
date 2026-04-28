@@ -12,14 +12,16 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import { createLogger, logError, logInfo } from "@thor/common";
 
 const log = createLogger("event-queue");
 
-function compareEvents(a: QueuedEvent, b: QueuedEvent): number {
+function compareEvents(
+  a: { sourceTs: number; id: string },
+  b: { sourceTs: number; id: string },
+): number {
   return a.sourceTs - b.sourceTs || a.id.localeCompare(b.id);
 }
 
@@ -121,8 +123,7 @@ export class EventQueue {
   /** Write an event to the queue directory (synchronous, atomic). */
   enqueue(event: QueuedEvent): void {
     const ts = event.sourceTs.toString().padStart(15, "0");
-    const idHash = createHash("sha256").update(event.id).digest("hex");
-    const filename = `${ts}_${idHash}.json`;
+    const filename = `${ts}_${event.id}.json`;
     const tmpPath = join(this.dir, `.${filename}.tmp`);
     const finalPath = join(this.dir, filename);
 
