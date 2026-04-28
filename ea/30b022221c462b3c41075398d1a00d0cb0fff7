@@ -1,0 +1,29 @@
+docker/opencode/config/agents/thinker.md
+  1da2ebac4f7992ec 8,22,29,31-33,35,37-38,40,42
+docker/opencode/config/agents/build.md
+  1da2ebac4f7992ec 101,108-111,114,116,140,142,144,150,153-155,157-163,167-171
+docs/plan/2026042701_agent-task-handoffs.md
+  1da2ebac4f7992ec 65,200,202,204-205,207,222,258,260-261
+docker/opencode/config/agents/coder.md
+  1da2ebac4f7992ec 7,20,27,29-31,33,35,37,39,41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ea30b022221c462b3c41075398d1a00d0cb0fff7",
+  "prompts": {
+    "1da2ebac4f7992ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d40531f-4798-4033-907f-e913c030b233",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 60,
+      "total_deletions": 113,
+      "accepted_lines": 59,
+      "overriden_lines": 0
+    }
+  }
+}
