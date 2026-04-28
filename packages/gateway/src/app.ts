@@ -228,8 +228,9 @@ async function resolveExistingWorktreePath(
   try {
     const entry = await stat(candidate);
     if (!entry.isDirectory()) return null;
+    const realRepoRoot = await realpath(repoRoot);
     const realCandidate = await realpath(candidate);
-    if (realCandidate !== candidate) return null;
+    if (!isPathWithin(realRepoRoot, realCandidate)) return null;
     return realCandidate;
   } catch {
     return null;
@@ -263,13 +264,23 @@ const IGNORED_PUSH_STATUSES = new Set<PushStatus>([
 ]);
 
 function sanitizeErrorMetadata(error: unknown): Record<string, unknown> {
+  const redact = (message: string): string =>
+    truncate(
+      message
+        .replace(/\b(token\s+)[^\s,;]+/gi, "$1[REDACTED]")
+        .replace(/\b(authorization:\s*)[^\s,;]+/gi, "$1[REDACTED]")
+        .replace(/\b(bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
+        .replace(/(https?:\/\/)[^\s/@]+@/gi, "$1[REDACTED]@"),
+      300,
+    );
+
   if (error instanceof Error) {
     return {
       errorName: error.name,
-      errorMessage: truncate(error.message, 300),
+      errorMessage: redact(error.message),
     };
   }
-  return { errorMessage: truncate(String(error), 300) };
+  return { errorMessage: redact(String(error)) };
 }
 
 function isInternalExecResult(value: unknown): value is Awaited<ReturnType<InternalExecClient>> {
@@ -682,7 +693,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     try {
       pullResult = await execGit({
         bin: "git",
-        args: ["pull", "--ff-only", "origin", branch],
+        args: ["pull", "--ff-only", "origin", `refs/heads/${branch}`],
         cwd: targetDir,
       });
     } catch (error) {

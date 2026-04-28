@@ -101,7 +101,7 @@ Worktree sync/cleanup target:
 
 - For non-default branches, candidate path is `/workspace/worktrees/<repo-name>/<branch>`.
 - Resolve with `realpath` before use.
-- Require the real path to equal or be nested under `/workspace/worktrees/<repo-name>/` and to point to the expected candidate. This protects branch names with `..`, symlinks, and accidental prefix collisions.
+- Require the candidate path to stay lexically under `/workspace/worktrees/<repo-name>/`, then require the canonical candidate to stay under the canonical repo worktree root. This protects branch names with `..` and accidental prefix collisions while still allowing symlinked mount roots.
 - If missing, log a skip status and return. Do not create the worktree.
 
 ### Non-deleted push: fast-forward sync
@@ -114,7 +114,7 @@ For `deleted !== true`:
 2. Run via `internalExec`:
 
 ```ts
-{ bin: "git", args: ["pull", "--ff-only", "origin", branch], cwd: targetDir }
+{ bin: "git", args: ["pull", "--ff-only", "origin", `refs/heads/${branch}`], cwd: targetDir }
 ```
 
 3. If the command exits non-zero, log sync failure and do not wake OpenCode.
@@ -197,7 +197,7 @@ Include at least: `deliveryId`, `repoFullName`, `localRepo`, `branch`, `ref`, `a
 
 - Add `push` to `GITHUB_SUPPORTED_EVENTS`.
 - Add `handleGitHubPushEvent` in `packages/gateway/src/app.ts` or a small dedicated module if app.ts becomes too large.
-- Use existing `internalExec` to run `git pull --ff-only origin <branch>` for sync events.
+- Use existing `internalExec` to run `git pull --ff-only origin refs/heads/<branch>` for sync events.
 - Use `git status --porcelain` and `git worktree remove <path>` for deleted-branch cleanup.
 - Add path-safety helpers for worktree resolution.
 - Record explicit log/history statuses from the taxonomy.
@@ -243,8 +243,8 @@ Include at least: `deliveryId`, `repoFullName`, `localRepo`, `branch`, `ref`, `a
 
 | Case | Expected behavior |
 | --- | --- |
-| Push to default branch | `git pull --ff-only origin <default>` in `/workspace/repos/<repo>` |
-| Push to existing branch worktree | `git pull --ff-only origin <branch>` in matching worktree |
+| Push to default branch | `git pull --ff-only origin refs/heads/<default>` in `/workspace/repos/<repo>` |
+| Push to existing branch worktree | `git pull --ff-only origin refs/heads/<branch>` in matching worktree |
 | Push to branch with slash | Preserves full branch name and resolves nested worktree path safely |
 | Push to branch without worktree | Logs `push_sync_worktree_missing`; no runner trigger |
 | Tag push | Logs `push_sync_non_branch_ref_ignored`; no pull, no trigger |
@@ -271,6 +271,8 @@ Include at least: `deliveryId`, `repoFullName`, `localRepo`, `branch`, `ref`, `a
 ## Follow-up log
 
 2026-04-28: Codex review identified that branch worktree paths are not runner-allowed directories and cron-sourced wakes can conflict with same-key GitHub batches. Updated push wakes to enqueue as GitHub-source events while retaining the synced worktree path as operational metadata only.
+2026-04-28: Copilot review identified branch-name option injection risk and raw error-message secret leakage. Updated push sync to pull `refs/heads/<branch>` and redact common token/header/URL credential patterns before writing error metadata.
+2026-04-28: Codex review identified that strict unresolved-path equality rejects valid worktrees under symlinked mount roots. Updated resolution to validate containment using canonicalized roots.
 
 ## Open questions
 

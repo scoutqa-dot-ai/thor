@@ -65,7 +65,7 @@ Subscribe to:
 
 `check_suite.completed` wakes Thor when CI reaches a terminal result for an existing Thor-authored branch session. GitHub reports check suites per commit per checks app, so repos with multiple CI providers may produce more than one terminal suite.
 
-`push` keeps local checkouts current. Default-branch pushes fast-forward `/workspace/repos/<repo>`; non-default branch pushes fast-forward an existing `/workspace/worktrees/<repo>/<branch>` with `git pull --ff-only origin <branch>`. Thor does not create missing worktrees for push events. Deleted branch pushes remove the matching non-default worktree only after `git status --porcelain` reports clean; dirty worktrees are preserved and logged. Delete events never wake OpenCode. Successful non-delete syncs wake OpenCode with `interrupt:false` only when the branch has an existing notes-backed correlation key.
+`push` keeps local checkouts current. Default-branch pushes fast-forward `/workspace/repos/<repo>`; non-default branch pushes fast-forward an existing `/workspace/worktrees/<repo>/<branch>` with `git pull --ff-only origin refs/heads/<branch>` so branch names are never parsed as CLI options. Thor does not create missing worktrees for push events. Deleted branch pushes remove the matching non-default worktree only after `git status --porcelain` reports clean; dirty worktrees are preserved and logged. Delete events never wake OpenCode. Successful non-delete syncs wake OpenCode with `interrupt:false` only when the branch has an existing notes-backed correlation key.
 
 ## 4a) Bot commit identity and CI wake gate
 

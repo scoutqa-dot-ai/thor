@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebClient } from "@slack/web-api";
@@ -1366,7 +1366,7 @@ describe("gateway", () => {
 
     expect(internalExec).toHaveBeenCalledWith({
       bin: "git",
-      args: ["pull", "--ff-only", "origin", "main"],
+      args: ["pull", "--ff-only", "origin", "refs/heads/main"],
       cwd: "/workspace/repos/test-repo",
     });
   });
@@ -1452,7 +1452,9 @@ describe("gateway", () => {
 
   it("returns push_sync_failed when pull internalExec rejects", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi.fn().mockRejectedValue(new Error("remote-cli timeout with token abc123"));
+    const internalExec = vi
+      .fn()
+      .mockRejectedValue(new Error("remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git"));
 
     await withWorklogDir(async (worklogDir) => {
       await withServer(
@@ -1476,7 +1478,11 @@ describe("gateway", () => {
           expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
             {
               reason: "push_sync_failed",
-              metadata: { errorName: "Error", errorMessage: "remote-cli timeout with token abc123" },
+              metadata: {
+                errorName: "Error",
+                errorMessage:
+                  "remote-cli timeout with token [REDACTED] at https://[REDACTED]@github.com/repo.git",
+              },
             },
           ]);
         },
@@ -1531,10 +1537,98 @@ describe("gateway", () => {
 
       expect(internalExec).toHaveBeenCalledWith({
         bin: "git",
-        args: ["pull", "--ff-only", "origin", "feat/nested"],
+        args: ["pull", "--ff-only", "origin", "refs/heads/feat/nested"],
         cwd: worktreeDir,
       });
     });
+  });
+
+  it("uses a full branch ref for push sync so dash-prefixed branch names are not parsed as options", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeDir = join(worktreesRoot, "test-repo", "-c");
+      mkdirSync(worktreeDir, { recursive: true });
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = pushWebhookBody({ ref: "refs/heads/-c" });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-dash-branch",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, status: "push_wake_skipped_no_session" });
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+
+      expect(internalExec).toHaveBeenCalledWith({
+        bin: "git",
+        args: ["pull", "--ff-only", "origin", "refs/heads/-c"],
+        cwd: worktreeDir,
+      });
+    });
+  });
+
+  it("resolves worktrees under a symlinked worktrees root", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+    const tempRoot = mkdtempSync(join(tmpdir(), "gateway-worktrees-symlink-"));
+    const realRoot = join(tempRoot, "real");
+    const linkRoot = join(tempRoot, "link");
+    mkdirSync(realRoot, { recursive: true });
+    symlinkSync(realRoot, linkRoot, "dir");
+    const prev = process.env.THOR_WORKTREES_ROOT;
+    process.env.THOR_WORKTREES_ROOT = linkRoot;
+
+    try {
+      const realWorktreeDir = join(realRoot, "test-repo", "feat/nested");
+      mkdirSync(realWorktreeDir, { recursive: true });
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = pushWebhookBody();
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-symlink-root",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, status: "push_wake_skipped_no_session" });
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+
+      expect(internalExec).toHaveBeenCalledWith({
+        bin: "git",
+        args: ["pull", "--ff-only", "origin", "refs/heads/feat/nested"],
+        cwd: realWorktreeDir,
+      });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.THOR_WORKTREES_ROOT;
+      } else {
+        process.env.THOR_WORKTREES_ROOT = prev;
+      }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("removes clean deleted branch worktrees and never wakes", async () => {
