@@ -1,0 +1,23 @@
+docs/plan/2026042703_github-wake-on-ci.md
+  666207d0d9d68a08 4-6,159,161-162,194-348
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "62ed47464a945559f76edc9173f2d5c7c636b052",
+  "prompts": {
+    "666207d0d9d68a08": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d454c927-8c4d-434c-86e7-625cc64c3563",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 162,
+      "total_deletions": 20,
+      "accepted_lines": 161,
+      "overriden_lines": 0
+    }
+  }
+}
