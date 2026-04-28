@@ -1,0 +1,23 @@
+docs/plan/2026042701_github-webhook-event-expansion.md
+  8524d5fcf8782c0a 5,19,21-29,39-40,56,64-68,86,93-94,96-99,101,115,143-144,201,206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "efa83be2d8578faa08c69584097a04cbc362db9f",
+  "prompts": {
+    "8524d5fcf8782c0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "59c87bc7-515d-4bea-8d1c-ad0c5e148b6e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 34,
+      "total_deletions": 20,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}
