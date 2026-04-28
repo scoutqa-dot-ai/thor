@@ -271,8 +271,8 @@ Include at least: `deliveryId`, `repoFullName`, `localRepo`, `branch`, `ref`, `a
 ## Follow-up log
 
 2026-04-28: Codex review identified that branch worktree paths are not runner-allowed directories and cron-sourced wakes can conflict with same-key GitHub batches. Updated push wakes to enqueue as GitHub-source events while retaining the synced worktree path as operational metadata only.
-2026-04-28: Copilot review identified branch-name option injection risk and raw error-message secret leakage. Updated push sync to pull `refs/heads/<branch>` and redact common token/header/URL credential patterns before writing error metadata.
-2026-04-28: Codex review identified that strict unresolved-path equality rejects valid worktrees under symlinked mount roots. Updated resolution to validate containment using canonicalized roots.
+2026-04-28: Copilot review identified branch-name option injection risk and weak local error extraction. Updated push sync to pull `refs/heads/<branch>` and moved error metadata extraction to a shared `@thor/common` helper backed by `serialize-error`.
+2026-04-28: Codex review identified that strict unresolved-path equality rejects valid worktrees under symlinked mount roots. Updated resolution to use shared `@thor/common` workspace root/path containment helpers with canonicalized roots.
 
 ## Open questions
 

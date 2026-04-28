@@ -1,12 +1,13 @@
 import express, { type Express, type Request, type Response } from "express";
-import { realpath, stat } from "node:fs/promises";
-import path from "node:path";
 import {
   appendJsonlWorklog,
   createLogger,
+  errorToMetadata,
   findNotesFile,
+  getWorkspaceWorktreesRoot,
   logError,
   logInfo,
+  resolveExistingDirectoryWithinRoot,
   resolveCorrelationKeys,
   hasSlackReply,
   getAllowedChannelIds,
@@ -206,35 +207,12 @@ type GitHubIgnoreReason =
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
-const DEFAULT_WORKTREES_ROOT = "/workspace/worktrees";
-
-function getWorktreesRoot(): string {
-  return process.env.THOR_WORKTREES_ROOT || DEFAULT_WORKTREES_ROOT;
-}
-
-function isPathWithin(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child);
-  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
-}
 
 async function resolveExistingWorktreePath(
   localRepo: string,
   branch: string,
 ): Promise<string | null> {
-  const repoRoot = path.resolve(getWorktreesRoot(), localRepo);
-  const candidate = path.resolve(repoRoot, branch);
-  if (!isPathWithin(repoRoot, candidate)) return null;
-
-  try {
-    const entry = await stat(candidate);
-    if (!entry.isDirectory()) return null;
-    const realRepoRoot = await realpath(repoRoot);
-    const realCandidate = await realpath(candidate);
-    if (!isPathWithin(realRepoRoot, realCandidate)) return null;
-    return realCandidate;
-  } catch {
-    return null;
-  }
+  return resolveExistingDirectoryWithinRoot(getWorkspaceWorktreesRoot(), `${localRepo}/${branch}`);
 }
 
 type PushStatus =
@@ -262,26 +240,6 @@ const IGNORED_PUSH_STATUSES = new Set<PushStatus>([
   "push_delete_non_branch_ref_ignored",
   "push_delete_cleanup_failed",
 ]);
-
-function sanitizeErrorMetadata(error: unknown): Record<string, unknown> {
-  const redact = (message: string): string =>
-    truncate(
-      message
-        .replace(/\b(token\s+)[^\s,;]+/gi, "$1[REDACTED]")
-        .replace(/\b(authorization:\s*)[^\s,;]+/gi, "$1[REDACTED]")
-        .replace(/\b(bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
-        .replace(/(https?:\/\/)[^\s/@]+@/gi, "$1[REDACTED]@"),
-      300,
-    );
-
-  if (error instanceof Error) {
-    return {
-      errorName: error.name,
-      errorMessage: redact(error.message),
-    };
-  }
-  return { errorMessage: redact(String(error)) };
-}
 
 function isInternalExecResult(value: unknown): value is Awaited<ReturnType<InternalExecClient>> {
   if (!value || typeof value !== "object") return false;
@@ -651,7 +609,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           cwd: targetDir,
         });
       } catch (error) {
-        record("push_delete_cleanup_failed", { targetDir, ...sanitizeErrorMetadata(error) });
+        record("push_delete_cleanup_failed", { targetDir, ...errorToMetadata(error) });
         return { status: "push_delete_cleanup_failed", ignored: true };
       }
       if (statusResult.exitCode !== 0) {
@@ -671,7 +629,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           cwd: repoDir,
         });
       } catch (error) {
-        record("push_delete_cleanup_failed", { targetDir, ...sanitizeErrorMetadata(error) });
+        record("push_delete_cleanup_failed", { targetDir, ...errorToMetadata(error) });
         return { status: "push_delete_cleanup_failed", ignored: true };
       }
       if (removeResult.exitCode !== 0) {
@@ -697,7 +655,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         cwd: targetDir,
       });
     } catch (error) {
-      record("push_sync_failed", { targetDir, ...sanitizeErrorMetadata(error) });
+      record("push_sync_failed", { targetDir, ...errorToMetadata(error) });
       return { status: "push_sync_failed", ignored: true };
     }
     if (pullResult.exitCode !== 0) {

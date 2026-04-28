@@ -1480,8 +1480,7 @@ describe("gateway", () => {
               reason: "push_sync_failed",
               metadata: {
                 errorName: "Error",
-                errorMessage:
-                  "remote-cli timeout with token [REDACTED] at https://[REDACTED]@github.com/repo.git",
+                errorMessage: "remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git",
               },
             },
           ]);

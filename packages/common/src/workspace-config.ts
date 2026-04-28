@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { WORKSPACE_REPOS_ROOT, isPathWithinPrefix } from "./paths.js";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
 import { createLogger, logWarn } from "./logger.js";
@@ -333,7 +334,7 @@ export function getInstallationIdForOwner(
   return config.owners?.[owner]?.github_app_installation_id;
 }
 
-const ALLOWED_PREFIXES = ["/workspace/repos/"];
+const ALLOWED_PREFIXES = [WORKSPACE_REPOS_ROOT];
 
 /**
  * Check that a directory path is under an allowed workspace prefix.
@@ -343,6 +344,6 @@ const ALLOWED_PREFIXES = ["/workspace/repos/"];
 export function isAllowedDirectory(directory: string): boolean {
   const normalized = normalize(resolve("/", directory));
   return ALLOWED_PREFIXES.some(
-    (prefix) => normalized.startsWith(prefix) && normalized.length > prefix.length,
+    (prefix) => isPathWithinPrefix(prefix, normalized) && normalized.length > prefix.length,
   );
 }
