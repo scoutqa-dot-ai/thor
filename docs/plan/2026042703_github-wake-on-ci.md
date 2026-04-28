@@ -19,14 +19,14 @@ implementation pending a design decision; decisions are now recorded below.
 
 ## Decisions
 
-| #       | Question                | Decision                                                                                                                                                 |
-| ------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1      | Event primitive         | **`check_suite.completed`** — single rollup per commit, native PR association, eliminates Q4 fan-out                                                     |
-| Q2      | Self-loop guard         | **Gateway-side `git cat-file -e <head_sha>`** via `internalExec()` against the workspace directory before enqueue. No notes schema change, no woken-flag |
-| Q3      | Bot authorship          | **Gateway-side `git log -1 --format=%ae <head_sha>`** via `internalExec()`, matched against `THOR_GIT_AUTHOR_EMAIL`. Both Q2 and Q3 must pass to enqueue |
-| Q4      | Multi-workflow debounce | **Not applicable** — eliminated by Q1 choice                                                                                                             |
-| Q5      | Failure handling        | **Forward terminal non-success** with a distinct prompt shape ("CI failed on sha X, branch Y") so Thor reacts instead of hangs. Same Q2+Q3 gate applies  |
-| Rollout | Gating                  | **All repos on the GitHub App install.** No per-repo opt-in for now; the git-author gate is the rollout safety filter                                    |
+| #       | Question                | Decision                                                                                                                                                                                                       |
+| ------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q1      | Event primitive         | **`check_suite.completed`** — single rollup per commit, native PR association, eliminates Q4 fan-out                                                                                                           |
+| Q2      | Self-loop guard         | **Gateway-side `git cat-file -e <head_sha>`** via `internalExec()` against the workspace directory before enqueue. No notes schema change, no woken-flag                                                       |
+| Q3      | Bot authorship          | **Gateway-side `git log -1 --format=%ae <head_sha>`** via `internalExec()`, matched against the GitHub App bot email derived from `GITHUB_APP_BOT_ID` + `GITHUB_APP_SLUG`. Both Q2 and Q3 must pass to enqueue |
+| Q4      | Multi-workflow debounce | **Not applicable** — eliminated by Q1 choice                                                                                                                                                                   |
+| Q5      | Failure handling        | **Forward terminal non-success** in the JSON event payload so Thor reacts instead of hangs. Same Q2+Q3 gate applies                                                                                            |
+| Rollout | Gating                  | **All repos on the GitHub App install.** No per-repo opt-in for now; existing-session + git-author gates are the rollout safety filter                                                                         |
 
 ### Wake-time gate (no schema change)
 
@@ -125,11 +125,11 @@ Recommendation lean: drop actor-based gating entirely; use session-state
 correlation (option 4) to answer "is this a sha I pushed."
 
 **Decision: gateway-side git-author check via `internalExec()`.**
-`git log -1 --format=%ae <head_sha>` against `THOR_GIT_AUTHOR_EMAIL`.
+`git log -1 --format=%ae <head_sha>` against the GitHub App bot
+email derived from `GITHUB_APP_BOT_ID` + `GITHUB_APP_SLUG`.
 Webhook actor fields can't help here: `check_suite.sender` is the CI
 app (e.g., `github-actions[bot]`), not the pusher, and there is no
-clean `pusher`/`actor` field on `check_suite`. `GITHUB_APP_BOT_ID`
-stays gateway-only.
+clean `pusher`/`actor` field on `check_suite`.
 
 ### 4. Multi-workflow granularity
 
@@ -146,12 +146,13 @@ list, which the gateway doesn't have).
 If CI fails, does Thor stay asleep forever waiting on a green that never
 comes? Or do we forward terminal non-success as a "stop waiting" signal?
 
-Recommendation lean: forward conclusion=failure with a distinct prompt
-shape ("CI failed on sha X, branch Y") so Thor can react instead of hang.
+Recommendation lean: forward conclusion=failure so Thor can react
+instead of hang.
 
-**Decision: forward terminal non-success.** New prompt shape in the
-GitHub prompt renderer. Same Q2+Q3 git gate applies. No "woken" flag
-needed — reruns naturally re-wake.
+**Decision: forward terminal non-success.** With the JSON-passthrough
+renderer, no gateway-specific failure prompt shape is needed; the agent
+reads `check_suite.conclusion` from the raw event. Same Q2+Q3 git gate
+applies. No "woken" flag needed — reruns naturally re-wake.
 
 ## Implementation prerequisites (resolved)
 
@@ -159,9 +160,9 @@ needed — reruns naturally re-wake.
 - ✅ Self-loop guard: existing correlation key + gateway `internalExec()` → `git cat-file -e` (Q2)
 - ✅ Authorship proxy: gateway `internalExec()` → `git log -1 --format=%ae` (Q3)
 - ✅ Hard dependency: PR #47 landed (`/internal/exec` endpoint)
-- ✅ Failure-forwarding: forward with distinct prompt shape (Q5)
+- ✅ Failure-forwarding: forward the raw JSON event including `conclusion` (Q5)
 - ⏭ Operator runbook update (`docs/github-app-webhooks.md`) — Phase 4
-- ✅ Rollout: all repos on the install. Git-author gate is the safety filter (D-5); per-repo gating not introduced.
+- ✅ Rollout: all repos on the install. Existing-session + git-author gates are the safety filter (D-5); per-repo gating not introduced.
 
 ## Feasibility notes (from 2026-04-28 review)
 
@@ -187,9 +188,11 @@ needed — reruns naturally re-wake.
   `POST /internal/exec` on `remote-cli`. This plan must add the gateway
   `internalExec()` client as part of Phase 2; the endpoint exists, but the
   client helper does not yet.
-- `THOR_GIT_AUTHOR_EMAIL` becomes a new gateway env var (the gateway
-  doesn't set git config today; it only reads commits authored by
-  Thor in OpenCode workspaces).
+- Gateway and remote-cli must derive the GitHub App bot git email through
+  one shared helper in `@thor/common`, using `GITHUB_APP_BOT_ID` +
+  `GITHUB_APP_SLUG`. Do not add a separate `THOR_GIT_AUTHOR_EMAIL`
+  env var; it would drift from the identity remote-cli already uses when
+  configuring git.
 - Test the gate as a pure-ish helper that takes an `internalExec`
   function + sha + expected email; stub `internalExec` for unit
   coverage. No new E2E scaffolding needed.
@@ -241,7 +244,12 @@ Exit criteria:
 
 ### Phase 1 — Accept `check_suite.completed` at the gateway
 
-**Goal:** the gateway parses, schema-validates, and forwards `check_suite.completed` events end-to-end without a gate. Wake fires on every CI completion for repos in the existing GitHub install. Phase 2's git-author gate (the next commit) is the real filter — Phase 1 by itself would wake on every CI event including human-authored commits, so don't deploy between Phase 1 and Phase 2 landing.
+**Goal:** the gateway parses and schema-validates `check_suite.completed`
+events, then forwards only events whose `head_branch` resolves to an
+existing notes-backed Thor session. Phase 1 does **not** do the git sha
+or git-author checks yet, but it must already include the strict
+existing-session gate so an ambient CI event cannot create a brand-new
+branch session.
 
 Files:
 
@@ -249,16 +257,19 @@ Files:
   - Add `check_suite` to `GITHUB_SUPPORTED_EVENTS`.
   - Add `check_suite_branch_missing` and `correlation_key_unresolved` to the local GitHub ignored-reason union and write ignored history for both cases.
   - For `check_suite`, build `rawKey = buildCorrelationKey(localRepo, head_branch)`, resolve it, and require a positive existing-session match before enqueueing. Do not rely on `resolveCorrelationKeys([rawKey])` alone, because that function intentionally falls back to `rawKey` when nothing resolves.
+  - Use either a strict resolver (`resolveCorrelationKeyMatch`) or `findNotesFile(resolvedKey)` after resolution. If no existing notes-backed session is found, write ignored history with `reason: "correlation_key_unresolved"` and do not enqueue.
+  - Enqueue accepted `check_suite.completed` events with `interrupt: false`. CI completion should resume/coalesce with the existing branch session without aborting in-flight work. Keep existing GitHub mention/review events on their current `interrupt: true` behavior.
 - `packages/gateway/src/github.ts`
   - Define `CheckSuiteCompletedEventSchema` (zod) and `CheckSuiteCompletedEvent` type. Discriminator: top-level `check_suite` object with `head_sha`, `head_branch`, `conclusion`, `pull_requests[]`. Also `action: "completed"`, `repository`, `installation`, `sender`.
-  - Extend `GitHubWebhookEnvelopeSchema` discriminated union to include the new variant.
+  - Make `GitHubWebhookEnvelopeSchema` a true `z.discriminatedUnion("event_type", ...)` instead of the current plain `z.union(...)`: preprocess the parsed webhook body by adding an internal `event_type` field derived from shape (`issue`, `pull_request` + `comment`, `pull_request` + `review`, or `check_suite`), then discriminate on that field. Keep the queued `event` payload as the parsed schema output, including `event_type`, so downstream type guards can use the same discriminator.
+  - Extend the discriminated union to include the new `check_suite` variant.
   - `isCheckSuiteCompletedEvent` type guard.
   - `getGitHubEventType` returns `"check_suite"` for the new variant.
   - `getGitHubEventBranch` returns `event.check_suite.head_branch`.
   - If `head_branch` is null/empty, drop the event explicitly with a structured ignore reason such as `check_suite_branch_missing`. Do **not** fall through to the existing pending-branch resolve path: that path is issue-comment-specific and calls `/github/pr-head` with an issue/PR number. A `check_suite` event may contain `pull_requests[]`, but the current reroute code only accepts `IssueCommentEvent` and would drop non-issue-comment payloads as `branch_lookup_failed`.
   - `getGitHubEventNumber` should not be used for `check_suite` routing. If future support for branchless `check_suite` events is needed, add a dedicated branch resolver based on `check_suite.pull_requests[]` instead of reusing the issue-comment pending key.
   - `getGitHubEventSourceTs` returns `Date.parse(event.check_suite.updated_at)`.
-  - `shouldIgnoreGitHubEvent` returns `null` for `check_suite` (filtering happens in Phase 2 git gate).
+  - `shouldIgnoreGitHubEvent` returns `null` for `check_suite` (branch/session filtering happens in Phase 1; git sha/authorship filtering happens in Phase 2).
 
 No `service.ts` changes — Phase 0's `JSON.stringify` renderer handles `check_suite` automatically.
 
@@ -268,27 +279,35 @@ Tests:
   - `CheckSuiteCompletedEventSchema` parses a real GitHub fixture (success and failure conclusions).
   - `getGitHubEventType` / `getGitHubEventBranch` / `getGitHubEventSourceTs` for the new variant.
 - `packages/gateway/src/app.test.ts`
-  - End-to-end: POST `check_suite` payload → `writeGitHubWebhookHistory("ingested", …)` and `queue.enqueue` called with `payload.event.check_suite.head_sha` reachable.
+  - Existing-session path: POST `check_suite` payload with a notes-backed branch key → `writeGitHubWebhookHistory("ingested", …)` and `queue.enqueue` called with `payload.event.check_suite.head_sha` reachable.
+  - Unknown-session path: same payload without a matching notes file → ignored with `correlation_key_unresolved`, no enqueue.
 
 Exit criteria:
 
 - Unit tests green.
-- `check_suite.completed` no longer hits `event_unsupported`; queued payload carries the raw event.
+- `check_suite.completed` no longer hits `event_unsupported`.
+- A branchless event or an event whose branch has no existing notes-backed session is ignored before enqueue.
+- A queued payload carries the raw event, uses the resolved existing correlation key, and has `interrupt: false`.
 
 ### Phase 2 — Git gate via `internalExec()`
 
-**Goal:** before enqueuing a `check_suite.completed` event, verify that the branch maps to an existing Thor correlation key, the `head_sha` exists in the workspace, and the commit was authored by Thor's bot. Drop with a structured ignored-history entry otherwise.
+**Goal:** before enqueuing a `check_suite.completed` event that already
+passed Phase 1's existing-session gate, verify that the `head_sha` exists
+in the workspace and the commit was authored by Thor's bot. Drop with a
+structured ignored-history entry otherwise.
 
 Files:
 
-- Env wiring: `THOR_GIT_AUTHOR_EMAIL` (no default).
-  - `packages/gateway/src/index.ts` — add to env loader; fail-fast if absent (consistent with `THOR_INTERNAL_SECRET` / `GITHUB_APP_BOT_ID` patterns).
-  - `.env.example`, `docker-compose.yml` (gateway service env), e2e workflows (mint a test value).
+- Shared bot identity helper:
+  - `packages/common/src/github-identity.ts` (new) — export a helper such as `deriveGitHubAppBotIdentity({ slug, botId })` returning `{ name, email }`, where email is `${botId}+${slug}[bot]@users.noreply.github.com`.
+  - `packages/common/src/index.ts` — export the helper.
+  - `packages/remote-cli/src/index.ts` — replace the local `deriveBotGitIdentity()` implementation with the shared helper.
+  - `packages/gateway/src/index.ts` — derive the expected author email from already-required `GITHUB_APP_SLUG` + `GITHUB_APP_BOT_ID`; do not introduce `THOR_GIT_AUTHOR_EMAIL`.
 - Add gateway `internalExec()` client in `packages/gateway/src/service.ts` or a small sibling module:
   - POSTs to `${remoteCliUrl}/internal/exec` with `{ bin, args, cwd }`.
   - Sends `x-thor-internal-secret` when configured.
   - Parses `ExecResultSchema`.
-  - Uses a client-side `AbortSignal.timeout(5000)` for the CI gate call sites.
+  - Uses gateway-side client timeouts via Node's `AbortSignal.timeout(5000)` on the `fetch()` call. This is enforced by the gateway process, not by remote-cli; remote-cli may continue the underlying command briefly after the HTTP client aborts, but the webhook decision treats the abort as `exec_failed`.
   - Treats non-2xx responses, schema failures, and thrown fetch/timeout errors as client failures.
 - New helper `verifyThorAuthoredSha` in `packages/gateway/src/github-gate.ts` (new file):
 
@@ -309,7 +328,7 @@ Files:
   - Network/timeout/exec failure → `exec_failed`.
 
 - `packages/gateway/src/app.ts`
-  - After the existing `shouldIgnoreGitHubEvent` block, when `eventType === "check_suite"`: resolve `directory = resolveRepoDirectory(localRepo)` (already trusted at this point), require the branch correlation key to resolve to an existing notes-backed session, then call `verifyThorAuthoredSha`. On failure, `writeGitHubWebhookHistory("ignored", { reason: "check_suite_gate_failed", metadata: { ..., gateReason } })` and `logGitHubIgnored`.
+  - After the Phase 1 existing-session gate, when `eventType === "check_suite"`: resolve `directory = resolveRepoDirectory(localRepo)` (already trusted at this point), then call `verifyThorAuthoredSha`. On failure, `writeGitHubWebhookHistory("ignored", { reason: "check_suite_gate_failed", metadata: { ..., gateReason } })` and `logGitHubIgnored`.
   - Plumb the new `internalExec` client through `GatewayAppConfig` if needed for tests; fall back to the real HTTP client in production.
 - New `IgnoreReason` value: `"check_suite_gate_failed"` in `packages/gateway/src/github.ts`.
 
@@ -321,7 +340,7 @@ Tests:
 Exit criteria:
 
 - Unit tests green.
-- A `check_suite` event whose branch correlation key is unknown, whose `head_sha` is unknown to the workspace, OR whose commit is not authored by `THOR_GIT_AUTHOR_EMAIL` is dropped before enqueue.
+- A `check_suite` event whose `head_sha` is unknown to the workspace OR whose commit is not authored by the derived GitHub App bot email is dropped before enqueue.
 
 ### Phase 3 — Agent-side handling of CI failure
 
@@ -329,7 +348,7 @@ Exit criteria:
 
 Files:
 
-- Agent prompt / system instructions (location TBD per current agent config layout — likely `docker/opencode/config/agents/*.md` or similar): document how to interpret a `check_suite` event in the inbound payload, including the `conclusion` field, and what action to take per outcome (success → continue; failure/cancelled/timed_out → investigate and fix).
+- `docker/opencode/config/agents/build.md` — document how to interpret a `check_suite` event in the inbound payload, including the `conclusion` field, and what action to take per outcome (success → continue; failure/cancelled/timed_out → investigate and fix).
 
 Tests:
 
@@ -337,7 +356,7 @@ Tests:
 
 Exit criteria:
 
-- Agent docs updated. Manual smoke (in Phase 5 verification) confirms Thor reacts sensibly to both success and failure events.
+- Agent docs updated. Manual smoke (in Phase 4 verification) confirms Thor reacts sensibly to both success and failure events.
 
 ### Phase 4 — Runbook + integration verification
 
@@ -347,9 +366,9 @@ Files:
 
 - `docs/github-app-webhooks.md`
   - Document the new `check_suite` subscription requirement on the GitHub App.
-  - `THOR_GIT_AUTHOR_EMAIL` env var.
+  - The derived GitHub App bot email used for git-author gating (`GITHUB_APP_BOT_ID` + `GITHUB_APP_SLUG`), and why there is no separate author-email env var.
   - Troubleshooting: how to read `writeGitHubWebhookHistory` worklogs for `check_suite_gate_failed`.
-- `README.md` — add the env var to the gateway section.
+- `README.md` — document that the gateway uses existing `GITHUB_APP_SLUG` + `GITHUB_APP_BOT_ID` to derive the bot author email; no new env var is required.
 
 Verification:
 
@@ -363,18 +382,19 @@ Exit criteria:
 
 ## Decision Log
 
-| #    | Decision                                                                   | Rationale                                                                                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| D-1  | Gate at the gateway, not the runner                                        | Gateway already has `directory`, correlation-key resolution, `internalExec()`, and the supported-events check. Runner stays unchanged. Rejected events never enqueue.                                                                                                          |
-| D-2  | `check_suite.completed` only; not `workflow_run` or `check_run`            | Single rollup per commit eliminates multi-workflow fan-out. Native `pull_requests[]` association.                                                                                                                                                                              |
-| D-3  | No notes-file `head_sha` schema; no woken-flag                             | Provenance lives in git. `check_suite` fires once per (commit, app); reruns _should_ re-wake.                                                                                                                                                                                  |
-| D-4  | Author check via `git log -1 --format=%ae` against `THOR_GIT_AUTHOR_EMAIL` | Webhook actor fields don't help on `check_suite` (`sender` is the CI app). Git is the source of truth for authorship.                                                                                                                                                          |
-| D-5  | No per-repo opt-in for now; rollout to all repos on the install            | Git-author gate is itself the safety filter — only Thor-authored shas wake. A misfire would require a sha matching `THOR_GIT_AUTHOR_EMAIL` in a workspace's git, which is the exact case we want to wake on. Add per-repo gating later only if a real misfire pattern emerges. |
-| D-6  | Don't deploy between Phase 1 and Phase 2                                   | Phase 1 alone wakes on every CI event regardless of authorship. Phase 2's git-author gate is the real filter. Land both before any production deploy.                                                                                                                          |
-| D-7  | GitHub prompt is `JSON.stringify(rawEvent)`, mirroring Slack               | Per-field rendering was cruft from the pre-passthrough era. Slack already passes raw events. Lets the agent decide; eliminates Phase 3 gateway work; new event types like `check_suite` cost zero rendering code.                                                              |
-| D-8  | Drop `GITHUB_PROMPT_LIMIT_BYTES` batch truncation                          | Zod strips unknown keys, so parsed events are already tiny. Only `comment.body`/`review.body` are unbounded; dropping whole events to fit a batch limit is a worse failure mode than passing one large body through. Cap fields at parse time if it ever matters.              |
-| D-9  | Require existing correlation key for `check_suite` wakes                   | Dropping repo opt-in is acceptable only if `check_suite` cannot create a brand-new branch session by itself. Existing notes are the signal that Thor was already working that branch and is waiting for CI.                                                                    |
-| D-10 | Keep existing GitHub mention/review behavior unchanged                     | Issue comments and review events are user-initiated or PR-author gated and may legitimately start work. The existing-notes requirement is only for CI completion events, which are ambient system signals.                                                                     |
+| #    | Decision                                                                            | Rationale                                                                                                                                                                                                                                                                                                      |
+| ---- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D-1  | Gate at the gateway, not the runner                                                 | Gateway already has `directory`, correlation-key resolution, `internalExec()`, and the supported-events check. Runner stays unchanged. Rejected events never enqueue.                                                                                                                                          |
+| D-2  | `check_suite.completed` only; not `workflow_run` or `check_run`                     | Single rollup per commit eliminates multi-workflow fan-out. Native `pull_requests[]` association.                                                                                                                                                                                                              |
+| D-3  | No notes-file `head_sha` schema; no woken-flag                                      | Provenance lives in git. `check_suite` fires once per (commit, app); reruns _should_ re-wake.                                                                                                                                                                                                                  |
+| D-4  | Author check via `git log -1 --format=%ae` against the derived GitHub App bot email | Webhook actor fields don't help on `check_suite` (`sender` is the CI app). Git is the source of truth for the operational authorship heuristic. The email is derived once in `@thor/common` from `GITHUB_APP_BOT_ID` + `GITHUB_APP_SLUG` so gateway and remote-cli cannot drift.                               |
+| D-5  | No per-repo opt-in for now; rollout to all repos on the install                     | Existing-session gating plus git-author gating is the rollout safety filter. Git author email is spoofable, and that is acceptable for this operational wake path because a wake also requires an existing Thor notes-backed branch session. Add per-repo gating later only if a real misfire pattern emerges. |
+| D-6  | Phase 1 is deployable because it includes the existing-session gate                 | Phase 1 does not yet verify sha existence or bot authorship, but it cannot create a new session from an ambient CI event. Phase 2 tightens the gate before broader rollout validation.                                                                                                                         |
+| D-7  | GitHub prompt is `JSON.stringify(rawEvent)`, mirroring Slack                        | Per-field rendering was cruft from the pre-passthrough era. Slack already passes raw events. Lets the agent decide; eliminates Phase 3 gateway work; new event types like `check_suite` cost zero rendering code.                                                                                              |
+| D-8  | Drop `GITHUB_PROMPT_LIMIT_BYTES` batch truncation                                   | Zod strips unknown keys, so parsed events are already tiny. Only `comment.body`/`review.body` are unbounded; dropping whole events to fit a batch limit is a worse failure mode than passing one large body through. Cap fields at parse time if it ever matters.                                              |
+| D-9  | Require existing correlation key for `check_suite` wakes                            | Dropping repo opt-in is acceptable only if `check_suite` cannot create a brand-new branch session by itself. Existing notes are the signal that Thor was already working that branch and is waiting for CI.                                                                                                    |
+| D-10 | Keep existing GitHub mention/review behavior unchanged                              | Issue comments and review events are user-initiated or PR-author gated and may legitimately start work. The existing-notes requirement is only for CI completion events, which are ambient system signals.                                                                                                     |
+| D-11 | `check_suite.completed` enqueues with `interrupt: false`                            | CI completion is a continuation signal for an existing branch session, not a direct user instruction. It should wake or coalesce without aborting in-flight work; user-initiated GitHub mentions/reviews keep `interrupt: true`.                                                                               |
 
 ## Out of scope
 
