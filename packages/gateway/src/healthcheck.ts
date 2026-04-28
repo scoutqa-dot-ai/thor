@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import type { PendingQueueSnapshot } from "./queue.js";
 
 interface ServiceHealth {
   status: "ok" | "error";
@@ -26,6 +27,18 @@ interface CodexUsage {
   httpStatus?: number;
   error?: string;
 }
+
+interface QueueHealth {
+  status: "ok" | "error";
+  pendingCount: number;
+  staleThresholdMs: number;
+  staleEventCount: number;
+  error?: string;
+  oldestPendingReceivedAt?: string;
+  oldestPendingAgeMs?: number;
+}
+
+const DEFAULT_QUEUE_STALE_THRESHOLD_MS = 15 * 60 * 1000;
 
 function getObject(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object"
@@ -145,6 +158,7 @@ export interface HealthCheckResult {
   status: "ok" | "degraded" | "error";
   service: "gateway";
   services: Record<string, ServiceHealth>;
+  queue?: QueueHealth;
   codex?: CodexUsage;
 }
 
@@ -218,6 +232,51 @@ export interface HealthCheckDeps {
   remoteCliPort: number;
   openaiAuthPath?: string;
   fetchImpl?: typeof fetch;
+  queueSnapshot?: PendingQueueSnapshot;
+  queueStaleThresholdMs?: number;
+}
+
+function checkQueueHealth(
+  snapshot: PendingQueueSnapshot | undefined,
+  staleThresholdMs: number,
+): QueueHealth | undefined {
+  if (!snapshot) return undefined;
+
+  if (snapshot.readError) {
+    return {
+      status: "error",
+      pendingCount: snapshot.pendingCount,
+      staleThresholdMs,
+      staleEventCount: 0,
+      error: `queue snapshot failed: ${snapshot.readError}`,
+    };
+  }
+
+  const now = Date.now();
+  let staleEventCount = 0;
+  let oldestPendingReceivedAt: string | undefined;
+  let oldestPendingAgeMs: number | undefined;
+
+  for (const event of snapshot.pending) {
+    const receivedAtMs = Date.parse(event.receivedAt);
+    if (!Number.isFinite(receivedAtMs)) continue;
+
+    const ageMs = now - receivedAtMs;
+    if (oldestPendingAgeMs === undefined || ageMs > oldestPendingAgeMs) {
+      oldestPendingAgeMs = ageMs;
+      oldestPendingReceivedAt = event.receivedAt;
+    }
+    if (ageMs > staleThresholdMs) staleEventCount++;
+  }
+
+  return {
+    status: staleEventCount > 0 ? "error" : "ok",
+    pendingCount: snapshot.pendingCount,
+    staleThresholdMs,
+    staleEventCount,
+    ...(oldestPendingReceivedAt ? { oldestPendingReceivedAt } : {}),
+    ...(oldestPendingAgeMs !== undefined ? { oldestPendingAgeMs } : {}),
+  };
 }
 
 export async function deepHealthCheck(deps: HealthCheckDeps): Promise<HealthCheckResult> {
@@ -232,13 +291,20 @@ export async function deepHealthCheck(deps: HealthCheckDeps): Promise<HealthChec
   ]);
 
   const services = { runner, "remote-cli": remoteCli };
+  const queue = checkQueueHealth(
+    deps.queueSnapshot,
+    deps.queueStaleThresholdMs ?? DEFAULT_QUEUE_STALE_THRESHOLD_MS,
+  );
   const allServicesOk = Object.values(services).every((s) => s.status === "ok");
+  const queueOk = !queue || queue.status === "ok";
   const codexOk = !codex || codex.status === "ok" || codex.status === "no_auth";
 
   return {
-    status: allServicesOk && codexOk ? "ok" : allServicesOk ? "degraded" : "error",
+    status:
+      allServicesOk && queueOk && codexOk ? "ok" : allServicesOk && queueOk ? "degraded" : "error",
     service: "gateway",
     services,
+    ...(queue ? { queue } : {}),
     ...(codex ? { codex } : {}),
   };
 }

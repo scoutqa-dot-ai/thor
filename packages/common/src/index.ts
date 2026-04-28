@@ -27,8 +27,8 @@ export type {
   ValidationResult,
 } from "./workspace-config.js";
 export type { ProxyName } from "./proxies.js";
-export { writeToolCallLog } from "./worklog.js";
-export type { ToolCallLogEntry } from "./worklog.js";
+export { writeToolCallLog, appendJsonlWorklog, writeInboundWebhookHistory } from "./worklog.js";
+export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
 export type { Logger } from "./logger.js";
 export {

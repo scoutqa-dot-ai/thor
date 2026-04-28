@@ -211,6 +211,50 @@ describe("EventQueue", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it("provides a read-only snapshot of live pending queue events", () => {
+    const handler = ackHandler();
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    queue.enqueue(makeEvent("key-1", "first"));
+    queue.enqueue(makeMention("key-2", "second"));
+
+    writeFileSync(join(queueDir, ".ignored.tmp"), JSON.stringify(makeEvent("key-x", "tmp")));
+    writeFileSync(
+      join(queueDir, "dead-letter", "000000000000000_dead.json"),
+      JSON.stringify(makeEvent("key-x", "dead")),
+    );
+
+    const snapshot = queue.snapshotPending();
+
+    expect(snapshot.pendingCount).toBe(2);
+    expect(snapshot.pending).toHaveLength(2);
+    expect(snapshot.pending[0]).toMatchObject({
+      source: "slack",
+      correlationKey: "key-1",
+    });
+    expect(snapshot.pending[0]).not.toHaveProperty("payload");
+    expect(snapshot.pending[1]).toMatchObject({
+      source: "slack",
+      correlationKey: "key-2",
+      interrupt: true,
+    });
+  });
+
+  it("reports snapshot read failures explicitly", () => {
+    const handler = ackHandler();
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    rmSync(queueDir, { recursive: true, force: true });
+
+    const snapshot = queue.snapshotPending();
+
+    expect(snapshot).toMatchObject({
+      pending: [],
+      pendingCount: 0,
+      readError: expect.any(String),
+    });
+  });
+
   it("handles corrupt files without crashing", async () => {
     const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
