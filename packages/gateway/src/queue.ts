@@ -12,11 +12,16 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import { createLogger, logError, logInfo } from "@thor/common";
 
 const log = createLogger("event-queue");
+
+function compareEvents(a: QueuedEvent, b: QueuedEvent): number {
+  return a.sourceTs - b.sourceTs || a.id.localeCompare(b.id);
+}
 
 export interface QueuedEvent<T = unknown> {
   /** Unique event ID for dedup (e.g. Slack event_id). Retries with the same ID overwrite the file. */
@@ -116,7 +121,8 @@ export class EventQueue {
   /** Write an event to the queue directory (synchronous, atomic). */
   enqueue(event: QueuedEvent): void {
     const ts = event.sourceTs.toString().padStart(15, "0");
-    const filename = `${ts}_${event.id}.json`;
+    const idHash = createHash("sha256").update(event.id).digest("hex");
+    const filename = `${ts}_${idHash}.json`;
     const tmpPath = join(this.dir, `.${filename}.tmp`);
     const finalPath = join(this.dir, filename);
 
@@ -193,6 +199,7 @@ export class EventQueue {
         // Ignore unreadable/corrupt files for snapshot purposes.
       }
     }
+    pending.sort((a, b) => a.sourceTs - b.sourceTs || a.id.localeCompare(b.id));
 
     return {
       pending,
@@ -236,6 +243,7 @@ export class EventQueue {
 
     for (const [key, entries] of byKey) {
       if (this.processing.has(key)) continue;
+      entries.sort((a, b) => compareEvents(a.event, b.event));
 
       // When interrupt events exist, readiness is based on interrupt events only
       // (non-interrupt events get swept in but don't delay the batch).
