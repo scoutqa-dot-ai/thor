@@ -18,6 +18,7 @@ const GitHubInstallationSchema = z.object({
 
 const GitHubRepositorySchema = z.object({
   full_name: z.string(),
+  default_branch: z.string().optional(),
 });
 
 const GitHubPullRequestRefSchema = z.object({
@@ -129,11 +130,42 @@ export const CheckSuiteCompletedEventSchema = z.object({
   }),
 });
 
+export const PushEventSchema = z.object({
+  event_type: z.literal("push"),
+  ref: z.string(),
+  before: z.string(),
+  after: z.string(),
+  created: z.boolean().optional(),
+  deleted: z.boolean().optional(),
+  forced: z.boolean().optional(),
+  installation: GitHubInstallationSchema,
+  repository: GitHubRepositorySchema.extend({ default_branch: z.string() }),
+  sender: GitHubSenderSchema,
+  pusher: z.object({ name: z.string().optional(), email: z.string().optional() }).optional(),
+  head_commit: z
+    .object({
+      id: z.string().optional(),
+      message: z.string().optional(),
+      url: z.string().optional(),
+      timestamp: IsoDateTimeSchema.optional(),
+    })
+    .nullable()
+    .optional(),
+  commits: z.array(z.object({ id: z.string().optional() })).optional(),
+});
+
 function withEventType(raw: unknown): unknown {
   if (!raw || typeof raw !== "object") return raw;
   const obj = raw as Record<string, unknown>;
   if (typeof obj.event_type === "string") return raw;
   if ("check_suite" in obj) return { ...obj, event_type: "check_suite" };
+  if (
+    typeof obj.ref === "string" &&
+    typeof obj.before === "string" &&
+    typeof obj.after === "string"
+  ) {
+    return { ...obj, event_type: "push" };
+  }
   if ("issue" in obj) return { ...obj, event_type: "issue_comment" };
   if ("pull_request" in obj && "comment" in obj) {
     return { ...obj, event_type: "pull_request_review_comment" };
@@ -151,6 +183,7 @@ export const GitHubWebhookEnvelopeSchema = z.preprocess(
     PullRequestReviewCommentTypedEnvelopeSchema,
     PullRequestReviewTypedEnvelopeSchema,
     CheckSuiteCompletedEventSchema,
+    PushEventSchema,
   ]),
 );
 
@@ -163,6 +196,7 @@ export type PullRequestReviewCommentEvent = z.infer<
 >;
 export type PullRequestReviewEvent = z.infer<typeof PullRequestReviewTypedEnvelopeSchema>;
 export type CheckSuiteCompletedEvent = z.infer<typeof CheckSuiteCompletedEventSchema>;
+export type PushEvent = z.infer<typeof PushEventSchema>;
 
 export type GitHubIgnoreReason =
   | "pure_issue_comment_unsupported"
@@ -230,6 +264,10 @@ export function isPendingBranchResolveKey(key: string): boolean {
 }
 
 export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number {
+  if (isPushEvent(raw)) {
+    const ts = raw.head_commit?.timestamp ? Date.parse(raw.head_commit.timestamp) : NaN;
+    return Number.isFinite(ts) ? ts : Date.now();
+  }
   const iso = isIssueCommentEvent(raw)
     ? raw.comment.created_at
     : isPullRequestReviewCommentEvent(raw)
@@ -241,6 +279,7 @@ export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number {
 }
 
 export function getGitHubEventBranch(raw: GitHubWebhookEvent): string | null {
+  if (isPushEvent(raw)) return extractGitHubBranchFromRef(raw.ref);
   if (isIssueCommentEvent(raw)) return null;
   if (isCheckSuiteCompletedEvent(raw)) return raw.check_suite.head_branch?.trim() || null;
   return raw.pull_request.head.ref;
@@ -248,14 +287,21 @@ export function getGitHubEventBranch(raw: GitHubWebhookEvent): string | null {
 
 export function getGitHubEventType(
   raw: GitHubWebhookEvent,
-): "issue_comment" | "pull_request_review_comment" | "pull_request_review" | "check_suite" {
+): "issue_comment" | "pull_request_review_comment" | "pull_request_review" | "check_suite" | "push" {
   return raw.event_type;
+}
+
+export function extractGitHubBranchFromRef(ref: string): string | null {
+  const prefix = "refs/heads/";
+  if (!ref.startsWith(prefix)) return null;
+  const branch = ref.slice(prefix.length);
+  return branch.trim() ? branch : null;
 }
 
 export function getGitHubEventNumber(raw: GitHubWebhookEvent): number {
   if (isIssueCommentEvent(raw)) return raw.issue.number;
-  if (isCheckSuiteCompletedEvent(raw)) {
-    throw new Error("check_suite events do not have a single routing number");
+  if (isCheckSuiteCompletedEvent(raw) || isPushEvent(raw)) {
+    throw new Error(`${raw.event_type} events do not have a single routing number`);
   }
   return raw.pull_request.number;
 }
@@ -320,6 +366,7 @@ export function shouldIgnoreGitHubEvent(
   raw: GitHubWebhookEvent,
   options: { mentionLogins: string[]; botId: number },
 ): GitHubIgnoreReason | null {
+  if (isPushEvent(raw)) return null;
   if (isCheckSuiteCompletedEvent(raw)) return null;
   if (isIssueCommentEvent(raw)) return shouldIgnoreIssueCommentEvent(raw, options);
   if (isPullRequestReviewCommentEvent(raw)) {
@@ -332,6 +379,10 @@ export function isCheckSuiteCompletedEvent(
   raw: GitHubWebhookEvent,
 ): raw is CheckSuiteCompletedEvent {
   return raw.event_type === "check_suite";
+}
+
+export function isPushEvent(raw: GitHubWebhookEvent): raw is PushEvent {
+  return raw.event_type === "push";
 }
 
 export function isIssueCommentEvent(raw: GitHubWebhookEvent): raw is IssueCommentEvent {
