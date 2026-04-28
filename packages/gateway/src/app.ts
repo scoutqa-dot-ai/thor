@@ -39,11 +39,19 @@ import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from ".
 import {
   buildCorrelationKey,
   buildPendingBranchResolveKey,
+  getGitHubEventBranch,
+  getGitHubEventNumber,
   getGitHubEventSourceTs,
+  getGitHubEventType,
   GitHubWebhookEnvelopeSchema,
+  isIssueCommentEvent,
   isPendingBranchResolveKey,
-  type NormalizedGitHubEvent,
-  normalizeGitHubEvent,
+  isPullRequestReviewCommentEvent,
+  isPullRequestReviewEvent,
+  shouldIgnoreIssueCommentEvent,
+  shouldIgnorePullRequestReviewCommentEvent,
+  shouldIgnorePullRequestReviewEvent,
+  type GitHubQueuedPayload,
   verifyGitHubSignature,
 } from "./github.js";
 
@@ -55,7 +63,7 @@ interface CronQueuedEvent extends QueuedEvent<CronPayload> {
   source: "cron";
 }
 
-interface GitHubQueuedEvent extends QueuedEvent<NormalizedGitHubEvent> {
+interface GitHubQueuedEvent extends QueuedEvent<GitHubQueuedPayload> {
   source: "github";
 }
 
@@ -69,6 +77,24 @@ function isCronEvent(e: QueuedEvent): e is CronQueuedEvent {
 
 function isGitHubEvent(e: QueuedEvent): e is GitHubQueuedEvent {
   return e.source === "github";
+}
+
+function isGitHubQueuedPayload(payload: unknown): payload is GitHubQueuedPayload {
+  if (!payload || typeof payload !== "object") return false;
+  const candidate = payload as {
+    v?: unknown;
+    event?: unknown;
+    deliveryId?: unknown;
+    localRepo?: unknown;
+    resolvedBranch?: unknown;
+  };
+  return (
+    candidate.v === 2 &&
+    typeof candidate.deliveryId === "string" &&
+    typeof candidate.localRepo === "string" &&
+    (candidate.resolvedBranch === undefined || typeof candidate.resolvedBranch === "string") &&
+    GitHubWebhookEnvelopeSchema.safeParse(candidate.event).success
+  );
 }
 
 const log = createLogger("gateway");
@@ -226,6 +252,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       };
 
       try {
+        if (githubEvents.some((event) => !isGitHubQueuedPayload(event.payload))) {
+          reject("legacy_payload_shape");
+          logTrigger(logPrefix, "dropped", "legacy_payload_shape");
+          return;
+        }
+
         const plan = await planBatchDispatch({
           slackEvents: slackEvents.map((event) => event.payload),
           cronEvents: cronEvents.map((event) => event.payload),
@@ -647,30 +679,42 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const normalized = normalizeGitHubEvent(parsed.data, {
-      localRepo,
-      mentionLogins: githubMentionLogins,
-      botId: githubAppBotId,
-    });
-    if ("ignored" in normalized) {
+    const eventType = getGitHubEventType(parsed.data);
+    if (eventType !== eventTypeHeader) {
       logGitHubIgnored({
         deliveryId,
         repoFullName,
         eventType: eventTypeHeader,
         action: parsed.data.action,
-        reason: normalized.reason,
+        reason: "event_unsupported",
       });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
 
-    if (normalized.eventType !== eventTypeHeader) {
+    const ignoreReason = isIssueCommentEvent(parsed.data)
+      ? shouldIgnoreIssueCommentEvent(parsed.data, {
+          mentionLogins: githubMentionLogins,
+          botId: githubAppBotId,
+        })
+      : isPullRequestReviewCommentEvent(parsed.data)
+        ? shouldIgnorePullRequestReviewCommentEvent(parsed.data, {
+            mentionLogins: githubMentionLogins,
+            botId: githubAppBotId,
+          })
+        : isPullRequestReviewEvent(parsed.data)
+          ? shouldIgnorePullRequestReviewEvent(parsed.data, {
+              mentionLogins: githubMentionLogins,
+              botId: githubAppBotId,
+            })
+          : "event_unsupported";
+    if (ignoreReason) {
       logGitHubIgnored({
         deliveryId,
         repoFullName,
         eventType: eventTypeHeader,
-        action: normalized.action,
-        reason: "event_unsupported",
+        action: parsed.data.action,
+        reason: ignoreReason,
       });
       res.status(200).json({ ok: true, ignored: true });
       return;
@@ -678,15 +722,16 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const sourceTs = getGitHubEventSourceTs(parsed.data);
     const delayMs = githubMentionDelay;
-    const correlationKey = normalized.branch
-      ? resolveCorrelationKeys([buildCorrelationKey(normalized.localRepo, normalized.branch)])
-      : buildPendingBranchResolveKey(normalized.localRepo, normalized.number);
+    const branch = getGitHubEventBranch(parsed.data);
+    const correlationKey = branch
+      ? resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)])
+      : buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
 
     queue.enqueue({
       id: deliveryId,
       source: "github",
       correlationKey,
-      payload: normalized,
+      payload: { v: 2, event: parsed.data, deliveryId, localRepo },
       receivedAt: new Date().toISOString(),
       sourceTs,
       readyAt: sourceTs + delayMs,
@@ -696,10 +741,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     logInfo(log, "github_event_accepted", {
       deliveryId,
-      repoFullName: normalized.repoFullName,
-      localRepo: normalized.localRepo,
-      eventType: normalized.eventType,
-      action: normalized.action,
+      repoFullName,
+      localRepo,
+      eventType,
+      action: parsed.data.action,
       correlationKey,
       interrupt: true,
       delayMs,

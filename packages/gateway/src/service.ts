@@ -13,8 +13,13 @@ import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
 import {
   buildCorrelationKey,
+  getGitHubEventNumber,
+  getGitHubEventType,
+  isIssueCommentEvent,
   isPendingBranchResolveKey,
-  type NormalizedGitHubEvent,
+  isPullRequestReviewCommentEvent,
+  type GitHubQueuedPayload,
+  type IssueCommentEvent,
 } from "./github.js";
 
 const log = createLogger("gateway-service");
@@ -63,7 +68,7 @@ export interface RunnerTriggerOptions {
 export interface BatchDispatchInput {
   slackEvents: SlackThreadEvent[];
   cronEvents: CronPayload[];
-  githubEvents: NormalizedGitHubEvent[];
+  githubEvents: GitHubQueuedPayload[];
   correlationKey: string;
   deps: RunnerDeps;
   slackMcpDeps: SlackMcpDeps;
@@ -90,7 +95,7 @@ export type BatchDispatchPlan =
       logPrefix: "github";
       fromCorrelationKey: string;
       toCorrelationKey: string;
-      githubEvents: NormalizedGitHubEvent[];
+      githubEvents: GitHubQueuedPayload[];
     };
 
 interface DispatchPart {
@@ -154,7 +159,7 @@ function renderCronPrompt(events: CronPayload[]): string {
   );
 }
 
-function renderGitHubPromptSection(events: NormalizedGitHubEvent[]): string {
+function renderGitHubPromptSection(events: GitHubQueuedPayload[]): string {
   return renderHeadedSection("GitHub", events, renderGitHubPrompt(events));
 }
 
@@ -244,13 +249,13 @@ function resolveSlackBatchDirectory(
   });
 }
 
-function resolveGitHubBatchDirectory(events: NormalizedGitHubEvent[]): {
+function resolveGitHubBatchDirectory(events: GitHubQueuedPayload[]): {
   directory?: string;
   reason?: string;
 } {
-  return collectBatchDirectory("GitHub", events, (event) => {
-    const directory = resolveRepoDirectory(event.localRepo);
-    if (!directory) return { reason: `repo directory not found for ${event.localRepo}` };
+  return collectBatchDirectory("GitHub", events, (payload) => {
+    const directory = resolveRepoDirectory(payload.localRepo);
+    if (!directory) return { reason: `repo directory not found for ${payload.localRepo}` };
     return { directory };
   });
 }
@@ -336,13 +341,16 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     }
 
     const latest = input.githubEvents[input.githubEvents.length - 1];
+    if (!latest || !isIssueCommentEvent(latest.event)) {
+      return { kind: "drop", logPrefix, reason: "branch_lookup_failed" };
+    }
     try {
       const branchInfo = await resolveGitHubPrHead(
-        latest,
+        latest.event,
         input.remoteCliUrl,
         input.deps.fetchImpl,
       );
-      if (branchInfo.headRepoFullName !== latest.repoFullName) {
+      if (branchInfo.headRepoFullName !== latest.event.repository.full_name) {
         return { kind: "drop", logPrefix, reason: "fork_pr_unsupported" };
       }
 
@@ -351,7 +359,10 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
         logPrefix: "github",
         fromCorrelationKey: input.correlationKey,
         toCorrelationKey: buildCorrelationKey(latest.localRepo, branchInfo.ref),
-        githubEvents: input.githubEvents.map((event) => ({ ...event, branch: branchInfo.ref })),
+        githubEvents: input.githubEvents.map((payload) => ({
+          ...payload,
+          resolvedBranch: branchInfo.ref,
+        })),
       };
     } catch (error) {
       if (error instanceof TerminalGitHubDispatchError) {
@@ -614,7 +625,7 @@ export async function triggerRunnerCron(
 }
 
 export async function triggerRunnerGitHub(
-  events: NormalizedGitHubEvent[],
+  events: GitHubQueuedPayload[],
   correlationKey: string,
   deps: RunnerDeps,
   remoteCliUrl: string,
@@ -639,14 +650,14 @@ export async function triggerRunnerGitHub(
 }
 
 export async function resolveGitHubPrHead(
-  event: NormalizedGitHubEvent,
+  event: IssueCommentEvent,
   remoteCliUrl: string,
   fetchImpl?: typeof fetch,
 ): Promise<GitHubPrHeadResult> {
   const params = new URLSearchParams({
-    installation: String(event.installationId),
-    repo: event.repoFullName,
-    number: String(event.number),
+    installation: String(event.installation.id),
+    repo: event.repository.full_name,
+    number: String(event.issue.number),
   });
   const url = `${remoteCliUrl}/github/pr-head?${params.toString()}`;
 
@@ -722,8 +733,8 @@ export async function resolveGitHubPrHead(
   );
 }
 
-function renderGitHubPrompt(events: NormalizedGitHubEvent[]): string {
-  const lines = events.map((event) => renderGitHubPromptLine(event));
+function renderGitHubPrompt(events: GitHubQueuedPayload[]): string {
+  const lines = events.map((payload) => renderGitHubPromptLine(payload));
   let selected = [...lines];
   let prompt = selected.join("\n\n");
 
@@ -744,9 +755,23 @@ function renderGitHubPrompt(events: NormalizedGitHubEvent[]): string {
   return prompt;
 }
 
-function renderGitHubPromptLine(event: NormalizedGitHubEvent): string {
-  const body = truncate(event.body.replace(/\s+/g, " ").trim(), GITHUB_PROMPT_EVENT_BODY_MAX);
-  return `[${event.senderLogin}] ${event.action} on ${event.repoFullName}#${event.number} (${event.eventType}): ${body}\n${event.htmlUrl}`;
+function renderGitHubPromptLine(payload: GitHubQueuedPayload): string {
+  const { event } = payload;
+  const senderLogin = event.sender.login.toLowerCase();
+  const eventType = getGitHubEventType(event);
+  const number = getGitHubEventNumber(event);
+  const rawBody = isIssueCommentEvent(event)
+    ? event.comment.body
+    : isPullRequestReviewCommentEvent(event)
+      ? event.comment.body
+      : (event.review.body?.trim() ?? "");
+  const htmlUrl = isIssueCommentEvent(event)
+    ? event.comment.html_url
+    : isPullRequestReviewCommentEvent(event)
+      ? event.comment.html_url
+      : event.review.html_url;
+  const body = truncate(rawBody.replace(/\s+/g, " ").trim(), GITHUB_PROMPT_EVENT_BODY_MAX);
+  return `[${senderLogin}] ${event.action} on ${event.repository.full_name}#${number} (${eventType}): ${body}\n${htmlUrl}`;
 }
 
 async function forwardApprovalNotification(

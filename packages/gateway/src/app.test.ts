@@ -56,6 +56,16 @@ function readQueuedEvents(queueDir: string): Array<Record<string, unknown>> {
     );
 }
 
+function readDeadLetterEvents(queueDir: string): Array<Record<string, unknown>> {
+  const deadLetterDir = join(queueDir, "dead-letter");
+  return readdirSync(deadLetterDir)
+    .filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
+    .map(
+      (entry) =>
+        JSON.parse(readFileSync(join(deadLetterDir, entry), "utf8")) as Record<string, unknown>,
+    );
+}
+
 async function withServer<T>(
   fetchImpl: typeof fetch,
   run: (baseUrl: string, queue: EventQueue, queueDir: string) => Promise<T>,
@@ -361,11 +371,17 @@ describe("gateway", () => {
           delayMs: 3000,
           interrupt: true,
           payload: {
-            source: "github",
-            eventType: "pull_request_review_comment",
-            repoFullName: "scoutqa-dot-ai/thor",
+            v: 2,
+            deliveryId: "delivery-1",
             localRepo: "thor",
-            branch: "feature/refactor",
+            event: {
+              action: "created",
+              repository: { full_name: "scoutqa-dot-ai/thor" },
+              pull_request: {
+                number: 42,
+                head: { ref: "feature/refactor" },
+              },
+            },
           },
         });
         expect(fetchImpl).not.toHaveBeenCalled();
@@ -543,8 +559,13 @@ describe("gateway", () => {
           delayMs: 3000,
           interrupt: true,
           payload: {
-            eventType: "issue_comment",
-            branch: null,
+            v: 2,
+            deliveryId: "delivery-branch-pending",
+            localRepo: "thor",
+            event: {
+              action: "created",
+              issue: { number: 12 },
+            },
           },
         });
       },
@@ -554,6 +575,50 @@ describe("gateway", () => {
         githubAppBotId: 7777,
       },
     );
+  });
+
+  it("dead-letters legacy GitHub queue payloads", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (_baseUrl, queue, queueDir) => {
+      writeFileSync(
+        join(queueDir, "000000000000000_legacy-github.json"),
+        JSON.stringify({
+          id: "legacy-github",
+          source: "github",
+          correlationKey: "git:branch:thor:main",
+          receivedAt: new Date(0).toISOString(),
+          sourceTs: 0,
+          readyAt: 0,
+          interrupt: true,
+          payload: {
+            source: "github",
+            eventType: "issue_comment",
+            action: "created",
+            installationId: 126669985,
+            repoFullName: "scoutqa-dot-ai/thor",
+            localRepo: "thor",
+            senderLogin: "alice",
+            htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+            number: 42,
+            body: "@thor please review this branch",
+            branch: "main",
+          },
+        }),
+      );
+
+      await queue.flush();
+
+      expect(readQueuedEvents(queueDir)).toHaveLength(0);
+      const deadLetters = readDeadLetterEvents(queueDir);
+      expect(deadLetters).toHaveLength(1);
+      expect(deadLetters[0]).toMatchObject({
+        id: "legacy-github",
+        source: "github",
+        payload: { eventType: "issue_comment" },
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
   });
 
   it("acknowledges subscribed non-app_mention events without triggering runner calls", async () => {

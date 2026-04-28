@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunnerDeps, SlackMcpDeps } from "./service.js";
-import type { NormalizedGitHubEvent } from "./github.js";
+import type { GitHubQueuedPayload } from "./github.js";
 
 // Helper: create a ReadableStream from NDJSON lines
 function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
@@ -33,18 +33,25 @@ function textResponse(text: string, status: number): Response {
   return new Response(text, { status, headers: { "content-type": "text/plain" } });
 }
 
-const githubEventBase: NormalizedGitHubEvent = {
-  source: "github",
-  eventType: "issue_comment",
-  action: "created",
-  installationId: 126669985,
-  repoFullName: "scoutqa-dot-ai/thor",
+const githubEventBase: GitHubQueuedPayload = {
+  v: 2,
+  deliveryId: "delivery-1",
   localRepo: "thor",
-  senderLogin: "alice",
-  htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
-  number: 42,
-  body: "@thor please review this branch",
-  branch: null,
+  event: {
+    action: "created",
+    installation: { id: 126669985 },
+    repository: { full_name: "scoutqa-dot-ai/thor" },
+    sender: { id: 1001, login: "alice", type: "User" },
+    issue: {
+      number: 42,
+      pull_request: { html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42" },
+    },
+    comment: {
+      body: "@thor please review this branch",
+      html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+      created_at: "2026-04-24T11:00:00Z",
+    },
+  },
 };
 
 describe("resolveApproval", () => {
@@ -549,6 +556,115 @@ describe("triggerRunnerGitHub", () => {
     expect(onAccepted).toHaveBeenCalled();
   });
 
+  it("returns reroute plan with resolvedBranch on the payload", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ ref: "feature/refactor", headRepoFullName: "scoutqa-dot-ai/thor" }),
+    );
+
+    const { planBatchDispatch } = await import("./service.js");
+    const plan = await planBatchDispatch({
+      slackEvents: [],
+      cronEvents: [],
+      githubEvents: [githubEventBase],
+      correlationKey: "pending:branch-resolve:thor:42",
+      deps,
+      slackMcpDeps: { slackMcpUrl: "", fetchImpl: mockFetch },
+      remoteCliUrl: "http://remote-cli:3004",
+    });
+
+    expect(plan).toMatchObject({
+      kind: "reroute",
+      toCorrelationKey: "git:branch:thor:feature/refactor",
+      githubEvents: [{ resolvedBranch: "feature/refactor" }],
+    });
+  });
+
+  it("renders pull_request_review_comment prompt bytes from the parsed envelope", async () => {
+    mockFetch.mockResolvedValueOnce(
+      ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
+    );
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [
+        {
+          v: 2,
+          deliveryId: "delivery-review-comment",
+          localRepo: "thor",
+          event: {
+            action: "created",
+            installation: { id: 126669985 },
+            repository: { full_name: "scoutqa-dot-ai/thor" },
+            sender: { id: 1001, login: "Alice", type: "User" },
+            pull_request: {
+              number: 42,
+              user: { id: 1001, login: "alice" },
+              head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
+              base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+            },
+            comment: {
+              body: "Please   check this @thor",
+              html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+              created_at: "2026-04-24T11:00:00Z",
+            },
+          },
+        },
+      ],
+      "git:branch:thor:feature/refactor",
+      deps,
+      "http://remote-cli:3004",
+    );
+
+    expect(result.busy).toBe(false);
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
+    expect(triggerBody.prompt).toBe(
+      "[alice] created on scoutqa-dot-ai/thor#42 (pull_request_review_comment): Please check this @thor\nhttps://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+    );
+  });
+
+  it("renders pull_request_review prompt bytes from the parsed envelope", async () => {
+    mockFetch.mockResolvedValueOnce(
+      ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
+    );
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [
+        {
+          v: 2,
+          deliveryId: "delivery-review",
+          localRepo: "thor",
+          event: {
+            action: "submitted",
+            installation: { id: 126669985 },
+            repository: { full_name: "scoutqa-dot-ai/thor" },
+            sender: { id: 1001, login: "Alice", type: "User" },
+            pull_request: {
+              number: 42,
+              user: { id: 1001, login: "alice" },
+              head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
+              base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+            },
+            review: {
+              body: "  Looks   good @thor  ",
+              html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#pullrequestreview-1",
+              submitted_at: "2026-04-24T11:00:00Z",
+            },
+          },
+        },
+      ],
+      "git:branch:thor:feature/refactor",
+      deps,
+      "http://remote-cli:3004",
+    );
+
+    expect(result.busy).toBe(false);
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
+    expect(triggerBody.prompt).toBe(
+      "[alice] submitted on scoutqa-dot-ai/thor#42 (pull_request_review): Looks good @thor\nhttps://github.com/scoutqa-dot-ai/thor/pull/42#pullrequestreview-1",
+    );
+  });
+
   it("maps branch lookup 403 to terminal installation_gone rejection", async () => {
     mockFetch.mockResolvedValueOnce(textResponse("forbidden", 403));
     const onRejected = vi.fn();
@@ -659,7 +775,28 @@ describe("triggerRunnerGitHub", () => {
 
     const { triggerRunnerGitHub } = await import("./service.js");
     const result = await triggerRunnerGitHub(
-      [{ ...githubEventBase, branch: "main" }],
+      [
+        {
+          ...githubEventBase,
+          event: {
+            action: "created",
+            installation: { id: 126669985 },
+            repository: { full_name: "scoutqa-dot-ai/thor" },
+            sender: { id: 1001, login: "alice", type: "User" },
+            pull_request: {
+              number: 42,
+              user: { id: 1001, login: "alice" },
+              head: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+              base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+            },
+            comment: {
+              body: "@thor please review this branch",
+              html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+              created_at: "2026-04-24T11:00:00Z",
+            },
+          },
+        },
+      ],
       "git:branch:thor:main",
       deps,
       "http://remote-cli:3004",

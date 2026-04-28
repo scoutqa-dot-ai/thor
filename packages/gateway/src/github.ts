@@ -107,19 +107,13 @@ export type GitHubIgnoreReason =
   | "non_mention_comment"
   | "event_unsupported";
 
-export interface NormalizedGitHubEvent {
-  source: "github";
-  eventType: "issue_comment" | "pull_request_review_comment" | "pull_request_review";
-  action: "created" | "submitted";
-  installationId: number;
-  repoFullName: string;
+export type GitHubQueuedPayload = {
+  v: 2;
+  event: GitHubWebhookEvent;
+  deliveryId: string;
   localRepo: string;
-  senderLogin: string;
-  htmlUrl: string;
-  number: number;
-  body: string;
-  branch: string | null;
-}
+  resolvedBranch?: string;
+};
 
 export function verifyGitHubSignature(input: {
   secret: string;
@@ -185,6 +179,19 @@ export function getGitHubEventBranch(raw: GitHubWebhookEvent): string | null {
   return raw.pull_request.head.ref;
 }
 
+export function getGitHubEventType(
+  raw: GitHubWebhookEvent,
+): "issue_comment" | "pull_request_review_comment" | "pull_request_review" {
+  if (isIssueCommentEvent(raw)) return "issue_comment";
+  if (isPullRequestReviewCommentEvent(raw)) return "pull_request_review_comment";
+  return "pull_request_review";
+}
+
+export function getGitHubEventNumber(raw: GitHubWebhookEvent): number {
+  if (isIssueCommentEvent(raw)) return raw.issue.number;
+  return raw.pull_request.number;
+}
+
 export function shouldIgnoreIssueCommentEvent(
   raw: IssueCommentEvent,
   options: { mentionLogins: string[]; botId: number },
@@ -239,67 +246,6 @@ export function shouldIgnorePullRequestReviewEvent(
     return "non_mention_comment";
   }
   return null;
-}
-
-export function normalizeGitHubEvent(
-  raw: GitHubWebhookEnvelope,
-  options: { localRepo: string; mentionLogins: string[]; botId: number },
-): NormalizedGitHubEvent | { ignored: true; reason: GitHubIgnoreReason } {
-  const senderLogin = raw.sender.login.toLowerCase();
-
-  if (isIssueCommentEvent(raw)) {
-    const reason = shouldIgnoreIssueCommentEvent(raw, options);
-    if (reason) return { ignored: true, reason };
-    return {
-      source: "github",
-      eventType: "issue_comment",
-      action: "created",
-      installationId: raw.installation.id,
-      repoFullName: raw.repository.full_name,
-      localRepo: options.localRepo,
-      senderLogin,
-      htmlUrl: raw.comment.html_url,
-      number: raw.issue.number,
-      body: raw.comment.body,
-      branch: null,
-    };
-  }
-
-  if (isPullRequestReviewCommentEvent(raw)) {
-    const reason = shouldIgnorePullRequestReviewCommentEvent(raw, options);
-    if (reason) return { ignored: true, reason };
-    return {
-      source: "github",
-      eventType: "pull_request_review_comment",
-      action: "created",
-      installationId: raw.installation.id,
-      repoFullName: raw.repository.full_name,
-      localRepo: options.localRepo,
-      senderLogin,
-      htmlUrl: raw.comment.html_url,
-      number: raw.pull_request.number,
-      body: raw.comment.body,
-      branch: raw.pull_request.head.ref,
-    };
-  }
-
-  const reason = shouldIgnorePullRequestReviewEvent(raw, options);
-  if (reason) return { ignored: true, reason };
-  const body = raw.review.body?.trim() ?? "";
-
-  return {
-    source: "github",
-    eventType: "pull_request_review",
-    action: "submitted",
-    installationId: raw.installation.id,
-    repoFullName: raw.repository.full_name,
-    localRepo: options.localRepo,
-    senderLogin,
-    htmlUrl: raw.review.html_url,
-    number: raw.pull_request.number,
-    body,
-    branch: raw.pull_request.head.ref,
-  };
 }
 
 export function isIssueCommentEvent(raw: GitHubWebhookEvent): raw is IssueCommentEvent {
