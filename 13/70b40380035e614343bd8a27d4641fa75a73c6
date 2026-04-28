@@ -1,0 +1,23 @@
+docs/plan/2026042703_internal-exec-endpoint.md
+  6de17ac82cb860b0 23,34-35,38,68-70,74-76,84-85,97,109-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1370b40380035e614343bd8a27d4641fa75a73c6",
+  "prompts": {
+    "6de17ac82cb860b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f0e48227-c9c9-4a6b-95cd-185785eac7f9",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 15,
+      "total_deletions": 17,
+      "accepted_lines": 15,
+      "overriden_lines": 0
+    }
+  }
+}
