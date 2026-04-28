@@ -52,10 +52,11 @@ curl -sS -X POST https://slack.com/api/chat.postMessage \
   --data-urlencode 'text=Looking into this now. I will report back in-thread.'
 ```
 
-When posting to Slack, preserve raw JSON stdout from `chat.postMessage` (do not
-pipe through formatters that replace the original JSON body). For multiline
-message text or fragile quoting, use `--data-urlencode "text@${TEXT_FILE}"`
-with a unique temp file under `/tmp`.
+When posting to Slack, inline `text=...` is only for short single-line replies.
+If the message has paragraph breaks, bullets, code spans, or quoting feels
+fragile, write the body to a unique temp file under `/tmp` and send it with
+`--data-urlencode "text@$TEXT_FILE"`. Do not send multiline Slack text as an
+inline shell argument.
 
 For any Slack task beyond a simple post, use the `slack` skill.
 
