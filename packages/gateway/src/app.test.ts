@@ -517,9 +517,17 @@ describe("gateway", () => {
           status: 200,
         });
       }
-      if (url.startsWith("http://remote-cli:3004/github/pr-head?")) {
+      if (url === "http://remote-cli:3004/internal/exec") {
         return new Response(
-          JSON.stringify({ ref: "feature/refactor", headRepoFullName: "acme/thor" }),
+          JSON.stringify({
+            stdout: JSON.stringify({
+              headRefName: "feature/refactor",
+              headRepositoryOwner: { login: "acme" },
+              headRepository: { name: "thor" },
+            }),
+            stderr: "",
+            exitCode: 0,
+          }),
           { status: 200 },
         );
       }

@@ -306,6 +306,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           slackMcpDeps,
           remoteCliUrl,
           internalSecret: config.internalSecret,
+          internalExec,
           interrupt: hasInterrupt,
           onAccepted: ack,
           onRejected: reject,

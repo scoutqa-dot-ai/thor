@@ -33,6 +33,14 @@ function textResponse(text: string, status: number): Response {
   return new Response(text, { status, headers: { "content-type": "text/plain" } });
 }
 
+function execResponse(stdout: unknown, stderr = "", exitCode = 0): Response {
+  return jsonResponse({
+    stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout),
+    stderr,
+    exitCode,
+  });
+}
+
 const githubEventBase: GitHubWebhookEvent = {
   event_type: "issue_comment",
   action: "created",
@@ -539,7 +547,11 @@ describe("triggerRunnerGitHub", () => {
   it("resolves pending branch then dispatches runner with canonical correlation key", async () => {
     mockFetch
       .mockResolvedValueOnce(
-        jsonResponse({ ref: "feature/refactor", headRepoFullName: "scoutqa-dot-ai/thor" }),
+        execResponse({
+          headRefName: "feature/refactor",
+          headRepositoryOwner: { login: "scoutqa-dot-ai" },
+          headRepository: { name: "thor" },
+        }),
       )
       .mockResolvedValueOnce(
         ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
@@ -559,11 +571,23 @@ describe("triggerRunnerGitHub", () => {
     );
 
     expect(result.busy).toBe(false);
-    expect(mockFetch.mock.calls[0][0]).toContain(
-      "/github/pr-head?installation=126669985&repo=scoutqa-dot-ai%2Fthor&number=42",
-    );
+    expect(mockFetch.mock.calls[0][0]).toBe("http://remote-cli:3004/internal/exec");
     expect(mockFetch.mock.calls[0][1]).toMatchObject({
+      method: "POST",
       headers: { "x-thor-internal-secret": "internal-secret" },
+    });
+    expect(JSON.parse(String(mockFetch.mock.calls[0][1]?.body))).toMatchObject({
+      bin: "gh",
+      args: [
+        "pr",
+        "view",
+        "42",
+        "--repo",
+        "scoutqa-dot-ai/thor",
+        "--json",
+        "headRefName,headRepository,headRepositoryOwner",
+      ],
+      cwd: "/workspace/repos/my-repo",
     });
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[1][1]?.body));
     expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
@@ -573,9 +597,15 @@ describe("triggerRunnerGitHub", () => {
   });
 
   it("returns reroute plan with the parsed event payload", async () => {
-    mockFetch.mockResolvedValueOnce(
-      jsonResponse({ ref: "feature/refactor", headRepoFullName: "scoutqa-dot-ai/thor" }),
-    );
+    const internalExec = vi.fn().mockResolvedValue({
+      stdout: JSON.stringify({
+        headRefName: "feature/refactor",
+        headRepositoryOwner: { login: "scoutqa-dot-ai" },
+        headRepository: { name: "thor" },
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
 
     const { planBatchDispatch } = await import("./service.js");
     const plan = await planBatchDispatch({
@@ -585,7 +615,7 @@ describe("triggerRunnerGitHub", () => {
       correlationKey: "pending:branch-resolve:thor:42",
       deps,
       slackMcpDeps: { slackMcpUrl: "", fetchImpl: mockFetch },
-      remoteCliUrl: "http://remote-cli:3004",
+      internalExec,
     });
 
     expect(plan).toMatchObject({
@@ -631,8 +661,8 @@ describe("triggerRunnerGitHub", () => {
     expect(JSON.parse(triggerBody.prompt)).toEqual([githubReviewCommentPayload(), githubEventBase]);
   });
 
-  it("maps branch lookup 403 to terminal installation_gone rejection", async () => {
-    mockFetch.mockResolvedValueOnce(textResponse("forbidden", 403));
+  it("maps gh auth failures to terminal installation_gone rejection", async () => {
+    mockFetch.mockResolvedValueOnce(execResponse("", "HTTP 403: forbidden", 1));
     const onRejected = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -652,8 +682,8 @@ describe("triggerRunnerGitHub", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("maps branch lookup 404 to terminal branch_not_found rejection", async () => {
-    mockFetch.mockResolvedValueOnce(textResponse("not found", 404));
+  it("maps gh not found failures to terminal branch_not_found rejection", async () => {
+    mockFetch.mockResolvedValueOnce(execResponse("", "HTTP 404: not found", 1));
     const onRejected = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -673,10 +703,8 @@ describe("triggerRunnerGitHub", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("maps exhausted 5xx branch lookup retries to terminal branch_lookup_failed", async () => {
-    mockFetch
-      .mockResolvedValueOnce(textResponse("upstream error", 500))
-      .mockResolvedValueOnce(textResponse("upstream error", 500));
+  it("maps gh lookup failures to terminal branch_lookup_failed", async () => {
+    mockFetch.mockResolvedValueOnce(execResponse("", "upstream error", 1));
     const onRejected = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -693,33 +721,10 @@ describe("triggerRunnerGitHub", () => {
 
     expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
     expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("maps exhausted timeout retries to terminal branch_lookup_failed", async () => {
-    const timeoutError = new Error("timed out");
-    timeoutError.name = "TimeoutError";
-    mockFetch.mockRejectedValue(timeoutError);
-    const onRejected = vi.fn();
-
-    const { triggerRunnerGitHub } = await import("./service.js");
-    const result = await triggerRunnerGitHub(
-      [githubEventBase],
-      "pending:branch-resolve:delivery-1",
-      deps,
-      "http://remote-cli:3004",
-      "internal-secret",
-      false,
-      undefined,
-      onRejected,
-    );
-
-    expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
-    expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-  });
-
-  it("maps exhausted network lookup retries to terminal branch_lookup_failed", async () => {
+  it("maps internal exec transport failures to terminal branch_lookup_failed", async () => {
     mockFetch.mockRejectedValue(new TypeError("fetch failed"));
     const onRejected = vi.fn();
 
@@ -737,7 +742,28 @@ describe("triggerRunnerGitHub", () => {
 
     expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
     expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps malformed gh output to terminal branch_lookup_failed", async () => {
+    mockFetch.mockResolvedValueOnce(execResponse({ headRefName: "feature/refactor" }));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      "internal-secret",
+      false,
+      undefined,
+      onRejected,
+    );
+
+    expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
+    expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("returns busy without ack for non-mention events", async () => {

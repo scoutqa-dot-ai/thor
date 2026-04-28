@@ -265,7 +265,7 @@ Files:
   - `isCheckSuiteCompletedEvent` type guard.
   - `getGitHubEventType` returns `"check_suite"` for the new variant.
   - `getGitHubEventBranch` returns `event.check_suite.head_branch`.
-  - If `head_branch` is null/empty, drop the event explicitly with a structured ignore reason such as `check_suite_branch_missing`. Do **not** fall through to the existing pending-branch resolve path: that path is issue-comment-specific and calls `/github/pr-head` with an issue/PR number. A `check_suite` event may contain `pull_requests[]`, but the current reroute code only accepts `IssueCommentEvent` and would drop non-issue-comment payloads as `branch_lookup_failed`.
+  - If `head_branch` is null/empty, drop the event explicitly with a structured ignore reason such as `check_suite_branch_missing`. Do **not** fall through to the existing pending-branch resolve path: that path is issue-comment-specific and resolves an issue/PR number through `gh pr view` via `/internal/exec`. A `check_suite` event may contain `pull_requests[]`, but the current reroute code only accepts `IssueCommentEvent` and would drop non-issue-comment payloads as `branch_lookup_failed`.
   - `getGitHubEventNumber` should not be used for `check_suite` routing. If future support for branchless `check_suite` events is needed, add a dedicated branch resolver based on `check_suite.pull_requests[]` instead of reusing the issue-comment pending key.
   - `getGitHubEventSourceTs` returns `Date.parse(event.check_suite.updated_at)`.
   - `shouldIgnoreGitHubEvent` returns `null` for `check_suite` (branch/session filtering happens in Phase 1; git sha/authorship filtering happens in Phase 2).
