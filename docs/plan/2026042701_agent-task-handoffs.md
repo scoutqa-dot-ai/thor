@@ -62,7 +62,7 @@ Run-id: `<YYYYMMDD-HHMMSS>-<slug>` (seconds granularity, e.g. `20260427-143052-m
 
 ### `README.md` shape
 
-Short, structured, scannable. The canonical schema lives inline in `docker/opencode/config/agents/build.md` (the orchestrator instructions) as a fenced skeleton; `coder.md` and `thinker.md` reference build.md's sections by name instead of duplicating the spec, and the static lint extracts the skeleton from build.md to validate it.
+Short, structured, scannable. The canonical schema lives inline in `docker/opencode/config/agents/build.md` (the orchestrator instructions) as a fenced skeleton; `coder.md` and `thinker.md` reference build.md's sections by name instead of duplicating the spec.
 
 Required literal field prefixes at the top (one per line, in this order, exact case, single space after the colon) so the runs are deterministically grep-able:
 
@@ -194,24 +194,17 @@ Bring the subagents into the protocol. **The exact post-edit text for each file 
   - Header parsing + `realpath` check (same).
   - Role split: `Role: plan` writes `plan.md` if useful, inserts an Artifacts row linking to it, appends a Log line; `Role: review` reads README + linked artifacts + worktree diff, replaces the `Verdict:` line with one of `BLOCK|SUBSTANTIVE|NIT`, optionally writes `review.md`.
   - Same fail-fast contract and same mutation rules.
-- A static lint in CI (or a one-shot script in `scripts/`) checks all three files (`build.md`, `coder.md`, `thinker.md`) for the magic strings: `Run dir:`, `Role:`, the verdict enum, the lifecycle enum. If any of the three drift, CI fails.
 
-**Exit criteria:** both subagent files contain the documented contract; the lint passes; a manual prompt-paste smoke ("Run dir: /workspace/runs/_missing\nRole: plan\n\nfoo") returns the expected `ERROR: README not found at /workspace/runs/_missing/README.md` from `thinker`, and `coder` rejects unsupported roles with `ERROR:`.
+**Exit criteria:** both subagent files contain the documented contract; a manual prompt-paste smoke ("Run dir: /workspace/runs/_missing\nRole: plan\n\nfoo") returns the expected `ERROR: README not found at /workspace/runs/_missing/README.md` from `thinker`, and `coder` rejects unsupported roles with `ERROR:`.
 
-### Phase 5 — Static + container test harness
+### Phase 5 — Verification
 
-Land verification before the integration phase, not as part of it.
+No static lint — see Decision Log for why. Verification is behavioral, against the running stack:
 
-- T1. Static lint: build.md / coder.md / thinker.md all reference the same magic strings (run via `scripts/lint-runs-protocol.sh` or similar).
-- T2. Schema validator: extract the README skeleton from `build.md` (the fenced block starting with `Run-ID:`) and validate both it and a sample populated README built from it; assert required fields present and enums valid.
-- T3. Container smoke: Phase 1's `mkdir/rmdir` test, automated.
-- T4. Mount audit: verify `opencode` has RW on `/workspace/runs/` and document that `runner` also has RW through the existing whole-workspace bind. v1 accepts this dual-writer surface; subagents own README mutations, runner may observe or perform future hard validators.
-- T5. Contract lint: assert `build.md`, `coder.md`, and `thinker.md` all carry the `Run dir:`, `Role:`, `ERROR:`, realpath, verdict, and lifecycle contract strings.
-- T6. Schema validator: generate a sample populated README from the build.md skeleton and assert field order, required sections, and enum values.
-- T7. Container smoke: validate the Docker Compose mount wiring statically here; run the live `mkdir/rmdir /workspace/runs/_smoke` check during Phase 6 with the stack up.
-- T8. Manual subagent smoke: with the stack up, dispatch missing-README, log-append, verdict enum, re-narration, and path traversal prompts from Phase 6.
+- **Mount smoke.** `docker compose up` succeeds; `mkdir /workspace/runs/_smoke && rmdir` works inside `opencode`. `runner` retains RW on `/workspace/runs/` through the existing whole-workspace bind — v1 accepts this dual-writer surface.
+- **Subagent smokes** (run during Phase 6 with the stack up): missing-README → `ERROR:` reply; coder log-append → exactly one new Log line; review verdict → in `{BLOCK, SUBSTANTIVE, NIT}` (force `Verdict: NEEDS_WORK` → orchestrator retries once); single-word coder prompt → reads README without asking for more context; `Run dir: /workspace/memory/../../etc` → rejected.
 
-**Exit criteria:** deterministic static checks are green via `pnpm test:runs-protocol`; live subagent behavior is verified in Phase 6.
+**Exit criteria:** mount smoke passes; subagent smokes pass during Phase 6.
 
 ### Phase 6 — Integration verification
 
@@ -226,7 +219,7 @@ Land verification before the integration phase, not as part of it.
 
 **Exit criteria:** one end-to-end task completes through the new loop with a populated README, valid `Verdict:`, and only the supporting files that were useful.
 
-**Execution note (2026-04-28):** Local deterministic verification passed with `pnpm test:runs-protocol`. Docker Compose rendered successfully with dummy required env placeholders, and the rendered config includes the `/workspace/runs` mount. Live Slack/subagent smoke is deferred to the pushed environment because it requires the running Thor/OpenCode stack and real service credentials.
+**Execution note (2026-04-28):** Local deterministic verification originally passed with a `pnpm test:runs-protocol` lint script; that lint was subsequently dropped (see Decision Log) because it inspected prose for magic strings rather than catching real protocol failures. Docker Compose rendered successfully with dummy required env placeholders, and the rendered config includes the `/workspace/runs` mount. Live Slack/subagent smoke is deferred to the pushed environment because it requires the running Thor/OpenCode stack and real service credentials.
 
 ### Phase 7 — Deferred (out of scope of this plan)
 
@@ -262,10 +255,10 @@ Tracked here so they don't get lost; not part of this PR.
 | Required literal field prefixes at top of README (`Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, `Lifecycle:`, `Verdict:`) | "Short, structured, scannable" was prose-only. Locked literal prefixes give deterministic `grep -l` for "all open runs" / "all blocked runs" without parsing markdown. /autoplan DX review. |
 | Run-id at seconds granularity (`YYYYMMDD-HHMMSS`), not minutes | Minute granularity collides on concurrent Slack mentions or retries; dropping `<repo>` from the path made it worse. Seconds + slug + optional thread-ts is sufficient until runner-owned IDs land in Phase 7. /autoplan CEO + Eng review. |
 | Orchestrator-side `Verdict:` enum validator after every `task()` call | Without the helper CLI, the orchestrator post-condition check is the only gate that protects iterate-vs-stop logic from model drift (`OK`, `NEEDS_WORK`, etc.). Reads the README, asserts the enum, retries once with corrective prompt, then escalates. |
-| Subagent prompt deltas pre-drafted in Phase 4, not freestyled by implementer | The protocol is the contract. Letting Phase 4 invent the contract surface during implementation reintroduces drift across the three files. Pre-draft + lint catches it. |
+| Subagent prompt deltas pre-drafted in Phase 4, not freestyled by implementer | The protocol is the contract. Letting Phase 4 invent the contract surface during implementation reintroduces drift across the three files. Pre-drafting + behavioral smokes (Phase 5) catch drift. |
 | Defer runner-owned worktree lease + opaque run-IDs to Phase 7 | Both are correct long-term but require runner state-model changes that exceed this plan's scope. Seconds-granularity IDs + worktree-reuse-with-best-effort is the v1 risk-budget choice. Revisit on first observed concurrency incident. |
-| Static protocol lint across `build.md`/`coder.md`/`thinker.md` | The 3-way contract lives in three files with no schema. A regex lint for the magic strings (Run dir:, Role:, verdict enum, lifecycle enum) costs ~30 lines and catches the most likely drift. |
-| Inline the README skeleton into `build.md` instead of a separate `run-readme.template.md` file | The earlier /autoplan DX surfaced "no canonical schema source" and proposed a separate template file. Once the orchestrator instructions in build.md already carried the field list, glossary, and section names, the template file became a second copy of the same prose with extra indirection. Inlining keeps build.md self-contained: the orchestrator reads one file to know how to frame a run. The lint extracts the fenced skeleton from build.md and validates it through the same `validateReadme` path as a populated sample, so build.md cannot drift from the schema rules. Subagent files reference build.md's section names instead of a separate file. |
+| Cut the static `lint-runs-protocol` script | The lint was tried (see git history) and dropped. It inspected prose in three markdown files for magic strings — useful in theory, low value in practice: regex-grepping the same words across three files doesn't catch real protocol failures (subagent ignores its role, README format drifts in ways the regex can't see, runtime path resolution breaks). The maintenance overhead — every time an error string changed, the lint had to be updated in lockstep — outweighed the drift it actually caught. Phase 5 is now behavioral verification only. Revisit if production drift becomes recurrent. |
+| Inline the README skeleton into `build.md` instead of a separate `run-readme.template.md` file | The earlier /autoplan DX surfaced "no canonical schema source" and proposed a separate template file. Once the orchestrator instructions in build.md already carried the field list, glossary, and section names, the template file became a second copy of the same prose with extra indirection. Inlining keeps build.md self-contained: the orchestrator reads one file to know how to frame a run. Subagent files reference build.md's section names instead of a separate file. |
 
 ---
 

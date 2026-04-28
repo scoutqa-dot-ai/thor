@@ -12,7 +12,6 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:mcp": "npx tsx scripts/test-mcp.ts",
-    "test:runs-protocol": "node scripts/lint-runs-protocol.mjs",
     "test:e2e": "./scripts/test-e2e.sh",
     "test:sandbox-e2e": "./scripts/test-sandbox-e2e.sh",
     "prepare": "husky"
