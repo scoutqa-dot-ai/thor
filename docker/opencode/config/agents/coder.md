@@ -15,27 +15,23 @@ Focus on:
 
 Do not over-explain. Write the code, verify it works, and move on.
 
-## Run Directory Contract
+## Run Directory
 
-When invoked through the run-handoff protocol, the prompt's first two non-empty lines are:
+When invoked through the run-handoff protocol, the prompt's first two non-empty lines look like:
 
 ```
 Run dir: /workspace/runs/<run-id>
 Role: implement
 ```
 
-Validate before doing anything else. On any failure, reply `ERROR: <one-line reason>` and stop — do not guess:
+The run directory is a flexible, safe place to keep task-related files. It is not an enforced format. If the target repo has its own conventions in `AGENTS.md` or `CLAUDE.md`, follow those first and treat the run dir as scratch space alongside them.
 
-- `Run dir:` matches `^Run dir: (?<path>/workspace/runs/[^\s]+)$`, and `realpath` stays under `/workspace/runs/`.
-- `Role:` equals `implement`.
-- `<run-dir>/README.md` exists with `Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, `Lifecycle:`, `Verdict:`, `## Goal`, `## Artifacts`, `## Log`.
+Read the run-dir README if present (it is usually the task source of truth), then edit the `Worktree:` directory, follow repo conventions, and prefer targeted tests over the full suite.
 
-Then read the README — it is the task source of truth, not the orchestrator's prose. Edit the `Worktree:` directory, follow repo conventions, and run targeted tests (never the full suite).
+On test failure, you may make up to two quick local fix attempts when the failure is mechanical (syntax, import, lint, command typo). Escalate via the Log without further attempts when the failure is behavioral or after the budget is spent — review decides whether to redispatch.
 
-Append exactly one Log entry when done, same format whether tests pass or fail:
+Append one Log entry when done, same format whether tests pass or fail:
 
 `YYYY-MM-DD HH:MM coder: <implementation summary>; tests: <command and result>`
 
-Summarize multi-stage work in that single line. Do not iterate locally on test failures — the review step decides whether to redispatch.
-
-README mutation rules: append to `## Log`; insert `## Artifacts` rows; replace `Lifecycle:` / `Verdict:` lines in place; never duplicate fields; never wholesale rewrite. Valid `Verdict:`: `BLOCK`, `SUBSTANTIVE`, `NIT`, `MERGED`. Valid `Lifecycle:`: `open`, `merged`, `abandoned`.
+Summarize multi-stage work in that single line.

@@ -98,7 +98,7 @@ Handle simple tasks yourself: Slack replies, reading files, running commands, qu
 
 ### Code change protocol
 
-For non-trivial code changes, use a file-based run directory instead of re-narrating context to subagents. Skip the protocol for trivial changes (single-file ≤30 lines, one-line config or doc edits, no new dep/schema/migration).
+For non-trivial code changes, use a file-based run directory instead of re-narrating context to subagents. The run directory is a flexible, safe place to keep task-related files — not an enforced format. If the target repo has its own way of work in `AGENTS.md` or `CLAUDE.md`, follow that instead and treat the run dir as scratch space alongside it. Skip the protocol entirely for trivial changes — single file, no new dependency/schema/migration, no cross-package effect, low blast radius.
 
 Run directory:
 
@@ -106,20 +106,21 @@ Run directory:
 /workspace/runs/<run-id>/
   README.md
   plan.md       # optional
-  review.md     # optional
+  review_1.md   # optional, numbered per iteration (review_2.md, review_3.md, …)
   verify.sh     # optional
   fixtures/     # optional
 ```
 
-Run ID: `<YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]` (kebab-case slug; append Slack thread ts when tied to a thread).
+Run ID: `<YYYYMMDD>-<slug>` (kebab-case slug). When tied to a Slack thread, record the ts in the `Thread:` header — keep it out of the ID so filenames stay parseable.
 
-Copy this skeleton into the run dir, fill the header and Goal, leave Artifacts and Log empty (subagents insert and append):
+Copy this skeleton into the run dir, fill the header and Goal, leave Artifacts and Log empty (subagents insert and append). Omit `Thread:` when not applicable.
 
 ```
-Run-ID: <YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]
+Run-ID: <YYYYMMDD>-<slug>
 Repo: <repo-name>
 Branch: <branch-name>
 Worktree: /workspace/worktrees/<repo>/<branch>
+Thread: <slack-thread-ts>
 Lifecycle: open
 Verdict:
 
@@ -137,9 +138,11 @@ Verdict:
 Append entries only. Format: `YYYY-MM-DD HH:MM <agent>: <one-line summary>`.
 ```
 
-`Lifecycle:` (run lifetime: `open` | `merged` | `abandoned`) and `Verdict:` (latest review: empty before first review, then `BLOCK` | `SUBSTANTIVE` | `NIT` | `MERGED`) are different fields — do not conflate.
+`Lifecycle:` (run lifetime) and `Verdict:` (latest review state) are different fields — do not conflate. Suggested values, not exhaustive: `Lifecycle:` `open` | `merged` | `abandoned`; `Verdict:` empty before first review, then `BLOCK` | `SUBSTANTIVE` | `NIT` | `MERGED`. Use a different value when the suggested set genuinely doesn't fit, and prefer reusing existing values across runs so the field stays scannable.
 
-Verdict meaning: `BLOCK` (defect, iterate), `SUBSTANTIVE` (non-trivial improvements, iterate), `NIT` (nitpicks only, ship), `MERGED` (PR landed, terminal).
+Verdict meaning when used: `BLOCK` (defect, iterate), `SUBSTANTIVE` (non-trivial improvements, iterate), `NIT` (nitpicks only, ship), `MERGED` (PR landed, terminal — set by the orchestrator after merge, not by the reviewer).
+
+Artifacts: only insert a row when an artifact file actually exists. Skip the row when the role's output is captured in the Log line alone.
 
 Subagent invocation passes the run dir, role, and ephemeral runtime hints in the `task` prompt — never the README contents:
 
@@ -150,23 +153,20 @@ Role: <plan|implement|review>
 <short instruction plus current runtime hints>
 ```
 
-Subagents validate the headers and the README on entry; any failure surfaces as `ERROR: <reason>`. On `ERROR:`, amend the README or fix the prompt and redispatch — do not continue from guesses.
 
 Loop:
 
 1. **Frame** — create `/workspace/runs/<run-id>/README.md` from the skeleton. If repo conventions require a durable plan in `docs/plan/`, create it there and link from the Artifacts table.
 2. **Plan** — `task(thinker, Role: plan)`. Thinker writes `plan.md` if useful, inserts an Artifacts row, appends a Log line.
-3. **Implement** — `task(coder, Role: implement)`. Coder edits the worktree, runs targeted tests, appends a Log line with implementation + test outcome.
-4. **Test** — confirm test evidence in the Log; redispatch if missing. Never run the full suite (CI handles that).
-5. **Review** — `task(thinker, Role: review)`. Thinker replaces `Verdict:` with `BLOCK`, `SUBSTANTIVE`, or `NIT` and may write `review.md`.
-6. **Validate** — after every `task()` call, read the README and confirm one new Log line was appended for the expected role. After review, confirm `Verdict:` is in the enum. On miss, retry once with a corrective prompt, then escalate.
-7. **Iterate** — on `BLOCK` or `SUBSTANTIVE`, redispatch `coder`, retest, re-review. Stop on `NIT`.
+3. **Implement + test** — `task(coder, Role: implement)`. Coder edits the worktree, runs targeted tests, appends a Log line with implementation + test outcome. Skip a separate test phase — coder owns that. Only run extra tests yourself when test evidence is missing from the Log or the change is cross-cutting enough that targeted scoping is unclear (CI is still the final gate).
+4. **Review** — `task(thinker, Role: review)`. Thinker replaces `Verdict:` (typically `BLOCK`, `SUBSTANTIVE`, or `NIT`) and may write `review_<n>.md` (next free `n` starting at 1).
+5. **Iterate** — read the README. If the expected role didn't append a Log line or `Verdict:` is missing after review, retry once with a corrective prompt then escalate. On a verdict that signals defects or substantive issues, redispatch `coder`, re-review. Stop when only nitpicks remain.
 
 Rules:
 
 - Worktree must match the branch: `/workspace/worktrees/<repo>/<branch>`. Reuse existing worktrees across sessions.
 - `/workspace/runs/` is active scratch. `worklog/` is the durable session index. `memory/` is distilled knowledge. Do not mix.
-- Per-repo conventions win for durable plans. If the target repo has `AGENTS.md` or `docs/plan/`, follow them and link from the run README.
+- Per-repo conventions always win. If the target repo has `AGENTS.md`, `CLAUDE.md`, or `docs/plan/`, follow them and link the resulting artifacts from the run README.
 - Recover prior context from `/workspace/worklog/` before re-investigating a previous session.
 - Verify the intended branch before drawing code-state conclusions; do not assume `main` is the right source when repos have active side branches.
 

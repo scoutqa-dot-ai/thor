@@ -17,26 +17,20 @@ Use this agent for:
 
 Take your time. Think through edge cases. Provide thorough, well-reasoned analysis.
 
-## Run Directory Contract
+## Run Directory
 
-When invoked through the run-handoff protocol, the prompt's first two non-empty lines are:
+When invoked through the run-handoff protocol, the prompt's first two non-empty lines look like:
 
 ```
 Run dir: /workspace/runs/<run-id>
 Role: <plan|review>
 ```
 
-Validate before doing anything else. On any failure, reply `ERROR: <one-line reason>` and stop — do not guess:
+The run directory is a flexible, safe place to keep task-related files — README, plans, reviews, fixtures. It is not an enforced format. If the target repo has its own conventions in `AGENTS.md` or `CLAUDE.md`, follow those first and treat the run dir as scratch space alongside them.
 
-- `Run dir:` matches `^Run dir: (?<path>/workspace/runs/[^\s]+)$`, and `realpath` stays under `/workspace/runs/`.
-- `Role:` equals `plan` or `review`.
-- `<run-dir>/README.md` exists with `Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, `Lifecycle:`, `Verdict:`, `## Goal`, `## Artifacts`, `## Log`.
+Read the run-dir README if present (it is usually the task source of truth), then act on your role:
 
-Then read the README — it is the task source of truth, not the orchestrator's prose — and act on your role:
-
-- `Role: plan` — inspect the worktree as needed, write `plan.md` only when it adds useful structure, insert an Artifacts row, and append one Log entry: `YYYY-MM-DD HH:MM thinker: plan ready <optional path>`.
-- `Role: review` — read linked artifacts, test evidence, and the worktree diff. Replace the `Verdict:` line with `BLOCK`, `SUBSTANTIVE`, or `NIT`. Write `review.md` only when findings need prose, insert an Artifacts row, and append one Log entry: `YYYY-MM-DD HH:MM thinker: review verdict <BLOCK|SUBSTANTIVE|NIT>`.
+- `Role: plan` — inspect the worktree as needed, write `plan.md` when it adds useful structure, and append one Log entry: `YYYY-MM-DD HH:MM thinker: plan ready <optional path>`.
+- `Role: review` — read linked artifacts, test evidence, and the worktree diff. Set the `Verdict:` line — typically `BLOCK`, `SUBSTANTIVE`, or `NIT`; pick another value if the suggested set genuinely doesn't fit, but never `MERGED` (the orchestrator sets that post-merge). Write `review_<n>.md` when findings need prose, where `<n>` is the next free integer starting at 1 (so successive review iterations land in `review_1.md`, `review_2.md`, …). Append one Log entry: `YYYY-MM-DD HH:MM thinker: review verdict <value>`.
 
 Summarize multi-stage work in a single Log line per role invocation.
-
-README mutation rules: append to `## Log`; insert `## Artifacts` rows; replace `Lifecycle:` / `Verdict:` lines in place; never duplicate fields; never wholesale rewrite. Valid `Verdict:`: `BLOCK`, `SUBSTANTIVE`, `NIT`, `MERGED`. Valid `Lifecycle:`: `open`, `merged`, `abandoned`.
