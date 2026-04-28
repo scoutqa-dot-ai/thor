@@ -2,14 +2,15 @@
 #
 # End-to-end test for Thor.
 #
-# Tests the full chain: curl -> runner -> OpenCode service -> remote-cli -> MCP servers
+# Default tests use deterministic direct service checks and avoid LLM-backed /trigger calls.
 #
 # Prerequisites:
 #   - Both services running (either `pnpm dev` or `docker compose up`)
-#   - OpenCode configured with an LLM provider in the runner environment
+#   - Set THOR_E2E_LLM=1 for the explicit OpenCode/LLM smoke path
 #
 # Usage:
 #   ./scripts/test-e2e.sh
+#   THOR_E2E_LLM=1 ./scripts/test-e2e.sh
 #   RUNNER_URL=http://localhost:3000 OPENCODE_URL=http://localhost:4096 ./scripts/test-e2e.sh
 #
 set -euo pipefail
@@ -32,6 +33,8 @@ REMOTE_CLI_AUTH_TS="${REMOTE_CLI_AUTH_TS:-$(date +%s)}"
 REMOTE_CLI_WORKTREE_BRANCH="${REMOTE_CLI_WORKTREE_BRANCH:-e2e-remote-cli-${REMOTE_CLI_AUTH_TS}}"
 REMOTE_CLI_WORKTREE_DIR="${REMOTE_CLI_WORKTREE_DIR:-/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
 HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
+THOR_E2E_LLM="${THOR_E2E_LLM:-0}"
+THOR_E2E_STRESS="${THOR_E2E_STRESS:-0}"
 
 passed=0
 failed=0
@@ -124,6 +127,11 @@ approval_tool_for_upstream() {
 
 echo ""
 echo "=== Prerequisites ==="
+if [[ "$THOR_E2E_LLM" == "1" ]]; then
+  echo "  ℹ LLM smoke enabled: /trigger checks will call OpenCode/LLM"
+else
+  echo "  ℹ LLM smoke skipped (set THOR_E2E_LLM=1 or run pnpm test:opencode-e2e)"
+fi
 
 remote_cli_container=$(resolve_remote_cli_container)
 remote_cli_health=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null || echo '{}')
@@ -189,24 +197,28 @@ assert '[[ "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]' \
   "origin='$clone_origin'"
 
 if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" && "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]; then
-  REMOTE_CLI_GH_CORR_KEY="e2e-remote-cli-gh-${REMOTE_CLI_AUTH_TS}"
-  echo "  Sending trigger #1 (asking agent to run gh pr list)..."
-  gh_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
-    -H 'Content-Type: application/json' \
-    -d "{\"prompt\":\"Run: gh pr list --limit 5\\nIf the command succeeds, reply with GH_PR_LIST_OK on the first line, then summarize the result in one short sentence. If the command fails, reply with GH_PR_LIST_FAILED on the first line and include the error.\",\"correlationKey\":\"$REMOTE_CLI_GH_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
-    --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
-  gh_trigger=$(echo "$gh_trigger_raw" | parse_done)
+  if [[ "$THOR_E2E_LLM" == "1" ]]; then
+    REMOTE_CLI_GH_CORR_KEY="e2e-remote-cli-gh-${REMOTE_CLI_AUTH_TS}"
+    echo "  LLM smoke: asking agent to run gh pr list..."
+    gh_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
+      -H 'Content-Type: application/json' \
+      -d "{\"prompt\":\"Run: gh pr list --limit 5\\nIf the command succeeds, reply with GH_PR_LIST_OK on the first line, then summarize the result in one short sentence. If the command fails, reply with GH_PR_LIST_FAILED on the first line and include the error.\",\"correlationKey\":\"$REMOTE_CLI_GH_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+      --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
+    gh_trigger=$(echo "$gh_trigger_raw" | parse_done)
 
-  gh_session=$(json_field "$gh_trigger" "sessionId")
-  gh_status=$(json_field "$gh_trigger" "status")
-  gh_response_text=$(json_field "$gh_trigger" "response")
-  gh_response_ok=$(response_contains "$gh_trigger" "GH_PR_LIST_OK")
+    gh_session=$(json_field "$gh_trigger" "sessionId")
+    gh_status=$(json_field "$gh_trigger" "status")
+    gh_response_text=$(json_field "$gh_trigger" "response")
+    gh_response_ok=$(response_contains "$gh_trigger" "GH_PR_LIST_OK")
 
-  assert '[[ -n "$gh_session" ]]' "GH auth trigger: got a session ID" "sessionId='$gh_session'"
-  assert '[[ "$gh_status" == "completed" ]]' "GH auth trigger: completed successfully" "status='$gh_status'"
-  assert '[[ "$gh_response_ok" == "yes" ]]' \
-    "GH auth trigger: agent successfully listed PRs" \
-    "response: ${gh_response_text:0:300}"
+    assert '[[ -n "$gh_session" ]]' "LLM smoke GH trigger: got a session ID" "sessionId='$gh_session'"
+    assert '[[ "$gh_status" == "completed" ]]' "LLM smoke GH trigger: completed successfully" "status='$gh_status'"
+    assert '[[ "$gh_response_ok" == "yes" ]]' \
+      "LLM smoke GH trigger: agent successfully listed PRs" \
+      "response: ${gh_response_text:0:300}"
+  else
+    echo "  Skipping LLM GH trigger smoke (set THOR_E2E_LLM=1)."
+  fi
 
   if [[ -z "$THOR_INTERNAL_SECRET" ]]; then
     assert 'false' \
@@ -265,31 +277,30 @@ if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" && "$clone_origin" == "$REMOTE_CLI
     fi
   fi
 
-  REMOTE_CLI_WORKTREE_CORR_KEY="e2e-remote-cli-worktree-${REMOTE_CLI_AUTH_TS}"
-  echo "  Sending trigger #2 (asking agent to create a worktree)..."
-  worktree_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
-    -H 'Content-Type: application/json' \
-    -d "{\"prompt\":\"Run: git worktree add -b $REMOTE_CLI_WORKTREE_BRANCH $REMOTE_CLI_WORKTREE_DIR HEAD\\nIf the command succeeds, reply with GIT_WORKTREE_OK on the first line, then mention the branch name. If the command fails, reply with GIT_WORKTREE_FAILED on the first line and include the error.\",\"correlationKey\":\"$REMOTE_CLI_WORKTREE_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
-    --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
-  worktree_trigger=$(echo "$worktree_trigger_raw" | parse_done)
+  if [[ -z "$THOR_INTERNAL_SECRET" ]]; then
+    assert 'false' \
+      "Internal exec worktree smoke: THOR_INTERNAL_SECRET is available" \
+      "Set THOR_INTERNAL_SECRET or ensure docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET returns a value"
+  else
+    echo "  Calling /internal/exec directly (git worktree add)..."
+    worktree_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/internal/exec" \
+      -H 'Content-Type: application/json' \
+      -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+      -d "{\"bin\":\"git\",\"args\":[\"worktree\",\"add\",\"-b\",\"$REMOTE_CLI_WORKTREE_BRANCH\",\"$REMOTE_CLI_WORKTREE_DIR\",\"HEAD\"],\"cwd\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+      2>/dev/null || echo '{}')
+    worktree_exit=$(json_field "$worktree_raw" "exitCode")
+    worktree_list=$(docker exec "$remote_cli_container" \
+      git -C "$REMOTE_CLI_GIT_REPO_DIR" worktree list 2>/dev/null || echo "")
 
-  worktree_session=$(json_field "$worktree_trigger" "sessionId")
-  worktree_status=$(json_field "$worktree_trigger" "status")
-  worktree_response_text=$(json_field "$worktree_trigger" "response")
-  worktree_response_ok=$(response_contains "$worktree_trigger" "GIT_WORKTREE_OK")
-  worktree_list=$(docker exec "$remote_cli_container" \
-    git -C "$REMOTE_CLI_GIT_REPO_DIR" worktree list 2>/dev/null || echo "")
-
-  assert '[[ -n "$worktree_session" ]]' "Worktree trigger: got a session ID" "sessionId='$worktree_session'"
-  assert '[[ "$worktree_status" == "completed" ]]' "Worktree trigger: completed successfully" "status='$worktree_status'"
-  assert '[[ "$worktree_response_ok" == "yes" ]]' \
-    "Worktree trigger: agent created the worktree" \
-    "response: ${worktree_response_text:0:300}"
+    assert '[[ "$worktree_exit" == "0" ]]' \
+      "Internal exec worktree smoke: git worktree add succeeds" \
+      "response: ${worktree_raw:0:300}"
+  fi
   assert '[[ -d "$HOST_REMOTE_CLI_WORKTREE_DIR" ]]' \
-    "Worktree trigger: worktree path exists on disk" \
+    "Internal exec worktree smoke: worktree path exists on disk" \
     "expected path: $HOST_REMOTE_CLI_WORKTREE_DIR"
   assert '[[ "$worktree_list" == *"$REMOTE_CLI_WORKTREE_DIR"* ]]' \
-    "Worktree trigger: cloned repo registers the new worktree" \
+    "Internal exec worktree smoke: cloned repo registers the new worktree" \
     "worktree list: ${worktree_list:0:300}"
 fi
 
@@ -297,6 +308,10 @@ fi
 
 echo ""
 echo "=== Session Resume ==="
+
+if [[ "$THOR_E2E_LLM" != "1" ]]; then
+  echo "  Skipping LLM session-resume smoke (set THOR_E2E_LLM=1)."
+else
 
 CORR_KEY="e2e-test-$(date +%s)"
 
@@ -336,9 +351,15 @@ response2_text=$(json_field "$trigger2" "response")
 assert '[[ "$session2" == "$session1" ]]' "Trigger #2: reused the SAME session ID" "expected='$session1', got='$session2'"
 assert '[[ "$resumed2" == "true" ]]' "Trigger #2: was a resumed session" "resumed='$resumed2'"
 assert '[[ "$response2_has_phrase" == "yes" ]]' "Trigger #2: agent recalled the phrase ($PHRASE)" "response: ${response2_text:0:200}"
+fi
 
 # ── 4. Cross-session memory ──────────────────────────────────────────────────
 
+if [[ "$THOR_E2E_STRESS" != "1" ]]; then
+  echo ""
+  echo "=== Cross-Session Memory ==="
+  echo "  Skipping LLM-backed memory stress (set THOR_E2E_STRESS=1)."
+else
 # Clean up stale memory files from prior runs
 rm -f "$MEMORY_DIR/ALWAYS.md" "$MEMORY_DIR/README.md"
 rm -rf "$MEMORY_DIR/e2e-test"
@@ -378,6 +399,7 @@ response_b_has_phrase=$(response_contains "$trigger_b" "$MEMORY_PHRASE")
 response_b_text=$(json_field "$trigger_b" "response")
 assert '[[ "$resumed_b" == "false" ]]' "Trigger B: was NOT a resumed session (different corr key)" "resumed='$resumed_b'"
 assert '[[ "$response_b_has_phrase" == "yes" ]]' "Trigger B: agent recalled cross-session memory phrase ($MEMORY_PHRASE)" "response: ${response_b_text:0:200}"
+fi
 
 # ── 5. Approval Flow ────────────────────────────────────────────────────────
 
@@ -505,10 +527,14 @@ else
     assert '[[ "$final_status" == "rejected" ]]' "remote-cli: final status confirms 'rejected'" "status='$final_status'"
   fi
 
-  # ── 4f–4h. End-to-end: rejection lands back in OpenCode session ───────────
+  # ── 4f–4h. Explicit LLM smoke: rejection lands back in OpenCode session ───
 
   echo ""
-  echo "  --- E2E: Rejection reaches OpenCode session ---"
+  echo "  --- LLM smoke: Rejection reaches OpenCode session ---"
+
+  if [[ "$THOR_E2E_LLM" != "1" ]]; then
+    echo "  Skipping LLM approval-status smoke (set THOR_E2E_LLM=1)."
+  else
 
   # 4f. Create a fresh pending approval via remote-cli API
   echo "  Creating pending approval via remote-cli..."
@@ -557,6 +583,7 @@ else
       console.log(text.includes('rejected') || text.includes('rejection') ? 'yes' : 'no');
     " 2>/dev/null || echo "no")
     assert '[[ "$response_has_rejected" == "yes" ]]' "E2E: agent confirms rejection landed in session" "response: ${approval_trigger_text:0:300}"
+  fi
   fi
 fi
 
@@ -658,6 +685,10 @@ assert '[[ "$status_exit" == "0" ]]' "git status (allowed) succeeds" "exitCode='
 echo ""
 echo "=== Busy Session + Interrupt ==="
 
+if [[ "$THOR_E2E_STRESS" != "1" ]]; then
+  echo "  Skipping LLM-backed busy/interrupt stress (covered by runner unit tests; set THOR_E2E_STRESS=1)."
+else
+
 BUSY_CORR_KEY="e2e-busy-$(date +%s)"
 BUSY_PHRASE="BUSY$(date +%s | tail -c 6)"
 
@@ -699,6 +730,7 @@ assert '[[ "$interrupt_has_phrase" == "yes" ]]' "Interrupt trigger: agent confir
 # Clean up background curl
 kill "$BUSY_BG_PID" 2>/dev/null || true
 wait "$BUSY_BG_PID" 2>/dev/null || true
+fi
 
 
 # ── 9. Alias-based session matching via gateway ──────────────────────────────
@@ -711,6 +743,10 @@ wait "$BUSY_BG_PID" 2>/dev/null || true
 
 echo ""
 echo "=== Alias-based Session Matching ==="
+
+if [[ "$THOR_E2E_STRESS" != "1" ]]; then
+  echo "  Skipping LLM-backed alias recall stress (set THOR_E2E_STRESS=1)."
+else
 
 ALIAS_TS=$(date +%s)
 ALIAS_BRANCH="e2e-alias-${ALIAS_TS}"
@@ -815,6 +851,7 @@ else
     -H 'Content-Type: application/json' \
     -d "{\"args\":[\"worktree\",\"prune\"],\"cwd\":\"$ALIAS_DIR\"}" \
     >/dev/null 2>&1 || true
+fi
 fi
 
 # ── Results ─────────────────────────────────────────────────────────────────

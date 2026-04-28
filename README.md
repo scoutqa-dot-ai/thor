@@ -214,7 +214,8 @@ Rules match by exact host or suffix first, then by optional `path_prefix`.
 ```bash
 pnpm test
 pnpm test:mcp
-pnpm test:e2e
+pnpm test:e2e          # deterministic direct checks, no /trigger LLM prompts by default
+pnpm test:opencode-e2e # explicit OpenCode/LLM smoke (or THOR_E2E_LLM=1 pnpm test:e2e)
 pnpm typecheck
 ```
 
