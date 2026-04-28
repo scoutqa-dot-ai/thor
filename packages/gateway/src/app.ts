@@ -29,7 +29,7 @@ import {
   type BatchSource,
   type RunnerDeps,
 } from "./service.js";
-import type { SlackDeps } from "./slack-api.js";
+import { createSlackClient, type SlackDeps } from "./slack-api.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKey,
@@ -191,7 +191,11 @@ const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
+  /** Slack bot token. Either this or `slackClient` is required. */
   slackBotToken: string;
+  /** Pre-built Slack WebClient (used by tests to inject a mock). */
+  slackClient?: SlackDeps["client"];
+  /** Override Slack API base URL (used by tests; ignored if `slackClient` is set). */
   slackApiBaseUrl?: string;
   /** Our bot's Slack user ID — used to ignore our own messages. */
   slackBotUserId: string;
@@ -490,9 +494,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     fetchImpl: config.fetchImpl,
   };
   const slackDeps: SlackDeps = {
-    botToken: config.slackBotToken,
-    fetchImpl: config.fetchImpl,
-    slackApiBaseUrl: config.slackApiBaseUrl,
+    client: config.slackClient ?? createSlackClient(config.slackBotToken, config.slackApiBaseUrl),
   };
   const remoteCliHost = config.remoteCliHost ?? "remote-cli";
   const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;

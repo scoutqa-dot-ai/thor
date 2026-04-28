@@ -119,27 +119,26 @@ describe("resolveApproval", () => {
 
 describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
   let mockRunnerFetch: ReturnType<typeof vi.fn>;
-  let mockSlackFetch: ReturnType<typeof vi.fn>;
+  let postMessage: ReturnType<typeof vi.fn>;
+  let update: ReturnType<typeof vi.fn>;
+  let del: ReturnType<typeof vi.fn>;
+  let reactionsAdd: ReturnType<typeof vi.fn>;
   let runnerDeps: RunnerDeps;
   let slackDeps: SlackDeps;
 
   beforeEach(() => {
     mockRunnerFetch = vi.fn();
-    mockSlackFetch = vi.fn<typeof fetch>(async (input) => {
-      const url = String(input);
-      if (url === "https://slack.com/api/chat.postMessage") {
-        return new Response(JSON.stringify({ ok: true, ts: "msg.001", channel: "C123" }), {
-          status: 200,
-        });
-      }
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
-    });
+    postMessage = vi.fn().mockResolvedValue({ ok: true, ts: "msg.001", channel: "C123" });
+    update = vi.fn().mockResolvedValue({ ok: true });
+    del = vi.fn().mockResolvedValue({ ok: true });
+    reactionsAdd = vi.fn().mockResolvedValue({ ok: true });
     runnerDeps = { runnerUrl: "http://runner:3000", fetchImpl: mockRunnerFetch };
     slackDeps = {
-      botToken: "xoxb-test",
-      fetchImpl: mockSlackFetch,
-      slackApiBaseUrl: "https://slack.com/api",
-    };
+      client: {
+        chat: { postMessage, update, delete: del },
+        reactions: { add: reactionsAdd },
+      },
+    } as unknown as SlackDeps;
 
     vi.mock("@thor/common", async (importOriginal) => {
       const actual = (await importOriginal()) as Record<string, unknown>;
@@ -199,19 +198,12 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    const slackUrls = mockSlackFetch.mock.calls.map((c: [string]) => c[0]);
-    expect(slackUrls).toContain("https://slack.com/api/chat.postMessage");
-    expect(slackUrls).toContain("https://slack.com/api/chat.update");
-    expect(slackUrls).toContain("https://slack.com/api/chat.delete");
-    const updateBodies = mockSlackFetch.mock.calls
-      .filter((c: [string]) => c[0] === "https://slack.com/api/chat.update")
-      .map((c) => JSON.parse((c[1] as { body: string }).body));
-    expect(
-      updateBodies.some((body: { text: string }) => body.text.includes("memory: README.md")),
-    ).toBe(true);
-    expect(
-      updateBodies.some((body: { text: string }) => body.text.includes("agents: research-agent")),
-    ).toBe(true);
+    expect(postMessage).toHaveBeenCalled();
+    expect(update).toHaveBeenCalled();
+    expect(del).toHaveBeenCalled();
+    const updateTexts = update.mock.calls.map(([arg]) => (arg as { text: string }).text);
+    expect(updateTexts.some((t) => t.includes("memory: README.md"))).toBe(true);
+    expect(updateTexts.some((t) => t.includes("agents: research-agent"))).toBe(true);
   });
 
   it("posts approval_required events with v3 button payload format", async () => {
@@ -239,15 +231,12 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    const approvalCall = mockSlackFetch.mock.calls.find(
-      (c: [string]) => c[0] === "https://slack.com/api/chat.postMessage",
-    );
-    expect(approvalCall).toBeDefined();
-    const body = JSON.parse((approvalCall?.[1] as { body: string }).body);
-    const approveButton = body.blocks[3].elements.find(
-      (el: { action_id: string }) => el.action_id === "approval_approve",
-    );
-    expect(approveButton.value).toBe("v3:act-1:github:1710000000.001");
+    expect(postMessage).toHaveBeenCalled();
+    const arg = postMessage.mock.calls[0][0] as {
+      blocks: Array<{ elements?: Array<{ action_id: string; value: string }> }>;
+    };
+    const approveButton = arg.blocks[3].elements?.find((el) => el.action_id === "approval_approve");
+    expect(approveButton?.value).toBe("v3:act-1:github:1710000000.001");
   });
 
   it("skips invalid NDJSON lines without crashing", async () => {
@@ -272,7 +261,10 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     expect(result.busy).toBe(false);
 
     await new Promise((r) => setTimeout(r, 50));
-    expect(mockSlackFetch).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(del).not.toHaveBeenCalled();
+    expect(reactionsAdd).not.toHaveBeenCalled();
   });
 
   it("adds an x reaction on early errors below the progress threshold", async () => {
@@ -305,12 +297,11 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    const reactionCall = mockSlackFetch.mock.calls.find(
-      (c: [string]) => c[0] === "https://slack.com/api/reactions.add",
-    );
-    expect(reactionCall).toBeDefined();
-    const body = JSON.parse((reactionCall?.[1] as { body: string }).body);
-    expect(body).toEqual({ channel: "C123", timestamp: "1710000000.001", name: "x" });
+    expect(reactionsAdd).toHaveBeenCalledWith({
+      channel: "C123",
+      timestamp: "1710000000.001",
+      name: "x",
+    });
   });
 
   it("handles chunked delivery across newline boundaries", async () => {
@@ -344,10 +335,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    const postCalls = mockSlackFetch.mock.calls.filter(
-      (c: [string]) => c[0] === "https://slack.com/api/chat.postMessage",
-    );
-    expect(postCalls.length).toBe(1);
+    expect(postMessage).toHaveBeenCalledTimes(1);
   });
 });
 

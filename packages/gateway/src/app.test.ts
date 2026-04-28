@@ -2,10 +2,36 @@ import { createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { WebClient } from "@slack/web-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConfigLoader, WorkspaceConfig } from "@thor/common";
 import { createGatewayApp, type GatewayAppConfig } from "./app.js";
 import type { EventQueue } from "./queue.js";
+
+interface MockSlackClient {
+  client: WebClient;
+  postMessage: ReturnType<typeof vi.fn>;
+  update: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
+  reactionsAdd: ReturnType<typeof vi.fn>;
+}
+
+function createMockSlackClient(): MockSlackClient {
+  const postMessage = vi.fn().mockResolvedValue({ ok: true, ts: "msg.001", channel: "C123" });
+  const update = vi.fn().mockResolvedValue({ ok: true });
+  const del = vi.fn().mockResolvedValue({ ok: true });
+  const reactionsAdd = vi.fn().mockResolvedValue({ ok: true });
+  return {
+    client: {
+      chat: { postMessage, update, delete: del },
+      reactions: { add: reactionsAdd },
+    } as unknown as WebClient,
+    postMessage,
+    update,
+    delete: del,
+    reactionsAdd,
+  };
+}
 
 /** Create a fake ConfigLoader from channel IDs and channel→repo map for tests. */
 function fakeConfigLoader(
@@ -115,14 +141,14 @@ async function withWorklogDir<T>(run: (worklogDir: string) => Promise<T>): Promi
 
 async function withServer<T>(
   fetchImpl: typeof fetch,
-  run: (baseUrl: string, queue: EventQueue, queueDir: string) => Promise<T>,
+  run: (baseUrl: string, queue: EventQueue, queueDir: string, slack: MockSlackClient) => Promise<T>,
   extraConfig?: Partial<GatewayAppConfig>,
 ): Promise<T> {
   const queueDir = mkdtempSync(join(tmpdir(), "gateway-test-"));
+  const slack = createMockSlackClient();
   const { app, queue } = createGatewayApp({
     signingSecret: "signing-secret",
     slackBotToken: "xoxb-test",
-    slackApiBaseUrl: "https://slack.com/api",
     slackBotUserId: "U0BOTEXAMPLE",
     runnerUrl: "http://runner.test",
     fetchImpl,
@@ -131,6 +157,7 @@ async function withServer<T>(
     shortDelayMs: 0,
     longDelayMs: 0,
     getConfig: fakeConfigLoader(["C123"], [["C123", "test-repo"]]),
+    slackClient: slack.client,
     ...extraConfig,
   });
 
@@ -143,7 +170,7 @@ async function withServer<T>(
   }
 
   try {
-    return await run(`http://127.0.0.1:${address.port}`, queue, queueDir);
+    return await run(`http://127.0.0.1:${address.port}`, queue, queueDir, slack);
   } finally {
     queue.close();
     await new Promise<void>((resolve, reject) =>
@@ -1423,12 +1450,9 @@ describe("gateway", () => {
   it("accepts a signed app mention and fires a trigger to the runner (fire-and-forget)", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // 1st call: POST reactions.add to Slack Web API
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      // 2nd call: POST /trigger to runner
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue) => {
+    await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
       const body = JSON.stringify({
         type: "event_callback",
         event_id: "Ev123",
@@ -1459,12 +1483,7 @@ describe("gateway", () => {
       await queue.flush();
 
       // Reaction via Slack Web API
-      const reactionCall = fetchImpl.mock.calls.find(
-        (c) => c[0] === "https://slack.com/api/reactions.add",
-      );
-      expect(reactionCall).toBeDefined();
-      const reactionBody = JSON.parse(String(reactionCall![1]?.body));
-      expect(reactionBody).toEqual({
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
         channel: "C123",
         timestamp: "1710000000.001",
         name: "eyes",
@@ -1727,14 +1746,9 @@ describe("gateway", () => {
   it("batches 3 rapid app_mention events into a single runner trigger with combined prompt", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // Reaction calls to Slack Web API (3x)
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      // POST /trigger → 200
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue) => {
+    await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
       const timestamp = `${Math.floor(Date.now() / 1000)}`;
 
       // Fire 3 mentions in quick succession (same thread)
@@ -1767,10 +1781,7 @@ describe("gateway", () => {
       await queue.flush();
 
       // 3 reaction calls to Slack Web API
-      const reactionCalls = fetchImpl.mock.calls.filter(
-        (c) => c[0] === "https://slack.com/api/reactions.add",
-      );
-      expect(reactionCalls).toHaveLength(3);
+      expect(slack.reactionsAdd).toHaveBeenCalledTimes(3);
 
       // 1 runner trigger via fetchImpl — combined prompt with Slack context
       const triggerCalls = fetchImpl.mock.calls.filter(
@@ -2317,7 +2328,6 @@ describe("gateway", () => {
           }),
         ),
       )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ busy: true }), {
           status: 200,
@@ -2398,9 +2408,11 @@ describe("gateway", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
 
+    let capturedSlack: MockSlackClient | undefined;
     await withServer(
       fetchImpl,
-      async (baseUrl, queue) => {
+      async (baseUrl, queue, _queueDir, slack) => {
+        capturedSlack = slack;
         const payload = encodeURIComponent(
           JSON.stringify({
             type: "block_actions",
@@ -2441,14 +2453,11 @@ describe("gateway", () => {
       },
     );
 
-    const updateCall = fetchImpl.mock.calls.find(
-      ([url]) => typeof url === "string" && url === "https://slack.com/api/chat.update",
-    );
-    expect(updateCall).toBeDefined();
-    const updateBody = JSON.parse(String(updateCall?.[1]?.body));
-    expect(updateBody.text).toContain("Approved, resolution failed");
-    expect(updateBody.text).toContain('Error calling "merge_pull_request"');
-    expect(updateBody.text).not.toContain("upstream unavailable");
+    expect(capturedSlack!.update).toHaveBeenCalled();
+    const updateArg = capturedSlack!.update.mock.calls[0][0] as { text: string };
+    expect(updateArg.text).toContain("Approved, resolution failed");
+    expect(updateArg.text).toContain('Error calling "merge_pull_request"');
+    expect(updateArg.text).not.toContain("upstream unavailable");
 
     const runnerCall = fetchImpl.mock.calls.find(
       ([url]) => typeof url === "string" && url === "http://runner.test/trigger",

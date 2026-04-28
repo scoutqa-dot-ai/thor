@@ -22,7 +22,11 @@ import {
   extractApprovalFailureCategory,
   formatApprovalArgs,
 } from "./approval.js";
+import type { WebClient } from "@slack/web-api";
 import { addReaction, updateMessage, postMessage, type SlackDeps } from "./slack-api.js";
+
+/** SlackDeps stub for triggers that never post to Slack (cron, github). */
+const NOOP_SLACK_DEPS: SlackDeps = { client: {} as WebClient };
 import { handleProgressEvent } from "./progress-manager.js";
 
 const log = createLogger("gateway-service");
@@ -713,7 +717,7 @@ export async function triggerRunnerCron(
     approvalOutcomes: [],
     correlationKey,
     deps,
-    slackDeps: { botToken: "", fetchImpl: deps.fetchImpl },
+    slackDeps: NOOP_SLACK_DEPS,
     interrupt,
     onAccepted,
     onRejected,
@@ -739,7 +743,7 @@ export async function triggerRunnerGitHub(
     approvalOutcomes: [],
     correlationKey,
     deps,
-    slackDeps: { botToken: "", fetchImpl: deps.fetchImpl },
+    slackDeps: NOOP_SLACK_DEPS,
     remoteCliUrl,
     internalSecret,
     interrupt,
