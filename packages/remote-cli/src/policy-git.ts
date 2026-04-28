@@ -49,6 +49,7 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "worktree",
   "push",
   "merge",
+  "revert",
   "blame",
   "reflog",
   "grep",
@@ -223,6 +224,8 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
       return wrap(validatePush(args), args);
     case "merge":
       return wrap(validateMerge(args), args);
+    case "revert":
+      return { args: [...args] };
     default:
       return deny(`git ${first}`);
   }
