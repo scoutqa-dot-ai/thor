@@ -127,6 +127,7 @@ describe("internalExec", () => {
         "x-thor-internal-secret": "internal-secret",
       },
       body: JSON.stringify({ bin: "echo", args: ["hello"], cwd: "/tmp" }),
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -145,6 +146,24 @@ describe("internalExec", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("ECONNREFUSED");
     expect(result.timedOut).toBe(false);
+  });
+
+  it("returns structured timeout failure when remote-cli hangs", async () => {
+    const timeoutError = new Error("The operation was aborted due to timeout");
+    timeoutError.name = "TimeoutError";
+    const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(timeoutError);
+
+    const { internalExec } = await import("./service.js");
+    const result = await internalExec(
+      { bin: "echo", args: ["hello"], cwd: "/tmp", timeoutMs: 100 },
+      "http://remote-cli:3004",
+      "internal-secret",
+      fetchImpl,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(result.timedOut).toBe(true);
   });
 });
 

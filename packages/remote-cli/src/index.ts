@@ -54,6 +54,7 @@ const GITHUB_API_URL = "https://api.github.com";
 const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
+const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   requireEnv("GITHUB_APP_ID", env);
@@ -136,10 +137,10 @@ function matchesInternalSecret(
   );
 }
 
-function redactInternalExecArgs(args: string[]): string[] {
+export function redactInternalExecArgs(args: string[]): string[] {
   const redactInlineValue = (arg: string): string => `${arg.slice(0, arg.indexOf("="))}=[REDACTED]`;
   const redactUrlCredentials = (arg: string): string =>
-    arg.replace(/^(https?:\/\/)([^\s/@]+)@/i, "$1[REDACTED]@");
+    arg.replace(/^([a-z][a-z0-9+.-]*:\/\/)([^\s/@]+)@/i, "$1[REDACTED]@");
   let redactNext = false;
   return args.map((arg) => {
     if (redactNext) {
@@ -174,6 +175,10 @@ function redactInternalExecArgs(args: string[]): string[] {
 
     return arg;
   });
+}
+
+function getInternalSecretHeader(req: express.Request): string | undefined {
+  return req.get(INTERNAL_SECRET_HEADER) ?? undefined;
 }
 
 type SandboxMode = "exec" | "create" | "stop" | "list";
@@ -407,9 +412,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   const internalSecret = process.env.THOR_INTERNAL_SECRET || "";
   const mcpService = createMcpService({
     getConfig,
-    internalSecret,
     isProduction: process.env.NODE_ENV === "production",
     ...config.mcp,
+    internalSecret,
   });
 
   const app = express();
@@ -420,7 +425,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   });
 
   app.get("/github/pr-head", async (req, res) => {
-    const providedSecret = req.headers[INTERNAL_SECRET_HEADER] as string | undefined;
+    const providedSecret = getInternalSecretHeader(req);
     if (!matchesInternalSecret(internalSecret, providedSecret)) {
       res.status(401).json({ error: "Unauthorized" });
       return;
@@ -908,16 +913,18 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       if (args[0] === "resolve") {
-        const providedSecret = req.headers[INTERNAL_SECRET_HEADER] as string | undefined;
+        const providedSecret = getInternalSecretHeader(req);
         if (!matchesInternalSecret(internalSecret, providedSecret)) {
           res.status(401).json({ error: "Unauthorized" });
           return;
         }
       }
 
+      const providedSecret = getInternalSecretHeader(req);
+
       const result = await mcpService.executeMcp(args, {
         directory: typeof req.body?.directory === "string" ? req.body.directory : undefined,
-        internalSecret: req.headers[INTERNAL_SECRET_HEADER] as string | undefined,
+        internalSecret: providedSecret,
         ...thorIds(req),
       });
 
@@ -934,7 +941,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   });
 
   app.post("/internal/exec", async (req, res) => {
-    const providedSecret = req.headers[INTERNAL_SECRET_HEADER] as string | undefined;
+    const providedSecret = getInternalSecretHeader(req);
     if (!matchesInternalSecret(internalSecret, providedSecret)) {
       res.status(401).json({ stdout: "", stderr: "Unauthorized", exitCode: 1, timedOut: false });
       return;
@@ -975,6 +982,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     const startedAt = Date.now();
     try {
       const result = await execCommand(bin, args, cwd, {
+        maxBuffer: INTERNAL_EXEC_MAX_OUTPUT,
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
       logInfo(log, "internal_exec", {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execCommand, execCommandStream } from "./exec.js";
+import { redactInternalExecArgs } from "./index.js";
 
 describe("execCommand", () => {
   it("captures stdout", async () => {
@@ -32,6 +33,14 @@ describe("execCommand", () => {
     });
     expect(result.exitCode).toBe(1);
     expect(result.timedOut).toBe(true);
+  });
+});
+
+describe("redactInternalExecArgs", () => {
+  it("redacts credentials in non-http URL arguments", () => {
+    expect(redactInternalExecArgs(["postgres://user:secret@example.com/db"])).toEqual([
+      "postgres://[REDACTED]@example.com/db",
+    ]);
   });
 });
 
