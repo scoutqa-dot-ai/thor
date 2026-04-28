@@ -1,5 +1,6 @@
 import express, { type Express, type Request, type Response } from "express";
 import {
+  appendJsonlWorklog,
   createLogger,
   logError,
   logInfo,
@@ -8,7 +9,9 @@ import {
   getAllowedChannelIds,
   getChannelRepoMap,
   resolveRepoDirectory,
+  writeInboundWebhookHistory,
   type ConfigLoader,
+  type InboundWebhookHistoryEntry,
 } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
@@ -78,6 +81,35 @@ interface RawBodyRequest extends Request {
   rawBodyBuffer?: Buffer;
 }
 
+type HeaderValue = string | string[] | undefined;
+
+function getHeaderSnapshot(req: Request, names: string[]): Record<string, HeaderValue> {
+  const headers: Record<string, HeaderValue> = {};
+  for (const name of names) {
+    headers[name] = req.headers[name] as HeaderValue;
+  }
+  return headers;
+}
+
+function getRawBufferFromBody(body: unknown): Buffer {
+  if (Buffer.isBuffer(body)) return body;
+  if (typeof body === "string") return Buffer.from(body, "utf8");
+  return Buffer.alloc(0);
+}
+
+function buildRawBodyFields(
+  rawBodyBuffer: Buffer,
+): Pick<InboundWebhookHistoryEntry, "rawBodyUtf8" | "rawBodyBase64"> {
+  return {
+    rawBodyUtf8: rawBodyBuffer.toString("utf8"),
+    rawBodyBase64: rawBodyBuffer.toString("base64"),
+  };
+}
+
+function isRawWebhookRoute(path: string): boolean {
+  return /^\/(?:slack\/events|github\/webhook)\/?$/.test(path);
+}
+
 /** Short debounce delay for mentions and engaged threads (ms). */
 const SHORT_DELAY_MS = 3000;
 const GITHUB_MENTION_DELAY_MS = 3000;
@@ -90,12 +122,17 @@ const GITHUB_SUPPORTED_EVENTS = new Set([
 type GitHubIgnoreReason =
   | "signature_invalid"
   | "event_unsupported"
+  | "json_parse_error"
+  | "schema_validation_failed"
   | "repo_not_mapped"
   | "pure_issue_comment_unsupported"
   | "fork_pr_unsupported"
   | "self_sender"
   | "empty_review_body"
   | "non_mention_comment";
+
+const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
+const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
@@ -171,6 +208,16 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       action: input.action,
       reason: input.reason,
     });
+  };
+
+  const writeGitHubWebhookHistory = (
+    stream: "ingested" | "ignored",
+    entry: InboundWebhookHistoryEntry,
+  ) => {
+    appendJsonlWorklog(
+      stream === "ingested" ? GITHUB_WEBHOOK_INGESTED_STREAM : GITHUB_WEBHOOK_IGNORED_STREAM,
+      entry,
+    );
   };
 
   /** Read allowed channels dynamically from config on each call. */
@@ -249,7 +296,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               id: `${event.id}:resolved`,
               correlationKey: resolvedKey,
               payload: plan.githubEvents[index],
-              receivedAt: new Date(now).toISOString(),
               readyAt: now,
               delayMs: 0,
             });
@@ -305,27 +351,45 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   // --- Express app ---
 
   const app = express();
+  const webhookRawParser = express.raw({
+    // GitHub webhook payloads can be up to 25 MB
+    // https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap
+    limit: "25mb",
+    type: "*/*",
+  });
+  const jsonParser = express.json({
+    // GitHub webhook payloads can be up to 25 MB
+    // https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap
+    limit: "25mb",
+    verify: (request, _response, buf) => {
+      (request as RawBodyRequest).rawBody = buf.toString("utf8");
+      (request as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
+    },
+  });
+  const urlencodedParser = express.urlencoded({
+    extended: false,
+    verify: (request, _response, buf) => {
+      (request as RawBodyRequest).rawBody = buf.toString("utf8");
+      (request as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
+    },
+  });
 
-  app.use(
-    express.json({
-      // GitHub webhook payloads can be up to 25 MB
-      // https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap
-      limit: "25mb",
-      verify: (req, _res, buf) => {
-        (req as RawBodyRequest).rawBody = buf.toString("utf8");
-        (req as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
-      },
-    }),
-  );
-  app.use(
-    express.urlencoded({
-      extended: false,
-      verify: (req, _res, buf) => {
-        (req as RawBodyRequest).rawBody = buf.toString("utf8");
-        (req as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
-      },
-    }),
-  );
+  app.use((req, res, next) => {
+    if (isRawWebhookRoute(req.path)) {
+      next();
+      return;
+    }
+
+    jsonParser(req, res, next);
+  });
+  app.use((req, res, next) => {
+    if (isRawWebhookRoute(req.path)) {
+      next();
+      return;
+    }
+
+    urlencodedParser(req, res, next);
+  });
 
   app.get("/health", async (_req, res) => {
     const result = await deepHealthCheck({
@@ -335,46 +399,149 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       remoteCliPort: config.remoteCliPort ?? 3004,
       openaiAuthPath: config.openaiAuthPath,
       fetchImpl: config.fetchImpl,
+      queueSnapshot: queue.snapshotPending(),
     });
-    res.json({
+    const statusCode = result.queue?.status === "error" ? 503 : 200;
+    res.status(statusCode).json({
       ...result,
       runnerUrl: config.runnerUrl,
       configured: Boolean(config.signingSecret),
     });
   });
 
-  app.post("/slack/events", (req: Request, res: Response) => {
-    const rawRequest = req as RawBodyRequest;
+  app.post("/slack/events", webhookRawParser, (req: Request, res: Response) => {
+    const rawBodyBuffer = getRawBufferFromBody(req.body);
+    const { rawBodyUtf8, rawBodyBase64 } = buildRawBodyFields(rawBodyBuffer);
     const signature = req.header("x-slack-signature");
     const timestamp = req.header("x-slack-request-timestamp");
+    const headers = getHeaderSnapshot(req, [
+      "content-type",
+      "user-agent",
+      "x-request-id",
+      "x-slack-request-id",
+      "x-slack-request-timestamp",
+      "x-slack-signature",
+      "x-slack-retry-num",
+      "x-slack-retry-reason",
+    ]);
 
     const verified = verifySlackSignature({
       signingSecret: config.signingSecret,
-      rawBody: rawRequest.rawBody || "",
+      rawBody: rawBodyUtf8,
       signature,
       timestamp,
       toleranceSeconds: config.timestampToleranceSeconds,
     });
 
     if (!verified) {
+      writeInboundWebhookHistory({
+        timestamp: new Date().toISOString(),
+        route: "/slack/events",
+        provider: "slack",
+        signatureVerified: false,
+        parseStatus: "not_parsed",
+        requestId:
+          (typeof headers["x-slack-request-id"] === "string" && headers["x-slack-request-id"]) ||
+          (typeof headers["x-request-id"] === "string" && headers["x-request-id"]) ||
+          undefined,
+        reason: "signature_invalid",
+        headers,
+        rawBodyUtf8,
+        rawBodyBase64,
+      });
       res.status(401).json({ error: "Invalid Slack signature" });
       return;
     }
 
-    const urlVerification = SlackUrlVerificationSchema.safeParse(req.body);
+    let parsedBody: unknown;
+    try {
+      parsedBody = JSON.parse(rawBodyUtf8);
+    } catch {
+      writeInboundWebhookHistory({
+        timestamp: new Date().toISOString(),
+        route: "/slack/events",
+        provider: "slack",
+        signatureVerified: true,
+        parseStatus: "json_invalid",
+        requestId:
+          (typeof headers["x-slack-request-id"] === "string" && headers["x-slack-request-id"]) ||
+          (typeof headers["x-request-id"] === "string" && headers["x-request-id"]) ||
+          undefined,
+        reason: "json_parse_error",
+        headers,
+        rawBodyUtf8,
+        rawBodyBase64,
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const urlVerification = SlackUrlVerificationSchema.safeParse(parsedBody);
     if (urlVerification.success) {
+      writeInboundWebhookHistory({
+        timestamp: new Date().toISOString(),
+        route: "/slack/events",
+        provider: "slack",
+        signatureVerified: true,
+        parseStatus: "url_verification",
+        requestId:
+          (typeof headers["x-slack-request-id"] === "string" && headers["x-slack-request-id"]) ||
+          (typeof headers["x-request-id"] === "string" && headers["x-request-id"]) ||
+          undefined,
+        eventType: "url_verification",
+        headers,
+        rawBodyUtf8,
+        rawBodyBase64,
+      });
       res.json({ challenge: urlVerification.data.challenge });
       return;
     }
 
-    const envelope = SlackEventEnvelopeSchema.safeParse(req.body);
+    const envelope = SlackEventEnvelopeSchema.safeParse(parsedBody);
     if (!envelope.success) {
+      writeInboundWebhookHistory({
+        timestamp: new Date().toISOString(),
+        route: "/slack/events",
+        provider: "slack",
+        signatureVerified: true,
+        parseStatus: "schema_invalid",
+        requestId:
+          (typeof headers["x-slack-request-id"] === "string" && headers["x-slack-request-id"]) ||
+          (typeof headers["x-request-id"] === "string" && headers["x-request-id"]) ||
+          undefined,
+        reason: "schema_validation_failed",
+        headers,
+        rawBodyUtf8,
+        rawBodyBase64,
+      });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
 
     const event = envelope.data.event;
     const eventId = envelope.data.event_id;
+    const requestId =
+      (typeof headers["x-slack-request-id"] === "string" && headers["x-slack-request-id"]) ||
+      (typeof headers["x-request-id"] === "string" && headers["x-request-id"]) ||
+      eventId;
+
+    writeInboundWebhookHistory({
+      timestamp: new Date().toISOString(),
+      route: "/slack/events",
+      provider: "slack",
+      signatureVerified: true,
+      parseStatus: "schema_valid",
+      requestId,
+      eventType: event.type,
+      reason: "received",
+      headers,
+      rawBodyUtf8,
+      rawBodyBase64,
+      metadata: {
+        eventId,
+        teamId: envelope.data.team_id,
+      },
+    });
 
     // Skip all Slack events when bot user ID is not configured
     if (!selfUserId) {
@@ -594,18 +761,56 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   // --- GitHub webhook ---
 
-  app.post("/github/webhook", (req: Request, res: Response) => {
-    const rawRequest = req as RawBodyRequest;
+  app.post("/github/webhook", webhookRawParser, (req: Request, res: Response) => {
+    const rawBodyBuffer = getRawBufferFromBody(req.body);
+    const { rawBodyUtf8, rawBodyBase64 } = buildRawBodyFields(rawBodyBuffer);
     const deliveryId = req.header("x-github-delivery") ?? "unknown";
     const eventTypeHeader = (req.header("x-github-event") ?? "").toLowerCase();
     const signature = req.header("x-hub-signature-256");
+    const headers = getHeaderSnapshot(req, [
+      "content-type",
+      "user-agent",
+      "x-request-id",
+      "x-github-delivery",
+      "x-github-event",
+      "x-hub-signature-256",
+      "x-github-hook-id",
+      "x-github-hook-installation-target-id",
+      "x-github-hook-installation-target-type",
+    ]);
+    const baseEntry = {
+      timestamp: new Date().toISOString(),
+      route: "/github/webhook",
+      provider: "github",
+      requestId: deliveryId,
+      eventType: eventTypeHeader || undefined,
+      headers,
+      rawBodyUtf8,
+      rawBodyBase64,
+    } satisfies Pick<
+      InboundWebhookHistoryEntry,
+      | "timestamp"
+      | "route"
+      | "provider"
+      | "requestId"
+      | "eventType"
+      | "headers"
+      | "rawBodyUtf8"
+      | "rawBodyBase64"
+    >;
 
     const verified = verifyGitHubSignature({
       secret: config.githubWebhookSecret ?? "",
-      rawBody: rawRequest.rawBodyBuffer ?? Buffer.from(""),
+      rawBody: rawBodyBuffer,
       header: signature,
     });
     if (!verified) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: false,
+        parseStatus: "not_parsed",
+        reason: "signature_invalid",
+      });
       logGitHubIgnored({
         deliveryId,
         eventType: eventTypeHeader || undefined,
@@ -616,6 +821,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     if (!GITHUB_SUPPORTED_EVENTS.has(eventTypeHeader)) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "not_parsed",
+        reason: "event_unsupported",
+      });
       logGitHubIgnored({
         deliveryId,
         eventType: eventTypeHeader || undefined,
@@ -625,9 +836,38 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const parsed = GitHubWebhookEnvelopeSchema.safeParse(req.body);
+    let parsedBody: unknown;
+    try {
+      parsedBody = JSON.parse(rawBodyUtf8);
+    } catch {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "json_invalid",
+        reason: "json_parse_error",
+      });
+      logGitHubIgnored({
+        deliveryId,
+        eventType: eventTypeHeader || undefined,
+        reason: "json_parse_error",
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const parsed = GitHubWebhookEnvelopeSchema.safeParse(parsedBody);
     if (!parsed.success) {
-      logGitHubIgnored({ deliveryId, eventType: eventTypeHeader, reason: "event_unsupported" });
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "schema_invalid",
+        reason: "schema_validation_failed",
+      });
+      logGitHubIgnored({
+        deliveryId,
+        eventType: eventTypeHeader || undefined,
+        reason: "schema_validation_failed",
+      });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
@@ -636,6 +876,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const parts = repoFullName.split("/");
     const localRepo = parts[parts.length - 1];
     if (!localRepo || !resolveRepoDirectory(localRepo)) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "schema_valid",
+        action: parsed.data.action,
+        reason: "repo_not_mapped",
+        metadata: {
+          repoFullName,
+          localRepo,
+        },
+      });
       logGitHubIgnored({
         deliveryId,
         repoFullName,
@@ -653,6 +904,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       botId: githubAppBotId,
     });
     if ("ignored" in normalized) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "schema_valid",
+        action: parsed.data.action,
+        reason: normalized.reason,
+        metadata: {
+          repoFullName,
+          localRepo,
+        },
+      });
       logGitHubIgnored({
         deliveryId,
         repoFullName,
@@ -665,6 +927,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     if (normalized.eventType !== eventTypeHeader) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "schema_valid",
+        action: normalized.action,
+        reason: "event_unsupported",
+        metadata: {
+          repoFullName,
+          localRepo,
+        },
+      });
       logGitHubIgnored({
         deliveryId,
         repoFullName,
@@ -692,6 +965,19 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       readyAt: sourceTs + delayMs,
       delayMs,
       interrupt: true,
+    });
+
+    writeGitHubWebhookHistory("ingested", {
+      ...baseEntry,
+      signatureVerified: true,
+      parseStatus: "schema_valid",
+      action: normalized.action,
+      reason: "accepted",
+      metadata: {
+        repoFullName: normalized.repoFullName,
+        localRepo: normalized.localRepo,
+        correlationKey,
+      },
     });
 
     logInfo(log, "github_event_accepted", {

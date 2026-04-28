@@ -71,6 +71,7 @@ import { _testing, THOR_CWD_LABEL, THOR_MANAGED_LABEL, THOR_SHA_LABEL } from "./
 import { createRemoteCliApp } from "./index.js";
 
 const CWD = "/workspace/worktrees/acme/feat-sandbox";
+const MULTI_SEGMENT_ROOT = "/workspace/worktrees/acme/feat/sandbox";
 const HEAD_SHA = "0123456789abcdef0123456789abcdef01234567";
 const OLD_SHA = "fedcba9876543210fedcba9876543210fedcba98";
 
@@ -217,6 +218,86 @@ describe("/exec/sandbox", () => {
     expect(events2.at(-1)).toEqual({ type: "exit", exitCode: 0 });
   });
 
+  it("preserves nested subpath when git toplevel has multi-segment branch", async () => {
+    configureGitExec({ dirty: false, headSha: HEAD_SHA, topLevel: MULTI_SEGMENT_ROOT });
+
+    const sandbox = makeSandbox("sbx-1", "thor-acme", {
+      [THOR_MANAGED_LABEL]: "true",
+      [THOR_CWD_LABEL]: MULTI_SEGMENT_ROOT,
+      [THOR_SHA_LABEL]: HEAD_SHA,
+    });
+    daytonaState.sandboxes.set(sandbox.id, sandbox);
+
+    const response = await postJson("/exec/sandbox", {
+      args: ["pnpm", "test"],
+      cwd: `${MULTI_SEGMENT_ROOT}/packages/remote-cli`,
+    });
+
+    expect(response.status).toBe(200);
+    const events = await readNdjson(response);
+    expect(events.at(-1)).toEqual({ type: "exit", exitCode: 0 });
+
+    const sessionCall = vi.mocked(sandbox.process.executeSessionCommand).mock.calls[0];
+    expect(sessionCall).toBeDefined();
+    const command = String(sessionCall?.[1]?.command ?? "");
+    expect(command).toContain("packages/remote-cli");
+    expect(command).toContain("pnpm");
+    expect(command).toContain("test");
+  });
+
+  it("accepts sandbox-only nested cwd values under a valid worktree", async () => {
+    configureGitExec({ dirty: false, headSha: HEAD_SHA, topLevel: MULTI_SEGMENT_ROOT });
+
+    const sandbox = makeSandbox("sbx-1", "thor-acme", {
+      [THOR_MANAGED_LABEL]: "true",
+      [THOR_CWD_LABEL]: MULTI_SEGMENT_ROOT,
+      [THOR_SHA_LABEL]: HEAD_SHA,
+    });
+    daytonaState.sandboxes.set(sandbox.id, sandbox);
+
+    const response = await postJson("/exec/sandbox", {
+      args: ["pnpm", "test"],
+      cwd: `${MULTI_SEGMENT_ROOT}/node_modules/.bin`,
+    });
+
+    expect(response.status).toBe(200);
+    const events = await readNdjson(response);
+    expect(events.at(-1)).toEqual({ type: "exit", exitCode: 0 });
+  });
+
+  it("rejects invalid git toplevel worktree shapes", async () => {
+    configureGitExec({ dirty: false, headSha: HEAD_SHA, topLevel: "/workspace/worktrees/acme" });
+
+    const response = await postJson("/exec/sandbox", {
+      args: ["pnpm", "test"],
+      cwd: CWD,
+    });
+
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as { stderr: string };
+    expect(body.stderr).toContain("Failed to resolve worktree root");
+  });
+
+  it("rejects git toplevels nested under another working tree", async () => {
+    configureGitExec({
+      dirty: false,
+      headSha: HEAD_SHA,
+      topLevel: `${MULTI_SEGMENT_ROOT}/packages/remote-cli`,
+      topLevels: {
+        [`${MULTI_SEGMENT_ROOT}/packages`]: MULTI_SEGMENT_ROOT,
+      },
+    });
+
+    const response = await postJson("/exec/sandbox", {
+      args: ["pnpm", "test"],
+      cwd: `${MULTI_SEGMENT_ROOT}/packages/remote-cli`,
+    });
+
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as { stderr: string };
+    expect(body.stderr).toContain("Failed to resolve worktree root");
+  });
+
   it("reports pullback failures as exec failures", async () => {
     const sandbox = makeSandbox("sbx-1", "thor-acme", {
       [THOR_MANAGED_LABEL]: "true",
@@ -348,8 +429,15 @@ describe("parseGitStatus", () => {
   });
 });
 
-function configureGitExec(options: { dirty: boolean; headSha: string }): void {
-  execCommandMock.mockImplementation(async (binary: string, args: string[]) => {
+function configureGitExec(options: {
+  dirty: boolean;
+  headSha: string;
+  topLevel?: string;
+  topLevels?: Record<string, string>;
+}): void {
+  const topLevel = options.topLevel ?? CWD;
+  const topLevels = options.topLevels ?? {};
+  execCommandMock.mockImplementation(async (binary: string, args: string[], cwd?: string) => {
     if (binary !== "git") {
       return { stdout: "", stderr: "unknown binary", exitCode: 1 };
     }
@@ -363,7 +451,11 @@ function configureGitExec(options: { dirty: boolean; headSha: string }): void {
     }
 
     if (args[0] === "rev-parse" && args[1] === "--show-toplevel") {
-      return { stdout: `${CWD}\n`, stderr: "", exitCode: 0 };
+      const override = cwd ? topLevels[cwd] : undefined;
+      if (override) {
+        return { stdout: `${override}\n`, stderr: "", exitCode: 0 };
+      }
+      return { stdout: `${topLevel}\n`, stderr: "", exitCode: 0 };
     }
 
     if (args[0] === "rev-parse" && args[1] === "HEAD") {
