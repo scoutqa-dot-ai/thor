@@ -13,7 +13,7 @@
     "test:watch": "vitest",
     "test:mcp": "npx tsx scripts/test-mcp.ts",
     "test:e2e": "./scripts/test-e2e.sh",
-    "test:opencode-e2e": "THOR_E2E_LLM=1 ./scripts/test-e2e.sh",
+    "test:opencode-e2e": "./scripts/test-opencode-e2e.sh",
     "test:sandbox-e2e": "./scripts/test-sandbox-e2e.sh",
     "prepare": "husky"
   },
