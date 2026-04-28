@@ -33,16 +33,24 @@ export function execCommand(
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
 
   return new Promise((resolve) => {
-    let timedOut = false;
     const child = execFile(
       binary,
       args,
       {
         cwd,
         maxBuffer,
+        timeout: timeoutMs,
+        killSignal: "SIGKILL",
         ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
       },
       (err, stdout, stderr) => {
+        const timedOut =
+          Boolean(err) &&
+          typeof err === "object" &&
+          "killed" in err &&
+          "signal" in err &&
+          (err as { killed?: unknown }).killed === true &&
+          (err as { signal?: unknown }).signal === "SIGKILL";
         resolve({
           stdout: stdout.toString(),
           stderr: stderr.toString(),
@@ -55,13 +63,6 @@ export function execCommand(
         });
       },
     );
-
-    // Safety: kill after timeout
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, timeoutMs);
-    child.on("exit", () => clearTimeout(timeout));
   });
 }
 

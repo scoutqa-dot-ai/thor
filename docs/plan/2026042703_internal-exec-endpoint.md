@@ -1,7 +1,7 @@
 # Internal Exec Endpoint + Internal-Secret Consolidation
 
 **Date**: 2026-04-27
-**Status**: Ready to implement
+**Status**: Implemented in PR #47
 
 ## Goal
 

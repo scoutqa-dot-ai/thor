@@ -409,7 +409,7 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const getConfig = config.getConfig ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const internalSecret = process.env.THOR_INTERNAL_SECRET || "";
+  const internalSecret = config.mcp?.internalSecret ?? (process.env.THOR_INTERNAL_SECRET || "");
   const mcpService = createMcpService({
     getConfig,
     isProduction: process.env.NODE_ENV === "production",
