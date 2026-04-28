@@ -23,7 +23,7 @@ Talk to Slack through real upstream URLs:
 - `https://slack.com/api/...`
 - `https://files.slack.com/files-pri/...`
 
-Authentication is injected by `mitmproxy`, do not pass `Authorization` manually.
+Authentication is injected automatically, do not pass `Authorization` header.
 
 The default tool for this skill is `curl`. Prefer URL-encoded form for simple
 Slack writes. Switch to JSON only when the payload becomes structured, such as
