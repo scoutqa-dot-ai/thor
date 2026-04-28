@@ -5,14 +5,17 @@ import {
   buildCorrelationKey,
   CheckSuiteCompletedEventSchema,
   detectMention,
+  extractGitHubBranchFromRef,
   getGitHubEventBranch,
   getGitHubEventSourceTs,
   getGitHubEventType,
   GitHubWebhookEnvelopeSchema,
   isCheckSuiteCompletedEvent,
   isIssueCommentEvent,
+  isPushEvent,
   isPullRequestReviewCommentEvent,
   isPullRequestReviewEvent,
+  shouldIgnoreGitHubEvent,
   shouldIgnoreIssueCommentEvent,
   shouldIgnorePullRequestReviewCommentEvent,
   shouldIgnorePullRequestReviewEvent,
@@ -74,6 +77,29 @@ function baseCheckSuiteEvent(conclusion = "success") {
   };
 }
 
+function basePushEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    ref: "refs/heads/feat/file-handoff",
+    before: "1111111111111111111111111111111111111111",
+    after: "2222222222222222222222222222222222222222",
+    created: false,
+    deleted: false,
+    forced: false,
+    installation: { id: 123 },
+    repository: { full_name: "scoutqa-dot-ai/thor", default_branch: "main" },
+    sender: { id: 1001, login: "alice", type: "User" },
+    pusher: { name: "alice", email: "alice@example.com" },
+    head_commit: {
+      id: "2222222222222222222222222222222222222222",
+      message: "update branch",
+      url: "https://github.com/scoutqa-dot-ai/thor/commit/222",
+      timestamp: "2026-04-24T13:00:00Z",
+    },
+    commits: [{ id: "2222222222222222222222222222222222222222" }],
+    ...overrides,
+  };
+}
+
 describe("verifyGitHubSignature", () => {
   it("accepts a valid signature", () => {
     const secret = "super-secret";
@@ -127,6 +153,41 @@ describe("GitHubWebhookEnvelopeSchema", () => {
 
     expect(parsed.data.check_suite.conclusion).toBe("failure");
     expect(CheckSuiteCompletedEventSchema.safeParse(parsed.data).success).toBe(true);
+  });
+
+  it("accepts push events and preserves slash-containing branch names", () => {
+    const parsed = GitHubWebhookEnvelopeSchema.safeParse(basePushEvent());
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+
+    expect(isPushEvent(parsed.data)).toBe(true);
+    expect(getGitHubEventType(parsed.data)).toBe("push");
+    expect(getGitHubEventBranch(parsed.data)).toBe("feat/file-handoff");
+    expect(getGitHubEventSourceTs(parsed.data)).toBe(Date.parse("2026-04-24T13:00:00Z"));
+  });
+
+  it("accepts deleted push events with null head_commit", () => {
+    const parsed = GitHubWebhookEnvelopeSchema.safeParse(
+      basePushEvent({ deleted: true, after: "0000000000000000000000000000000000000000", head_commit: null }),
+    );
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(isPushEvent(parsed.data)).toBe(true);
+    expect(getGitHubEventBranch(parsed.data)).toBe("feat/file-handoff");
+    expect(Number.isFinite(getGitHubEventSourceTs(parsed.data))).toBe(true);
+  });
+});
+
+describe("push helpers", () => {
+  it("extracts only branch refs", () => {
+    expect(extractGitHubBranchFromRef("refs/heads/feature/a/b")).toBe("feature/a/b");
+    expect(extractGitHubBranchFromRef("refs/tags/v1.0.0")).toBeNull();
+    expect(extractGitHubBranchFromRef("refs/heads/")).toBeNull();
+  });
+
+  it("does not apply mention gating to push events", () => {
+    const parsed = GitHubWebhookEnvelopeSchema.parse(basePushEvent());
+    expect(shouldIgnoreGitHubEvent(parsed, { mentionLogins: ["thor"], botId: 7777 })).toBeNull();
   });
 });
 

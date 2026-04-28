@@ -61,8 +61,11 @@ Subscribe to:
 - Pull request review
 - Pull request review comment
 - Check suite
+- Push
 
 `check_suite.completed` wakes Thor when CI reaches a terminal result for an existing Thor-authored branch session. GitHub reports check suites per commit per checks app, so repos with multiple CI providers may produce more than one terminal suite.
+
+`push` keeps local checkouts current. Default-branch pushes fast-forward `/workspace/repos/<repo>`; non-default branch pushes fast-forward an existing `/workspace/worktrees/<repo>/<branch>` with `git pull --ff-only origin <branch>`. Thor does not create missing worktrees for push events. Deleted branch pushes remove the matching non-default worktree only after `git status --porcelain` reports clean; dirty worktrees are preserved and logged. Delete events never wake OpenCode. Successful non-delete syncs wake OpenCode with `interrupt:false` only when the branch has an existing notes-backed correlation key.
 
 ## 4a) Bot commit identity and CI wake gate
 
@@ -133,6 +136,8 @@ npx smee-client --url https://smee.io/<channel-id> --path /github/webhook --port
 | `check_suite_branch_missing`     | GitHub did not include `check_suite.head_branch`                                               | Expected for fork/detached/tag cases; no action unless same-repo PRs are affected  |
 | `correlation_key_unresolved`     | `check_suite.head_branch` has no existing Thor notes-backed branch session                     | Confirm Thor previously worked that branch; otherwise the CI event is ignored      |
 | `check_suite_gate_failed`        | The git SHA/authorship gate failed before queueing a CI wake                                   | See `metadata.gateReason` in `github-webhook-ignored` worklog                      |
+| `push_sync_failed`               | Gateway could not fast-forward a default repo or branch worktree                               | Inspect `metadata.exitCode`; resolve non-FF/dirty checkout or remote-cli issues    |
+| `push_delete_cleanup_failed`     | Gateway could not check status or remove a clean deleted-branch worktree                       | Inspect `metadata.exitCode`; clean up manually if safe                             |
 
 `check_suite_gate_failed` includes `metadata.gateReason`:
 
