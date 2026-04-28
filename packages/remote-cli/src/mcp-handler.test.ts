@@ -51,6 +51,7 @@ describe("remote-cli MCP endpoints", () => {
 
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
+    vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
     approvalsDir = mkdtempSync(join(tmpdir(), "remote-cli-mcp-"));
     toolCalls = [];
     connectedUpstreams = [];
@@ -63,7 +64,6 @@ describe("remote-cli MCP endpoints", () => {
       mcp: {
         approvalsDir,
         isProduction: true,
-        resolveSecret: "resolve-secret",
         writeToolCallLogFn: () => {},
         connectUpstreamFn: async (name: string): Promise<UpstreamConnection> => {
           connectedUpstreams.push(name);
@@ -183,7 +183,6 @@ describe("remote-cli MCP endpoints", () => {
       mcp: {
         approvalsDir,
         isProduction: true,
-        resolveSecret: "resolve-secret",
         writeToolCallLogFn: () => {},
         connectUpstreamFn: async (name: string): Promise<UpstreamConnection> => {
           connectedUpstreams.push(name);
@@ -225,7 +224,7 @@ describe("remote-cli MCP endpoints", () => {
     });
   });
 
-  it("creates approvals, exposes them via approval commands, and blocks resolve without the secret", async () => {
+  it("creates approvals, exposes them via approval commands, and returns 401 for resolve without the internal secret", async () => {
     const pending = await postJson("/exec/mcp", {
       args: ["atlassian", "createJiraIssue", '{"projectKey":"THOR","summary":"Fix it"}'],
       cwd: "/workspace/repos/acme",
@@ -264,22 +263,19 @@ describe("remote-cli MCP endpoints", () => {
     const deniedResolve = await postJson("/exec/mcp", {
       args: ["resolve", actionId, "approved", "U123"],
     });
-    const deniedBody = (await deniedResolve.json()) as {
-      stdout: string;
-      stderr: string;
-      exitCode: number;
-    };
-    expect(deniedResolve.status).toBe(200);
-    expect(deniedBody).toMatchObject({
-      stdout: "",
-      stderr: "Unknown subcommand: resolve\n",
-      exitCode: 1,
-    });
+    expect(deniedResolve.status).toBe(401);
+
+    const wrongSecretResolve = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "wrong" },
+    );
+    expect(wrongSecretResolve.status).toBe(401);
 
     const allowedResolve = await postJson(
       "/exec/mcp",
       { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-resolve-secret": "resolve-secret" },
+      { "x-thor-internal-secret": "resolve-secret" },
     );
     const allowedBody = (await allowedResolve.json()) as {
       stdout: string;
@@ -295,6 +291,44 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls).toEqual([
       { name: "createJiraIssue", arguments: { projectKey: "THOR", summary: "Fix it" } },
     ]);
+  });
+
+  it("returns 401 for /internal/exec without the internal secret", async () => {
+    const response = await postJson("/internal/exec", {
+      bin: "echo",
+      args: ["hello"],
+      cwd: "/tmp",
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it("returns 401 for /github/pr-head without the internal secret", async () => {
+    const response = await fetch(
+      `${baseUrl}/github/pr-head?installation=1&repo=acme%2Frepo&number=1`,
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("runs /internal/exec with valid internal secret", async () => {
+    const response = await postJson(
+      "/internal/exec",
+      {
+        bin: "echo",
+        args: ["hello"],
+        cwd: "/tmp",
+      },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const body = (await response.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.exitCode).toBe(0);
+    expect(body.stdout.trim()).toBe("hello");
+    expect(body.stderr).toBe("");
   });
 
   async function postJson(

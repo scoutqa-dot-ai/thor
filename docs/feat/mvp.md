@@ -50,7 +50,7 @@ flowchart LR
 - Approved tools create an approval record and return an action ID.
 - Hidden tools are never listed to the agent.
 - Approval status is available through `POST /exec/approval`.
-- Approval resolution is available through `POST /exec/mcp` with `x-thor-resolve-secret`.
+- Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution and `POST /internal/exec`.
 
 Approval records are persisted under `/workspace/data/approvals`. Tool activity is audit-logged under `/workspace/worklog`.
 
@@ -68,7 +68,7 @@ The runner batches events by correlation key, resumes prior OpenCode sessions wh
 
 - Least privilege: each service keeps only the credentials it needs.
 - Server-side policy: MCP allow/approve enforcement happens in `remote-cli`, not in the agent.
-- Secret-gated approval resolution: agents never receive `RESOLVE_SECRET`.
+- Secret-gated internal routes: agents never receive `THOR_INTERNAL_SECRET`, which authorizes approval resolution and internal exec on gateway↔remote-cli routes.
 - Read-only repo mounts in OpenCode; modifications happen through worktrees.
 - Structured audit logs for tool calls and outcomes.
 

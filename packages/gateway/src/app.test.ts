@@ -508,13 +508,13 @@ describe("gateway", () => {
           action: "created",
           installation: { id: 1 },
           repository: { full_name: "acme/thor" },
-          sender: { login: "alice", type: "User" },
+          sender: { id: 1001, login: "alice", type: "User" },
           issue: {
             number: 12,
             pull_request: { html_url: "https://github.com/acme/thor/pull/12" },
           },
           comment: {
-            body: "please review",
+            body: "@thor please review",
             html_url: "https://github.com/acme/thor/pull/12#issuecomment-1",
             created_at: "2026-04-24T11:00:00Z",
           },
@@ -2181,7 +2181,7 @@ describe("gateway", () => {
       {
         remoteCliHost: "remote-cli.internal",
         remoteCliPort: 3010,
-        resolveSecret: "resolve-secret",
+        internalSecret: "resolve-secret",
       },
     );
 
@@ -2193,7 +2193,7 @@ describe("gateway", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-thor-resolve-secret": "resolve-secret",
+        "x-thor-internal-secret": "resolve-secret",
       },
       body: JSON.stringify({ args: ["resolve", "act-1", "approved", "U123"] }),
     });

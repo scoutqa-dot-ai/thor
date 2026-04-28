@@ -143,8 +143,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   remoteCliHost?: string;
   /** Remote CLI port for approval resolution. Default: 3004. */
   remoteCliPort?: number;
-  /** Shared secret for MCP approval resolution. */
-  resolveSecret?: string;
+  /** Shared secret for gateway→remote-cli internal endpoints. */
+  internalSecret?: string;
   timestampToleranceSeconds?: number;
   /** Directory for the event queue. Default: "data/queue". */
   queueDir?: string;
@@ -281,6 +281,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           deps: runnerDeps,
           slackMcpDeps,
           remoteCliUrl,
+          internalSecret: config.internalSecret,
           interrupt: hasInterrupt,
           onAccepted: ack,
           onRejected: reject,
@@ -737,7 +738,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               decision,
               reviewer,
               remoteCliUrl,
-              config.resolveSecret,
+              config.internalSecret,
               config.fetchImpl,
             );
             if (!resolved) {
