@@ -352,6 +352,57 @@ Files likely affected:
 - 2026-04-27: Removed the no-op OpenCode `curl` wrapper after Slack metadata
   injection moved into mitmproxy. The OpenCode image now uses the apt-installed
   `/usr/bin/curl` directly.
+- 2026-04-28: Gateway only trusts `thor-meta-key` from bash output when the
+  surrounding JSON also contains `ok: true` and a `ts` marker, so a tool that
+  echoes the field cannot forge a Slack thread alias.
+- 2026-04-28: Added a 10s timeout around every Slack Web API call in gateway so
+  a hung Slack request can no longer stall the per-thread queue.
+- 2026-04-28: Capped the NDJSON line buffer used by the progress relay so an
+  oversized event line cannot OOM the gateway.
+- 2026-04-28: Hardened progress lifecycle — duplicate `start` events no longer
+  leak the previous session, `done` from a superseded NDJSON stream is ignored,
+  per-thread error progress entries are bounded, and the registry entry is only
+  removed once `chat.delete` confirms.
+- 2026-04-28: Sanitized approval-card output so remote-cli stderr cannot leak
+  raw upstream tool data into Slack.
+- 2026-04-28: Approval interactivity payload parsing catches both JSON parse
+  errors and `URIError` from malformed button values; the dead `version` field
+  was dropped.
+- 2026-04-28: Approval resolution retries `resolveApproval` on transient
+  remote-cli failures and surfaces a final error to the Slack card instead of
+  silently dropping the click.
+- 2026-04-28: Approval outcome batches relay progress events back into the
+  resumed thread so the Slack progress message keeps updating after re-entry.
+- 2026-04-28: `handleApprovalAction` extracted from the interactivity route and
+  simplified.
+
+## Beyond the original plan
+
+The following landed on this branch but were not in the original phase
+breakdown. They are recorded here so the plan reflects what shipped.
+
+- **Gateway Slack client switched to `@slack/web-api`.** The original plan said
+  "move Slack Web API helper code into gateway" without specifying transport.
+  The branch ends on a refactor that replaces the raw-fetch wrapper with the
+  official `@slack/web-api` `WebClient` and `@slack/types` block typings. Tests
+  inject a mock client instead of intercepting `fetch`. Rationale: compile-time
+  typing for `chat.postMessage` / `chat.update` / `chat.delete` / `reactions.add`
+  payloads, and a single place to plug the per-call timeout. See decision D13.
+- **`remote-cli` git-merge policy lockdown.** Unrelated to Slack but landed on
+  this branch: `validateMerge` previously allowed every merge mode except
+  `--no-verify`. It is now restricted to `git merge --abort`,
+  `git merge --continue`, and `git merge origin/<branch>` with a small allow
+  list of safe flags. Recorded here only because the change is in this PR's
+  diff; it should be re-homed in any future plan that owns `policy-git`.
+- **`remote-cli` sandbox cwd.** Also unrelated to Slack: allow a sandbox-only
+  subdirectory as `cwd` so a session can run from inside a worktree subpath.
+  Same caveat as above.
+
+## Decision Log additions
+
+| #   | Decision                                                                           | Rationale                                                                                                                                                                                           |
+| --- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D13 | Use `@slack/web-api` `WebClient` in gateway instead of a hand-rolled fetch wrapper | Official typings for the four methods we use, one timeout seam, and tests can mock the client object directly. The wrapper was already gateway-local — the cost of swapping is tests + a small dep. |
 
 ## Verification matrix
 
