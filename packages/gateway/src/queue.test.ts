@@ -106,6 +106,21 @@ describe("EventQueue", () => {
     expect((batch[2].payload as { text: string }).text).toBe("third");
   });
 
+  it("dispatches same-key events chronologically even when filenames sort differently", async () => {
+    const handler = ackHandler();
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    const late = { ...makeEvent("key-1", "late"), id: "a-late", sourceTs: BASE_TIME + 200 };
+    const early = { ...makeEvent("key-1", "early"), id: "z-early", sourceTs: BASE_TIME + 100 };
+    writeFileSync(join(queueDir, "000000000000001_a-late.json"), JSON.stringify(late), "utf8");
+    writeFileSync(join(queueDir, "999999999999999_z-early.json"), JSON.stringify(early), "utf8");
+
+    await queue.flush();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(batchTexts(handler)).toEqual([["early", "late"]]);
+  });
+
   it("processes independent keys concurrently", async () => {
     const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });

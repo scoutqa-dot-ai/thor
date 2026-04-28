@@ -1161,6 +1161,63 @@ describe("gateway", () => {
     });
   });
 
+  it("ignores GitHub webhooks when the event header does not match the parsed body type", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = JSON.stringify({
+            action: "created",
+            installation: { id: 1 },
+            repository: { full_name: "scoutqa-dot-ai/thor" },
+            sender: { id: 1001, login: "alice", type: "User" },
+            issue: {
+              number: 12,
+              pull_request: { html_url: "https://github.com/scoutqa-dot-ai/thor/pull/12" },
+            },
+            comment: {
+              body: "@thor review",
+              html_url: "https://github.com/scoutqa-dot-ai/thor/pull/12#issuecomment-1",
+              created_at: "2026-04-24T11:00:00Z",
+            },
+          });
+
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-header-mismatch",
+              "X-GitHub-Event": "pull_request_review_comment",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            requestId: "delivery-header-mismatch",
+            reason: "event_unsupported",
+            eventType: "pull_request_review_comment",
+            action: "created",
+            parseStatus: "schema_valid",
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
   it("enqueues valid GitHub webhook with branch correlation and mention delay", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
