@@ -5,6 +5,8 @@
 
 > **Post-implementation note (2026-04-26):** the workspace-config block was renamed `orgs` → `owners` in commit `3d050bc3` to match GitHub's `owner` terminology (an installation can belong to a user or an org). References to `orgs.<name>.github_app_installation_id` below now read `owners.<name>.github_app_installation_id` in shipped code.
 
+> **Post-implementation note (2026-04-28):** PR #48 extends this webhook surface with `push` events for local checkout maintenance. Default-branch pushes fast-forward `/workspace/repos/<repo>`, non-default branch pushes fast-forward an existing matching worktree, and deleted-branch pushes remove a matching clean worktree without waking OpenCode. This is implemented; no follow-up action is implied by this historical plan.
+
 ## Goal
 
 Add GitHub App webhook intake to the gateway so Thor wakes up on PR code-flow activity, routes the event to the correct local repo, and continues the right session.
@@ -348,16 +350,4 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 | 17  | `X-GitHub-Delivery` is the queue event ID                                                          | Best available dedupe key for webhook deliveries; aligns with the existing queue overwrite model.                                                                                                                                                                 |
 | 18  | Require payload timestamps in the envelope schema                                                  | `comment.created_at` / `review.submitted_at` are always present in real GitHub deliveries; making them required removes the synthetic delivery-ID-hash fallback for `sourceTs` and keeps `readyAt` stable across redeliveries.                                    |
 | 19  | Same-key mixed-source batches dispatch as one runner trigger                                       | `git:branch:*` is intentionally shared across Slack, cron, and GitHub. Dispatching one composite prompt per ready batch preserves every event under a single queue ack and avoids source-priority drops when multiple intake paths hit the same branch together.  |
-| 20  | Centralize queue dispatch behind one batch planner + executor                                      | Single-source and mixed-source batches now share one decision path (`dispatch` / `reroute` / `drop`). Source-specific rules stay local, while queue handling stops duplicating routing policy across Slack, cron, and GitHub branches.                            |
-
-## Out of Scope
-
-- Replying back to GitHub (issues, PRs, reviews) from Thor.
-- Slack progress mirroring for GitHub-originated sessions.
-- Full GitHub webhook coverage beyond the 3-event MVP allowlist.
-- Issue triage via `git:issue:{repo}:{number}` correlation.
-- Fork PR support.
-- Monorepo / multi-workdir-per-repo topologies.
-- Mixed-case GitHub org/repo normalization beyond the current exact-match routing model.
-- Backfilling historical GitHub activity.
-- Durable replay-prevention storage (reassess when a reply path is added).
+| 20  | Centralize queue dispatch behind one batch planner + executor                                      | Single-source and mixed-source batches now share one decision path (`dispatch`
