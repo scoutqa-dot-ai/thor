@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/core-e2e.yml"
       - "scripts/test-e2e.sh"
+      - "scripts/test-opencode-e2e.sh"
       - "packages/**"
       - pnpm-lock.yaml
       - docker-compose.yml
@@ -133,6 +134,12 @@ jobs:
         env:
           CI: "true"
         run: pnpm test:e2e
+
+      - name: Run OpenCode LLM smoke test
+        if: github.ref == 'refs/heads/main'
+        env:
+          CI: "true"
+        run: pnpm test:opencode-e2e
 
       - name: Compose status (on failure)
         if: failure()
