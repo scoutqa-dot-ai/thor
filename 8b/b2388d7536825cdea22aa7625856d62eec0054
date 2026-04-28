@@ -1,0 +1,27 @@
+docs/plan/2026042701_agent-task-handoffs.md
+  1da2ebac4f7992ec 65,125,160,162,169,175,206,210,220,268
+scripts/lint-runs-protocol.mjs
+  1da2ebac4f7992ec 1,47-52,87-91,97
+docker/opencode/config/agents/build.md
+  1da2ebac4f7992ec 116,123,125-137,140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8bb2388d7536825cdea22aa7625856d62eec0054",
+  "prompts": {
+    "1da2ebac4f7992ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d40531f-4798-4033-907f-e913c030b233",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 49,
+      "total_deletions": 45,
+      "accepted_lines": 40,
+      "overriden_lines": 0
+    }
+  }
+}
