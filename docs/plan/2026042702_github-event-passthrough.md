@@ -3,7 +3,7 @@
 # GitHub event pass-through (drop NormalizedGitHubEvent)
 
 **Date**: 2026-04-27
-**Status**: Ready to implement
+**Status**: Implemented; awaiting push-check verification
 **Scope**: refactor-only, zero behavior change
 
 ## Goal
@@ -244,6 +244,16 @@ queue before deploy" in the rollout step, in-flight count should be near zero.
 | Resolved branch location                              | Inside `GitHubQueuedPayload.resolvedBranch`               | `EventQueue` parses only known top-level queue metadata; custom top-level fields would be stripped on scan.                                                                                                                      |
 | Legacy reject granularity                             | Reject the whole ready batch                              | Queue `reject(reason)` operates on the current correlation-key batch. Partial dead-lettering would require a queue API change, which is unnecessary for drained deploys.                                                         |
 | Bundle workflow_run with this refactor?               | No — separate plan                                        | /autoplan dual voices both flagged scope bundling. Wake-on-CI has open design questions (primitive choice, self-loop, granularity). See follow-up plan.                                                                          |
+
+## Implementation notes
+
+- Phase 1 commit: `869861bf refactor: add github event helpers`
+- Phase 2 commit: `6fb218a0 refactor: pass through github webhook payloads`
+- Local queue-drain check before push: no JSON files under `data/queue`.
+- Local verification:
+  - `pnpm exec vitest run packages/gateway/src/github.test.ts`
+  - `pnpm --filter @thor/gateway exec vitest run`
+  - `pnpm -r typecheck` via commit hooks
 
 ## Out of scope
 
