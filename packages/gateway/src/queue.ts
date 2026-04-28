@@ -199,7 +199,7 @@ export class EventQueue {
         // Ignore unreadable/corrupt files for snapshot purposes.
       }
     }
-    pending.sort((a, b) => a.sourceTs - b.sourceTs || a.id.localeCompare(b.id));
+    pending.sort(compareEvents);
 
     return {
       pending,
