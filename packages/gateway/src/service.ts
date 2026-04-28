@@ -84,6 +84,7 @@ export interface BatchDispatchInput {
   deps: RunnerDeps;
   slackDeps: SlackDeps;
   remoteCliUrl?: string;
+  internalSecret?: string;
   interrupt?: boolean;
   onAccepted?: () => void;
   onRejected?: (reason: string) => void;
@@ -407,6 +408,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       const branchInfo = await resolveGitHubPrHead(
         latest,
         input.remoteCliUrl,
+        input.internalSecret,
         input.deps.fetchImpl,
       );
       if (branchInfo.headRepoFullName !== latest.repoFullName) {
@@ -723,6 +725,7 @@ export async function triggerRunnerGitHub(
   correlationKey: string,
   deps: RunnerDeps,
   remoteCliUrl: string,
+  internalSecret?: string,
   interrupt?: boolean,
   onAccepted?: () => void,
   onRejected?: (reason: string) => void,
@@ -738,6 +741,7 @@ export async function triggerRunnerGitHub(
     deps,
     slackDeps: { botToken: "", fetchImpl: deps.fetchImpl },
     remoteCliUrl,
+    internalSecret,
     interrupt,
     onAccepted,
     onRejected,
@@ -786,6 +790,7 @@ export async function triggerRunnerApprovalOutcomes(
 export async function resolveGitHubPrHead(
   event: NormalizedGitHubEvent,
   remoteCliUrl: string,
+  internalSecret: string | undefined,
   fetchImpl?: typeof fetch,
 ): Promise<GitHubPrHeadResult> {
   const params = new URLSearchParams({
@@ -798,6 +803,9 @@ export async function resolveGitHubPrHead(
   for (let attempt = 0; attempt <= GITHUB_PR_HEAD_RETRIES; attempt++) {
     try {
       const response = await getFetch(fetchImpl)(url, {
+        headers: {
+          ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
+        },
         signal: AbortSignal.timeout(GITHUB_PR_HEAD_TIMEOUT_MS),
       });
       if (response.ok) {
@@ -813,7 +821,13 @@ export async function resolveGitHubPrHead(
         return { ref, headRepoFullName };
       }
 
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401) {
+        throw new TerminalGitHubDispatchError(
+          "branch_lookup_failed",
+          "Remote-cli /github/pr-head rejected the internal credential",
+        );
+      }
+      if (response.status === 403) {
         throw new TerminalGitHubDispatchError(
           "installation_gone",
           `Remote-cli /github/pr-head returned ${response.status}`,
@@ -936,7 +950,7 @@ export async function resolveApproval(
   decision: "approved" | "rejected",
   reviewer: string,
   remoteCliUrl: string,
-  resolveSecret: string | undefined,
+  internalSecret: string | undefined,
   fetchImpl?: typeof fetch,
   reason?: string,
 ): Promise<ExecResult | undefined> {
@@ -950,7 +964,7 @@ export async function resolveApproval(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(resolveSecret ? { "x-thor-resolve-secret": resolveSecret } : {}),
+          ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
         },
         body: JSON.stringify({ args }),
       });

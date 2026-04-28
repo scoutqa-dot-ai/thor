@@ -199,8 +199,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   remoteCliHost?: string;
   /** Remote CLI port for approval resolution. Default: 3004. */
   remoteCliPort?: number;
-  /** Shared secret for MCP approval resolution. */
-  resolveSecret?: string;
+  /** Shared secret for gateway→remote-cli internal endpoints. */
+  internalSecret?: string;
   timestampToleranceSeconds?: number;
   /** Directory for the event queue. Default: "data/queue". */
   queueDir?: string;
@@ -259,7 +259,7 @@ type ApprovalAction = SlackInteractivityAction & { value: string };
 interface ApprovalDeps {
   slackDeps: SlackDeps;
   remoteCliUrl: string;
-  resolveSecret: string | undefined;
+  internalSecret: string | undefined;
   fetchImpl: typeof fetch | undefined;
   queue: EventQueue;
 }
@@ -341,7 +341,7 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     threadTs,
     slackDeps,
     remoteCliUrl,
-    resolveSecret,
+    internalSecret,
     fetchImpl,
     queue,
   } = ctx;
@@ -351,7 +351,7 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     decision,
     reviewer,
     remoteCliUrl,
-    resolveSecret,
+    internalSecret,
     fetchImpl,
   );
   if (!resolved) {
@@ -538,6 +538,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           deps: runnerDeps,
           slackDeps,
           remoteCliUrl,
+          internalSecret: config.internalSecret,
           interrupt: hasInterrupt,
           onAccepted: ack,
           onRejected: reject,
@@ -962,7 +963,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           payload,
           slackDeps,
           remoteCliUrl,
-          resolveSecret: config.resolveSecret,
+          internalSecret: config.internalSecret,
           fetchImpl: config.fetchImpl,
           queue,
         });

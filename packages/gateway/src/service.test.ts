@@ -57,7 +57,7 @@ describe("resolveApproval", () => {
       "approved",
       "U123",
       "http://remote-cli:3004",
-      "resolve-secret",
+      "internal-secret",
       fetchImpl,
       "ship it",
     );
@@ -67,7 +67,7 @@ describe("resolveApproval", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-thor-resolve-secret": "resolve-secret",
+        "x-thor-internal-secret": "internal-secret",
       },
       body: JSON.stringify({
         args: ["resolve", "act-1", "approved", "U123", "ship it"],
@@ -557,6 +557,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       onAccepted,
       vi.fn(),
@@ -566,6 +567,9 @@ describe("triggerRunnerGitHub", () => {
     expect(mockFetch.mock.calls[0][0]).toContain(
       "/github/pr-head?installation=126669985&repo=scoutqa-dot-ai%2Fthor&number=42",
     );
+    expect(mockFetch.mock.calls[0][1]).toMatchObject({
+      headers: { "x-thor-internal-secret": "internal-secret" },
+    });
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[1][1]?.body));
     expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
     expect(triggerBody.directory).toBe("/workspace/repos/my-repo");
@@ -588,6 +592,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       undefined,
       onRejected,
@@ -608,6 +613,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       undefined,
       onRejected,
@@ -630,6 +636,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       undefined,
       onRejected,
@@ -652,6 +659,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       undefined,
       onRejected,
@@ -672,6 +680,7 @@ describe("triggerRunnerGitHub", () => {
       "pending:branch-resolve:delivery-1",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       undefined,
       onRejected,
@@ -692,6 +701,7 @@ describe("triggerRunnerGitHub", () => {
       "git:branch:thor:main",
       deps,
       "http://remote-cli:3004",
+      "internal-secret",
       false,
       onAccepted,
     );

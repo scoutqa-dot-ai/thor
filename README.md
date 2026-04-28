@@ -136,7 +136,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `OPENCODE_CPU_LIMIT`                | No       | `opencode`                | CPU limit for the OpenCode container                              |
 | `OPENCODE_MEMORY_LIMIT`             | No       | `opencode`                | Memory limit for the OpenCode container                           |
 | `POSTHOG_API_KEY`                   | Yes      | `remote-cli`              | PostHog MCP auth                                                  |
-| `RESOLVE_SECRET`                    | Yes      | `remote-cli`, `gateway`   | Secret-gates approval resolution                                  |
+| `THOR_INTERNAL_SECRET`              | Yes      | `remote-cli`, `gateway`   | Secret-gates gateway↔remote-cli internal APIs                     |
 | `SESSION_CWD`                       | No       | `runner`                  | Working directory for new sessions                                |
 | `SLACK_BOT_TOKEN`                   | Yes      | `gateway`, `mitmproxy`    | Slack bot token and mitmproxy default injection                   |
 | `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                 | Bot user ID used to ignore our own messages                       |
@@ -202,32 +202,32 @@ Rules match by exact host or suffix first, then by optional `path_prefix`.
 
 ## Key Env Vars
 
-| Variable                        | Required | Service                   | Purpose                                  |
-| ------------------------------- | -------- | ------------------------- | ---------------------------------------- |
-| `ATLASSIAN_AUTH`                | Yes      | `remote-cli`, `mitmproxy` | Atlassian MCP auth + proxy injection     |
-| `CRON_SECRET`                   | Yes      | `gateway`, `cron`         | Cron endpoint auth                       |
-| `GITHUB_APP_ID`                 | Yes      | `remote-cli`              | GitHub App ID                            |
-| `GITHUB_APP_BOT_ID`             | Yes      | `remote-cli`              | GitHub App bot user ID                   |
-| `GITHUB_APP_PRIVATE_KEY_FILE`   | Yes      | `remote-cli`              | GitHub App private key path              |
-| `GITHUB_APP_SLUG`               | Yes      | `remote-cli`, `gateway`   | GitHub App slug                          |
-| `GITHUB_PAT`                    | No       | `remote-cli`              | Optional fallback token for `git` / `gh` |
-| `GITHUB_WEBHOOK_SECRET`         | Yes      | `gateway`                 | GitHub webhook signature secret          |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | Yes      | `grafana-mcp`             | Grafana access token                     |
-| `GRAFANA_URL`                   | Yes      | `grafana-mcp`             | Grafana base URL                         |
-| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`              | Langfuse read-only auth                  |
-| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`              | Langfuse read-only auth                  |
-| `METABASE_API_KEY`              | No       | `remote-cli`              | Metabase access                          |
-| `POSTHOG_API_KEY`               | Yes      | `remote-cli`              | PostHog MCP auth                         |
-| `RESOLVE_SECRET`                | Yes      | `remote-cli`, `gateway`   | Secret-gates approval resolution         |
-| `SLACK_BOT_TOKEN`               | Yes      | `gateway`, `mitmproxy`    | Slack bot token + proxy injection        |
-| `SLACK_BOT_USER_ID`             | Yes      | `gateway`                 | Used to ignore our own Slack messages    |
-| `SLACK_SIGNING_SECRET`          | Yes      | `gateway`                 | Slack webhook verification               |
+| Variable                        | Required | Service                   | Purpose                                       |
+| ------------------------------- | -------- | ------------------------- | --------------------------------------------- |
+| `ATLASSIAN_AUTH`                | Yes      | `remote-cli`, `mitmproxy` | Atlassian MCP auth + proxy injection          |
+| `CRON_SECRET`                   | Yes      | `gateway`, `cron`         | Cron endpoint auth                            |
+| `GITHUB_APP_ID`                 | Yes      | `remote-cli`              | GitHub App ID                                 |
+| `GITHUB_APP_BOT_ID`             | Yes      | `remote-cli`              | GitHub App bot user ID                        |
+| `GITHUB_APP_PRIVATE_KEY_FILE`   | Yes      | `remote-cli`              | GitHub App private key path                   |
+| `GITHUB_APP_SLUG`               | Yes      | `remote-cli`, `gateway`   | GitHub App slug                               |
+| `GITHUB_PAT`                    | No       | `remote-cli`              | Optional fallback token for `git` / `gh`      |
+| `GITHUB_WEBHOOK_SECRET`         | Yes      | `gateway`                 | GitHub webhook signature secret               |
+| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | Yes      | `grafana-mcp`             | Grafana access token                          |
+| `GRAFANA_URL`                   | Yes      | `grafana-mcp`             | Grafana base URL                              |
+| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`              | Langfuse read-only auth                       |
+| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`              | Langfuse read-only auth                       |
+| `METABASE_API_KEY`              | No       | `remote-cli`              | Metabase access                               |
+| `POSTHOG_API_KEY`               | Yes      | `remote-cli`              | PostHog MCP auth                              |
+| `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`   | Secret-gates gateway↔remote-cli internal APIs |
+| `SLACK_BOT_TOKEN`               | Yes      | `gateway`, `mitmproxy`    | Slack bot token + proxy injection             |
+| `SLACK_BOT_USER_ID`             | Yes      | `gateway`                 | Used to ignore our own Slack messages         |
+| `SLACK_SIGNING_SECRET`          | Yes      | `gateway`                 | Slack webhook verification                    |
 
 ## Security Model
 
 - OpenCode does not get direct API credentials for MCP upstreams.
 - `remote-cli` enforces MCP allow/approve policy server-side and stores approvals under `/workspace/data/approvals`.
-- Approval resolution is only available through `POST /exec/mcp` with `x-thor-resolve-secret`.
+- Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution, `POST /internal/exec`, and `GET /github/pr-head`.
 - `git` uses GitHub App installation tokens through `GIT_ASKPASS` when `owners.<owner>.github_app_installation_id` is configured and the target owner can be resolved; `GITHUB_PAT` is only a fallback during command execution.
 - `gh` resolves GitHub App auth before execution and can fall back to inherited `GH_TOKEN` / `GITHUB_PAT` when no installation token is available, but the service itself still requires GitHub App env at startup.
 - Source repos are mounted read-only into OpenCode; edits happen in `/workspace/worktrees`.
