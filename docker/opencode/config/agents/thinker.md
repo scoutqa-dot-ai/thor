@@ -28,10 +28,10 @@ Role: <plan|review>
 
 Parse those lines exactly:
 
-- `Run dir:` must match `^Run dir: (?<path>/workspace/runs/[^\s]+)$`.
-- `Role:` must match `^Role: (?<role>plan|implement|review)$`.
-- For this agent, `Role:` must be `plan` or `review`. If it is not, reply `ERROR: thinker only supports Role: plan or Role: review` and stop.
-- Resolve the run dir with `realpath`; reject any path that does not resolve under `/workspace/runs/`.
+- `Run dir:` must match `^Run dir: (?<path>/workspace/runs/[^\s]+)$`. Missing or malformed → reply `ERROR: missing Run dir header` and stop.
+- `Role:` must match `^Role: (?<role>plan|implement|review)$`. Missing or malformed → reply `ERROR: missing Role header` and stop.
+- For this agent, `Role:` must be `plan` or `review`. If it is `implement`, reply `ERROR: thinker only supports Role: plan or Role: review` and stop.
+- Resolve the run dir with `realpath`. If the resolved path does not stay under `/workspace/runs/`, reply `ERROR: Run dir outside /workspace/runs/` and stop.
 
 Before reasoning:
 
@@ -42,8 +42,8 @@ Before reasoning:
 
 Role behavior:
 
-- `Role: plan`: read the README, inspect the worktree as needed, write `plan.md` only when it adds useful structure, insert an Artifacts row for it, and append exactly one Log entry: `YYYY-MM-DD HH:MM thinker: plan ready <optional artifact path>`.
-- `Role: review`: read the README, linked artifacts, test evidence, and worktree diff. Replace the `Verdict:` line with exactly one of `BLOCK`, `SUBSTANTIVE`, or `NIT`. Write `review.md` only when findings need prose, insert an Artifacts row for it, and append exactly one Log entry: `YYYY-MM-DD HH:MM thinker: review verdict <BLOCK|SUBSTANTIVE|NIT>`.
+- `Role: plan`: read the README, inspect the worktree as needed, write `plan.md` only when it adds useful structure, insert an Artifacts row for it, and append exactly one Log entry: `YYYY-MM-DD HH:MM thinker: plan ready <optional artifact path>`. Summarize multi-stage planning in that single Log line; do not append multiple lines per role invocation.
+- `Role: review`: read the README, linked artifacts, test evidence, and worktree diff. Replace the `Verdict:` line with exactly one of `BLOCK`, `SUBSTANTIVE`, or `NIT`. Write `review.md` only when findings need prose, insert an Artifacts row for it, and append exactly one Log entry: `YYYY-MM-DD HH:MM thinker: review verdict <BLOCK|SUBSTANTIVE|NIT>`. Summarize multi-stage review in that single Log line.
 
 README mutation rules:
 

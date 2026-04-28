@@ -26,10 +26,10 @@ Role: implement
 
 Parse those lines exactly:
 
-- `Run dir:` must match `^Run dir: (?<path>/workspace/runs/[^\s]+)$`.
-- `Role:` must match `^Role: (?<role>plan|implement|review)$`.
-- For this agent, `Role:` must be `implement`. If it is not, reply `ERROR: coder only supports Role: implement` and stop.
-- Resolve the run dir with `realpath`; reject any path that does not resolve under `/workspace/runs/`.
+- `Run dir:` must match `^Run dir: (?<path>/workspace/runs/[^\s]+)$`. Missing or malformed → reply `ERROR: missing Run dir header` and stop.
+- `Role:` must match `^Role: (?<role>plan|implement|review)$`. Missing or malformed → reply `ERROR: missing Role header` and stop.
+- For this agent, `Role:` must be `implement`. If it is `plan` or `review`, reply `ERROR: coder only supports Role: implement` and stop.
+- Resolve the run dir with `realpath`. If the resolved path does not stay under `/workspace/runs/`, reply `ERROR: Run dir outside /workspace/runs/` and stop.
 
 Before editing code:
 
@@ -43,7 +43,7 @@ Implementation behavior:
 - Edit the worktree listed by the `Worktree:` field.
 - Follow the repo's existing conventions and durable planning rules.
 - Run targeted tests relevant to your edits. Never run the full suite unless explicitly asked.
-- Append exactly one Log entry when done: `YYYY-MM-DD HH:MM coder: <one-line implementation summary>; tests: <command and result>`.
+- Append exactly one Log entry when done: `YYYY-MM-DD HH:MM coder: <one-line implementation summary>; tests: <command and result>`. Use this format whether tests pass or fail; if they fail, record the failing command and a one-line failure cue. If the work spanned multiple stages or commands, summarize them in this single line — do not append multiple Log lines per role invocation. Do not iterate locally on test failures; the orchestrator's review step decides whether to redispatch.
 
 README mutation rules:
 

@@ -113,7 +113,7 @@ Run directory:
 
 Run ID format: `<YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]`, for example `20260427-143052-mcp-approval`. Use a short kebab-case slug. Add the Slack thread ts suffix when the task is tied to a Slack thread.
 
-The canonical README schema is `/workspace/repos/thor/docker/opencode/config/run-readme.template.md` in this repo. Copy that template into the run dir and fill the header and Goal. Required top fields, in order:
+The canonical README schema is `/workspace/repos/thor/docker/opencode/config/run-readme.template.md` (repo-relative path: `docker/opencode/config/run-readme.template.md`). Copy that template into the run dir and fill the header and Goal. Required top fields, in order:
 
 ```
 Run-ID: <YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]
@@ -150,7 +150,13 @@ The subagent contract is strict:
 - Subagents read `<run-dir>/README.md` as the task source of truth.
 - Runtime-only context such as available tools, MCP upstreams, skills, and environment hints may go in the prompt. Task content stays in the README.
 - Do not paste the README contents into the subagent prompt.
-- Missing headers, missing README, or missing required README fields must produce an `ERROR:` reply from the subagent. Amend the README and redispatch; do not continue from guesses.
+- Missing headers, missing README, or missing required README fields must produce an `ERROR:` reply from the subagent. Exact strings the orchestrator should expect:
+  - Missing or malformed `Run dir:` → `ERROR: missing Run dir header`.
+  - Missing or malformed `Role:` → `ERROR: missing Role header`.
+  - `Run dir:` resolves outside `/workspace/runs/` → `ERROR: Run dir outside /workspace/runs/`.
+  - README missing → `ERROR: README not found at <path>`.
+  - README missing a required field → `ERROR: README missing <field>`.
+- On any `ERROR:` reply, amend the README (or fix the prompt header) and redispatch; do not continue from guesses.
 
 For non-trivial code changes, follow this loop:
 

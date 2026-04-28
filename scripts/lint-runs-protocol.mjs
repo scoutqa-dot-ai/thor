@@ -67,6 +67,11 @@ const sharedNeedles = [
   "merged",
   "abandoned",
   "ERROR:",
+  "ERROR: missing Run dir header",
+  "ERROR: missing Role header",
+  "ERROR: Run dir outside /workspace/runs/",
+  "ERROR: README not found",
+  "ERROR: README missing",
   "realpath",
   "/workspace/runs/",
 ];
