@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebClient } from "@slack/web-api";
@@ -108,6 +108,23 @@ function checkSuiteWebhookBody(overrides: Record<string, unknown> = {}): string 
   });
 }
 
+function pushWebhookBody(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    ref: "refs/heads/feat/nested",
+    before: "1111111111111111111111111111111111111111",
+    after: "2222222222222222222222222222222222222222",
+    created: false,
+    deleted: false,
+    forced: false,
+    installation: { id: 126669985 },
+    repository: { full_name: "scoutqa-dot-ai/test-repo", default_branch: "main" },
+    sender: { id: 1001, login: "alice", type: "User" },
+    head_commit: { timestamp: "2026-04-24T12:00:00Z" },
+    commits: [{ id: "2222222222222222222222222222222222222222" }],
+    ...overrides,
+  });
+}
+
 function readQueuedEvents(queueDir: string, subdir?: string): Array<Record<string, unknown>> {
   const dir = subdir ? join(queueDir, subdir) : queueDir;
   return readdirSync(dir)
@@ -166,6 +183,23 @@ async function withWorklogDir<T>(run: (worklogDir: string) => Promise<T>): Promi
     }
 
     rmSync(worklogDir, { recursive: true, force: true });
+  }
+}
+
+async function withWorktreesRoot<T>(run: (worktreesRoot: string) => Promise<T>): Promise<T> {
+  const worktreesRoot = mkdtempSync(join(tmpdir(), "gateway-worktrees-test-"));
+  const prev = process.env.THOR_WORKTREES_ROOT;
+  process.env.THOR_WORKTREES_ROOT = worktreesRoot;
+
+  try {
+    return await run(worktreesRoot);
+  } finally {
+    if (prev === undefined) {
+      delete process.env.THOR_WORKTREES_ROOT;
+    } else {
+      process.env.THOR_WORKTREES_ROOT = prev;
+    }
+    rmSync(worktreesRoot, { recursive: true, force: true });
   }
 }
 
@@ -1302,6 +1336,430 @@ describe("gateway", () => {
         githubAppBotId: 7777,
       },
     );
+  });
+
+  it("fast-forwards default branch pushes without waking when no notes exist", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir) => {
+        const body = pushWebhookBody({ ref: "refs/heads/main" });
+        const response = await fetch(`${baseUrl}/github/webhook`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+            "X-GitHub-Delivery": "delivery-push-main",
+            "X-GitHub-Event": "push",
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, status: "push_wake_skipped_no_session" });
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+      },
+      { githubWebhookSecret: "github-secret", internalExec },
+    );
+
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "git",
+      args: ["pull", "--ff-only", "origin", "refs/heads/main"],
+      cwd: "/workspace/repos/test-repo",
+    });
+  });
+
+  it("skips missing branch worktree pushes and records ignored history", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn();
+    rmSync("/workspace/worktrees/test-repo", { recursive: true, force: true });
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pushWebhookBody({ ref: "refs/heads/feat/missing" });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-missing-worktree",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({
+            ok: true,
+            ignored: true,
+            status: "push_sync_worktree_missing",
+          });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
+            { reason: "push_sync_worktree_missing", eventType: "push" },
+          ]);
+          expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+    });
+
+    expect(internalExec).not.toHaveBeenCalled();
+  });
+
+  it("ignores tag push refs and records ignored history", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pushWebhookBody({ ref: "refs/tags/v1.0.0" });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-tag",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({
+            ok: true,
+            ignored: true,
+            status: "push_sync_non_branch_ref_ignored",
+          });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
+            { reason: "push_sync_non_branch_ref_ignored", eventType: "push" },
+          ]);
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+    });
+
+    expect(internalExec).not.toHaveBeenCalled();
+  });
+
+  it("returns push_sync_failed when pull internalExec rejects", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi
+      .fn()
+      .mockRejectedValue(new Error("remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git"));
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pushWebhookBody({ ref: "refs/heads/main" });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-pull-reject",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true, status: "push_sync_failed" });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
+            {
+              reason: "push_sync_failed",
+              metadata: {
+                errorName: "Error",
+                errorMessage: "remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git",
+              },
+            },
+          ]);
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+    });
+  });
+
+  it("fast-forwards existing nested branch worktrees and wakes through the repo-scoped GitHub queue when notes exist", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeRoot = join(worktreesRoot, "test-repo");
+      const worktreeDir = join(worktreeRoot, "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
+      notesKeys.add("git:branch:test-repo:feat/nested");
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pushWebhookBody();
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-worktree",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, status: "push_wake_triggered" });
+          expect(readQueuedEvents(queueDir)).toMatchObject([
+            {
+              id: "delivery-push-worktree",
+              source: "github",
+              correlationKey: "git:branch:test-repo:feat/nested",
+              delayMs: 0,
+              interrupt: false,
+              payload: {
+                event_type: "push",
+                ref: "refs/heads/feat/nested",
+                after: "2222222222222222222222222222222222222222",
+              },
+            },
+          ]);
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+
+      expect(internalExec).toHaveBeenCalledWith({
+        bin: "git",
+        args: ["pull", "--ff-only", "origin", "refs/heads/feat/nested"],
+        cwd: worktreeDir,
+      });
+    });
+  });
+
+  it("uses a full branch ref for push sync so dash-prefixed branch names are not parsed as options", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeDir = join(worktreesRoot, "test-repo", "-c");
+      mkdirSync(worktreeDir, { recursive: true });
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = pushWebhookBody({ ref: "refs/heads/-c" });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-dash-branch",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, status: "push_wake_skipped_no_session" });
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+
+      expect(internalExec).toHaveBeenCalledWith({
+        bin: "git",
+        args: ["pull", "--ff-only", "origin", "refs/heads/-c"],
+        cwd: worktreeDir,
+      });
+    });
+  });
+
+  it("resolves worktrees under a symlinked worktrees root", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+    const tempRoot = mkdtempSync(join(tmpdir(), "gateway-worktrees-symlink-"));
+    const realRoot = join(tempRoot, "real");
+    const linkRoot = join(tempRoot, "link");
+    mkdirSync(realRoot, { recursive: true });
+    symlinkSync(realRoot, linkRoot, "dir");
+    const prev = process.env.THOR_WORKTREES_ROOT;
+    process.env.THOR_WORKTREES_ROOT = linkRoot;
+
+    try {
+      const realWorktreeDir = join(realRoot, "test-repo", "feat/nested");
+      mkdirSync(realWorktreeDir, { recursive: true });
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = pushWebhookBody();
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-symlink-root",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, status: "push_wake_skipped_no_session" });
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+
+      expect(internalExec).toHaveBeenCalledWith({
+        bin: "git",
+        args: ["pull", "--ff-only", "origin", "refs/heads/feat/nested"],
+        cwd: realWorktreeDir,
+      });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.THOR_WORKTREES_ROOT;
+      } else {
+        process.env.THOR_WORKTREES_ROOT = prev;
+      }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("removes clean deleted branch worktrees and never wakes", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 });
+
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeRoot = join(worktreesRoot, "test-repo");
+      const worktreeDir = join(worktreeRoot, "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
+      notesKeys.add("git:branch:test-repo:feat/nested");
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pushWebhookBody({
+            deleted: true,
+            after: "0000000000000000000000000000000000000000",
+            head_commit: null,
+          });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-delete",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, status: "push_delete_worktree_removed" });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+
+      expect(internalExec).toHaveBeenCalledWith({ bin: "git", args: ["status", "--porcelain"], cwd: worktreeDir });
+      expect(internalExec).toHaveBeenCalledWith({
+        bin: "git",
+        args: ["worktree", "remove", worktreeDir],
+        cwd: "/workspace/repos/test-repo",
+      });
+    });
+  });
+
+  it("preserves dirty deleted branch worktrees and never wakes", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockResolvedValue({ stdout: " M file.txt\n", stderr: "", exitCode: 0 });
+
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeRoot = join(worktreesRoot, "test-repo");
+      const worktreeDir = join(worktreeRoot, "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
+      notesKeys.add("git:branch:test-repo:feat/nested");
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pushWebhookBody({ deleted: true, head_commit: null });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-delete-dirty",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({
+            ok: true,
+            ignored: true,
+            status: "push_delete_worktree_dirty",
+          });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+
+      expect(internalExec).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("returns push_delete_cleanup_failed when cleanup internalExec rejects", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockRejectedValue(new Error("remote-cli unavailable"));
+
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeRoot = join(worktreesRoot, "test-repo");
+      const worktreeDir = join(worktreeRoot, "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
+      await withWorklogDir(async (worklogDir) => {
+        await withServer(
+          fetchImpl,
+          async (baseUrl, _queue, queueDir) => {
+            const body = pushWebhookBody({ deleted: true, head_commit: null });
+            const response = await fetch(`${baseUrl}/github/webhook`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+                "X-GitHub-Delivery": "delivery-push-cleanup-reject",
+                "X-GitHub-Event": "push",
+              },
+              body,
+            });
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({
+              ok: true,
+              ignored: true,
+              status: "push_delete_cleanup_failed",
+            });
+            expect(readQueuedEvents(queueDir)).toHaveLength(0);
+            expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
+              {
+                reason: "push_delete_cleanup_failed",
+                metadata: { targetDir: worktreeDir, errorName: "Error", errorMessage: "remote-cli unavailable" },
+              },
+            ]);
+          },
+          { githubWebhookSecret: "github-secret", internalExec },
+        );
+      });
+
+      expect(internalExec).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("enqueues check_suite events only when the branch has an existing notes-backed session", async () => {

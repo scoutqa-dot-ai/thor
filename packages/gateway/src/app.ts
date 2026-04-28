@@ -2,9 +2,12 @@ import express, { type Express, type Request, type Response } from "express";
 import {
   appendJsonlWorklog,
   createLogger,
+  errorToMetadata,
   findNotesFile,
+  getWorkspaceWorktreesRoot,
   logError,
   logInfo,
+  resolveExistingDirectoryWithinRoot,
   resolveCorrelationKeys,
   hasSlackReply,
   getAllowedChannelIds,
@@ -63,8 +66,10 @@ import {
   GitHubWebhookEnvelopeSchema,
   isPendingBranchResolveKey,
   isCheckSuiteCompletedEvent,
+  isPushEvent,
   shouldIgnoreGitHubEvent,
   type GitHubWebhookEvent,
+  type PushEvent,
   verifyGitHubSignature,
 } from "./github.js";
 
@@ -182,6 +187,7 @@ const GITHUB_SUPPORTED_EVENTS = new Set([
   "pull_request_review_comment",
   "pull_request_review",
   "check_suite",
+  "push",
 ]);
 
 type GitHubIgnoreReason =
@@ -201,6 +207,49 @@ type GitHubIgnoreReason =
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
+
+async function resolveExistingWorktreePath(
+  localRepo: string,
+  branch: string,
+): Promise<string | null> {
+  return resolveExistingDirectoryWithinRoot(getWorkspaceWorktreesRoot(), `${localRepo}/${branch}`);
+}
+
+type PushStatus =
+  | "push_sync_default_branch_pulled"
+  | "push_sync_worktree_pulled"
+  | "push_sync_worktree_missing"
+  | "push_sync_non_branch_ref_ignored"
+  | "push_sync_failed"
+  | "push_wake_triggered"
+  | "push_wake_skipped_no_session"
+  | "push_delete_worktree_removed"
+  | "push_delete_worktree_dirty"
+  | "push_delete_worktree_missing"
+  | "push_delete_default_branch_ignored"
+  | "push_delete_non_branch_ref_ignored"
+  | "push_delete_cleanup_failed";
+
+const IGNORED_PUSH_STATUSES = new Set<PushStatus>([
+  "push_sync_worktree_missing",
+  "push_sync_non_branch_ref_ignored",
+  "push_sync_failed",
+  "push_delete_worktree_dirty",
+  "push_delete_worktree_missing",
+  "push_delete_default_branch_ignored",
+  "push_delete_non_branch_ref_ignored",
+  "push_delete_cleanup_failed",
+]);
+
+function isInternalExecResult(value: unknown): value is Awaited<ReturnType<InternalExecClient>> {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return (
+    typeof result.stdout === "string" &&
+    typeof result.stderr === "string" &&
+    typeof result.exitCode === "number"
+  );
+}
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
@@ -474,7 +523,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     repoFullName?: string;
     eventType?: string;
     action?: string;
-    reason: GitHubIgnoreReason;
+    reason: GitHubIgnoreReason | string;
   }) => {
     logInfo(log, "github_event_ignored", {
       deliveryId: input.deliveryId,
@@ -493,6 +542,153 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       stream === "ingested" ? GITHUB_WEBHOOK_INGESTED_STREAM : GITHUB_WEBHOOK_IGNORED_STREAM,
       entry,
     );
+  };
+
+  const handleGitHubPushEvent = async (input: {
+    event: PushEvent;
+    deliveryId: string;
+    repoFullName: string;
+    localRepo: string;
+    repoDir: string;
+    baseEntry: Omit<InboundWebhookHistoryEntry, "signatureVerified" | "parseStatus">;
+  }): Promise<{ status: PushStatus; ignored?: boolean }> => {
+    const { event, deliveryId, repoFullName, localRepo, repoDir, baseEntry } = input;
+    const branch = getGitHubEventBranch(event);
+    const commonMeta = {
+      deliveryId,
+      repoFullName,
+      localRepo,
+      branch,
+      ref: event.ref,
+      after: event.after,
+      forced: event.forced,
+    };
+    const record = (status: PushStatus, metadata: Record<string, unknown> = {}) => {
+      writeGitHubWebhookHistory(IGNORED_PUSH_STATUSES.has(status) ? "ignored" : "ingested", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "schema_valid",
+        reason: status,
+        metadata: { ...commonMeta, ...metadata },
+      });
+      logInfo(log, "github_push_event_handled", { status, ...commonMeta, ...metadata });
+    };
+    const execGit = async (
+      request: Parameters<InternalExecClient>[0],
+    ): Promise<Awaited<ReturnType<InternalExecClient>>> => {
+      const result = await internalExec(request);
+      if (!isInternalExecResult(result)) {
+        throw new Error("internalExec returned invalid result");
+      }
+      return result;
+    };
+
+    if (!branch) {
+      const status = event.deleted ? "push_delete_non_branch_ref_ignored" : "push_sync_non_branch_ref_ignored";
+      record(status);
+      return { status, ignored: true };
+    }
+
+    if (event.deleted === true) {
+      if (branch === event.repository.default_branch) {
+        record("push_delete_default_branch_ignored");
+        return { status: "push_delete_default_branch_ignored", ignored: true };
+      }
+
+      const targetDir = await resolveExistingWorktreePath(localRepo, branch);
+      if (!targetDir) {
+        record("push_delete_worktree_missing");
+        return { status: "push_delete_worktree_missing", ignored: true };
+      }
+
+      let statusResult: Awaited<ReturnType<InternalExecClient>>;
+      try {
+        statusResult = await execGit({
+          bin: "git",
+          args: ["status", "--porcelain"],
+          cwd: targetDir,
+        });
+      } catch (error) {
+        record("push_delete_cleanup_failed", { targetDir, ...errorToMetadata(error) });
+        return { status: "push_delete_cleanup_failed", ignored: true };
+      }
+      if (statusResult.exitCode !== 0) {
+        record("push_delete_cleanup_failed", { targetDir, exitCode: statusResult.exitCode });
+        return { status: "push_delete_cleanup_failed", ignored: true };
+      }
+      if (statusResult.stdout.trim()) {
+        record("push_delete_worktree_dirty", { targetDir });
+        return { status: "push_delete_worktree_dirty", ignored: true };
+      }
+
+      let removeResult: Awaited<ReturnType<InternalExecClient>>;
+      try {
+        removeResult = await execGit({
+          bin: "git",
+          args: ["worktree", "remove", targetDir],
+          cwd: repoDir,
+        });
+      } catch (error) {
+        record("push_delete_cleanup_failed", { targetDir, ...errorToMetadata(error) });
+        return { status: "push_delete_cleanup_failed", ignored: true };
+      }
+      if (removeResult.exitCode !== 0) {
+        record("push_delete_cleanup_failed", { targetDir, exitCode: removeResult.exitCode });
+        return { status: "push_delete_cleanup_failed", ignored: true };
+      }
+      record("push_delete_worktree_removed", { targetDir });
+      return { status: "push_delete_worktree_removed" };
+    }
+
+    const isDefaultBranch = branch === event.repository.default_branch;
+    const targetDir = isDefaultBranch ? repoDir : await resolveExistingWorktreePath(localRepo, branch);
+    if (!targetDir) {
+      record("push_sync_worktree_missing");
+      return { status: "push_sync_worktree_missing", ignored: true };
+    }
+
+    let pullResult: Awaited<ReturnType<InternalExecClient>>;
+    try {
+      pullResult = await execGit({
+        bin: "git",
+        args: ["pull", "--ff-only", "origin", `refs/heads/${branch}`],
+        cwd: targetDir,
+      });
+    } catch (error) {
+      record("push_sync_failed", { targetDir, ...errorToMetadata(error) });
+      return { status: "push_sync_failed", ignored: true };
+    }
+    if (pullResult.exitCode !== 0) {
+      record("push_sync_failed", { targetDir, exitCode: pullResult.exitCode });
+      return { status: "push_sync_failed", ignored: true };
+    }
+
+    const syncStatus: PushStatus = isDefaultBranch
+      ? "push_sync_default_branch_pulled"
+      : "push_sync_worktree_pulled";
+    record(syncStatus, { targetDir });
+
+    const rawKey = buildCorrelationKey(localRepo, branch);
+    const correlationKey = resolveCorrelationKeys([rawKey]);
+    if (!findNotesFile(correlationKey)) {
+      record("push_wake_skipped_no_session", { targetDir, rawKey, correlationKey });
+      return { status: "push_wake_skipped_no_session" };
+    }
+
+    const sourceTs = getGitHubEventSourceTs(event);
+    queue.enqueue({
+      id: deliveryId,
+      source: "github",
+      correlationKey,
+      payload: event,
+      receivedAt: new Date().toISOString(),
+      sourceTs,
+      readyAt: sourceTs,
+      delayMs: 0,
+      interrupt: false,
+    });
+    record("push_wake_triggered", { targetDir, rawKey, correlationKey });
+    return { status: "push_wake_triggered" };
   };
 
   /** Read allowed channels dynamically from config on each call. */
@@ -1115,12 +1311,14 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const repoFullName = parsed.data.repository.full_name;
     const localRepo = getGitHubEventLocalRepo(parsed.data);
-    if (!localRepo || !resolveRepoDirectory(localRepo)) {
+    const repoDir = localRepo ? resolveRepoDirectory(localRepo) : undefined;
+    const action = "action" in parsed.data ? parsed.data.action : undefined;
+    if (!localRepo || !repoDir) {
       writeGitHubWebhookHistory("ignored", {
         ...baseEntry,
         signatureVerified: true,
         parseStatus: "schema_valid",
-        action: parsed.data.action,
+        action,
         reason: "repo_not_mapped",
         metadata: {
           repoFullName,
@@ -1131,7 +1329,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         deliveryId,
         repoFullName,
         eventType: eventTypeHeader,
-        action: parsed.data.action,
+        action,
         reason: "repo_not_mapped",
       });
       res.status(200).json({ ok: true, ignored: true });
@@ -1144,7 +1342,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         ...baseEntry,
         signatureVerified: true,
         parseStatus: "schema_valid",
-        action: parsed.data.action,
+        action,
         reason: "event_unsupported",
         metadata: {
           repoFullName,
@@ -1155,10 +1353,23 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         deliveryId,
         repoFullName,
         eventType: eventTypeHeader,
-        action: parsed.data.action,
+        action,
         reason: "event_unsupported",
       });
       res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    if (isPushEvent(parsed.data)) {
+      const result = await handleGitHubPushEvent({
+        event: parsed.data,
+        deliveryId,
+        repoFullName,
+        localRepo,
+        repoDir,
+        baseEntry,
+      });
+      res.status(200).json({ ok: true, ignored: result.ignored, status: result.status });
       return;
     }
 

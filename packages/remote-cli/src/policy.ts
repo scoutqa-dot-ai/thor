@@ -12,11 +12,16 @@
 export { resolveGitArgs, validateGitArgs, type ResolvedGitArgs } from "./policy-git.js";
 export { validateGhArgs } from "./policy-gh.js";
 
-import { realpathSync } from "node:fs";
+import {
+  WORKSPACE_REPOS_ROOT,
+  WORKSPACE_WORKTREES_ROOT,
+  isPathWithinPrefix,
+  realpathOrNull,
+} from "@thor/common";
 
 // ── cwd validation ──────────────────────────────────────────────────────────
 
-const ALLOWED_CWD_PREFIXES = ["/workspace/repos", "/workspace/worktrees"];
+const ALLOWED_CWD_PREFIXES = [WORKSPACE_REPOS_ROOT, WORKSPACE_WORKTREES_ROOT];
 
 export function validateCwd(cwd: string): string | null {
   if (!cwd || !cwd.startsWith("/")) {
@@ -28,23 +33,13 @@ export function validateCwd(cwd: string): string | null {
     return `cwd must be under ${ALLOWED_CWD_PREFIXES.join(" or ")}`;
   }
 
-  const allowed = ALLOWED_CWD_PREFIXES.some(
-    (prefix) => realCwd === prefix || realCwd.startsWith(prefix + "/"),
-  );
+  const allowed = ALLOWED_CWD_PREFIXES.some((prefix) => isPathWithinPrefix(prefix, realCwd));
 
   if (!allowed) {
     return `cwd must be under ${ALLOWED_CWD_PREFIXES.join(" or ")}`;
   }
 
   return null;
-}
-
-function realpathOrNull(path: string): string | null {
-  try {
-    return realpathSync.native(path);
-  } catch {
-    return null;
-  }
 }
 
 // ── scoutqa policy ──────────────────────────────────────────────────────────

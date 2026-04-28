@@ -31,6 +31,18 @@ export { writeToolCallLog, appendJsonlWorklog, writeInboundWebhookHistory } from
 export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
 export type { Logger } from "./logger.js";
+export { errorToMetadata } from "./errors.js";
+export type { ErrorMetadataOptions } from "./errors.js";
+export {
+  WORKSPACE_REPOS_ROOT,
+  WORKSPACE_WORKTREES_ROOT,
+  THOR_WORKTREES_ROOT_ENV,
+  getWorkspaceWorktreesRoot,
+  isPathWithin,
+  isPathWithinPrefix,
+  realpathOrNull,
+  resolveExistingDirectoryWithinRoot,
+} from "./paths.js";
 export {
   readNotes,
   createNotes,

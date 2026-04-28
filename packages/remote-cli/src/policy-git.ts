@@ -7,7 +7,7 @@
  */
 
 import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
-import { realpathSync } from "node:fs";
+import { WORKSPACE_WORKTREES_ROOT, isPathWithinPrefix, realpathOrNull } from "@thor/common";
 import { isAbsolute, normalize as normalizePosix } from "node:path/posix";
 
 const DIGITS_ONLY = /^\d+$/;
@@ -25,7 +25,7 @@ interface DenyGuidance {
   instead?: string;
 }
 
-const WORKTREE_ROOT = "/workspace/worktrees";
+const WORKTREE_ROOT = WORKSPACE_WORKTREES_ROOT;
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const USING_GIT_HINT = "Load skill using-git for the supported command patterns.";
 
@@ -452,7 +452,7 @@ function validateWorktreeRemove(args: string[]): string | null {
     return denyMessage("git worktree remove");
   }
   const realPath = realpathOrNull(args[2]);
-  if (!realPath || !realPath.startsWith(WORKTREE_PREFIX)) {
+  if (!realPath || !isPathWithinPrefix(WORKTREE_ROOT, realPath) || realPath === WORKTREE_ROOT) {
     return denyMessage("git worktree remove");
   }
   return null;
@@ -546,14 +546,6 @@ function isValidWorktreeBranchPathPart(value: string): boolean {
   if (segments.some((segment) => segment.length === 0 || segment === "..")) return false;
 
   return true;
-}
-
-function realpathOrNull(path: string): string | null {
-  try {
-    return realpathSync.native(path);
-  } catch {
-    return null;
-  }
 }
 
 function validatePush(args: string[]): string | null {
