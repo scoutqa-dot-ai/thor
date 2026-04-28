@@ -22,7 +22,7 @@ HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
 mkdir -p "${HOST_WORKSPACE}/repos/e2e-test"
 MEMORY_DIR="${MEMORY_DIR:-${HOST_WORKSPACE}/memory}"
 CRON_SECRET="${CRON_SECRET:-$(docker exec thor-cron-1 printenv CRON_SECRET 2>/dev/null)}"
-RESOLVE_SECRET="${RESOLVE_SECRET:-$(docker exec thor-gateway-1 printenv RESOLVE_SECRET 2>/dev/null)}"
+THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
 REMOTE_CLI_GIT_REPO_URL="${REMOTE_CLI_GIT_REPO_URL:-https://github.com/scoutqa-dot-ai/thor}"
 REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-scoutqa-dot-ai-thor-e2e}"
 REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
@@ -385,8 +385,8 @@ fi
 
 if [[ -z "$APPROVAL_TOOL" ]]; then
   assert 'false' "approval flow: discovered an approval-required tool" "${APPROVAL_DISCOVERY_DEBUG:-approval tool discovery returned no match}"
-elif [[ -z "$RESOLVE_SECRET" ]]; then
-  assert 'false' "approval flow: RESOLVE_SECRET is available" "Set RESOLVE_SECRET or ensure docker exec thor-gateway-1 printenv RESOLVE_SECRET returns a value"
+elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
+  assert 'false' "approval flow: THOR_INTERNAL_SECRET is available" "Set THOR_INTERNAL_SECRET or ensure docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET returns a value"
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
@@ -432,7 +432,7 @@ else
     echo "  Rejecting approval $action_id..."
     resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
       -H 'Content-Type: application/json' \
-      -H "x-thor-resolve-secret: $RESOLVE_SECRET" \
+      -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
       -d "{\"args\":[\"resolve\",\"$action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
       2>/dev/null || echo '{}')
     resolve_exit=$(json_field "$resolve_raw" "exitCode")
@@ -475,7 +475,7 @@ else
     echo "  Rejecting approval $e2e_action_id..."
     curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
       -H 'Content-Type: application/json' \
-      -H "x-thor-resolve-secret: $RESOLVE_SECRET" \
+      -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
       -d "{\"args\":[\"resolve\",\"$e2e_action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
       2>/dev/null >/dev/null
 

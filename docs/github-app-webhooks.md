@@ -138,4 +138,4 @@ The `remote-cli` service owns the GitHub App private key and mints installation 
 - The host port mapping is `127.0.0.1:3004:3004`, so it is not reachable from outside the host.
 - Inside the docker network, every compose service listed in the `depends_on` graph can call it directly.
 
-Operators adding new services to the compose network must treat them as equally trusted with gateway and runner. If that ever becomes too permissive, introduce a shared-secret header (mirroring the `RESOLVE_SECRET` / `x-thor-resolve-secret` pattern already used for MCP approvals) before adding the service.
+Operators adding new services to the compose network must treat them as equally trusted with gateway and runner. Gateway↔remote-cli internal routes are additionally protected by `THOR_INTERNAL_SECRET` / `x-thor-internal-secret`, including approval resolution, PR head lookup, and internal exec. Treat that secret as authorizing policy-bypass internal operations, not just approvals.
