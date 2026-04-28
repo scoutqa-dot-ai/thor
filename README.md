@@ -118,7 +118,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `ATLASSIAN_AUTH`                    | Yes      | `remote-cli`, `mitmproxy` | Atlassian MCP auth header value and mitmproxy default injection   |
 | `CRON_SECRET`                       | Yes      | `gateway`, `cron`         | Shared secret for cron endpoint auth                              |
 | `GITHUB_APP_ID`                     | Yes      | `remote-cli`              | GitHub App ID for GitHub App auth                                 |
-| `GITHUB_APP_BOT_ID`                 | Yes      | `remote-cli`              | GitHub App bot user ID (used for commit identity)                 |
+| `GITHUB_APP_BOT_ID`                 | Yes      | `remote-cli`, `gateway`   | GitHub App bot user ID (commit identity + CI wake author gate)    |
 | `GITHUB_APP_SLUG`                   | Yes      | `remote-cli`, `gateway`   | GitHub App slug (commit identity + mention detection)             |
 | `GITHUB_API_URL`                    | No       | `remote-cli`              | GitHub API base URL override                                      |
 | `GITHUB_APP_PRIVATE_KEY_FILE`       | Yes      | `remote-cli`              | GitHub App private key path                                       |
@@ -152,6 +152,8 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `VOUCH_WHITELIST`                   | Yes      | `vouch`                   | Comma-separated email allowlist                                   |
 
 Use [`docs/github-app-webhooks.md`](docs/github-app-webhooks.md) for GitHub App webhook setup, required permissions/subscriptions, and troubleshooting.
+
+Gateway and remote-cli derive the GitHub App bot commit identity from `GITHUB_APP_SLUG` and `GITHUB_APP_BOT_ID`: `${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com`. Gateway uses that derived email to accept `check_suite.completed` CI wakes only for Thor-authored commits; no separate author-email env var is required.
 
 Thor uses a shared workspace config file at `/workspace/config.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config.json`. Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point, and use [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
 

@@ -50,6 +50,7 @@ Thor's GitHub App is used for both webhook intake and agent-driven GitHub action
 | Issues        | Read & write |
 | Pull requests | Read & write |
 | Contents      | Read & write |
+| Checks        | Read-only    |
 | Metadata      | Read-only    |
 
 ## 4) Required event subscriptions
@@ -59,6 +60,18 @@ Subscribe to:
 - Issue comment
 - Pull request review
 - Pull request review comment
+- Check suite
+
+`check_suite.completed` wakes Thor when CI reaches a terminal result for an existing Thor-authored branch session. GitHub reports check suites per commit per checks app, so repos with multiple CI providers may produce more than one terminal suite.
+
+## 4a) Bot commit identity and CI wake gate
+
+Thor derives the Git author identity from the existing GitHub App variables:
+
+- `user.name = ${GITHUB_APP_SLUG}[bot]`
+- `user.email = ${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com`
+
+There is no separate author-email environment variable. Remote-cli uses the derived identity for commits, and gateway derives the same email when checking `check_suite.head_sha` before waking Thor. A CI wake is accepted only when the branch maps to an existing notes-backed session, the commit exists in the local repo, and `git log -1 --format=%ae <head_sha>` matches the derived bot email.
 
 ## 5) Webhook URL and payload format
 
@@ -117,6 +130,15 @@ npx smee-client --url https://smee.io/<channel-id> --path /github/webhook --port
 | `self_sender`                    | Sender's numeric user ID matches `GITHUB_APP_BOT_ID`                                           | Self-loop guard — expected when Thor comments/reviews                              |
 | `empty_review_body`              | Submitted review body was blank                                                                | Include text in the review body                                                    |
 | `non_mention_comment`            | Comment/review does not mention the app, and (for review events) the PR was not opened by Thor | Mention `@${GITHUB_APP_SLUG}` to act, or open the PR from Thor                     |
+| `check_suite_branch_missing`     | GitHub did not include `check_suite.head_branch`                                               | Expected for fork/detached/tag cases; no action unless same-repo PRs are affected  |
+| `correlation_key_unresolved`     | `check_suite.head_branch` has no existing Thor notes-backed branch session                     | Confirm Thor previously worked that branch; otherwise the CI event is ignored      |
+| `check_suite_gate_failed`        | The git SHA/authorship gate failed before queueing a CI wake                                   | See `metadata.gateReason` in `github-webhook-ignored` worklog                      |
+
+`check_suite_gate_failed` includes `metadata.gateReason`:
+
+- `sha_missing`: local repo does not know `check_suite.head_sha`; fetch/update the clone, then redeliver if appropriate.
+- `author_mismatch`: commit author email is not the derived GitHub App bot email; expected for human-authored commits.
+- `exec_failed`: gateway could not complete the internal git check through remote-cli; check remote-cli health and `THOR_INTERNAL_SECRET`.
 
 ### Dead-letter reasons (`github_trigger_dropped`)
 
