@@ -122,11 +122,7 @@ For `deleted !== true`:
    - Build raw key `git:branch:<repo>:<branch>`.
    - Resolve aliases with `resolveCorrelationKeys([rawKey])`.
    - Require `findNotesFile(resolvedKey)` to exist.
-   - If a notes file exists, trigger/enqueue with `interrupt: false`, directory set to the synced target, and a short prompt such as:
-
-     ```text
-     GitHub push updated <repo>@<branch> to <sha>. The local checkout was fast-forwarded. Continue only if useful; do not repeat work unnecessarily.
-     ```
+   - If a notes file exists, enqueue the push payload as a GitHub-source queue event with `interrupt: false`. The synced target remains metadata only; dispatch resolves through the repo directory so the runner receives an allowed `/workspace/repos/<repo>` directory and same-key GitHub batches do not split across sources/directories.
 
    - If no notes file exists, log `correlation_key_unresolved` and stop.
 
@@ -270,7 +266,11 @@ Include at least: `deliveryId`, `repoFullName`, `localRepo`, `branch`, `ref`, `a
 | D-4 | Require clean worktree before deletion | Protects uncommitted human/agent work. Dirty worktrees need manual review. |
 | D-5 | Prefer `git worktree remove` over raw filesystem deletion | Keeps Git worktree metadata consistent and avoids stale worktree admin entries. |
 | D-6 | Wake only when a resolved notes file exists | Prevents arbitrary pushes from creating new sessions while still letting branch-linked work continue after external updates. |
-| D-7 | Use the existing cron queue shape for push wake prompts | Push webhooks are maintenance events, not GitHub runner events; cron payloads already support prompt + directory + non-interrupt dispatch. |
+| D-7 | Queue push wakes as GitHub events, not cron prompts | Runner directories are restricted to `/workspace/repos/*`, and same-key GitHub batches must resolve to one directory. Keeping the wake in the GitHub queue source avoids mixed-source drops and uses the repo-scoped directory resolver. |
+
+## Follow-up log
+
+2026-04-28: Codex review identified that branch worktree paths are not runner-allowed directories and cron-sourced wakes can conflict with same-key GitHub batches. Updated push wakes to enqueue as GitHub-source events while retaining the synced worktree path as operational metadata only.
 
 ## Open questions
 

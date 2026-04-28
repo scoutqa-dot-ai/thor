@@ -709,12 +709,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const sourceTs = getGitHubEventSourceTs(event);
     queue.enqueue({
       id: deliveryId,
-      source: "cron",
+      source: "github",
       correlationKey,
-      payload: {
-        directory: targetDir,
-        prompt: `GitHub push updated ${localRepo}@${branch} to ${event.after}. The local checkout was fast-forwarded. Continue only if useful; do not repeat work unnecessarily.`,
-      },
+      payload: event,
       receivedAt: new Date().toISOString(),
       sourceTs,
       readyAt: sourceTs,

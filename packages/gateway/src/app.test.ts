@@ -1485,7 +1485,7 @@ describe("gateway", () => {
     });
   });
 
-  it("fast-forwards existing nested branch worktrees and wakes non-interrupt when notes exist", async () => {
+  it("fast-forwards existing nested branch worktrees and wakes through the repo-scoped GitHub queue when notes exist", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
 
@@ -1514,11 +1514,15 @@ describe("gateway", () => {
           expect(readQueuedEvents(queueDir)).toMatchObject([
             {
               id: "delivery-push-worktree",
-              source: "cron",
+              source: "github",
               correlationKey: "git:branch:test-repo:feat/nested",
               delayMs: 0,
               interrupt: false,
-              payload: { directory: worktreeDir },
+              payload: {
+                event_type: "push",
+                ref: "refs/heads/feat/nested",
+                after: "2222222222222222222222222222222222222222",
+              },
             },
           ]);
         },
