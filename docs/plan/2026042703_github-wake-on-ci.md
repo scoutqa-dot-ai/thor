@@ -1,7 +1,7 @@
 # Wake Thor on green CI
 
 **Date**: 2026-04-27
-**Status**: Ready to implement (Phase 1)
+**Status**: Ready to implement (Phase 0)
 **Updated**: 2026-04-28 (PR #47 merged into branch; phases expanded)
 **Depends on**: ~~https://github.com/scoutqa-dot-ai/thor/pull/47~~ ✅ landed — provides `THOR_INTERNAL_SECRET` + `POST /internal/exec` + gateway `internalExec()` client
 
@@ -158,8 +158,8 @@ needed — reruns naturally re-wake.
 - ✅ Authorship proxy: gateway `internalExec()` → `git log -1 --format=%ae` (Q3)
 - ✅ Hard dependency: PR #47 landed (`/internal/exec` + `internalExec()` client)
 - ✅ Failure-forwarding: forward with distinct prompt shape (Q5)
-- ⏭ Operator runbook update (`docs/github-app-webhooks.md`) — Phase 5
-- ⏭ Rollout: per-repo opt-in via Slack-style `getConfig` allowlist, off by default — Phase 4
+- ⏭ Operator runbook update (`docs/github-app-webhooks.md`) — Phase 4
+- ✅ Rollout: all repos on the install. Git-author gate is the safety filter (D-5); per-repo gating not introduced.
 
 ## Feasibility notes (from 2026-04-28 review)
 
@@ -195,9 +195,41 @@ needed — reruns naturally re-wake.
 
 Each phase = one commit. Phases land in order; later phases assume earlier phases are merged. Per AGENTS.md, run unit tests against the phase exit criteria before moving on; push at the end for E2E verification.
 
+### Phase 0 — Align GitHub prompt rendering with Slack (`JSON.stringify`)
+
+**Goal:** drop the bespoke `renderGitHubPromptLine` field-extraction. Slack already passes raw events to the agent via `JSON.stringify` (`service.ts:147-153`); GitHub had its own per-field renderer left over from when `NormalizedGitHubEvent` carried pre-extracted fields. With raw passthrough in place (commits `869861bf`, `6fb218a0`), per-field rendering is pointless work that the agent can do better itself.
+
+This is independent of `check_suite` and worth landing on its own merits — it shrinks Phase 1 (the `check_suite` variant works for free) and eliminates Phase 3 entirely (no failure-prompt shape to differentiate; the agent reads `conclusion` from the JSON).
+
+Files:
+
+- `packages/gateway/src/service.ts`
+  - Replace `renderGitHubPromptLine` + `renderGitHubPrompt` with a single function that mirrors `renderSlackPrompt`:
+    ```ts
+    function renderGitHubPrompt(events: GitHubQueuedPayload[]): string {
+      return JSON.stringify(events.length === 1 ? events[0].event : events.map((p) => p.event));
+    }
+    ```
+  - Drop the byte-limit truncation entirely. Remove `GITHUB_PROMPT_LIMIT_BYTES`, the `while`-loop, and the `github_prompt_truncated` log call. Zod schemas (`github.ts:32-79`) strip unknown keys at parse time, so each event is already a tiny declared subset; the only unbounded field is free-text `comment.body` / `review.body`, and dropping whole events is a worse failure mode than letting one large body through. If field-level bounds become necessary later, cap `body` at parse time rather than reintroducing batch truncation.
+  - Remove now-unused imports (`getGitHubEventNumber`, `isIssueCommentEvent`, `isPullRequestReviewCommentEvent`, `truncate`, `GITHUB_PROMPT_EVENT_BODY_MAX`).
+- `packages/gateway/src/service.test.ts`
+  - Replace per-field assertions on `renderGitHubPromptLine` output with JSON-shape assertions (parse the rendered prompt, check it equals the input event/array).
+  - Delete the truncation test.
+
+Tests:
+
+- All existing GitHub-prompt tests rewritten to JSON shape.
+- Single-event vs multi-event rendering (single event = object, multiple = array).
+
+Exit criteria:
+
+- `pnpm test` green.
+- No `renderGitHubPromptLine` / `GITHUB_PROMPT_LIMIT_BYTES` / `github_prompt_truncated` references in source.
+- Rendered prompt for any GitHub event is `JSON.stringify(rawEvent)` (or array thereof).
+
 ### Phase 1 — Accept `check_suite.completed` at the gateway
 
-**Goal:** the gateway parses, schema-validates, and forwards `check_suite.completed` events end-to-end without a gate. Wake fires on every CI completion for repos in the existing GitHub install. Safe to merge because Phase 4 will gate it per-repo before any production rollout.
+**Goal:** the gateway parses, schema-validates, and forwards `check_suite.completed` events end-to-end without a gate. Wake fires on every CI completion for repos in the existing GitHub install. Phase 2's git-author gate (the next commit) is the real filter — Phase 1 by itself would wake on every CI event including human-authored commits, so don't deploy between Phase 1 and Phase 2 landing.
 
 Files:
 
@@ -211,8 +243,8 @@ Files:
   - `getGitHubEventNumber` returns `event.check_suite.pull_requests[0]?.number ?? 0` (used only for pending-branch resolve fallback; `head_branch` should be present for normal cases).
   - `getGitHubEventSourceTs` returns `Date.parse(event.check_suite.updated_at)`.
   - `shouldIgnoreGitHubEvent` returns `null` for `check_suite` (filtering happens in Phase 2 git gate).
-- `packages/gateway/src/service.ts`
-  - `renderGitHubPromptLine` adds a branch for `check_suite`: `[CI] ${conclusion} on ${repoFullName}@${head_sha.slice(0,7)} (branch ${head_branch ?? "?"})`. Failure variant deferred to Phase 3.
+
+No `service.ts` changes — Phase 0's `JSON.stringify` renderer handles `check_suite` automatically.
 
 Tests:
 
@@ -237,6 +269,7 @@ Files:
   - `packages/gateway/src/index.ts` — add to env loader; fail-fast if absent (consistent with `THOR_INTERNAL_SECRET` / `GITHUB_APP_BOT_ID` patterns).
   - `.env.example`, `docker-compose.yml` (gateway service env), e2e workflows (mint a test value).
 - New helper `verifyThorAuthoredSha` in `packages/gateway/src/github-gate.ts` (new file):
+
   ```
   type GateResult =
     | { ok: true }
@@ -252,6 +285,7 @@ Files:
   - Calls `internalExec({ bin: "git", args: ["cat-file", "-e", sha], cwd: directory, timeoutMs: 5000 })` — non-zero exit → `sha_missing`.
   - Calls `internalExec({ bin: "git", args: ["log", "-1", "--format=%ae", sha], cwd: directory, timeoutMs: 5000 })` — compares stdout (trimmed) to `expectedEmail` case-insensitively → `author_mismatch` on miss.
   - Network/timeout/exec failure → `exec_failed`.
+
 - `packages/gateway/src/app.ts`
   - After the existing `shouldIgnoreGitHubEvent` block, when `eventType === "check_suite"`: resolve `directory = resolveRepoDirectory(localRepo)` (already trusted at this point), call `verifyThorAuthoredSha`. On failure, `writeGitHubWebhookHistory("ignored", { reason: "check_suite_gate_failed", metadata: { ..., gateReason } })` and `logGitHubIgnored`.
   - Plumb the `internalExec` client (already on `service.ts`) through `GatewayAppConfig` if not already exposed; fall back to a no-op stub in tests that always returns `{ ok: false, reason: "exec_failed" }` unless overridden.
@@ -267,47 +301,23 @@ Exit criteria:
 - Unit tests green.
 - A `check_suite` event whose `head_sha` is unknown to the workspace OR not authored by `THOR_GIT_AUTHOR_EMAIL` is dropped before enqueue.
 
-### Phase 3 — Failure-conclusion prompt
+### Phase 3 — Agent-side handling of CI failure
 
-**Goal:** Thor reacts to CI failure instead of hanging. Same Q2+Q3 gate applies; only the prompt rendering changes.
-
-Files:
-
-- `packages/gateway/src/service.ts`
-  - `renderGitHubPromptLine` for `check_suite`: branch on `conclusion`. Success: existing line from Phase 1. Failure (anything other than `success` once `status === "completed"`): `"[CI] FAILED on ${repoFullName}@${head_sha.slice(0,7)} (branch ${head_branch}, conclusion ${conclusion}). Investigate and fix."`. Include `pull_requests[0]?.html_url` if present.
-
-Tests:
-
-- `packages/gateway/src/service.test.ts` — `renderGitHubPromptLine` for `success`, `failure`, `cancelled`, `timed_out`, `action_required`.
-
-Exit criteria:
-
-- Both prompt shapes render correctly. No new gate logic — failure events flow the same gate as success events.
-
-### Phase 4 — Per-repo opt-in
-
-**Goal:** `check_suite` ingestion is off by default. Only repos explicitly listed in workspace config receive the wake.
+**Goal:** Thor reacts to CI failure instead of hanging. With the JSON-passthrough renderer (Phase 0), the gateway forwards the full `check_suite` event including `conclusion`; the agent reads it and decides. No gateway-side prompt-shape work needed.
 
 Files:
 
-- `packages/common/src/workspace-config.ts`
-  - Add `githubCheckSuiteRepos?: string[]` (or `Set<string>`) to the workspace config schema. Empty/missing = disabled for all repos.
-  - Helper `isCheckSuiteEnabled(config, localRepo): boolean`.
-- `packages/gateway/src/app.ts`
-  - In the `check_suite` path, before the git gate, call `isCheckSuiteEnabled(config.getConfig?.() ?? {}, localRepo)`. If false, log and write `writeGitHubWebhookHistory("ignored", { reason: "check_suite_repo_not_enabled" })`.
-- New `IgnoreReason` value: `"check_suite_repo_not_enabled"`.
+- Agent prompt / system instructions (location TBD per current agent config layout — likely `docker/opencode/config/agents/*.md` or similar): document how to interpret a `check_suite` event in the inbound payload, including the `conclusion` field, and what action to take per outcome (success → continue; failure/cancelled/timed_out → investigate and fix).
 
 Tests:
 
-- `packages/common/src/workspace-config.test.ts` — `isCheckSuiteEnabled` with missing config, empty list, matching repo, non-matching repo.
-- `packages/gateway/src/app.test.ts` — opt-in test: same `check_suite` event ignored when repo not in list, accepted when it is.
+- No new unit tests at the gateway. Coverage of the `check_suite` JSON envelope already exists from Phase 1.
 
 Exit criteria:
 
-- Default config = no repos receive `check_suite`. Explicit allowlist required.
-- Unit tests green.
+- Agent docs updated. Manual smoke (in Phase 5 verification) confirms Thor reacts sensibly to both success and failure events.
 
-### Phase 5 — Runbook + integration verification
+### Phase 4 — Runbook + integration verification
 
 **Goal:** documented and verified end-to-end.
 
@@ -316,14 +326,13 @@ Files:
 - `docs/github-app-webhooks.md`
   - Document the new `check_suite` subscription requirement on the GitHub App.
   - `THOR_GIT_AUTHOR_EMAIL` env var.
-  - Per-repo opt-in via `githubCheckSuiteRepos` in workspace config.
-  - Troubleshooting: how to read `writeGitHubWebhookHistory` worklogs for `check_suite_gate_failed` / `check_suite_repo_not_enabled`.
+  - Troubleshooting: how to read `writeGitHubWebhookHistory` worklogs for `check_suite_gate_failed`.
 - `README.md` — add the env var to the gateway section.
 
 Verification:
 
 - Push the branch; ensure unit-tests + core-e2e + sandbox-e2e workflows pass.
-- Manual: in a sandbox repo, opt in via config, push a Thor-authored commit, wait for CI, observe a wake. Push a non-Thor commit, wait for CI, observe an ignored history entry with `check_suite_gate_failed` (author_mismatch).
+- Manual: in a real repo on the GitHub App install, push a Thor-authored commit, wait for CI, observe a wake. Push a non-Thor commit, wait for CI, observe an ignored history entry with `check_suite_gate_failed` (author_mismatch).
 
 Exit criteria:
 
@@ -332,18 +341,20 @@ Exit criteria:
 
 ## Decision Log
 
-| #   | Decision                                                                             | Rationale                                                                                                                                 |
-| --- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| D-1 | Gate at the gateway, not the runner                                                  | Gateway already has `directory`, `internalExec()`, and the supported-events check. Runner stays unchanged. Rejected events never enqueue. |
-| D-2 | `check_suite.completed` only; not `workflow_run` or `check_run`                      | Single rollup per commit eliminates multi-workflow fan-out. Native `pull_requests[]` association.                                         |
-| D-3 | No notes-file `head_sha` schema; no woken-flag                                       | Provenance lives in git. `check_suite` fires once per (commit, app); reruns _should_ re-wake.                                             |
-| D-4 | Author check via `git log -1 --format=%ae` against `THOR_GIT_AUTHOR_EMAIL`           | Webhook actor fields don't help on `check_suite` (`sender` is the CI app). Git is the source of truth for authorship.                     |
-| D-5 | Per-repo opt-in, off by default                                                      | Mirrors Slack channel allowlist pattern. Limits blast radius of a misconfiguration; explicit consent per repo before wakes start.         |
-| D-6 | Phase 1 ships unguarded but acceptable because Phase 4 gates per-repo before rollout | Keeps each phase small and reviewable. No production traffic flows until Phase 4 lands. Branch is feature-flag-equivalent until then.     |
+| #   | Decision                                                                   | Rationale                                                                                                                                                                                                                                                                      |
+| --- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| D-1 | Gate at the gateway, not the runner                                        | Gateway already has `directory`, `internalExec()`, and the supported-events check. Runner stays unchanged. Rejected events never enqueue.                                                                                                                                      |
+| D-2 | `check_suite.completed` only; not `workflow_run` or `check_run`            | Single rollup per commit eliminates multi-workflow fan-out. Native `pull_requests[]` association.                                                                                                                                                                              |
+| D-3 | No notes-file `head_sha` schema; no woken-flag                             | Provenance lives in git. `check_suite` fires once per (commit, app); reruns _should_ re-wake.                                                                                                                                                                                  |
+| D-4 | Author check via `git log -1 --format=%ae` against `THOR_GIT_AUTHOR_EMAIL` | Webhook actor fields don't help on `check_suite` (`sender` is the CI app). Git is the source of truth for authorship.                                                                                                                                                          |
+| D-5 | No per-repo opt-in for now; rollout to all repos on the install            | Git-author gate is itself the safety filter — only Thor-authored shas wake. A misfire would require a sha matching `THOR_GIT_AUTHOR_EMAIL` in a workspace's git, which is the exact case we want to wake on. Add per-repo gating later only if a real misfire pattern emerges. |
+| D-6 | Don't deploy between Phase 1 and Phase 2                                   | Phase 1 alone wakes on every CI event regardless of authorship. Phase 2's git-author gate is the real filter. Land both before any production deploy.                                                                                                                          |
+| D-7 | GitHub prompt is `JSON.stringify(rawEvent)`, mirroring Slack               | Per-field rendering was cruft from the pre-passthrough era. Slack already passes raw events. Lets the agent decide; eliminates Phase 3 gateway work; new event types like `check_suite` cost zero rendering code.                                                              |
+| D-8 | Drop `GITHUB_PROMPT_LIMIT_BYTES` batch truncation                          | Zod strips unknown keys, so parsed events are already tiny. Only `comment.body`/`review.body` are unbounded; dropping whole events to fit a batch limit is a worse failure mode than passing one large body through. Cap fields at parse time if it ever matters.              |
 
 ## Out of scope
 
 - `workflow_run` / `workflow_job` / `deployment_status` / `repository_dispatch` — not selected.
 - Retries on transient `internalExec` failures. Phase 2 treats any non-success as drop. If false-negative rate becomes a problem, add bounded retry in a follow-up.
 - Coalescing repeated `check_suite` events for the same `head_sha`. Not observed as a problem; revisit if rerun storms become noisy.
-- Surfacing CI logs to Thor in the failure prompt. Phase 3 forwards the `conclusion` and PR URL only; Thor can fetch logs via `gh` if needed.
+- Surfacing CI logs to Thor in the prompt. The forwarded JSON includes `conclusion` and `pull_requests[]` URLs; Thor can fetch logs via `gh` if needed.
