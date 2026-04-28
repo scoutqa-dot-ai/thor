@@ -20,7 +20,7 @@ This is shared infrastructure used by `2026042701_github-webhook-event-expansion
   - `.github/workflows/{core,sandbox}-e2e.yml` mints the value at run time
   - Documented in `README.md:140,222,231`, `docs/feat/mvp.md:53,71`, `docs/github-app-webhooks.md:140`
 - Policy-checked exec paths (`/exec/git`, `/exec/gh`, etc.) on `remote-cli` enforce per-binary allowlists via `policy.ts` and `policy-git.ts`. There is no bypass path for trusted internal callers today.
-- `packages/remote-cli/src/exec.ts` exposes `execCommand({ bin, args, cwd, timeoutMs })` which `child_process.execFile`s with timeout, returning `{ exitCode, stdout, stderr, timedOut }`.
+- `packages/remote-cli/src/exec.ts` exposes `execCommand({ bin, args, cwd, options })` which `child_process.execFile`s the binary (with an unconditional 60s safety SIGKILL) and returns `{ exitCode, stdout, stderr }`.
 
 ## Architecture
 
@@ -31,11 +31,11 @@ This is shared infrastructure used by `2026042701_github-webhook-event-expansion
 **`POST /internal/exec` shape**:
 
 - Auth: `x-thor-internal-secret` header, `crypto.timingSafeEqual` against `THOR_INTERNAL_SECRET`. Missing/wrong → 401 before any work.
-- Body: `{ bin: string, args: string[], cwd: string, timeoutMs?: number }`.
-- Response: `{ exitCode, stdout, stderr, timedOut }` from `execCommand()`.
+- Body: `{ bin: string, args: string[], cwd: string }`.
+- Response: `{ exitCode, stdout, stderr }` from `execCommand()`.
 - No bin allowlist — caller is trusted by virtue of holding the secret. This is the bypass path; `/exec/git` etc. remain the default for agent-driven calls.
 - Bound on the internal Docker network only. Documented in the runbook; never exposed via public ingress.
-- Every invocation logged with `bin`, `args` (redacted of secrets if any are passed), `cwd`, `exitCode`, duration.
+- Every invocation logged with `bin`, `argc`, `cwd`, `exitCode`, `durationMs`. Args themselves are not logged; the endpoint is internal-only and the caller is trusted, so a hardcoded redaction list (which would inevitably miss flags from `psql`/`ssh`/`aws`/custom tools) buys false confidence.
 
 **Migration**: hard rename in one commit. No backwards-compat env fallback. Justified: internal infra, no external consumers, e2e workflows mint the secret at run time, production deploys are coordinated. (See Decision D-2 for the rolling-deploy mitigation.)
 
@@ -65,16 +65,15 @@ In `packages/remote-cli/src/index.ts`:
 
 In `packages/gateway/src/service.ts`:
 
-- Add `internalExec({ bin, args, cwd, timeoutMs })` client that POSTs to `/internal/exec` with the secret header and returns `{ exitCode, stdout, stderr, timedOut }`.
-- Surface network/timeout errors as a structured failure result rather than throwing, so callers (the upcoming push-event handler) can degrade gracefully.
+- Thread `internalSecret` through `BatchDispatchInput` → `triggerRunnerGitHub` → `resolveGitHubPrHead` so the existing `/github/pr-head` fetch can include `x-thor-internal-secret`. Same for `resolveApproval` against `/exec/mcp`.
+- Split the upstream-status handling: 401 from remote-cli now means "rejected our internal credential" (terminal `branch_lookup_failed`); 403 still means "installation gone".
+- A typed `internalExec()` client for `/internal/exec` is **deferred** (see Deferred section): it would land as dead code on this branch, so it ships with its first real caller (the push-event `git pull` handler in `2026042701_github-webhook-event-expansion.md`).
 
 ### Phase 3 — Tests + grep audit
 
-- 401 on missing/wrong secret for both `/exec/mcp` and `/internal/exec`; `execCommand`/approval handler never invoked.
-- Existing MCP approval test suite passes against the renamed env/header (no behavioral change).
-- `/internal/exec` happy-path: runs `echo`/`true`, returns `{ exitCode: 0, stdout: ..., stderr: "", timedOut: false }`.
-- `/internal/exec` timeout: a `sleep 5` with `timeoutMs: 100` returns `timedOut: true`.
-- Gateway client `internalExec()` covered by unit tests against a stub server.
+- 401 on missing/wrong secret for `/exec/mcp` resolve, `/internal/exec`, and `/github/pr-head`; `execCommand`/approval handler never invoked.
+- Existing MCP approval test suite passes against the renamed env/header. The previous "Unknown subcommand: resolve" denial path is replaced by an HTTP 401 at the route layer.
+- `/internal/exec` happy-path: runs `echo`, returns `{ exitCode: 0, stdout: "hello\n", stderr: "" }`.
 - `grep -r "RESOLVE_SECRET\|x-thor-resolve-secret"` returns zero hits outside historical plan docs (`docs/plan/2026041602_drop-proxy.md` and similar — leave as historical record).
 
 ## Exit Criteria
@@ -82,11 +81,10 @@ In `packages/gateway/src/service.ts`:
 - [ ] `THOR_INTERNAL_SECRET` is the only internal-auth env var; `RESOLVE_SECRET` is gone from source, compose, e2e workflows, README, and live docs.
 - [ ] `x-thor-internal-secret` is the only internal-auth header; `x-thor-resolve-secret` is gone.
 - [ ] `/exec/mcp` approval resolution still works under the renamed env+header; existing approval tests pass unchanged in behavior.
-- [ ] `/internal/exec` runs arbitrary `{bin, args, cwd}` under the same auth, bypasses policy, returns `{exitCode, stdout, stderr, timedOut}`.
-- [ ] 401 on missing/wrong secret for both endpoints; never invokes `execCommand` or approval logic in that case.
+- [ ] `/internal/exec` runs arbitrary `{bin, args, cwd}` under the same auth, bypasses policy, returns `{exitCode, stdout, stderr}`.
+- [ ] 401 on missing/wrong secret for `/exec/mcp` resolve, `/internal/exec`, and `/github/pr-head`; never invokes `execCommand` or approval logic in that case.
 - [ ] Boot fails fast on missing `THOR_INTERNAL_SECRET` in either service.
 - [ ] e2e workflows mint and pass `THOR_INTERNAL_SECRET` to both services.
-- [ ] Gateway-side `internalExec()` client returns structured failure on network/timeout errors instead of throwing.
 
 ## Decision Log
 
@@ -96,7 +94,7 @@ In `packages/gateway/src/service.ts`:
 | D-2 | Hard rename (no dual-read env fallback) deployed via coordinated restart                         | Backwards-compat fallback is operational tax for internal infra with no external consumers. Reviewed alternative: dual-read for one release. Accepted in favor of single-step rename + explicit deploy procedure (gateway and remote-cli restart together; e2e workflows already mint at run time). If a rolling deploy is required in the future, add a one-release dual-read window then. |
 | D-3 | `POST /internal/exec` has no bin allowlist                                                       | The endpoint exists _because_ the policy allowlist is too narrow for legitimate service-to-service maintenance. An allowlist on the bypass path defeats the point. The credential + network boundary is the security control.                                                                                                                                                               |
 | D-4 | Endpoint is internal-only by design — never expose via public ingress                            | This is authenticated remote shell. The only safe deployment is on the internal Docker network with the credential never leaving that boundary. Documented in the runbook; verified by docker-compose port bindings.                                                                                                                                                                        |
-| D-5 | Reuse `execCommand()` from `packages/remote-cli/src/exec.ts` rather than introduce a new spawner | Existing utility handles timeout, stdout/stderr capture, and exit codes. No reason to fork.                                                                                                                                                                                                                                                                                                 |
+| D-5 | Reuse `execCommand()` from `packages/remote-cli/src/exec.ts` rather than introduce a new spawner | Existing utility handles stdout/stderr capture, exit codes, and an unconditional 60s safety SIGKILL. No reason to fork.                                                                                                                                                                                                                                                                     |
 
 ## Out of Scope
 
@@ -108,5 +106,5 @@ In `packages/gateway/src/service.ts`:
 
 ## Deferred
 
-- **Caller-driven timeouts via AbortController**. The original implementation baked a `timeoutMs` field into both `ExecCommandOptions` (remote-cli) and the `/internal/exec` request body, with a corresponding `timedOut` flag on the response. This was removed: callers that need a deadline should instead pass an `AbortSignal` through `ExecCommandOptions` and have it forwarded to `child_process.execFile` (and as `signal` on the gateway-side `fetch`). The signal-propagation work is deferred — until a caller actually needs it, `execCommand` runs to completion and any future client waits as long as the HTTP transport allows.
-- **Gateway-side `internalExec()` client.** The plan called for adding it alongside the endpoint. With no production caller on this branch, it would have shipped as dead code; landing it together with its first real caller (e.g. the push-event `git pull` handler in `2026042701_github-webhook-event-expansion.md`) is cleaner.
+- **Caller-driven timeouts.** Callers that need a deadline should pass an `AbortSignal` through `ExecCommandOptions` and forward it to `child_process.execFile` (and as `signal` on the gateway-side `fetch`). Until there's a real caller, `execCommand` only enforces the existing 60s safety SIGKILL.
+- **Gateway-side `internalExec()` client.** Lands with its first real caller (e.g. the push-event `git pull` handler in `2026042701_github-webhook-event-expansion.md`) so it doesn't ship as dead code.
