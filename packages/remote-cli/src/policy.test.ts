@@ -222,6 +222,10 @@ describe("validateGitArgs", () => {
         ["merge", "--abort"],
         ["merge", "--continue"],
         ["merge", "--quit"],
+        ["revert", "HEAD~1"],
+        ["revert", "--no-edit", "abc1234"],
+        ["revert", "--no-commit", "HEAD~3..HEAD"],
+        ["revert", "-m", "1", "abc1234"],
       ];
 
       for (const args of allowedCommands) {

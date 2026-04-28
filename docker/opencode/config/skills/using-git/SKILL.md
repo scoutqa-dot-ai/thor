@@ -106,6 +106,10 @@ The only denied flag is `--no-verify`, which would skip `pre-merge-commit` / `co
 
 To pick up upstream changes, run `git fetch origin <branch>` then `git merge origin/<branch>`. This replaces `git pull`.
 
+### `git revert`
+
+Passthrough — any revert shape is accepted. Revert adds inverse changes instead of rewriting existing commits; protected-branch and explicit-push rules still govern what can be pushed to origin.
+
 ## Passthrough subcommands (any arguments accepted)
 
 - `git blame`
@@ -119,6 +123,7 @@ To pick up upstream changes, run `git fetch origin <branch>` then `git merge ori
 - `git name-rev`
 - `git reflog`
 - `git rev-parse`
+- `git revert`
 - `git shortlog`
 - `git show`
 - `git show-ref`
