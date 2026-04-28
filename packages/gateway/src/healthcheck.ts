@@ -302,11 +302,8 @@ export async function deepHealthCheck(deps: HealthCheckDeps): Promise<HealthChec
   const codexOk = !codex || codex.status === "ok" || codex.status === "no_auth";
 
   return {
-    status: allServicesOk && queueOk && codexOk
-      ? "ok"
-      : allServicesOk && queueOk
-        ? "degraded"
-        : "error",
+    status:
+      allServicesOk && queueOk && codexOk ? "ok" : allServicesOk && queueOk ? "degraded" : "error",
     service: "gateway",
     services,
     ...(queue ? { queue } : {}),

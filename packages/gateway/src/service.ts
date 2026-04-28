@@ -13,15 +13,15 @@ import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
 import {
   buildCorrelationKey,
+  getGitHubEventLocalRepo,
+  isIssueCommentEvent,
   isPendingBranchResolveKey,
-  type NormalizedGitHubEvent,
+  type GitHubWebhookEvent,
+  type IssueCommentEvent,
 } from "./github.js";
 
 const log = createLogger("gateway-service");
-const GITHUB_PR_HEAD_TIMEOUT_MS = 3000;
-const GITHUB_PR_HEAD_RETRIES = 1;
-const GITHUB_PROMPT_LIMIT_BYTES = 8 * 1024;
-const GITHUB_PROMPT_EVENT_BODY_MAX = 280;
+const INTERNAL_EXEC_TIMEOUT_MS = 5000;
 
 // --- Runner deps (internal HTTP, testable via fetchImpl) ---
 
@@ -63,12 +63,13 @@ export interface RunnerTriggerOptions {
 export interface BatchDispatchInput {
   slackEvents: SlackThreadEvent[];
   cronEvents: CronPayload[];
-  githubEvents: NormalizedGitHubEvent[];
+  githubEvents: GitHubWebhookEvent[];
   correlationKey: string;
   deps: RunnerDeps;
   slackMcpDeps: SlackMcpDeps;
   remoteCliUrl?: string;
   internalSecret?: string;
+  internalExec?: InternalExecClient;
   interrupt?: boolean;
   onAccepted?: () => void;
   onRejected?: (reason: string) => void;
@@ -91,7 +92,7 @@ export type BatchDispatchPlan =
       logPrefix: "github";
       fromCorrelationKey: string;
       toCorrelationKey: string;
-      githubEvents: NormalizedGitHubEvent[];
+      githubEvents: GitHubWebhookEvent[];
     };
 
 interface DispatchPart {
@@ -118,6 +119,18 @@ export interface GitHubPrHeadResult {
   headRepoFullName: string;
 }
 
+export interface InternalExecRequest {
+  bin: string;
+  args: string[];
+  cwd: string;
+}
+
+export type InternalExecClient = (request: InternalExecRequest) => Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}>;
+
 type TerminalGitHubRejectReason =
   | "installation_gone"
   | "branch_not_found"
@@ -132,6 +145,33 @@ class TerminalGitHubDispatchError extends Error {
     super(message);
     this.name = "TerminalGitHubDispatchError";
   }
+}
+
+function parseGhPrHead(stdout: string): GitHubPrHeadResult | null {
+  const parsed = JSON.parse(stdout) as {
+    headRefName?: unknown;
+    headRepositoryOwner?: { login?: unknown } | null;
+    headRepository?: { name?: unknown } | null;
+  };
+  const ref = typeof parsed.headRefName === "string" ? parsed.headRefName.trim() : "";
+  const owner =
+    typeof parsed.headRepositoryOwner?.login === "string"
+      ? parsed.headRepositoryOwner.login.trim()
+      : "";
+  const repo =
+    typeof parsed.headRepository?.name === "string" ? parsed.headRepository.name.trim() : "";
+  if (!ref || !owner || !repo) return null;
+  return { ref, headRepoFullName: `${owner}/${repo}` };
+}
+
+function classifyGhPrViewFailure(stderr: string): TerminalGitHubRejectReason {
+  if (/http\s+40[13]|authentication|not logged in|forbidden|unauthorized/i.test(stderr)) {
+    return "installation_gone";
+  }
+  if (/http\s+404|not found|could not resolve/i.test(stderr)) {
+    return "branch_not_found";
+  }
+  return "branch_lookup_failed";
 }
 
 function renderHeadedSection(label: string, events: unknown[], body: string): string {
@@ -155,7 +195,7 @@ function renderCronPrompt(events: CronPayload[]): string {
   );
 }
 
-function renderGitHubPromptSection(events: NormalizedGitHubEvent[]): string {
+function renderGitHubPromptSection(events: GitHubWebhookEvent[]): string {
   return renderHeadedSection("GitHub", events, renderGitHubPrompt(events));
 }
 
@@ -245,13 +285,15 @@ function resolveSlackBatchDirectory(
   });
 }
 
-function resolveGitHubBatchDirectory(events: NormalizedGitHubEvent[]): {
+function resolveGitHubBatchDirectory(events: GitHubWebhookEvent[]): {
   directory?: string;
   reason?: string;
 } {
   return collectBatchDirectory("GitHub", events, (event) => {
-    const directory = resolveRepoDirectory(event.localRepo);
-    if (!directory) return { reason: `repo directory not found for ${event.localRepo}` };
+    const localRepo = getGitHubEventLocalRepo(event);
+    if (!localRepo) return { reason: `repo directory not found for ${event.repository.full_name}` };
+    const directory = resolveRepoDirectory(localRepo);
+    if (!directory) return { reason: `repo directory not found for ${localRepo}` };
     return { directory };
   });
 }
@@ -332,19 +374,35 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   const logPrefix = getBatchLogPrefix(sources);
 
   if (input.githubEvents.length > 0 && isPendingBranchResolveKey(input.correlationKey)) {
-    if (!input.remoteCliUrl) {
-      throw new Error("remoteCliUrl is required for pending GitHub branch resolution");
-    }
-
     const latest = input.githubEvents[input.githubEvents.length - 1];
-    try {
-      const branchInfo = await resolveGitHubPrHead(
-        latest,
-        input.remoteCliUrl,
-        input.internalSecret,
-        input.deps.fetchImpl,
+    if (!latest || !isIssueCommentEvent(latest)) {
+      return { kind: "drop", logPrefix, reason: "branch_lookup_failed" };
+    }
+    const localRepo = getGitHubEventLocalRepo(latest);
+    if (!localRepo) {
+      return { kind: "drop", logPrefix, reason: "branch_lookup_failed" };
+    }
+    const directory = resolveRepoDirectory(localRepo);
+    if (!directory) {
+      return { kind: "drop", logPrefix, reason: `repo directory not found for ${localRepo}` };
+    }
+    const internalExec =
+      input.internalExec ??
+      (input.remoteCliUrl
+        ? createInternalExecClient({
+            remoteCliUrl: input.remoteCliUrl,
+            internalSecret: input.internalSecret,
+            fetchImpl: input.deps.fetchImpl,
+          })
+        : undefined);
+    if (!internalExec) {
+      throw new Error(
+        "internalExec or remoteCliUrl is required for pending GitHub branch resolution",
       );
-      if (branchInfo.headRepoFullName !== latest.repoFullName) {
+    }
+    try {
+      const branchInfo = await resolveGitHubPrHead(latest, directory, internalExec);
+      if (branchInfo.headRepoFullName !== latest.repository.full_name) {
         return { kind: "drop", logPrefix, reason: "fork_pr_unsupported" };
       }
 
@@ -352,8 +410,8 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
         kind: "reroute",
         logPrefix: "github",
         fromCorrelationKey: input.correlationKey,
-        toCorrelationKey: buildCorrelationKey(latest.localRepo, branchInfo.ref),
-        githubEvents: input.githubEvents.map((event) => ({ ...event, branch: branchInfo.ref })),
+        toCorrelationKey: buildCorrelationKey(localRepo, branchInfo.ref),
+        githubEvents: input.githubEvents,
       };
     } catch (error) {
       if (error instanceof TerminalGitHubDispatchError) {
@@ -616,7 +674,7 @@ export async function triggerRunnerCron(
 }
 
 export async function triggerRunnerGitHub(
-  events: NormalizedGitHubEvent[],
+  events: GitHubWebhookEvent[],
   correlationKey: string,
   deps: RunnerDeps,
   remoteCliUrl: string,
@@ -636,6 +694,11 @@ export async function triggerRunnerGitHub(
     slackMcpDeps: { slackMcpUrl: "", fetchImpl: deps.fetchImpl },
     remoteCliUrl,
     internalSecret,
+    internalExec: createInternalExecClient({
+      remoteCliUrl,
+      internalSecret,
+      fetchImpl: deps.fetchImpl,
+    }),
     interrupt,
     onAccepted,
     onRejected,
@@ -643,124 +706,77 @@ export async function triggerRunnerGitHub(
 }
 
 export async function resolveGitHubPrHead(
-  event: NormalizedGitHubEvent,
-  remoteCliUrl: string,
-  internalSecret: string | undefined,
-  fetchImpl?: typeof fetch,
+  event: IssueCommentEvent,
+  directory: string,
+  internalExec: InternalExecClient,
 ): Promise<GitHubPrHeadResult> {
-  const params = new URLSearchParams({
-    installation: String(event.installationId),
-    repo: event.repoFullName,
-    number: String(event.number),
-  });
-  const url = `${remoteCliUrl}/github/pr-head?${params.toString()}`;
-
-  for (let attempt = 0; attempt <= GITHUB_PR_HEAD_RETRIES; attempt++) {
-    try {
-      const response = await getFetch(fetchImpl)(url, {
-        headers: {
-          ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
-        },
-        signal: AbortSignal.timeout(GITHUB_PR_HEAD_TIMEOUT_MS),
-      });
-      if (response.ok) {
-        const body = (await response.json()) as { ref?: string; headRepoFullName?: string };
-        const ref = body.ref?.trim();
-        const headRepoFullName = body.headRepoFullName?.trim();
-        if (!ref || !headRepoFullName) {
-          throw new TerminalGitHubDispatchError(
-            "branch_lookup_failed",
-            "Remote-cli /github/pr-head returned incomplete PR head info",
-          );
-        }
-        return { ref, headRepoFullName };
-      }
-
-      if (response.status === 401) {
-        throw new TerminalGitHubDispatchError(
-          "branch_lookup_failed",
-          "Remote-cli /github/pr-head rejected the internal credential",
-        );
-      }
-      if (response.status === 403) {
-        throw new TerminalGitHubDispatchError(
-          "installation_gone",
-          `Remote-cli /github/pr-head returned ${response.status}`,
-        );
-      }
-      if (response.status === 404) {
-        throw new TerminalGitHubDispatchError(
-          "branch_not_found",
-          "Remote-cli /github/pr-head returned 404",
-        );
-      }
-      if (response.status >= 500) {
-        if (attempt < GITHUB_PR_HEAD_RETRIES) {
-          continue;
-        }
-        throw new TerminalGitHubDispatchError(
-          "branch_lookup_failed",
-          `Remote-cli /github/pr-head returned ${response.status} after retries`,
-        );
-      }
-      throw new Error(`Remote-cli /github/pr-head returned ${response.status}`);
-    } catch (error) {
-      if (error instanceof TerminalGitHubDispatchError) {
-        throw error;
-      }
-      if (error instanceof Error && error.name === "TimeoutError") {
-        if (attempt < GITHUB_PR_HEAD_RETRIES) {
-          continue;
-        }
-        throw new TerminalGitHubDispatchError(
-          "branch_lookup_failed",
-          "Remote-cli /github/pr-head timed out after retries",
-        );
-      }
-      if (error instanceof TypeError && attempt >= GITHUB_PR_HEAD_RETRIES) {
-        throw new TerminalGitHubDispatchError(
-          "branch_lookup_failed",
-          `Remote-cli /github/pr-head request failed after retries: ${error.message}`,
-        );
-      }
-      if (attempt < GITHUB_PR_HEAD_RETRIES) {
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw new TerminalGitHubDispatchError(
-    "branch_lookup_failed",
-    "Remote-cli /github/pr-head failed",
-  );
-}
-
-function renderGitHubPrompt(events: NormalizedGitHubEvent[]): string {
-  const lines = events.map((event) => renderGitHubPromptLine(event));
-  let selected = [...lines];
-  let prompt = selected.join("\n\n");
-
-  while (selected.length > 1 && Buffer.byteLength(prompt, "utf8") > GITHUB_PROMPT_LIMIT_BYTES) {
-    selected = selected.slice(1);
-    prompt = selected.join("\n\n");
-  }
-
-  if (selected.length < lines.length) {
-    logInfo(log, "github_prompt_truncated", {
-      originalCount: lines.length,
-      retainedCount: selected.length,
-      droppedCount: lines.length - selected.length,
-      bytes: Buffer.byteLength(prompt, "utf8"),
+  try {
+    const result = await internalExec({
+      bin: "gh",
+      args: [
+        "pr",
+        "view",
+        String(event.issue.number),
+        "--repo",
+        event.repository.full_name,
+        "--json",
+        "headRefName,headRepository,headRepositoryOwner",
+      ],
+      cwd: directory,
     });
+    if (result.exitCode !== 0) {
+      throw new TerminalGitHubDispatchError(
+        classifyGhPrViewFailure(result.stderr),
+        `gh pr view failed: ${result.stderr}`,
+      );
+    }
+    const parsed = parseGhPrHead(result.stdout);
+    if (!parsed) {
+      throw new TerminalGitHubDispatchError(
+        "branch_lookup_failed",
+        "gh pr view returned incomplete PR head info",
+      );
+    }
+    return parsed;
+  } catch (error) {
+    if (error instanceof TerminalGitHubDispatchError) throw error;
+    throw new TerminalGitHubDispatchError(
+      "branch_lookup_failed",
+      error instanceof Error ? error.message : "gh pr view failed",
+    );
   }
-
-  return prompt;
 }
 
-function renderGitHubPromptLine(event: NormalizedGitHubEvent): string {
-  const body = truncate(event.body.replace(/\s+/g, " ").trim(), GITHUB_PROMPT_EVENT_BODY_MAX);
-  return `[${event.senderLogin}] ${event.action} on ${event.repoFullName}#${event.number} (${event.eventType}): ${body}\n${event.htmlUrl}`;
+export function createInternalExecClient(input: {
+  remoteCliUrl: string;
+  internalSecret?: string;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}): InternalExecClient {
+  const fetchFn = getFetch(input.fetchImpl);
+  const timeoutMs = input.timeoutMs ?? INTERNAL_EXEC_TIMEOUT_MS;
+
+  return async (request) => {
+    const response = await fetchFn(`${input.remoteCliUrl}/internal/exec`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(input.internalSecret ? { "x-thor-internal-secret": input.internalSecret } : {}),
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Remote-cli /internal/exec returned ${response.status}`);
+    }
+
+    return ExecResultSchema.parse(await response.json());
+  };
+}
+
+function renderGitHubPrompt(events: GitHubWebhookEvent[]): string {
+  return JSON.stringify(events.length === 1 ? events[0] : events);
 }
 
 async function forwardApprovalNotification(

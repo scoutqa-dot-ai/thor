@@ -65,13 +65,12 @@ In `packages/remote-cli/src/index.ts`:
 
 In `packages/gateway/src/service.ts`:
 
-- Thread `internalSecret` through `BatchDispatchInput` → `triggerRunnerGitHub` → `resolveGitHubPrHead` so the existing `/github/pr-head` fetch can include `x-thor-internal-secret`. Same for `resolveApproval` against `/exec/mcp`.
-- Split the upstream-status handling: 401 from remote-cli now means "rejected our internal credential" (terminal `branch_lookup_failed`); 403 still means "installation gone".
-- A typed `internalExec()` client for `/internal/exec` is **deferred** (see Deferred section): it would land as dead code on this branch, so it ships with its first real caller (the push-event `git pull` handler in `2026042701_github-webhook-event-expansion.md`).
+- Thread `internalSecret` through `BatchDispatchInput` → `triggerRunnerGitHub`; pending GitHub branch resolution now runs `gh pr view` through `/internal/exec`.
+- A typed `internalExec()` client for `/internal/exec` is used by gateway callers that need remote-cli-owned credentials or workspace git access.
 
 ### Phase 3 — Tests + grep audit
 
-- 401 on missing/wrong secret for `/exec/mcp` resolve, `/internal/exec`, and `/github/pr-head`; `execCommand`/approval handler never invoked.
+- 401 on missing/wrong secret for `/exec/mcp` resolve and `/internal/exec`; `execCommand`/approval handler never invoked.
 - Existing MCP approval test suite passes against the renamed env/header. The previous "Unknown subcommand: resolve" denial path is replaced by an HTTP 401 at the route layer.
 - `/internal/exec` happy-path: runs `echo`, returns `{ exitCode: 0, stdout: "hello\n", stderr: "" }`.
 - `grep -r "RESOLVE_SECRET\|x-thor-resolve-secret"` returns zero hits outside historical plan docs (`docs/plan/2026041602_drop-proxy.md` and similar — leave as historical record).
@@ -82,7 +81,7 @@ In `packages/gateway/src/service.ts`:
 - [ ] `x-thor-internal-secret` is the only internal-auth header; `x-thor-resolve-secret` is gone.
 - [ ] `/exec/mcp` approval resolution still works under the renamed env+header; existing approval tests pass unchanged in behavior.
 - [ ] `/internal/exec` runs arbitrary `{bin, args, cwd}` under the same auth, bypasses policy, returns `{exitCode, stdout, stderr}`.
-- [ ] 401 on missing/wrong secret for `/exec/mcp` resolve, `/internal/exec`, and `/github/pr-head`; never invokes `execCommand` or approval logic in that case.
+- [ ] 401 on missing/wrong secret for `/exec/mcp` resolve and `/internal/exec`; never invokes `execCommand` or approval logic in that case.
 - [ ] Boot fails fast on missing `THOR_INTERNAL_SECRET` in either service.
 - [ ] e2e workflows mint and pass `THOR_INTERNAL_SECRET` to both services.
 

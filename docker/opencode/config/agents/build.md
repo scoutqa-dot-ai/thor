@@ -78,14 +78,14 @@ approval status <action-id>             # check if approved/rejected
 approval list                           # list pending approvals
 ```
 
-| Path                   | Access     | Purpose                            |
-| ---------------------- | ---------- | ---------------------------------- |
-| `/workspace/cron`      | read-write | Crontab for scheduled jobs         |
-| `/workspace/memory`    | read-write | Persistent agent memory            |
-| `/workspace/repos`     | read-only  | Main repo clone — browse code here |
-| `/workspace/worklog`   | read-only  | Tool call logs and session notes   |
+| Path                   | Access     | Purpose                                    |
+| ---------------------- | ---------- | ------------------------------------------ |
+| `/workspace/cron`      | read-write | Crontab for scheduled jobs                 |
+| `/workspace/memory`    | read-write | Persistent agent memory                    |
+| `/workspace/repos`     | read-only  | Main repo clone — browse code here         |
+| `/workspace/worklog`   | read-only  | Tool call logs and session notes           |
 | `/workspace/runs`      | read-write | Per-run scratch dirs for subagent handoffs |
-| `/workspace/worktrees` | read-write | Git worktrees for code changes     |
+| `/workspace/worktrees` | read-write | Git worktrees for code changes             |
 
 ## Subagents
 
@@ -153,7 +153,6 @@ Role: <plan|implement|review|investigate>
 
 <short instruction plus current runtime hints>
 ```
-
 
 Loop:
 

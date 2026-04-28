@@ -2,6 +2,7 @@ import express, { type Express, type Request, type Response } from "express";
 import {
   appendJsonlWorklog,
   createLogger,
+  findNotesFile,
   logError,
   logInfo,
   resolveCorrelationKeys,
@@ -22,12 +23,15 @@ import {
   getBatchLogPrefix,
   planBatchDispatch,
   resolveApproval,
+  createInternalExecClient,
   updateSlackMessage,
   type BatchLogPrefix,
   type BatchSource,
+  type InternalExecClient,
   type RunnerDeps,
   type SlackMcpDeps,
 } from "./service.js";
+import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKey,
@@ -42,11 +46,16 @@ import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from ".
 import {
   buildCorrelationKey,
   buildPendingBranchResolveKey,
+  getGitHubEventBranch,
+  getGitHubEventLocalRepo,
+  getGitHubEventNumber,
   getGitHubEventSourceTs,
+  getGitHubEventType,
   GitHubWebhookEnvelopeSchema,
   isPendingBranchResolveKey,
-  type NormalizedGitHubEvent,
-  normalizeGitHubEvent,
+  isCheckSuiteCompletedEvent,
+  shouldIgnoreGitHubEvent,
+  type GitHubWebhookEvent,
   verifyGitHubSignature,
 } from "./github.js";
 
@@ -58,7 +67,7 @@ interface CronQueuedEvent extends QueuedEvent<CronPayload> {
   source: "cron";
 }
 
-interface GitHubQueuedEvent extends QueuedEvent<NormalizedGitHubEvent> {
+interface GitHubQueuedEvent extends QueuedEvent<GitHubWebhookEvent> {
   source: "github";
 }
 
@@ -117,6 +126,7 @@ const GITHUB_SUPPORTED_EVENTS = new Set([
   "issue_comment",
   "pull_request_review_comment",
   "pull_request_review",
+  "check_suite",
 ]);
 
 type GitHubIgnoreReason =
@@ -129,7 +139,10 @@ type GitHubIgnoreReason =
   | "fork_pr_unsupported"
   | "self_sender"
   | "empty_review_body"
-  | "non_mention_comment";
+  | "non_mention_comment"
+  | "check_suite_branch_missing"
+  | "correlation_key_unresolved"
+  | "check_suite_gate_failed";
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
@@ -166,6 +179,10 @@ export interface GatewayAppConfig extends RunnerDeps {
   githubMentionLogins?: string[];
   /** Numeric GitHub user ID of our App's bot user. Used as the canonical self-identity check. */
   githubAppBotId?: number;
+  /** Git author email derived from the GitHub App bot identity. */
+  githubAppBotEmail?: string;
+  /** Internal exec client override for tests. */
+  internalExec?: InternalExecClient;
   /** GitHub mention debounce delay in ms. Default: 3000. */
   githubMentionDelayMs?: number;
 }
@@ -241,6 +258,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   };
   const remoteCliHost = config.remoteCliHost ?? "remote-cli";
   const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;
+  const internalExec =
+    config.internalExec ??
+    createInternalExecClient({
+      remoteCliUrl,
+      internalSecret: config.internalSecret,
+      fetchImpl: config.fetchImpl,
+    });
 
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
@@ -282,6 +306,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           slackMcpDeps,
           remoteCliUrl,
           internalSecret: config.internalSecret,
+          internalExec,
           interrupt: hasInterrupt,
           onAccepted: ack,
           onRejected: reject,
@@ -762,7 +787,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   // --- GitHub webhook ---
 
-  app.post("/github/webhook", webhookRawParser, (req: Request, res: Response) => {
+  app.post("/github/webhook", webhookRawParser, async (req: Request, res: Response) => {
     const rawBodyBuffer = getRawBufferFromBody(req.body);
     const { rawBodyUtf8, rawBodyBase64 } = buildRawBodyFields(rawBodyBuffer);
     const deliveryId = req.header("x-github-delivery") ?? "unknown";
@@ -874,8 +899,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     const repoFullName = parsed.data.repository.full_name;
-    const parts = repoFullName.split("/");
-    const localRepo = parts[parts.length - 1];
+    const localRepo = getGitHubEventLocalRepo(parsed.data);
     if (!localRepo || !resolveRepoDirectory(localRepo)) {
       writeGitHubWebhookHistory("ignored", {
         ...baseEntry,
@@ -899,18 +923,41 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const normalized = normalizeGitHubEvent(parsed.data, {
-      localRepo,
+    const eventType = getGitHubEventType(parsed.data);
+    if (eventType !== eventTypeHeader) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "schema_valid",
+        action: parsed.data.action,
+        reason: "event_unsupported",
+        metadata: {
+          repoFullName,
+          localRepo,
+        },
+      });
+      logGitHubIgnored({
+        deliveryId,
+        repoFullName,
+        eventType: eventTypeHeader,
+        action: parsed.data.action,
+        reason: "event_unsupported",
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const ignoreReason = shouldIgnoreGitHubEvent(parsed.data, {
       mentionLogins: githubMentionLogins,
       botId: githubAppBotId,
     });
-    if ("ignored" in normalized) {
+    if (ignoreReason) {
       writeGitHubWebhookHistory("ignored", {
         ...baseEntry,
         signatureVerified: true,
         parseStatus: "schema_valid",
         action: parsed.data.action,
-        reason: normalized.reason,
+        reason: ignoreReason,
         metadata: {
           repoFullName,
           localRepo,
@@ -921,74 +968,150 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         repoFullName,
         eventType: eventTypeHeader,
         action: parsed.data.action,
-        reason: normalized.reason,
+        reason: ignoreReason,
       });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
 
-    if (normalized.eventType !== eventTypeHeader) {
-      writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
-        signatureVerified: true,
-        parseStatus: "schema_valid",
-        action: normalized.action,
-        reason: "event_unsupported",
-        metadata: {
+    const branch = getGitHubEventBranch(parsed.data);
+    let correlationKey: string;
+    let delayMs = githubMentionDelay;
+    let interrupt = true;
+
+    if (isCheckSuiteCompletedEvent(parsed.data)) {
+      if (!branch) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "check_suite_branch_missing",
+          metadata: {
+            repoFullName,
+            localRepo,
+            headSha: parsed.data.check_suite.head_sha,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
           repoFullName,
-          localRepo,
-        },
-      });
-      logGitHubIgnored({
-        deliveryId,
-        repoFullName,
-        eventType: eventTypeHeader,
-        action: normalized.action,
-        reason: "event_unsupported",
-      });
-      res.status(200).json({ ok: true, ignored: true });
-      return;
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_branch_missing",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      const rawKey = buildCorrelationKey(localRepo, branch);
+      const resolvedKey = resolveCorrelationKeys([rawKey]);
+      if (!findNotesFile(resolvedKey)) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "correlation_key_unresolved",
+          metadata: {
+            repoFullName,
+            localRepo,
+            rawKey,
+            resolvedKey,
+            headSha: parsed.data.check_suite.head_sha,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "correlation_key_unresolved",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      const directory = resolveRepoDirectory(localRepo);
+      const gate = directory
+        ? await verifyThorAuthoredSha({
+            internalExec,
+            directory,
+            sha: parsed.data.check_suite.head_sha,
+            expectedEmail: config.githubAppBotEmail ?? "",
+          })
+        : { ok: false as const, reason: "exec_failed" as const };
+      if (!gate.ok) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "check_suite_gate_failed",
+          metadata: {
+            repoFullName,
+            localRepo,
+            rawKey,
+            resolvedKey,
+            headSha: parsed.data.check_suite.head_sha,
+            gateReason: gate.reason,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_gate_failed",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      correlationKey = resolvedKey;
+      delayMs = 0;
+      interrupt = false;
+    } else {
+      correlationKey = branch
+        ? resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)])
+        : buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
     }
 
     const sourceTs = getGitHubEventSourceTs(parsed.data);
-    const delayMs = githubMentionDelay;
-    const correlationKey = normalized.branch
-      ? resolveCorrelationKeys([buildCorrelationKey(normalized.localRepo, normalized.branch)])
-      : buildPendingBranchResolveKey(normalized.localRepo, normalized.number);
 
     queue.enqueue({
       id: deliveryId,
       source: "github",
       correlationKey,
-      payload: normalized,
+      payload: parsed.data,
       receivedAt: new Date().toISOString(),
       sourceTs,
       readyAt: sourceTs + delayMs,
       delayMs,
-      interrupt: true,
+      interrupt,
     });
 
     writeGitHubWebhookHistory("ingested", {
       ...baseEntry,
       signatureVerified: true,
       parseStatus: "schema_valid",
-      action: normalized.action,
+      action: parsed.data.action,
       reason: "accepted",
       metadata: {
-        repoFullName: normalized.repoFullName,
-        localRepo: normalized.localRepo,
+        repoFullName,
+        localRepo,
         correlationKey,
       },
     });
 
     logInfo(log, "github_event_accepted", {
       deliveryId,
-      repoFullName: normalized.repoFullName,
-      localRepo: normalized.localRepo,
-      eventType: normalized.eventType,
-      action: normalized.action,
+      repoFullName,
+      localRepo,
+      eventType,
+      action: parsed.data.action,
       correlationKey,
-      interrupt: true,
+      interrupt,
       delayMs,
     });
 

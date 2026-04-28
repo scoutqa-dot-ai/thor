@@ -30,6 +30,7 @@ function fakeConfigLoader(
 
 let mockHasSlackReply = false;
 let mappedRepos = new Set<string>(["test-repo", "thor"]);
+let notesKeys = new Set<string>();
 vi.mock("@thor/common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@thor/common")>();
   return {
@@ -37,6 +38,8 @@ vi.mock("@thor/common", async (importOriginal) => {
     resolveRepoDirectory: (repoName: string) =>
       mappedRepos.has(repoName) ? `/workspace/repos/${repoName}` : undefined,
     hasSlackReply: () => mockHasSlackReply,
+    findNotesFile: (correlationKey: string) =>
+      notesKeys.has(correlationKey) ? `/workspace/worklog/test/${correlationKey}.md` : undefined,
   };
 });
 
@@ -48,12 +51,39 @@ function signGitHub(body: string, secret: string): string {
   return `sha256=${createHmac("sha256", secret).update(Buffer.from(body)).digest("hex")}`;
 }
 
-function readQueuedEvents(queueDir: string): Array<Record<string, unknown>> {
-  return readdirSync(queueDir)
+function checkSuiteWebhookBody(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    action: "completed",
+    installation: { id: 126669985 },
+    repository: { full_name: "scoutqa-dot-ai/thor" },
+    sender: { id: 41898282, login: "github-actions[bot]", type: "Bot" },
+    check_suite: {
+      head_sha: "abc123def456",
+      head_branch: "feature/refactor",
+      conclusion: "success",
+      status: "completed",
+      updated_at: "2026-04-24T12:00:00Z",
+      pull_requests: [
+        {
+          number: 42,
+          head: {
+            ref: "feature/refactor",
+            sha: "abc123def456",
+            repo: { full_name: "scoutqa-dot-ai/thor" },
+          },
+          base: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+        },
+      ],
+      ...overrides,
+    },
+  });
+}
+
+function readQueuedEvents(queueDir: string, subdir?: string): Array<Record<string, unknown>> {
+  const dir = subdir ? join(queueDir, subdir) : queueDir;
+  return readdirSync(dir)
     .filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
-    .map(
-      (entry) => JSON.parse(readFileSync(join(queueDir, entry), "utf8")) as Record<string, unknown>,
-    );
+    .map((entry) => JSON.parse(readFileSync(join(dir, entry), "utf8")) as Record<string, unknown>);
 }
 
 function readInboundWebhookHistoryEntries(worklogDir: string): Array<Record<string, unknown>> {
@@ -153,6 +183,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   mockHasSlackReply = false;
   mappedRepos = new Set(["test-repo", "thor"]);
+  notesKeys = new Set();
 });
 
 describe("gateway", () => {
@@ -486,9 +517,17 @@ describe("gateway", () => {
           status: 200,
         });
       }
-      if (url.startsWith("http://remote-cli:3004/github/pr-head?")) {
+      if (url === "http://remote-cli:3004/internal/exec") {
         return new Response(
-          JSON.stringify({ ref: "feature/refactor", headRepoFullName: "acme/thor" }),
+          JSON.stringify({
+            stdout: JSON.stringify({
+              headRefName: "feature/refactor",
+              headRepositoryOwner: { login: "acme" },
+              headRepository: { name: "thor" },
+            }),
+            stderr: "",
+            exitCode: 0,
+          }),
           { status: 200 },
         );
       }
@@ -1122,6 +1161,63 @@ describe("gateway", () => {
     });
   });
 
+  it("ignores GitHub webhooks when the event header does not match the parsed body type", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = JSON.stringify({
+            action: "created",
+            installation: { id: 1 },
+            repository: { full_name: "scoutqa-dot-ai/thor" },
+            sender: { id: 1001, login: "alice", type: "User" },
+            issue: {
+              number: 12,
+              pull_request: { html_url: "https://github.com/scoutqa-dot-ai/thor/pull/12" },
+            },
+            comment: {
+              body: "@thor review",
+              html_url: "https://github.com/scoutqa-dot-ai/thor/pull/12#issuecomment-1",
+              created_at: "2026-04-24T11:00:00Z",
+            },
+          });
+
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-header-mismatch",
+              "X-GitHub-Event": "pull_request_review_comment",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            requestId: "delivery-header-mismatch",
+            reason: "event_unsupported",
+            eventType: "pull_request_review_comment",
+            action: "created",
+            parseStatus: "schema_valid",
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
   it("enqueues valid GitHub webhook with branch correlation and mention delay", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
@@ -1169,11 +1265,12 @@ describe("gateway", () => {
           delayMs: 3000,
           interrupt: true,
           payload: {
-            source: "github",
-            eventType: "pull_request_review_comment",
-            repoFullName: "scoutqa-dot-ai/thor",
-            localRepo: "thor",
-            branch: "feature/refactor",
+            action: "created",
+            repository: { full_name: "scoutqa-dot-ai/thor" },
+            pull_request: {
+              number: 42,
+              head: { ref: "feature/refactor" },
+            },
           },
         });
         expect(fetchImpl).not.toHaveBeenCalled();
@@ -1184,6 +1281,245 @@ describe("gateway", () => {
         githubAppBotId: 7777,
       },
     );
+  });
+
+  it("enqueues check_suite events only when the branch has an existing notes-backed session", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
+      .mockResolvedValueOnce({
+        stdout: "49699333+thor[bot]@users.noreply.github.com\n",
+        stderr: "",
+        exitCode: 0,
+      });
+
+    await withWorklogDir(async (worklogDir) => {
+      notesKeys.add("git:branch:thor:feature/refactor");
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody();
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-ok",
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true });
+
+          const queued = readQueuedEvents(queueDir);
+          expect(queued).toHaveLength(1);
+          expect(queued[0]).toMatchObject({
+            id: "delivery-check-suite-ok",
+            source: "github",
+            correlationKey: "git:branch:thor:feature/refactor",
+            delayMs: 0,
+            interrupt: false,
+            payload: {
+              event_type: "check_suite",
+              action: "completed",
+              check_suite: {
+                head_sha: "abc123def456",
+                head_branch: "feature/refactor",
+                conclusion: "success",
+              },
+            },
+          });
+
+          const ingested = readGitHubIngestedEntries(worklogDir);
+          expect(ingested).toHaveLength(1);
+          expect(ingested[0]).toMatchObject({
+            reason: "accepted",
+            eventType: "check_suite",
+            metadata: { correlationKey: "git:branch:thor:feature/refactor" },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+          githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+          internalExec,
+        },
+      );
+    });
+
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "git",
+      args: ["cat-file", "-e", "abc123def456"],
+      cwd: "/workspace/repos/thor",
+    });
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "git",
+      args: ["log", "-1", "--format=%ae", "abc123def456"],
+      cwd: "/workspace/repos/thor",
+    });
+  });
+
+  it.each([
+    {
+      gateReason: "sha_missing",
+      execResults: [{ stdout: "", stderr: "missing", exitCode: 128 }],
+    },
+    {
+      gateReason: "author_mismatch",
+      execResults: [
+        { stdout: "", stderr: "", exitCode: 0 },
+        { stdout: "alice@example.com\n", stderr: "", exitCode: 0 },
+      ],
+    },
+    {
+      gateReason: "exec_failed",
+      execResults: [new Error("timeout")],
+    },
+  ])(
+    "ignores check_suite events when the git gate returns $gateReason",
+    async ({ gateReason, execResults }) => {
+      const fetchImpl = vi.fn<typeof fetch>();
+      const internalExec = vi.fn();
+      for (const result of execResults) {
+        if (result instanceof Error) {
+          internalExec.mockRejectedValueOnce(result);
+        } else {
+          internalExec.mockResolvedValueOnce(result);
+        }
+      }
+
+      await withWorklogDir(async (worklogDir) => {
+        notesKeys.add("git:branch:thor:feature/refactor");
+
+        await withServer(
+          fetchImpl,
+          async (baseUrl, _queue, queueDir) => {
+            const body = checkSuiteWebhookBody();
+            const response = await fetch(`${baseUrl}/github/webhook`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+                "X-GitHub-Delivery": `delivery-check-suite-${gateReason}`,
+                "X-GitHub-Event": "check_suite",
+              },
+              body,
+            });
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({ ok: true, ignored: true });
+            expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+            const ignored = readGitHubIgnoredEntries(worklogDir);
+            expect(ignored).toHaveLength(1);
+            expect(ignored[0]).toMatchObject({
+              reason: "check_suite_gate_failed",
+              eventType: "check_suite",
+              metadata: {
+                headSha: "abc123def456",
+                gateReason,
+              },
+            });
+          },
+          {
+            githubWebhookSecret: "github-secret",
+            githubMentionLogins: ["thor", "thor[bot]"],
+            githubAppBotId: 7777,
+            githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+            internalExec,
+          },
+        );
+      });
+    },
+  );
+
+  it("ignores check_suite events without an existing notes-backed session", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody();
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-unresolved",
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "correlation_key_unresolved",
+            eventType: "check_suite",
+            metadata: {
+              rawKey: "git:branch:thor:feature/refactor",
+              resolvedKey: "git:branch:thor:feature/refactor",
+              headSha: "abc123def456",
+            },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("ignores branchless check_suite events before pending branch resolution", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody({ head_branch: null });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-branchless",
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "check_suite_branch_missing",
+            eventType: "check_suite",
+            metadata: { headSha: "abc123def456" },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
   });
 
   it("returns 401 and does not enqueue for invalid GitHub signature", async () => {
@@ -1351,8 +1687,8 @@ describe("gateway", () => {
           delayMs: 3000,
           interrupt: true,
           payload: {
-            eventType: "issue_comment",
-            branch: null,
+            action: "created",
+            issue: { number: 12 },
           },
         });
       },

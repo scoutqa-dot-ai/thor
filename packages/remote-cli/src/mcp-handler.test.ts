@@ -302,13 +302,6 @@ describe("remote-cli MCP endpoints", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns 401 for /github/pr-head without the internal secret", async () => {
-    const response = await fetch(
-      `${baseUrl}/github/pr-head?installation=1&repo=acme%2Frepo&number=1`,
-    );
-    expect(response.status).toBe(401);
-  });
-
   it("runs /internal/exec with valid internal secret", async () => {
     const response = await postJson(
       "/internal/exec",
