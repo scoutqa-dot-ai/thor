@@ -203,29 +203,6 @@ Rules match by exact host or suffix first, then by optional `path_prefix`.
 - Repos under `/workspace/repos` are mounted read-only into OpenCode. Thor creates edits in `/workspace/worktrees`.
 - Scheduled prompts live in `docker-volumes/workspace/cron/crontab`.
 
-## Key Env Vars
-
-| Variable                        | Required | Service                   | Purpose                                       |
-| ------------------------------- | -------- | ------------------------- | --------------------------------------------- |
-| `ATLASSIAN_AUTH`                | Yes      | `remote-cli`, `mitmproxy` | Atlassian MCP auth + proxy injection          |
-| `CRON_SECRET`                   | Yes      | `gateway`, `cron`         | Cron endpoint auth                            |
-| `GITHUB_APP_ID`                 | Yes      | `remote-cli`              | GitHub App ID                                 |
-| `GITHUB_APP_BOT_ID`             | Yes      | `remote-cli`              | GitHub App bot user ID                        |
-| `GITHUB_APP_PRIVATE_KEY_FILE`   | Yes      | `remote-cli`              | GitHub App private key path                   |
-| `GITHUB_APP_SLUG`               | Yes      | `remote-cli`, `gateway`   | GitHub App slug                               |
-| `GITHUB_PAT`                    | No       | `remote-cli`              | Optional fallback token for `git` / `gh`      |
-| `GITHUB_WEBHOOK_SECRET`         | Yes      | `gateway`                 | GitHub webhook signature secret               |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | Yes      | `grafana-mcp`             | Grafana access token                          |
-| `GRAFANA_URL`                   | Yes      | `grafana-mcp`             | Grafana base URL                              |
-| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`              | Langfuse read-only auth                       |
-| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`              | Langfuse read-only auth                       |
-| `METABASE_API_KEY`              | No       | `remote-cli`              | Metabase access                               |
-| `POSTHOG_API_KEY`               | Yes      | `remote-cli`              | PostHog MCP auth                              |
-| `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`   | Secret-gates gateway↔remote-cli internal APIs |
-| `SLACK_BOT_TOKEN`               | Yes      | `slack-mcp`, `mitmproxy`  | Slack bot token + proxy injection             |
-| `SLACK_BOT_USER_ID`             | Yes      | `gateway`                 | Used to ignore our own Slack messages         |
-| `SLACK_SIGNING_SECRET`          | Yes      | `gateway`                 | Slack webhook verification                    |
-
 ## Security Model
 
 - OpenCode does not get direct API credentials for MCP upstreams.
