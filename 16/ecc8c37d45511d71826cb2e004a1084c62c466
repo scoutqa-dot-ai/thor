@@ -1,0 +1,25 @@
+docs/plan/2026042702_github-event-passthrough.md
+  306b61b884090542 2,6,10-32,36-40,45,54,59-72,74,76,78-80,83-91,94-95,97,99-145,149,154-161,165,171,173,178-185,190-197,199,201-206,211-212,214,216-220,224-227,232-238,242-265
+docs/plan/2026042703_github-wake-on-ci-design.md
+  306b61b884090542 1-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "16ecc8c37d45511d71826cb2e004a1084c62c466",
+  "prompts": {
+    "306b61b884090542": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d3f05f75-43ac-4624-ba0f-2913e0b3f8a0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 310,
+      "total_deletions": 228,
+      "accepted_lines": 301,
+      "overriden_lines": 0
+    }
+  }
+}
