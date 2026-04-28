@@ -1,0 +1,25 @@
+docs/plan/2026042703_internal-exec-endpoint.md
+  6de17ac82cb860b0 108-112
+packages/remote-cli/src/index.ts
+  6de17ac82cb860b0 132-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a5a3a9a844e262ce1577d36889b1ba371b597327",
+  "prompts": {
+    "6de17ac82cb860b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f0e48227-c9c9-4a6b-95cd-185785eac7f9",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 27,
+      "total_deletions": 244,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}
