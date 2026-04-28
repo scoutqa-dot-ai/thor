@@ -84,6 +84,7 @@ approval list                           # list pending approvals
 | `/workspace/memory`    | read-write | Persistent agent memory            |
 | `/workspace/repos`     | read-only  | Main repo clone — browse code here |
 | `/workspace/worklog`   | read-only  | Tool call logs and session notes   |
+| `/workspace/runs`      | read-write | Per-run scratch dirs for subagent handoffs |
 | `/workspace/worktrees` | read-write | Git worktrees for code changes     |
 
 ## Subagents
@@ -97,15 +98,69 @@ Handle simple tasks yourself: Slack replies, reading files, running commands, qu
 
 ### Code change protocol
 
+For non-trivial code changes, use a file-based run directory instead of re-narrating task context to subagents. Skip this protocol for trivial changes: single-file changes of 30 lines or fewer, one-line config edits, docs-only edits, and changes with no new dependency, schema, migration, or cross-module behavior.
+
+Run directory:
+
+```
+/workspace/runs/<run-id>/
+  README.md
+  plan.md       # optional, only when useful
+  review.md     # optional, only when useful
+  verify.sh     # optional repro or verification helper
+  fixtures/     # optional payloads, logs, screenshots
+```
+
+Run ID format: `<YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]`, for example `20260427-143052-mcp-approval`. Use a short kebab-case slug. Add the Slack thread ts suffix when the task is tied to a Slack thread.
+
+The canonical README schema is `/workspace/repos/thor/docker/opencode/config/run-readme.template.md` in this repo. Copy that template into the run dir and fill the header and Goal. Required top fields, in order:
+
+```
+Run-ID: <YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]
+Repo: <repo-name>
+Branch: <branch-name>
+Worktree: /workspace/worktrees/<repo>/<branch>
+Lifecycle: open | merged | abandoned
+Verdict: BLOCK | SUBSTANTIVE | NIT | MERGED | empty before first review
+```
+
+Verdict glossary:
+
+- `BLOCK` — review found a defect that must be fixed; iterate.
+- `SUBSTANTIVE` — review found non-trivial improvements; iterate.
+- `NIT` — only nitpicks remain; ship.
+- `MERGED` — PR landed; run is terminal.
+
+`Lifecycle:` is the run's lifetime state. `Verdict:` is the latest review outcome. Do not conflate them.
+
+Subagent invocation uses the `task` tool prompt body. There are no CLI flags. The first two non-empty prompt lines must be:
+
+```
+Run dir: /workspace/runs/<run-id>
+Role: <plan|implement|review>
+
+<short instruction for this step plus current runtime hints>
+```
+
+The subagent contract is strict:
+
+- `Run dir:` must match `^Run dir: (?<path>/workspace/runs/[^\s]+)$`.
+- `Role:` must match `^Role: (?<role>plan|implement|review)$`.
+- Paths are case-sensitive, absolute, and must resolve under `/workspace/runs/`.
+- Subagents read `<run-dir>/README.md` as the task source of truth.
+- Runtime-only context such as available tools, MCP upstreams, skills, and environment hints may go in the prompt. Task content stays in the README.
+- Do not paste the README contents into the subagent prompt.
+- Missing headers, missing README, or missing required README fields must produce an `ERROR:` reply from the subagent. Amend the README and redispatch; do not continue from guesses.
+
 For non-trivial code changes, follow this loop:
 
-1. **Plan** — delegate to `thinker` to analyze the requirements, identify affected files, and produce a step-by-step plan
-2. **Implement** — delegate to `coder` with the plan to write the code
-3. **Test** — run targeted tests in the sandbox. Never run the full suite — CI handles that on push.
-4. **Review** — delegate to `thinker` to review the implementation for correctness, security, and design issues
-5. **Iterate** — if the review finds substantive issues, send them back to `coder` to fix and re-review. Stop when the reviewer only finds nitpicks.
-
-Skip this protocol for trivial changes (config edits, one-line fixes, documentation updates).
+1. **Frame** — create `/workspace/runs/<run-id>/README.md` from the template. Fill `Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, `Lifecycle: open`, leave `Verdict:` empty, and write a concrete Goal. If repo conventions require a durable plan in `docs/plan/`, create or update that in-repo plan and link it from the run README Artifacts table.
+2. **Plan** — delegate to `thinker` with `Role: plan`. The thinker reads the README, writes `plan.md` only if useful, inserts an Artifacts row, and appends one Log line.
+3. **Implement** — delegate to `coder` with `Role: implement`. The coder reads the README and linked artifacts, edits the worktree, runs targeted tests, and appends one Log line with the implementation and test outcome.
+4. **Test** — confirm the targeted test evidence in the README Log. If the coder did not run the relevant targeted test, run it yourself in the sandbox or redispatch the coder. Never run the full suite; CI handles that on push.
+5. **Review** — delegate to `thinker` with `Role: review`. The thinker reads the README, linked artifacts, test evidence, and worktree diff, then replaces the `Verdict:` line with `BLOCK`, `SUBSTANTIVE`, or `NIT`. It writes `review.md` only when findings need prose.
+6. **Validate** — after each subagent call, read `<run-dir>/README.md` yourself and confirm the expected role appended exactly one new Log line. After review, confirm `Verdict:` is one of `BLOCK`, `SUBSTANTIVE`, `NIT`, or `MERGED`. If validation fails, retry once with a corrective prompt; then escalate.
+7. **Iterate** — on `BLOCK` or `SUBSTANTIVE`, redispatch `coder` with `Role: implement`, then retest and re-review. Stop when the reviewer writes `NIT`.
 
 Rules:
 
@@ -113,6 +168,8 @@ Rules:
 - Reuse an existing worktree for the same branch across sessions. Check `/workspace/worktrees/` before creating a new one.
 - Recover prior context from `/workspace/worklog/` before re-investigating a task from a previous session.
 - Verify the intended branch before making code-state conclusions — do not assume `main` is the right source of truth when repos have active side branches.
+- `/workspace/runs/` is scratch state for active handoffs. `worklog/` is the durable session index. `memory/` is distilled knowledge. Do not mix those roles.
+- Per-repo conventions win. If the target repo has `AGENTS.md`, `docs/plan/`, `docs/feat/`, or other durable planning rules, write durable plans there and link them from the run README.
 
 ### PR review protocol
 

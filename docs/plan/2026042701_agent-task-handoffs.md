@@ -19,7 +19,7 @@ Stop the orchestrator from re-stating task context to `thinker` and `coder` on e
 - **Update `docker/opencode/config/agents/coder.md` and `thinker.md`** (revised in scope per /autoplan CEO gate, 2026-04-27):
   - Teach each subagent to parse `Run dir:` and `Role:` from the prompt header.
   - Teach each subagent to read `<run-dir>/README.md` as task source of truth.
-  - Teach each subagent to append a Log line and update Status/Artifacts when finishing its role.
+  - Teach each subagent to append a Log line and update Lifecycle/Verdict/Artifacts when finishing its role.
   - Teach each subagent the fail-fast contract: if the README is missing required content, return an error to the orchestrator rather than guessing.
 - Make per-repo plan/feat conventions explicitly take precedence for in-repo durable artifacts.
 
@@ -136,7 +136,7 @@ Distillation into `worklog/` and `memory/<repo>/` is **out of the main loop** �
 
 - Subagent prompts contain the run-dir path, the role, and **runtime context that the README must not capture**: currently available tools, MCP upstreams, skills, and any environment hints that may change between invocations. Task content stays in the README; runtime context stays in the prompt.
 - Subagents must not depend on conversational context from the orchestrator about the task itself. If the README lacks task information they need, fail fast and ask the orchestrator to amend it.
-- Status and verdict live in the README; supporting files are optional elaboration.
+- Lifecycle and verdict live in the README; supporting files are optional elaboration.
 - `/workspace/runs/` is the working surface. `worklog/` is the index. `memory/` is the distilled knowledge. Don't mix.
 - **Per-repo conventions win.** If the target repo defines its own plan/feat layout (e.g. `docs/plan/`, `docs/feat/`, `AGENTS.md` rules, plan filename format, decision-log schema), durable plan documents are written in the repo's preferred location and format. The run dir still holds inter-agent handoffs; the README links to the in-repo plan so subagents can find it.
 - Trivial changes (one-line config, doc tweaks) skip the protocol entirely — no run dir created.
@@ -178,7 +178,7 @@ Lock the contract before any agent code reads it.
 - Add the orchestrator-side verdict validator: after each `task()` call to `thinker review`, the orchestrator reads `<run-dir>/README.md` and asserts the `Verdict:` line is in the enum; on miss, retry once with a corrective prompt, then escalate. This is the load-bearing check that lets the helper CLI stay deferred.
 - Add the orchestrator post-condition check: after each `task()` call, assert a Log line was appended for the expected role; on miss, escalate.
 
-**Exit criteria:** `build.md` is internally consistent: every step references the README + helper; no step relies on re-narrated task content; the path table matches the mount; verdict and post-condition validators are described.
+**Exit criteria:** `build.md` is internally consistent: every step references the README and direct edit rules; no step relies on re-narrated task content; the path table matches the mount; verdict and post-condition validators are described.
 
 ### Phase 4 — Subagent definition updates (`coder.md`, `thinker.md`)
 
@@ -552,6 +552,5 @@ TTHW current: **5+ cognitive steps, 3+ underspec'd**. Target: 2 steps with expli
 | 16 | DX | Defaults table for missing fields | Auto-decide | P1 completeness | Standard contract hygiene |
 | 17 | DX | Glossary for verdict vocabulary in build.md | Auto-decide | P5 | Cheap; both voices flagged |
 | 18 | Cross | Drop `<repo>` segment from run-id (Decision Log line 156) | Re-surfaced | — | Both voices argue this REDUCES uniqueness; revisit |
-
 
 
