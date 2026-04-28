@@ -134,46 +134,6 @@ function matchesInternalSecret(
   return timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret));
 }
 
-export function redactInternalExecArgs(args: string[]): string[] {
-  const redactInlineValue = (arg: string): string => `${arg.slice(0, arg.indexOf("="))}=[REDACTED]`;
-  const redactUrlCredentials = (arg: string): string =>
-    arg.replace(/^([a-z][a-z0-9+.-]*:\/\/)([^\s/@]+)@/i, "$1[REDACTED]@");
-  let redactNext = false;
-  return args.map((arg) => {
-    if (redactNext) {
-      redactNext = false;
-      return "[REDACTED]";
-    }
-
-    if (
-      /^(?:-H|--header|-u|--user|--token|--auth|--authorization|--password|--passwd|--secret|--api-key|--apikey)$/i.test(
-        arg,
-      )
-    ) {
-      redactNext = true;
-      return arg;
-    }
-
-    if (
-      /^(?:--token|--auth|--authorization|--password|--passwd|--secret|--api-key|--apikey|token|secret|password|api[_-]?key)=/i.test(
-        arg,
-      )
-    ) {
-      return redactInlineValue(arg);
-    }
-
-    if (/^(?:-H|--header)=/i.test(arg)) {
-      return redactInlineValue(arg);
-    }
-
-    if (/^https?:\/\//i.test(arg) || (/:\/\//.test(arg) && /@/.test(arg))) {
-      return redactUrlCredentials(arg);
-    }
-
-    return arg;
-  });
-}
-
 function getInternalSecretHeader(req: express.Request): string | undefined {
   return req.get(INTERNAL_SECRET_HEADER) ?? undefined;
 }
@@ -961,7 +921,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       });
       logInfo(log, "internal_exec", {
         bin,
-        args: redactInternalExecArgs(args),
+        argc: args.length,
         cwd,
         exitCode: result.exitCode,
         durationMs: Date.now() - startedAt,
@@ -971,7 +931,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     } catch (err) {
       logError(log, "internal_exec_error", err instanceof Error ? err.message : String(err), {
         bin,
-        args: redactInternalExecArgs(args),
+        argc: args.length,
         cwd,
         durationMs: Date.now() - startedAt,
         ...thorIds(req),
