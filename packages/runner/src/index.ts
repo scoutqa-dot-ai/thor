@@ -39,6 +39,7 @@ import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { buildToolInstructions } from "./tool-instructions.js";
 import { getMemoryProgressEvents } from "./memory-progress.js";
+import { pathToFileURL } from "node:url";
 
 const log = createLogger("runner");
 
@@ -62,7 +63,17 @@ const TaskDelegateInputSchema = z.object({
 const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
 /** Shared event buses — one SSE connection per directory, dispatches to per-session listeners. */
-const eventBuses = new EventBusRegistry(OPENCODE_URL);
+const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
+
+type OpencodeClient = ReturnType<typeof createOpencodeClient>;
+
+export interface RunnerAppOptions {
+  opencodeUrl?: string;
+  eventBuses?: EventBusRegistry;
+  createClient?: (opts: { baseUrl: string; directory: string }) => OpencodeClient;
+  isOpencodeReachable?: () => Promise<boolean>;
+  ensureOpencodeAvailable?: () => Promise<void>;
+}
 
 /** Read a file, returns trimmed content or undefined. */
 function readMemoryFile(filePath: string): string | undefined {
@@ -125,17 +136,23 @@ async function ensureOpencodeAvailable(): Promise<void> {
 
 // --- Express app ---
 
-const app = express();
-app.use(express.json());
+export function createRunnerApp(options: RunnerAppOptions = {}): express.Express {
+  const app = express();
+  app.use(express.json());
+  const opencodeUrl = options.opencodeUrl ?? OPENCODE_URL;
+  const eventBuses = options.eventBuses ?? defaultEventBuses;
+  const createClient = options.createClient ?? createOpencodeClient;
+  const checkOpencodeReachable = options.isOpencodeReachable ?? isOpencodeReachable;
+  const waitForOpencode = options.ensureOpencodeAvailable ?? ensureOpencodeAvailable;
 
 app.get("/health", async (_req, res) => {
-  const opencodeHealthy = await isOpencodeReachable();
+  const opencodeHealthy = await checkOpencodeReachable();
 
   res.json({
     status: "ok",
     service: "runner",
     opencode: opencodeHealthy ? "connected" : "disconnected",
-    opencodeUrl: OPENCODE_URL,
+    opencodeUrl,
   });
 });
 
@@ -367,7 +384,7 @@ app.post("/trigger", async (req, res) => {
   let { prompt, model, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
 
   try {
-    await ensureOpencodeAvailable();
+    await waitForOpencode();
 
     const sessionDirectory = directory;
     if (!isAllowedDirectory(sessionDirectory)) {
@@ -384,8 +401,8 @@ app.post("/trigger", async (req, res) => {
       return;
     }
 
-    const client = createOpencodeClient({
-      baseUrl: OPENCODE_URL,
+    const client = createClient({
+      baseUrl: opencodeUrl,
       directory: sessionDirectory,
     });
 
@@ -849,6 +866,9 @@ app.post("/trigger", async (req, res) => {
   }
 });
 
+  return app;
+}
+
 // --- Helpers ---
 
 /**
@@ -910,9 +930,16 @@ function parseApprovalResult(
 
 // --- Startup ---
 
-app.listen(PORT, () => {
-  logInfo(log, "runner_started", {
-    port: PORT,
-    opencodeUrl: OPENCODE_URL,
+export function startRunner(): void {
+  const app = createRunnerApp();
+  app.listen(PORT, () => {
+    logInfo(log, "runner_started", {
+      port: PORT,
+      opencodeUrl: OPENCODE_URL,
+    });
   });
-});
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  startRunner();
+}
