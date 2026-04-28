@@ -24,6 +24,7 @@ MEMORY_DIR="${MEMORY_DIR:-${HOST_WORKSPACE}/memory}"
 CRON_SECRET="${CRON_SECRET:-$(docker exec thor-cron-1 printenv CRON_SECRET 2>/dev/null)}"
 THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
 REMOTE_CLI_GIT_REPO_URL="${REMOTE_CLI_GIT_REPO_URL:-https://github.com/scoutqa-dot-ai/thor}"
+REMOTE_CLI_GITHUB_REPO="${REMOTE_CLI_GITHUB_REPO:-scoutqa-dot-ai/thor}"
 REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-scoutqa-dot-ai-thor-e2e}"
 REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
 HOST_REMOTE_CLI_GIT_REPO_DIR="${HOST_REMOTE_CLI_GIT_REPO_DIR:-${HOST_WORKSPACE}/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
@@ -206,6 +207,63 @@ if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" && "$clone_origin" == "$REMOTE_CLI
   assert '[[ "$gh_response_ok" == "yes" ]]' \
     "GH auth trigger: agent successfully listed PRs" \
     "response: ${gh_response_text:0:300}"
+
+  if [[ -z "$THOR_INTERNAL_SECRET" ]]; then
+    assert 'false' \
+      "Internal exec PR-head smoke: THOR_INTERNAL_SECRET is available" \
+      "Set THOR_INTERNAL_SECRET or ensure docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET returns a value"
+  else
+    echo "  Calling /internal/exec directly (gh pr list + gh pr view)..."
+    internal_pr_list_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/internal/exec" \
+      -H 'Content-Type: application/json' \
+      -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+      -d "{\"bin\":\"gh\",\"args\":[\"pr\",\"list\",\"--repo\",\"$REMOTE_CLI_GITHUB_REPO\",\"--state\",\"all\",\"--limit\",\"1\",\"--json\",\"number\"],\"cwd\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+      2>/dev/null || echo '{}')
+    internal_pr_list_exit=$(json_field "$internal_pr_list_raw" "exitCode")
+    internal_pr_number=$(echo "$internal_pr_list_raw" | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+      const prs = JSON.parse(d.stdout || '[]');
+      console.log(prs[0]?.number || '');
+    " 2>/dev/null || echo "")
+
+    assert '[[ "$internal_pr_list_exit" == "0" ]]' \
+      "Internal exec PR-head smoke: gh pr list succeeds" \
+      "response: ${internal_pr_list_raw:0:300}"
+    assert '[[ -n "$internal_pr_number" ]]' \
+      "Internal exec PR-head smoke: found a PR to inspect" \
+      "response: ${internal_pr_list_raw:0:300}"
+
+    if [[ -n "$internal_pr_number" ]]; then
+      internal_pr_view_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/internal/exec" \
+        -H 'Content-Type: application/json' \
+        -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+        -d "{\"bin\":\"gh\",\"args\":[\"pr\",\"view\",\"$internal_pr_number\",\"--repo\",\"$REMOTE_CLI_GITHUB_REPO\",\"--json\",\"headRefName,headRepository,headRepositoryOwner\"],\"cwd\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+        2>/dev/null || echo '{}')
+      internal_pr_view_exit=$(json_field "$internal_pr_view_raw" "exitCode")
+      internal_pr_head_ref=$(echo "$internal_pr_view_raw" | node -e "
+        const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+        const out = JSON.parse(d.stdout || '{}');
+        console.log(out.headRefName || '');
+      " 2>/dev/null || echo "")
+      internal_pr_head_owner=$(echo "$internal_pr_view_raw" | node -e "
+        const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+        const out = JSON.parse(d.stdout || '{}');
+        console.log(out.headRepositoryOwner?.login || '');
+      " 2>/dev/null || echo "")
+      internal_pr_head_repo=$(echo "$internal_pr_view_raw" | node -e "
+        const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+        const out = JSON.parse(d.stdout || '{}');
+        console.log(out.headRepository?.name || '');
+      " 2>/dev/null || echo "")
+
+      assert '[[ "$internal_pr_view_exit" == "0" ]]' \
+        "Internal exec PR-head smoke: gh pr view succeeds" \
+        "response: ${internal_pr_view_raw:0:300}"
+      assert '[[ -n "$internal_pr_head_ref" && -n "$internal_pr_head_owner" && -n "$internal_pr_head_repo" ]]' \
+        "Internal exec PR-head smoke: gh pr view returns head ref and repo owner/name" \
+        "ref='$internal_pr_head_ref', owner='$internal_pr_head_owner', repo='$internal_pr_head_repo'"
+    fi
+  fi
 
   REMOTE_CLI_WORKTREE_CORR_KEY="e2e-remote-cli-worktree-${REMOTE_CLI_AUTH_TS}"
   echo "  Sending trigger #2 (asking agent to create a worktree)..."

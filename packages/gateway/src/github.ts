@@ -66,6 +66,7 @@ const PullRequestReviewCommentEnvelopeSchema = z.object({
 });
 
 const PullRequestReviewEnvelopeSchema = z.object({
+  event_type: z.literal("pull_request_review"),
   action: z.string(),
   installation: GitHubInstallationSchema,
   repository: GitHubRepositorySchema,
@@ -78,42 +79,100 @@ const PullRequestReviewEnvelopeSchema = z.object({
   }),
 });
 
-export const GitHubWebhookEnvelopeSchema = z.union([
-  IssueCommentEnvelopeSchema.extend({ action: z.literal("created") }),
-  PullRequestReviewCommentEnvelopeSchema.extend({ action: z.literal("created") }),
-  PullRequestReviewEnvelopeSchema.extend({ action: z.literal("submitted") }),
-]);
+const IssueCommentTypedEnvelopeSchema = IssueCommentEnvelopeSchema.extend({
+  event_type: z.literal("issue_comment"),
+  action: z.literal("created"),
+});
 
-export type GitHubWebhookEnvelope =
-  | z.infer<typeof IssueCommentEnvelopeSchema>
-  | z.infer<typeof PullRequestReviewCommentEnvelopeSchema>
-  | z.infer<typeof PullRequestReviewEnvelopeSchema>;
+const PullRequestReviewCommentTypedEnvelopeSchema = PullRequestReviewCommentEnvelopeSchema.extend({
+  event_type: z.literal("pull_request_review_comment"),
+  action: z.literal("created"),
+});
 
-type IssueCommentEnvelope = z.infer<typeof IssueCommentEnvelopeSchema>;
-type PullRequestReviewCommentEnvelope = z.infer<typeof PullRequestReviewCommentEnvelopeSchema>;
-type PullRequestReviewEnvelope = z.infer<typeof PullRequestReviewEnvelopeSchema>;
+const PullRequestReviewTypedEnvelopeSchema = PullRequestReviewEnvelopeSchema.extend({
+  event_type: z.literal("pull_request_review"),
+  action: z.literal("submitted"),
+});
 
-type IgnoreReason =
+const CheckSuitePullRequestSchema = z.object({
+  number: z.number().int().positive(),
+  url: z.string().optional(),
+  head: z
+    .object({
+      ref: z.string().optional(),
+      sha: z.string().optional(),
+      repo: z.object({ full_name: z.string().optional() }).optional(),
+    })
+    .optional(),
+  base: z
+    .object({
+      ref: z.string().optional(),
+      sha: z.string().optional(),
+      repo: z.object({ full_name: z.string().optional() }).optional(),
+    })
+    .optional(),
+});
+
+export const CheckSuiteCompletedEventSchema = z.object({
+  event_type: z.literal("check_suite"),
+  action: z.literal("completed"),
+  installation: GitHubInstallationSchema,
+  repository: GitHubRepositorySchema,
+  sender: GitHubSenderSchema,
+  check_suite: z.object({
+    head_sha: z.string(),
+    head_branch: z.string().nullable().optional(),
+    conclusion: z.string().nullable().optional(),
+    status: z.string().optional(),
+    updated_at: IsoDateTimeSchema,
+    pull_requests: z.array(CheckSuitePullRequestSchema),
+  }),
+});
+
+function withEventType(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.event_type === "string") return raw;
+  if ("check_suite" in obj) return { ...obj, event_type: "check_suite" };
+  if ("issue" in obj) return { ...obj, event_type: "issue_comment" };
+  if ("pull_request" in obj && "comment" in obj) {
+    return { ...obj, event_type: "pull_request_review_comment" };
+  }
+  if ("pull_request" in obj && "review" in obj) {
+    return { ...obj, event_type: "pull_request_review" };
+  }
+  return raw;
+}
+
+export const GitHubWebhookEnvelopeSchema = z.preprocess(
+  withEventType,
+  z.discriminatedUnion("event_type", [
+    IssueCommentTypedEnvelopeSchema,
+    PullRequestReviewCommentTypedEnvelopeSchema,
+    PullRequestReviewTypedEnvelopeSchema,
+    CheckSuiteCompletedEventSchema,
+  ]),
+);
+
+export type GitHubWebhookEvent = z.infer<typeof GitHubWebhookEnvelopeSchema>;
+export type GitHubWebhookEnvelope = GitHubWebhookEvent;
+
+export type IssueCommentEvent = z.infer<typeof IssueCommentTypedEnvelopeSchema>;
+export type PullRequestReviewCommentEvent = z.infer<
+  typeof PullRequestReviewCommentTypedEnvelopeSchema
+>;
+export type PullRequestReviewEvent = z.infer<typeof PullRequestReviewTypedEnvelopeSchema>;
+export type CheckSuiteCompletedEvent = z.infer<typeof CheckSuiteCompletedEventSchema>;
+
+export type GitHubIgnoreReason =
   | "pure_issue_comment_unsupported"
   | "fork_pr_unsupported"
   | "self_sender"
   | "empty_review_body"
   | "non_mention_comment"
+  | "check_suite_branch_missing"
+  | "correlation_key_unresolved"
   | "event_unsupported";
-
-export interface NormalizedGitHubEvent {
-  source: "github";
-  eventType: "issue_comment" | "pull_request_review_comment" | "pull_request_review";
-  action: "created" | "submitted";
-  installationId: number;
-  repoFullName: string;
-  localRepo: string;
-  senderLogin: string;
-  htmlUrl: string;
-  number: number;
-  body: string;
-  branch: string | null;
-}
 
 export function verifyGitHubSignature(input: {
   secret: string;
@@ -155,6 +214,11 @@ export function buildCorrelationKey(localRepo: string, branch: string): string {
   return `git:branch:${localRepo}:${branch}`;
 }
 
+export function getGitHubEventLocalRepo(raw: GitHubWebhookEvent): string | null {
+  const parts = raw.repository.full_name.split("/");
+  return parts[parts.length - 1] || null;
+}
+
 const PENDING_BRANCH_RESOLVE_PREFIX = "pending:branch-resolve:";
 
 export function buildPendingBranchResolveKey(localRepo: string, number: number): string {
@@ -170,115 +234,116 @@ export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number {
     ? raw.comment.created_at
     : isPullRequestReviewCommentEvent(raw)
       ? raw.comment.created_at
-      : raw.review.submitted_at;
+      : isCheckSuiteCompletedEvent(raw)
+        ? raw.check_suite.updated_at
+        : raw.review.submitted_at;
   return Date.parse(iso);
 }
 
-export function normalizeGitHubEvent(
-  raw: GitHubWebhookEnvelope,
-  options: { localRepo: string; mentionLogins: string[]; botId: number },
-): NormalizedGitHubEvent | { ignored: true; reason: IgnoreReason } {
-  const senderLogin = raw.sender.login.toLowerCase();
-  const isSelf = raw.sender.id === options.botId;
+export function getGitHubEventBranch(raw: GitHubWebhookEvent): string | null {
+  if (isIssueCommentEvent(raw)) return null;
+  if (isCheckSuiteCompletedEvent(raw)) return raw.check_suite.head_branch?.trim() || null;
+  return raw.pull_request.head.ref;
+}
 
-  if (isIssueCommentEvent(raw)) {
-    if (raw.action !== "created") {
-      return { ignored: true, reason: "event_unsupported" };
-    }
-    if (!raw.issue.pull_request) {
-      return { ignored: true, reason: "pure_issue_comment_unsupported" };
-    }
-    if (isSelf) {
-      return { ignored: true, reason: "self_sender" };
-    }
-    if (!detectMention(raw.comment.body, options.mentionLogins)) {
-      return { ignored: true, reason: "non_mention_comment" };
-    }
-    return {
-      source: "github",
-      eventType: "issue_comment",
-      action: "created",
-      installationId: raw.installation.id,
-      repoFullName: raw.repository.full_name,
-      localRepo: options.localRepo,
-      senderLogin,
-      htmlUrl: raw.comment.html_url,
-      number: raw.issue.number,
-      body: raw.comment.body,
-      branch: null,
-    };
-  }
+export function getGitHubEventType(
+  raw: GitHubWebhookEvent,
+): "issue_comment" | "pull_request_review_comment" | "pull_request_review" | "check_suite" {
+  return raw.event_type;
+}
 
-  if (isPullRequestReviewCommentEvent(raw)) {
-    if (raw.action !== "created") {
-      return { ignored: true, reason: "event_unsupported" };
-    }
-    if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
-      return { ignored: true, reason: "fork_pr_unsupported" };
-    }
-    if (isSelf) {
-      return { ignored: true, reason: "self_sender" };
-    }
-    if (
-      !detectMention(raw.comment.body, options.mentionLogins) &&
-      raw.pull_request.user.id !== options.botId
-    ) {
-      return { ignored: true, reason: "non_mention_comment" };
-    }
-    return {
-      source: "github",
-      eventType: "pull_request_review_comment",
-      action: "created",
-      installationId: raw.installation.id,
-      repoFullName: raw.repository.full_name,
-      localRepo: options.localRepo,
-      senderLogin,
-      htmlUrl: raw.comment.html_url,
-      number: raw.pull_request.number,
-      body: raw.comment.body,
-      branch: raw.pull_request.head.ref,
-    };
+export function getGitHubEventNumber(raw: GitHubWebhookEvent): number {
+  if (isIssueCommentEvent(raw)) return raw.issue.number;
+  if (isCheckSuiteCompletedEvent(raw)) {
+    throw new Error("check_suite events do not have a single routing number");
   }
+  return raw.pull_request.number;
+}
 
-  if (raw.action !== "submitted") {
-    return { ignored: true, reason: "event_unsupported" };
+export function shouldIgnoreIssueCommentEvent(
+  raw: IssueCommentEvent,
+  options: { mentionLogins: string[]; botId: number },
+): GitHubIgnoreReason | null {
+  if (!raw.issue.pull_request) {
+    return "pure_issue_comment_unsupported";
   }
+  if (raw.sender.id === options.botId) {
+    return "self_sender";
+  }
+  if (!detectMention(raw.comment.body, options.mentionLogins)) {
+    return "non_mention_comment";
+  }
+  return null;
+}
+
+export function shouldIgnorePullRequestReviewCommentEvent(
+  raw: PullRequestReviewCommentEvent,
+  options: { mentionLogins: string[]; botId: number },
+): GitHubIgnoreReason | null {
   if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
-    return { ignored: true, reason: "fork_pr_unsupported" };
+    return "fork_pr_unsupported";
+  }
+  if (raw.sender.id === options.botId) {
+    return "self_sender";
+  }
+  if (
+    !detectMention(raw.comment.body, options.mentionLogins) &&
+    raw.pull_request.user.id !== options.botId
+  ) {
+    return "non_mention_comment";
+  }
+  return null;
+}
+
+export function shouldIgnorePullRequestReviewEvent(
+  raw: PullRequestReviewEvent,
+  options: { mentionLogins: string[]; botId: number },
+): GitHubIgnoreReason | null {
+  if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
+    return "fork_pr_unsupported";
   }
 
   const body = raw.review.body?.trim() ?? "";
   if (!body) {
-    return { ignored: true, reason: "empty_review_body" };
+    return "empty_review_body";
   }
-  if (isSelf) {
-    return { ignored: true, reason: "self_sender" };
+  if (raw.sender.id === options.botId) {
+    return "self_sender";
   }
   if (!detectMention(body, options.mentionLogins) && raw.pull_request.user.id !== options.botId) {
-    return { ignored: true, reason: "non_mention_comment" };
+    return "non_mention_comment";
   }
-
-  return {
-    source: "github",
-    eventType: "pull_request_review",
-    action: "submitted",
-    installationId: raw.installation.id,
-    repoFullName: raw.repository.full_name,
-    localRepo: options.localRepo,
-    senderLogin,
-    htmlUrl: raw.review.html_url,
-    number: raw.pull_request.number,
-    body,
-    branch: raw.pull_request.head.ref,
-  };
+  return null;
 }
 
-function isIssueCommentEvent(raw: GitHubWebhookEnvelope): raw is IssueCommentEnvelope {
+export function shouldIgnoreGitHubEvent(
+  raw: GitHubWebhookEvent,
+  options: { mentionLogins: string[]; botId: number },
+): GitHubIgnoreReason | null {
+  if (isCheckSuiteCompletedEvent(raw)) return null;
+  if (isIssueCommentEvent(raw)) return shouldIgnoreIssueCommentEvent(raw, options);
+  if (isPullRequestReviewCommentEvent(raw)) {
+    return shouldIgnorePullRequestReviewCommentEvent(raw, options);
+  }
+  return shouldIgnorePullRequestReviewEvent(raw, options);
+}
+
+export function isCheckSuiteCompletedEvent(
+  raw: GitHubWebhookEvent,
+): raw is CheckSuiteCompletedEvent {
+  return raw.event_type === "check_suite";
+}
+
+export function isIssueCommentEvent(raw: GitHubWebhookEvent): raw is IssueCommentEvent {
   return "issue" in raw;
 }
 
-function isPullRequestReviewCommentEvent(
-  raw: GitHubWebhookEnvelope,
-): raw is PullRequestReviewCommentEnvelope {
+export function isPullRequestReviewCommentEvent(
+  raw: GitHubWebhookEvent,
+): raw is PullRequestReviewCommentEvent {
   return "pull_request" in raw && "comment" in raw;
+}
+
+export function isPullRequestReviewEvent(raw: GitHubWebhookEvent): raw is PullRequestReviewEvent {
+  return "pull_request" in raw && "review" in raw;
 }

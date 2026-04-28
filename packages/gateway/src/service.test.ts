@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunnerDeps } from "./service.js";
 import type { SlackDeps } from "./slack-api.js";
-import type { NormalizedGitHubEvent } from "./github.js";
+import type { GitHubWebhookEvent } from "./github.js";
 
 function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
   const text = lines.join("\n") + "\n";
@@ -31,19 +31,55 @@ function textResponse(text: string, status: number): Response {
   return new Response(text, { status, headers: { "content-type": "text/plain" } });
 }
 
-const githubEventBase: NormalizedGitHubEvent = {
-  source: "github",
-  eventType: "issue_comment",
+function execResponse(stdout: unknown, stderr = "", exitCode = 0): Response {
+  return jsonResponse({
+    stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout),
+    stderr,
+    exitCode,
+  });
+}
+
+function noopSlackDeps(): SlackDeps {
+  return { client: {} } as unknown as SlackDeps;
+}
+
+const githubEventBase: GitHubWebhookEvent = {
+  event_type: "issue_comment",
   action: "created",
-  installationId: 126669985,
-  repoFullName: "scoutqa-dot-ai/thor",
-  localRepo: "thor",
-  senderLogin: "alice",
-  htmlUrl: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
-  number: 42,
-  body: "@thor please review this branch",
-  branch: null,
+  installation: { id: 126669985 },
+  repository: { full_name: "scoutqa-dot-ai/thor" },
+  sender: { id: 1001, login: "alice", type: "User" },
+  issue: {
+    number: 42,
+    pull_request: { html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42" },
+  },
+  comment: {
+    body: "@thor please review this branch",
+    html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
+    created_at: "2026-04-24T11:00:00Z",
+  },
 };
+
+function githubReviewCommentPayload(): GitHubWebhookEvent {
+  return {
+    event_type: "pull_request_review_comment",
+    action: "created",
+    installation: { id: 126669985 },
+    repository: { full_name: "scoutqa-dot-ai/thor" },
+    sender: { id: 1001, login: "Alice", type: "User" },
+    pull_request: {
+      number: 42,
+      user: { id: 1001, login: "alice" },
+      head: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+      base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+    },
+    comment: {
+      body: "Please   check this @thor",
+      html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+      created_at: "2026-04-24T11:00:00Z",
+    },
+  };
+}
 
 describe("resolveApproval", () => {
   it("posts resolve requests to remote-cli with the secret header", async () => {
@@ -347,11 +383,7 @@ describe("triggerRunnerSlack edge cases", () => {
   beforeEach(() => {
     mockRunnerFetch = vi.fn();
     runnerDeps = { runnerUrl: "http://runner:3000", fetchImpl: mockRunnerFetch };
-    slackDeps = {
-      botToken: "xoxb-test",
-      fetchImpl: vi.fn(),
-      slackApiBaseUrl: "https://slack.com/api",
-    };
+    slackDeps = noopSlackDeps();
   });
 
   const slackEvent = {
@@ -532,7 +564,11 @@ describe("triggerRunnerGitHub", () => {
   it("resolves pending branch then dispatches runner with canonical correlation key", async () => {
     mockFetch
       .mockResolvedValueOnce(
-        jsonResponse({ ref: "feature/refactor", headRepoFullName: "scoutqa-dot-ai/thor" }),
+        execResponse({
+          headRefName: "feature/refactor",
+          headRepositoryOwner: { login: "scoutqa-dot-ai" },
+          headRepository: { name: "thor" },
+        }),
       )
       .mockResolvedValueOnce(
         ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
@@ -552,26 +588,69 @@ describe("triggerRunnerGitHub", () => {
     );
 
     expect(result.busy).toBe(false);
-    expect(mockFetch.mock.calls[0][0]).toContain(
-      "/github/pr-head?installation=126669985&repo=scoutqa-dot-ai%2Fthor&number=42",
-    );
+    expect(mockFetch.mock.calls[0][0]).toBe("http://remote-cli:3004/internal/exec");
     expect(mockFetch.mock.calls[0][1]).toMatchObject({
+      method: "POST",
       headers: { "x-thor-internal-secret": "internal-secret" },
+    });
+    expect(JSON.parse(String(mockFetch.mock.calls[0][1]?.body))).toMatchObject({
+      bin: "gh",
+      args: [
+        "pr",
+        "view",
+        "42",
+        "--repo",
+        "scoutqa-dot-ai/thor",
+        "--json",
+        "headRefName,headRepository,headRepositoryOwner",
+      ],
+      cwd: "/workspace/repos/my-repo",
     });
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[1][1]?.body));
     expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
     expect(triggerBody.directory).toBe("/workspace/repos/my-repo");
-    expect(triggerBody.prompt).toContain(
-      "[alice] created on scoutqa-dot-ai/thor#42 (issue_comment): @thor please review this",
-    );
-    expect(triggerBody.prompt).toContain(
-      "https://github.com/scoutqa-dot-ai/thor/pull/42#issuecomment-1",
-    );
+    expect(JSON.parse(triggerBody.prompt)).toEqual(githubEventBase);
     expect(onAccepted).toHaveBeenCalled();
   });
 
-  it("maps branch lookup 403 to terminal installation_gone rejection", async () => {
-    mockFetch.mockResolvedValueOnce(textResponse("forbidden", 403));
+  it("renders single GitHub events as the parsed JSON envelope", async () => {
+    mockFetch.mockResolvedValueOnce(
+      ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
+    );
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubReviewCommentPayload()],
+      "git:branch:thor:feature/refactor",
+      deps,
+      "http://remote-cli:3004",
+    );
+
+    expect(result.busy).toBe(false);
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
+    expect(JSON.parse(triggerBody.prompt)).toEqual(githubReviewCommentPayload());
+  });
+
+  it("renders multiple GitHub events as a JSON array of parsed envelopes", async () => {
+    mockFetch.mockResolvedValueOnce(
+      ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
+    );
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubReviewCommentPayload(), githubEventBase],
+      "git:branch:thor:feature/refactor",
+      deps,
+      "http://remote-cli:3004",
+    );
+
+    expect(result.busy).toBe(false);
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
+    expect(JSON.parse(triggerBody.prompt)).toEqual([githubReviewCommentPayload(), githubEventBase]);
+  });
+
+  it("maps gh auth failures to terminal installation_gone rejection", async () => {
+    mockFetch.mockResolvedValueOnce(execResponse("", "HTTP 403: forbidden", 1));
     const onRejected = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -591,8 +670,35 @@ describe("triggerRunnerGitHub", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("maps branch lookup 404 to terminal branch_not_found rejection", async () => {
-    mockFetch.mockResolvedValueOnce(textResponse("not found", 404));
+  it("drops pending branch issue comments when gh resolves a fork PR head", async () => {
+    mockFetch.mockResolvedValueOnce(
+      execResponse({
+        headRefName: "feature/refactor",
+        headRepositoryOwner: { login: "alice" },
+        headRepository: { name: "thor" },
+      }),
+    );
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      "internal-secret",
+      false,
+      undefined,
+      onRejected,
+    );
+
+    expect(result).toEqual({ busy: false, rejected: true, reason: "fork_pr_unsupported" });
+    expect(onRejected).toHaveBeenCalledWith("fork_pr_unsupported");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps gh not found failures to terminal branch_not_found rejection", async () => {
+    mockFetch.mockResolvedValueOnce(execResponse("", "HTTP 404: not found", 1));
     const onRejected = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -612,10 +718,8 @@ describe("triggerRunnerGitHub", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("maps exhausted 5xx branch lookup retries to terminal branch_lookup_failed", async () => {
-    mockFetch
-      .mockResolvedValueOnce(textResponse("upstream error", 500))
-      .mockResolvedValueOnce(textResponse("upstream error", 500));
+  it("maps gh lookup failures to terminal branch_lookup_failed", async () => {
+    mockFetch.mockResolvedValueOnce(execResponse("", "upstream error", 1));
     const onRejected = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -632,13 +736,11 @@ describe("triggerRunnerGitHub", () => {
 
     expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
     expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("maps exhausted timeout retries to terminal branch_lookup_failed", async () => {
-    const timeoutError = new Error("timed out");
-    timeoutError.name = "TimeoutError";
-    mockFetch.mockRejectedValue(timeoutError);
+  it("maps non-OK internal exec responses to terminal branch_lookup_failed", async () => {
+    mockFetch.mockResolvedValueOnce(textResponse("Unauthorized", 401));
     const onRejected = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -655,10 +757,10 @@ describe("triggerRunnerGitHub", () => {
 
     expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
     expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("maps exhausted network lookup retries to terminal branch_lookup_failed", async () => {
+  it("maps internal exec transport failures to terminal branch_lookup_failed", async () => {
     mockFetch.mockRejectedValue(new TypeError("fetch failed"));
     const onRejected = vi.fn();
 
@@ -676,7 +778,28 @@ describe("triggerRunnerGitHub", () => {
 
     expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
     expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps malformed gh output to terminal branch_lookup_failed", async () => {
+    mockFetch.mockResolvedValueOnce(execResponse({ headRefName: "feature/refactor" }));
+    const onRejected = vi.fn();
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [githubEventBase],
+      "pending:branch-resolve:delivery-1",
+      deps,
+      "http://remote-cli:3004",
+      "internal-secret",
+      false,
+      undefined,
+      onRejected,
+    );
+
+    expect(result).toEqual({ busy: false, rejected: true, reason: "branch_lookup_failed" });
+    expect(onRejected).toHaveBeenCalledWith("branch_lookup_failed");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("returns busy without ack for non-mention events", async () => {
@@ -685,7 +808,7 @@ describe("triggerRunnerGitHub", () => {
 
     const { triggerRunnerGitHub } = await import("./service.js");
     const result = await triggerRunnerGitHub(
-      [{ ...githubEventBase, branch: "main" }],
+      [githubReviewCommentPayload()],
       "git:branch:thor:main",
       deps,
       "http://remote-cli:3004",
@@ -774,7 +897,7 @@ describe("approval outcome prompts", () => {
       ],
       "slack:thread:1710000000.001",
       { runnerUrl: "http://runner:3000", fetchImpl },
-      { botToken: "xoxb-test", fetchImpl: vi.fn(), slackApiBaseUrl: "https://slack.com/api" },
+      noopSlackDeps(),
       false,
       undefined,
       new Map([["C123", "my-repo"]]),
@@ -818,7 +941,7 @@ describe("triggerRunnerApprovalOutcomes", () => {
       ],
       "slack:thread:1710000000.001",
       { runnerUrl: "http://runner:3000", fetchImpl },
-      { botToken: "xoxb-test", fetchImpl },
+      noopSlackDeps(),
       false,
       undefined,
       new Map([["C123", "my-repo"]]),
@@ -860,7 +983,7 @@ describe("triggerRunnerApprovalOutcomes", () => {
       ],
       "slack:thread:1710000000.001",
       { runnerUrl: "http://runner:3000", fetchImpl },
-      { botToken: "xoxb-test", fetchImpl },
+      noopSlackDeps(),
       false,
       onAccepted,
       new Map([["C123", "my-repo"]]),
