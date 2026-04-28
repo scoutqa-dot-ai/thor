@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -92,13 +91,13 @@ validateReadme(template, files.template);
 const scratch = mkdtempSync(join(tmpdir(), "thor-runs-protocol-"));
 try {
   const samplePath = join(scratch, "README.md");
-  const sample = template
-    .replace("Run-ID: <YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]", "Run-ID: 20260428-120000-agent-handoff")
-    .replace("Repo: <repo-name>", "Repo: thor")
-    .replace("Branch: <branch-name>", "Branch: feat/file-handoff")
-    .replace("Worktree: /workspace/worktrees/<repo>/<branch>", "Worktree: /workspace/worktrees/thor/feat-file-handoff")
-    .replace("Verdict:", "Verdict: NIT");
-  writeFileSync(samplePath, sample);
+  const sampleLines = template.split(/\r?\n/);
+  sampleLines[0] = "Run-ID: 20260428-120000-agent-handoff";
+  sampleLines[1] = "Repo: thor";
+  sampleLines[2] = "Branch: feat/file-handoff";
+  sampleLines[3] = "Worktree: /workspace/worktrees/thor/feat-file-handoff";
+  sampleLines[5] = "Verdict: NIT";
+  writeFileSync(samplePath, sampleLines.join("\n"));
   validateReadme(read(samplePath), samplePath);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
