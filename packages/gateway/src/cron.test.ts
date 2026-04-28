@@ -13,7 +13,9 @@ async function withServer<T>(
   const queueDir = mkdtempSync(join(tmpdir(), "gateway-cron-test-"));
   const { app, queue } = createGatewayApp({
     signingSecret: "signing-secret",
-    slackMcpUrl: "http://slack-mcp.test",
+    slackBotToken: "xoxb-test",
+    slackBotUserId: "U0BOTEXAMPLE",
+    slackApiBaseUrl: "https://slack.com/api",
     runnerUrl: "http://runner.test",
     fetchImpl,
     queueDir,

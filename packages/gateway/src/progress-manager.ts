@@ -7,9 +7,9 @@ import {
   addReaction,
   type SlackDeps,
   type SlackBlock,
-} from "./slack.js";
+} from "./slack-api.js";
 
-const log = createLogger("slack-progress");
+const log = createLogger("gateway-progress");
 
 /** Threshold: post first message after this many tool calls. */
 const TOOL_CALL_THRESHOLD = 3;
@@ -190,6 +190,13 @@ interface ProgressEntry {
 /** Map<threadKey, Map<messageTs, ProgressEntry>> */
 const progressMessages = new Map<string, Map<string, ProgressEntry>>();
 
+/** Cap retained error entries per thread. Without this, every failed session
+ * leaves a permanent entry and the per-thread map keeps the threadKey alive
+ * across the process lifetime. The most recent N errors are sufficient for
+ * users to inspect; older ones are forgotten from the registry but stay
+ * visible in Slack. */
+const MAX_ERROR_ENTRIES_PER_THREAD = 5;
+
 function registerProgress(
   channel: string,
   threadTs: string,
@@ -206,6 +213,17 @@ function registerProgress(
   thread.set(messageTs, { status, deps });
 }
 
+function evictExcessErrors(thread: Map<string, ProgressEntry>): void {
+  const errorTimestamps: string[] = [];
+  for (const [ts, entry] of thread) {
+    if (entry.status === "error") errorTimestamps.push(ts);
+  }
+  while (errorTimestamps.length > MAX_ERROR_ENTRIES_PER_THREAD) {
+    const oldest = errorTimestamps.shift()!;
+    thread.delete(oldest);
+  }
+}
+
 function updateProgressStatus(
   channel: string,
   threadTs: string,
@@ -217,6 +235,9 @@ function updateProgressStatus(
   const entry = thread?.get(messageTs);
   if (entry) {
     entry.status = status;
+    if (status === "error" && thread) {
+      evictExcessErrors(thread);
+    }
   }
 }
 
@@ -224,16 +245,11 @@ function updateProgressStatus(
  * Delete all non-error progress messages for a thread.
  * Skips deletion if there is still an active session running.
  */
-async function cleanupProgressMessages(
-  channel: string,
-  threadTs: string,
-  trigger: "bot_reply" | "session_end",
-): Promise<void> {
+async function cleanupProgressMessages(channel: string, threadTs: string): Promise<void> {
   const key = threadKey(channel, threadTs);
   const thread = progressMessages.get(key);
   const hasActiveSession = activeSessions.has(key);
   logInfo(log, "cleanup_progress", {
-    trigger,
     key,
     progressCount: thread?.size ?? 0,
     statuses: thread ? [...thread.values()].map((e) => e.status) : [],
@@ -245,48 +261,49 @@ async function cleanupProgressMessages(
   // If there's still an active session, don't delete progress messages —
   // the session is still running and will update/clean up its own message.
   if (hasActiveSession) {
-    logInfo(log, "skip_delete_active_session", { trigger, key });
+    logInfo(log, "skip_delete_active_session", { key });
     return;
   }
 
   const deletions: Promise<void>[] = [];
 
+  // Drop entries from the registry only after chat.delete confirms (or after a
+  // permanent message_not_found). Transient Slack failures keep the entry so
+  // the next session-end cleanup can retry. Without this, a failed delete
+  // would leave the message visible in Slack forever with no record to retry
+  // from.
   for (const [messageTs, entry] of thread) {
     if (entry.status === "error") continue;
 
-    thread.delete(messageTs);
     deletions.push(
       deleteMessage(channel, messageTs, entry.deps)
-        .then(() => logInfo(log, "progress_deleted", { trigger, channel, ts: messageTs, threadTs }))
-        .catch((err) =>
-          logError(log, "delete_error", err instanceof Error ? err.message : String(err)),
-        ),
+        .then(() => {
+          thread.delete(messageTs);
+          logInfo(log, "progress_deleted", { channel, ts: messageTs, threadTs });
+        })
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          if (message.includes("message_not_found")) {
+            thread.delete(messageTs);
+          }
+          logError(log, "delete_error", message);
+        }),
     );
   }
 
   await Promise.all(deletions);
 
-  // Clean up thread entry if empty
+  // Cap any error entries we left behind so the per-thread map cannot grow
+  // unbounded across the process lifetime.
+  evictExcessErrors(thread);
+
   if (thread.size === 0) {
     progressMessages.delete(key);
   }
 }
 
-/**
- * Called when the bot posts a reply to a thread.
- * Attempts cleanup — will skip if session is still active.
- */
-export async function onBotReply(channel: string, threadTs: string): Promise<void> {
-  await cleanupProgressMessages(channel, threadTs, "bot_reply");
-}
-
-/**
- * Called when a progress session ends (done/error event received).
- * All bot replies have already been sent via the faster MCP path,
- * so this is the reliable cleanup point.
- */
 async function onSessionEnd(channel: string, threadTs: string): Promise<void> {
-  await cleanupProgressMessages(channel, threadTs, "session_end");
+  await cleanupProgressMessages(channel, threadTs);
 }
 
 /** Visible for testing. */
@@ -309,6 +326,7 @@ export function clearRegistry(): void {
 // ---------------------------------------------------------------------------
 
 class ProgressSession {
+  readonly sessionId: string | undefined;
   private channel: string;
   private threadTs: string;
   private deps: SlackDeps;
@@ -328,17 +346,35 @@ class ProgressSession {
   private finished = false;
   private tickTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(channel: string, threadTs: string, deps: SlackDeps, sourceTs: string) {
+  constructor(
+    channel: string,
+    threadTs: string,
+    deps: SlackDeps,
+    sourceTs: string,
+    sessionId?: string,
+  ) {
     this.channel = channel;
     this.threadTs = threadTs;
     this.deps = deps;
     this.sourceTs = sourceTs;
+    this.sessionId = sessionId;
     this.startTime = Date.now();
-    // Tick the elapsed timer even when no events arrive (e.g. one slow tool
-    // call running for minutes). Recursive setTimeout (rather than setInterval)
-    // ensures the next tick is scheduled only after the previous one resolves,
-    // and the cadence can adapt to the session's elapsed time.
     this.scheduleNextTick();
+  }
+
+  /**
+   * Stop ticking and refuse further updates without posting any final state.
+   * Used when this session is superseded by a newer one (e.g. a duplicate
+   * `start` arrives) so the orphaned tickTimer chain doesn't keep editing
+   * messages owned by the new session.
+   */
+  abandon(): void {
+    if (this.finished) return;
+    this.finished = true;
+    if (this.tickTimer) {
+      clearTimeout(this.tickTimer);
+      this.tickTimer = undefined;
+    }
   }
 
   private scheduleNextTick(): void {
@@ -585,8 +621,15 @@ export async function handleProgressEvent(
   });
 
   if (event.type === "start") {
-    // New session — replace any existing one
-    activeSessions.set(key, new ProgressSession(channel, threadTs, deps, sourceTs));
+    // Abandon any prior session on this thread so its tickTimer stops and it
+    // can no longer post or edit messages — otherwise the orphan keeps
+    // editing the OLD progress message while the new session runs.
+    const prior = activeSessions.get(key);
+    if (prior) prior.abandon();
+    activeSessions.set(
+      key,
+      new ProgressSession(channel, threadTs, deps, sourceTs, event.sessionId),
+    );
     return;
   }
 
@@ -608,11 +651,23 @@ export async function handleProgressEvent(
     case "delegate":
       await session.onDelegate({ agent: event.agent });
       break;
-    case "done":
+    case "done": {
+      // A late `done` from a superseded stream must not finish the current
+      // session. Match the event's sessionId to the active session — if they
+      // differ, this `done` belongs to an older stream and is ignored.
+      if (session.sessionId && event.sessionId && session.sessionId !== event.sessionId) {
+        logInfo(log, "done_session_mismatch", {
+          key,
+          eventSessionId: event.sessionId,
+          activeSessionId: session.sessionId,
+        });
+        return;
+      }
       await session.finish(event.status === "completed" ? "completed" : "error", event.error);
       activeSessions.delete(key);
       await onSessionEnd(channel, threadTs);
       break;
+    }
     case "error":
       await session.finish("error", event.error);
       activeSessions.delete(key);

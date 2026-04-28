@@ -71,34 +71,6 @@ export const ProgressEventSchema = z.discriminatedUnion("type", [
   ProgressHeartbeatSchema,
 ]);
 
-// --- REST endpoint request schemas ---
-
-export const SlackProgressRequestSchema = z.object({
-  channel: z.string(),
-  threadTs: z.string(),
-  sourceTs: z.string(),
-  event: ProgressEventSchema,
-});
-
-export const SlackReactionRequestSchema = z.object({
-  channel: z.string(),
-  timestamp: z.string(),
-  reaction: z.string(),
-});
-
-export const SlackApprovalRequestSchema = z.object({
-  channel: z.string(),
-  threadTs: z.string(),
-  actionId: z.string(),
-  tool: z.string(),
-  args: z.record(z.string(), z.unknown()),
-  proxyName: z.string().optional(),
-});
-
-export type SlackProgressRequest = z.infer<typeof SlackProgressRequestSchema>;
-export type SlackReactionRequest = z.infer<typeof SlackReactionRequestSchema>;
-export type SlackApprovalRequest = z.infer<typeof SlackApprovalRequestSchema>;
-
 // --- Inferred types ---
 
 export type ProgressStart = z.infer<typeof ProgressStartSchema>;

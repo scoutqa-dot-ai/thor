@@ -18,6 +18,13 @@ import { createLogger, logError, logInfo } from "@thor/common";
 
 const log = createLogger("event-queue");
 
+function compareEvents(
+  a: { sourceTs: number; id: string },
+  b: { sourceTs: number; id: string },
+): number {
+  return a.sourceTs - b.sourceTs || a.id.localeCompare(b.id);
+}
+
 export interface QueuedEvent<T = unknown> {
   /** Unique event ID for dedup (e.g. Slack event_id). Retries with the same ID overwrite the file. */
   id: string;
@@ -193,6 +200,7 @@ export class EventQueue {
         // Ignore unreadable/corrupt files for snapshot purposes.
       }
     }
+    pending.sort(compareEvents);
 
     return {
       pending,
@@ -236,6 +244,7 @@ export class EventQueue {
 
     for (const [key, entries] of byKey) {
       if (this.processing.has(key)) continue;
+      entries.sort((a, b) => compareEvents(a.event, b.event));
 
       // When interrupt events exist, readiness is based on interrupt events only
       // (non-interrupt events get swept in but don't delay the batch).

@@ -6,25 +6,6 @@
 # Stop:    docker compose down
 
 services:
-  slack-mcp:
-    build:
-      context: .
-      target: slack-mcp
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:3003:3003"
-    volumes:
-      - ./docker-volumes/workspace:/workspace:ro
-    environment:
-      - NODE_ENV=production
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
-    healthcheck:
-      test:
-        ["CMD", "node", "-e", "fetch('http://localhost:3003/health').then(r=>{if(!r.ok)throw 1})"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   remote-cli:
     build:
       context: .
@@ -63,8 +44,6 @@ services:
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
     depends_on:
-      slack-mcp:
-        condition: service_healthy
       grafana-mcp:
         condition: service_healthy
     deploy:
@@ -146,10 +125,10 @@ services:
     environment:
       - http_proxy=http://mitmproxy:8080
       - https_proxy=http://mitmproxy:8080
-      - no_proxy=localhost,127.0.0.1,::1,remote-cli,gateway,runner,slack-mcp,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - no_proxy=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
       - HTTP_PROXY=http://mitmproxy:8080
       - HTTPS_PROXY=http://mitmproxy:8080
-      - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,slack-mcp,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
       - NODE_OPTIONS=--use-env-proxy --disable-warning=UNDICI-EHPA
       - NODE_EXTRA_CA_CERTS=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
       - CURL_CA_BUNDLE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
@@ -212,6 +191,7 @@ services:
     environment:
       - NODE_ENV=production
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:?set SLACK_BOT_TOKEN}
       - SLACK_BOT_USER_ID=${SLACK_BOT_USER_ID:?set SLACK_BOT_USER_ID}
       - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
       - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:?set GITHUB_APP_SLUG}
@@ -227,8 +207,6 @@ services:
     depends_on:
       runner:
         condition: service_started
-      slack-mcp:
-        condition: service_healthy
       remote-cli:
         condition: service_healthy
     healthcheck:

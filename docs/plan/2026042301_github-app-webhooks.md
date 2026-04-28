@@ -36,7 +36,7 @@ GitHub App webhook
     -> ignore-early: unsupported event | unmapped repo | bot sender | fork PR | empty review body | pure-issue comment
     -> enqueue with correlationKey + interrupt flag (respond 200 within budget)
   -> queue handler
-    -> if branch missing, resolve via remote-cli GET /github/pr-head (3s timeout + 1 retry, terminal drop on 401/403/404)
+    -> if branch missing, resolve via remote-cli POST /internal/exec running gh pr view
     -> triggerRunnerGitHub() -> POST /trigger { prompt, correlationKey, interrupt, directory }
       -> packages/runner
 ```
@@ -171,9 +171,7 @@ When GitHub omits payload timestamps, the queue fallback should be derived deter
 
 Gateway reads `GITHUB_WEBHOOK_SECRET` and `GITHUB_APP_SLUG`. Nothing else. The App private key stays in remote-cli (`GITHUB_APP_PRIVATE_KEY_FILE`). All installation-token minting and GitHub API calls happen in remote-cli.
 
-One new internal remote-cli endpoint:
-
-- `GET /github/pr-head?installation={id}&repo={full}&number={n}` — returns `{ ref, headRepoFullName }` or 404. Called by the queue handler for PR-backed events missing `head.ref`. Remote-cli mints the installation token internally using the JWT.
+Branch lookup for PR-backed events missing `head.ref` uses the existing remote-cli internal exec endpoint to run `gh pr view` inside the repo workspace. Remote-cli mints installation tokens through the existing `gh` wrapper path.
 
 No private-key handling in the gateway process. No boot-time GitHub API calls.
 
@@ -275,7 +273,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 
 1. Add `GitHubQueuedEvent` handling in the `EventQueue` handler in `app.ts`, symmetric to `SlackQueuedEvent` / `CronQueuedEvent`.
 2. Add `triggerRunnerGitHub(events, correlationKey, runnerDeps, hasInterrupt, ack, reposMap, reject)` in `packages/gateway/src/service.ts`.
-3. Before dispatch, if any event has `pending:branch-resolve:*` as its correlation key, call remote-cli `GET /github/pr-head` (3s timeout, one retry). On 401/403, reject with `reason: "installation_gone"`. On 404 or an exhausted timeout/5xx/network retry budget, reject with `reason: "branch_unresolved"` — terminal drop, no further retries.
+3. Before dispatch, if any event has `pending:branch-resolve:*` as its correlation key, call remote-cli `/internal/exec` to run `gh pr view`. Auth/permission failures reject with `reason: "installation_gone"`. Missing PRs reject with `reason: "branch_not_found"`. Other exec/parse failures reject with `reason: "branch_lookup_failed"`.
 4. Once branch is resolved, rewrite the correlation key to `git:branch:{localRepo}:{branch}` and batch events by key.
 5. Resolve local repo directory via `resolveRepoDirectory(localRepo)` from `workspace-config.ts`.
 6. Render each event with the compact one-liner template. Concatenate with `\n\n` as the prompt. Cap at 8KB — if exceeded, truncate oldest events first, log `github_prompt_truncated`.

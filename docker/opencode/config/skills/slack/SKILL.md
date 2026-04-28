@@ -23,15 +23,14 @@ Talk to Slack through real upstream URLs:
 - `https://slack.com/api/...`
 - `https://files.slack.com/files-pri/...`
 
-Authentication is injected by `mitmproxy`. Do not pass `Authorization`
-manually and do not look for a separate Slack MCP tool.
+Authentication is injected automatically, do not pass `Authorization` header.
 
 The default tool for this skill is `curl`. Prefer URL-encoded form for simple
 Slack writes. Switch to JSON only when the payload becomes structured, such as
 `blocks` or `attachments`.
 For any multiline Slack message, or whenever quoting feels fragile, write the
 message body to a unique temp file under `/tmp` and send it with
-`--data-urlencode "text@$TEXT_FILE"`.
+`--data-urlencode "text@${TEXT_FILE}"`.
 For file uploads, prefer `slack-upload` over manually calling Slack's
 multi-step upload endpoints.
 
@@ -140,7 +139,7 @@ curl -sS -X POST https://slack.com/api/chat.postMessage \
   -H 'content-type: application/x-www-form-urlencoded' \
   --data-urlencode 'channel=C123' \
   --data-urlencode 'thread_ts=1710000000.001' \
-  --data-urlencode "text@$TEXT_FILE"
+  --data-urlencode "text@${TEXT_FILE}"
 ```
 
 ### 5. Upload a file
@@ -186,7 +185,7 @@ Common failures to report as-is:
 - `thread_ts` should be the parent message timestamp for the thread.
 - Use real Slack URLs. Do not route Slack work through `mcp slack`.
 - Do not send multiline Slack text as an inline shell string. Default to a
-  unique temp file under `/tmp` plus `--data-urlencode "text@$TEXT_FILE"`.
+  unique temp file under `/tmp` plus `--data-urlencode "text@${TEXT_FILE}"`.
 - Do not use literal `\n` inside single-quoted `text=...` arguments.
 - Do not use shared temp paths. Default to `mktemp` under `/tmp`; use
   `mktemp -d` when you need a stable filename inside a unique temp directory.

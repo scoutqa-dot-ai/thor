@@ -34,6 +34,7 @@ Instructions for AI agents working on this repository.
 ```
 thor/
 ├── AGENTS.md                  # This file
+├── CLAUDE.md                  # Claude Code guidance
 ├── docker/                    # Container definitions and service configs
 ├── docker-volumes/            # Local mounted data for dockerized services
 ├── docs/
@@ -43,10 +44,9 @@ thor/
 │   ├── admin/                 # Admin web UI
 │   ├── common/                # Shared config, logging, notes, schemas
 │   ├── gateway/               # Inbound webhook gateway (Slack, etc.)
-│   ├── opencode-cli/          # OpenCode CLI integration layer
+│   ├── opencode-cli/          # OpenCode helper wrappers for remote-cli
 │   ├── remote-cli/            # CLI + MCP policy gateway
-│   ├── runner/                # Agent runner + trigger endpoint
-│   └── slack-mcp/             # Slack MCP server + progress updates
+│   └── runner/                # Agent runner + trigger endpoint
 ├── scripts/                   # Test and utility scripts
 ├── docker-compose.yml
 ├── package.json               # pnpm workspace root

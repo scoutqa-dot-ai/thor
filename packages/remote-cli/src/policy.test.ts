@@ -331,8 +331,20 @@ describe("validateGitArgs", () => {
       expectGitDenied(["worktree", "add", "-b", "/feat", "/workspace/worktrees/repo/feat"]);
       expectGitDenied(["worktree", "add", "-b", "feat/", "/workspace/worktrees/repo/feat/"]);
       expectGitDenied(["worktree", "add", "-b", "feat//x", "/workspace/worktrees/repo/feat//x"]);
-      expectGitDenied(["worktree", "add", "-b", "feat/../x", "/workspace/worktrees/repo/feat/../x"]);
-      expectGitDenied(["worktree", "add", "-b", "feat\u0000x", "/workspace/worktrees/repo/feat\u0000x"]);
+      expectGitDenied([
+        "worktree",
+        "add",
+        "-b",
+        "feat/../x",
+        "/workspace/worktrees/repo/feat/../x",
+      ]);
+      expectGitDenied([
+        "worktree",
+        "add",
+        "-b",
+        "feat\u0000x",
+        "/workspace/worktrees/repo/feat\u0000x",
+      ]);
 
       expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/worktrees//feat"]);
       expectGitDenied(["worktree", "add", "-b", "feat", "/workspace/worktrees/repo/"]);

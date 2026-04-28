@@ -41,14 +41,14 @@ The run directory is flexible scratch space, not an enforced format. If the targ
 
 Every protocol follows the same skeleton:
 
-| Step | Purpose |
-|---|---|
-| **Classify** | Triage gate — decide whether the protocol applies at all. |
-| **Frame** | Create the run dir README. Refresh remote state before delegating. |
-| **Delegate** | First subagent hop with explicit `Role:`. |
-| *(work steps)* | Protocol-specific middle, e.g. implement+test, or further investigate hops. |
-| **Iterate** | Read the README. Retry once on missing thinker output then escalate. Stop on a defined exit condition. |
-| **Report** | Deliver the user-facing outcome. Prefer file upload over inline paraphrase. |
+| Step           | Purpose                                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------------------ |
+| **Classify**   | Triage gate — decide whether the protocol applies at all.                                              |
+| **Frame**      | Create the run dir README. Refresh remote state before delegating.                                     |
+| **Delegate**   | First subagent hop with explicit `Role:`.                                                              |
+| _(work steps)_ | Protocol-specific middle, e.g. implement+test, or further investigate hops.                            |
+| **Iterate**    | Read the README. Retry once on missing thinker output then escalate. Stop on a defined exit condition. |
+| **Report**     | Deliver the user-facing outcome. Prefer file upload over inline paraphrase.                            |
 
 Subagent output is delivered to the user via **file upload, not paraphrase**, whenever the artifact is non-trivial. The chat reply points at the file; the file is the answer. This applies most strongly at any phase where the loop pauses or stops — the artifact (`plan.md`, `findings_<n>.md`, csv/txt for data) is uploaded verbatim instead of being re-narrated, because LLM paraphrasing introduces mistakes and makes review harder.
 

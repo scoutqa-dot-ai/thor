@@ -1,4 +1,5 @@
 <!-- /autoplan restore point: /Users/son.dao/.gstack/projects/scoutqa-dot-ai-thor/explain-build-agent-autoplan-restore-20260427-215334.md -->
+
 # Agent Run Directories
 
 Switch the `build` agent's coding protocol from in-prompt context passing to a file-based handoff: each task gets a directory under `/workspace/runs/<run-id>/` with a single required `README.md` index, and subagents read/update that directory instead of being re-narrated by the orchestrator on every step.
@@ -37,14 +38,14 @@ Stop the orchestrator from re-stating task context to `thinker` and `coder` on e
 
 New mount, peer to existing workspace dirs:
 
-| Path | Access | Purpose |
-|---|---|---|
-| `/workspace/cron` | RW | Crontab for scheduled jobs |
-| `/workspace/memory` | RW | Persistent agent memory |
-| `/workspace/repos` | RO | Main repo clone |
-| `/workspace/worklog` | RO | Tool call logs and session notes |
-| `/workspace/worktrees` | RW | Git worktrees for code changes |
-| **`/workspace/runs`** | **RW** | **Per-run scratch dir for agent handoffs** |
+| Path                   | Access | Purpose                                    |
+| ---------------------- | ------ | ------------------------------------------ |
+| `/workspace/cron`      | RW     | Crontab for scheduled jobs                 |
+| `/workspace/memory`    | RW     | Persistent agent memory                    |
+| `/workspace/repos`     | RO     | Main repo clone                            |
+| `/workspace/worklog`   | RO     | Tool call logs and session notes           |
+| `/workspace/worktrees` | RW     | Git worktrees for code changes             |
+| **`/workspace/runs`**  | **RW** | **Per-run scratch dir for agent handoffs** |
 
 ### Run directory
 
@@ -108,13 +109,13 @@ Subagents parse the first two non-empty lines of the prompt against:
 
 Defaults / missing fields:
 
-| Missing | Subagent behavior |
-|---|---|
-| `Run dir:` | Reply `ERROR: missing Run dir header` and stop. No fallback to "old protocol." |
-| `Role:` | Reply `ERROR: missing Role header` and stop. |
-| `<run-dir>/README.md` does not exist | Reply `ERROR: README not found at <path>` and stop. |
-| Required README field absent (Goal, etc.) | Reply `ERROR: README missing <field>` and stop; orchestrator amends and re-dispatches. |
-| Verdict written by `thinker review` is outside enum | Orchestrator validator rejects, retries once with corrective prompt, then escalates. |
+| Missing                                             | Subagent behavior                                                                      |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `Run dir:`                                          | Reply `ERROR: missing Run dir header` and stop. No fallback to "old protocol."         |
+| `Role:`                                             | Reply `ERROR: missing Role header` and stop.                                           |
+| `<run-dir>/README.md` does not exist                | Reply `ERROR: README not found at <path>` and stop.                                    |
+| Required README field absent (Goal, etc.)           | Reply `ERROR: README missing <field>` and stop; orchestrator amends and re-dispatches. |
+| Verdict written by `thinker review` is outside enum | Orchestrator validator rejects, retries once with corrective prompt, then escalates.   |
 
 Anything else the subagent needs (available tools, MCP upstreams, skills, environment hints) is appended to the prompt by the orchestrator — it does not live in the README.
 
@@ -195,7 +196,7 @@ Bring the subagents into the protocol. **The exact post-edit text for each file 
   - Role split: `Role: plan` writes `plan.md` if useful, inserts an Artifacts row linking to it, appends a Log line; `Role: review` reads README + linked artifacts + worktree diff, replaces the `Verdict:` line with one of `BLOCK|SUBSTANTIVE|NIT`, optionally writes `review.md`.
   - Same fail-fast contract and same mutation rules.
 
-**Exit criteria:** both subagent files contain the documented contract; a manual prompt-paste smoke ("Run dir: /workspace/runs/_missing\nRole: plan\n\nfoo") returns the expected `ERROR: README not found at /workspace/runs/_missing/README.md` from `thinker`, and `coder` rejects unsupported roles with `ERROR:`.
+**Exit criteria:** both subagent files contain the documented contract; a manual prompt-paste smoke ("Run dir: /workspace/runs/\_missing\nRole: plan\n\nfoo") returns the expected `ERROR: README not found at /workspace/runs/_missing/README.md` from `thinker`, and `coder` rejects unsupported roles with `ERROR:`.
 
 ### Phase 5 — Verification
 
@@ -234,31 +235,31 @@ Tracked here so they don't get lost; not part of this PR.
 
 ## Decision Log
 
-| Decision | Rationale |
-|---|---|
-| Name the mount `/workspace/runs/` (not `tasks/` or `handoffs/`) | `tasks/` collides semantically with opencode's built-in `task` tool and `permission.task` config — same word, different identifiers, ambiguous in conversation. `handoffs/` biases toward the linear coding case and reads strained for investigations. `runs/` is lifecycle-agnostic and works for every workflow we plan to extend to. |
-| Single required `README.md` per run, everything else on demand | One rule instead of a fixed file set or weight tiers. Tiny tasks stay tiny; complex tasks accumulate files organically, always indexed from the README. |
-| Separate `/workspace/runs/` mount instead of nesting under `memory/<repo>/runs/` | Memory is curated and permanent; run scratch is verbose and ephemeral. Co-locating muddles grep semantics and lifecycle rules. |
-| Drop `<repo>` segment from the run path | Keep the path short. `repo` lives in the README header, so the run-id alone is unique and tools can still filter. |
-| Run-id `<YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]` | Sortable, unique enough for v1 without coordination, human-readable. Slack ts suffix optional. |
-| Verdict line `BLOCK | SUBSTANTIVE | NIT | MERGED` in README `Verdict:` field | Mechanical iterate-vs-stop decision without parsing prose. |
-| No enforced `iterations/<n>/` split | Iteration history lives in the README Log; agents freely add or replace supporting files. Forcing a numbered split adds ceremony without value for the common case. |
-| Distillation runs out of band, not in the main loop | Worklog and memory updates are a separate daily/weekly pass (design TBD). Keeping them out of the main loop keeps run completion fast and lets the distillation policy evolve independently. |
-| Tool/skill hints pass via subagent prompt, not README | Runtime info changes between invocations; storing it in a durable artifact means stale hints and a forced rewrite on every call. README captures task content; prompts carry environment. |
-| Worklog stays read-only and unchanged | Append a pointer line to the existing session note rather than writing artifacts there; preserves its role as the durable index. |
-| No automatic archival in this change | Cleanup policy can wait until we see real volume; manual deletion is fine to start. |
-| Per-repo plan/feat conventions take precedence | Repos already define plan format, location, and decision-log schema in their own `AGENTS.md`. The run dir holds inter-agent scratch; durable plans stay where the repo expects them. |
-| Mount layout: `docker-volumes/workspace/runs:/workspace/runs` (not `docker-volumes/runs/`) | Keep the established `docker-volumes/workspace/<dir>` pattern. Caught by /autoplan eng review (2026-04-27). |
-| 5-step loop with explicit `Test` step (not 4-step) | Existing `build.md:102` testing policy is load-bearing — coder runs targeted tests before review. Folding it into Implement loses the explicit gate. /autoplan eng review (Codex + subagent) flagged High regression. |
-| No helper CLI in v1; subagents edit the README directly | The CLI was speced (`runs init`, `log`, `verdict`, `lifecycle`, `artifact`, `cat`) but cut after worst-case-drift analysis. Realistic worst case is one wasted subagent iteration (~1–2 min, a few thousand tokens) when a stale-snapshot rewrite drops a Log line or Artifacts row. The load-bearing `Verdict:` field is already protected by the orchestrator-side validator (Phase 3); PRs still get human review; run dirs are scratch with no durable consumer. Building the CLI before observing drift was speculative. Revisit as a Phase 7 follow-up if Phase 6 integration or production shows recurrent drift. /autoplan cross-phase consensus + measurement-first override. |
-| `Lifecycle:` (open/merged/abandoned) and `Verdict:` (BLOCK/SUBSTANTIVE/NIT/MERGED) are different fields | Earlier draft had a single `Status` field overloaded across both. /autoplan DX review (both voices) flagged High — `MERGED` semantically overlapped with header lifecycle. Splitting also makes both fields independently grep-able. |
-| Required literal field prefixes at top of README (`Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, `Lifecycle:`, `Verdict:`) | "Short, structured, scannable" was prose-only. Locked literal prefixes give deterministic `grep -l` for "all open runs" / "all blocked runs" without parsing markdown. /autoplan DX review. |
-| Run-id at seconds granularity (`YYYYMMDD-HHMMSS`), not minutes | Minute granularity collides on concurrent Slack mentions or retries; dropping `<repo>` from the path made it worse. Seconds + slug + optional thread-ts is sufficient until runner-owned IDs land in Phase 7. /autoplan CEO + Eng review. |
-| Orchestrator-side `Verdict:` enum validator after every `task()` call | Without the helper CLI, the orchestrator post-condition check is the only gate that protects iterate-vs-stop logic from model drift (`OK`, `NEEDS_WORK`, etc.). Reads the README, asserts the enum, retries once with corrective prompt, then escalates. |
-| Subagent prompt deltas pre-drafted in Phase 4, not freestyled by implementer | The protocol is the contract. Letting Phase 4 invent the contract surface during implementation reintroduces drift across the three files. Pre-drafting + behavioral smokes (Phase 5) catch drift. |
-| Defer runner-owned worktree lease + opaque run-IDs to Phase 7 | Both are correct long-term but require runner state-model changes that exceed this plan's scope. Seconds-granularity IDs + worktree-reuse-with-best-effort is the v1 risk-budget choice. Revisit on first observed concurrency incident. |
-| Cut the static `lint-runs-protocol` script | The lint was tried (see git history) and dropped. It inspected prose in three markdown files for magic strings — useful in theory, low value in practice: regex-grepping the same words across three files doesn't catch real protocol failures (subagent ignores its role, README format drifts in ways the regex can't see, runtime path resolution breaks). The maintenance overhead — every time an error string changed, the lint had to be updated in lockstep — outweighed the drift it actually caught. Phase 5 is now behavioral verification only. Revisit if production drift becomes recurrent. |
-| Inline the README skeleton into `build.md` instead of a separate `run-readme.template.md` file | The earlier /autoplan DX surfaced "no canonical schema source" and proposed a separate template file. Once the orchestrator instructions in build.md already carried the field list, glossary, and section names, the template file became a second copy of the same prose with extra indirection. Inlining keeps build.md self-contained: the orchestrator reads one file to know how to frame a run. Subagent files reference build.md's section names instead of a separate file. |
+| Decision                                                                                                                | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | -------------------------------- | ---------------------------------------------------------- |
+| Name the mount `/workspace/runs/` (not `tasks/` or `handoffs/`)                                                         | `tasks/` collides semantically with opencode's built-in `task` tool and `permission.task` config — same word, different identifiers, ambiguous in conversation. `handoffs/` biases toward the linear coding case and reads strained for investigations. `runs/` is lifecycle-agnostic and works for every workflow we plan to extend to.                                                                                                                                                                                                                                                                                                                                               |
+| Single required `README.md` per run, everything else on demand                                                          | One rule instead of a fixed file set or weight tiers. Tiny tasks stay tiny; complex tasks accumulate files organically, always indexed from the README.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Separate `/workspace/runs/` mount instead of nesting under `memory/<repo>/runs/`                                        | Memory is curated and permanent; run scratch is verbose and ephemeral. Co-locating muddles grep semantics and lifecycle rules.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Drop `<repo>` segment from the run path                                                                                 | Keep the path short. `repo` lives in the README header, so the run-id alone is unique and tools can still filter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Run-id `<YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]`                                                                         | Sortable, unique enough for v1 without coordination, human-readable. Slack ts suffix optional.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Verdict line `BLOCK                                                                                                     | SUBSTANTIVE                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | NIT | MERGED`in README`Verdict:` field | Mechanical iterate-vs-stop decision without parsing prose. |
+| No enforced `iterations/<n>/` split                                                                                     | Iteration history lives in the README Log; agents freely add or replace supporting files. Forcing a numbered split adds ceremony without value for the common case.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Distillation runs out of band, not in the main loop                                                                     | Worklog and memory updates are a separate daily/weekly pass (design TBD). Keeping them out of the main loop keeps run completion fast and lets the distillation policy evolve independently.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Tool/skill hints pass via subagent prompt, not README                                                                   | Runtime info changes between invocations; storing it in a durable artifact means stale hints and a forced rewrite on every call. README captures task content; prompts carry environment.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Worklog stays read-only and unchanged                                                                                   | Append a pointer line to the existing session note rather than writing artifacts there; preserves its role as the durable index.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| No automatic archival in this change                                                                                    | Cleanup policy can wait until we see real volume; manual deletion is fine to start.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Per-repo plan/feat conventions take precedence                                                                          | Repos already define plan format, location, and decision-log schema in their own `AGENTS.md`. The run dir holds inter-agent scratch; durable plans stay where the repo expects them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Mount layout: `docker-volumes/workspace/runs:/workspace/runs` (not `docker-volumes/runs/`)                              | Keep the established `docker-volumes/workspace/<dir>` pattern. Caught by /autoplan eng review (2026-04-27).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 5-step loop with explicit `Test` step (not 4-step)                                                                      | Existing `build.md:102` testing policy is load-bearing — coder runs targeted tests before review. Folding it into Implement loses the explicit gate. /autoplan eng review (Codex + subagent) flagged High regression.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| No helper CLI in v1; subagents edit the README directly                                                                 | The CLI was speced (`runs init`, `log`, `verdict`, `lifecycle`, `artifact`, `cat`) but cut after worst-case-drift analysis. Realistic worst case is one wasted subagent iteration (~1–2 min, a few thousand tokens) when a stale-snapshot rewrite drops a Log line or Artifacts row. The load-bearing `Verdict:` field is already protected by the orchestrator-side validator (Phase 3); PRs still get human review; run dirs are scratch with no durable consumer. Building the CLI before observing drift was speculative. Revisit as a Phase 7 follow-up if Phase 6 integration or production shows recurrent drift. /autoplan cross-phase consensus + measurement-first override. |
+| `Lifecycle:` (open/merged/abandoned) and `Verdict:` (BLOCK/SUBSTANTIVE/NIT/MERGED) are different fields                 | Earlier draft had a single `Status` field overloaded across both. /autoplan DX review (both voices) flagged High — `MERGED` semantically overlapped with header lifecycle. Splitting also makes both fields independently grep-able.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Required literal field prefixes at top of README (`Run-ID:`, `Repo:`, `Branch:`, `Worktree:`, `Lifecycle:`, `Verdict:`) | "Short, structured, scannable" was prose-only. Locked literal prefixes give deterministic `grep -l` for "all open runs" / "all blocked runs" without parsing markdown. /autoplan DX review.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Run-id at seconds granularity (`YYYYMMDD-HHMMSS`), not minutes                                                          | Minute granularity collides on concurrent Slack mentions or retries; dropping `<repo>` from the path made it worse. Seconds + slug + optional thread-ts is sufficient until runner-owned IDs land in Phase 7. /autoplan CEO + Eng review.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Orchestrator-side `Verdict:` enum validator after every `task()` call                                                   | Without the helper CLI, the orchestrator post-condition check is the only gate that protects iterate-vs-stop logic from model drift (`OK`, `NEEDS_WORK`, etc.). Reads the README, asserts the enum, retries once with corrective prompt, then escalates.                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Subagent prompt deltas pre-drafted in Phase 4, not freestyled by implementer                                            | The protocol is the contract. Letting Phase 4 invent the contract surface during implementation reintroduces drift across the three files. Pre-drafting + behavioral smokes (Phase 5) catch drift.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Defer runner-owned worktree lease + opaque run-IDs to Phase 7                                                           | Both are correct long-term but require runner state-model changes that exceed this plan's scope. Seconds-granularity IDs + worktree-reuse-with-best-effort is the v1 risk-budget choice. Revisit on first observed concurrency incident.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Cut the static `lint-runs-protocol` script                                                                              | The lint was tried (see git history) and dropped. It inspected prose in three markdown files for magic strings — useful in theory, low value in practice: regex-grepping the same words across three files doesn't catch real protocol failures (subagent ignores its role, README format drifts in ways the regex can't see, runtime path resolution breaks). The maintenance overhead — every time an error string changed, the lint had to be updated in lockstep — outweighed the drift it actually caught. Phase 5 is now behavioral verification only. Revisit if production drift becomes recurrent.                                                                            |
+| Inline the README skeleton into `build.md` instead of a separate `run-readme.template.md` file                          | The earlier /autoplan DX surfaced "no canonical schema source" and proposed a separate template file. Once the orchestrator instructions in build.md already carried the field list, glossary, and section names, the template file became a second copy of the same prose with extra indirection. Inlining keeps build.md self-contained: the orchestrator reads one file to know how to frame a run. Subagent files reference build.md's section names instead of a separate file.                                                                                                                                                                                                   |
 
 ---
 
@@ -269,6 +270,7 @@ Generated by `/autoplan` on 2026-04-27. Branch: `explain-build-agent`. Commit: `
 ### Phase 1 — CEO / Strategy (dual voices)
 
 **Codex CEO voice — strategy challenge (verified against codebase):**
+
 - **Critical** — Plan optimizes an unmeasured pain. No data on prompt-token cost from re-narration, observed orchestrator drift, or attributable subagent failures. The 10x reframe is not "how do subagents share context" but "what is the canonical task state model in the runner, made inspectable, resumable, and auditable?"
 - **Critical** — "Changes to subagent definitions out of scope" is incoherent with the design. Codex read `docker/opencode/config/agents/coder.md` and `thinker.md` and confirmed they are generic prompts (~12 lines each) with no parsing contract, no filesystem contract, no README mutation behavior. Either bring them in scope or restate the contract in every delegated prompt (which defeats the purpose).
 - **High** — Run-id uniqueness claim is false. `<YYYYMMDD-HHMM>-<slug>` at minute granularity, with `<repo>` segment dropped, will collide on concurrent Slack mentions, retries, or same-slug-different-repo. Slack thread ts suffix is "optional" and many runs won't have one.
@@ -277,10 +279,11 @@ Generated by `/autoplan` on 2026-04-27. Branch: `explain-build-agent`. Commit: `
 - **Strategic miss** — Thor's MVP scenarios skew toward investigation/orchestration, not just code implementation. Optimizing the coding loop first improves a secondary path.
 
 **Claude CEO subagent — independent strategic review:**
+
 - **Critical** — Subagent scope gap (same finding, independently surfaced).
 - **High** — No problem quantification. Optimizing on vibe.
 - **High** — Markdown vs JSON for machine handoff (same finding).
-- **High** — Alternatives not analyzed: (a) in-prompt with compression/summary, (b) structured JSON, (c) DB/KV instead of files, (d) do nothing with 200K+ context windows. Decision Log justifies internal choices (path name, run-id format) but not the *approach itself*.
+- **High** — Alternatives not analyzed: (a) in-prompt with compression/summary, (b) structured JSON, (c) DB/KV instead of files, (d) do nothing with 200K+ context windows. Decision Log justifies internal choices (path name, run-id format) but not the _approach itself_.
 - **High** — README Log will recreate the bloat problem after 5+ iterations on a complex task.
 - **High** — P4: orchestrator can resist re-narration. LLMs gravitate toward verbose prompts; without a hard token limit, the orchestrator will paste README contents "just to be safe."
 - **Medium** — 6-month regret: protocol calcifies before generalizing; Status vocabulary divergence between coding/investigation will force a v1 rewrite.
@@ -289,25 +292,25 @@ Generated by `/autoplan` on 2026-04-27. Branch: `explain-build-agent`. Commit: `
 
 **CEO DUAL VOICES — CONSENSUS TABLE:**
 
-| Dimension | Claude | Codex | Consensus |
-|---|---|---|---|
-| 1. Premises valid? | ❌ unmeasured | ❌ unmeasured | **CONFIRMED ❌** |
-| 2. Right problem to solve? | ⚠️ secondary to subagent quality | ⚠️ secondary to runner state model | **CONFIRMED ❌ (different reframings)** |
-| 3. Scope calibration correct? | ❌ subagent edits required | ❌ subagent edits required (verified) | **CONFIRMED ❌** |
-| 4. Alternatives sufficiently explored? | ❌ 4 dismissed | ❌ runner-state, prompt-deltas dismissed | **CONFIRMED ❌** |
-| 5. Competitive/standard risks covered? | ⚠️ diverges from emerging standards | — | flagged by Claude only |
-| 6. 6-month trajectory sound? | ❌ Log-bloat regret | ❌ pseudo-JSON-in-markdown regret | **CONFIRMED ❌** |
+| Dimension                              | Claude                              | Codex                                    | Consensus                               |
+| -------------------------------------- | ----------------------------------- | ---------------------------------------- | --------------------------------------- |
+| 1. Premises valid?                     | ❌ unmeasured                       | ❌ unmeasured                            | **CONFIRMED ❌**                        |
+| 2. Right problem to solve?             | ⚠️ secondary to subagent quality    | ⚠️ secondary to runner state model       | **CONFIRMED ❌ (different reframings)** |
+| 3. Scope calibration correct?          | ❌ subagent edits required          | ❌ subagent edits required (verified)    | **CONFIRMED ❌**                        |
+| 4. Alternatives sufficiently explored? | ❌ 4 dismissed                      | ❌ runner-state, prompt-deltas dismissed | **CONFIRMED ❌**                        |
+| 5. Competitive/standard risks covered? | ⚠️ diverges from emerging standards | —                                        | flagged by Claude only                  |
+| 6. 6-month trajectory sound?           | ❌ Log-bloat regret                 | ❌ pseudo-JSON-in-markdown regret        | **CONFIRMED ❌**                        |
 
 ### What already exists (mapped from the plan to current code)
 
-| Plan sub-problem | Existing surface |
-|---|---|
-| Path table for `/workspace/<dir>` | `docker/opencode/config/agents/build.md:81-87` |
-| 5-step Code change protocol | `build.md:98-115` |
-| `coder` / `thinker` subagent prompts | `docker/opencode/config/agents/coder.md`, `thinker.md` (do NOT know the proposed protocol) |
-| Worktree pattern, durable repo plan | `AGENTS.md:7` requires `docs/plan/YYYYMMDDNN_<slug>.md` already |
-| Worklog / memory mounts | `docker-compose.yml:152-159` |
-| Bind layout pattern | `docker-volumes/workspace/<dir>` (NOT `docker-volumes/<dir>`) — plan's Phase 1 says `docker-volumes/runs/.gitkeep`, inconsistent |
+| Plan sub-problem                     | Existing surface                                                                                                                 |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Path table for `/workspace/<dir>`    | `docker/opencode/config/agents/build.md:81-87`                                                                                   |
+| 5-step Code change protocol          | `build.md:98-115`                                                                                                                |
+| `coder` / `thinker` subagent prompts | `docker/opencode/config/agents/coder.md`, `thinker.md` (do NOT know the proposed protocol)                                       |
+| Worktree pattern, durable repo plan  | `AGENTS.md:7` requires `docs/plan/YYYYMMDDNN_<slug>.md` already                                                                  |
+| Worklog / memory mounts              | `docker-compose.yml:152-159`                                                                                                     |
+| Bind layout pattern                  | `docker-volumes/workspace/<dir>` (NOT `docker-volumes/<dir>`) — plan's Phase 1 says `docker-volumes/runs/.gitkeep`, inconsistent |
 
 ### NOT in scope (proposed deferrals after CEO review)
 
@@ -318,19 +321,19 @@ Generated by `/autoplan` on 2026-04-27. Branch: `explain-build-agent`. Commit: `
 
 ### Failure Modes Registry (CEO-surfaced)
 
-| # | Mode | Likelihood | Impact | Mitigation candidate |
-|---|---|---|---|---|
-| F1 | Orphan run dirs because subagents don't know the protocol | **High (day 1)** | Critical — protocol non-functional | Move subagent edits in scope |
-| F2 | README Log grows unboundedly, recreates bloat | High after iteration ≥5 | High | Cap, summarize-and-rotate, or sidecar JSON |
-| F3 | Run-id collision on concurrent Slack mentions | Medium | Medium — overwrites another run's state | Add seconds + random suffix or runner-issued ID |
-| F4 | Orchestrator pastes README into prompt "just to be safe" | High (LLM tendency) | High — defeats goal | Hard token cap on subagent prompts; protocol doc forbids inlining |
-| F5 | Split-brain across run README, repo plan, worklog, memory | Medium | Medium — debug-time confusion | Pick one source of truth per kind of fact; document |
-| F6 | docker-volumes path inconsistency (`docker-volumes/runs/` vs `docker-volumes/workspace/runs/`) | High (Phase 1) | Low — cosmetic but breaks pattern | Phase 1 wording fix |
-| F7 | Verdict-line drift (`BLOCK \| SUBSTANTIVE \| NIT`) under model variance | Medium | Medium — iterate-vs-stop logic breaks | Validate verdict against allowlist; reject and re-prompt |
+| #   | Mode                                                                                           | Likelihood              | Impact                                  | Mitigation candidate                                              |
+| --- | ---------------------------------------------------------------------------------------------- | ----------------------- | --------------------------------------- | ----------------------------------------------------------------- |
+| F1  | Orphan run dirs because subagents don't know the protocol                                      | **High (day 1)**        | Critical — protocol non-functional      | Move subagent edits in scope                                      |
+| F2  | README Log grows unboundedly, recreates bloat                                                  | High after iteration ≥5 | High                                    | Cap, summarize-and-rotate, or sidecar JSON                        |
+| F3  | Run-id collision on concurrent Slack mentions                                                  | Medium                  | Medium — overwrites another run's state | Add seconds + random suffix or runner-issued ID                   |
+| F4  | Orchestrator pastes README into prompt "just to be safe"                                       | High (LLM tendency)     | High — defeats goal                     | Hard token cap on subagent prompts; protocol doc forbids inlining |
+| F5  | Split-brain across run README, repo plan, worklog, memory                                      | Medium                  | Medium — debug-time confusion           | Pick one source of truth per kind of fact; document               |
+| F6  | docker-volumes path inconsistency (`docker-volumes/runs/` vs `docker-volumes/workspace/runs/`) | High (Phase 1)          | Low — cosmetic but breaks pattern       | Phase 1 wording fix                                               |
+| F7  | Verdict-line drift (`BLOCK \| SUBSTANTIVE \| NIT`) under model variance                        | Medium                  | Medium — iterate-vs-stop logic breaks   | Validate verdict against allowlist; reject and re-prompt          |
 
 ### Dream state delta
 
-This plan leaves Thor with a partial protocol: the orchestrator follows it, the subagents don't know it. The 12-month ideal is a runner-owned task state model where the runner — not the orchestrator and not the subagents — is the source of truth, and where any agent reading or writing state goes through a typed, audited interface. The current plan moves toward that future *if* it includes (a) subagent contract updates, (b) JSON sidecar from day one, (c) opaque run IDs from the runner. Without those, it's a half-step that calcifies the wrong shape.
+This plan leaves Thor with a partial protocol: the orchestrator follows it, the subagents don't know it. The 12-month ideal is a runner-owned task state model where the runner — not the orchestrator and not the subagents — is the source of truth, and where any agent reading or writing state goes through a typed, audited interface. The current plan moves toward that future _if_ it includes (a) subagent contract updates, (b) JSON sidecar from day one, (c) opaque run IDs from the runner. Without those, it's a half-step that calcifies the wrong shape.
 
 ### Premise gate (resolved)
 
@@ -406,43 +409,43 @@ User chose **REVISE**: bring `coder.md` / `thinker.md` edits into Phase 2 scope.
 
 #### ENG DUAL VOICES — CONSENSUS TABLE
 
-| Dimension | Claude | Codex | Consensus |
-|---|---|---|---|
-| 1. Architecture sound? | ❌ 1:N worktree, no lock | ❌ 1:N worktree, runner doesn't lease | **CONFIRMED ❌** |
-| 2. Test coverage sufficient? | ❌ 4-step drops Test | ❌ 4-step drops Test | **CONFIRMED ❌** |
-| 3. Performance risks addressed? | ⚠️ README log growth | ⚠️ stale-snapshot lost updates | **CONFIRMED ⚠️** |
-| 4. Security threats covered? | ❌ runner RW on whole /workspace; path traversal | ❌ runner RW; path traversal; session dir allowlist | **CONFIRMED ❌** |
-| 5. Error paths handled? | ❌ no post-condition check; no fail-fast contract enforcement | ❌ no verdict validator; no CAS | **CONFIRMED ❌** |
-| 6. Deployment risk manageable? | ⚠️ docker-volumes path wrong; bind layout breaks pattern | ⚠️ same | **CONFIRMED ⚠️** |
+| Dimension                       | Claude                                                        | Codex                                               | Consensus        |
+| ------------------------------- | ------------------------------------------------------------- | --------------------------------------------------- | ---------------- |
+| 1. Architecture sound?          | ❌ 1:N worktree, no lock                                      | ❌ 1:N worktree, runner doesn't lease               | **CONFIRMED ❌** |
+| 2. Test coverage sufficient?    | ❌ 4-step drops Test                                          | ❌ 4-step drops Test                                | **CONFIRMED ❌** |
+| 3. Performance risks addressed? | ⚠️ README log growth                                          | ⚠️ stale-snapshot lost updates                      | **CONFIRMED ⚠️** |
+| 4. Security threats covered?    | ❌ runner RW on whole /workspace; path traversal              | ❌ runner RW; path traversal; session dir allowlist | **CONFIRMED ❌** |
+| 5. Error paths handled?         | ❌ no post-condition check; no fail-fast contract enforcement | ❌ no verdict validator; no CAS                     | **CONFIRMED ❌** |
+| 6. Deployment risk manageable?  | ⚠️ docker-volumes path wrong; bind layout breaks pattern      | ⚠️ same                                             | **CONFIRMED ⚠️** |
 
 #### Test diagram (codepaths → coverage)
 
-| Codepath / behavior | Test type | Status in plan | Required (auto-decided) |
-|---|---|---|---|
-| `build.md` mints run-id; `Run dir:`/`Role:` lines emitted | Static lint of `build.md` | None | **ADD** (T1) |
-| README has all 5 sections, Status from allowlist | Schema/regex validator on a sample README | None | **ADD** (T2) |
-| `mkdir/rmdir /workspace/runs/_smoke` | Container smoke | Phase 1 exit | OK |
-| Two concurrent run-id mints in same minute | Concurrency unit test | None | **ADD** (T4) |
-| Runner cannot write to /workspace/runs OR doc the dual-writer rule | Mount audit | None | **ADD** (T5) |
-| README missing Goal → thinker fail-fast | Subagent contract test | None | **ADD** (T6) |
-| `coder` appends exactly one Log line, mutates Status/Artifacts cleanly | Subagent contract test | None | **ADD** (T7) |
-| `thinker review` writes verdict matching enum | Subagent contract test | None | **ADD** (T8) |
-| Re-narration regression: prompt with only Run dir:/Role: still works | Subagent contract test | None | **ADD** (T9) |
-| 1 BLOCK iteration → coder re-invoked | E2E Slack | Phase 3 exit | OK |
-| 2 iterations → Log append-only, supporting files overwrite cleanly | E2E Slack | Implicit | **ADD** (T11) |
-| Path traversal: `Run dir: /workspace/memory/../../etc` rejected | Subagent canonicalization test | None | **ADD** |
+| Codepath / behavior                                                    | Test type                                 | Status in plan | Required (auto-decided) |
+| ---------------------------------------------------------------------- | ----------------------------------------- | -------------- | ----------------------- |
+| `build.md` mints run-id; `Run dir:`/`Role:` lines emitted              | Static lint of `build.md`                 | None           | **ADD** (T1)            |
+| README has all 5 sections, Status from allowlist                       | Schema/regex validator on a sample README | None           | **ADD** (T2)            |
+| `mkdir/rmdir /workspace/runs/_smoke`                                   | Container smoke                           | Phase 1 exit   | OK                      |
+| Two concurrent run-id mints in same minute                             | Concurrency unit test                     | None           | **ADD** (T4)            |
+| Runner cannot write to /workspace/runs OR doc the dual-writer rule     | Mount audit                               | None           | **ADD** (T5)            |
+| README missing Goal → thinker fail-fast                                | Subagent contract test                    | None           | **ADD** (T6)            |
+| `coder` appends exactly one Log line, mutates Status/Artifacts cleanly | Subagent contract test                    | None           | **ADD** (T7)            |
+| `thinker review` writes verdict matching enum                          | Subagent contract test                    | None           | **ADD** (T8)            |
+| Re-narration regression: prompt with only Run dir:/Role: still works   | Subagent contract test                    | None           | **ADD** (T9)            |
+| 1 BLOCK iteration → coder re-invoked                                   | E2E Slack                                 | Phase 3 exit   | OK                      |
+| 2 iterations → Log append-only, supporting files overwrite cleanly     | E2E Slack                                 | Implicit       | **ADD** (T11)           |
+| Path traversal: `Run dir: /workspace/memory/../../etc` rejected        | Subagent canonicalization test            | None           | **ADD**                 |
 
 The test plan artifact (T1–T11) lives in this section; if Phase 2 implementation lands a `runs-cli` helper, those tests run as fast unit tests on the helper rather than the LLM.
 
 #### Eng-surfaced failure modes (additions to F1–F7 above)
 
-| # | Mode | Likelihood | Impact | Mitigation |
-|---|---|---|---|---|
-| F8 | Concurrent runs corrupt shared worktree's git state | High in active-thor | Critical | Runner-owned worktree lease |
-| F9 | LLM rewrites README from stale snapshot, drops new Log lines | Medium | Bounded — 1–2 wasted iterations per event | Orchestrator post-condition validator + retry; revisit `runs-cli` if observed recurrently |
-| F10 | Verdict line outside enum, iterate-vs-stop logic breaks | Medium | Medium | Orchestrator validator + retry |
-| F11 | Session `directory` set to /workspace/runs/<id>, runner rejects | Medium (impl error) | Medium | Document explicitly; widen allowlist deliberately or keep at /workspace/repos |
-| F12 | Test step regression: untested code reaches Review | High | High | Restore Test step or mandate verification artifact |
+| #   | Mode                                                            | Likelihood          | Impact                                    | Mitigation                                                                                |
+| --- | --------------------------------------------------------------- | ------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------- |
+| F8  | Concurrent runs corrupt shared worktree's git state             | High in active-thor | Critical                                  | Runner-owned worktree lease                                                               |
+| F9  | LLM rewrites README from stale snapshot, drops new Log lines    | Medium              | Bounded — 1–2 wasted iterations per event | Orchestrator post-condition validator + retry; revisit `runs-cli` if observed recurrently |
+| F10 | Verdict line outside enum, iterate-vs-stop logic breaks         | Medium              | Medium                                    | Orchestrator validator + retry                                                            |
+| F11 | Session `directory` set to /workspace/runs/<id>, runner rejects | Medium (impl error) | Medium                                    | Document explicitly; widen allowlist deliberately or keep at /workspace/repos             |
+| F12 | Test step regression: untested code reaches Review              | High                | High                                      | Restore Test step or mandate verification artifact                                        |
 
 ### Phase 3.5 — DX (dual voices)
 
@@ -468,40 +471,40 @@ The test plan artifact (T1–T11) lives in this section; if Phase 2 implementati
 
 #### DX DUAL VOICES — CONSENSUS TABLE
 
-| Dimension | Claude | Codex | Consensus |
-|---|---|---|---|
-| 1. Header contract regex spec'd? | ❌ | ❌ | **CONFIRMED ❌** |
-| 2. README schema canonical source? | ❌ no template file | ❌ no template file | **CONFIRMED ❌** |
-| 3. coder.md/thinker.md realistic? | ❌ undrafted | ❌ undrafted | **CONFIRMED ❌** |
-| 4. Status/Verdict overloaded? | ❌ rename | ❌ Lifecycle: + Verdict: | **CONFIRMED ❌** |
-| 5. Grep determinism? | ⚠️ Status line drift risk | ❌ no fixed prefixes | **CONFIRMED ❌** |
-| 6. Error/fail-fast visible? | ❌ no landing zone | ❌ no landing zone | **CONFIRMED ❌** |
+| Dimension                          | Claude                    | Codex                    | Consensus        |
+| ---------------------------------- | ------------------------- | ------------------------ | ---------------- |
+| 1. Header contract regex spec'd?   | ❌                        | ❌                       | **CONFIRMED ❌** |
+| 2. README schema canonical source? | ❌ no template file       | ❌ no template file      | **CONFIRMED ❌** |
+| 3. coder.md/thinker.md realistic?  | ❌ undrafted              | ❌ undrafted             | **CONFIRMED ❌** |
+| 4. Status/Verdict overloaded?      | ❌ rename                 | ❌ Lifecycle: + Verdict: | **CONFIRMED ❌** |
+| 5. Grep determinism?               | ⚠️ Status line drift risk | ❌ no fixed prefixes     | **CONFIRMED ❌** |
+| 6. Error/fail-fast visible?        | ❌ no landing zone        | ❌ no landing zone       | **CONFIRMED ❌** |
 
 #### DX Scorecard (averaged from both voices)
 
-| Dimension | Claude | Codex | Avg |
-|---|---:|---:|---:|
-| TTHW for LLM agent | 4 | 3 | **3.5** |
-| TTHW for human maintainer | 7 | 4 | **5.5** |
-| Error message quality | 3 | 2 | **2.5** |
-| Naming/protocol consistency | 4 | 4 | **4** |
-| Documentation clarity | 5 | 3 | **4** |
-| Escape hatches / flexibility | 5 | 5 | **5** |
-| Discoverability | 5 | 3 | **4** |
-| Upgrade path (kind: extension) | 6 | 6 | **6** |
-| **Overall** | — | — | **4.3 / 10** |
+| Dimension                      | Claude | Codex |          Avg |
+| ------------------------------ | -----: | ----: | -----------: |
+| TTHW for LLM agent             |      4 |     3 |      **3.5** |
+| TTHW for human maintainer      |      7 |     4 |      **5.5** |
+| Error message quality          |      3 |     2 |      **2.5** |
+| Naming/protocol consistency    |      4 |     4 |        **4** |
+| Documentation clarity          |      5 |     3 |        **4** |
+| Escape hatches / flexibility   |      5 |     5 |        **5** |
+| Discoverability                |      5 |     3 |        **4** |
+| Upgrade path (kind: extension) |      6 |     6 |        **6** |
+| **Overall**                    |      — |     — | **4.3 / 10** |
 
 #### Developer journey (LLM-agent path, post-revise)
 
-| Stage | What the agent sees | Friction |
-|---|---|---|
-| Receive prompt | `Run dir: /workspace/runs/X\nRole: plan\n<task>` | Header format unspec'd; agent may miss/misread |
-| Locate README | Must `cat <run-dir>/README.md` | No instruction in coder.md/thinker.md (yet) |
-| Parse 5 sections | Free-form markdown, no schema validator | Sections are headings only; LLM may add own |
-| Decide action by Role | Role enum is `plan/implement/review` but not enumerated agent-side | LLM may invent `Role: planning` |
-| Mutate README | Append Log + set Status, preserve other sections | LLM rewrites, drops rows, duplicates sections |
-| Return | Format unspec'd | Orchestrator can't tell success from failure |
-| Fail-fast on missing field | "ask orchestrator to amend" | No structured return; orchestrator ignores |
+| Stage                      | What the agent sees                                                | Friction                                       |
+| -------------------------- | ------------------------------------------------------------------ | ---------------------------------------------- |
+| Receive prompt             | `Run dir: /workspace/runs/X\nRole: plan\n<task>`                   | Header format unspec'd; agent may miss/misread |
+| Locate README              | Must `cat <run-dir>/README.md`                                     | No instruction in coder.md/thinker.md (yet)    |
+| Parse 5 sections           | Free-form markdown, no schema validator                            | Sections are headings only; LLM may add own    |
+| Decide action by Role      | Role enum is `plan/implement/review` but not enumerated agent-side | LLM may invent `Role: planning`                |
+| Mutate README              | Append Log + set Status, preserve other sections                   | LLM rewrites, drops rows, duplicates sections  |
+| Return                     | Format unspec'd                                                    | Orchestrator can't tell success from failure   |
+| Fail-fast on missing field | "ask orchestrator to amend"                                        | No structured return; orchestrator ignores     |
 
 TTHW current: **5+ cognitive steps, 3+ underspec'd**. Target: 2 steps with explicit grammar + helper CLI.
 
@@ -527,23 +530,23 @@ TTHW current: **5+ cognitive steps, 3+ underspec'd**. Target: 2 steps with expli
 
 ### Decision Audit Trail (auto-decided)
 
-| # | Phase | Decision | Classification | Principle | Rationale |
-|---|---|---|---|---|---|
-| 1 | CEO | Mode: SELECTIVE EXPANSION | Mechanical | P6 bias-to-action | Per /autoplan rule |
-| 2 | CEO | Run dual voices | Mechanical | P6 | Per /autoplan rule |
-| 3 | CEO | Premise gate → user | Human | — | User chose REVISE |
-| 4 | CEO | Bring coder.md/thinker.md edits in scope | Resolved | P1 completeness | User accepted recommendation |
-| 5 | Eng | Add T1–T11 test plan to Phase 3 | Mechanical | P1 + P5 | Tests ARE the verification surface |
-| 6 | Eng | Restore Test step (or fold into Implement w/ verification artifact) | Surfaced | P1 + P3 | Both voices High; surfaced as taste decision |
-| 7 | Eng | Cut `runs-cli` helper from v1; subagents edit README directly | Resolved | P5 + measurement-first | User override after worst-case-drift analysis showed bounded blast radius. Revisit as Phase 7 follow-up if drift observed in Phase 6 or production. |
-| 8 | Eng | docker-volumes path → `docker-volumes/workspace/runs/.gitkeep` | Auto-decide | P3 pragmatic | Both voices flagged; existing pattern wins |
-| 9 | Eng | Runner worktree lease | Surfaced | P5 | Runner-owned vs orchestrator-owned is a real architecture choice |
-| 10 | Eng | Verdict enum validator at orchestrator | Auto-decide | P1 + P5 | Both voices flagged; enforce or break |
-| 11 | DX | Rename header `status:` → `Lifecycle:` | Auto-decide | P5 explicit | Both voices High; cheap rename |
-| 12 | DX | Required literal field prefixes (`Run-ID:`, `Repo:`, `Lifecycle:`, `Verdict:`) | Auto-decide | P5 | Grep-determinism is a real human DX need |
-| 13 | DX | Header parsing regex spec'd in build.md | Auto-decide | P1 + P5 | Both voices Critical |
-| 14 | DX | Add `run-readme.template.md` canonical template | Surfaced | P1 | Both voices Critical; could go in plan-doc instead — taste call |
-| 15 | DX | Pre-draft exact post-edit text for coder.md/thinker.md in this plan | Surfaced | P5 | Both voices High; ceremony tradeoff vs implementer freedom |
-| 16 | DX | Defaults table for missing fields | Auto-decide | P1 completeness | Standard contract hygiene |
-| 17 | DX | Glossary for verdict vocabulary in build.md | Auto-decide | P5 | Cheap; both voices flagged |
-| 18 | Cross | Drop `<repo>` segment from run-id (Decision Log line 156) | Re-surfaced | — | Both voices argue this REDUCES uniqueness; revisit |
+| #   | Phase | Decision                                                                       | Classification | Principle              | Rationale                                                                                                                                           |
+| --- | ----- | ------------------------------------------------------------------------------ | -------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | CEO   | Mode: SELECTIVE EXPANSION                                                      | Mechanical     | P6 bias-to-action      | Per /autoplan rule                                                                                                                                  |
+| 2   | CEO   | Run dual voices                                                                | Mechanical     | P6                     | Per /autoplan rule                                                                                                                                  |
+| 3   | CEO   | Premise gate → user                                                            | Human          | —                      | User chose REVISE                                                                                                                                   |
+| 4   | CEO   | Bring coder.md/thinker.md edits in scope                                       | Resolved       | P1 completeness        | User accepted recommendation                                                                                                                        |
+| 5   | Eng   | Add T1–T11 test plan to Phase 3                                                | Mechanical     | P1 + P5                | Tests ARE the verification surface                                                                                                                  |
+| 6   | Eng   | Restore Test step (or fold into Implement w/ verification artifact)            | Surfaced       | P1 + P3                | Both voices High; surfaced as taste decision                                                                                                        |
+| 7   | Eng   | Cut `runs-cli` helper from v1; subagents edit README directly                  | Resolved       | P5 + measurement-first | User override after worst-case-drift analysis showed bounded blast radius. Revisit as Phase 7 follow-up if drift observed in Phase 6 or production. |
+| 8   | Eng   | docker-volumes path → `docker-volumes/workspace/runs/.gitkeep`                 | Auto-decide    | P3 pragmatic           | Both voices flagged; existing pattern wins                                                                                                          |
+| 9   | Eng   | Runner worktree lease                                                          | Surfaced       | P5                     | Runner-owned vs orchestrator-owned is a real architecture choice                                                                                    |
+| 10  | Eng   | Verdict enum validator at orchestrator                                         | Auto-decide    | P1 + P5                | Both voices flagged; enforce or break                                                                                                               |
+| 11  | DX    | Rename header `status:` → `Lifecycle:`                                         | Auto-decide    | P5 explicit            | Both voices High; cheap rename                                                                                                                      |
+| 12  | DX    | Required literal field prefixes (`Run-ID:`, `Repo:`, `Lifecycle:`, `Verdict:`) | Auto-decide    | P5                     | Grep-determinism is a real human DX need                                                                                                            |
+| 13  | DX    | Header parsing regex spec'd in build.md                                        | Auto-decide    | P1 + P5                | Both voices Critical                                                                                                                                |
+| 14  | DX    | Add `run-readme.template.md` canonical template                                | Surfaced       | P1                     | Both voices Critical; could go in plan-doc instead — taste call                                                                                     |
+| 15  | DX    | Pre-draft exact post-edit text for coder.md/thinker.md in this plan            | Surfaced       | P5                     | Both voices High; ceremony tradeoff vs implementer freedom                                                                                          |
+| 16  | DX    | Defaults table for missing fields                                              | Auto-decide    | P1 completeness        | Standard contract hygiene                                                                                                                           |
+| 17  | DX    | Glossary for verdict vocabulary in build.md                                    | Auto-decide    | P5                     | Cheap; both voices flagged                                                                                                                          |
+| 18  | Cross | Drop `<repo>` segment from run-id (Decision Log line 156)                      | Re-surfaced    | —                      | Both voices argue this REDUCES uniqueness; revisit                                                                                                  |

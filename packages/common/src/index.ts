@@ -66,6 +66,8 @@ export type {
 } from "./notes.js";
 export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
 export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
+export { deriveGitHubAppBotIdentity } from "./github-identity.js";
+export type { GitHubAppBotIdentity, GitHubAppBotIdentityInput } from "./github-identity.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,
@@ -75,9 +77,6 @@ export {
   ProgressErrorSchema,
   ProgressApprovalRequiredSchema,
   ProgressEventSchema,
-  SlackProgressRequestSchema,
-  SlackReactionRequestSchema,
-  SlackApprovalRequestSchema,
 } from "./progress-events.js";
 export type {
   ProgressStart,
@@ -88,7 +87,4 @@ export type {
   ProgressError,
   ProgressApprovalRequired,
   ProgressEvent,
-  SlackProgressRequest,
-  SlackReactionRequest,
-  SlackApprovalRequest,
 } from "./progress-events.js";

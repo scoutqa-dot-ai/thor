@@ -1,6 +1,6 @@
 # Thor
 
-An event-driven AI team member that watches Slack and scheduled jobs, resumes OpenCode sessions through the runner, and reaches external systems through `remote-cli` and `slack-mcp`.
+An event-driven AI team member that watches Slack and scheduled jobs, resumes OpenCode sessions through the runner, and reaches external systems through `remote-cli`.
 
 ## Architecture
 
@@ -8,14 +8,11 @@ An event-driven AI team member that watches Slack and scheduled jobs, resumes Op
 ingress -> gateway -> runner -> opencode
                            \
                             -> remote-cli -> MCP upstreams / CLI integrations
-                             \
-                              -> slack-mcp
 ```
 
 - `gateway` accepts Slack, GitHub webhook, and cron events, batches them, and forwards them to the runner.
 - `runner` manages OpenCode session continuity and streams progress back out.
 - `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, langfuse, metabase, MCP tool calls, and approval status/resolution.
-- `slack-mcp` owns Slack API access for progress updates and approval notifications.
 
 ## Services
 
@@ -29,7 +26,6 @@ ingress -> gateway -> runner -> opencode
 | `ingress`     | 8080 | `docker/ingress`   | Reverse proxy + Vouch integration           |
 | `opencode`    | 4096 | Docker image       | Headless agent runtime                      |
 | `runner`      | 3000 | `@thor/runner`     | Session lifecycle + NDJSON progress stream  |
-| `slack-mcp`   | 3003 | `@thor/slack-mcp`  | Slack MCP server and progress lifecycle     |
 | `vouch`       | 9090 | Docker image       | OAuth/SSO proxy                             |
 
 ## Quick Start
@@ -67,7 +63,7 @@ Example:
   "repos": {
     "your-repo": {
       "channels": ["C12345678"],
-      "proxies": ["slack", "atlassian", "grafana"]
+      "proxies": ["atlassian", "grafana"]
     }
   }
 }
@@ -118,7 +114,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `ATLASSIAN_AUTH`                    | Yes      | `remote-cli`, `mitmproxy` | Atlassian MCP auth header value and mitmproxy default injection   |
 | `CRON_SECRET`                       | Yes      | `gateway`, `cron`         | Shared secret for cron endpoint auth                              |
 | `GITHUB_APP_ID`                     | Yes      | `remote-cli`              | GitHub App ID for GitHub App auth                                 |
-| `GITHUB_APP_BOT_ID`                 | Yes      | `remote-cli`              | GitHub App bot user ID (used for commit identity)                 |
+| `GITHUB_APP_BOT_ID`                 | Yes      | `remote-cli`, `gateway`   | GitHub App bot user ID (commit identity + CI wake author gate)    |
 | `GITHUB_APP_SLUG`                   | Yes      | `remote-cli`, `gateway`   | GitHub App slug (commit identity + mention detection)             |
 | `GITHUB_API_URL`                    | No       | `remote-cli`              | GitHub API base URL override                                      |
 | `GITHUB_APP_PRIVATE_KEY_FILE`       | Yes      | `remote-cli`              | GitHub App private key path                                       |
@@ -137,9 +133,9 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `OPENCODE_CPU_LIMIT`                | No       | `opencode`                | CPU limit for the OpenCode container                              |
 | `OPENCODE_MEMORY_LIMIT`             | No       | `opencode`                | Memory limit for the OpenCode container                           |
 | `POSTHOG_API_KEY`                   | Yes      | `remote-cli`              | PostHog MCP auth                                                  |
-| `THOR_INTERNAL_SECRET`                    | Yes      | `remote-cli`, `gateway`   | Secret-gates gateway↔remote-cli internal APIs                     |
+| `THOR_INTERNAL_SECRET`              | Yes      | `remote-cli`, `gateway`   | Secret-gates gateway↔remote-cli internal APIs                     |
 | `SESSION_CWD`                       | No       | `runner`                  | Working directory for new sessions                                |
-| `SLACK_BOT_TOKEN`                   | Yes      | `slack-mcp`, `mitmproxy`  | Slack bot token and mitmproxy default injection                   |
+| `SLACK_BOT_TOKEN`                   | Yes      | `gateway`, `mitmproxy`    | Slack bot token and mitmproxy default injection                   |
 | `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                 | Bot user ID used to ignore our own messages                       |
 | `SLACK_SIGNING_SECRET`              | Yes      | `gateway`                 | Slack webhook verification                                        |
 | `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | `gateway`                 | Signature timestamp tolerance                                     |
@@ -152,6 +148,8 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `VOUCH_WHITELIST`                   | Yes      | `vouch`                   | Comma-separated email allowlist                                   |
 
 Use [`docs/github-app-webhooks.md`](docs/github-app-webhooks.md) for GitHub App webhook setup, required permissions/subscriptions, and troubleshooting.
+
+Gateway and remote-cli derive the GitHub App bot commit identity from `GITHUB_APP_SLUG` and `GITHUB_APP_BOT_ID`: `${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com`. Gateway uses that derived email to accept `check_suite.completed` CI wakes only for Thor-authored commits; no separate author-email env var is required.
 
 Thor uses a shared workspace config file at `/workspace/config.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config.json`. Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point, and use [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
 
@@ -201,34 +199,11 @@ Rules match by exact host or suffix first, then by optional `path_prefix`.
 - Repos under `/workspace/repos` are mounted read-only into OpenCode. Thor creates edits in `/workspace/worktrees`.
 - Scheduled prompts live in `docker-volumes/workspace/cron/crontab`.
 
-## Key Env Vars
-
-| Variable                        | Required | Service                   | Purpose                                  |
-| ------------------------------- | -------- | ------------------------- | ---------------------------------------- |
-| `ATLASSIAN_AUTH`                | Yes      | `remote-cli`, `mitmproxy` | Atlassian MCP auth + proxy injection     |
-| `CRON_SECRET`                   | Yes      | `gateway`, `cron`         | Cron endpoint auth                       |
-| `GITHUB_APP_ID`                 | Yes      | `remote-cli`              | GitHub App ID                            |
-| `GITHUB_APP_BOT_ID`             | Yes      | `remote-cli`              | GitHub App bot user ID                   |
-| `GITHUB_APP_PRIVATE_KEY_FILE`   | Yes      | `remote-cli`              | GitHub App private key path              |
-| `GITHUB_APP_SLUG`               | Yes      | `remote-cli`, `gateway`   | GitHub App slug                          |
-| `GITHUB_PAT`                    | No       | `remote-cli`              | Optional fallback token for `git` / `gh` |
-| `GITHUB_WEBHOOK_SECRET`         | Yes      | `gateway`                 | GitHub webhook signature secret          |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | Yes      | `grafana-mcp`             | Grafana access token                     |
-| `GRAFANA_URL`                   | Yes      | `grafana-mcp`             | Grafana base URL                         |
-| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`              | Langfuse read-only auth                  |
-| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`              | Langfuse read-only auth                  |
-| `METABASE_API_KEY`              | No       | `remote-cli`              | Metabase access                          |
-| `POSTHOG_API_KEY`               | Yes      | `remote-cli`              | PostHog MCP auth                         |
-| `THOR_INTERNAL_SECRET`                | Yes      | `remote-cli`, `gateway`   | Secret-gates gateway↔remote-cli internal APIs |
-| `SLACK_BOT_TOKEN`               | Yes      | `slack-mcp`, `mitmproxy`  | Slack bot token + proxy injection        |
-| `SLACK_BOT_USER_ID`             | Yes      | `gateway`                 | Used to ignore our own Slack messages    |
-| `SLACK_SIGNING_SECRET`          | Yes      | `gateway`                 | Slack webhook verification               |
-
 ## Security Model
 
 - OpenCode does not get direct API credentials for MCP upstreams.
 - `remote-cli` enforces MCP allow/approve policy server-side and stores approvals under `/workspace/data/approvals`.
-- Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution, `POST /internal/exec`, and `GET /github/pr-head`.
+- Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution and `POST /internal/exec`.
 - `git` uses GitHub App installation tokens through `GIT_ASKPASS` when `owners.<owner>.github_app_installation_id` is configured and the target owner can be resolved; `GITHUB_PAT` is only a fallback during command execution.
 - `gh` resolves GitHub App auth before execution and can fall back to inherited `GH_TOKEN` / `GITHUB_PAT` when no installation token is available, but the service itself still requires GitHub App env at startup.
 - Source repos are mounted read-only into OpenCode; edits happen in `/workspace/worktrees`.
@@ -253,7 +228,7 @@ thor/
 │   ├── opencode-cli/
 │   ├── remote-cli/
 │   ├── runner/
-│   └── slack-mcp/
+│   └── admin/
 ├── docker/
 │   ├── cron/
 │   ├── mitmproxy/

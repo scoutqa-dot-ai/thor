@@ -2,10 +2,36 @@ import { createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { WebClient } from "@slack/web-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConfigLoader, WorkspaceConfig } from "@thor/common";
 import { createGatewayApp, type GatewayAppConfig } from "./app.js";
 import type { EventQueue } from "./queue.js";
+
+interface MockSlackClient {
+  client: WebClient;
+  postMessage: ReturnType<typeof vi.fn>;
+  update: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
+  reactionsAdd: ReturnType<typeof vi.fn>;
+}
+
+function createMockSlackClient(): MockSlackClient {
+  const postMessage = vi.fn().mockResolvedValue({ ok: true, ts: "msg.001", channel: "C123" });
+  const update = vi.fn().mockResolvedValue({ ok: true });
+  const del = vi.fn().mockResolvedValue({ ok: true });
+  const reactionsAdd = vi.fn().mockResolvedValue({ ok: true });
+  return {
+    client: {
+      chat: { postMessage, update, delete: del },
+      reactions: { add: reactionsAdd },
+    } as unknown as WebClient,
+    postMessage,
+    update,
+    delete: del,
+    reactionsAdd,
+  };
+}
 
 /** Create a fake ConfigLoader from channel IDs and channel→repo map for tests. */
 function fakeConfigLoader(
@@ -30,13 +56,19 @@ function fakeConfigLoader(
 
 let mockHasSlackReply = false;
 let mappedRepos = new Set<string>(["test-repo", "thor"]);
+let correlationKeyAliases = new Map<string, string>();
+let notesKeys = new Set<string>();
 vi.mock("@thor/common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@thor/common")>();
   return {
     ...actual,
     resolveRepoDirectory: (repoName: string) =>
       mappedRepos.has(repoName) ? `/workspace/repos/${repoName}` : undefined,
+    resolveCorrelationKeys: (rawKeys: string[]) =>
+      correlationKeyAliases.get(rawKeys[0] ?? "") ?? rawKeys[0] ?? "",
     hasSlackReply: () => mockHasSlackReply,
+    findNotesFile: (correlationKey: string) =>
+      notesKeys.has(correlationKey) ? `/workspace/worklog/test/${correlationKey}.md` : undefined,
   };
 });
 
@@ -48,12 +80,39 @@ function signGitHub(body: string, secret: string): string {
   return `sha256=${createHmac("sha256", secret).update(Buffer.from(body)).digest("hex")}`;
 }
 
-function readQueuedEvents(queueDir: string): Array<Record<string, unknown>> {
-  return readdirSync(queueDir)
+function checkSuiteWebhookBody(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    action: "completed",
+    installation: { id: 126669985 },
+    repository: { full_name: "scoutqa-dot-ai/thor" },
+    sender: { id: 41898282, login: "github-actions[bot]", type: "Bot" },
+    check_suite: {
+      head_sha: "abc123def456",
+      head_branch: "feature/refactor",
+      conclusion: "success",
+      status: "completed",
+      updated_at: "2026-04-24T12:00:00Z",
+      pull_requests: [
+        {
+          number: 42,
+          head: {
+            ref: "feature/refactor",
+            sha: "abc123def456",
+            repo: { full_name: "scoutqa-dot-ai/thor" },
+          },
+          base: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+        },
+      ],
+      ...overrides,
+    },
+  });
+}
+
+function readQueuedEvents(queueDir: string, subdir?: string): Array<Record<string, unknown>> {
+  const dir = subdir ? join(queueDir, subdir) : queueDir;
+  return readdirSync(dir)
     .filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
-    .map(
-      (entry) => JSON.parse(readFileSync(join(queueDir, entry), "utf8")) as Record<string, unknown>,
-    );
+    .map((entry) => JSON.parse(readFileSync(join(dir, entry), "utf8")) as Record<string, unknown>);
 }
 
 function readInboundWebhookHistoryEntries(worklogDir: string): Array<Record<string, unknown>> {
@@ -112,13 +171,14 @@ async function withWorklogDir<T>(run: (worklogDir: string) => Promise<T>): Promi
 
 async function withServer<T>(
   fetchImpl: typeof fetch,
-  run: (baseUrl: string, queue: EventQueue, queueDir: string) => Promise<T>,
+  run: (baseUrl: string, queue: EventQueue, queueDir: string, slack: MockSlackClient) => Promise<T>,
   extraConfig?: Partial<GatewayAppConfig>,
 ): Promise<T> {
   const queueDir = mkdtempSync(join(tmpdir(), "gateway-test-"));
+  const slack = createMockSlackClient();
   const { app, queue } = createGatewayApp({
     signingSecret: "signing-secret",
-    slackMcpUrl: "http://slack-mcp.test",
+    slackBotToken: "xoxb-test",
     slackBotUserId: "U0BOTEXAMPLE",
     runnerUrl: "http://runner.test",
     fetchImpl,
@@ -127,6 +187,7 @@ async function withServer<T>(
     shortDelayMs: 0,
     longDelayMs: 0,
     getConfig: fakeConfigLoader(["C123"], [["C123", "test-repo"]]),
+    slackClient: slack.client,
     ...extraConfig,
   });
 
@@ -139,7 +200,7 @@ async function withServer<T>(
   }
 
   try {
-    return await run(`http://127.0.0.1:${address.port}`, queue, queueDir);
+    return await run(`http://127.0.0.1:${address.port}`, queue, queueDir, slack);
   } finally {
     queue.close();
     await new Promise<void>((resolve, reject) =>
@@ -153,9 +214,31 @@ afterEach(() => {
   vi.restoreAllMocks();
   mockHasSlackReply = false;
   mappedRepos = new Set(["test-repo", "thor"]);
+  correlationKeyAliases = new Map();
+  notesKeys = new Set();
 });
 
 describe("gateway", () => {
+  it("fails fast when slack bot token is missing", () => {
+    const queueDir = mkdtempSync(join(tmpdir(), "gateway-config-test-"));
+
+    try {
+      expect(() =>
+        createGatewayApp({
+          signingSecret: "signing-secret",
+          slackBotToken: "",
+          slackBotUserId: "U0BOTEXAMPLE",
+          runnerUrl: "http://runner.test",
+          fetchImpl: vi.fn<typeof fetch>(),
+          queueDir,
+          disableQueueInterval: true,
+        }),
+      ).toThrow("SLACK_BOT_TOKEN is required");
+    } finally {
+      rmSync(queueDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns filtered Codex status from /health", async () => {
     const authDir = mkdtempSync(join(tmpdir(), "gateway-auth-"));
     const authPath = join(authDir, "auth.json");
@@ -165,11 +248,6 @@ describe("gateway", () => {
       const url = String(input);
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
-      }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
       }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
@@ -238,7 +316,6 @@ describe("gateway", () => {
             },
             services: {
               runner: { status: "ok", service: "runner" },
-              "slack-mcp": { status: "ok", service: "slack-mcp" },
               "remote-cli": { status: "ok", service: "remote-cli" },
             },
             codex: {
@@ -295,11 +372,6 @@ describe("gateway", () => {
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
@@ -348,11 +420,6 @@ describe("gateway", () => {
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
@@ -397,11 +464,6 @@ describe("gateway", () => {
           status: 503,
         });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
@@ -438,11 +500,6 @@ describe("gateway", () => {
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
@@ -476,19 +533,22 @@ describe("gateway", () => {
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
         });
       }
-      if (url.startsWith("http://remote-cli:3004/github/pr-head?")) {
+      if (url === "http://remote-cli:3004/internal/exec") {
         return new Response(
-          JSON.stringify({ ref: "feature/refactor", headRepoFullName: "acme/thor" }),
+          JSON.stringify({
+            stdout: JSON.stringify({
+              headRefName: "feature/refactor",
+              headRepositoryOwner: { login: "acme" },
+              headRepository: { name: "thor" },
+            }),
+            stderr: "",
+            exitCode: 0,
+          }),
           { status: 200 },
         );
       }
@@ -1122,6 +1182,63 @@ describe("gateway", () => {
     });
   });
 
+  it("ignores GitHub webhooks when the event header does not match the parsed body type", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = JSON.stringify({
+            action: "created",
+            installation: { id: 1 },
+            repository: { full_name: "scoutqa-dot-ai/thor" },
+            sender: { id: 1001, login: "alice", type: "User" },
+            issue: {
+              number: 12,
+              pull_request: { html_url: "https://github.com/scoutqa-dot-ai/thor/pull/12" },
+            },
+            comment: {
+              body: "@thor review",
+              html_url: "https://github.com/scoutqa-dot-ai/thor/pull/12#issuecomment-1",
+              created_at: "2026-04-24T11:00:00Z",
+            },
+          });
+
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-header-mismatch",
+              "X-GitHub-Event": "pull_request_review_comment",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            requestId: "delivery-header-mismatch",
+            reason: "event_unsupported",
+            eventType: "pull_request_review_comment",
+            action: "created",
+            parseStatus: "schema_valid",
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
   it("enqueues valid GitHub webhook with branch correlation and mention delay", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
@@ -1169,11 +1286,12 @@ describe("gateway", () => {
           delayMs: 3000,
           interrupt: true,
           payload: {
-            source: "github",
-            eventType: "pull_request_review_comment",
-            repoFullName: "scoutqa-dot-ai/thor",
-            localRepo: "thor",
-            branch: "feature/refactor",
+            action: "created",
+            repository: { full_name: "scoutqa-dot-ai/thor" },
+            pull_request: {
+              number: 42,
+              head: { ref: "feature/refactor" },
+            },
           },
         });
         expect(fetchImpl).not.toHaveBeenCalled();
@@ -1184,6 +1302,245 @@ describe("gateway", () => {
         githubAppBotId: 7777,
       },
     );
+  });
+
+  it("enqueues check_suite events only when the branch has an existing notes-backed session", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
+      .mockResolvedValueOnce({
+        stdout: "49699333+thor[bot]@users.noreply.github.com\n",
+        stderr: "",
+        exitCode: 0,
+      });
+
+    await withWorklogDir(async (worklogDir) => {
+      notesKeys.add("git:branch:thor:feature/refactor");
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody();
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-ok",
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true });
+
+          const queued = readQueuedEvents(queueDir);
+          expect(queued).toHaveLength(1);
+          expect(queued[0]).toMatchObject({
+            id: "delivery-check-suite-ok",
+            source: "github",
+            correlationKey: "git:branch:thor:feature/refactor",
+            delayMs: 0,
+            interrupt: false,
+            payload: {
+              event_type: "check_suite",
+              action: "completed",
+              check_suite: {
+                head_sha: "abc123def456",
+                head_branch: "feature/refactor",
+                conclusion: "success",
+              },
+            },
+          });
+
+          const ingested = readGitHubIngestedEntries(worklogDir);
+          expect(ingested).toHaveLength(1);
+          expect(ingested[0]).toMatchObject({
+            reason: "accepted",
+            eventType: "check_suite",
+            metadata: { correlationKey: "git:branch:thor:feature/refactor" },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+          githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+          internalExec,
+        },
+      );
+    });
+
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "git",
+      args: ["cat-file", "-e", "abc123def456"],
+      cwd: "/workspace/repos/thor",
+    });
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "git",
+      args: ["log", "-1", "--format=%ae", "abc123def456"],
+      cwd: "/workspace/repos/thor",
+    });
+  });
+
+  it.each([
+    {
+      gateReason: "sha_missing",
+      execResults: [{ stdout: "", stderr: "missing", exitCode: 128 }],
+    },
+    {
+      gateReason: "author_mismatch",
+      execResults: [
+        { stdout: "", stderr: "", exitCode: 0 },
+        { stdout: "alice@example.com\n", stderr: "", exitCode: 0 },
+      ],
+    },
+    {
+      gateReason: "exec_failed",
+      execResults: [new Error("timeout")],
+    },
+  ])(
+    "ignores check_suite events when the git gate returns $gateReason",
+    async ({ gateReason, execResults }) => {
+      const fetchImpl = vi.fn<typeof fetch>();
+      const internalExec = vi.fn();
+      for (const result of execResults) {
+        if (result instanceof Error) {
+          internalExec.mockRejectedValueOnce(result);
+        } else {
+          internalExec.mockResolvedValueOnce(result);
+        }
+      }
+
+      await withWorklogDir(async (worklogDir) => {
+        notesKeys.add("git:branch:thor:feature/refactor");
+
+        await withServer(
+          fetchImpl,
+          async (baseUrl, _queue, queueDir) => {
+            const body = checkSuiteWebhookBody();
+            const response = await fetch(`${baseUrl}/github/webhook`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+                "X-GitHub-Delivery": `delivery-check-suite-${gateReason}`,
+                "X-GitHub-Event": "check_suite",
+              },
+              body,
+            });
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({ ok: true, ignored: true });
+            expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+            const ignored = readGitHubIgnoredEntries(worklogDir);
+            expect(ignored).toHaveLength(1);
+            expect(ignored[0]).toMatchObject({
+              reason: "check_suite_gate_failed",
+              eventType: "check_suite",
+              metadata: {
+                headSha: "abc123def456",
+                gateReason,
+              },
+            });
+          },
+          {
+            githubWebhookSecret: "github-secret",
+            githubMentionLogins: ["thor", "thor[bot]"],
+            githubAppBotId: 7777,
+            githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+            internalExec,
+          },
+        );
+      });
+    },
+  );
+
+  it("ignores check_suite events without an existing notes-backed session", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody();
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-unresolved",
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "correlation_key_unresolved",
+            eventType: "check_suite",
+            metadata: {
+              rawKey: "git:branch:thor:feature/refactor",
+              resolvedKey: "git:branch:thor:feature/refactor",
+              headSha: "abc123def456",
+            },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("ignores branchless check_suite events before pending branch resolution", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody({ head_branch: null });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-branchless",
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "check_suite_branch_missing",
+            eventType: "check_suite",
+            metadata: { headSha: "abc123def456" },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
   });
 
   it("returns 401 and does not enqueue for invalid GitHub signature", async () => {
@@ -1351,8 +1708,8 @@ describe("gateway", () => {
           delayMs: 3000,
           interrupt: true,
           payload: {
-            eventType: "issue_comment",
-            branch: null,
+            action: "created",
+            issue: { number: 12 },
           },
         });
       },
@@ -1409,12 +1766,9 @@ describe("gateway", () => {
   it("accepts a signed app mention and fires a trigger to the runner (fire-and-forget)", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // 1st call: POST /reaction to slack-mcp
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      // 2nd call: POST /trigger to runner
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue) => {
+    await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
       const body = JSON.stringify({
         type: "event_callback",
         event_id: "Ev123",
@@ -1444,16 +1798,11 @@ describe("gateway", () => {
 
       await queue.flush();
 
-      // Reaction via slack-mcp
-      const reactionCall = fetchImpl.mock.calls.find(
-        (c) => c[0] === "http://slack-mcp.test/reaction",
-      );
-      expect(reactionCall).toBeDefined();
-      const reactionBody = JSON.parse(String(reactionCall![1]?.body));
-      expect(reactionBody).toEqual({
+      // Reaction via Slack Web API
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
         channel: "C123",
         timestamp: "1710000000.001",
-        reaction: "eyes",
+        name: "eyes",
       });
 
       // Runner trigger via fetchImpl
@@ -1713,14 +2062,9 @@ describe("gateway", () => {
   it("batches 3 rapid app_mention events into a single runner trigger with combined prompt", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      // Reaction calls to slack-mcp (3x)
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      // POST /trigger → 200
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue) => {
+    await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
       const timestamp = `${Math.floor(Date.now() / 1000)}`;
 
       // Fire 3 mentions in quick succession (same thread)
@@ -1752,11 +2096,8 @@ describe("gateway", () => {
 
       await queue.flush();
 
-      // 3 reaction calls to slack-mcp
-      const reactionCalls = fetchImpl.mock.calls.filter(
-        (c) => c[0] === "http://slack-mcp.test/reaction",
-      );
-      expect(reactionCalls).toHaveLength(3);
+      // 3 reaction calls to Slack Web API
+      expect(slack.reactionsAdd).toHaveBeenCalledTimes(3);
 
       // 1 runner trigger via fetchImpl — combined prompt with Slack context
       const triggerCalls = fetchImpl.mock.calls.filter(
@@ -2138,45 +2479,51 @@ describe("gateway", () => {
     });
   });
 
-  it("resolves approval actions through remote-cli for current v2 button values", async () => {
+  it("resolves approval actions through remote-cli for legacy v2 button values", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 })))
-      .mockResolvedValueOnce(new Response("ok"));
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({ status: "approved", tool: "deploy", upstream: "slack" }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
 
     await withServer(
       fetchImpl,
-      async (baseUrl) => {
-        const payloads = [
-          {
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
             type: "block_actions",
             user: { id: "U123" },
             channel: { id: "C123" },
-            message: { ts: "1710000000.001" },
+            message: { ts: "1710000000.001", thread_ts: "1710000000.001" },
             actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
           },
-        ];
+          body,
+        });
 
-        for (const payloadData of payloads) {
-          const payload = encodeURIComponent(JSON.stringify(payloadData));
-          const body = `payload=${payload}`;
-          const timestamp = `${Math.floor(Date.now() / 1000)}`;
-
-          const response = await fetch(`${baseUrl}/slack/interactivity`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-              "X-Slack-Request-Timestamp": timestamp,
-              "X-Slack-Signature": sign(body, "signing-secret", timestamp),
-            },
-            body,
-          });
-
-          expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true });
-        }
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
 
         await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
       },
       {
         remoteCliHost: "remote-cli.internal",
@@ -2185,11 +2532,10 @@ describe("gateway", () => {
       },
     );
 
-    const execCalls = fetchImpl.mock.calls.filter(
+    const execCall = fetchImpl.mock.calls.find(
       ([url]) => typeof url === "string" && url === "http://remote-cli.internal:3010/exec/mcp",
     );
-    expect(execCalls).toHaveLength(1);
-    expect(execCalls[0]?.[1]).toMatchObject({
+    expect(execCall?.[1]).toMatchObject({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2197,5 +2543,303 @@ describe("gateway", () => {
       },
       body: JSON.stringify({ args: ["resolve", "act-1", "approved", "U123"] }),
     });
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeDefined();
+    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.correlationKey).toBe("slack:thread:1710000000.001");
+    expect(runnerBody.interrupt).toBe(false);
+  });
+
+  it("resolves approval outcome correlation keys through registered aliases", async () => {
+    correlationKeyAliases.set(
+      "slack:thread:1710000000.001",
+      "git:branch:test-repo:feature/from-slack",
+    );
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({
+              status: "approved",
+              tool: "merge_pull_request",
+              upstream: "github",
+            }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100", thread_ts: "1710000000.001" },
+            actions: [
+              {
+                action_id: "approval_approve",
+                value: "v3:act-1:github:1710000000.001",
+              },
+            ],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        internalSecret: "resolve-secret",
+      },
+    );
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeDefined();
+    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.correlationKey).toBe("git:branch:test-repo:feature/from-slack");
+  });
+
+  it("retries queued approval outcome re-entry when runner is busy", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({
+              status: "approved",
+              tool: "merge_pull_request",
+              upstream: "github",
+              reason: "ship it",
+            }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ busy: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100", thread_ts: "1710000000.001" },
+            actions: [
+              {
+                action_id: "approval_approve",
+                value: "v3:act-1:github:1710000000.001",
+              },
+            ],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        await queue.flush();
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        internalSecret: "resolve-secret",
+      },
+    );
+
+    const runnerCalls = fetchImpl.mock.calls.filter(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCalls).toHaveLength(2);
+
+    const firstBody = JSON.parse(String(runnerCalls[0]?.[1]?.body));
+    expect(firstBody.interrupt).toBe(false);
+    expect(firstBody.correlationKey).toBe("slack:thread:1710000000.001");
+    expect(firstBody.prompt).toContain("human approved action `act-1`");
+    expect(firstBody.prompt).toContain("continue the workflow");
+  });
+
+  it("updates Slack and re-enters the session when an approved action fails during execution", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: "",
+            stderr: 'Error calling "merge_pull_request": upstream unavailable\n',
+            exitCode: 1,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    let capturedSlack: MockSlackClient | undefined;
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue, _queueDir, slack) => {
+        capturedSlack = slack;
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100", thread_ts: "1710000000.001" },
+            actions: [
+              {
+                action_id: "approval_approve",
+                value: "v3:act-1:github:1710000000.001",
+              },
+            ],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        internalSecret: "resolve-secret",
+      },
+    );
+
+    expect(capturedSlack!.update).toHaveBeenCalled();
+    const updateArg = capturedSlack!.update.mock.calls[0][0] as { text: string };
+    expect(updateArg.text).toContain("Approved, resolution failed");
+    expect(updateArg.text).toContain('Error calling "merge_pull_request"');
+    expect(updateArg.text).not.toContain("upstream unavailable");
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeDefined();
+    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.prompt).toContain("approval resolution reported a failure");
+    expect(runnerBody.prompt).toContain('Error calling "merge_pull_request"');
+    expect(runnerBody.prompt).not.toContain("upstream unavailable");
+  });
+
+  it("fails closed for v2 approval buttons when thread context is missing", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stdout: JSON.stringify({ status: "approved", tool: "deploy", upstream: "slack" }),
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const payload = encodeURIComponent(
+          JSON.stringify({
+            type: "block_actions",
+            user: { id: "U123" },
+            channel: { id: "C123" },
+            message: { ts: "1710000000.100" },
+            actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
+          }),
+        );
+        const body = `payload=${payload}`;
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/interactivity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.flush();
+      },
+      {
+        remoteCliHost: "remote-cli.internal",
+        remoteCliPort: 3010,
+        internalSecret: "resolve-secret",
+      },
+    );
+
+    const runnerCall = fetchImpl.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
+    );
+    expect(runnerCall).toBeUndefined();
   });
 });

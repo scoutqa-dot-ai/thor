@@ -80,6 +80,15 @@ export const SlackInteractivityPayloadSchema = z.object({
   message: z
     .object({
       ts: z.string(),
+      thread_ts: z.string().optional(),
+    })
+    .optional(),
+  container: z
+    .object({
+      type: z.string().optional(),
+      message_ts: z.string().optional(),
+      thread_ts: z.string().optional(),
+      channel_id: z.string().optional(),
     })
     .optional(),
 });
@@ -90,6 +99,8 @@ export type SlackReactionEvent = z.infer<typeof SlackReactionEventSchema>;
 export type SlackBotEvent = z.infer<typeof SlackBotEventSchema>;
 export type SlackEventEnvelope = z.infer<typeof SlackEventEnvelopeSchema>;
 export type SlackUrlVerification = z.infer<typeof SlackUrlVerificationSchema>;
+export type SlackInteractivityPayload = z.infer<typeof SlackInteractivityPayloadSchema>;
+export type SlackInteractivityAction = NonNullable<SlackInteractivityPayload["actions"]>[number];
 
 export function verifySlackSignature(input: {
   signingSecret: string;

@@ -2,12 +2,14 @@ import express, { type Express, type Request, type Response } from "express";
 import {
   appendJsonlWorklog,
   createLogger,
+  findNotesFile,
   logError,
   logInfo,
   resolveCorrelationKeys,
   hasSlackReply,
   getAllowedChannelIds,
   getChannelRepoMap,
+  truncate,
   resolveRepoDirectory,
   writeInboundWebhookHistory,
   type ConfigLoader,
@@ -22,12 +24,16 @@ import {
   getBatchLogPrefix,
   planBatchDispatch,
   resolveApproval,
+  createInternalExecClient,
   updateSlackMessage,
+  type ApprovalOutcomeEventPayload,
   type BatchLogPrefix,
   type BatchSource,
+  type InternalExecClient,
   type RunnerDeps,
-  type SlackMcpDeps,
 } from "./service.js";
+import { createSlackClient, type SlackDeps } from "./slack-api.js";
+import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKey,
@@ -36,17 +42,29 @@ import {
   SlackInteractivityPayloadSchema,
   SlackUrlVerificationSchema,
   verifySlackSignature,
+  type SlackInteractivityAction,
+  type SlackInteractivityPayload,
   type SlackThreadEvent,
 } from "./slack.js";
 import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.js";
 import {
+  extractApprovalFailureCategory,
+  parseApprovalButtonValue,
+  type ApprovalButtonRoute,
+} from "./approval.js";
+import {
   buildCorrelationKey,
   buildPendingBranchResolveKey,
+  getGitHubEventBranch,
+  getGitHubEventLocalRepo,
+  getGitHubEventNumber,
   getGitHubEventSourceTs,
+  getGitHubEventType,
   GitHubWebhookEnvelopeSchema,
   isPendingBranchResolveKey,
-  type NormalizedGitHubEvent,
-  normalizeGitHubEvent,
+  isCheckSuiteCompletedEvent,
+  shouldIgnoreGitHubEvent,
+  type GitHubWebhookEvent,
   verifyGitHubSignature,
 } from "./github.js";
 
@@ -58,8 +76,12 @@ interface CronQueuedEvent extends QueuedEvent<CronPayload> {
   source: "cron";
 }
 
-interface GitHubQueuedEvent extends QueuedEvent<NormalizedGitHubEvent> {
+interface GitHubQueuedEvent extends QueuedEvent<GitHubWebhookEvent> {
   source: "github";
+}
+
+interface ApprovalQueuedEvent extends QueuedEvent<ApprovalOutcomeEventPayload> {
+  source: "approval";
 }
 
 function isSlackEvent(e: QueuedEvent): e is SlackQueuedEvent {
@@ -70,8 +92,50 @@ function isCronEvent(e: QueuedEvent): e is CronQueuedEvent {
   return e.source === "cron";
 }
 
+function isApprovalEvent(e: QueuedEvent): e is ApprovalQueuedEvent {
+  return e.source === "approval";
+}
+
 function isGitHubEvent(e: QueuedEvent): e is GitHubQueuedEvent {
   return e.source === "github";
+}
+
+function summarizeResolutionOutput(
+  stdout: string,
+  stderr: string,
+): {
+  status?: string;
+  summary?: string;
+  tool?: string;
+  upstream?: string;
+} {
+  let status: string | undefined;
+  let summary: string | undefined;
+  let tool: string | undefined;
+  let upstream: string | undefined;
+
+  // Avoid echoing raw stdout/stderr — both can contain upstream tool response
+  // data, which the approval card must not leak. Only surface structured fields
+  // and a sanitized failure category.
+  try {
+    const parsed = JSON.parse(stdout) as Record<string, unknown>;
+    if (typeof parsed.status === "string") status = parsed.status;
+    if (typeof parsed.tool === "string") tool = parsed.tool;
+    if (typeof parsed.upstream === "string") upstream = parsed.upstream;
+    if (typeof parsed.error === "string" && parsed.error) {
+      summary = parsed.error;
+    } else if (typeof parsed.reason === "string" && parsed.reason) {
+      summary = parsed.reason;
+    }
+  } catch {
+    // non-JSON stdout: drop, do not surface
+  }
+
+  if (!summary) {
+    summary = extractApprovalFailureCategory(stderr);
+  }
+
+  return { status, summary, tool, upstream };
 }
 
 const log = createLogger("gateway");
@@ -117,6 +181,7 @@ const GITHUB_SUPPORTED_EVENTS = new Set([
   "issue_comment",
   "pull_request_review_comment",
   "pull_request_review",
+  "check_suite",
 ]);
 
 type GitHubIgnoreReason =
@@ -129,14 +194,22 @@ type GitHubIgnoreReason =
   | "fork_pr_unsupported"
   | "self_sender"
   | "empty_review_body"
-  | "non_mention_comment";
+  | "non_mention_comment"
+  | "check_suite_branch_missing"
+  | "correlation_key_unresolved"
+  | "check_suite_gate_failed";
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
 
 export interface GatewayAppConfig extends RunnerDeps {
   signingSecret: string;
-  slackMcpUrl: string;
+  /** Slack bot token. Either this or `slackClient` is required. */
+  slackBotToken: string;
+  /** Pre-built Slack WebClient (used by tests to inject a mock). */
+  slackClient?: SlackDeps["client"];
+  /** Override Slack API base URL (used by tests; ignored if `slackClient` is set). */
+  slackApiBaseUrl?: string;
   /** Our bot's Slack user ID — used to ignore our own messages. */
   slackBotUserId: string;
   /** Remote CLI hostname for approval resolution. Default: "remote-cli". */
@@ -166,6 +239,10 @@ export interface GatewayAppConfig extends RunnerDeps {
   githubMentionLogins?: string[];
   /** Numeric GitHub user ID of our App's bot user. Used as the canonical self-identity check. */
   githubAppBotId?: number;
+  /** Git author email derived from the GitHub App bot identity. */
+  githubAppBotEmail?: string;
+  /** Internal exec client override for tests. */
+  internalExec?: InternalExecClient;
   /** GitHub mention debounce delay in ms. Default: 3000. */
   githubMentionDelayMs?: number;
 }
@@ -177,7 +254,13 @@ const InteractivityBodySchema = z.object({
 function parseInteractivityPayload(body: unknown) {
   const parsed = InteractivityBodySchema.safeParse(body);
   if (!parsed.success) return undefined;
-  return SlackInteractivityPayloadSchema.safeParse(JSON.parse(parsed.data.payload));
+  let raw: unknown;
+  try {
+    raw = JSON.parse(parsed.data.payload);
+  } catch {
+    return undefined;
+  }
+  return SlackInteractivityPayloadSchema.safeParse(raw);
 }
 
 export interface GatewayApp {
@@ -185,7 +268,199 @@ export interface GatewayApp {
   queue: EventQueue;
 }
 
+type ApprovalDecision = "approved" | "rejected";
+
+const DECISION_LABEL: Record<ApprovalDecision, string> = {
+  approved: "Approved",
+  rejected: "Rejected",
+};
+
+type ApprovalAction = SlackInteractivityAction & { value: string };
+
+interface ApprovalDeps {
+  slackDeps: SlackDeps;
+  remoteCliUrl: string;
+  internalSecret: string | undefined;
+  fetchImpl: typeof fetch | undefined;
+  queue: EventQueue;
+}
+
+interface ApprovalActionContext extends ApprovalDeps {
+  res: Response;
+  action: ApprovalAction;
+  payload: SlackInteractivityPayload;
+}
+
+interface ApprovalReentryContext extends ApprovalDeps {
+  route: ApprovalButtonRoute;
+  decision: ApprovalDecision;
+  reviewer: string;
+  channel: string | undefined;
+  messageTs: string | undefined;
+  threadTs: string;
+}
+
+function handleApprovalAction(ctx: ApprovalActionContext): void {
+  const { res, action, payload } = ctx;
+  const decision: ApprovalDecision =
+    action.action_id === "approval_approve" ? "approved" : "rejected";
+  const reviewer = payload.user?.id ?? "unknown";
+  const route = parseApprovalButtonValue(action.value);
+  const channel = payload.channel?.id ?? payload.container?.channel_id;
+  const messageTs = payload.message?.ts ?? payload.container?.message_ts;
+  const threadTs = route?.threadTs ?? payload.message?.thread_ts ?? payload.container?.thread_ts;
+
+  if (!route) {
+    logError(log, "approval_resolve_failed", "Unrecognized button value format", {
+      value: action.value,
+    });
+    res.status(200).json({ ok: true });
+    return;
+  }
+
+  if (!threadTs) {
+    logError(log, "approval_resolve_failed", "Unable to determine originating thread", {
+      actionId: route.actionId,
+      value: action.value,
+    });
+    res.status(200).json({ ok: true });
+    return;
+  }
+
+  logInfo(log, "approval_action", {
+    actionId: route.actionId,
+    upstreamName: route.upstreamName,
+    decision,
+    reviewer,
+    threadTs,
+    remoteCliUrl: ctx.remoteCliUrl,
+  });
+
+  // Slack requires the interactivity ack within 3s; finish in the background.
+  res.status(200).json({ ok: true });
+
+  void resolveApprovalAndReenter({
+    ...ctx,
+    route,
+    decision,
+    reviewer,
+    channel,
+    messageTs,
+    threadTs,
+  }).catch((error) => {
+    logError(log, "approval_background_error", error, { actionId: route.actionId });
+  });
+}
+
+async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<void> {
+  const {
+    route,
+    decision,
+    reviewer,
+    channel,
+    messageTs,
+    threadTs,
+    slackDeps,
+    remoteCliUrl,
+    internalSecret,
+    fetchImpl,
+    queue,
+  } = ctx;
+
+  const resolved = await resolveApproval(
+    route.actionId,
+    decision,
+    reviewer,
+    remoteCliUrl,
+    internalSecret,
+    fetchImpl,
+  );
+  if (!resolved) {
+    logError(log, "approval_resolve_failed", "remote-cli returned error", {
+      actionId: route.actionId,
+    });
+    if (channel && messageTs) {
+      const failureText = `⚠️ *${DECISION_LABEL[decision]}, but resolution failed* by <@${reviewer}> · \`${route.actionId}\`\n>remote-cli did not respond after retries; please retry the approval action`;
+      await updateSlackMessage(channel, messageTs, failureText, slackDeps);
+    }
+    return;
+  }
+
+  const resolution = summarizeResolutionOutput(resolved.stdout, resolved.stderr);
+  const resolutionFailed = resolved.exitCode !== 0;
+  const statusEmoji = resolutionFailed ? "⚠️" : decision === "approved" ? "✅" : "❌";
+  const decisionLabel = resolutionFailed
+    ? `${DECISION_LABEL[decision]}, resolution failed`
+    : DECISION_LABEL[decision];
+  const target = [route.upstreamName ?? resolution.upstream, resolution.tool]
+    .filter(Boolean)
+    .join("/");
+  const summarySuffix = resolution.summary ? `\n>${truncate(resolution.summary, 180)}` : "";
+  const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}> · \`${route.actionId}\`${target ? ` (${target})` : ""}${summarySuffix}`;
+
+  if (!channel) {
+    logError(log, "approval_reentry_enqueue_failed", "Missing channel for approval outcome", {
+      actionId: route.actionId,
+      threadTs,
+    });
+    return;
+  }
+
+  const outcomePayload: ApprovalOutcomeEventPayload = {
+    actionId: route.actionId,
+    decision,
+    reviewer,
+    channel,
+    threadTs,
+    upstreamName: route.upstreamName ?? resolution.upstream,
+    tool: resolution.tool,
+    messageTs,
+    resolutionStatus: resolutionFailed ? "error" : resolution.status,
+    resolutionSummary: resolution.summary,
+    resolutionExitCode: resolved.exitCode,
+  };
+
+  const rawCorrelationKey = `slack:thread:${threadTs}`;
+  const outcomeCorrelationKey = resolveCorrelationKeys([rawCorrelationKey]);
+  if (outcomeCorrelationKey !== rawCorrelationKey) {
+    logInfo(log, "corr_key_resolved", {
+      rawKey: rawCorrelationKey,
+      correlationKey: outcomeCorrelationKey,
+    });
+  }
+
+  // Enqueue before the Slack card update — re-entering the runner is the
+  // load-bearing operation; a failed chat.update must not block it.
+  queue.enqueue({
+    id: `approval-${route.actionId}-${decision}-${Date.now()}`,
+    source: "approval",
+    correlationKey: outcomeCorrelationKey,
+    payload: outcomePayload,
+    receivedAt: new Date().toISOString(),
+    sourceTs: Date.now(),
+    readyAt: Date.now(),
+    delayMs: 0,
+    interrupt: false,
+  });
+
+  logInfo(log, "approval_outcome_enqueued", {
+    actionId: route.actionId,
+    decision,
+    channel,
+    threadTs,
+    correlationKey: outcomeCorrelationKey,
+  });
+
+  if (messageTs) {
+    await updateSlackMessage(channel, messageTs, text, slackDeps);
+  }
+}
+
 export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
+  if (!config.slackBotToken.trim()) {
+    throw new Error("SLACK_BOT_TOKEN is required");
+  }
+
   // --- Event queue with handler ---
 
   const selfUserId = config.slackBotUserId;
@@ -235,12 +510,18 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     runnerUrl: config.runnerUrl,
     fetchImpl: config.fetchImpl,
   };
-  const slackMcpDeps: SlackMcpDeps = {
-    slackMcpUrl: config.slackMcpUrl,
-    fetchImpl: config.fetchImpl,
+  const slackDeps: SlackDeps = {
+    client: config.slackClient ?? createSlackClient(config.slackBotToken, config.slackApiBaseUrl),
   };
   const remoteCliHost = config.remoteCliHost ?? "remote-cli";
   const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;
+  const internalExec =
+    config.internalExec ??
+    createInternalExecClient({
+      remoteCliUrl,
+      internalSecret: config.internalSecret,
+      fetchImpl: config.fetchImpl,
+    });
 
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
@@ -249,6 +530,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       const slackEvents = events.filter(isSlackEvent);
       const cronEvents = events.filter(isCronEvent);
       const githubEvents = events.filter(isGitHubEvent);
+      const approvalEvents = events.filter(isApprovalEvent);
       const sources = [...new Set(events.map((event) => event.source))].sort() as BatchSource[];
       const logPrefix = getBatchLogPrefix(sources);
       const correlationKey = events[events.length - 1]?.correlationKey;
@@ -277,11 +559,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           slackEvents: slackEvents.map((event) => event.payload),
           cronEvents: cronEvents.map((event) => event.payload),
           githubEvents: githubEvents.map((event) => event.payload),
+          approvalOutcomes: approvalEvents.map((event) => event.payload),
           correlationKey: correlationKey ?? "",
           deps: runnerDeps,
-          slackMcpDeps,
+          slackDeps,
           remoteCliUrl,
           internalSecret: config.internalSecret,
+          internalExec,
           interrupt: hasInterrupt,
           onAccepted: ack,
           onRejected: reject,
@@ -395,7 +679,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   app.get("/health", async (_req, res) => {
     const result = await deepHealthCheck({
       runnerUrl: config.runnerUrl,
-      slackMcpUrl: config.slackMcpUrl,
       remoteCliHost,
       remoteCliPort: config.remoteCliPort ?? 3004,
       openaiAuthPath: config.openaiAuthPath,
@@ -406,7 +689,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     res.status(statusCode).json({
       ...result,
       runnerUrl: config.runnerUrl,
-      configured: Boolean(config.signingSecret),
+      configured: Boolean(config.signingSecret && config.slackBotToken),
     });
   });
 
@@ -579,7 +862,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // app_mention — always forward
     if (event.type === "app_mention") {
       res.status(200).json({ ok: true });
-      void addSlackReaction(event.channel, event.ts, "eyes", slackMcpDeps).catch((err) =>
+      void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
         logError(log, "reaction_failed", err, { eventId }),
       );
       const rawKey = getSlackCorrelationKey(event);
@@ -692,77 +975,34 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const interactionType = result.success ? (result.data.type ?? "unknown") : "unknown";
     logInfo(log, "interactivity_received", { interactionType });
 
-    // Handle approval button clicks
-    if (result.success && result.data.type === "block_actions" && result.data.actions) {
+    if (result.success && result.data.type === "block_actions") {
       const payload = result.data;
-      for (const action of payload.actions!) {
-        if (
-          (action.action_id === "approval_approve" || action.action_id === "approval_reject") &&
-          action.value
-        ) {
-          const decision = action.action_id === "approval_approve" ? "approved" : "rejected";
-          const reviewer = payload.user?.id ?? "unknown";
-          const channel = payload.channel?.id;
-          const messageTs = payload.message?.ts;
-
-          // Button value format:
-          //   v2:{actionId}:{upstreamName}
-          const parts = action.value.split(":");
-          let actionId: string;
-          let upstreamName: string;
-
-          if (parts[0] === "v2" && parts.length >= 3) {
-            actionId = parts[1];
-            upstreamName = parts[2];
-          } else {
-            logError(log, "approval_resolve_failed", "Unrecognized button value format", {
-              value: action.value,
-            });
-            res.status(200).json({ ok: true });
-            return;
-          }
-
-          logInfo(log, "approval_action", {
-            actionId,
-            upstreamName,
-            decision,
-            reviewer,
-            remoteCliUrl,
-          });
-
-          // Respond immediately to Slack (must reply within 3s)
-          res.status(200).json({ ok: true });
-          void (async () => {
-            const resolved = await resolveApproval(
-              actionId,
-              decision,
-              reviewer,
-              remoteCliUrl,
-              config.internalSecret,
-              config.fetchImpl,
-            );
-            if (!resolved) {
-              logError(log, "approval_resolve_failed", "remote-cli returned error", { actionId });
-              return;
-            }
-            if (channel && messageTs) {
-              const statusEmoji = decision === "approved" ? "✅" : "❌";
-              const decisionLabel = decision.charAt(0).toUpperCase() + decision.slice(1);
-              const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}>`;
-              await updateSlackMessage(channel, messageTs, text, slackMcpDeps);
-            }
-          })();
-          return;
-        }
+      const approvalAction = (payload.actions ?? []).find(
+        (a): a is ApprovalAction =>
+          (a.action_id === "approval_approve" || a.action_id === "approval_reject") &&
+          typeof a.value === "string" &&
+          a.value.length > 0,
+      );
+      if (approvalAction) {
+        handleApprovalAction({
+          res,
+          action: approvalAction,
+          payload,
+          slackDeps,
+          remoteCliUrl,
+          internalSecret: config.internalSecret,
+          fetchImpl: config.fetchImpl,
+          queue,
+        });
+        return;
       }
     }
-
     res.status(200).json({ ok: true, ignored: true, interactionType });
   });
 
   // --- GitHub webhook ---
 
-  app.post("/github/webhook", webhookRawParser, (req: Request, res: Response) => {
+  app.post("/github/webhook", webhookRawParser, async (req: Request, res: Response) => {
     const rawBodyBuffer = getRawBufferFromBody(req.body);
     const { rawBodyUtf8, rawBodyBase64 } = buildRawBodyFields(rawBodyBuffer);
     const deliveryId = req.header("x-github-delivery") ?? "unknown";
@@ -874,8 +1114,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     const repoFullName = parsed.data.repository.full_name;
-    const parts = repoFullName.split("/");
-    const localRepo = parts[parts.length - 1];
+    const localRepo = getGitHubEventLocalRepo(parsed.data);
     if (!localRepo || !resolveRepoDirectory(localRepo)) {
       writeGitHubWebhookHistory("ignored", {
         ...baseEntry,
@@ -899,18 +1138,41 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const normalized = normalizeGitHubEvent(parsed.data, {
-      localRepo,
+    const eventType = getGitHubEventType(parsed.data);
+    if (eventType !== eventTypeHeader) {
+      writeGitHubWebhookHistory("ignored", {
+        ...baseEntry,
+        signatureVerified: true,
+        parseStatus: "schema_valid",
+        action: parsed.data.action,
+        reason: "event_unsupported",
+        metadata: {
+          repoFullName,
+          localRepo,
+        },
+      });
+      logGitHubIgnored({
+        deliveryId,
+        repoFullName,
+        eventType: eventTypeHeader,
+        action: parsed.data.action,
+        reason: "event_unsupported",
+      });
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
+    const ignoreReason = shouldIgnoreGitHubEvent(parsed.data, {
       mentionLogins: githubMentionLogins,
       botId: githubAppBotId,
     });
-    if ("ignored" in normalized) {
+    if (ignoreReason) {
       writeGitHubWebhookHistory("ignored", {
         ...baseEntry,
         signatureVerified: true,
         parseStatus: "schema_valid",
         action: parsed.data.action,
-        reason: normalized.reason,
+        reason: ignoreReason,
         metadata: {
           repoFullName,
           localRepo,
@@ -921,74 +1183,150 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         repoFullName,
         eventType: eventTypeHeader,
         action: parsed.data.action,
-        reason: normalized.reason,
+        reason: ignoreReason,
       });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
 
-    if (normalized.eventType !== eventTypeHeader) {
-      writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
-        signatureVerified: true,
-        parseStatus: "schema_valid",
-        action: normalized.action,
-        reason: "event_unsupported",
-        metadata: {
+    const branch = getGitHubEventBranch(parsed.data);
+    let correlationKey: string;
+    let delayMs = githubMentionDelay;
+    let interrupt = true;
+
+    if (isCheckSuiteCompletedEvent(parsed.data)) {
+      if (!branch) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "check_suite_branch_missing",
+          metadata: {
+            repoFullName,
+            localRepo,
+            headSha: parsed.data.check_suite.head_sha,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
           repoFullName,
-          localRepo,
-        },
-      });
-      logGitHubIgnored({
-        deliveryId,
-        repoFullName,
-        eventType: eventTypeHeader,
-        action: normalized.action,
-        reason: "event_unsupported",
-      });
-      res.status(200).json({ ok: true, ignored: true });
-      return;
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_branch_missing",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      const rawKey = buildCorrelationKey(localRepo, branch);
+      const resolvedKey = resolveCorrelationKeys([rawKey]);
+      if (!findNotesFile(resolvedKey)) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "correlation_key_unresolved",
+          metadata: {
+            repoFullName,
+            localRepo,
+            rawKey,
+            resolvedKey,
+            headSha: parsed.data.check_suite.head_sha,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "correlation_key_unresolved",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      const directory = resolveRepoDirectory(localRepo);
+      const gate = directory
+        ? await verifyThorAuthoredSha({
+            internalExec,
+            directory,
+            sha: parsed.data.check_suite.head_sha,
+            expectedEmail: config.githubAppBotEmail ?? "",
+          })
+        : { ok: false as const, reason: "exec_failed" as const };
+      if (!gate.ok) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "check_suite_gate_failed",
+          metadata: {
+            repoFullName,
+            localRepo,
+            rawKey,
+            resolvedKey,
+            headSha: parsed.data.check_suite.head_sha,
+            gateReason: gate.reason,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_gate_failed",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      correlationKey = resolvedKey;
+      delayMs = 0;
+      interrupt = false;
+    } else {
+      correlationKey = branch
+        ? resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)])
+        : buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
     }
 
     const sourceTs = getGitHubEventSourceTs(parsed.data);
-    const delayMs = githubMentionDelay;
-    const correlationKey = normalized.branch
-      ? resolveCorrelationKeys([buildCorrelationKey(normalized.localRepo, normalized.branch)])
-      : buildPendingBranchResolveKey(normalized.localRepo, normalized.number);
 
     queue.enqueue({
       id: deliveryId,
       source: "github",
       correlationKey,
-      payload: normalized,
+      payload: parsed.data,
       receivedAt: new Date().toISOString(),
       sourceTs,
       readyAt: sourceTs + delayMs,
       delayMs,
-      interrupt: true,
+      interrupt,
     });
 
     writeGitHubWebhookHistory("ingested", {
       ...baseEntry,
       signatureVerified: true,
       parseStatus: "schema_valid",
-      action: normalized.action,
+      action: parsed.data.action,
       reason: "accepted",
       metadata: {
-        repoFullName: normalized.repoFullName,
-        localRepo: normalized.localRepo,
+        repoFullName,
+        localRepo,
         correlationKey,
       },
     });
 
     logInfo(log, "github_event_accepted", {
       deliveryId,
-      repoFullName: normalized.repoFullName,
-      localRepo: normalized.localRepo,
-      eventType: normalized.eventType,
-      action: normalized.action,
+      repoFullName,
+      localRepo,
+      eventType,
+      action: parsed.data.action,
       correlationKey,
-      interrupt: true,
+      interrupt,
       delayMs,
     });
 

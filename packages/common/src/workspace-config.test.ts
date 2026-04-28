@@ -84,10 +84,20 @@ describe("loadWorkspaceConfig", () => {
 
   it("accepts repo with valid proxies array", () => {
     const path = writeConfig("config.json", {
-      repos: { "my-repo": { channels: ["C1"], proxies: ["slack"] } },
+      repos: { "my-repo": { channels: ["C1"], proxies: ["posthog"] } },
     });
     const config = loadWorkspaceConfig(path);
-    expect(config.repos["my-repo"].proxies).toEqual(["slack"]);
+    expect(config.repos["my-repo"].proxies).toEqual(["posthog"]);
+  });
+
+  it("rejects removed slack proxy in repo proxies", () => {
+    const path = writeConfig("config.json", {
+      repos: { "my-repo": { proxies: ["slack"] } },
+    });
+
+    expect(() => loadWorkspaceConfig(path)).toThrow(
+      'Unknown proxy "slack". Available proxies: atlassian, grafana, posthog',
+    );
   });
 
   it("throws when repo references unknown proxy", () => {
@@ -95,7 +105,7 @@ describe("loadWorkspaceConfig", () => {
       repos: { "my-repo": { proxies: ["nonexistent"] } },
     });
     expect(() => loadWorkspaceConfig(path)).toThrow(
-      "Available proxies: atlassian, grafana, posthog, slack",
+      "Available proxies: atlassian, grafana, posthog",
     );
   });
 
@@ -105,7 +115,7 @@ describe("loadWorkspaceConfig", () => {
     );
 
     expect(config.repos["your-repo"]).toBeDefined();
-    expect(config.repos["your-repo"].proxies).toEqual(["atlassian", "grafana", "slack"]);
+    expect(config.repos["your-repo"].proxies).toEqual(["atlassian", "grafana"]);
     expect(config.owners).toEqual({
       "scoutqa-dot-ai": { github_app_installation_id: 126669985 },
     });
@@ -327,10 +337,10 @@ describe("getRepoUpstreams", () => {
   it("returns proxies array for a configured repo", () => {
     const config = loadWorkspaceConfig(
       writeConfig("config.json", {
-        repos: { "acme-app": { proxies: ["slack", "atlassian"] } },
+        repos: { "acme-app": { proxies: ["atlassian", "posthog"] } },
       }),
     );
-    expect(getRepoUpstreams(config, "acme-app")).toEqual(["slack", "atlassian"]);
+    expect(getRepoUpstreams(config, "acme-app")).toEqual(["atlassian", "posthog"]);
   });
 
   it("returns empty array for repo without proxies field", () => {

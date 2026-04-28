@@ -18,7 +18,6 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json tsup.con
 COPY packages/common/package.json packages/common/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/runner/package.json packages/runner/
-COPY packages/slack-mcp/package.json packages/slack-mcp/
 COPY packages/remote-cli/package.json packages/remote-cli/
 COPY packages/opencode-cli/package.json packages/opencode-cli/
 COPY packages/admin/package.json packages/admin/
@@ -51,12 +50,6 @@ WORKDIR /workspace
 ENV PORT=3000
 EXPOSE 3000
 CMD ["node", "/app/packages/runner/dist/index.js"]
-
-FROM build AS slack-mcp
-USER thor
-ENV PORT=3003
-EXPOSE 3003
-CMD ["node", "/app/packages/slack-mcp/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode

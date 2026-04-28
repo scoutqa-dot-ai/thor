@@ -8,20 +8,32 @@ import {
   ProgressEventSchema,
   resolveRepoDirectory,
 } from "@thor/common";
-import type { ProgressEvent } from "@thor/common";
+import type { ExecResult, ProgressEvent } from "@thor/common";
 import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
 import {
   buildCorrelationKey,
+  getGitHubEventLocalRepo,
+  isIssueCommentEvent,
   isPendingBranchResolveKey,
-  type NormalizedGitHubEvent,
+  type GitHubWebhookEvent,
+  type IssueCommentEvent,
 } from "./github.js";
+import {
+  buildApprovalButtonValue,
+  buildInlineApprovalBlocks,
+  extractApprovalFailureCategory,
+  formatApprovalArgs,
+} from "./approval.js";
+import type { WebClient } from "@slack/web-api";
+import { addReaction, updateMessage, postMessage, type SlackDeps } from "./slack-api.js";
+import { handleProgressEvent } from "./progress-manager.js";
+
+/** SlackDeps stub for triggers that never post to Slack (cron, github). */
+const NOOP_SLACK_DEPS: SlackDeps = { client: {} as WebClient };
 
 const log = createLogger("gateway-service");
-const GITHUB_PR_HEAD_TIMEOUT_MS = 3000;
-const GITHUB_PR_HEAD_RETRIES = 1;
-const GITHUB_PROMPT_LIMIT_BYTES = 8 * 1024;
-const GITHUB_PROMPT_EVENT_BODY_MAX = 280;
+const INTERNAL_EXEC_TIMEOUT_MS = 5000;
 
 // --- Runner deps (internal HTTP, testable via fetchImpl) ---
 
@@ -30,21 +42,14 @@ export interface RunnerDeps {
   fetchImpl?: typeof fetch;
 }
 
-// --- Slack MCP deps (HTTP calls to slack-mcp service) ---
-
-export interface SlackMcpDeps {
-  slackMcpUrl: string;
-  fetchImpl?: typeof fetch;
-}
-
-export type BatchSource = "slack" | "cron" | "github";
+export type BatchSource = "slack" | "cron" | "github" | "approval";
 export type BatchLogPrefix = BatchSource | "mixed";
 
 export interface ProgressRelayTarget {
   channel: string;
   threadTs: string;
   triggerTs: string;
-  slackMcpDeps: SlackMcpDeps;
+  slackDeps: SlackDeps;
 }
 
 export interface RunnerTriggerOptions {
@@ -60,15 +65,31 @@ export interface RunnerTriggerOptions {
   backgroundDrainLogEvent?: string;
 }
 
+export interface ApprovalOutcomeEventPayload {
+  actionId: string;
+  decision: "approved" | "rejected";
+  reviewer: string;
+  channel: string;
+  threadTs: string;
+  upstreamName?: string;
+  tool?: string;
+  messageTs?: string;
+  resolutionStatus?: string;
+  resolutionSummary?: string;
+  resolutionExitCode?: number;
+}
+
 export interface BatchDispatchInput {
   slackEvents: SlackThreadEvent[];
   cronEvents: CronPayload[];
-  githubEvents: NormalizedGitHubEvent[];
+  githubEvents: GitHubWebhookEvent[];
+  approvalOutcomes: ApprovalOutcomeEventPayload[];
   correlationKey: string;
   deps: RunnerDeps;
-  slackMcpDeps: SlackMcpDeps;
+  slackDeps: SlackDeps;
   remoteCliUrl?: string;
   internalSecret?: string;
+  internalExec?: InternalExecClient;
   interrupt?: boolean;
   onAccepted?: () => void;
   onRejected?: (reason: string) => void;
@@ -91,7 +112,7 @@ export type BatchDispatchPlan =
       logPrefix: "github";
       fromCorrelationKey: string;
       toCorrelationKey: string;
-      githubEvents: NormalizedGitHubEvent[];
+      githubEvents: GitHubWebhookEvent[];
     };
 
 interface DispatchPart {
@@ -118,6 +139,18 @@ export interface GitHubPrHeadResult {
   headRepoFullName: string;
 }
 
+export interface InternalExecRequest {
+  bin: string;
+  args: string[];
+  cwd: string;
+}
+
+export type InternalExecClient = (request: InternalExecRequest) => Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}>;
+
 type TerminalGitHubRejectReason =
   | "installation_gone"
   | "branch_not_found"
@@ -132,6 +165,33 @@ class TerminalGitHubDispatchError extends Error {
     super(message);
     this.name = "TerminalGitHubDispatchError";
   }
+}
+
+function parseGhPrHead(stdout: string): GitHubPrHeadResult | null {
+  const parsed = JSON.parse(stdout) as {
+    headRefName?: unknown;
+    headRepositoryOwner?: { login?: unknown } | null;
+    headRepository?: { name?: unknown } | null;
+  };
+  const ref = typeof parsed.headRefName === "string" ? parsed.headRefName.trim() : "";
+  const owner =
+    typeof parsed.headRepositoryOwner?.login === "string"
+      ? parsed.headRepositoryOwner.login.trim()
+      : "";
+  const repo =
+    typeof parsed.headRepository?.name === "string" ? parsed.headRepository.name.trim() : "";
+  if (!ref || !owner || !repo) return null;
+  return { ref, headRepoFullName: `${owner}/${repo}` };
+}
+
+function classifyGhPrViewFailure(stderr: string): TerminalGitHubRejectReason {
+  if (/http\s+40[13]|authentication|not logged in|forbidden|unauthorized/i.test(stderr)) {
+    return "installation_gone";
+  }
+  if (/http\s+404|not found|could not resolve/i.test(stderr)) {
+    return "branch_not_found";
+  }
+  return "branch_lookup_failed";
 }
 
 function renderHeadedSection(label: string, events: unknown[], body: string): string {
@@ -155,8 +215,29 @@ function renderCronPrompt(events: CronPayload[]): string {
   );
 }
 
-function renderGitHubPromptSection(events: NormalizedGitHubEvent[]): string {
+function renderGitHubPromptSection(events: GitHubWebhookEvent[]): string {
   return renderHeadedSection("GitHub", events, renderGitHubPrompt(events));
+}
+
+export function buildApprovalOutcomePrompt(events: ApprovalOutcomeEventPayload[]): string {
+  const lines = events.map((event, index) => {
+    const target = [event.upstreamName, event.tool].filter(Boolean).join("/") || "unknown tool";
+    const resolutionFailed =
+      typeof event.resolutionExitCode === "number" && event.resolutionExitCode !== 0;
+    const guidance = resolutionFailed
+      ? `human ${event.decision} action \`${event.actionId}\`, but approval resolution reported a failure; inspect approval status/output, explain the implication, and choose the next safe action`
+      : event.decision === "approved"
+        ? `human approved action \`${event.actionId}\`; continue the workflow, fetch approval status if needed, and finish the next safe step`
+        : `human rejected action \`${event.actionId}\`; do not retry the same write blindly, explain the implication, and choose the next safe action`;
+
+    const summary = event.resolutionSummary
+      ? `\nResolution summary: ${event.resolutionSummary}`
+      : "";
+
+    return `${index + 1}. ${guidance}.\nReviewer: <@${event.reviewer}>\nTarget: ${target}\nThread: ${event.threadTs}${summary}`;
+  });
+
+  return `Approval outcome event${events.length > 1 ? "s" : ""}:\n\n${lines.join("\n\n")}`;
 }
 
 function getBatchSources(input: BatchDispatchInput): BatchSource[] {
@@ -164,6 +245,7 @@ function getBatchSources(input: BatchDispatchInput): BatchSource[] {
   if (input.slackEvents.length > 0) sources.push("slack");
   if (input.githubEvents.length > 0) sources.push("github");
   if (input.cronEvents.length > 0) sources.push("cron");
+  if (input.approvalOutcomes.length > 0) sources.push("approval");
   return sources;
 }
 
@@ -197,16 +279,32 @@ export function buildDispatchLogContext(input: {
 
 function buildProgressTarget(
   slackEvents: SlackThreadEvent[],
-  slackMcpDeps: SlackMcpDeps,
+  approvalOutcomes: ApprovalOutcomeEventPayload[],
+  slackDeps: SlackDeps,
 ): ProgressRelayTarget | undefined {
   const lastSlackEvent = slackEvents[slackEvents.length - 1];
-  if (!lastSlackEvent) return undefined;
-  return {
-    channel: lastSlackEvent.channel,
-    threadTs: getSlackThreadTs(lastSlackEvent),
-    triggerTs: lastSlackEvent.ts,
-    slackMcpDeps,
-  };
+  if (lastSlackEvent) {
+    return {
+      channel: lastSlackEvent.channel,
+      threadTs: getSlackThreadTs(lastSlackEvent),
+      triggerTs: lastSlackEvent.ts,
+      slackDeps,
+    };
+  }
+  // Approval-outcome batches resume an existing Slack thread session — without
+  // a progress target the resumed run goes silent (no progress, no further
+  // approval cards) because triggerRunnerPrompt would background-drain the
+  // NDJSON instead of forwarding events to Slack.
+  const lastApproval = approvalOutcomes[approvalOutcomes.length - 1];
+  if (lastApproval) {
+    return {
+      channel: lastApproval.channel,
+      threadTs: lastApproval.threadTs,
+      triggerTs: lastApproval.messageTs ?? lastApproval.threadTs,
+      slackDeps,
+    };
+  }
+  return undefined;
 }
 
 function collectBatchDirectory<T>(
@@ -245,19 +343,34 @@ function resolveSlackBatchDirectory(
   });
 }
 
-function resolveGitHubBatchDirectory(events: NormalizedGitHubEvent[]): {
+function resolveGitHubBatchDirectory(events: GitHubWebhookEvent[]): {
   directory?: string;
   reason?: string;
 } {
   return collectBatchDirectory("GitHub", events, (event) => {
-    const directory = resolveRepoDirectory(event.localRepo);
-    if (!directory) return { reason: `repo directory not found for ${event.localRepo}` };
+    const localRepo = getGitHubEventLocalRepo(event);
+    if (!localRepo) return { reason: `repo directory not found for ${event.repository.full_name}` };
+    const directory = resolveRepoDirectory(localRepo);
+    if (!directory) return { reason: `repo directory not found for ${localRepo}` };
     return { directory };
   });
 }
 
 function resolveCronBatchDirectory(events: CronPayload[]): { directory?: string; reason?: string } {
   return collectBatchDirectory("Cron", events, (event) => ({ directory: event.directory }));
+}
+
+function resolveApprovalBatchDirectory(
+  events: ApprovalOutcomeEventPayload[],
+  channelRepos?: Map<string, string>,
+): { directory?: string; reason?: string } {
+  return collectBatchDirectory("Approval", events, (event) => {
+    const repo = channelRepos?.get(event.channel);
+    if (!repo) return { reason: `channel ${event.channel} has no repo mapping` };
+    const directory = resolveRepoDirectory(repo);
+    if (!directory) return { reason: `repo directory not found for ${repo}` };
+    return { directory };
+  });
 }
 
 async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<TriggerResult> {
@@ -298,15 +411,15 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
   options.onAccepted?.();
 
   if (options.progressTarget) {
-    const { channel, threadTs, triggerTs, slackMcpDeps } = options.progressTarget;
-    void consumeNdjsonStream(response, channel, threadTs, triggerTs, slackMcpDeps).catch(
+    const { channel, threadTs, triggerTs, slackDeps } = options.progressTarget;
+    void consumeNdjsonStream(response, channel, threadTs, triggerTs, slackDeps).catch(
       async (err) => {
         logError(log, "stream_consume_error", err instanceof Error ? err.message : String(err));
         await forwardProgressEvent(
           channel,
           threadTs,
           { type: "error", error: err instanceof Error ? err.message : "stream error" },
-          slackMcpDeps,
+          slackDeps,
           triggerTs,
         ).catch(() => {});
       },
@@ -332,19 +445,35 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   const logPrefix = getBatchLogPrefix(sources);
 
   if (input.githubEvents.length > 0 && isPendingBranchResolveKey(input.correlationKey)) {
-    if (!input.remoteCliUrl) {
-      throw new Error("remoteCliUrl is required for pending GitHub branch resolution");
-    }
-
     const latest = input.githubEvents[input.githubEvents.length - 1];
-    try {
-      const branchInfo = await resolveGitHubPrHead(
-        latest,
-        input.remoteCliUrl,
-        input.internalSecret,
-        input.deps.fetchImpl,
+    if (!latest || !isIssueCommentEvent(latest)) {
+      return { kind: "drop", logPrefix, reason: "branch_lookup_failed" };
+    }
+    const localRepo = getGitHubEventLocalRepo(latest);
+    if (!localRepo) {
+      return { kind: "drop", logPrefix, reason: "branch_lookup_failed" };
+    }
+    const directory = resolveRepoDirectory(localRepo);
+    if (!directory) {
+      return { kind: "drop", logPrefix, reason: `repo directory not found for ${localRepo}` };
+    }
+    const internalExec =
+      input.internalExec ??
+      (input.remoteCliUrl
+        ? createInternalExecClient({
+            remoteCliUrl: input.remoteCliUrl,
+            internalSecret: input.internalSecret,
+            fetchImpl: input.deps.fetchImpl,
+          })
+        : undefined);
+    if (!internalExec) {
+      throw new Error(
+        "internalExec or remoteCliUrl is required for pending GitHub branch resolution",
       );
-      if (branchInfo.headRepoFullName !== latest.repoFullName) {
+    }
+    try {
+      const branchInfo = await resolveGitHubPrHead(latest, directory, internalExec);
+      if (branchInfo.headRepoFullName !== latest.repository.full_name) {
         return { kind: "drop", logPrefix, reason: "fork_pr_unsupported" };
       }
 
@@ -352,8 +481,8 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
         kind: "reroute",
         logPrefix: "github",
         fromCorrelationKey: input.correlationKey,
-        toCorrelationKey: buildCorrelationKey(latest.localRepo, branchInfo.ref),
-        githubEvents: input.githubEvents.map((event) => ({ ...event, branch: branchInfo.ref })),
+        toCorrelationKey: buildCorrelationKey(localRepo, branchInfo.ref),
+        githubEvents: input.githubEvents,
       };
     } catch (error) {
       if (error instanceof TerminalGitHubDispatchError) {
@@ -405,6 +534,22 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     });
   }
 
+  if (input.approvalOutcomes.length > 0) {
+    const approvalDirectory = resolveApprovalBatchDirectory(
+      input.approvalOutcomes,
+      input.channelRepos,
+    );
+    if (approvalDirectory.reason) {
+      return { kind: "drop", logPrefix, reason: approvalDirectory.reason };
+    }
+    const prompt = buildApprovalOutcomePrompt(input.approvalOutcomes);
+    parts.push({
+      directory: approvalDirectory.directory!,
+      singlePrompt: prompt,
+      mixedPrompt: prompt,
+    });
+  }
+
   const directories = [...new Set(parts.map((part) => part.directory))];
   if (directories.length === 0) {
     return { kind: "drop", logPrefix, reason: "no directory resolved for batch" };
@@ -417,9 +562,15 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     return { kind: "drop", logPrefix, reason };
   }
 
-  const progressTarget = buildProgressTarget(input.slackEvents, input.slackMcpDeps);
-  const isCronOnly = sources.length === 1 && sources[0] === "cron";
-  const backgroundDrain = !progressTarget && !isCronOnly;
+  const progressTarget = buildProgressTarget(
+    input.slackEvents,
+    input.approvalOutcomes,
+    input.slackDeps,
+  );
+  // Cron-only batches have no Slack progress relay; drain in foreground so
+  // callers can rely on cleanup happening before return.
+  const isSilentOnly = sources.length === 1 && sources[0] === "cron";
+  const backgroundDrain = !progressTarget && !isSilentOnly;
   const prompt =
     parts.length === 1 ? parts[0].singlePrompt : parts.map((part) => part.mixedPrompt).join("\n\n");
 
@@ -472,21 +623,26 @@ export async function triggerRunnerSlack(
   events: SlackThreadEvent[],
   correlationKey: string,
   deps: RunnerDeps,
-  slackMcpDeps: SlackMcpDeps,
+  slackDeps: SlackDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
   channelRepos?: Map<string, string>,
   onRejected?: (reason: string) => void,
+  approvalOutcomes?: ApprovalOutcomeEventPayload[],
 ): Promise<TriggerResult> {
-  if (events.length === 0) return { busy: false };
+  if (events.length === 0 && (!approvalOutcomes || approvalOutcomes.length === 0)) {
+    return { busy: false };
+  }
 
   const handleRejected = (reason: string) => {
     const last = events[events.length - 1];
-    logWarn(
-      log,
-      reason.includes("no repo mapping") ? "channel_has_no_repo" : "repo_directory_not_found",
-      { channel: last.channel },
-    );
+    if (last) {
+      logWarn(
+        log,
+        reason.includes("no repo mapping") ? "channel_has_no_repo" : "repo_directory_not_found",
+        { channel: last.channel },
+      );
+    }
     onRejected?.(reason);
   };
 
@@ -494,9 +650,10 @@ export async function triggerRunnerSlack(
     slackEvents: events,
     cronEvents: [],
     githubEvents: [],
+    approvalOutcomes: approvalOutcomes ?? [],
     correlationKey,
     deps,
-    slackMcpDeps,
+    slackDeps,
     interrupt,
     onAccepted,
     onRejected: handleRejected,
@@ -509,7 +666,7 @@ async function consumeNdjsonStream(
   channel: string,
   threadTs: string,
   triggerTs: string,
-  slackMcpDeps: SlackMcpDeps,
+  slackDeps: SlackDeps,
 ): Promise<void> {
   const body = response.body;
   if (!body) return;
@@ -533,10 +690,10 @@ async function consumeNdjsonStream(
       });
 
       if (event.type === "approval_required") {
-        await forwardApprovalNotification(channel, threadTs, event, slackMcpDeps);
+        await forwardApprovalNotification(channel, threadTs, event, slackDeps);
         continue;
       }
-      await forwardProgressEvent(channel, threadTs, event, slackMcpDeps, triggerTs);
+      await forwardProgressEvent(channel, threadTs, event, slackDeps, triggerTs);
     } catch (err) {
       logWarn(log, "ndjson_parse_skip", {
         line: truncate(line, 200),
@@ -555,6 +712,12 @@ async function drainResponseBody(response: Response): Promise<void> {
   }
 }
 
+/** Maximum bytes the newlineStream buffer is allowed to grow before forcing
+ * a flush. Caps adversarial / runaway inputs that would otherwise OOM the
+ * gateway (a single multi-MB NDJSON line). 1 MiB is well above any legitimate
+ * progress event payload. */
+const NDJSON_LINE_BYTE_LIMIT = 1 * 1024 * 1024;
+
 /** TransformStream that splits chunks on newlines. */
 function newlineStream(): TransformStream<string, string> {
   let buffer = "";
@@ -564,6 +727,13 @@ function newlineStream(): TransformStream<string, string> {
       const parts = buffer.split("\n");
       buffer = parts.pop() ?? "";
       for (const part of parts) controller.enqueue(part);
+      if (buffer.length > NDJSON_LINE_BYTE_LIMIT) {
+        // Drop the oversized partial line and reset; the next newline starts
+        // a fresh line. The truncated event will fail JSON.parse downstream
+        // and be skipped via the existing parse-error log.
+        logWarn(log, "ndjson_line_too_large", { bufferedBytes: buffer.length });
+        buffer = "";
+      }
     },
     flush(controller) {
       if (buffer) controller.enqueue(buffer);
@@ -575,15 +745,11 @@ async function forwardProgressEvent(
   channel: string,
   threadTs: string,
   event: ProgressEvent,
-  deps: SlackMcpDeps,
+  deps: SlackDeps,
   sourceTs: string,
 ): Promise<void> {
   try {
-    await getFetch(deps.fetchImpl)(`${deps.slackMcpUrl}/progress`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channel, threadTs, sourceTs, event }),
-    });
+    await handleProgressEvent(channel, threadTs, event, deps, sourceTs);
   } catch (err) {
     logError(log, "progress_forward_error", err instanceof Error ? err.message : String(err));
   }
@@ -606,9 +772,10 @@ export async function triggerRunnerCron(
     slackEvents: [],
     cronEvents: Array.isArray(payload) ? payload : [payload],
     githubEvents: [],
+    approvalOutcomes: [],
     correlationKey,
     deps,
-    slackMcpDeps: { slackMcpUrl: "", fetchImpl: deps.fetchImpl },
+    slackDeps: NOOP_SLACK_DEPS,
     interrupt,
     onAccepted,
     onRejected,
@@ -616,7 +783,7 @@ export async function triggerRunnerCron(
 }
 
 export async function triggerRunnerGitHub(
-  events: NormalizedGitHubEvent[],
+  events: GitHubWebhookEvent[],
   correlationKey: string,
   deps: RunnerDeps,
   remoteCliUrl: string,
@@ -631,164 +798,172 @@ export async function triggerRunnerGitHub(
     slackEvents: [],
     cronEvents: [],
     githubEvents: events,
+    approvalOutcomes: [],
     correlationKey,
     deps,
-    slackMcpDeps: { slackMcpUrl: "", fetchImpl: deps.fetchImpl },
+    slackDeps: NOOP_SLACK_DEPS,
     remoteCliUrl,
     internalSecret,
+    internalExec: createInternalExecClient({
+      remoteCliUrl,
+      internalSecret,
+      fetchImpl: deps.fetchImpl,
+    }),
     interrupt,
     onAccepted,
     onRejected,
   });
 }
 
-export async function resolveGitHubPrHead(
-  event: NormalizedGitHubEvent,
-  remoteCliUrl: string,
-  internalSecret: string | undefined,
-  fetchImpl?: typeof fetch,
-): Promise<GitHubPrHeadResult> {
-  const params = new URLSearchParams({
-    installation: String(event.installationId),
-    repo: event.repoFullName,
-    number: String(event.number),
-  });
-  const url = `${remoteCliUrl}/github/pr-head?${params.toString()}`;
+export async function triggerRunnerApprovalOutcomes(
+  events: ApprovalOutcomeEventPayload[],
+  correlationKey: string,
+  deps: RunnerDeps,
+  slackDeps: SlackDeps,
+  interrupt?: boolean,
+  onAccepted?: () => void,
+  channelRepos?: Map<string, string>,
+  onRejected?: (reason: string) => void,
+): Promise<TriggerResult> {
+  if (events.length === 0) return { busy: false };
 
-  for (let attempt = 0; attempt <= GITHUB_PR_HEAD_RETRIES; attempt++) {
-    try {
-      const response = await getFetch(fetchImpl)(url, {
-        headers: {
-          ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
-        },
-        signal: AbortSignal.timeout(GITHUB_PR_HEAD_TIMEOUT_MS),
-      });
-      if (response.ok) {
-        const body = (await response.json()) as { ref?: string; headRepoFullName?: string };
-        const ref = body.ref?.trim();
-        const headRepoFullName = body.headRepoFullName?.trim();
-        if (!ref || !headRepoFullName) {
-          throw new TerminalGitHubDispatchError(
-            "branch_lookup_failed",
-            "Remote-cli /github/pr-head returned incomplete PR head info",
-          );
-        }
-        return { ref, headRepoFullName };
-      }
-
-      if (response.status === 401) {
-        throw new TerminalGitHubDispatchError(
-          "branch_lookup_failed",
-          "Remote-cli /github/pr-head rejected the internal credential",
-        );
-      }
-      if (response.status === 403) {
-        throw new TerminalGitHubDispatchError(
-          "installation_gone",
-          `Remote-cli /github/pr-head returned ${response.status}`,
-        );
-      }
-      if (response.status === 404) {
-        throw new TerminalGitHubDispatchError(
-          "branch_not_found",
-          "Remote-cli /github/pr-head returned 404",
-        );
-      }
-      if (response.status >= 500) {
-        if (attempt < GITHUB_PR_HEAD_RETRIES) {
-          continue;
-        }
-        throw new TerminalGitHubDispatchError(
-          "branch_lookup_failed",
-          `Remote-cli /github/pr-head returned ${response.status} after retries`,
-        );
-      }
-      throw new Error(`Remote-cli /github/pr-head returned ${response.status}`);
-    } catch (error) {
-      if (error instanceof TerminalGitHubDispatchError) {
-        throw error;
-      }
-      if (error instanceof Error && error.name === "TimeoutError") {
-        if (attempt < GITHUB_PR_HEAD_RETRIES) {
-          continue;
-        }
-        throw new TerminalGitHubDispatchError(
-          "branch_lookup_failed",
-          "Remote-cli /github/pr-head timed out after retries",
-        );
-      }
-      if (error instanceof TypeError && attempt >= GITHUB_PR_HEAD_RETRIES) {
-        throw new TerminalGitHubDispatchError(
-          "branch_lookup_failed",
-          `Remote-cli /github/pr-head request failed after retries: ${error.message}`,
-        );
-      }
-      if (attempt < GITHUB_PR_HEAD_RETRIES) {
-        continue;
-      }
-      throw error;
+  const handleRejected = (reason: string) => {
+    const last = events[events.length - 1];
+    if (last) {
+      logWarn(
+        log,
+        reason.includes("no repo mapping") ? "channel_has_no_repo" : "repo_directory_not_found",
+        { channel: last.channel },
+      );
     }
-  }
+    onRejected?.(reason);
+  };
 
-  throw new TerminalGitHubDispatchError(
-    "branch_lookup_failed",
-    "Remote-cli /github/pr-head failed",
-  );
+  return dispatchBatch({
+    slackEvents: [],
+    cronEvents: [],
+    githubEvents: [],
+    approvalOutcomes: events,
+    correlationKey,
+    deps,
+    slackDeps,
+    interrupt,
+    onAccepted,
+    onRejected: handleRejected,
+    channelRepos,
+  });
 }
 
-function renderGitHubPrompt(events: NormalizedGitHubEvent[]): string {
-  const lines = events.map((event) => renderGitHubPromptLine(event));
-  let selected = [...lines];
-  let prompt = selected.join("\n\n");
-
-  while (selected.length > 1 && Buffer.byteLength(prompt, "utf8") > GITHUB_PROMPT_LIMIT_BYTES) {
-    selected = selected.slice(1);
-    prompt = selected.join("\n\n");
-  }
-
-  if (selected.length < lines.length) {
-    logInfo(log, "github_prompt_truncated", {
-      originalCount: lines.length,
-      retainedCount: selected.length,
-      droppedCount: lines.length - selected.length,
-      bytes: Buffer.byteLength(prompt, "utf8"),
+export async function resolveGitHubPrHead(
+  event: IssueCommentEvent,
+  directory: string,
+  internalExec: InternalExecClient,
+): Promise<GitHubPrHeadResult> {
+  try {
+    const result = await internalExec({
+      bin: "gh",
+      args: [
+        "pr",
+        "view",
+        String(event.issue.number),
+        "--repo",
+        event.repository.full_name,
+        "--json",
+        "headRefName,headRepository,headRepositoryOwner",
+      ],
+      cwd: directory,
     });
+    if (result.exitCode !== 0) {
+      throw new TerminalGitHubDispatchError(
+        classifyGhPrViewFailure(result.stderr),
+        `gh pr view failed: ${result.stderr}`,
+      );
+    }
+    const parsed = parseGhPrHead(result.stdout);
+    if (!parsed) {
+      throw new TerminalGitHubDispatchError(
+        "branch_lookup_failed",
+        "gh pr view returned incomplete PR head info",
+      );
+    }
+    return parsed;
+  } catch (error) {
+    if (error instanceof TerminalGitHubDispatchError) throw error;
+    throw new TerminalGitHubDispatchError(
+      "branch_lookup_failed",
+      error instanceof Error ? error.message : "gh pr view failed",
+    );
   }
-
-  return prompt;
 }
 
-function renderGitHubPromptLine(event: NormalizedGitHubEvent): string {
-  const body = truncate(event.body.replace(/\s+/g, " ").trim(), GITHUB_PROMPT_EVENT_BODY_MAX);
-  return `[${event.senderLogin}] ${event.action} on ${event.repoFullName}#${event.number} (${event.eventType}): ${body}\n${event.htmlUrl}`;
+export function createInternalExecClient(input: {
+  remoteCliUrl: string;
+  internalSecret?: string;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}): InternalExecClient {
+  const fetchFn = getFetch(input.fetchImpl);
+  const timeoutMs = input.timeoutMs ?? INTERNAL_EXEC_TIMEOUT_MS;
+
+  return async (request) => {
+    const response = await fetchFn(`${input.remoteCliUrl}/internal/exec`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(input.internalSecret ? { "x-thor-internal-secret": input.internalSecret } : {}),
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Remote-cli /internal/exec returned ${response.status}`);
+    }
+
+    return ExecResultSchema.parse(await response.json());
+  };
+}
+
+function renderGitHubPrompt(events: GitHubWebhookEvent[]): string {
+  return JSON.stringify(events.length === 1 ? events[0] : events);
 }
 
 async function forwardApprovalNotification(
   channel: string,
   threadTs: string,
   event: { actionId: string; tool: string; args: Record<string, unknown>; proxyName?: string },
-  deps: SlackMcpDeps,
+  deps: SlackDeps,
 ): Promise<void> {
   try {
-    await getFetch(deps.fetchImpl)(`${deps.slackMcpUrl}/approval`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        channel,
-        threadTs,
-        actionId: event.actionId,
-        tool: event.tool,
-        args: event.args,
-        proxyName: event.proxyName,
-      }),
+    const argsJson = formatApprovalArgs(event.args);
+    const buttonValue = buildApprovalButtonValue({
+      actionId: event.actionId,
+      upstreamName: event.proxyName,
+      threadTs,
     });
+
+    await postMessage(
+      channel,
+      `Approval required for \`${event.tool}\``,
+      threadTs,
+      deps,
+      buildInlineApprovalBlocks(event.tool, argsJson, buttonValue),
+    );
   } catch (err) {
     logError(log, "approval_forward_error", err instanceof Error ? err.message : String(err));
   }
 }
 
+const APPROVAL_RESOLVE_MAX_ATTEMPTS = 3;
+const APPROVAL_RESOLVE_BACKOFF_MS = [200, 800];
+
 /**
  * Resolve an approval action through the remote-cli MCP endpoint.
+ *
+ * Retries on transient failures (timeouts, 5xx, network errors). Without
+ * retries a single remote-cli blip silently drops the human's approval
+ * click — Slack already saw 200 from /slack/interactivity, so the click
+ * cannot be replayed.
  */
 export async function resolveApproval(
   actionId: string,
@@ -798,51 +973,74 @@ export async function resolveApproval(
   internalSecret: string | undefined,
   fetchImpl?: typeof fetch,
   reason?: string,
-): Promise<Record<string, unknown> | undefined> {
+): Promise<ExecResult | undefined> {
   const fetchFn = getFetch(fetchImpl);
   const args = ["resolve", actionId, decision, reviewer];
   if (reason) args.push(reason);
 
-  try {
-    const response = await fetchFn(`${remoteCliUrl}/exec/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
-      },
-      body: JSON.stringify({ args }),
-    });
-    const body = ExecResultSchema.parse(await response.json());
-    if (!response.ok || body.exitCode !== 0) {
-      logError(
-        log,
-        "approval_resolve_error",
-        `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
-        { remoteCliUrl },
-      );
+  for (let attempt = 0; attempt < APPROVAL_RESOLVE_MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetchFn(`${remoteCliUrl}/exec/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
+        },
+        body: JSON.stringify({ args }),
+      });
+      const body = ExecResultSchema.parse(await response.json());
+      if (!response.ok) {
+        logError(
+          log,
+          "approval_resolve_error",
+          `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
+          { remoteCliUrl, attempt },
+        );
+        if (response.status >= 500 && attempt + 1 < APPROVAL_RESOLVE_MAX_ATTEMPTS) {
+          await delay(APPROVAL_RESOLVE_BACKOFF_MS[attempt] ?? 0);
+          continue;
+        }
+        return undefined;
+      }
+      if (body.exitCode !== 0) {
+        logError(
+          log,
+          "approval_resolve_error",
+          `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
+          { remoteCliUrl, attempt },
+        );
+        return isResolvedApprovalExecutionFailure(body) ? body : undefined;
+      }
+      return body;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError(log, "approval_resolve_error", message, { remoteCliUrl, attempt });
+      if (attempt + 1 < APPROVAL_RESOLVE_MAX_ATTEMPTS) {
+        await delay(APPROVAL_RESOLVE_BACKOFF_MS[attempt] ?? 0);
+        continue;
+      }
       return undefined;
     }
-    return body as Record<string, unknown>;
-  } catch (err) {
-    logError(log, "approval_resolve_error", err instanceof Error ? err.message : String(err), {
-      remoteCliUrl,
-    });
-    return undefined;
   }
+  return undefined;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isResolvedApprovalExecutionFailure(body: ExecResult): boolean {
+  return body.exitCode !== 0 && extractApprovalFailureCategory(body.stderr) !== undefined;
 }
 
 export async function updateSlackMessage(
   channel: string,
   ts: string,
   text: string,
-  deps: SlackMcpDeps,
+  deps: SlackDeps,
 ): Promise<void> {
   try {
-    await getFetch(deps.fetchImpl)(`${deps.slackMcpUrl}/update-message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channel, ts, text }),
-    });
+    await updateMessage(channel, ts, text, deps);
   } catch (err) {
     logError(log, "message_update_error", err instanceof Error ? err.message : String(err));
   }
@@ -852,14 +1050,10 @@ export async function addSlackReaction(
   channel: string,
   timestamp: string,
   reaction: string,
-  deps: SlackMcpDeps,
+  deps: SlackDeps,
 ): Promise<void> {
   try {
-    await getFetch(deps.fetchImpl)(`${deps.slackMcpUrl}/reaction`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channel, timestamp, reaction }),
-    });
+    await addReaction(channel, timestamp, reaction, deps);
   } catch (err) {
     logError(log, "reaction_forward_error", err instanceof Error ? err.message : String(err));
   }
