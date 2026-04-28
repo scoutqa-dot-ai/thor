@@ -23,13 +23,11 @@ Talk to Slack through real upstream URLs:
 - `https://slack.com/api/...`
 - `https://files.slack.com/files-pri/...`
 
-Authentication is injected by `mitmproxy`. Do not pass `Authorization`
-manually. Slack writes are limited to the configured allowed channel IDs.
+Authentication is injected by `mitmproxy`, do not pass `Authorization` manually.
 
-Use direct `curl` for Slack reads and writes. For `chat.postMessage`, keep the
-raw JSON response on stdout so Thor can read in-band thread correlation metadata
-(`thor-meta-key`) injected by mitmproxy.
-
+The default tool for this skill is `curl`. Prefer URL-encoded form for simple
+Slack writes. Switch to JSON only when the payload becomes structured, such as
+`blocks` or `attachments`.
 For any multiline Slack message, or whenever quoting feels fragile, write the
 message body to a unique temp file under `/tmp` and send it with
 `--data-urlencode "text@${TEXT_FILE}"`.
