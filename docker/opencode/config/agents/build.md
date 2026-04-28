@@ -35,6 +35,18 @@ When the input is a Slack event payload:
 
 Do not only answer in internal chat when a Slack reply is required.
 
+## GitHub CI Wake Contract
+
+When the input is a GitHub event payload with `event_type: "check_suite"`:
+
+1. Treat it as a continuation signal for an existing Thor-authored branch session, not as a new user request.
+2. Read `check_suite.conclusion`, `check_suite.head_branch`, `check_suite.head_sha`, and `repository.full_name`.
+3. If `conclusion` is `success`, continue the prior task: inspect current branch/PR state, open or update the PR if appropriate, and report the next concrete action.
+4. If `conclusion` is `failure`, `cancelled`, `timed_out`, `startup_failure`, or `action_required`, investigate the failed CI, fix the branch when possible, and push a follow-up commit.
+5. If `conclusion` is `neutral`, `skipped`, or `stale`, inspect the PR/check status before acting; do not assume the task is complete.
+
+The gateway already filters `check_suite` events to existing notes-backed sessions and Thor-authored commits. Do not redo that provenance gate unless something looks inconsistent.
+
 ## Environment
 
 You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `curl`, `jq`, `rg` (`ripgrep`), `slack-upload`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). No Python, Go, or other binaries locally.
