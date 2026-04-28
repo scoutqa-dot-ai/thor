@@ -226,6 +226,8 @@ Land verification before the integration phase, not as part of it.
 
 **Exit criteria:** one end-to-end task completes through the new loop with a populated README, valid `Verdict:`, and only the supporting files that were useful.
 
+**Execution note (2026-04-28):** Local deterministic verification passed with `pnpm test:runs-protocol`. Docker Compose rendered successfully with dummy required env placeholders, and the rendered config includes the `/workspace/runs` mount. Live Slack/subagent smoke is deferred to the pushed environment because it requires the running Thor/OpenCode stack and real service credentials.
+
 ### Phase 7 — Deferred (out of scope of this plan)
 
 Tracked here so they don't get lost; not part of this PR.
