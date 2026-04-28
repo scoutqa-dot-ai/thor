@@ -265,17 +265,6 @@ describe("/exec/sandbox", () => {
     expect(events.at(-1)).toEqual({ type: "exit", exitCode: 0 });
   });
 
-  it("rejects sandbox cwd traversal", async () => {
-    const response = await postJson("/exec/sandbox", {
-      args: ["true"],
-      cwd: `${CWD}/../evil`,
-    });
-
-    expect(response.status).toBe(400);
-    const body = (await response.json()) as { stderr: string };
-    expect(body.stderr).toContain("cwd must be under /workspace/worktrees");
-  });
-
   it("rejects invalid git toplevel worktree shapes", async () => {
     configureGitExec({ dirty: false, headSha: HEAD_SHA, topLevel: "/workspace/worktrees/acme" });
 

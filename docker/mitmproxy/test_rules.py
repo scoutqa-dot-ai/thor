@@ -107,34 +107,6 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     assert slack_file.rule.readonly is True
 
 
-def test_allowed_slack_channels_are_collected_from_repos() -> None:
-    ruleset = parse_ruleset(
-        {
-            "repos": {
-                "repo-a": {"channels": ["C1", "C2"]},
-                "repo-b": {"channels": ["C2", "C3"]},
-                "repo-c": {},
-            }
-        }
-    )
-
-    assert ruleset.allowed_slack_channels == frozenset({"C1", "C2", "C3"})
-
-
-def test_invalid_repo_channels_are_rejected() -> None:
-    try:
-        parse_ruleset({"repos": {"repo-a": {"channels": "C1"}}})
-        raise AssertionError("expected invalid channels to raise")
-    except ValueError as exc:
-        assert "repos.repo-a.channels must be an array" in str(exc)
-
-    try:
-        parse_ruleset({"repos": {"repo-a": {"channels": ["C1", ""]}}})
-        raise AssertionError("expected empty channel to raise")
-    except ValueError as exc:
-        assert "repos.repo-a.channels[1] must be a non-empty string" in str(exc)
-
-
 def test_user_rule_override_wins_over_builtin() -> None:
     ruleset = parse_ruleset(
         {

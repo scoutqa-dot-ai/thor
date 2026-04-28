@@ -184,8 +184,6 @@ Common failures to report as-is:
 - Tool inputs use Slack IDs such as `C...` and `F...`, not channel names.
 - `thread_ts` should be the parent message timestamp for the thread.
 - Use real Slack URLs. Do not route Slack work through `mcp slack`.
-- Use direct `curl` for `chat.postMessage`; preserve raw JSON stdout so
-  `thor-meta-key` remains available for alias extraction.
 - Do not send multiline Slack text as an inline shell string. Default to a
   unique temp file under `/tmp` plus `--data-urlencode "text@${TEXT_FILE}"`.
 - Do not use literal `\n` inside single-quoted `text=...` arguments.
@@ -193,8 +191,7 @@ Common failures to report as-is:
   `mktemp -d` when you need a stable filename inside a unique temp directory.
 - Use `slack-upload` for uploads; it wraps `files.getUploadURLExternal`,
   the raw `files.slack.com/upload/v1/...` upload, and
-  `files.completeUploadExternal`. It requires `--channel` with an allowed Slack
-  channel ID.
+  `files.completeUploadExternal`.
 - `/tmp` is the default location for temporary Slack artifacts. Treat
   `/workspace/worktrees` as persistent storage and use it only when
   persistence is explicitly requested.

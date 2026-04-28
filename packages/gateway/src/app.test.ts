@@ -389,11 +389,6 @@ describe("gateway", () => {
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
@@ -438,11 +433,6 @@ describe("gateway", () => {
           status: 503,
         });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
@@ -479,11 +469,6 @@ describe("gateway", () => {
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
       }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
-      }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
           status: 200,
@@ -516,11 +501,6 @@ describe("gateway", () => {
       const url = String(input);
       if (url === "http://runner.test/health") {
         return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
-      }
-      if (url === "http://slack-mcp.test/health") {
-        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
-          status: 200,
-        });
       }
       if (url === "http://remote-cli:3004/health") {
         return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {

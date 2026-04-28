@@ -676,9 +676,6 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       // Resolve the worktree root for all sandbox operations — cwd may
       // be a subdirectory (e.g. /workspace/worktrees/repo/feat/auth/sub/path).
-      // resolveWorktreeRoot validates the resolved root via
-      // isValidWorktreeTopLevel and findContainingWorktreeRoot, so no
-      // additional cwd-vs-root checks are needed here.
       const { root: worktreeRoot } = await resolveWorktreeRoot(cwd);
 
       if (mode === "stop") {

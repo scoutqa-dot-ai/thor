@@ -504,63 +504,26 @@ describe("alias extraction", () => {
       expect(aliases[1].alias).toBe("git:branch:repo:feat/b");
     });
 
-    it("extracts slack thread alias from bash tool raw Slack JSON", () => {
+    it("extracts slack thread alias from bash tool with [thor:meta]", () => {
+      const meta = JSON.stringify({
+        type: "alias",
+        alias: "slack:thread:1712345678.123",
+        context: "New thread posted to C123",
+      });
       const aliases = extractAliases([
         {
           tool: "bash",
-          input: {
-            command:
-              "curl -sS -X POST https://slack.com/api/chat.postMessage --data-urlencode 'channel=C123'",
-          },
-          output:
-            '{"ok":true,"channel":"C123","ts":"1712345678.999","thor-meta-key":"slack:thread:1712345678.123"}\n',
+          input: { command: "mcp slack post_message ..." },
+          output: `posted\n[thor:meta] ${meta}\n`,
         },
       ]);
 
       expect(aliases).toEqual([
         {
           alias: "slack:thread:1712345678.123",
-          context: "Slack postMessage in C123",
+          context: "New thread posted to C123",
         },
       ]);
-    });
-
-    it("skips bash JSON output without thor-meta-key", () => {
-      const aliases = extractAliases([
-        {
-          tool: "bash",
-          input: { command: "curl -sS --get https://slack.com/api/conversations.replies" },
-          output: '{"ok":true,"messages":[]}',
-        },
-      ]);
-
-      expect(aliases).toEqual([]);
-    });
-
-    it("rejects forged thor-meta-key from arbitrary stdout (missing ok:true)", () => {
-      // An agent could emit this to try to register an arbitrary alias.
-      // Mitmproxy only injects thor-meta-key when ok:true and ts are present.
-      const aliases = extractAliases([
-        {
-          tool: "bash",
-          input: { command: "echo something-evil" },
-          output: '{"thor-meta-key":"slack:thread:HIJACK","channel":"C123"}',
-        },
-      ]);
-
-      expect(aliases).toEqual([]);
-    });
-
-    it("rejects forged thor-meta-key without ts", () => {
-      const aliases = extractAliases([
-        {
-          tool: "bash",
-          input: { command: "echo something-evil" },
-          output: '{"ok":true,"thor-meta-key":"slack:thread:HIJACK","channel":"C123"}',
-        },
-      ]);
-
-      expect(aliases).toEqual([]);
     });
 
     it("skips bash tool output without [thor:meta]", () => {
