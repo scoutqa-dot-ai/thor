@@ -56,6 +56,60 @@ function readQueuedEvents(queueDir: string): Array<Record<string, unknown>> {
     );
 }
 
+function readInboundWebhookHistoryEntries(worklogDir: string): Array<Record<string, unknown>> {
+  return readJsonlStreamEntries(worklogDir, "inbound-webhook-history");
+}
+
+function readGitHubIngestedEntries(worklogDir: string): Array<Record<string, unknown>> {
+  return readJsonlStreamEntries(worklogDir, "github-webhook-ingested");
+}
+
+function readGitHubIgnoredEntries(worklogDir: string): Array<Record<string, unknown>> {
+  return readJsonlStreamEntries(worklogDir, "github-webhook-ignored");
+}
+
+function readJsonlStreamEntries(
+  worklogDir: string,
+  stream: string,
+): Array<Record<string, unknown>> {
+  try {
+    const dayDir = readdirSync(worklogDir).find((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry));
+    if (!dayDir) return [];
+    const historyPath = join(worklogDir, dayDir, "jsonl", `${stream}.jsonl`);
+    const content = readFileSync(historyPath, "utf8").trim();
+    if (!content) return [];
+    return content.split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+  } catch {
+    return [];
+  }
+}
+
+async function withWorklogDir<T>(run: (worklogDir: string) => Promise<T>): Promise<T> {
+  const worklogDir = mkdtempSync(join(tmpdir(), "gateway-worklog-test-"));
+  const prevDir = process.env.WORKLOG_DIR;
+  const prevEnabled = process.env.WORKLOG_ENABLED;
+  process.env.WORKLOG_DIR = worklogDir;
+  process.env.WORKLOG_ENABLED = "true";
+
+  try {
+    return await run(worklogDir);
+  } finally {
+    if (prevDir === undefined) {
+      delete process.env.WORKLOG_DIR;
+    } else {
+      process.env.WORKLOG_DIR = prevDir;
+    }
+
+    if (prevEnabled === undefined) {
+      delete process.env.WORKLOG_ENABLED;
+    } else {
+      process.env.WORKLOG_ENABLED = prevEnabled;
+    }
+
+    rmSync(worklogDir, { recursive: true, force: true });
+  }
+}
+
 async function withServer<T>(
   fetchImpl: typeof fetch,
   run: (baseUrl: string, queue: EventQueue, queueDir: string) => Promise<T>,
@@ -176,6 +230,12 @@ describe("gateway", () => {
             service: "gateway",
             runnerUrl: "http://runner.test",
             configured: true,
+            queue: {
+              status: "ok",
+              pendingCount: 0,
+              staleThresholdMs: 900000,
+              staleEventCount: 0,
+            },
             services: {
               runner: { status: "ok", service: "runner" },
               "slack-mcp": { status: "ok", service: "slack-mcp" },
@@ -257,6 +317,12 @@ describe("gateway", () => {
           expect(response.status).toBe(200);
           expect(await response.json()).toMatchObject({
             status: "ok",
+            queue: {
+              status: "ok",
+              pendingCount: 0,
+              staleThresholdMs: 900000,
+              staleEventCount: 0,
+            },
             codex: {
               status: "no_auth",
               authenticated: false,
@@ -274,6 +340,243 @@ describe("gateway", () => {
     } finally {
       rmSync(authDir, { recursive: true, force: true });
     }
+  });
+
+  it("returns 503 when queue has stale pending events", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const staleReceivedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+      queue.enqueue({
+        id: "stale-event",
+        source: "cron",
+        correlationKey: "cron:stale",
+        payload: { prompt: "stale" },
+        receivedAt: staleReceivedAt,
+        sourceTs: Date.now(),
+        readyAt: Date.now() + 60_000,
+      });
+
+      const response = await fetch(`${baseUrl}/health`);
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        status: "error",
+        queue: {
+          status: "error",
+          pendingCount: 1,
+          staleThresholdMs: 900000,
+          staleEventCount: 1,
+          oldestPendingReceivedAt: staleReceivedAt,
+        },
+      });
+    });
+  });
+
+  it("keeps HTTP 200 when dependencies fail but queue is not stale", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "error", error: "runner down" }), {
+          status: 503,
+        });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await withServer(fetchImpl, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/health`);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        status: "error",
+        queue: {
+          status: "ok",
+          pendingCount: 0,
+          staleThresholdMs: 900000,
+          staleEventCount: 0,
+        },
+        services: {
+          runner: {
+            status: "error",
+            error: "HTTP 503",
+          },
+        },
+      });
+    });
+  });
+
+  it("returns 503 when queue snapshot cannot be read", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await withServer(fetchImpl, async (baseUrl, _queue, queueDir) => {
+      rmSync(queueDir, { recursive: true, force: true });
+
+      const response = await fetch(`${baseUrl}/health`);
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        status: "error",
+        queue: {
+          status: "error",
+          pendingCount: 0,
+          staleThresholdMs: 900000,
+          staleEventCount: 0,
+          error: expect.stringContaining("queue snapshot failed:"),
+        },
+      });
+    });
+  });
+
+  it("preserves receivedAt when GitHub pending-branch events are rerouted", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url === "http://runner.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "runner" }), { status: 200 });
+      }
+      if (url === "http://slack-mcp.test/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "slack-mcp" }), {
+          status: 200,
+        });
+      }
+      if (url === "http://remote-cli:3004/health") {
+        return new Response(JSON.stringify({ status: "ok", service: "remote-cli" }), {
+          status: 200,
+        });
+      }
+      if (url.startsWith("http://remote-cli:3004/github/pr-head?")) {
+        return new Response(
+          JSON.stringify({ ref: "feature/refactor", headRepoFullName: "acme/thor" }),
+          { status: 200 },
+        );
+      }
+      if (url === "http://runner.test/trigger" && init?.method === "POST") {
+        return new Response(JSON.stringify({ busy: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue, queueDir) => {
+        const body = JSON.stringify({
+          action: "created",
+          installation: { id: 1 },
+          repository: { full_name: "acme/thor" },
+          sender: { login: "alice", type: "User" },
+          issue: {
+            number: 12,
+            pull_request: { html_url: "https://github.com/acme/thor/pull/12" },
+          },
+          comment: {
+            body: "please review",
+            html_url: "https://github.com/acme/thor/pull/12#issuecomment-1",
+            created_at: "2026-04-24T11:00:00Z",
+          },
+        });
+
+        const webhookResponse = await fetch(`${baseUrl}/github/webhook`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+            "X-GitHub-Delivery": "delivery-reroute-stale",
+            "X-GitHub-Event": "issue_comment",
+          },
+          body,
+        });
+
+        expect(webhookResponse.status).toBe(200);
+
+        const queueFiles = readdirSync(queueDir).filter(
+          (entry) => entry.endsWith(".json") && !entry.startsWith("."),
+        );
+        expect(queueFiles).toHaveLength(1);
+
+        const queuedPath = join(queueDir, queueFiles[0]);
+        const queuedEvent = JSON.parse(readFileSync(queuedPath, "utf8")) as Record<string, unknown>;
+        const staleReceivedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+        writeFileSync(
+          queuedPath,
+          JSON.stringify({
+            ...queuedEvent,
+            receivedAt: staleReceivedAt,
+          }),
+          "utf8",
+        );
+
+        await queue.flush();
+
+        const queuedAfterReroute = readQueuedEvents(queueDir);
+        expect(queuedAfterReroute).toHaveLength(1);
+        expect(queuedAfterReroute[0]).toMatchObject({
+          id: "delivery-reroute-stale:resolved",
+          correlationKey: "git:branch:thor:feature/refactor",
+          receivedAt: staleReceivedAt,
+        });
+
+        const healthResponse = await fetch(`${baseUrl}/health`);
+        expect(healthResponse.status).toBe(503);
+        expect(await healthResponse.json()).toMatchObject({
+          status: "error",
+          queue: {
+            status: "error",
+            pendingCount: 1,
+            staleEventCount: 1,
+            oldestPendingReceivedAt: staleReceivedAt,
+          },
+        });
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+      },
+    );
   });
 
   it("returns a placeholder response for the configured redirect URL", async () => {
@@ -314,6 +617,511 @@ describe("gateway", () => {
     });
   });
 
+  it("archives Slack valid payloads", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(fetchImpl, async (baseUrl) => {
+        const body = JSON.stringify({ type: "url_verification", challenge: "challenge-token" });
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+            "X-Slack-Request-Id": "slack-req-1",
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ challenge: "challenge-token" });
+
+        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          route: "/slack/events",
+          provider: "slack",
+          signatureVerified: true,
+          parseStatus: "url_verification",
+          requestId: "slack-req-1",
+          eventType: "url_verification",
+          rawBodyUtf8: body,
+          rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+        });
+      });
+    });
+  });
+
+  it("archives Slack invalid signatures and returns 401", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(fetchImpl, async (baseUrl) => {
+        const body = JSON.stringify({ type: "event_callback", event_id: "EvBadSig", event: {} });
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "wrong-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(401);
+
+        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          route: "/slack/events",
+          provider: "slack",
+          signatureVerified: false,
+          parseStatus: "not_parsed",
+          reason: "signature_invalid",
+          rawBodyUtf8: body,
+          rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+        });
+      });
+    });
+  });
+
+  it("preserves raw Slack webhook handling on trailing-slash route", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(fetchImpl, async (baseUrl) => {
+        const body = JSON.stringify({ type: "event_callback", event_id: "EvSlash", event: {} });
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events/`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "wrong-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(401);
+
+        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          route: "/slack/events",
+          provider: "slack",
+          signatureVerified: false,
+          reason: "signature_invalid",
+          rawBodyUtf8: body,
+        });
+      });
+    });
+  });
+
+  it("archives Slack malformed JSON payloads", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(fetchImpl, async (baseUrl) => {
+        const body = '{"type":"event_callback"';
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          route: "/slack/events",
+          provider: "slack",
+          signatureVerified: true,
+          parseStatus: "json_invalid",
+          reason: "json_parse_error",
+          rawBodyUtf8: body,
+          rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+        });
+      });
+    });
+  });
+
+  it("archives accepted GitHub webhook payloads to ingested stream", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = JSON.stringify({
+            action: "created",
+            installation: { id: 1 },
+            repository: { full_name: "acme/thor" },
+            sender: { id: 1001, login: "alice", type: "User" },
+            issue: {
+              number: 12,
+              pull_request: { html_url: "https://github.com/acme/thor/pull/12" },
+            },
+            comment: {
+              body: "@thor please check",
+              html_url: "https://github.com/acme/thor/issues/12#issuecomment-1",
+              created_at: "2026-04-24T11:00:00Z",
+            },
+          });
+
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-archive-ok",
+              "X-GitHub-Event": "issue_comment",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true });
+
+          const entries = readGitHubIngestedEntries(worklogDir);
+          expect(entries).toHaveLength(1);
+          expect(entries[0]).toMatchObject({
+            route: "/github/webhook",
+            provider: "github",
+            signatureVerified: true,
+            parseStatus: "schema_valid",
+            requestId: "delivery-archive-ok",
+            eventType: "issue_comment",
+            action: "created",
+            reason: "accepted",
+            rawBodyUtf8: body,
+            rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+          });
+          expect(readGitHubIgnoredEntries(worklogDir)).toHaveLength(0);
+          expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("archives GitHub invalid signatures and returns 401", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = JSON.stringify({
+            action: "created",
+            repository: { full_name: "acme/thor" },
+          });
+
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "wrong-secret"),
+              "X-GitHub-Delivery": "delivery-archive-bad-sig",
+              "X-GitHub-Event": "issue_comment",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(401);
+
+          const entries = readGitHubIgnoredEntries(worklogDir);
+          expect(entries).toHaveLength(1);
+          expect(entries[0]).toMatchObject({
+            route: "/github/webhook",
+            provider: "github",
+            signatureVerified: false,
+            parseStatus: "not_parsed",
+            requestId: "delivery-archive-bad-sig",
+            reason: "signature_invalid",
+            rawBodyUtf8: body,
+            rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+          });
+          expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
+          expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("preserves raw GitHub webhook handling on trailing-slash route", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = JSON.stringify({
+            action: "created",
+            repository: { full_name: "acme/thor" },
+          });
+
+          const response = await fetch(`${baseUrl}/github/webhook/`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "wrong-secret"),
+              "X-GitHub-Delivery": "delivery-trailing-slash-bad-sig",
+              "X-GitHub-Event": "issue_comment",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(401);
+
+          const entries = readGitHubIgnoredEntries(worklogDir);
+          expect(entries).toHaveLength(1);
+          expect(entries[0]).toMatchObject({
+            route: "/github/webhook",
+            provider: "github",
+            signatureVerified: false,
+            requestId: "delivery-trailing-slash-bad-sig",
+            reason: "signature_invalid",
+            rawBodyUtf8: body,
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("archives malformed GitHub webhook JSON payloads", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = '{"action":"created"';
+
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-archive-bad-json",
+              "X-GitHub-Event": "issue_comment",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+          const entries = readGitHubIgnoredEntries(worklogDir);
+          expect(entries).toHaveLength(1);
+          expect(entries[0]).toMatchObject({
+            route: "/github/webhook",
+            provider: "github",
+            signatureVerified: true,
+            parseStatus: "json_invalid",
+            requestId: "delivery-archive-bad-json",
+            reason: "json_parse_error",
+            rawBodyUtf8: body,
+            rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+          });
+          expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
+          expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("archives schema-invalid GitHub webhook payloads with schema_validation_failed reason", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = JSON.stringify({
+            action: "created",
+            repository: { full_name: "acme/thor" },
+          });
+
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-archive-schema-invalid",
+              "X-GitHub-Event": "issue_comment",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+          const entries = readGitHubIgnoredEntries(worklogDir);
+          expect(entries).toHaveLength(1);
+          expect(entries[0]).toMatchObject({
+            requestId: "delivery-archive-schema-invalid",
+            eventType: "issue_comment",
+            parseStatus: "schema_invalid",
+            reason: "schema_validation_failed",
+          });
+          expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("archives repo_not_mapped GitHub outcomes to ignored stream", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = JSON.stringify({
+            action: "created",
+            installation: { id: 1 },
+            repository: { full_name: "acme/not-mapped" },
+            sender: { id: 1001, login: "alice", type: "User" },
+            issue: {
+              number: 12,
+              pull_request: { html_url: "https://github.com/acme/not-mapped/pull/12" },
+            },
+            comment: {
+              body: "@thor please check",
+              html_url: "https://github.com/acme/not-mapped/issues/12#issuecomment-1",
+              created_at: "2026-04-24T11:00:00Z",
+            },
+          });
+
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-repo-not-mapped",
+              "X-GitHub-Event": "issue_comment",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+          const entries = readGitHubIgnoredEntries(worklogDir);
+          expect(entries).toHaveLength(1);
+          expect(entries[0]).toMatchObject({
+            requestId: "delivery-repo-not-mapped",
+            eventType: "issue_comment",
+            reason: "repo_not_mapped",
+            parseStatus: "schema_valid",
+          });
+          expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("archives normalization-level ignored GitHub outcomes to ignored stream", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = JSON.stringify({
+            action: "created",
+            installation: { id: 126669985 },
+            repository: { full_name: "scoutqa-dot-ai/thor" },
+            sender: { id: 1001, login: "alice", type: "User" },
+            pull_request: {
+              number: 42,
+              user: { id: 1001, login: "alice" },
+              head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
+              base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+            },
+            comment: {
+              body: "@codex review",
+              html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r9",
+              created_at: "2026-04-24T11:00:00Z",
+            },
+          });
+
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-normalized-ignored",
+              "X-GitHub-Event": "pull_request_review_comment",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+          const entries = readGitHubIgnoredEntries(worklogDir);
+          expect(entries).toHaveLength(1);
+          expect(entries[0]).toMatchObject({
+            requestId: "delivery-normalized-ignored",
+            eventType: "pull_request_review_comment",
+            reason: "non_mention_comment",
+            parseStatus: "schema_valid",
+          });
+          expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
   it("enqueues valid GitHub webhook with branch correlation and mention delay", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
@@ -324,9 +1132,10 @@ describe("gateway", () => {
           action: "created",
           installation: { id: 126669985 },
           repository: { full_name: "scoutqa-dot-ai/thor" },
-          sender: { login: "alice", type: "User" },
+          sender: { id: 1001, login: "alice", type: "User" },
           pull_request: {
             number: 42,
+            user: { id: 1001, login: "alice" },
             head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
             base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
           },
@@ -365,7 +1174,6 @@ describe("gateway", () => {
             repoFullName: "scoutqa-dot-ai/thor",
             localRepo: "thor",
             branch: "feature/refactor",
-            mention: true,
           },
         });
         expect(fetchImpl).not.toHaveBeenCalled();
@@ -373,6 +1181,7 @@ describe("gateway", () => {
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });
@@ -403,6 +1212,7 @@ describe("gateway", () => {
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });
@@ -417,7 +1227,7 @@ describe("gateway", () => {
           action: "created",
           installation: { id: 1 },
           repository: { full_name: "acme/thor" },
-          sender: { login: "alice", type: "User" },
+          sender: { id: 1001, login: "alice", type: "User" },
           issue: { number: 12, pull_request: null },
           comment: {
             body: "hello",
@@ -444,6 +1254,54 @@ describe("gateway", () => {
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
+      },
+    );
+  });
+
+  it("ignores PR comments that do not mention the configured app", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir) => {
+        const body = JSON.stringify({
+          action: "created",
+          installation: { id: 126669985 },
+          repository: { full_name: "scoutqa-dot-ai/thor" },
+          sender: { id: 1001, login: "alice", type: "User" },
+          pull_request: {
+            number: 42,
+            user: { id: 1001, login: "alice" },
+            head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
+            base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+          },
+          comment: {
+            body: "@codex review",
+            html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r9",
+            created_at: "2026-04-24T11:00:00Z",
+          },
+        });
+
+        const response = await fetch(`${baseUrl}/github/webhook`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+            "X-GitHub-Delivery": "delivery-non-mention",
+            "X-GitHub-Event": "pull_request_review_comment",
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, ignored: true });
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });
@@ -458,13 +1316,13 @@ describe("gateway", () => {
           action: "created",
           installation: { id: 1 },
           repository: { full_name: "acme/thor" },
-          sender: { login: "alice", type: "User" },
+          sender: { id: 1001, login: "alice", type: "User" },
           issue: {
             number: 12,
             pull_request: { html_url: "https://github.com/acme/thor/pull/12" },
           },
           comment: {
-            body: "please review",
+            body: "@thor please review",
             html_url: "https://github.com/acme/thor/pull/12#issuecomment-1",
             created_at: "2026-04-24T11:00:00Z",
           },
@@ -490,18 +1348,18 @@ describe("gateway", () => {
           id: "delivery-branch-pending",
           source: "github",
           correlationKey: "pending:branch-resolve:thor:12",
-          delayMs: 60000,
-          interrupt: false,
+          delayMs: 3000,
+          interrupt: true,
           payload: {
             eventType: "issue_comment",
             branch: null,
-            mention: false,
           },
         });
       },
       {
         githubWebhookSecret: "github-secret",
         githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
       },
     );
   });
