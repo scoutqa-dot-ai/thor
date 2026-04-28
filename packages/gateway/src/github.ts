@@ -66,6 +66,7 @@ const PullRequestReviewCommentEnvelopeSchema = z.object({
 });
 
 const PullRequestReviewEnvelopeSchema = z.object({
+  event_type: z.literal("pull_request_review"),
   action: z.string(),
   installation: GitHubInstallationSchema,
   repository: GitHubRepositorySchema,
@@ -78,26 +79,90 @@ const PullRequestReviewEnvelopeSchema = z.object({
   }),
 });
 
-export const GitHubWebhookEnvelopeSchema = z.union([
-  IssueCommentEnvelopeSchema.extend({ action: z.literal("created") }),
-  PullRequestReviewCommentEnvelopeSchema.extend({ action: z.literal("created") }),
-  PullRequestReviewEnvelopeSchema.extend({ action: z.literal("submitted") }),
-]);
+const IssueCommentTypedEnvelopeSchema = IssueCommentEnvelopeSchema.extend({
+  event_type: z.literal("issue_comment"),
+  action: z.literal("created"),
+});
+
+const PullRequestReviewCommentTypedEnvelopeSchema = PullRequestReviewCommentEnvelopeSchema.extend({
+  event_type: z.literal("pull_request_review_comment"),
+  action: z.literal("created"),
+});
+
+const PullRequestReviewTypedEnvelopeSchema = PullRequestReviewEnvelopeSchema.extend({
+  event_type: z.literal("pull_request_review"),
+  action: z.literal("submitted"),
+});
+
+const CheckSuitePullRequestSchema = z.object({
+  number: z.number().int().positive(),
+  url: z.string().optional(),
+  head: z
+    .object({
+      ref: z.string().optional(),
+      sha: z.string().optional(),
+      repo: z.object({ full_name: z.string().optional() }).optional(),
+    })
+    .optional(),
+  base: z
+    .object({
+      ref: z.string().optional(),
+      sha: z.string().optional(),
+      repo: z.object({ full_name: z.string().optional() }).optional(),
+    })
+    .optional(),
+});
+
+export const CheckSuiteCompletedEventSchema = z.object({
+  event_type: z.literal("check_suite"),
+  action: z.literal("completed"),
+  installation: GitHubInstallationSchema,
+  repository: GitHubRepositorySchema,
+  sender: GitHubSenderSchema,
+  check_suite: z.object({
+    head_sha: z.string(),
+    head_branch: z.string().nullable().optional(),
+    conclusion: z.string().nullable().optional(),
+    status: z.string().optional(),
+    updated_at: IsoDateTimeSchema,
+    pull_requests: z.array(CheckSuitePullRequestSchema),
+  }),
+});
+
+function withEventType(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.event_type === "string") return raw;
+  if ("check_suite" in obj) return { ...obj, event_type: "check_suite" };
+  if ("issue" in obj) return { ...obj, event_type: "issue_comment" };
+  if ("pull_request" in obj && "comment" in obj) {
+    return { ...obj, event_type: "pull_request_review_comment" };
+  }
+  if ("pull_request" in obj && "review" in obj) {
+    return { ...obj, event_type: "pull_request_review" };
+  }
+  return raw;
+}
+
+export const GitHubWebhookEnvelopeSchema = z.preprocess(
+  withEventType,
+  z.discriminatedUnion("event_type", [
+    IssueCommentTypedEnvelopeSchema,
+    PullRequestReviewCommentTypedEnvelopeSchema,
+    PullRequestReviewTypedEnvelopeSchema,
+    CheckSuiteCompletedEventSchema,
+  ]),
+);
 
 export type GitHubWebhookEvent = z.infer<typeof GitHubWebhookEnvelopeSchema>;
 export type GitHubWebhookEnvelope = GitHubWebhookEvent;
 
-export type IssueCommentEvent = z.infer<typeof IssueCommentEnvelopeSchema> & {
-  action: "created";
-};
+export type IssueCommentEvent = z.infer<typeof IssueCommentTypedEnvelopeSchema>;
 export type PullRequestReviewCommentEvent = z.infer<
-  typeof PullRequestReviewCommentEnvelopeSchema
-> & {
-  action: "created";
-};
-export type PullRequestReviewEvent = z.infer<typeof PullRequestReviewEnvelopeSchema> & {
-  action: "submitted";
-};
+  typeof PullRequestReviewCommentTypedEnvelopeSchema
+>;
+export type PullRequestReviewEvent = z.infer<typeof PullRequestReviewTypedEnvelopeSchema>;
+export type CheckSuiteCompletedEvent = z.infer<typeof CheckSuiteCompletedEventSchema>;
 
 export type GitHubIgnoreReason =
   | "pure_issue_comment_unsupported"
@@ -105,6 +170,8 @@ export type GitHubIgnoreReason =
   | "self_sender"
   | "empty_review_body"
   | "non_mention_comment"
+  | "check_suite_branch_missing"
+  | "correlation_key_unresolved"
   | "event_unsupported";
 
 export type GitHubQueuedPayload = {
@@ -170,25 +237,29 @@ export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number {
     ? raw.comment.created_at
     : isPullRequestReviewCommentEvent(raw)
       ? raw.comment.created_at
-      : raw.review.submitted_at;
+      : isCheckSuiteCompletedEvent(raw)
+        ? raw.check_suite.updated_at
+        : raw.review.submitted_at;
   return Date.parse(iso);
 }
 
 export function getGitHubEventBranch(raw: GitHubWebhookEvent): string | null {
   if (isIssueCommentEvent(raw)) return null;
+  if (isCheckSuiteCompletedEvent(raw)) return raw.check_suite.head_branch?.trim() || null;
   return raw.pull_request.head.ref;
 }
 
 export function getGitHubEventType(
   raw: GitHubWebhookEvent,
-): "issue_comment" | "pull_request_review_comment" | "pull_request_review" {
-  if (isIssueCommentEvent(raw)) return "issue_comment";
-  if (isPullRequestReviewCommentEvent(raw)) return "pull_request_review_comment";
-  return "pull_request_review";
+): "issue_comment" | "pull_request_review_comment" | "pull_request_review" | "check_suite" {
+  return raw.event_type;
 }
 
 export function getGitHubEventNumber(raw: GitHubWebhookEvent): number {
   if (isIssueCommentEvent(raw)) return raw.issue.number;
+  if (isCheckSuiteCompletedEvent(raw)) {
+    throw new Error("check_suite events do not have a single routing number");
+  }
   return raw.pull_request.number;
 }
 
@@ -252,11 +323,18 @@ export function shouldIgnoreGitHubEvent(
   raw: GitHubWebhookEvent,
   options: { mentionLogins: string[]; botId: number },
 ): GitHubIgnoreReason | null {
+  if (isCheckSuiteCompletedEvent(raw)) return null;
   if (isIssueCommentEvent(raw)) return shouldIgnoreIssueCommentEvent(raw, options);
   if (isPullRequestReviewCommentEvent(raw)) {
     return shouldIgnorePullRequestReviewCommentEvent(raw, options);
   }
   return shouldIgnorePullRequestReviewEvent(raw, options);
+}
+
+export function isCheckSuiteCompletedEvent(
+  raw: GitHubWebhookEvent,
+): raw is CheckSuiteCompletedEvent {
+  return raw.event_type === "check_suite";
 }
 
 export function isIssueCommentEvent(raw: GitHubWebhookEvent): raw is IssueCommentEvent {

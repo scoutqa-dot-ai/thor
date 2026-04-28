@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import { computeGitAlias } from "@thor/common";
 import {
   buildCorrelationKey,
+  CheckSuiteCompletedEventSchema,
   detectMention,
   getGitHubEventBranch,
+  getGitHubEventSourceTs,
+  getGitHubEventType,
   GitHubWebhookEnvelopeSchema,
+  isCheckSuiteCompletedEvent,
   isIssueCommentEvent,
   isPullRequestReviewCommentEvent,
   isPullRequestReviewEvent,
@@ -36,6 +40,36 @@ function baseReviewCommentEvent(): GitHubWebhookEnvelope {
       body: "Looks good @thor",
       html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
       created_at: "2026-04-24T11:00:00Z",
+    },
+  };
+}
+
+function baseCheckSuiteEvent(conclusion = "success") {
+  return {
+    action: "completed",
+    installation: { id: 123 },
+    repository: { full_name: "scoutqa-dot-ai/thor" },
+    sender: { id: 41898282, login: "github-actions[bot]", type: "Bot" },
+    check_suite: {
+      head_sha: "abc123def456",
+      head_branch: "feature/refactor",
+      conclusion,
+      status: "completed",
+      updated_at: "2026-04-24T12:00:00Z",
+      pull_requests: [
+        {
+          number: 42,
+          head: {
+            ref: "feature/refactor",
+            sha: "abc123def456",
+            repo: { full_name: "scoutqa-dot-ai/thor" },
+          },
+          base: {
+            ref: "main",
+            repo: { full_name: "scoutqa-dot-ai/thor" },
+          },
+        },
+      ],
     },
   };
 }
@@ -72,6 +106,27 @@ describe("GitHubWebhookEnvelopeSchema", () => {
         action: "edited",
       }).success,
     ).toBe(false);
+  });
+
+  it("accepts check_suite completed events and adds the event discriminator", () => {
+    const parsed = GitHubWebhookEnvelopeSchema.safeParse(baseCheckSuiteEvent("success"));
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+
+    expect(parsed.data.event_type).toBe("check_suite");
+    expect(isCheckSuiteCompletedEvent(parsed.data)).toBe(true);
+    expect(getGitHubEventType(parsed.data)).toBe("check_suite");
+    expect(getGitHubEventBranch(parsed.data)).toBe("feature/refactor");
+    expect(getGitHubEventSourceTs(parsed.data)).toBe(Date.parse("2026-04-24T12:00:00Z"));
+  });
+
+  it("accepts non-success check_suite conclusions", () => {
+    const parsed = GitHubWebhookEnvelopeSchema.safeParse(baseCheckSuiteEvent("failure"));
+    expect(parsed.success).toBe(true);
+    if (!parsed.success || !isCheckSuiteCompletedEvent(parsed.data)) return;
+
+    expect(parsed.data.check_suite.conclusion).toBe("failure");
+    expect(CheckSuiteCompletedEventSchema.safeParse(parsed.data).success).toBe(true);
   });
 });
 

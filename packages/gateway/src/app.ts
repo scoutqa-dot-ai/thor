@@ -2,6 +2,7 @@ import express, { type Express, type Request, type Response } from "express";
 import {
   appendJsonlWorklog,
   createLogger,
+  findNotesFile,
   logError,
   logInfo,
   resolveCorrelationKeys,
@@ -48,6 +49,7 @@ import {
   getGitHubEventType,
   GitHubWebhookEnvelopeSchema,
   isPendingBranchResolveKey,
+  isCheckSuiteCompletedEvent,
   shouldIgnoreGitHubEvent,
   type GitHubQueuedPayload,
   verifyGitHubSignature,
@@ -138,6 +140,7 @@ const GITHUB_SUPPORTED_EVENTS = new Set([
   "issue_comment",
   "pull_request_review_comment",
   "pull_request_review",
+  "check_suite",
 ]);
 
 type GitHubIgnoreReason =
@@ -150,7 +153,9 @@ type GitHubIgnoreReason =
   | "fork_pr_unsupported"
   | "self_sender"
   | "empty_review_body"
-  | "non_mention_comment";
+  | "non_mention_comment"
+  | "check_suite_branch_missing"
+  | "correlation_key_unresolved";
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
@@ -977,12 +982,74 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const sourceTs = getGitHubEventSourceTs(parsed.data);
-    const delayMs = githubMentionDelay;
     const branch = getGitHubEventBranch(parsed.data);
-    const correlationKey = branch
-      ? resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)])
-      : buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
+    let correlationKey: string;
+    let delayMs = githubMentionDelay;
+    let interrupt = true;
+
+    if (isCheckSuiteCompletedEvent(parsed.data)) {
+      if (!branch) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "check_suite_branch_missing",
+          metadata: {
+            repoFullName,
+            localRepo,
+            headSha: parsed.data.check_suite.head_sha,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_branch_missing",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      const rawKey = buildCorrelationKey(localRepo, branch);
+      const resolvedKey = resolveCorrelationKeys([rawKey]);
+      if (!findNotesFile(resolvedKey)) {
+        writeGitHubWebhookHistory("ignored", {
+          ...baseEntry,
+          signatureVerified: true,
+          parseStatus: "schema_valid",
+          action: parsed.data.action,
+          reason: "correlation_key_unresolved",
+          metadata: {
+            repoFullName,
+            localRepo,
+            rawKey,
+            resolvedKey,
+            headSha: parsed.data.check_suite.head_sha,
+          },
+        });
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "correlation_key_unresolved",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      correlationKey = resolvedKey;
+      delayMs = 0;
+      interrupt = false;
+    } else {
+      correlationKey = branch
+        ? resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)])
+        : buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
+    }
+
+    const sourceTs = getGitHubEventSourceTs(parsed.data);
 
     queue.enqueue({
       id: deliveryId,
@@ -993,7 +1060,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       sourceTs,
       readyAt: sourceTs + delayMs,
       delayMs,
-      interrupt: true,
+      interrupt,
     });
 
     writeGitHubWebhookHistory("ingested", {
@@ -1016,7 +1083,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       eventType,
       action: parsed.data.action,
       correlationKey,
-      interrupt: true,
+      interrupt,
       delayMs,
     });
 

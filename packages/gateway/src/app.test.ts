@@ -30,6 +30,7 @@ function fakeConfigLoader(
 
 let mockHasSlackReply = false;
 let mappedRepos = new Set<string>(["test-repo", "thor"]);
+let notesKeys = new Set<string>();
 vi.mock("@thor/common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@thor/common")>();
   return {
@@ -37,6 +38,8 @@ vi.mock("@thor/common", async (importOriginal) => {
     resolveRepoDirectory: (repoName: string) =>
       mappedRepos.has(repoName) ? `/workspace/repos/${repoName}` : undefined,
     hasSlackReply: () => mockHasSlackReply,
+    findNotesFile: (correlationKey: string) =>
+      notesKeys.has(correlationKey) ? `/workspace/worklog/test/${correlationKey}.md` : undefined,
   };
 });
 
@@ -46,6 +49,34 @@ function sign(body: string, secret: string, timestamp: string): string {
 
 function signGitHub(body: string, secret: string): string {
   return `sha256=${createHmac("sha256", secret).update(Buffer.from(body)).digest("hex")}`;
+}
+
+function checkSuiteWebhookBody(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    action: "completed",
+    installation: { id: 126669985 },
+    repository: { full_name: "scoutqa-dot-ai/thor" },
+    sender: { id: 41898282, login: "github-actions[bot]", type: "Bot" },
+    check_suite: {
+      head_sha: "abc123def456",
+      head_branch: "feature/refactor",
+      conclusion: "success",
+      status: "completed",
+      updated_at: "2026-04-24T12:00:00Z",
+      pull_requests: [
+        {
+          number: 42,
+          head: {
+            ref: "feature/refactor",
+            sha: "abc123def456",
+            repo: { full_name: "scoutqa-dot-ai/thor" },
+          },
+          base: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+        },
+      ],
+      ...overrides,
+    },
+  });
 }
 
 function readQueuedEvents(queueDir: string, subdir?: string): Array<Record<string, unknown>> {
@@ -152,6 +183,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   mockHasSlackReply = false;
   mappedRepos = new Set(["test-repo", "thor"]);
+  notesKeys = new Set();
 });
 
 describe("gateway", () => {
@@ -1189,6 +1221,155 @@ describe("gateway", () => {
         githubAppBotId: 7777,
       },
     );
+  });
+
+  it("enqueues check_suite events only when the branch has an existing notes-backed session", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      notesKeys.add("git:branch:thor:feature/refactor");
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody();
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-ok",
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true });
+
+          const queued = readQueuedEvents(queueDir);
+          expect(queued).toHaveLength(1);
+          expect(queued[0]).toMatchObject({
+            id: "delivery-check-suite-ok",
+            source: "github",
+            correlationKey: "git:branch:thor:feature/refactor",
+            delayMs: 0,
+            interrupt: false,
+            payload: {
+              v: 2,
+              deliveryId: "delivery-check-suite-ok",
+              localRepo: "thor",
+              event: {
+                event_type: "check_suite",
+                action: "completed",
+                check_suite: {
+                  head_sha: "abc123def456",
+                  head_branch: "feature/refactor",
+                  conclusion: "success",
+                },
+              },
+            },
+          });
+
+          const ingested = readGitHubIngestedEntries(worklogDir);
+          expect(ingested).toHaveLength(1);
+          expect(ingested[0]).toMatchObject({
+            reason: "accepted",
+            eventType: "check_suite",
+            metadata: { correlationKey: "git:branch:thor:feature/refactor" },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("ignores check_suite events without an existing notes-backed session", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody();
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-unresolved",
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "correlation_key_unresolved",
+            eventType: "check_suite",
+            metadata: {
+              rawKey: "git:branch:thor:feature/refactor",
+              resolvedKey: "git:branch:thor:feature/refactor",
+              headSha: "abc123def456",
+            },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("ignores branchless check_suite events before pending branch resolution", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody({ head_branch: null });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-branchless",
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "check_suite_branch_missing",
+            eventType: "check_suite",
+            metadata: { headSha: "abc123def456" },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
   });
 
   it("returns 401 and does not enqueue for invalid GitHub signature", async () => {
