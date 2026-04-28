@@ -1,0 +1,23 @@
+docs/plan/2026042701_agent-task-handoffs.md
+  1da2ebac4f7992ec 125-129,161-167,169,178,189-190,192,195-196,209-213,215,221-222,225,234,259,263,447,527,543
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "85343f85675a0e14f8d247bbb85774c303f0b78a",
+  "prompts": {
+    "1da2ebac4f7992ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d40531f-4798-4033-907f-e913c030b233",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 36,
+      "total_deletions": 37,
+      "accepted_lines": 34,
+      "overriden_lines": 0
+    }
+  }
+}
