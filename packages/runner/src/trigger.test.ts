@@ -10,7 +10,7 @@ vi.hoisted(() => {
   process.env.WORKLOG_DIR = "/tmp/thor-runner-trigger-test/worklog";
 });
 const sessionDir = "/workspace/repos/runner-trigger-test";
-const memoryDir = "/workspace/memory";
+const memoryDir = "/tmp/thor-runner-trigger-test/memory";
 
 class FakeSubscription implements AsyncIterable<Event> {
   private queue: Event[] = [];
@@ -131,6 +131,7 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
         return sub;
       },
     } as unknown as RunnerAppOptions["eventBuses"],
+    memoryDir,
     createClient: () => client as unknown as ReturnType<NonNullable<RunnerAppOptions["createClient"]>>,
     ensureOpencodeAvailable: async () => {},
     isOpencodeReachable: async () => true,
@@ -168,15 +169,10 @@ async function trigger(url: string, body: Record<string, unknown>) {
 beforeEach(() => {
   process.env.WORKLOG_DIR = worklogDir;
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
-  rmSync(`${memoryDir}/README.md`, { force: true });
-  rmSync(`${memoryDir}/runner-trigger-test`, { recursive: true, force: true });
-  mkdirSync(sessionDir, { recursive: true });
 });
 
 afterEach(() => {
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
-  rmSync(`${memoryDir}/README.md`, { force: true });
-  rmSync(`${memoryDir}/runner-trigger-test`, { recursive: true, force: true });
 });
 
 describe("runner /trigger orchestration", () => {

@@ -53,9 +53,6 @@ const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
 /** Memory directory root. */
 const MEMORY_DIR = "/workspace/memory";
 
-/** Root memory file — injected into every new or stale session prompt. */
-const ROOT_MEMORY_PATH = `${MEMORY_DIR}/README.md`;
-
 const TaskDelegateInputSchema = z.object({
   subagent_type: z.string().trim().min(1),
 });
@@ -69,6 +66,7 @@ type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 
 export interface RunnerAppOptions {
   opencodeUrl?: string;
+  memoryDir?: string;
   eventBuses?: EventBusRegistry;
   createClient?: (opts: { baseUrl: string; directory: string }) => OpencodeClient;
   isOpencodeReachable?: () => Promise<boolean>;
@@ -86,15 +84,15 @@ function readMemoryFile(filePath: string): string | undefined {
 }
 
 /** Read root memory file, returns content or undefined. */
-function readRootMemory(): string | undefined {
-  return readMemoryFile(ROOT_MEMORY_PATH);
+function readRootMemory(memoryDir = MEMORY_DIR): string | undefined {
+  return readMemoryFile(`${memoryDir}/README.md`);
 }
 
 /** Read per-repo memory file, returns content or undefined. */
-function readRepoMemory(directory: string): string | undefined {
+function readRepoMemory(directory: string, memoryDir = MEMORY_DIR): string | undefined {
   const repo = extractRepoFromCwd(directory);
   if (!repo) return undefined;
-  return readMemoryFile(`${MEMORY_DIR}/${repo}/README.md`);
+  return readMemoryFile(`${memoryDir}/${repo}/README.md`);
 }
 
 function getToolInstructions(directory: string): string | undefined {
@@ -140,6 +138,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   const app = express();
   app.use(express.json());
   const opencodeUrl = options.opencodeUrl ?? OPENCODE_URL;
+  const memoryDir = options.memoryDir ?? MEMORY_DIR;
   const eventBuses = options.eventBuses ?? defaultEventBuses;
   const createClient = options.createClient ?? createOpencodeClient;
   const checkOpencodeReachable = options.isOpencodeReachable ?? isOpencodeReachable;
@@ -521,19 +520,19 @@ app.post("/trigger", async (req, res) => {
 
     // --- Memory: inject into new or stale sessions ---
     if (!resumed) {
-      const rootMemory = readRootMemory();
+      const rootMemory = readRootMemory(memoryDir);
       if (rootMemory) {
         prompt = `[Root memory — important context from prior sessions]\n${rootMemory}\n\n${prompt}`;
-        bootstrapMemoryPaths.push(ROOT_MEMORY_PATH);
+        bootstrapMemoryPaths.push(`${memoryDir}/README.md`);
       } else {
-        prompt = `[Root memory: none yet — write to ${ROOT_MEMORY_PATH} to persist cross-repo context]\n\n${prompt}`;
+        prompt = `[Root memory: none yet — write to ${memoryDir}/README.md to persist cross-repo context]\n\n${prompt}`;
       }
 
       // Per-repo memory: inject repo-specific context
       const repo = extractRepoFromCwd(sessionDirectory);
       if (repo) {
-        const repoMemoryPath = `${MEMORY_DIR}/${repo}/README.md`;
-        const repoMemory = readRepoMemory(sessionDirectory);
+        const repoMemoryPath = `${memoryDir}/${repo}/README.md`;
+        const repoMemory = readRepoMemory(sessionDirectory, memoryDir);
         if (repoMemory) {
           prompt = `[Repo memory — context for ${repo}]\n${repoMemory}\n\n${prompt}`;
           bootstrapMemoryPaths.push(repoMemoryPath);
