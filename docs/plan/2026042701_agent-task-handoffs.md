@@ -143,7 +143,7 @@ Distillation into `worklog/` and `memory/<repo>/` is **out of the main loop** �
 
 ## Phases
 
-The phase set was restructured after `/autoplan` review (2026-04-27). The original three phases (mount → build.md rewrite → integration) had a critical scope hole: the subagents didn't know the protocol, and the markdown contract was too loose for repeated LLM edits. The new structure adds a contract-foundation phase (template + helper CLI), a subagent-edits phase, and a static test phase before integration.
+The phase set was restructured after `/autoplan` review (2026-04-27). The original three phases (mount → build.md rewrite → integration) had a critical scope hole: the subagents didn't know the protocol, and the markdown contract was too loose for repeated LLM edits. The new structure adds a contract-foundation phase (template + direct edit rules), a subagent-edits phase, and a static test phase before integration.
 
 ### Phase 1 — Volume mount
 
@@ -246,8 +246,8 @@ Tracked here so they don't get lost; not part of this PR.
 | Single required `README.md` per run, everything else on demand | One rule instead of a fixed file set or weight tiers. Tiny tasks stay tiny; complex tasks accumulate files organically, always indexed from the README. |
 | Separate `/workspace/runs/` mount instead of nesting under `memory/<repo>/runs/` | Memory is curated and permanent; run scratch is verbose and ephemeral. Co-locating muddles grep semantics and lifecycle rules. |
 | Drop `<repo>` segment from the run path | Keep the path short. `repo` lives in the README header, so the run-id alone is unique and tools can still filter. |
-| Run-id `<YYYYMMDD-HHMM>-<slug>` | Sortable, unique without coordination, human-readable. Slack ts suffix optional. |
-| Verdict line `BLOCK | SUBSTANTIVE | NIT` in README Status | Mechanical iterate-vs-stop decision without parsing prose. |
+| Run-id `<YYYYMMDD-HHMMSS>-<slug>[-<thread-ts>]` | Sortable, unique enough for v1 without coordination, human-readable. Slack ts suffix optional. |
+| Verdict line `BLOCK | SUBSTANTIVE | NIT | MERGED` in README `Verdict:` field | Mechanical iterate-vs-stop decision without parsing prose. |
 | No enforced `iterations/<n>/` split | Iteration history lives in the README Log; agents freely add or replace supporting files. Forcing a numbered split adds ceremony without value for the common case. |
 | Distillation runs out of band, not in the main loop | Worklog and memory updates are a separate daily/weekly pass (design TBD). Keeping them out of the main loop keeps run completion fast and lets the distillation policy evolve independently. |
 | Tool/skill hints pass via subagent prompt, not README | Runtime info changes between invocations; storing it in a durable artifact means stale hints and a forced rewrite on every call. README captures task content; prompts carry environment. |
@@ -552,7 +552,6 @@ TTHW current: **5+ cognitive steps, 3+ underspec'd**. Target: 2 steps with expli
 | 16 | DX | Defaults table for missing fields | Auto-decide | P1 completeness | Standard contract hygiene |
 | 17 | DX | Glossary for verdict vocabulary in build.md | Auto-decide | P5 | Cheap; both voices flagged |
 | 18 | Cross | Drop `<repo>` segment from run-id (Decision Log line 156) | Re-surfaced | — | Both voices argue this REDUCES uniqueness; revisit |
-
 
 
 
