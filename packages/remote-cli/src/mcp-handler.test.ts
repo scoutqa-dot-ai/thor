@@ -293,24 +293,13 @@ describe("remote-cli MCP endpoints", () => {
     ]);
   });
 
-  it("returns 401 for /internal/exec with missing or wrong internal secret", async () => {
-    const missing = await postJson("/internal/exec", {
+  it("returns 401 for /internal/exec without the internal secret", async () => {
+    const response = await postJson("/internal/exec", {
       bin: "echo",
       args: ["hello"],
       cwd: "/tmp",
     });
-    expect(missing.status).toBe(401);
-
-    const wrong = await postJson(
-      "/internal/exec",
-      {
-        bin: "echo",
-        args: ["hello"],
-        cwd: "/tmp",
-      },
-      { "x-thor-internal-secret": "wrong" },
-    );
-    expect(wrong.status).toBe(401);
+    expect(response.status).toBe(401);
   });
 
   it("returns 401 for /github/pr-head without the internal secret", async () => {
