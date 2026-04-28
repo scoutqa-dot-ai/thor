@@ -4,8 +4,14 @@ import { computeGitAlias } from "@thor/common";
 import {
   buildCorrelationKey,
   detectMention,
+  getGitHubEventBranch,
   GitHubWebhookEnvelopeSchema,
-  normalizeGitHubEvent,
+  isIssueCommentEvent,
+  isPullRequestReviewCommentEvent,
+  isPullRequestReviewEvent,
+  shouldIgnoreIssueCommentEvent,
+  shouldIgnorePullRequestReviewCommentEvent,
+  shouldIgnorePullRequestReviewEvent,
   verifyGitHubSignature,
   type GitHubWebhookEnvelope,
 } from "./github.js";
@@ -72,240 +78,210 @@ describe("GitHubWebhookEnvelopeSchema", () => {
 const THOR_BOT_ID = 7777;
 const OTHER_BOT_ID = 9999;
 
-describe("normalizeGitHubEvent", () => {
+describe("GitHub ignore helpers", () => {
   const options = {
-    localRepo: "thor",
     mentionLogins: ["thor", "thor[bot]"],
     botId: THOR_BOT_ID,
   };
 
-  it("normalizes pull_request_review_comment and detects mention", () => {
-    const normalized = normalizeGitHubEvent(baseReviewCommentEvent(), options);
-    if ("ignored" in normalized) throw new Error("expected normalized event");
+  it("accepts pull_request_review_comment and derives branch", () => {
+    const event = baseReviewCommentEvent();
+    if (!isPullRequestReviewCommentEvent(event)) throw new Error("expected review comment event");
 
-    expect(normalized.eventType).toBe("pull_request_review_comment");
-    expect(normalized.repoFullName).toBe("scoutqa-dot-ai/thor");
-    expect(normalized.branch).toBe("feature/refactor");
+    expect(shouldIgnorePullRequestReviewCommentEvent(event, options)).toBeNull();
+    expect(getGitHubEventBranch(event)).toBe("feature/refactor");
   });
 
   it("ignores pure issue comments", () => {
-    const result = normalizeGitHubEvent(
-      {
-        action: "created",
-        installation: { id: 1 },
-        repository: { full_name: "acme/repo" },
-        sender: { id: 1001, login: "alice", type: "User" },
-        issue: { number: 12, pull_request: null },
-        comment: {
-          body: "hello",
-          html_url: "https://github.com/acme/repo/issues/12#issuecomment-1",
-          created_at: "2026-04-24T11:00:00Z",
-        },
+    const event: GitHubWebhookEnvelope = {
+      action: "created",
+      installation: { id: 1 },
+      repository: { full_name: "acme/repo" },
+      sender: { id: 1001, login: "alice", type: "User" },
+      issue: { number: 12, pull_request: null },
+      comment: {
+        body: "hello",
+        html_url: "https://github.com/acme/repo/issues/12#issuecomment-1",
+        created_at: "2026-04-24T11:00:00Z",
       },
-      options,
-    );
-    expect(result).toEqual({ ignored: true, reason: "pure_issue_comment_unsupported" });
+    };
+    if (!isIssueCommentEvent(event)) throw new Error("expected issue comment event");
+    expect(shouldIgnoreIssueCommentEvent(event, options)).toBe("pure_issue_comment_unsupported");
   });
 
   it("ignores fork PR comments", () => {
-    const result = normalizeGitHubEvent(
-      {
-        ...baseReviewCommentEvent(),
-        pull_request: {
-          ...baseReviewCommentEvent().pull_request,
-          head: { ref: "feature", repo: { full_name: "alice/thor" } },
-        },
+    const event = {
+      ...baseReviewCommentEvent(),
+      pull_request: {
+        ...baseReviewCommentEvent().pull_request,
+        head: { ref: "feature", repo: { full_name: "alice/thor" } },
       },
-      options,
-    );
-    expect(result).toEqual({ ignored: true, reason: "fork_pr_unsupported" });
+    };
+    if (!isPullRequestReviewCommentEvent(event)) throw new Error("expected review comment event");
+    expect(shouldIgnorePullRequestReviewCommentEvent(event, options)).toBe("fork_pr_unsupported");
   });
 
-  it("ignores self senders and unsupported actions", () => {
-    const self = normalizeGitHubEvent(
-      {
-        ...baseReviewCommentEvent(),
-        sender: { id: THOR_BOT_ID, login: "thor[bot]", type: "Bot" },
-      },
-      options,
-    );
-    expect(self).toEqual({ ignored: true, reason: "self_sender" });
-
-    const unsupported = normalizeGitHubEvent(
-      {
-        ...baseReviewCommentEvent(),
-        action: "edited",
-      },
-      options,
-    );
-    expect(unsupported).toEqual({ ignored: true, reason: "event_unsupported" });
+  it("ignores self senders", () => {
+    const self = {
+      ...baseReviewCommentEvent(),
+      sender: { id: THOR_BOT_ID, login: "thor[bot]", type: "Bot" },
+    };
+    if (!isPullRequestReviewCommentEvent(self)) throw new Error("expected review comment event");
+    expect(shouldIgnorePullRequestReviewCommentEvent(self, options)).toBe("self_sender");
   });
 
   it("does not auto-drop other bots — falls through to mention/bot-PR checks", () => {
-    const otherBotMention = normalizeGitHubEvent(
-      {
-        ...baseReviewCommentEvent(),
-        sender: { id: OTHER_BOT_ID, login: "codex[bot]", type: "Bot" },
-      },
-      options,
-    );
-    if ("ignored" in otherBotMention) throw new Error("expected normalized event");
-    expect(otherBotMention.senderLogin).toBe("codex[bot]");
+    const otherBotMention = {
+      ...baseReviewCommentEvent(),
+      sender: { id: OTHER_BOT_ID, login: "codex[bot]", type: "Bot" },
+    };
+    if (!isPullRequestReviewCommentEvent(otherBotMention)) {
+      throw new Error("expected review comment event");
+    }
+    expect(shouldIgnorePullRequestReviewCommentEvent(otherBotMention, options)).toBeNull();
 
-    const otherBotNoMention = normalizeGitHubEvent(
-      {
-        ...baseReviewCommentEvent(),
-        sender: { id: OTHER_BOT_ID, login: "codex[bot]", type: "Bot" },
-        comment: {
-          body: "no @mention here",
-          html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r4",
-          created_at: "2026-04-24T11:00:00Z",
-        },
+    const otherBotNoMention = {
+      ...baseReviewCommentEvent(),
+      sender: { id: OTHER_BOT_ID, login: "codex[bot]", type: "Bot" },
+      comment: {
+        body: "no @mention here",
+        html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r4",
+        created_at: "2026-04-24T11:00:00Z",
       },
-      options,
+    };
+    if (!isPullRequestReviewCommentEvent(otherBotNoMention)) {
+      throw new Error("expected review comment event");
+    }
+    expect(shouldIgnorePullRequestReviewCommentEvent(otherBotNoMention, options)).toBe(
+      "non_mention_comment",
     );
-    expect(otherBotNoMention).toEqual({ ignored: true, reason: "non_mention_comment" });
   });
 
   it("ignores self senders even when login does not match (id is canonical)", () => {
-    const result = normalizeGitHubEvent(
-      {
-        ...baseReviewCommentEvent(),
-        sender: { id: THOR_BOT_ID, login: "renamed-thor[bot]", type: "Bot" },
-      },
-      options,
-    );
-    expect(result).toEqual({ ignored: true, reason: "self_sender" });
+    const event = {
+      ...baseReviewCommentEvent(),
+      sender: { id: THOR_BOT_ID, login: "renamed-thor[bot]", type: "Bot" },
+    };
+    if (!isPullRequestReviewCommentEvent(event)) throw new Error("expected review comment event");
+    expect(shouldIgnorePullRequestReviewCommentEvent(event, options)).toBe("self_sender");
   });
 
   it("ignores issue_comment without app mention", () => {
-    const result = normalizeGitHubEvent(
-      {
-        action: "created",
-        installation: { id: 1 },
-        repository: { full_name: "acme/repo" },
-        sender: { id: 1001, login: "alice", type: "User" },
-        issue: {
-          number: 12,
-          pull_request: { html_url: "https://github.com/acme/repo/pull/12" },
-        },
-        comment: {
-          body: "@codex review",
-          html_url: "https://github.com/acme/repo/pull/12#issuecomment-1",
-          created_at: "2026-04-24T11:00:00Z",
-        },
+    const event: GitHubWebhookEnvelope = {
+      action: "created",
+      installation: { id: 1 },
+      repository: { full_name: "acme/repo" },
+      sender: { id: 1001, login: "alice", type: "User" },
+      issue: {
+        number: 12,
+        pull_request: { html_url: "https://github.com/acme/repo/pull/12" },
       },
-      options,
-    );
-    expect(result).toEqual({ ignored: true, reason: "non_mention_comment" });
+      comment: {
+        body: "@codex review",
+        html_url: "https://github.com/acme/repo/pull/12#issuecomment-1",
+        created_at: "2026-04-24T11:00:00Z",
+      },
+    };
+    if (!isIssueCommentEvent(event)) throw new Error("expected issue comment event");
+    expect(shouldIgnoreIssueCommentEvent(event, options)).toBe("non_mention_comment");
+    expect(getGitHubEventBranch(event)).toBeNull();
   });
 
   it("ignores pull_request_review_comment without app mention", () => {
-    const result = normalizeGitHubEvent(
-      {
-        ...baseReviewCommentEvent(),
-        comment: {
-          body: "@codex please look",
-          html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r2",
-          created_at: "2026-04-24T11:00:00Z",
-        },
+    const event = {
+      ...baseReviewCommentEvent(),
+      comment: {
+        body: "@codex please look",
+        html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r2",
+        created_at: "2026-04-24T11:00:00Z",
       },
-      options,
-    );
-    expect(result).toEqual({ ignored: true, reason: "non_mention_comment" });
+    };
+    if (!isPullRequestReviewCommentEvent(event)) throw new Error("expected review comment event");
+    expect(shouldIgnorePullRequestReviewCommentEvent(event, options)).toBe("non_mention_comment");
   });
 
   it("forwards pull_request_review_comment without mention when PR was opened by us", () => {
-    const result = normalizeGitHubEvent(
-      {
-        ...baseReviewCommentEvent(),
-        pull_request: {
-          ...baseReviewCommentEvent().pull_request,
-          user: { id: THOR_BOT_ID, login: "thor[bot]" },
-        },
-        comment: {
-          body: "looks good, no @ mention here",
-          html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r3",
-          created_at: "2026-04-24T11:00:00Z",
-        },
+    const event = {
+      ...baseReviewCommentEvent(),
+      pull_request: {
+        ...baseReviewCommentEvent().pull_request,
+        user: { id: THOR_BOT_ID, login: "thor[bot]" },
       },
-      options,
-    );
-    if ("ignored" in result) throw new Error("expected normalized event");
-    expect(result.eventType).toBe("pull_request_review_comment");
+      comment: {
+        body: "looks good, no @ mention here",
+        html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r3",
+        created_at: "2026-04-24T11:00:00Z",
+      },
+    };
+    if (!isPullRequestReviewCommentEvent(event)) throw new Error("expected review comment event");
+    expect(shouldIgnorePullRequestReviewCommentEvent(event, options)).toBeNull();
   });
 
   it("forwards pull_request_review without mention when PR was opened by us", () => {
-    const result = normalizeGitHubEvent(
-      {
-        action: "submitted",
-        installation: { id: 1 },
-        repository: { full_name: "acme/repo" },
-        sender: { id: 1001, login: "alice", type: "User" },
-        pull_request: {
-          number: 12,
-          user: { id: THOR_BOT_ID, login: "thor[bot]" },
-          head: { ref: "main", repo: { full_name: "acme/repo" } },
-          base: { repo: { full_name: "acme/repo" } },
-        },
-        review: {
-          body: "looks good to me",
-          html_url: "https://github.com/acme/repo/pull/12#pullrequestreview-2",
-          submitted_at: "2026-04-24T11:00:00Z",
-        },
+    const event: GitHubWebhookEnvelope = {
+      action: "submitted",
+      installation: { id: 1 },
+      repository: { full_name: "acme/repo" },
+      sender: { id: 1001, login: "alice", type: "User" },
+      pull_request: {
+        number: 12,
+        user: { id: THOR_BOT_ID, login: "thor[bot]" },
+        head: { ref: "main", repo: { full_name: "acme/repo" } },
+        base: { repo: { full_name: "acme/repo" } },
       },
-      options,
-    );
-    if ("ignored" in result) throw new Error("expected normalized event");
-    expect(result.eventType).toBe("pull_request_review");
+      review: {
+        body: "looks good to me",
+        html_url: "https://github.com/acme/repo/pull/12#pullrequestreview-2",
+        submitted_at: "2026-04-24T11:00:00Z",
+      },
+    };
+    if (!isPullRequestReviewEvent(event)) throw new Error("expected review event");
+    expect(shouldIgnorePullRequestReviewEvent(event, options)).toBeNull();
+    expect(getGitHubEventBranch(event)).toBe("main");
   });
 
   it("ignores pull_request_review without app mention", () => {
-    const result = normalizeGitHubEvent(
-      {
-        action: "submitted",
-        installation: { id: 1 },
-        repository: { full_name: "acme/repo" },
-        sender: { id: 1001, login: "alice", type: "User" },
-        pull_request: {
-          number: 12,
-          user: { id: 1001, login: "alice" },
-          head: { ref: "main", repo: { full_name: "acme/repo" } },
-          base: { repo: { full_name: "acme/repo" } },
-        },
-        review: {
-          body: "looks good to me",
-          html_url: "https://github.com/acme/repo/pull/12#pullrequestreview-1",
-          submitted_at: "2026-04-24T11:00:00Z",
-        },
+    const event: GitHubWebhookEnvelope = {
+      action: "submitted",
+      installation: { id: 1 },
+      repository: { full_name: "acme/repo" },
+      sender: { id: 1001, login: "alice", type: "User" },
+      pull_request: {
+        number: 12,
+        user: { id: 1001, login: "alice" },
+        head: { ref: "main", repo: { full_name: "acme/repo" } },
+        base: { repo: { full_name: "acme/repo" } },
       },
-      options,
-    );
-    expect(result).toEqual({ ignored: true, reason: "non_mention_comment" });
+      review: {
+        body: "looks good to me",
+        html_url: "https://github.com/acme/repo/pull/12#pullrequestreview-1",
+        submitted_at: "2026-04-24T11:00:00Z",
+      },
+    };
+    if (!isPullRequestReviewEvent(event)) throw new Error("expected review event");
+    expect(shouldIgnorePullRequestReviewEvent(event, options)).toBe("non_mention_comment");
   });
 
   it("ignores empty pull_request_review body", () => {
-    const result = normalizeGitHubEvent(
-      {
-        action: "submitted",
-        installation: { id: 1 },
-        repository: { full_name: "acme/repo" },
-        sender: { id: 1001, login: "alice", type: "User" },
-        pull_request: {
-          number: 12,
-          user: { id: 1001, login: "alice" },
-          head: { ref: "main", repo: { full_name: "acme/repo" } },
-          base: { repo: { full_name: "acme/repo" } },
-        },
-        review: {
-          body: "   ",
-          html_url: "https://github.com/acme/repo/pull/12#pullrequestreview-1",
-          submitted_at: "2026-04-24T11:00:00Z",
-        },
+    const event: GitHubWebhookEnvelope = {
+      action: "submitted",
+      installation: { id: 1 },
+      repository: { full_name: "acme/repo" },
+      sender: { id: 1001, login: "alice", type: "User" },
+      pull_request: {
+        number: 12,
+        user: { id: 1001, login: "alice" },
+        head: { ref: "main", repo: { full_name: "acme/repo" } },
+        base: { repo: { full_name: "acme/repo" } },
       },
-      options,
-    );
-    expect(result).toEqual({ ignored: true, reason: "empty_review_body" });
+      review: {
+        body: "   ",
+        html_url: "https://github.com/acme/repo/pull/12#pullrequestreview-1",
+        submitted_at: "2026-04-24T11:00:00Z",
+      },
+    };
+    if (!isPullRequestReviewEvent(event)) throw new Error("expected review event");
+    expect(shouldIgnorePullRequestReviewEvent(event, options)).toBe("empty_review_body");
   });
 });
 
