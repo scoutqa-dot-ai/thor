@@ -14,7 +14,7 @@ import {
   getChannelRepoMap,
   truncate,
   resolveRepoDirectory,
-  writeInboundWebhookHistory,
+  writeSlackWebhookHistory,
   type ConfigLoader,
   type InboundWebhookHistoryEntry,
 } from "@thor/common";
@@ -938,7 +938,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     });
 
     if (!verified) {
-      writeInboundWebhookHistory({
+      writeSlackWebhookHistory({
         timestamp: new Date().toISOString(),
         route: "/slack/events",
         provider: "slack",
@@ -960,7 +960,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     try {
       parsedBody = JSON.parse(rawBodyUtf8);
     } catch {
-      writeInboundWebhookHistory({
+      writeSlackWebhookHistory({
         timestamp: new Date().toISOString(),
         route: "/slack/events",
         provider: "slack",
@@ -980,7 +980,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const urlVerification = SlackUrlVerificationSchema.safeParse(parsedBody);
     if (urlVerification.success) {
-      writeInboundWebhookHistory({
+      writeSlackWebhookHistory({
         timestamp: new Date().toISOString(),
         route: "/slack/events",
         provider: "slack",
@@ -1000,7 +1000,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const envelope = SlackEventEnvelopeSchema.safeParse(parsedBody);
     if (!envelope.success) {
-      writeInboundWebhookHistory({
+      writeSlackWebhookHistory({
         timestamp: new Date().toISOString(),
         route: "/slack/events",
         provider: "slack",
@@ -1025,7 +1025,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       (typeof headers["x-request-id"] === "string" && headers["x-request-id"]) ||
       eventId;
 
-    writeInboundWebhookHistory({
+    writeSlackWebhookHistory({
       timestamp: new Date().toISOString(),
       route: "/slack/events",
       provider: "slack",

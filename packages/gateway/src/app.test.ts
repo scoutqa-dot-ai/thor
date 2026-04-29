@@ -132,8 +132,8 @@ function readQueuedEvents(queueDir: string, subdir?: string): Array<Record<strin
     .map((entry) => JSON.parse(readFileSync(join(dir, entry), "utf8")) as Record<string, unknown>);
 }
 
-function readInboundWebhookHistoryEntries(worklogDir: string): Array<Record<string, unknown>> {
-  return readJsonlStreamEntries(worklogDir, "inbound-webhook-history");
+function readSlackWebhookEntries(worklogDir: string): Array<Record<string, unknown>> {
+  return readJsonlStreamEntries(worklogDir, "slack-webhook");
 }
 
 function readGitHubIngestedEntries(worklogDir: string): Array<Record<string, unknown>> {
@@ -733,7 +733,7 @@ describe("gateway", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ challenge: "challenge-token" });
 
-        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        const entries = readSlackWebhookEntries(worklogDir);
         expect(entries).toHaveLength(1);
         expect(entries[0]).toMatchObject({
           route: "/slack/events",
@@ -770,7 +770,7 @@ describe("gateway", () => {
 
         expect(response.status).toBe(401);
 
-        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        const entries = readSlackWebhookEntries(worklogDir);
         expect(entries).toHaveLength(1);
         expect(entries[0]).toMatchObject({
           route: "/slack/events",
@@ -806,7 +806,7 @@ describe("gateway", () => {
 
         expect(response.status).toBe(401);
 
-        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        const entries = readSlackWebhookEntries(worklogDir);
         expect(entries).toHaveLength(1);
         expect(entries[0]).toMatchObject({
           route: "/slack/events",
@@ -841,7 +841,7 @@ describe("gateway", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ ok: true, ignored: true });
 
-        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        const entries = readSlackWebhookEntries(worklogDir);
         expect(entries).toHaveLength(1);
         expect(entries[0]).toMatchObject({
           route: "/slack/events",
@@ -909,7 +909,7 @@ describe("gateway", () => {
           expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
           expect(entries[0]).not.toHaveProperty("rawBodyBase64");
           expect(readGitHubIgnoredEntries(worklogDir)).toHaveLength(0);
-          expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
+          expect(readSlackWebhookEntries(worklogDir)).toHaveLength(0);
         },
         {
           githubWebhookSecret: "github-secret",
@@ -959,7 +959,7 @@ describe("gateway", () => {
           expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
           expect(entries[0]).not.toHaveProperty("rawBodyBase64");
           expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
-          expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
+          expect(readSlackWebhookEntries(worklogDir)).toHaveLength(0);
         },
         {
           githubWebhookSecret: "github-secret",
@@ -1095,7 +1095,7 @@ describe("gateway", () => {
           });
           expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
           expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
-          expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
+          expect(readSlackWebhookEntries(worklogDir)).toHaveLength(0);
         },
         {
           githubWebhookSecret: "github-secret",
