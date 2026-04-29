@@ -742,9 +742,10 @@ describe("gateway", () => {
           parseStatus: "url_verification",
           requestId: "slack-req-1",
           eventType: "url_verification",
-          rawBodyUtf8: body,
-          rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+          payload: JSON.parse(body),
         });
+        expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+        expect(entries[0]).not.toHaveProperty("rawBodyBase64");
       });
     });
   });
@@ -777,9 +778,10 @@ describe("gateway", () => {
           signatureVerified: false,
           parseStatus: "not_parsed",
           reason: "signature_invalid",
-          rawBodyUtf8: body,
-          rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+          payload: JSON.parse(body),
         });
+        expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+        expect(entries[0]).not.toHaveProperty("rawBodyBase64");
       });
     });
   });
@@ -811,8 +813,9 @@ describe("gateway", () => {
           provider: "slack",
           signatureVerified: false,
           reason: "signature_invalid",
-          rawBodyUtf8: body,
+          payload: JSON.parse(body),
         });
+        expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
       });
     });
   });
@@ -846,9 +849,9 @@ describe("gateway", () => {
           signatureVerified: true,
           parseStatus: "json_invalid",
           reason: "json_parse_error",
-          rawBodyUtf8: body,
           rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
         });
+        expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
       });
     });
   });
@@ -901,9 +904,10 @@ describe("gateway", () => {
             eventType: "issue_comment",
             action: "created",
             reason: "accepted",
-            rawBodyUtf8: body,
-            rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+            payload: JSON.parse(body),
           });
+          expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+          expect(entries[0]).not.toHaveProperty("rawBodyBase64");
           expect(readGitHubIgnoredEntries(worklogDir)).toHaveLength(0);
           expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
         },
@@ -950,11 +954,55 @@ describe("gateway", () => {
             parseStatus: "not_parsed",
             requestId: "delivery-archive-bad-sig",
             reason: "signature_invalid",
-            rawBodyUtf8: body,
-            rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+            payload: JSON.parse(body),
           });
+          expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+          expect(entries[0]).not.toHaveProperty("rawBodyBase64");
           expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
           expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("keeps raw UTF-8 for unsupported GitHub JSON events", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = JSON.stringify({ zen: "Keep it logically awesome." });
+
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-unsupported",
+              "X-GitHub-Event": "ping",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+          const entries = readGitHubIgnoredEntries(worklogDir);
+          expect(entries).toHaveLength(1);
+          expect(entries[0]).toMatchObject({
+            requestId: "delivery-unsupported",
+            eventType: "ping",
+            reason: "event_unsupported",
+            rawBodyUtf8: body,
+          });
+          expect(entries[0]).not.toHaveProperty("rawBodyBase64");
+          expect(entries[0]).not.toHaveProperty("payload");
         },
         {
           githubWebhookSecret: "github-secret",
@@ -998,8 +1046,9 @@ describe("gateway", () => {
             signatureVerified: false,
             requestId: "delivery-trailing-slash-bad-sig",
             reason: "signature_invalid",
-            rawBodyUtf8: body,
+            payload: JSON.parse(body),
           });
+          expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
         },
         {
           githubWebhookSecret: "github-secret",
@@ -1042,9 +1091,9 @@ describe("gateway", () => {
             parseStatus: "json_invalid",
             requestId: "delivery-archive-bad-json",
             reason: "json_parse_error",
-            rawBodyUtf8: body,
             rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
           });
+          expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
           expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
           expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
         },

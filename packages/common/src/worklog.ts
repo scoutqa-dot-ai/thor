@@ -110,8 +110,9 @@ export interface InboundWebhookHistoryEntry {
   action?: string;
   reason?: string;
   headers: Record<string, string | string[] | undefined>;
-  rawBodyUtf8: string;
-  rawBodyBase64: string;
+  payload?: unknown;
+  rawBodyUtf8?: string;
+  rawBodyBase64?: string;
   metadata?: Record<string, unknown>;
 }
 

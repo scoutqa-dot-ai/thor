@@ -166,13 +166,37 @@ function getRawBufferFromBody(body: unknown): Buffer {
   return Buffer.alloc(0);
 }
 
-function buildRawBodyFields(
+function buildJsonPayloadField(payload: unknown): Pick<InboundWebhookHistoryEntry, "payload"> {
+  return { payload };
+}
+
+function buildNonJsonBodyField(
+  rawBodyBuffer: Buffer,
+): Pick<InboundWebhookHistoryEntry, "rawBodyBase64"> {
+  return { rawBodyBase64: rawBodyBuffer.toString("base64") };
+}
+
+function buildUnparsedJsonOrRawBodyFields(
+  rawBodyBuffer: Buffer,
+): Pick<InboundWebhookHistoryEntry, "payload" | "rawBodyBase64"> {
+  const rawBodyUtf8 = rawBodyBuffer.toString("utf8");
+  try {
+    return buildJsonPayloadField(JSON.parse(rawBodyUtf8));
+  } catch {
+    return buildNonJsonBodyField(rawBodyBuffer);
+  }
+}
+
+function buildUnsupportedGitHubBodyFields(
   rawBodyBuffer: Buffer,
 ): Pick<InboundWebhookHistoryEntry, "rawBodyUtf8" | "rawBodyBase64"> {
-  return {
-    rawBodyUtf8: rawBodyBuffer.toString("utf8"),
-    rawBodyBase64: rawBodyBuffer.toString("base64"),
-  };
+  const rawBodyUtf8 = rawBodyBuffer.toString("utf8");
+  try {
+    JSON.parse(rawBodyUtf8);
+    return { rawBodyUtf8 };
+  } catch {
+    return buildNonJsonBodyField(rawBodyBuffer);
+  }
 }
 
 function isRawWebhookRoute(path: string): boolean {
@@ -891,7 +915,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   app.post("/slack/events", webhookRawParser, (req: Request, res: Response) => {
     const rawBodyBuffer = getRawBufferFromBody(req.body);
-    const { rawBodyUtf8, rawBodyBase64 } = buildRawBodyFields(rawBodyBuffer);
+    const rawBodyUtf8 = rawBodyBuffer.toString("utf8");
     const signature = req.header("x-slack-signature");
     const timestamp = req.header("x-slack-request-timestamp");
     const headers = getHeaderSnapshot(req, [
@@ -926,8 +950,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           undefined,
         reason: "signature_invalid",
         headers,
-        rawBodyUtf8,
-        rawBodyBase64,
+        ...buildUnparsedJsonOrRawBodyFields(rawBodyBuffer),
       });
       res.status(401).json({ error: "Invalid Slack signature" });
       return;
@@ -949,8 +972,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           undefined,
         reason: "json_parse_error",
         headers,
-        rawBodyUtf8,
-        rawBodyBase64,
+        ...buildNonJsonBodyField(rawBodyBuffer),
       });
       res.status(200).json({ ok: true, ignored: true });
       return;
@@ -970,8 +992,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           undefined,
         eventType: "url_verification",
         headers,
-        rawBodyUtf8,
-        rawBodyBase64,
+        ...buildJsonPayloadField(parsedBody),
       });
       res.json({ challenge: urlVerification.data.challenge });
       return;
@@ -991,8 +1012,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           undefined,
         reason: "schema_validation_failed",
         headers,
-        rawBodyUtf8,
-        rawBodyBase64,
+        ...buildJsonPayloadField(parsedBody),
       });
       res.status(200).json({ ok: true, ignored: true });
       return;
@@ -1015,8 +1035,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       eventType: event.type,
       reason: "received",
       headers,
-      rawBodyUtf8,
-      rawBodyBase64,
+      ...buildJsonPayloadField(parsedBody),
       metadata: {
         eventId,
         teamId: envelope.data.team_id,
@@ -1200,7 +1219,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   app.post("/github/webhook", webhookRawParser, async (req: Request, res: Response) => {
     const rawBodyBuffer = getRawBufferFromBody(req.body);
-    const { rawBodyUtf8, rawBodyBase64 } = buildRawBodyFields(rawBodyBuffer);
+    const rawBodyUtf8 = rawBodyBuffer.toString("utf8");
     const deliveryId = req.header("x-github-delivery") ?? "unknown";
     const eventTypeHeader = (req.header("x-github-event") ?? "").toLowerCase();
     const signature = req.header("x-hub-signature-256");
@@ -1222,8 +1241,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       requestId: deliveryId,
       eventType: eventTypeHeader || undefined,
       headers,
-      rawBodyUtf8,
-      rawBodyBase64,
     } satisfies Pick<
       InboundWebhookHistoryEntry,
       | "timestamp"
@@ -1232,8 +1249,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       | "requestId"
       | "eventType"
       | "headers"
-      | "rawBodyUtf8"
-      | "rawBodyBase64"
     >;
 
     const verified = verifyGitHubSignature({
@@ -1247,6 +1262,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         signatureVerified: false,
         parseStatus: "not_parsed",
         reason: "signature_invalid",
+        ...buildUnparsedJsonOrRawBodyFields(rawBodyBuffer),
       });
       logGitHubIgnored({
         deliveryId,
@@ -1263,6 +1279,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         signatureVerified: true,
         parseStatus: "not_parsed",
         reason: "event_unsupported",
+        ...buildUnsupportedGitHubBodyFields(rawBodyBuffer),
       });
       logGitHubIgnored({
         deliveryId,
@@ -1282,6 +1299,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         signatureVerified: true,
         parseStatus: "json_invalid",
         reason: "json_parse_error",
+        ...buildNonJsonBodyField(rawBodyBuffer),
       });
       logGitHubIgnored({
         deliveryId,
@@ -1292,10 +1310,15 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
+    const parsedBaseEntry = {
+      ...baseEntry,
+      ...buildJsonPayloadField(parsedBody),
+    };
+
     const parsed = GitHubWebhookEnvelopeSchema.safeParse(parsedBody);
     if (!parsed.success) {
       writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
+        ...parsedBaseEntry,
         signatureVerified: true,
         parseStatus: "schema_invalid",
         reason: "schema_validation_failed",
@@ -1315,7 +1338,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const action = "action" in parsed.data ? parsed.data.action : undefined;
     if (!localRepo || !repoDir) {
       writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
+        ...parsedBaseEntry,
         signatureVerified: true,
         parseStatus: "schema_valid",
         action,
@@ -1339,7 +1362,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const eventType = getGitHubEventType(parsed.data);
     if (eventType !== eventTypeHeader) {
       writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
+        ...parsedBaseEntry,
         signatureVerified: true,
         parseStatus: "schema_valid",
         action,
@@ -1367,7 +1390,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         repoFullName,
         localRepo,
         repoDir,
-        baseEntry,
+        baseEntry: parsedBaseEntry,
       });
       res.status(200).json({ ok: true, ignored: result.ignored, status: result.status });
       return;
@@ -1379,7 +1402,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     });
     if (ignoreReason) {
       writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
+        ...parsedBaseEntry,
         signatureVerified: true,
         parseStatus: "schema_valid",
         action: parsed.data.action,
@@ -1408,7 +1431,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     if (isCheckSuiteCompletedEvent(parsed.data)) {
       if (!branch) {
         writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
+          ...parsedBaseEntry,
           signatureVerified: true,
           parseStatus: "schema_valid",
           action: parsed.data.action,
@@ -1434,7 +1457,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       const resolvedKey = resolveCorrelationKeys([rawKey]);
       if (!findNotesFile(resolvedKey)) {
         writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
+          ...parsedBaseEntry,
           signatureVerified: true,
           parseStatus: "schema_valid",
           action: parsed.data.action,
@@ -1469,7 +1492,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         : { ok: false as const, reason: "exec_failed" as const };
       if (!gate.ok) {
         writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
+          ...parsedBaseEntry,
           signatureVerified: true,
           parseStatus: "schema_valid",
           action: parsed.data.action,
@@ -1518,7 +1541,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     });
 
     writeGitHubWebhookHistory("ingested", {
-      ...baseEntry,
+      ...parsedBaseEntry,
       signatureVerified: true,
       parseStatus: "schema_valid",
       action: parsed.data.action,
