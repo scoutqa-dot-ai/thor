@@ -1,11 +1,24 @@
 import { createHmac } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebClient } from "@slack/web-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConfigLoader, WorkspaceConfig } from "@thor/common";
-import { createGatewayApp, type GatewayAppConfig } from "./app.js";
+import {
+  createGatewayApp,
+  resolveWebhookHistoryWrite,
+  type GatewayAppConfig,
+  type WebhookHistoryOutcome,
+} from "./app.js";
 import type { EventQueue } from "./queue.js";
 
 interface MockSlackClient {
@@ -250,6 +263,98 @@ afterEach(() => {
   mappedRepos = new Set(["test-repo", "thor"]);
   correlationKeyAliases = new Map();
   notesKeys = new Set();
+});
+
+describe("webhook history outcome mapping", () => {
+  const headers = { "x-request-id": "req-1" };
+
+  it.each([
+    [
+      "slack JSON event",
+      {
+        provider: "slack",
+        signatureVerified: true,
+        parseStatus: "schema_valid",
+        requestId: "req-1",
+        eventType: "app_mention",
+        reason: "received",
+        headers,
+        body: { kind: "json", payload: { submitted_key: "kept" } },
+      } satisfies WebhookHistoryOutcome,
+      "slack-webhook",
+      { payload: { submitted_key: "kept" }, rawBodyUtf8: undefined, rawBodyBase64: undefined },
+    ],
+    [
+      "GitHub ingested JSON event",
+      {
+        provider: "github",
+        stream: "ingested",
+        signatureVerified: true,
+        parseStatus: "schema_valid",
+        requestId: "delivery-1",
+        eventType: "issue_comment",
+        reason: "accepted",
+        headers,
+        body: { kind: "json", payload: { repository: { full_name: "owner/repo" } } },
+      } satisfies WebhookHistoryOutcome,
+      "github-webhook-ingested",
+      {
+        payload: { repository: { full_name: "owner/repo" } },
+        rawBodyUtf8: undefined,
+        rawBodyBase64: undefined,
+      },
+    ],
+    [
+      "GitHub ignored malformed event",
+      {
+        provider: "github",
+        stream: "ignored",
+        signatureVerified: true,
+        parseStatus: "json_invalid",
+        requestId: "delivery-2",
+        eventType: "issue_comment",
+        reason: "json_parse_error",
+        headers,
+        body: { kind: "base64", rawBodyBuffer: Buffer.from("{not-json", "utf8") },
+      } satisfies WebhookHistoryOutcome,
+      "github-webhook-ignored",
+      {
+        payload: undefined,
+        rawBodyUtf8: undefined,
+        rawBodyBase64: Buffer.from("{not-json").toString("base64"),
+      },
+    ],
+    [
+      "unsupported GitHub JSON event",
+      {
+        provider: "github",
+        stream: "ignored",
+        signatureVerified: true,
+        parseStatus: "not_parsed",
+        requestId: "delivery-3",
+        eventType: "workflow_run",
+        reason: "event_unsupported",
+        headers,
+        body: {
+          kind: "unsupported_github",
+          rawBodyBuffer: Buffer.from('{"submitted_key":"kept"}', "utf8"),
+        },
+      } satisfies WebhookHistoryOutcome,
+      "github-webhook-ignored",
+      { payload: undefined, rawBodyUtf8: '{"submitted_key":"kept"}', rawBodyBase64: undefined },
+    ],
+  ])("maps %s to a single stream and payload policy", (_name, outcome, stream, bodyFields) => {
+    const write = resolveWebhookHistoryWrite(outcome);
+
+    expect(write.stream).toBe(stream);
+    expect(write.entry.route).toBe(
+      outcome.provider === "slack" ? "/slack/events" : "/github/webhook",
+    );
+    expect(write.entry.provider).toBe(outcome.provider);
+    expect(write.entry.payload).toEqual(bodyFields.payload);
+    expect(write.entry.rawBodyUtf8).toEqual(bodyFields.rawBodyUtf8);
+    expect(write.entry.rawBodyBase64).toEqual(bodyFields.rawBodyBase64);
+  });
 });
 
 describe("gateway", () => {
@@ -1503,7 +1608,9 @@ describe("gateway", () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi
       .fn()
-      .mockRejectedValue(new Error("remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git"));
+      .mockRejectedValue(
+        new Error("remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git"),
+      );
 
     await withWorklogDir(async (worklogDir) => {
       await withServer(
@@ -1522,14 +1629,19 @@ describe("gateway", () => {
           });
 
           expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true, ignored: true, status: "push_sync_failed" });
+          expect(await response.json()).toEqual({
+            ok: true,
+            ignored: true,
+            status: "push_sync_failed",
+          });
           expect(readQueuedEvents(queueDir)).toHaveLength(0);
           expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
             {
               reason: "push_sync_failed",
               metadata: {
                 errorName: "Error",
-                errorMessage: "remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git",
+                errorMessage:
+                  "remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git",
               },
             },
           ]);
@@ -1615,7 +1727,10 @@ describe("gateway", () => {
           });
 
           expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true, status: "push_wake_skipped_no_session" });
+          expect(await response.json()).toEqual({
+            ok: true,
+            status: "push_wake_skipped_no_session",
+          });
         },
         { githubWebhookSecret: "github-secret", internalExec },
       );
@@ -1659,7 +1774,10 @@ describe("gateway", () => {
           });
 
           expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true, status: "push_wake_skipped_no_session" });
+          expect(await response.json()).toEqual({
+            ok: true,
+            status: "push_wake_skipped_no_session",
+          });
         },
         { githubWebhookSecret: "github-secret", internalExec },
       );
@@ -1711,13 +1829,20 @@ describe("gateway", () => {
           });
 
           expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true, status: "push_delete_worktree_removed" });
+          expect(await response.json()).toEqual({
+            ok: true,
+            status: "push_delete_worktree_removed",
+          });
           expect(readQueuedEvents(queueDir)).toHaveLength(0);
         },
         { githubWebhookSecret: "github-secret", internalExec },
       );
 
-      expect(internalExec).toHaveBeenCalledWith({ bin: "git", args: ["status", "--porcelain"], cwd: worktreeDir });
+      expect(internalExec).toHaveBeenCalledWith({
+        bin: "git",
+        args: ["status", "--porcelain"],
+        cwd: worktreeDir,
+      });
       expect(internalExec).toHaveBeenCalledWith({
         bin: "git",
         args: ["worktree", "remove", worktreeDir],
@@ -1728,7 +1853,9 @@ describe("gateway", () => {
 
   it("preserves dirty deleted branch worktrees and never wakes", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi.fn().mockResolvedValue({ stdout: " M file.txt\n", stderr: "", exitCode: 0 });
+    const internalExec = vi
+      .fn()
+      .mockResolvedValue({ stdout: " M file.txt\n", stderr: "", exitCode: 0 });
 
     await withWorktreesRoot(async (worktreesRoot) => {
       const worktreeRoot = join(worktreesRoot, "test-repo");
@@ -1799,7 +1926,11 @@ describe("gateway", () => {
             expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
               {
                 reason: "push_delete_cleanup_failed",
-                metadata: { targetDir: worktreeDir, errorName: "Error", errorMessage: "remote-cli unavailable" },
+                metadata: {
+                  targetDir: worktreeDir,
+                  errorName: "Error",
+                  errorMessage: "remote-cli unavailable",
+                },
               },
             ]);
           },
