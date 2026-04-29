@@ -1222,9 +1222,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     res.status(200).json({ ok: true, ignored: true, eventType: event.type });
   };
 
-  // codeql[js/missing-rate-limiting] Rate limiting for public webhook ingestion
-  // is intentionally enforced at the infrastructure edge (API gateway/CDN), not
-  // in the app process.
+  // Rate limiting for public webhook ingestion is intentionally enforced at the
+  // infrastructure edge (API gateway/CDN), not in the app process.
+  // codeql[js/missing-rate-limiting]
+  // lgtm[js/missing-rate-limiting]
   app.post(
     "/slack/events",
     webhookRawParser,
@@ -1569,9 +1570,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     res.status(200).json({ ok: true });
   };
 
-  // codeql[js/missing-rate-limiting] Rate limiting for public webhook ingestion
-  // is intentionally enforced at the infrastructure edge (API gateway/CDN), not
-  // in the app process.
+  // Rate limiting for public webhook ingestion is intentionally enforced at the
+  // infrastructure edge (API gateway/CDN), not in the app process.
+  // codeql[js/missing-rate-limiting]
+  // lgtm[js/missing-rate-limiting]
   app.post(
     "/github/webhook",
     webhookRawParser,
