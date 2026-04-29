@@ -14,10 +14,24 @@ interface DenyGuidance {
   instead?: string;
 }
 
+interface GhApiMutationShape {
+  endpoint: RegExp;
+  validate: (args: string[]) => string | null;
+}
+
 const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
 const DIGITS_ONLY = /^\d+$/;
+const CURRENT_REPO_REVIEW_REPLY_ENDPOINT =
+  /^\/?repos\/\{owner\}\/\{repo\}\/pulls\/comments\/(\d+)\/replies$/;
 const PROTECTED_PR_HEAD_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
 const WORKTREE_PREFIX = "/workspace/worktrees/";
+
+const ALLOWED_GH_API_MUTATION_SHAPES: readonly GhApiMutationShape[] = [
+  {
+    endpoint: CURRENT_REPO_REVIEW_REPLY_ENDPOINT,
+    validate: validateGhApiReviewReplyArgs,
+  },
+];
 
 const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "api",
@@ -127,9 +141,9 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
     instead: "gh release view <tag|latest>",
   },
   "gh api": {
-    reason:
-      "gh api is limited to implicit GET requests against REST endpoints with output-shaping flags only.",
-    instead: "gh api <endpoint> --jq <filter> or use a first-class gh read command",
+    reason: "gh api is limited to implicit GET reads, plus explicit append-only REST shapes.",
+    instead:
+      "gh api <endpoint> --jq <filter> or gh api repos/{owner}/{repo}/pulls/comments/<id>/replies --method POST -f body=<text>",
   },
 };
 
@@ -461,6 +475,13 @@ function validateGhApiArgs(args: string[]): string | null {
     return denyMessage("gh api");
   }
 
+  const mutationShape = ALLOWED_GH_API_MUTATION_SHAPES.find((shape) =>
+    shape.endpoint.test(endpoint),
+  );
+  if (mutationShape) {
+    return mutationShape.validate(args);
+  }
+
   const parsed = scanPolicyArgs(args, 2, [
     { name: "include", kind: "boolean", aliases: ["--include", "-i"] },
     { name: "silent", kind: "boolean", aliases: ["--silent"] },
@@ -469,6 +490,33 @@ function validateGhApiArgs(args: string[]): string | null {
     { name: "template", kind: "value", aliases: ["--template", "-t"] },
   ]);
   if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage("gh api");
+  }
+
+  return null;
+}
+
+function validateGhApiReviewReplyArgs(args: string[]): string | null {
+  const parsed = scanPolicyArgs(args, 2, [
+    { name: "method", kind: "value", aliases: ["--method", "-X"] },
+    { name: "raw-field", kind: "value", aliases: ["-f", "--raw-field"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage("gh api");
+  }
+
+  const methods = valueFlagValues(parsed, "method");
+  if (methods.length !== 1 || methods[0] !== "POST") {
+    return denyMessage("gh api");
+  }
+
+  const rawFields = valueFlagValues(parsed, "raw-field");
+  if (rawFields.length !== 1) {
+    return denyMessage("gh api");
+  }
+
+  const [field] = rawFields;
+  if (!field?.startsWith("body=") || field.slice("body=".length).trim().length === 0) {
     return denyMessage("gh api");
   }
 

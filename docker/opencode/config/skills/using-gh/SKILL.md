@@ -9,7 +9,7 @@ All `gh` commands go through Thor's remote-cli which enforces:
 
 - **Append-only writes.** Create PRs, post comments, submit `--comment`/`--request-changes` reviews. Never approve, merge, edit, or delete.
 - **Repo-targeting flags are blocked.** `--repo`/`-R` is not part of the supported surface.
-- **`gh api` is a tiny read-only subset.** REST only, implicit GET only, output-shaping flags only.
+- **`gh api` is a tiny explicit subset.** REST implicit GET reads are allowed with output shaping. One append-only POST shape is allowed for PR review-comment replies.
 - **PR approval is a human gate.** `gh pr review --approve` is denied.
 - **PR review requires a worktree.** `gh pr diff` and `gh pr checkout` are denied — see "Reviewing a PR" below.
 
@@ -64,7 +64,15 @@ Required: workflow selector (workflow file name or numeric ID, positional, no fl
 
 ### `gh api`
 
-Implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages). Blocked: `graphql`, `--method`/`-X`, `--input`, `-H`/`--header`, `--preview`, `--hostname`, `-f`/`--raw-field`, and `-F`/`--field`.
+Read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages).
+
+Append-only review-comment reply path: only the current-repo placeholder endpoint is allowed:
+
+```bash
+gh api repos/{owner}/{repo}/pulls/comments/<comment-id>/replies --method POST -f body=<text>
+```
+
+`<comment-id>` must be numeric, `body` must be non-empty, and `-f`/`--raw-field` is the only accepted body source. Explicit owner/repo write endpoints, `-F`/`--field`, `--input`, headers, previews, GraphQL, edit/delete endpoints, and arbitrary `--method` use remain blocked.
 
 ## Read-only (passthrough) commands
 
