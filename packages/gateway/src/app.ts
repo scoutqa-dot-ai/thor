@@ -1,5 +1,5 @@
 import express, { type Express, type Request, type Response } from "express";
-import { rateLimit } from "express-rate-limit";
+import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import {
   appendJsonlWorklog,
   createLogger,
@@ -190,6 +190,7 @@ function buildUnsupportedGitHubBodyFields(
 
 type WebhookBodyPolicy =
   | { kind: "json"; payload: unknown }
+  | { kind: "none" }
   | { kind: "base64"; rawBodyBuffer: Buffer }
   | { kind: "unsupported_github"; rawBodyBuffer: Buffer };
 
@@ -220,6 +221,8 @@ function resolveWebhookBodyFields(
   switch (body.kind) {
     case "json":
       return buildJsonPayloadField(body.payload);
+    case "none":
+      return {};
     case "base64":
       return buildNonJsonBodyField(body.rawBodyBuffer);
     case "unsupported_github":
@@ -235,6 +238,9 @@ function resolveWebhookBodyPolicy(state: WebhookHistoryState): WebhookBodyPolicy
   }
   if (state.parsedPayload !== undefined) {
     return { kind: "json", payload: state.parsedPayload };
+  }
+  if (!state.signatureVerified) {
+    return { kind: "none" };
   }
   return { kind: "base64", rawBodyBuffer: state.rawBodyBuffer };
 }
@@ -288,6 +294,13 @@ function parseRawJson(rawBodyBuffer: Buffer): { ok: true; payload: unknown } | {
   }
 }
 
+function parseWebhookJson(history: WebhookHistoryState): unknown | undefined {
+  const parsed = parseRawJson(history.rawBodyBuffer);
+  if (!parsed.ok) return undefined;
+  history.parsedPayload = parsed.payload;
+  return parsed.payload;
+}
+
 function withWebhookHistory(
   provider: "slack" | "github",
   route: "/slack/events" | "/github/webhook",
@@ -296,15 +309,13 @@ function withWebhookHistory(
 ): (req: Request, res: Response) => Promise<void> {
   return async (req, res) => {
     const rawBodyBuffer = getRawBufferFromBody(req.body);
-    const parsed = parseRawJson(rawBodyBuffer);
     const history: WebhookHistoryState = {
       provider,
       route,
       headers: getHeaderSnapshot(req, headerNames),
       rawBodyBuffer,
-      parsedPayload: parsed.ok ? parsed.payload : undefined,
       signatureVerified: false,
-      parseStatus: parsed.ok ? "not_parsed" : "json_invalid",
+      parseStatus: "not_parsed",
       reason: "handled",
       githubStream: provider === "github" ? "ignored" : undefined,
       bodyPolicy: "default",
@@ -973,6 +984,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   // --- Express app ---
 
   const app = express();
+  app.set("trust proxy", 1);
   const webhookRawParser = express.raw({
     // GitHub webhook payloads can be up to 25 MB
     // https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap
@@ -998,6 +1010,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const webhookRateLimit = rateLimit({
     windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
     limit: WEBHOOK_RATE_LIMIT_MAX_REQUESTS,
+    keyGenerator: (req) => `${req.path}:${ipKeyGenerator(req.ip ?? "unknown")}`,
     standardHeaders: true,
     legacyHeaders: false,
   });
@@ -1063,13 +1076,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    if (history.parsedPayload === undefined) {
+    const parsedBody = parseWebhookJson(history);
+    if (parsedBody === undefined) {
       history.parseStatus = "json_invalid";
       history.reason = "json_parse_error";
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
-    const parsedBody = history.parsedPayload;
 
     const urlVerification = SlackUrlVerificationSchema.safeParse(parsedBody);
     if (urlVerification.success) {
@@ -1340,7 +1353,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    if (history.parsedPayload === undefined) {
+    const parsedBody = parseWebhookJson(history);
+    if (parsedBody === undefined) {
       history.githubStream = "ignored";
       history.parseStatus = "json_invalid";
       history.reason = "json_parse_error";
@@ -1352,7 +1366,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
-    const parsedBody = history.parsedPayload;
 
     const parsed = GitHubWebhookEnvelopeSchema.safeParse(parsedBody);
     if (!parsed.success) {

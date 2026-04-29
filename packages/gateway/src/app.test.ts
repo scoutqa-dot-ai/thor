@@ -786,8 +786,8 @@ describe("gateway", () => {
           signatureVerified: false,
           parseStatus: "not_parsed",
           reason: "signature_invalid",
-          payload: JSON.parse(body),
         });
+        expect(entries[0]).not.toHaveProperty("payload");
         expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
         expect(entries[0]).not.toHaveProperty("rawBodyBase64");
       });
@@ -821,9 +821,10 @@ describe("gateway", () => {
           provider: "slack",
           signatureVerified: false,
           reason: "signature_invalid",
-          payload: JSON.parse(body),
         });
+        expect(entries[0]).not.toHaveProperty("payload");
         expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+        expect(entries[0]).not.toHaveProperty("rawBodyBase64");
       });
     });
   });
@@ -962,8 +963,8 @@ describe("gateway", () => {
             parseStatus: "not_parsed",
             requestId: "delivery-archive-bad-sig",
             reason: "signature_invalid",
-            payload: JSON.parse(body),
           });
+          expect(entries[0]).not.toHaveProperty("payload");
           expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
           expect(entries[0]).not.toHaveProperty("rawBodyBase64");
           expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
@@ -1054,9 +1055,10 @@ describe("gateway", () => {
             signatureVerified: false,
             requestId: "delivery-trailing-slash-bad-sig",
             reason: "signature_invalid",
-            payload: JSON.parse(body),
           });
+          expect(entries[0]).not.toHaveProperty("payload");
           expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+          expect(entries[0]).not.toHaveProperty("rawBodyBase64");
         },
         {
           githubWebhookSecret: "github-secret",
