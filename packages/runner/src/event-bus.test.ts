@@ -324,13 +324,15 @@ function createMockStream() {
 
 describe("EventBusRegistry", () => {
   let mockStream: ReturnType<typeof createMockStream>;
+  let subscribeMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockStream = createMockStream();
+    subscribeMock = vi.fn().mockResolvedValue({ stream: mockStream.stream });
     vi.mocked(createOpencodeClient).mockReturnValue({
       event: {
-        subscribe: vi.fn().mockResolvedValue({ stream: mockStream.stream }),
+        subscribe: subscribeMock,
       },
     } as never);
   });
@@ -518,5 +520,19 @@ describe("EventBusRegistry", () => {
     expect(collected).toHaveLength(1);
 
     sub2.close();
+  });
+
+  it("aborts the SDK event subscription when the last subscription closes", async () => {
+    const reg = new EventBusRegistry("http://localhost:4096");
+
+    const sub = await reg.subscribe("/repo/a", ["s1"]);
+    const subscribeOptions = subscribeMock.mock.calls[0]?.[0] as { signal?: AbortSignal };
+
+    expect(subscribeOptions.signal).toBeInstanceOf(AbortSignal);
+    expect(subscribeOptions.signal?.aborted).toBe(false);
+
+    sub.close();
+
+    expect(subscribeOptions.signal?.aborted).toBe(true);
   });
 });

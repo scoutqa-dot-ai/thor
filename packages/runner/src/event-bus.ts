@@ -29,6 +29,7 @@ class DirectoryEventBus {
   private currentClient: unknown = null;
   private currentStream: unknown = null;
   private currentIterator: AsyncIterator<Event> | null = null;
+  private currentAbortController: AbortController | null = null;
   private closed = false;
   private baseUrl: string;
   private directory: string;
@@ -59,13 +60,15 @@ class DirectoryEventBus {
 
   private async connect(): Promise<void> {
     const generation = ++this.connectionGeneration;
+    const abortController = new AbortController();
     const client = createOpencodeClient({
       baseUrl: this.baseUrl,
       directory: this.directory,
     });
 
-    const { stream } = await client.event.subscribe();
+    const { stream } = await client.event.subscribe({ signal: abortController.signal });
     if (this.closed || generation !== this.connectionGeneration) {
+      abortController.abort();
       await closeSseResource(stream);
       await closeSseResource(client);
       return;
@@ -73,6 +76,7 @@ class DirectoryEventBus {
 
     this.currentClient = client;
     this.currentStream = stream;
+    this.currentAbortController = abortController;
     this.alive = true;
     logInfo(log, "connected", { baseUrl: this.baseUrl, directory: this.directory });
 
@@ -104,6 +108,7 @@ class DirectoryEventBus {
           this.currentClient = null;
           this.currentStream = null;
           this.currentIterator = null;
+          this.currentAbortController = null;
           logInfo(log, "disconnected", { directory: this.directory });
         }
       }
@@ -132,13 +137,16 @@ class DirectoryEventBus {
     this.alive = false;
     this.connectPromise = null;
     this.connectionGeneration++;
+    const abortController = this.currentAbortController;
     const iterator = this.currentIterator;
     const stream = this.currentStream;
     const client = this.currentClient;
+    this.currentAbortController = null;
     this.currentIterator = null;
     this.currentStream = null;
     this.currentClient = null;
     this.emitter.removeAllListeners();
+    abortController?.abort();
     void closeSseResource(iterator);
     if (stream !== iterator) void closeSseResource(stream);
     if (client !== stream && client !== iterator) void closeSseResource(client);
@@ -164,12 +172,13 @@ export class EventBusRegistry {
   async subscribe(directory: string, sessionIds: string[]): Promise<SessionSubscription> {
     let bus = this.buses.get(directory);
     if (!bus) {
-      bus = new DirectoryEventBus(this.baseUrl, directory, () => {
-        if (this.buses.get(directory) === bus) {
+      const createdBus = new DirectoryEventBus(this.baseUrl, directory, () => {
+        if (this.buses.get(directory) === createdBus) {
           this.buses.delete(directory);
-          bus.close();
+          createdBus.close();
         }
       });
+      bus = createdBus;
       this.buses.set(directory, bus);
     }
     const subscription = bus.subscribe(sessionIds);
