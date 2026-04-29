@@ -127,13 +127,13 @@ Thor supports the following `gh` workflows:
 - REST read gap:
   `gh api <endpoint> [output flags]` with the restricted subset below
 - PR review-comment reply:
-  `gh api repos/{owner}/{repo}/pulls/comments/<comment-id>/replies --method POST -f body=<text>`
+  `gh api repos/{owner}/{repo}/pulls/<pull-number>/comments/<comment-id>/replies --method POST -f body=<text>`
 
 The supported `gh api` subset is intentionally tiny and shape-based:
 
 - REST endpoints only, never `graphql`
 - implicit GET reads allow output flags only: `--jq`, `--template`, `--silent`, `--include`, `--paginate`
-- append-only POST is allowed only for current-repo PR review-comment replies: `repos/{owner}/{repo}/pulls/comments/<numeric-id>/replies --method POST -f body=<non-empty text>`
+- append-only POST is allowed only for current-repo PR review-comment replies: `repos/{owner}/{repo}/pulls/<numeric-pr>/comments/<numeric-comment-id>/replies --method POST -f body=<non-empty text>`
 - blocked outside that explicit POST shape: `--method`, `--input`, `-H/--header`, `--preview`, `--hostname`, `-f/--raw-field`, `-F/--field`
 
 Notable exclusions:
@@ -150,9 +150,9 @@ Notable exclusions:
 
 Decision Log:
 
-| Date       | Decision                                                                                                                                       | Rationale                                                                                                                                                                                                   |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-04-29 | Model `gh api` as an explicit REST-shape registry and add only `POST repos/{owner}/{repo}/pulls/comments/<id>/replies -f body=<text>` for now. | This enables true inline replies to PR review comments while preserving append-only, current-repo-only behavior through GitHub's `{owner}/{repo}` placeholder and avoiding broad `gh api` mutation support. |
+| Date       | Decision                                                                                                                                            | Rationale                                                                                                                                                                                                   |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-29 | Model `gh api` as an explicit REST-shape registry and add only `POST repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies -f body=<text>` for now. | This enables true inline replies to PR review comments while preserving append-only, current-repo-only behavior through GitHub's `{owner}/{repo}` placeholder and avoiding broad `gh api` mutation support. |
 
 ### Skill Docs
 

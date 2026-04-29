@@ -804,7 +804,7 @@ describe("validateGhArgs", () => {
       expect(
         validateGhArgs([
           "api",
-          "repos/{owner}/{repo}/pulls/comments/123/replies",
+          "repos/{owner}/{repo}/pulls/53/comments/123/replies",
           "--method",
           "POST",
           "-f",
@@ -814,7 +814,7 @@ describe("validateGhArgs", () => {
       expect(
         validateGhArgs([
           "api",
-          "/repos/{owner}/{repo}/pulls/comments/123/replies",
+          "/repos/{owner}/{repo}/pulls/53/comments/123/replies",
           "--method=POST",
           "--raw-field=body=Thanks, I fixed this.",
         ]),
@@ -822,7 +822,7 @@ describe("validateGhArgs", () => {
       expect(
         validateGhArgs([
           "api",
-          "repos/{owner}/{repo}/pulls/comments/123/replies",
+          "repos/{owner}/{repo}/pulls/53/comments/123/replies",
           "-X",
           "POST",
           "--raw-field",
@@ -1142,24 +1142,37 @@ describe("validateGhArgs", () => {
     it("blocks unsafe gh api review-comment reply shapes", () => {
       expectGhDenied([
         "api",
-        "repos/acme/web/pulls/comments/123/replies",
+        "repos/acme/web/pulls/53/comments/123/replies",
         "--method",
         "POST",
         "-f",
         "body=Done.",
       ]);
-      expectGhDenied(["api", "repos/{owner}/{repo}/pulls/comments/123", "--method", "PATCH"]);
-      expectGhDenied(["api", "repos/{owner}/{repo}/pulls/comments/123", "--method", "DELETE"]);
-      expectGhDenied(["api", "repos/{owner}/{repo}/pulls/comments/123/replies", "--method", "GET"]);
+      expectGhDenied(["api", "repos/{owner}/{repo}/pulls/53/comments/123", "--method", "PATCH"]);
+      expectGhDenied(["api", "repos/{owner}/{repo}/pulls/53/comments/123", "--method", "DELETE"]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "GET",
+      ]);
       expectGhDenied([
         "api",
         "repos/{owner}/{repo}/pulls/comments/123/replies",
         "--method",
         "POST",
+        "-f",
+        "body=Done.",
       ]);
       expectGhDenied([
         "api",
-        "repos/{owner}/{repo}/pulls/comments/123/replies",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "POST",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
         "--method",
         "POST",
         "-f",
@@ -1167,7 +1180,7 @@ describe("validateGhArgs", () => {
       ]);
       expectGhDenied([
         "api",
-        "repos/{owner}/{repo}/pulls/comments/123/replies",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
         "--method",
         "POST",
         "-F",
@@ -1175,7 +1188,7 @@ describe("validateGhArgs", () => {
       ]);
       expectGhDenied([
         "api",
-        "repos/{owner}/{repo}/pulls/comments/123/replies",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
         "--method",
         "POST",
         "-f",
@@ -1185,7 +1198,7 @@ describe("validateGhArgs", () => {
       ]);
       expectGhDenied([
         "api",
-        "repos/{owner}/{repo}/pulls/comments/not-a-number/replies",
+        "repos/{owner}/{repo}/pulls/53/comments/not-a-number/replies",
         "--method",
         "POST",
         "-f",
@@ -1193,7 +1206,15 @@ describe("validateGhArgs", () => {
       ]);
       expectGhDenied([
         "api",
-        "repos/{owner}/{repo}/pulls/comments/123/replies",
+        "repos/{owner}/{repo}/pulls/not-a-number/comments/123/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=Done.",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
         "--method",
         "POST",
         "-f",

@@ -69,10 +69,10 @@ Read path: implicit GET only. Required: REST endpoint as the first positional ar
 Append-only review-comment reply path: only the current-repo placeholder endpoint is allowed:
 
 ```bash
-gh api repos/{owner}/{repo}/pulls/comments/<comment-id>/replies --method POST -f body=<text>
+gh api repos/{owner}/{repo}/pulls/<pull-number>/comments/<comment-id>/replies --method POST -f body=<text>
 ```
 
-`<comment-id>` must be numeric, `body` must be non-empty, and `-f`/`--raw-field` is the only accepted body source. Explicit owner/repo write endpoints, `-F`/`--field`, `--input`, headers, previews, GraphQL, edit/delete endpoints, and arbitrary `--method` use remain blocked.
+`<pull-number>` and `<comment-id>` must be numeric, `body` must be non-empty, and `-f`/`--raw-field` is the only accepted body source. Explicit owner/repo write endpoints, `-F`/`--field`, `--input`, headers, previews, GraphQL, edit/delete endpoints, and arbitrary `--method` use remain blocked.
 
 ## Read-only (passthrough) commands
 

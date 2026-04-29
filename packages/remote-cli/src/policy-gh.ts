@@ -22,7 +22,7 @@ interface GhApiMutationShape {
 const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
 const DIGITS_ONLY = /^\d+$/;
 const CURRENT_REPO_REVIEW_REPLY_ENDPOINT =
-  /^\/?repos\/\{owner\}\/\{repo\}\/pulls\/comments\/(\d+)\/replies$/;
+  /^\/?repos\/\{owner\}\/\{repo\}\/pulls\/(\d+)\/comments\/(\d+)\/replies$/;
 const PROTECTED_PR_HEAD_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
 const WORKTREE_PREFIX = "/workspace/worktrees/";
 
@@ -143,7 +143,7 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   "gh api": {
     reason: "gh api is limited to implicit GET reads, plus explicit append-only REST shapes.",
     instead:
-      "gh api <endpoint> --jq <filter> or gh api repos/{owner}/{repo}/pulls/comments/<id>/replies --method POST -f body=<text>",
+      "gh api <endpoint> --jq <filter> or gh api repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies --method POST -f body=<text>",
   },
 };
 
