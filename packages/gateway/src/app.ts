@@ -1,5 +1,4 @@
 import express, { type Express, type Request, type Response } from "express";
-import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import {
   appendJsonlWorklog,
   createLogger,
@@ -365,8 +364,6 @@ type GitHubIgnoreReason =
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
-const WEBHOOK_RATE_LIMIT_WINDOW_MS = 60_000;
-const WEBHOOK_RATE_LIMIT_MAX_REQUESTS = 600;
 
 async function resolveExistingWorktreePath(
   localRepo: string,
@@ -984,7 +981,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   // --- Express app ---
 
   const app = express();
-  app.set("trust proxy", 1);
   const webhookRawParser = express.raw({
     // GitHub webhook payloads can be up to 25 MB
     // https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap
@@ -1007,14 +1003,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       (request as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
     },
   });
-  const webhookRateLimit = rateLimit({
-    windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
-    limit: WEBHOOK_RATE_LIMIT_MAX_REQUESTS,
-    keyGenerator: (req) => `${req.path}:${ipKeyGenerator(req.ip ?? "unknown")}`,
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-
   app.use((req, res, next) => {
     if (isRawWebhookRoute(req.path)) {
       next();
@@ -1236,7 +1224,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   app.post(
     "/slack/events",
-    webhookRateLimit,
+    // Rate limiting for public webhook ingestion is intentionally enforced at
+    // the infrastructure edge (API gateway/CDN), not in the app process.
     webhookRawParser,
     withWebhookHistory(
       "slack",
@@ -1581,7 +1570,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   app.post(
     "/github/webhook",
-    webhookRateLimit,
+    // Rate limiting for public webhook ingestion is intentionally enforced at
+    // the infrastructure edge (API gateway/CDN), not in the app process.
     webhookRawParser,
     withWebhookHistory(
       "github",
