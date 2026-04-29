@@ -13,12 +13,7 @@ import { join } from "node:path";
 import type { WebClient } from "@slack/web-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConfigLoader, WorkspaceConfig } from "@thor/common";
-import {
-  createGatewayApp,
-  resolveWebhookHistoryWrite,
-  type GatewayAppConfig,
-  type WebhookHistoryOutcome,
-} from "./app.js";
+import { createGatewayApp, type GatewayAppConfig } from "./app.js";
 import type { EventQueue } from "./queue.js";
 
 interface MockSlackClient {
@@ -263,98 +258,6 @@ afterEach(() => {
   mappedRepos = new Set(["test-repo", "thor"]);
   correlationKeyAliases = new Map();
   notesKeys = new Set();
-});
-
-describe("webhook history outcome mapping", () => {
-  const headers = { "x-request-id": "req-1" };
-
-  it.each([
-    [
-      "slack JSON event",
-      {
-        provider: "slack",
-        signatureVerified: true,
-        parseStatus: "schema_valid",
-        requestId: "req-1",
-        eventType: "app_mention",
-        reason: "received",
-        headers,
-        body: { kind: "json", payload: { submitted_key: "kept" } },
-      } satisfies WebhookHistoryOutcome,
-      "slack-webhook",
-      { payload: { submitted_key: "kept" }, rawBodyUtf8: undefined, rawBodyBase64: undefined },
-    ],
-    [
-      "GitHub ingested JSON event",
-      {
-        provider: "github",
-        stream: "ingested",
-        signatureVerified: true,
-        parseStatus: "schema_valid",
-        requestId: "delivery-1",
-        eventType: "issue_comment",
-        reason: "accepted",
-        headers,
-        body: { kind: "json", payload: { repository: { full_name: "owner/repo" } } },
-      } satisfies WebhookHistoryOutcome,
-      "github-webhook-ingested",
-      {
-        payload: { repository: { full_name: "owner/repo" } },
-        rawBodyUtf8: undefined,
-        rawBodyBase64: undefined,
-      },
-    ],
-    [
-      "GitHub ignored malformed event",
-      {
-        provider: "github",
-        stream: "ignored",
-        signatureVerified: true,
-        parseStatus: "json_invalid",
-        requestId: "delivery-2",
-        eventType: "issue_comment",
-        reason: "json_parse_error",
-        headers,
-        body: { kind: "base64", rawBodyBuffer: Buffer.from("{not-json", "utf8") },
-      } satisfies WebhookHistoryOutcome,
-      "github-webhook-ignored",
-      {
-        payload: undefined,
-        rawBodyUtf8: undefined,
-        rawBodyBase64: Buffer.from("{not-json").toString("base64"),
-      },
-    ],
-    [
-      "unsupported GitHub JSON event",
-      {
-        provider: "github",
-        stream: "ignored",
-        signatureVerified: true,
-        parseStatus: "not_parsed",
-        requestId: "delivery-3",
-        eventType: "workflow_run",
-        reason: "event_unsupported",
-        headers,
-        body: {
-          kind: "unsupported_github",
-          rawBodyBuffer: Buffer.from('{"submitted_key":"kept"}', "utf8"),
-        },
-      } satisfies WebhookHistoryOutcome,
-      "github-webhook-ignored",
-      { payload: undefined, rawBodyUtf8: '{"submitted_key":"kept"}', rawBodyBase64: undefined },
-    ],
-  ])("maps %s to a single stream and payload policy", (_name, outcome, stream, bodyFields) => {
-    const write = resolveWebhookHistoryWrite(outcome);
-
-    expect(write.stream).toBe(stream);
-    expect(write.entry.route).toBe(
-      outcome.provider === "slack" ? "/slack/events" : "/github/webhook",
-    );
-    expect(write.entry.provider).toBe(outcome.provider);
-    expect(write.entry.payload).toEqual(bodyFields.payload);
-    expect(write.entry.rawBodyUtf8).toEqual(bodyFields.rawBodyUtf8);
-    expect(write.entry.rawBodyBase64).toEqual(bodyFields.rawBodyBase64);
-  });
 });
 
 describe("gateway", () => {
@@ -1496,27 +1399,36 @@ describe("gateway", () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
 
-    await withServer(
-      fetchImpl,
-      async (baseUrl, _queue, queueDir) => {
-        const body = pushWebhookBody({ ref: "refs/heads/main" });
-        const response = await fetch(`${baseUrl}/github/webhook`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
-            "X-GitHub-Delivery": "delivery-push-main",
-            "X-GitHub-Event": "push",
-          },
-          body,
-        });
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pushWebhookBody({ ref: "refs/heads/main" });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-main",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
 
-        expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ ok: true, status: "push_wake_skipped_no_session" });
-        expect(readQueuedEvents(queueDir)).toHaveLength(0);
-      },
-      { githubWebhookSecret: "github-secret", internalExec },
-    );
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({
+            ok: true,
+            status: "push_wake_skipped_no_session",
+          });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          expect(readGitHubIngestedEntries(worklogDir)).toMatchObject([
+            { reason: "push_wake_skipped_no_session", eventType: "push" },
+          ]);
+          expect(readGitHubIgnoredEntries(worklogDir)).toHaveLength(0);
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+    });
 
     expect(internalExec).toHaveBeenCalledWith({
       bin: "git",
