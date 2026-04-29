@@ -24,12 +24,21 @@ class DirectoryEventBus {
   private emitter = new EventEmitter();
   private alive = false;
   private connectPromise: Promise<void> | null = null;
+  private activeSubscriptions = 0;
+  private connectionGeneration = 0;
+  private currentClient: unknown = null;
+  private currentStream: unknown = null;
+  private currentIterator: AsyncIterator<Event> | null = null;
+  private currentAbortController: AbortController | null = null;
+  private closed = false;
   private baseUrl: string;
   private directory: string;
+  private onEmpty: () => void;
 
-  constructor(baseUrl: string, directory: string) {
+  constructor(baseUrl: string, directory: string, onEmpty: () => void) {
     this.baseUrl = baseUrl;
     this.directory = directory;
+    this.onEmpty = onEmpty;
     // Sessions can be numerous; raise the per-event limit.
     this.emitter.setMaxListeners(200);
   }
@@ -39,6 +48,7 @@ class DirectoryEventBus {
    * until it resolves, so only one connection attempt happens at a time.
    */
   ensureConnected(): Promise<void> {
+    if (this.closed) return Promise.reject(new Error("DirectoryEventBus is closed"));
     if (this.alive) return Promise.resolve();
     if (this.connectPromise) return this.connectPromise;
 
@@ -49,12 +59,24 @@ class DirectoryEventBus {
   }
 
   private async connect(): Promise<void> {
+    const generation = ++this.connectionGeneration;
+    const abortController = new AbortController();
     const client = createOpencodeClient({
       baseUrl: this.baseUrl,
       directory: this.directory,
     });
 
-    const { stream } = await client.event.subscribe();
+    const { stream } = await client.event.subscribe({ signal: abortController.signal });
+    if (this.closed || generation !== this.connectionGeneration) {
+      abortController.abort();
+      await closeSseResource(stream);
+      await closeSseResource(client);
+      return;
+    }
+
+    this.currentClient = client;
+    this.currentStream = stream;
+    this.currentAbortController = abortController;
     this.alive = true;
     logInfo(log, "connected", { baseUrl: this.baseUrl, directory: this.directory });
 
@@ -62,8 +84,15 @@ class DirectoryEventBus {
     // network error, etc.) we just mark ourselves as dead — the next
     // subscribe() call will reconnect.
     void (async () => {
+      const iterator = stream[Symbol.asyncIterator]();
+      if (generation === this.connectionGeneration) {
+        this.currentIterator = iterator;
+      }
       try {
-        for await (const event of stream) {
+        for (;;) {
+          const next = await iterator.next();
+          if (next.done) break;
+          const event = next.value;
           const sid = extractSessionId(event);
           if (sid) {
             this.emitter.emit(sid, event);
@@ -74,14 +103,53 @@ class DirectoryEventBus {
           directory: this.directory,
         });
       } finally {
-        this.alive = false;
-        logInfo(log, "disconnected", { directory: this.directory });
+        if (generation === this.connectionGeneration) {
+          this.alive = false;
+          this.currentClient = null;
+          this.currentStream = null;
+          this.currentIterator = null;
+          this.currentAbortController = null;
+          logInfo(log, "disconnected", { directory: this.directory });
+        }
       }
     })();
   }
 
   subscribe(sessionIds: string[]): SessionSubscription {
-    return new SessionSubscription(this.emitter, sessionIds);
+    if (this.closed) throw new Error("DirectoryEventBus is closed");
+    this.activeSubscriptions++;
+    return new SessionSubscription(this.emitter, sessionIds, () => this.releaseSubscription());
+  }
+
+  private releaseSubscription(): void {
+    if (this.activeSubscriptions > 0) {
+      this.activeSubscriptions--;
+    }
+    if (this.activeSubscriptions === 0) {
+      this.onEmpty();
+    }
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.activeSubscriptions = 0;
+    this.alive = false;
+    this.connectPromise = null;
+    this.connectionGeneration++;
+    const abortController = this.currentAbortController;
+    const iterator = this.currentIterator;
+    const stream = this.currentStream;
+    const client = this.currentClient;
+    this.currentAbortController = null;
+    this.currentIterator = null;
+    this.currentStream = null;
+    this.currentClient = null;
+    this.emitter.removeAllListeners();
+    abortController?.abort();
+    void closeSseResource(iterator);
+    if (stream !== iterator) void closeSseResource(stream);
+    if (client !== stream && client !== iterator) void closeSseResource(client);
   }
 }
 
@@ -104,11 +172,23 @@ export class EventBusRegistry {
   async subscribe(directory: string, sessionIds: string[]): Promise<SessionSubscription> {
     let bus = this.buses.get(directory);
     if (!bus) {
-      bus = new DirectoryEventBus(this.baseUrl, directory);
+      const createdBus = new DirectoryEventBus(this.baseUrl, directory, () => {
+        if (this.buses.get(directory) === createdBus) {
+          this.buses.delete(directory);
+          createdBus.close();
+        }
+      });
+      bus = createdBus;
       this.buses.set(directory, bus);
     }
-    await bus.ensureConnected();
-    return bus.subscribe(sessionIds);
+    const subscription = bus.subscribe(sessionIds);
+    try {
+      await bus.ensureConnected();
+      return subscription;
+    } catch (err) {
+      subscription.close();
+      throw err;
+    }
   }
 }
 
@@ -122,15 +202,17 @@ export class SessionSubscription implements AsyncIterable<Event> {
   private queue: Event[] = [];
   private waiter: (() => void) | null = null;
   private done = false;
+  private onClose: (() => void) | undefined;
   private handler = (event: Event) => {
     this.queue.push(event);
     this.waiter?.();
   };
 
-  constructor(emitter: EventEmitter, sessionIds: string[]) {
+  constructor(emitter: EventEmitter, sessionIds: string[], onClose?: () => void) {
     this.emitter = emitter;
     this.sessionIds = new Set(sessionIds);
-    for (const sid of sessionIds) {
+    this.onClose = onClose;
+    for (const sid of this.sessionIds) {
       emitter.on(sid, this.handler);
     }
   }
@@ -149,6 +231,7 @@ export class SessionSubscription implements AsyncIterable<Event> {
     for (const sid of this.sessionIds) {
       this.emitter.off(sid, this.handler);
     }
+    this.onClose?.();
     // Wake up any pending next() so it can return done.
     this.waiter?.();
   }
@@ -192,10 +275,32 @@ export async function waitForSessionSettled(
     return false;
   })();
 
-  return Promise.race([
-    waitForSettled,
-    new Promise<false>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
-  ]);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      waitForSettled,
+      new Promise<false>((resolve) => {
+        timeout = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function closeSseResource(resource: unknown): Promise<void> {
+  if (!resource || typeof resource !== "object") return;
+  for (const method of ["return", "abort", "cancel", "close"] as const) {
+    const fn = (resource as Record<string, unknown>)[method];
+    if (typeof fn === "function") {
+      try {
+        await fn.call(resource);
+      } catch (err) {
+        logError(log, "close_resource_error", err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+  }
 }
 
 function extractSessionId(event: Event): string | undefined {
