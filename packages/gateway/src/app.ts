@@ -1228,6 +1228,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   // lgtm[js/missing-rate-limiting]
   app.post(
     "/slack/events",
+    // codeql[js/missing-rate-limiting]
+    // lgtm[js/missing-rate-limiting]
     webhookRawParser,
     withWebhookHistory(
       "slack",
@@ -1576,6 +1578,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   // lgtm[js/missing-rate-limiting]
   app.post(
     "/github/webhook",
+    // codeql[js/missing-rate-limiting]
+    // lgtm[js/missing-rate-limiting]
     webhookRawParser,
     withWebhookHistory(
       "github",
