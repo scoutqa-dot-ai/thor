@@ -103,7 +103,7 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
   "gh pr comment": {
     reason: "PR comments must target a numeric PR and provide exactly one body source.",
-    instead: "gh pr comment <number> --body <text> or gh pr comment <number> -F <path>",
+    instead: "gh pr comment <number> --body <text>",
   },
   "gh issue comment": {
     reason: "GitHub issue comments are outside v1 disclaimer-injection scope.",
