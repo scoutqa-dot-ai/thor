@@ -30,7 +30,7 @@ For the same reason, `gh pr checkout <N>` is also denied — it would mutate the
 
 ### `gh pr create`
 
-Required: `--title`/`-t` plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`). Optional: `--base`/`-B`, `--head`/`-H`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). Blocked: `--editor`, `--web`, `--repo`/`-R`, `--fill` (no body field for Thor to inject the trigger viewer link into — pass an explicit `--body`).
+Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`-H`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). Blocked: `--editor`, `--web`, `--repo`/`-R`, `--fill`, `-F`/`--body-file` (no mutable body value for Thor to inject the trigger viewer link into — pass an explicit `--body`).
 
 `--head` must equal the branch implied by cwd (`/workspace/worktrees/<repo>/<branch>`) — the explicit form of the default that `gh pr create` would pick anyway. To PR from a different branch, `cd` into that worktree first. Cross-fork (`<owner>:<branch>`) and protected branches (`main`/`master`) fall out as side effects.
 
@@ -40,7 +40,7 @@ Blocked in v1: GitHub issue content is outside Thor's disclaimer-injection scope
 
 ### `gh pr comment`
 
-Required: numeric PR selector plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`). Blocked: non-numeric selectors, edit/delete modes, `--editor`, and `--repo`/`-R`.
+Required: numeric PR selector plus `--body`/`-b`. Blocked: non-numeric selectors, edit/delete modes, `--editor`, `-F`/`--body-file`, and `--repo`/`-R`.
 
 ### `gh issue comment`
 

@@ -37,7 +37,7 @@ const RUNNER_BASE_URL = (process.env.RUNNER_BASE_URL || "").replace(/\/$/, "");
 
 function addDisclaimerToApprovalArgs(tool: string, args: Record<string, unknown>, sessionId?: string): Record<string, unknown> {
   if (tool !== "createJiraIssue" && tool !== "addCommentToJiraIssue") return args;
-  if (!sessionId) return args;
+  if (!sessionId) throw new Error("Cannot create approval: missing Thor session id for disclaimer injection");
   const active = findActiveTrigger(sessionId);
   if (!active.ok) throw new Error(`Cannot create approval: no single active trigger for this session (${active.reason})`);
   const url = `${RUNNER_BASE_URL}/runner/v/${active.sessionId}/${active.triggerId}`;

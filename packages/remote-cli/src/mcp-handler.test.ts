@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import type { WorkspaceConfig } from "@thor/common";
+import { appendSessionEvent, type WorkspaceConfig } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.js";
 import type { UpstreamConnection } from "./upstream.js";
@@ -33,6 +33,9 @@ const tools: Tool[] = [
   },
 ];
 
+const worklogDir = "/tmp/thor-remote-cli-mcp-test/worklog";
+const activeTriggerId = "00000000-0000-4000-8000-000000000101";
+
 describe("remote-cli MCP endpoints", () => {
   let approvalsDir: string;
   let server: Server;
@@ -52,6 +55,8 @@ describe("remote-cli MCP endpoints", () => {
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
+    vi.stubEnv("WORKLOG_DIR", worklogDir);
+    rmSync("/tmp/thor-remote-cli-mcp-test", { recursive: true, force: true });
     approvalsDir = mkdtempSync(join(tmpdir(), "remote-cli-mcp-"));
     toolCalls = [];
     connectedUpstreams = [];
@@ -116,6 +121,7 @@ describe("remote-cli MCP endpoints", () => {
     });
     await closeRemoteCli();
     rmSync(approvalsDir, { recursive: true, force: true });
+    rmSync("/tmp/thor-remote-cli-mcp-test", { recursive: true, force: true });
     vi.unstubAllEnvs();
   });
 
@@ -224,12 +230,31 @@ describe("remote-cli MCP endpoints", () => {
     });
   });
 
-  it("creates approvals, exposes them via approval commands, and returns 401 for resolve without the internal secret", async () => {
+  it("fails closed for Jira approvals when Thor session context is missing", async () => {
     const pending = await postJson("/exec/mcp", {
-      args: ["atlassian", "createJiraIssue", '{"projectKey":"THOR","summary":"Fix it"}'],
+      args: ["atlassian", "createJiraIssue", '{"projectKey":"THOR","summary":"Fix it","description":"body"}'],
       cwd: "/workspace/repos/acme",
       directory: "/workspace/repos/acme",
     });
+    const pendingBody = (await pending.json()) as { stdout: string; stderr: string; exitCode: number };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(pendingBody.stderr).toContain("missing Thor session id");
+    expect(toolCalls).toEqual([]);
+
+    const list = await postJson("/exec/approval", { args: ["list"] });
+    const listBody = (await list.json()) as { stdout: string };
+    expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
+  });
+
+  it("creates approvals with Jira disclaimers, exposes them via approval commands, and returns 401 for resolve without the internal secret", async () => {
+    expect(appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId })).toEqual({ ok: true });
+    const pending = await postJson("/exec/mcp", {
+      args: ["atlassian", "createJiraIssue", '{"projectKey":"THOR","summary":"Fix it","description":"body"}'],
+      cwd: "/workspace/repos/acme",
+      directory: "/workspace/repos/acme",
+    }, { "x-thor-session-id": "parent-session" });
     const pendingBody = (await pending.json()) as { stdout: string };
 
     expect(pending.status).toBe(200);
@@ -289,7 +314,14 @@ describe("remote-cli MCP endpoints", () => {
       exitCode: 0,
     });
     expect(toolCalls).toEqual([
-      { name: "createJiraIssue", arguments: { projectKey: "THOR", summary: "Fix it" } },
+      {
+        name: "createJiraIssue",
+        arguments: {
+          projectKey: "THOR",
+          summary: "Fix it",
+          description: expect.stringContaining(`/runner/v/parent-session/${activeTriggerId}`),
+        },
+      },
     ]);
   });
 

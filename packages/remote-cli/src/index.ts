@@ -138,7 +138,7 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
   const rewritten =
     args[0] === "api"
       ? rewriteValueFlag(args, ["-f", "--raw-field", "-F"], footer)
-      : rewriteValueFlag(args, ["--body", "-b", "--body-file", "-F"], footer);
+      : rewriteValueFlag(args, ["--body", "-b"], footer);
   return rewritten ?? { error: "Disclaimer required: could not find a mutable gh body field" };
 }
 

@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Event, TextPart } from "@opencode-ai/sdk";
 import { createRunnerApp, type RunnerAppOptions } from "./index.js";
+import { appendSessionEvent } from "@thor/common";
 
 const worklogDir = "/tmp/thor-runner-trigger-test/worklog";
 vi.hoisted(() => {
   process.env.WORKLOG_DIR = "/tmp/thor-runner-trigger-test/worklog";
+  process.env.SESSION_LOG_ENABLED = "true";
 });
 const sessionDir = "/workspace/repos/runner-trigger-test";
 const memoryDir = "/tmp/thor-runner-trigger-test/memory";
@@ -76,7 +78,23 @@ function idleEvent(sessionId: string): Event {
   return { type: "session.idle", properties: { sessionID: sessionId } } as Event;
 }
 
-function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Set<string> } = {}) {
+function taskRunningEvent(sessionId: string): Event {
+  return {
+    type: "message.part.updated",
+    properties: {
+      part: {
+        type: "tool",
+        sessionID: sessionId,
+        messageID: `m-${sessionId}`,
+        callID: "call-task",
+        tool: "task",
+        state: { status: "running", input: { subagent_type: "general" } },
+      },
+    },
+  } as unknown as Event;
+}
+
+function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Set<string>; children?: Array<{ id: string }>; promptEvents?: (sessionId: string) => Event[] } = {}) {
   const buses = new FakeEventBuses();
   const existingSessions = opts.existingSessions ?? new Set<string>();
   const busySessions = opts.busySessions ?? new Set<string>();
@@ -111,12 +129,12 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
         prompts.push(body.parts[0]?.text ?? "");
         queueMicrotask(() => {
           const sub = buses.latest();
-          sub.push(textEvent(path.id, `ok ${path.id}`));
-          sub.push(idleEvent(path.id));
+          const events = opts.promptEvents?.(path.id) ?? [textEvent(path.id, `ok ${path.id}`), idleEvent(path.id)];
+          for (const event of events) sub.push(event);
         });
         return { data: {} };
       },
-      children: async () => ({ data: [] }),
+      children: async () => ({ data: opts.children ?? [] }),
     },
   };
 
@@ -168,6 +186,7 @@ async function trigger(url: string, body: Record<string, unknown>) {
 
 beforeEach(() => {
   process.env.WORKLOG_DIR = worklogDir;
+  process.env.SESSION_LOG_ENABLED = "true";
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
 });
 
@@ -176,6 +195,33 @@ afterEach(() => {
 });
 
 describe("runner /trigger orchestration", () => {
+  it("serves the Vouch-gated trigger viewer with 401, 404, and rendered status", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-4000-8000-000000000301";
+    expect(appendSessionEvent("viewer-session", { type: "trigger_start", triggerId })).toEqual({ ok: true });
+    expect(appendSessionEvent("viewer-session", { type: "trigger_end", triggerId, status: "completed" })).toEqual({ ok: true });
+
+    await withServer(h.app, async (url) => {
+      const unauthorized = await fetch(`${url}/runner/v/viewer-session/${triggerId}`);
+      expect(unauthorized.status).toBe(401);
+      expect(await unauthorized.text()).toContain("Unauthorized");
+
+      const missing = await fetch(`${url}/runner/v/viewer-session/00000000-0000-4000-8000-000000000399`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      expect(missing.status).toBe(404);
+      expect(await missing.text()).toContain("Trigger not found");
+
+      const ok = await fetch(`${url}/runner/v/viewer-session/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await ok.text();
+      expect(ok.status).toBe(200);
+      expect(html).toContain("completed");
+      expect(html).toContain(`/runner/v/viewer-session/${triggerId}/raw`);
+    });
+  });
+
   it("creates a correlation-key session, records notes, and resumes the same session", async () => {
     const h = createHarness();
 
@@ -185,6 +231,9 @@ describe("runner /trigger orchestration", () => {
       const firstDone = first.events.find((e) => e.type === "done");
       expect(firstStart).toMatchObject({ sessionId: "session-1", resumed: false });
       expect(firstDone).toMatchObject({ sessionId: "session-1", resumed: false, status: "completed" });
+      const logText = readFileSync(`${worklogDir}/sessions/session-1.jsonl`, "utf8");
+      expect(logText).toContain('"type":"trigger_start"');
+      expect(logText).toContain('"type":"trigger_end"');
 
       const second = await trigger(url, { prompt: "second", correlationKey: "same-key" });
       const secondStart = second.events.find((e) => e.type === "start");
@@ -263,5 +312,22 @@ describe("runner /trigger orchestration", () => {
       expect(h.prompts[1]).not.toContain("root memory text");
       expect(h.prompts[1]).not.toContain("repo memory text");
     });
+  });
+
+  it("emits session.parent aliases for discovered child sessions", async () => {
+    const h = createHarness({
+      children: [{ id: "child-session" }],
+      promptEvents: (sessionId) => [taskRunningEvent(sessionId), idleEvent(sessionId)],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, { prompt: "delegate", correlationKey: "child-key" });
+      expect(result.events.find((e) => e.type === "delegate")).toMatchObject({ agent: "general" });
+    });
+
+    const aliases = readFileSync(`${worklogDir}/aliases.jsonl`, "utf8");
+    expect(aliases).toContain('"aliasType":"session.parent"');
+    expect(aliases).toContain('"aliasValue":"child-session"');
+    expect(aliases).toContain('"sessionId":"session-1"');
   });
 });

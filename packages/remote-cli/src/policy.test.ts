@@ -712,11 +712,6 @@ describe("validateGhArgs", () => {
           "carol",
         ]),
       ).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "body.md"])).toBeNull();
-      expect(
-        validateGhArgs(["pr", "create", "--title", "x", "--body-file", "docs/pr-body.md"]),
-      ).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "/tmp/body.md"])).toBeNull();
     });
 
     it("denies pr create --fill (no body field for disclaimer injection)", () => {
@@ -768,7 +763,6 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toContain(
         "outside v1 disclaimer-injection scope",
       );
-      expect(validateGhArgs(["pr", "comment", "123", "-F", "comment.md"])).toBeNull();
     });
 
     it("allows append-only pr reviews for comment/request-changes", () => {
@@ -1016,18 +1010,15 @@ describe("validateGhArgs", () => {
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--fill"]);
       expectGhDenied(["pr", "create", "--fill", "--title", "x"]);
       expectGhDenied(["pr", "create", "--fill", "-F", "body.md"]);
-      // --body and -F are mutually exclusive
+      // -F/--body-file are denied: direct writes require a mutable --body value
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "-F", "body.md"]);
-      // Title still required when -F supplies body
       expectGhDenied(["pr", "create", "-F", "body.md"]);
-      // Duplicate -F
       expectGhDenied(["pr", "create", "--title", "x", "-F", "a.md", "--body-file", "b.md"]);
     });
 
-    it("blocks pr comment double-source and issue comment -F entirely", () => {
-      // pr comment: -F and --body cannot be combined
+    it("blocks comment body-file forms", () => {
       expectGhDenied(["pr", "comment", "123", "--body", "x", "-F", "body.md"]);
-      // issue comment does not support -F
+      expectGhDenied(["pr", "comment", "123", "-F", "body.md"]);
       expectGhDenied(["issue", "comment", "42", "-F", "body.md"]);
     });
 

@@ -257,7 +257,6 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
     { name: "fill", kind: "boolean", aliases: ["--fill"] },
     { name: "title", kind: "value", aliases: ["-t", "--title"] },
     { name: "body", kind: "value", aliases: ["-b", "--body"] },
-    { name: "body-file", kind: "value", aliases: ["-F", "--body-file"] },
     { name: "base", kind: "value", aliases: ["-B", "--base"] },
     { name: "head", kind: "value", aliases: ["-H", "--head"] },
     { name: "label", kind: "value", aliases: ["-l", "--label"] },
@@ -270,7 +269,6 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
 
   const titles = valueFlagValues(parsed, "title");
   const bodies = valueFlagValues(parsed, "body");
-  const bodyFiles = valueFlagValues(parsed, "body-file");
   const heads = valueFlagValues(parsed, "head");
   const fill = booleanFlagCount(parsed, "fill") > 0;
 
@@ -332,14 +330,7 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
       instead: "gh pr create --title <title> --body <body>",
     });
   }
-  // --body and -F are mutually exclusive.
-  if (bodies.length > 0 && bodyFiles.length > 0) {
-    return denyMessage("gh pr create");
-  }
-  if (bodyFiles.length > 1) return denyMessage("gh pr create");
-
-  const hasBodySource = bodies.length > 0 || bodyFiles.length > 0;
-  return titles.length > 0 && hasBodySource ? null : denyMessage("gh pr create");
+  return titles.length > 0 && bodies.length > 0 ? null : denyMessage("gh pr create");
 }
 
 function validateGhIssueCreateArgs(args: string[]): string | null {
@@ -359,19 +350,14 @@ function validateGhIssueCreateArgs(args: string[]): string | null {
 function validateGhCommentArgs(
   args: string[],
   command: "gh pr comment" | "gh issue comment",
-  supportBodyFile: boolean,
+  _supportBodyFile: boolean,
 ): string | null {
   const selector = args[2];
   if (!selector || !DIGITS_ONLY.test(selector)) {
     return denyMessage(command);
   }
 
-  const flags: Parameters<typeof scanPolicyArgs>[2] = supportBodyFile
-    ? [
-        { name: "body", kind: "value", aliases: ["-b", "--body"] },
-        { name: "body-file", kind: "value", aliases: ["-F", "--body-file"] },
-      ]
-    : [{ name: "body", kind: "value", aliases: ["-b", "--body"] }];
+  const flags: Parameters<typeof scanPolicyArgs>[2] = [{ name: "body", kind: "value", aliases: ["-b", "--body"] }];
 
   const parsed = scanPolicyArgs(args, 3, flags);
   if (!parsed || parsed.positionals.length > 0) {
@@ -379,12 +365,7 @@ function validateGhCommentArgs(
   }
 
   const bodies = valueFlagValues(parsed, "body");
-  const bodyFiles = supportBodyFile ? valueFlagValues(parsed, "body-file") : [];
-
-  if (bodies.length > 0 && bodyFiles.length > 0) return denyMessage(command);
-  if (bodyFiles.length > 1) return denyMessage(command);
-
-  return bodies.length > 0 || bodyFiles.length > 0 ? null : denyMessage(command);
+  return bodies.length > 0 ? null : denyMessage(command);
 }
 
 function validateGhPrReviewArgs(args: string[]): string | null {
