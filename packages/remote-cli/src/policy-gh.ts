@@ -272,6 +272,13 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
   const heads = valueFlagValues(parsed, "head");
   const fill = booleanFlagCount(parsed, "fill") > 0;
 
+  if (bodies.length > 1) {
+    return denyMessage("gh pr create", {
+      reason: "multiple --body values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body value",
+    });
+  }
+
   // --head must match the branch implied by cwd. The cwd is the agent's worktree
   // (/workspace/worktrees/<repo>/<branch>), so the branch it would PR from
   // implicitly is fixed. Allowing --head only when it equals that same branch
@@ -330,7 +337,7 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
       instead: "gh pr create --title <title> --body <body>",
     });
   }
-  return titles.length > 0 && bodies.length > 0 ? null : denyMessage("gh pr create");
+  return titles.length > 0 && bodies.length === 1 ? null : denyMessage("gh pr create");
 }
 
 function validateGhIssueCreateArgs(args: string[]): string | null {
@@ -365,7 +372,13 @@ function validateGhCommentArgs(
   }
 
   const bodies = valueFlagValues(parsed, "body");
-  return bodies.length > 0 ? null : denyMessage(command);
+  if (bodies.length > 1) {
+    return denyMessage(command, {
+      reason: "multiple --body values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body value",
+    });
+  }
+  return bodies.length === 1 ? null : denyMessage(command);
 }
 
 function validateGhPrReviewArgs(args: string[]): string | null {
@@ -388,7 +401,15 @@ function validateGhPrReviewArgs(args: string[]): string | null {
 
   const hasComment = booleanFlagCount(parsed, "comment") > 0;
   const hasRequestChanges = booleanFlagCount(parsed, "request-changes") > 0;
-  const hasBody = valueFlagValues(parsed, "body").length > 0;
+  const bodies = valueFlagValues(parsed, "body");
+  const hasBody = bodies.length === 1;
+
+  if (bodies.length > 1) {
+    return denyMessage("gh pr review", {
+      reason: "multiple --body values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body value",
+    });
+  }
 
   if (hasComment === hasRequestChanges || !hasBody) {
     return denyMessage("gh pr review");

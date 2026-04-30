@@ -1016,6 +1016,15 @@ describe("validateGhArgs", () => {
       expectGhDenied(["pr", "create", "--title", "x", "-F", "a.md", "--body-file", "b.md"]);
     });
 
+    it("blocks duplicate pr body flags that could bypass disclaimer injection", () => {
+      expectGhDenied(["pr", "create", "--title", "x", "--body", "traced", "--body", "untraced"]);
+      expectGhDenied(["pr", "create", "--title", "x", "--body=traced", "-b", "untraced"]);
+      expectGhDenied(["pr", "comment", "123", "--body", "traced", "--body", "untraced"]);
+      expectGhDenied(["pr", "comment", "123", "--body=traced", "-b", "untraced"]);
+      expectGhDenied(["pr", "review", "123", "--comment", "--body", "traced", "--body", "untraced"]);
+      expectGhDenied(["pr", "review", "123", "--request-changes", "--body=traced", "-b", "untraced"]);
+    });
+
     it("blocks comment body-file forms", () => {
       expectGhDenied(["pr", "comment", "123", "--body", "x", "-F", "body.md"]);
       expectGhDenied(["pr", "comment", "123", "-F", "body.md"]);
@@ -1178,6 +1187,16 @@ describe("validateGhArgs", () => {
         "body=Done.",
         "-f",
         "extra=value",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=Traced.",
+        "--raw-field",
+        "body=Untraced.",
       ]);
       expectGhDenied([
         "api",

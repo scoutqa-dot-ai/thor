@@ -109,21 +109,39 @@ function buildDisclaimerUrl(sessionId: string): string | { error: string } {
   return `${base}/runner/v/${active.sessionId}/${active.triggerId}`;
 }
 
-function rewriteValueFlag(args: string[], names: string[], append: string): string[] | undefined {
+function rewriteSingleValueFlag(
+  args: string[],
+  names: string[],
+  append: string,
+  valuePrefix?: string,
+): string[] | { error: string } {
   const out = [...args];
+  let match: { index: number; valueIndex?: number; inlinePrefix?: string } | undefined;
   for (let i = 0; i < out.length; i++) {
     for (const name of names) {
       if (out[i] === name && i + 1 < out.length) {
-        out[i + 1] = `${out[i + 1]}${append}`;
-        return out;
+        if (valuePrefix && !out[i + 1].startsWith(valuePrefix)) continue;
+        if (match) return { error: "Disclaimer required: multiple mutable gh body fields" };
+        match = { index: i, valueIndex: i + 1 };
+        i += 1;
+        break;
       }
       if (out[i].startsWith(`${name}=`)) {
-        out[i] = `${name}=${out[i].slice(name.length + 1)}${append}`;
-        return out;
+        const value = out[i].slice(name.length + 1);
+        if (valuePrefix && !value.startsWith(valuePrefix)) continue;
+        if (match) return { error: "Disclaimer required: multiple mutable gh body fields" };
+        match = { index: i, inlinePrefix: `${name}=` };
+        break;
       }
     }
   }
-  return undefined;
+  if (!match) return { error: "Disclaimer required: could not find a mutable gh body field" };
+  if (match.valueIndex !== undefined) {
+    out[match.valueIndex] = `${out[match.valueIndex]}${append}`;
+  } else if (match.inlinePrefix) {
+    out[match.index] = `${match.inlinePrefix}${out[match.index].slice(match.inlinePrefix.length)}${append}`;
+  }
+  return out;
 }
 
 function withGhDisclaimer(args: string[], sessionId?: string): string[] | { error: string } {
@@ -135,11 +153,9 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
   const url = buildDisclaimerUrl(sessionId);
   if (typeof url !== "string") return url;
   const footer = disclaimerFooter(url);
-  const rewritten =
-    args[0] === "api"
-      ? rewriteValueFlag(args, ["-f", "--raw-field", "-F"], footer)
-      : rewriteValueFlag(args, ["--body", "-b"], footer);
-  return rewritten ?? { error: "Disclaimer required: could not find a mutable gh body field" };
+  return args[0] === "api"
+    ? rewriteSingleValueFlag(args, ["-f", "--raw-field"], footer, "body=")
+    : rewriteSingleValueFlag(args, ["--body", "-b"], footer);
 }
 
 /**

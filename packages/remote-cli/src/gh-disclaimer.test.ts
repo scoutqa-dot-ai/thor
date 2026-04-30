@@ -139,4 +139,36 @@ describe("gh disclaimer injection", () => {
       expect(execCalls).toHaveLength(0);
     });
   });
+
+  it("fails closed for duplicate mutable body fields", async () => {
+    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({ ok: true });
+
+    await withServer(async (url) => {
+      const comment = await postGh(
+        url,
+        ["pr", "comment", "123", "--body", "traced", "--body", "untraced"],
+        "parent",
+      );
+      expect(comment.response.status).toBe(400);
+      expect(comment.body.stderr).toContain("multiple --body values");
+
+      const reply = await postGh(
+        url,
+        [
+          "api",
+          "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+          "--method",
+          "POST",
+          "-f",
+          "body=traced",
+          "--raw-field",
+          "body=untraced",
+        ],
+        "parent",
+      );
+      expect(reply.response.status).toBe(400);
+      expect(reply.body.stderr).toContain("gh api");
+      expect(execCalls).toHaveLength(0);
+    });
+  });
 });
