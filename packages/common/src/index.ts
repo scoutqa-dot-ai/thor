@@ -27,8 +27,20 @@ export type {
   ValidationResult,
 } from "./workspace-config.js";
 export type { ProxyName } from "./proxies.js";
-export { writeToolCallLog, appendJsonlWorklog, writeSlackWebhookHistory } from "./worklog.js";
+export { writeToolCallLog, appendJsonlWorklog, appendJsonlWorklogOrThrow, writeSlackWebhookHistory } from "./worklog.js";
 export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.js";
+export {
+  SessionEventLogRecordSchema,
+  AliasRecordSchema,
+  appendSessionEvent,
+  appendAlias,
+  readTriggerSlice,
+  findActiveTrigger,
+  resolveAlias,
+  listSessionAliases,
+  sessionLogPath,
+} from "./event-log.js";
+export type { SessionEventLogRecord, AliasRecord, TriggerSlice, ActiveTriggerResult } from "./event-log.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
 export type { Logger } from "./logger.js";
 export { errorToMetadata } from "./errors.js";

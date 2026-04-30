@@ -40,6 +40,10 @@ function getWorklogDir(): string {
   return process.env.WORKLOG_DIR || "/workspace/worklog";
 }
 
+export function getWorklogRoot(): string {
+  return getWorklogDir();
+}
+
 function isWorklogEnabled(): boolean {
   return process.env.WORKLOG_ENABLED !== "false";
 }
@@ -134,6 +138,20 @@ export function appendJsonlWorklog(stream: string, entry: object): void {
       `[worklog] Failed to append stream ${stream}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+/**
+ * Throwing JSONL append primitive for records that are source-of-truth state.
+ * Unlike appendJsonlWorklog, callers can fail closed when this append fails.
+ */
+export function appendJsonlWorklogOrThrow(stream: string, entry: object): void {
+  if (!isWorklogEnabled()) return;
+
+  const now = new Date();
+  const streamName = sanitize(stream).replace(/-+/g, "-");
+  const jsonlDir = join(getWorklogDir(), now.toISOString().slice(0, 10), "jsonl");
+  ensureDir(jsonlDir);
+  appendFileSync(join(jsonlDir, `${streamName}.jsonl`), `${JSON.stringify(entry)}\n`);
 }
 
 /**
