@@ -1,5 +1,5 @@
 import express from "express";
-import type { RequestHandler } from "express";
+import rateLimit from "express-rate-limit";
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { z } from "zod/v4";
 import type {
@@ -72,29 +72,12 @@ const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 /** Shared event buses — one SSE connection per directory, dispatches to per-session listeners. */
 const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
 
-function createSimpleRateLimit(options: { windowMs: number; max: number }): RequestHandler {
-  const hits = new Map<string, { count: number; resetAt: number }>();
-  return (req, res, next) => {
-    const now = Date.now();
-    const key = req.ip || req.socket.remoteAddress || "unknown";
-    const current = hits.get(key);
-    if (!current || current.resetAt <= now) {
-      hits.set(key, { count: 1, resetAt: now + options.windowMs });
-      next();
-      return;
-    }
-    if (current.count >= options.max) {
-      res.status(429).type("text/plain").send("Too many requests");
-      return;
-    }
-    current.count += 1;
-    next();
-  };
-}
-
-const viewerRateLimit = createSimpleRateLimit({
+const viewerRateLimit = rateLimit({
   windowMs: VIEWER_RATE_LIMIT_WINDOW_MS,
-  max: VIEWER_RATE_LIMIT_MAX,
+  limit: VIEWER_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: "Too many requests",
 });
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
