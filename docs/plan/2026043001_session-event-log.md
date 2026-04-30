@@ -103,9 +103,9 @@ remote-cli calls `findActiveTrigger(sessionId)` on each disclaimer-eligible writ
 6. Chain-walk depth is capped at 5 (defends against cycles and runaway recursion); cycle detection by tracking visited ids per resolution.
 7. If the chain exhausts with zero opens, or any node returns >1 open trigger, log and return `none`.
 
-The remote-cli inference cache stores the last-seen offset and result per session in memory; cache TTL ~30s so a stale "active" result clears quickly after `trigger_end`.
+No caching. Each disclaimer-eligible write does a fresh JSONL tail-read; the per-trigger call volume is small enough that I/O is not load-bearing.
 
-Failure mode: if inference returns `none`, remote-cli logs and skips disclaimer injection for that write. The write itself proceeds normally — the disclaimer is the optional decoration, not the operation.
+Failure mode: if inference returns anything other than exactly one open trigger (zero, ambiguous, depth-exceeded, cycle), the caller fails-fast. The write does not ship without a disclaimer. See "Disclaimer Links" for the per-path details.
 
 ## Trigger Slicing
 
@@ -235,11 +235,10 @@ OG metadata is dropped — Vouch will redirect Slack-unfurl bots to the OAuth lo
 
 ### Operational guards
 
-- Per-hit audit log via `appendJsonlWorklog("viewer-audit", ...)`: request-id, vouch user, sessionId, triggerId, status, ts.
 - Path validation: viewer `realpath`s the resolved session file path and asserts prefix `/workspace/worklog/sessions/` before opening.
 - Per-file size cap (e.g. 50 MiB) — beyond that, viewer returns oversized state with a raw link only.
 
-Rate-limiting is delegated to Vouch / ingress; the runner does not add its own limiter on `/runner/*`.
+Rate-limiting and access logging are delegated to Vouch / ingress; the runner does not add its own limiter or audit stream on `/runner/*`.
 
 No client-side framework is needed.
 
@@ -256,11 +255,19 @@ Slack messages are skipped to avoid noise. Confluence writes are denied entirely
 
 The disclaimer URL is the plain Vouch-gated viewer path: `/runner/v/<sessionId>/<triggerId>`. No HMAC, no TTL.
 
-Two write paths, two injection strategies:
+**Both paths fail-fast.** Every Thor-created artifact must be traceable to a trigger; if `findActiveTrigger(sessionId)` cannot return exactly one open trigger, or if the per-tool args injector cannot find the expected field, the operation fails outright. The artifact does not ship without the disclaimer. Silent skips would let routing bugs (broken `session.parent` chain, runner crash mid-flight, schema drift on a Jira args shape) ship trivially-attributable artifacts as untraceable, which defeats the point of the disclaimer.
 
 ### Direct writes (GitHub `gh`)
 
-Inline at execute time. The shell command runs through remote-cli with `x-thor-session-id` already in the request context. remote-cli calls `findActiveTrigger(sessionId)` (walks `session.parent` chain), builds the URL, and rewrites the relevant `gh` flag (`--body` for PR/comment/review) before exec.
+Inline at execute time. The shell command runs through remote-cli with `x-thor-session-id` already in the request context.
+
+1. remote-cli detects disclaimer-eligible commands: `gh pr create`, `gh pr comment`, `gh pr review`.
+2. Call `findActiveTrigger(sessionId)`. **Fail-fast** if zero / ambiguous / cycle / depth-exceeded: the `gh` command exits non-zero with a clear error ("Disclaimer required: no single active trigger for session X — runner state may be broken"). No exec, no artifact.
+3. Build the URL `${RUNNER_BASE_URL}/runner/v/<sessionId>/<triggerId>`.
+4. Rewrite the relevant `gh` flag (`--body`/`-b` for PR/comment/review; `-F <file>` is read, mutated, and re-passed via stdin or a temp file).
+5. Exec `gh` with the mutated body.
+
+No cache — each disclaimer-eligible exec does a fresh `findActiveTrigger` JSONL tail-read. The per-trigger volume of these calls is small (a handful), so the I/O is not load-bearing; cache complexity is not warranted.
 
 ### Approve-gated writes (Atlassian MCP)
 
@@ -268,17 +275,16 @@ The approval flow is async — humans review in Slack, can take minutes-to-hours
 
 At `packages/remote-cli/src/mcp-handler.ts:443`, before `approvalStore.create(toolInfo.name, args)`:
 
-1. Call `findActiveTrigger(sessionId)` — using the current request's session id.
-2. **If zero or multiple open triggers, fail-closed:** return an error to the LLM ("Cannot create approval: no single active trigger for this session") rather than persist a half-formed action. The runner is always inside an open trigger when MCP tools fire; an ambiguous result is a real bug (alias chain broken, runner crashed mid-flight) and should surface, not silently swallow the disclaimer.
-3. Build the URL `${RUNNER_BASE_URL}/runner/v/<sessionId>/<triggerId>`.
-4. Mutate `args` per a small per-tool injector:
+1. Call `findActiveTrigger(sessionId)` using the current request's session id. **Fail-fast** if zero / ambiguous / cycle / depth-exceeded: return an error to the LLM ("Cannot create approval: no single active trigger for this session") and persist no action.
+2. Build the URL `${RUNNER_BASE_URL}/runner/v/<sessionId>/<triggerId>`.
+3. Mutate `args` per a small per-tool injector. **The injector throws if the expected field is missing on the args shape** — defense-in-depth against MCP schema drift or LLM passing the wrong field name. Throws bubble up as approval-create errors; no half-mutated action is persisted.
 
 | Tool | Injection field | Strategy |
 |---|---|---|
-| `createJiraIssue` | `description` | Append `\n\n---\n[View Thor trigger](<url>)` to the description body |
-| `addCommentToJiraIssue` | `commentBody` | Append the same footer to the comment body |
+| `createJiraIssue` | `description` | Append `\n\n---\n[View Thor trigger](<url>)` to the description body. Throw if `args.description` is missing or non-string. |
+| `addCommentToJiraIssue` | `commentBody` | Append the same footer to the comment body. Throw if `args.commentBody` is missing or non-string. |
 
-5. Call `approvalStore.create(toolInfo.name, mutatedArgs)`. The persisted action carries the URL in `args` from the start.
+4. Call `approvalStore.create(toolInfo.name, mutatedArgs)`. The persisted action carries the URL in `args` from the start.
 
 At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args: action.args, ... })` unchanged — the disclaimer is already in the args. No execute-time mutation, no schema changes to `ApprovalActionSchema`, no Thor context required at resolve time.
 
@@ -288,11 +294,6 @@ At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args:
 - **Idempotent on retry.** Approve-resolve has 3 attempts (`packages/gateway/src/service.ts`); replays carry identical args, no risk of double-injection.
 - **No schema migration.** `ApprovalActionSchema` (`packages/remote-cli/src/approval-store.ts:6`) stays unchanged.
 - **Audit-clean.** The action record IS the bytes that got executed. No "the args said X but we sent X+disclaimer" footnote.
-- **Trade-off:** TTL-style expiry semantics aren't possible (no HMAC anyway since we are Vouch-gated, so this is moot). The link is durable, which is what the audit story wants.
-
-### Caching on the direct-write path
-
-Direct writes (`gh pr create` etc.) call `findActiveTrigger` once per disclaimer-eligible exec. An in-process LRU cache (TTL ~30s, keyed by sessionId) in remote-cli absorbs repeats inside the same trigger.
 
 ## Decision Log
 
@@ -311,16 +312,18 @@ Direct writes (`gh pr create` etc.) call `findActiveTrigger` once per disclaimer
 | 2026-04-30 | Viewer is Vouch-gated under `/runner/*` ingress prefix; no HMAC, no TTL on the URL    | Reuses the existing OAuth proxy pattern (`packages/admin/src/app.ts`); UUIDv4 entropy + Vouch is the access-control model. Drops HMAC operational cost (secret mgmt, signature code, "Invalid signature" UX). Audit-friendly: links in old artifacts keep working. (CHANGED 2026-04-30 from earlier "HMAC-signed public viewer" decision.) |
 | 2026-04-30 | Use `/runner/*` ingress prefix for runner-owned routes                                | Single ingress mount lets future runner routes ship without per-route ingress changes. Mirrors the existing `/admin/*` pattern. |
 | 2026-04-30 | Redaction is allowlist (default-deny) on tool outputs                                | Defense-in-depth — Vouch fronts the route, but allowlist redaction keeps screenshots / copy-paste / log-share from leaking content the page itself shouldn't render. |
-| 2026-04-30 | Drop Confluence writes from the approve list (deny entirely)                          | Reduces blast radius and removes three approve-gated tools from scope. Re-introduce later if a real Confluence write use case lands. |
+| 2026-04-30 | Confluence writes removed from the atlassian approve list (commit `a4d755ca` on this branch) | Reduces blast radius; the only approve-gated MCP tools that need disclaimer support are `createJiraIssue` and `addCommentToJiraIssue`. Re-introduce later if a real Confluence write use case lands. Tracked as part of this plan, not just deferred. |
 | 2026-04-30 | Approve-gated writes (Atlassian MCP): mutate `args` at approval-create time           | Approval is async; by execute time the original trigger is closed and inference would return zero opens. Create-time mutation keeps Thor context in scope, lets the human approver see the disclaimer in the Slack prompt, and avoids `ApprovalActionSchema` changes. |
-| 2026-04-30 | Approve-create fails closed when `findActiveTrigger` returns none/ambiguous          | The runner is always inside an open trigger when MCP tools fire; an ambiguous result is a real bug. Failing closed surfaces it; failing open silently ships disclaimer-less artifacts. |
+| 2026-04-30 | Both disclaimer paths fail-fast on missing/ambiguous active trigger                   | Every Thor-created artifact must be traceable to a trigger. Direct writes (`gh`) exit non-zero with no upstream call; approve-create returns an error and persists no action. Failing open would silently ship disclaimer-less artifacts and hide the underlying routing bug. |
+| 2026-04-30 | Per-tool args injector throws on missing/wrong-typed field                            | Defense-in-depth against MCP schema drift or LLM passing the wrong field name. A throw bubbles to approval-create and persists no action; never a half-mutated record. |
+| 2026-04-30 | No cache on the direct-write disclaimer path                                          | Per-trigger call volume is small (handful of disclaimer-eligible execs); JSONL tail-read I/O is not load-bearing. Cache complexity buys nothing. |
 | 2026-04-30 | Direct writes (GitHub `gh`): inline injection at execute time                         | `gh` exec is synchronous within the runner-driven request; original Thor context is in scope. Inference + URL build + flag rewrite is straightforward; no approval store involvement. |
 | 2026-04-30 | Cap one event record at < 4 KiB serialized; truncate and mark `_truncated`           | Avoids cross-process append interleave; mirrors `worklog.ts:18` truncation pattern. |
 | 2026-04-30 | `triggerId` is UUIDv4 (≥128-bit random)                                              | Public viewer URL relies on it as an unguessable bearer.         |
 | 2026-04-30 | Reuse `appendJsonlWorklog` (`packages/common/src/worklog.ts:123`) as the underlying writer | DRY; the existing primitive already handles day-partitioning and graceful failure. |
 | 2026-04-30 | Single shared Zod schema in `@thor/common/event-log.ts`                              | Writer-reader schema gate; readers `safeParse` and skip-with-counter; forward-compat by ignoring unknown fields. |
 | 2026-04-30 | Add Phase 6: retention/archival/janitor                                              | JSONL grows unbounded; viewer OOMs on large `readFileSync`; active-trigger inference becomes O(file). |
-| 2026-04-30 | Per-hit JSONL audit log on `/runner/v/*`                                              | Vouch handles auth and rate-limiting; the runner records vouch-user / sessionId / triggerId per render for incident response. |
+| 2026-04-30 | No per-hit audit log on `/runner/v/*`                                                  | Vouch / ingress already log auth events; an additional Thor-side audit stream is bookkeeping debt without a clear consumer. Add only if a real incident-response need surfaces. |
 
 ## Phases
 
@@ -386,9 +389,8 @@ Scope:
 4. Implement the state matrix: valid/completed, valid/running (with `<meta refresh>`), valid/incomplete, valid/aborted, valid/empty, valid/oversized, redacted markers, branded 401/404/503.
 5. Implement redaction allowlist (default-deny on tool outputs); per-tool field rules ship iteratively starting with safe metadata.
 6. Mobile-first CSS, semantic landmarks, `<time datetime>`, branded 401/404/503 pages.
-7. Per-hit audit log via `appendJsonlWorklog("viewer-audit", ...)` recording vouch user, sessionId, triggerId, status, ts.
-8. Path validation: `realpath` + prefix-check on `/workspace/worklog/sessions/`.
-9. Per-file size cap (50 MiB default); oversized state returns curated view + raw link only.
+7. Path validation: `realpath` + prefix-check on `/workspace/worklog/sessions/`.
+8. Per-file size cap (50 MiB default); oversized state returns curated view + raw link only.
 
 Exit criteria:
 
@@ -397,7 +399,6 @@ Exit criteria:
 - Unknown session/trigger returns branded 404.
 - Redaction default-deny is enforced (snapshot tests assert no raw tool output appears in HTML for non-allowlisted fields).
 - Mobile snapshot at 375px viewport renders single-column with 16px base font.
-- Per-hit audit log records every render with vouch user / sessionId / triggerId.
 - Ingress smoke test: an authenticated request to `/runner/v/<sid>/<tid>` reaches the runner; an unauth request gets the Vouch login redirect.
 
 ### Phase 4 - Alias Marker Producers
@@ -418,36 +419,40 @@ Exit criteria:
 
 ### Phase 5 - Disclaimer Injection
 
-Two paths share the same `findActiveTrigger(sessionId)` helper from `@thor/common/event-log.ts` (walks `session.parent` chain). Both build the URL `${RUNNER_BASE_URL}/runner/v/<sessionId>/<triggerId>` — no HMAC, no TTL.
+Two paths share the same `findActiveTrigger(sessionId)` helper from `@thor/common/event-log.ts` (walks `session.parent` chain). Both build the URL `${RUNNER_BASE_URL}/runner/v/<sessionId>/<triggerId>` — no HMAC, no TTL. **Both fail-fast** if inference cannot return exactly one open trigger or if the per-tool args injector cannot find the expected field.
+
+Prerequisite (already shipped on this branch in commit `a4d755ca`): Confluence write tools removed from the approve list in `packages/common/src/proxies.ts`. Phase 5's per-tool injector covers only `createJiraIssue` and `addCommentToJiraIssue`.
 
 #### Direct writes (GitHub `gh`) — inline at execute time
 
 1. Extend remote-cli's `gh` exec path to detect disclaimer-eligible commands: `gh pr create`, `gh pr comment`, `gh pr review`.
-2. For each, call `findActiveTrigger(sessionId)`. If exactly one open trigger, build the URL and rewrite the relevant `--body`/`-b` flag (or `-F` file content) to append `\n\n---\n[View Thor trigger](<url>)`.
-3. If `none`/`ambiguous`/`depth_exceeded`/`cycle`, log and proceed without injection — the write still ships, the disclaimer is missing.
-4. In-process LRU cache (TTL ~30s, keyed by sessionId) absorbs repeats inside the same trigger.
+2. For each, call `findActiveTrigger(sessionId)`. **Fail-fast** if `none`/`ambiguous`/`depth_exceeded`/`cycle`: the `gh` command exits non-zero with a clear error message; no upstream call.
+3. Build the URL and rewrite the relevant `--body`/`-b` flag (or `-F` file content) to append `\n\n---\n[View Thor trigger](<url>)`.
+4. Exec `gh` with the mutated body.
+
+No cache — each disclaimer-eligible exec does a fresh JSONL tail-read. The per-trigger call volume is small enough that I/O cost is irrelevant; cache complexity is not warranted.
 
 #### Approve-gated writes (Atlassian MCP) — args mutation at create time
 
 1. At `packages/remote-cli/src/mcp-handler.ts:443`, before `approvalStore.create(toolInfo.name, args)`:
    - Call `findActiveTrigger(sessionId)` using the current request's session id.
-   - **Fail-closed** if zero/ambiguous/cycle/depth-exceeded: return an error to the caller. Do not persist a half-formed action.
+   - **Fail-fast** if zero/ambiguous/cycle/depth-exceeded: return an error to the caller. Do not persist a half-formed action.
    - Build the URL.
-   - Mutate `args` per a small per-tool injector helper:
-     - `createJiraIssue` → append footer to `args.description`.
-     - `addCommentToJiraIssue` → append footer to `args.commentBody`.
+   - Mutate `args` per a small per-tool injector helper. **The injector throws if the expected field is missing or wrong-typed:**
+     - `createJiraIssue` → append footer to `args.description`. Throw if missing/non-string.
+     - `addCommentToJiraIssue` → append footer to `args.commentBody`. Throw if missing/non-string.
+   - Throws propagate as approval-create errors; no half-mutated action is persisted.
 2. Persist the mutated args into the approval action. The Slack approval prompt now shows the disclaimer the human is signing off on.
 3. At resolve+execute time (`mcp-handler.ts:515`), no changes — `executeUpstreamCall` runs `action.args` verbatim, disclaimer included.
-4. Skip Slack writes (no injection). Confluence writes are denied entirely (out of scope).
+4. Skip Slack writes (no injection). Confluence writes are denied entirely (already removed from approve list).
 
 Exit criteria:
 
-- `gh pr create`/`gh pr comment`/`gh pr review` inject the disclaimer link inline at exec time when inference returns one open trigger.
-- `createJiraIssue` and `addCommentToJiraIssue` carry the disclaimer in their `description` / `commentBody` from the moment the approval is created. The Slack approval prompt shows the disclaimer.
-- Approve-create with no/ambiguous active trigger returns an error and persists no action; surfaces as a runner-visible bug rather than a silent missed disclaimer.
+- `gh pr create`/`gh pr comment`/`gh pr review` inject the disclaimer link inline when inference returns one open trigger; otherwise exit non-zero with a clear error and no upstream call.
+- `createJiraIssue` and `addCommentToJiraIssue` carry the disclaimer in `description` / `commentBody` from approval-create time. The Slack approval prompt shows the disclaimer.
+- Approve-create with no/ambiguous active trigger or missing args field returns an error and persists no action.
 - Child-session writes resolve via `session.parent` chain to the parent's open trigger and inject the correct link.
-- Direct-write LRU cache absorbs repeats inside the same trigger.
-- Tests cover: direct write with one open trigger; child session resolving via parent alias (depth 1); chain depth exceeded; cycle detection; ambiguous direct-write (logs + ships without disclaimer); ambiguous approve-create (errors + no action persisted); approve-resolve replays the same args (idempotent); cache TTL expiry.
+- Tests cover: direct write with one open trigger; child session resolving via parent alias (depth 1); chain depth exceeded; cycle detection; ambiguous direct-write (`gh` exits non-zero, no exec); ambiguous approve-create (errors, no action persisted); per-tool injector throws on missing field; approve-resolve replays the same args (idempotent).
 
 ### Phase 6 - Retention, Archival, and Janitor
 
@@ -455,7 +460,7 @@ Scope:
 
 1. Per-session size cap on `events.jsonl` (e.g. 50 MiB). On exceed, rotate to `<session-id>-1.jsonl` (continuation file) and link the chain in a sidecar.
 2. Retention sweeper (cron job or one-shot script) that, after a configurable age (default 30 days), compresses session files to `<session-id>.jsonl.gz` and after a longer age (default 90 days) removes them.
-3. Symlink janitor — even though sessions are flat, viewer-audit and any future symlink uses get a sweeper that prunes broken symlinks and stray `tmp.*` files.
+3. Symlink/tmp janitor — sweep stray `tmp.*` files left behind by partial alias writes (and any future symlink-based artifacts).
 4. Aliases.jsonl rotation: when the file exceeds (e.g.) 100 MiB, snapshot the current state into `aliases-snapshot-<date>.jsonl` and start a fresh `aliases.jsonl`. Resolver reads snapshot + current.
 5. Viewer behavior on archived sessions: gzipped session loads transparently; removed sessions return branded 410 ("This trigger has been archived").
 
@@ -471,7 +476,7 @@ Exit criteria:
 - SQLite or any database-backed index.
 - Propagating `triggerId` through OpenCode/bash/curl/remote-cli — recovered via inference + `session.parent` chain.
 - New alias types beyond `slack.thread_id`, `git.branch`, and `session.parent` (no `github.pr` in this phase).
-- Confluence writes (`createConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment`) — removed from the approve list in `packages/common/src/proxies.ts`; denied by default until a real use case lands.
+- Confluence write *features*. The three Confluence approve-gated tools (`createConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment`) are removed from `packages/common/src/proxies.ts` as part of this plan (commit `a4d755ca` on this branch) and denied by default. Re-introducing them is out of scope.
 - Public unauthenticated viewer access — viewer is Vouch-gated; external Jira reporters who don't have OAuth cannot click into the disclaimer link. Acceptable trade for content-protection simplicity.
 - HMAC-signed viewer URLs / TTL expiry — Vouch + UUIDv4 entropy is the access-control model.
 - Rich client-side viewer UI.
@@ -487,8 +492,8 @@ Local verification:
 - `@thor/common` tests for event log helpers (append, slice, alias resolution including `session.parent` chain-walk + cycle/depth caps, schema drift, multi-process fuzz, partial trailing line).
 - runner tests for marker order, busy behavior, interrupt behavior, abort timeout, crash window (`trigger_aborted`), idempotent retry, same-correlationKey race, stale-session chain, `session.parent` alias write on child session discovery.
 - resolver tests for Slack and git aliases (newest wins, back-reference chain, type isolation).
-- viewer route tests for valid completed/running/incomplete/aborted/empty/oversized/redacted states, branded 401/404/503, mobile snapshot, audit log per hit, two-view model, `X-Vouch-User` 401 path.
-- remote-cli tests for direct-write disclaimer injection (`gh pr create` flag rewrite), approve-gated args mutation at create time (Jira ticket/comment), fail-closed behavior on ambiguous active trigger, idempotent approve-resolve replay, LRU cache TTL.
+- viewer route tests for valid completed/running/incomplete/aborted/empty/oversized/redacted states, branded 401/404/503, mobile snapshot, two-view model, `X-Vouch-User` 401 path.
+- remote-cli tests for direct-write disclaimer injection (`gh pr create` flag rewrite); fail-fast on direct write when active trigger is missing/ambiguous (`gh` exits non-zero, no exec); approve-gated args mutation at create time (Jira ticket/comment); fail-fast approve-create on missing/ambiguous active trigger (no action persisted); per-tool injector throws on missing/wrong-typed field (no action persisted); idempotent approve-resolve replay.
 - ingress smoke test: `/runner/v/<sid>/<tid>` reaches the runner only with a valid Vouch session.
 - retention/janitor tests for gz round-trip, retention boundaries, dangling cleanup, aliases.jsonl rotation.
 
@@ -514,7 +519,7 @@ Codex available: yes | UI scope: yes (public viewer is a server-rendered page) |
 > **Post-/autoplan amendments (2026-04-30):**
 > - UC1 (propagate `x-thor-trigger-id`) was reversed. The plan body keeps `triggerId` runner-internal and recovers it at remote-cli via inference + a new `session.parent` alias type that lets inference chain-walk from a child OpenCode session id up to the parent that owns the open trigger.
 > - UC2 (HMAC-signed public viewer URL) was reversed. The viewer is Vouch-gated under `/runner/*` instead. UUIDv4 entropy + Vouch is the access-control model. Drops HMAC operational cost (secret mgmt, signature code, Invalid-signature 403, Expired 410). Trade-off: external Jira reporters without OAuth cannot click the disclaimer link.
-> - **Approve-gated disclaimer gap surfaced post-review.** Atlassian writes (`createJiraIssue`, `addCommentToJiraIssue`) go through the MCP approval store, which neither persists Thor identifiers nor receives them at resolve time. By execute time the original trigger has closed. Fix: mutate `args` at approval-create time (while context is in scope) and fail-closed if `findActiveTrigger` returns none/ambiguous. Documented in the Disclaimer Links section.
+> - **Approve-gated disclaimer gap surfaced post-review.** Atlassian writes (`createJiraIssue`, `addCommentToJiraIssue`) go through the MCP approval store, which neither persists Thor identifiers nor receives them at resolve time. By execute time the original trigger has closed. Fix: mutate `args` at approval-create time (while context is in scope). **Both disclaimer paths fail-fast** if `findActiveTrigger` cannot return one open trigger or if the per-tool injector cannot find the expected field — the artifact never ships without a disclaimer. Documented in the Disclaimer Links section.
 > - **Confluence writes denied entirely.** `createConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment` removed from the approve list in `packages/common/src/proxies.ts`. Out of scope until a real use case lands.
 > - UC3 (flat session file path), UC4 (retention as Phase 6), UC5 (cutover-not-greenfield) stand.
 >
