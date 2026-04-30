@@ -13,6 +13,7 @@ import type {
 } from "@opencode-ai/sdk";
 import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import {
   createLogger,
   logInfo,
@@ -34,6 +35,9 @@ import {
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
   extractRepoFromCwd,
+  appendSessionEvent,
+  appendAlias,
+  resolveAlias,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -46,6 +50,7 @@ const log = createLogger("runner");
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const OPENCODE_URL = (process.env.OPENCODE_URL || "http://127.0.0.1:4096").replace(/\/$/, "");
 const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
+const SESSION_LOG_ENABLED = process.env.SESSION_LOG_ENABLED === "true";
 
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
@@ -101,6 +106,18 @@ function getToolInstructions(directory: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function appendSessionEventOrFail(sessionId: string, record: Record<string, unknown>): void {
+  if (!SESSION_LOG_ENABLED) return;
+  const result = appendSessionEvent(sessionId, record);
+  if (!result.ok) throw result.error;
+}
+
+function appendAliasOrFail(record: Parameters<typeof appendAlias>[0]): void {
+  if (!SESSION_LOG_ENABLED) return;
+  const result = appendAlias(record);
+  if (!result.ok) throw result.error;
 }
 
 async function fetchOpencode(path: string): Promise<Response> {
@@ -411,7 +428,11 @@ app.post("/trigger", async (req, res) => {
     let previousNotesPath: string | undefined;
 
     const candidateSessionId =
-      requestedSessionId || (correlationKey ? getSessionIdFromNotes(correlationKey) : undefined);
+      requestedSessionId ||
+      (correlationKey && SESSION_LOG_ENABLED
+        ? resolveAlias({ aliasType: "slack.thread_id", aliasValue: correlationKey })
+        : undefined) ||
+      (correlationKey ? getSessionIdFromNotes(correlationKey) : undefined);
 
     if (candidateSessionId) {
       // Verify the session still exists in OpenCode
@@ -514,6 +535,7 @@ app.post("/trigger", async (req, res) => {
       } else {
         createNotes({ correlationKey, prompt, model, sessionId });
       }
+      appendAliasOrFail({ aliasType: "slack.thread_id", aliasValue: correlationKey, sessionId });
     }
 
     const bootstrapMemoryPaths: string[] = [];
@@ -565,6 +587,14 @@ app.post("/trigger", async (req, res) => {
     // Subscribe to event bus BEFORE sending the prompt
     const subscription = await eventBuses.subscribe(sessionDirectory, [sessionId]);
 
+    const triggerId = randomUUID();
+    appendSessionEventOrFail(sessionId, {
+      type: "trigger_start",
+      triggerId,
+      correlationKey,
+      promptPreview: truncate(prompt, 500),
+    });
+
     const promptStart = Date.now();
     const asyncResult = await client.session.promptAsync({
       path: { id: sessionId },
@@ -575,6 +605,12 @@ app.post("/trigger", async (req, res) => {
     });
 
     if (asyncResult.error) {
+      appendSessionEventOrFail(sessionId, {
+        type: "trigger_end",
+        triggerId,
+        status: "error",
+        error: JSON.stringify(asyncResult.error),
+      });
       res.status(500).json({
         error: "Failed to send prompt",
         detail: asyncResult.error,
@@ -668,6 +704,8 @@ app.post("/trigger", async (req, res) => {
       for await (const event of subscription) {
         if (finished) break;
 
+        appendSessionEventOrFail(sessionId, { type: "opencode_event", event });
+
         const isParent = isSessionEvent(event, sessionId);
 
         // Forward tool progress from child sessions so
@@ -719,6 +757,7 @@ app.post("/trigger", async (req, res) => {
                     for (const child of resp.data) {
                       childSessionIds.add(child.id);
                       subscription.addSessionId(child.id);
+                      appendAliasOrFail({ aliasType: "session.parent", aliasValue: child.id, sessionId });
                     }
                   }
                 })
@@ -790,6 +829,13 @@ app.post("/trigger", async (req, res) => {
     subscription.close();
 
     const durationMs = Date.now() - promptStart;
+    appendSessionEventOrFail(sessionId, {
+      type: "trigger_end",
+      triggerId,
+      status: sessionError ? "error" : "completed",
+      durationMs,
+      ...(sessionError ? { error: sessionError } : {}),
+    });
 
     // Append summary to the markdown notes file
     if (correlationKey) {
