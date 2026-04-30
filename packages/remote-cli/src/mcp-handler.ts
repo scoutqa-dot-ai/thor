@@ -3,10 +3,10 @@ import {
   createLogger,
   extractRepoFromCwd,
   getProxyConfig,
-  formatThorMeta,
+  buildThorDisclaimerForSession,
   isProxyName,
   getRepoUpstreams,
-  formatThorDisclaimerFooter,
+  formatThorMeta,
   interpolateHeaders,
   isAliasableMcpTool,
   logError,
@@ -17,7 +17,7 @@ import {
   type ProxyConfig,
   type WorkspaceConfig,
   writeToolCallLog,
-  findActiveTrigger,
+  ThorDisclaimerError,
 } from "@thor/common";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import {
@@ -38,13 +38,21 @@ const RUNNER_BASE_URL = (process.env.RUNNER_BASE_URL || "").replace(/\/$/, "");
 
 function addDisclaimerToApprovalArgs(tool: string, args: Record<string, unknown>, sessionId?: string): Record<string, unknown> {
   if (tool !== "createJiraIssue" && tool !== "addCommentToJiraIssue") return args;
-  if (!sessionId) throw new Error("Cannot create approval: missing Thor session id for disclaimer injection");
-  const active = findActiveTrigger(sessionId);
-  if (!active.ok) throw new Error(`Cannot create approval: no single active trigger for this session (${active.reason})`);
-  const url = `${RUNNER_BASE_URL}/runner/v/${active.sessionId}/${active.triggerId}`;
+  let footer: string;
+  try {
+    footer = buildThorDisclaimerForSession(sessionId, RUNNER_BASE_URL).footer;
+  } catch (err) {
+    if (err instanceof ThorDisclaimerError) {
+      if (err.code === "missing_session_id") {
+        throw new Error("Cannot create approval: missing Thor session id for disclaimer injection");
+      }
+      throw new Error(`Cannot create approval: no single active trigger for this session (${err.activeTriggerReason ?? "unknown"})`);
+    }
+    throw err;
+  }
   const field = tool === "createJiraIssue" ? "description" : "commentBody";
   if (typeof args[field] !== "string") throw new Error(`Cannot create approval: ${tool}.${field} must be a string for disclaimer injection`);
-  return { ...args, [field]: `${args[field]}\n${formatThorDisclaimerFooter(url)}` };
+  return { ...args, [field]: `${args[field]}\n${footer}` };
 }
 
 interface ProxyInstance {

@@ -5,12 +5,12 @@ import { dirname, normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import {
   computeGitAlias,
+  buildThorDisclaimerForSession,
   createConfigLoader,
   createLogger,
   deriveGitHubAppBotIdentity,
   formatThorMeta,
-  formatThorDisclaimerFooter,
-  findActiveTrigger,
+  ThorDisclaimerError,
   logError,
   logInfo,
   requireEnv,
@@ -99,13 +99,6 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
   };
 }
 
-function buildDisclaimerUrl(sessionId: string): string | { error: string } {
-  const active = findActiveTrigger(sessionId);
-  if (!active.ok) return { error: `Disclaimer required: no single active trigger for session ${sessionId} (${active.reason})` };
-  const base = RUNNER_BASE_URL || "";
-  return `${base}/runner/v/${active.sessionId}/${active.triggerId}`;
-}
-
 function rewriteSingleValueFlag(
   args: string[],
   names: string[],
@@ -146,10 +139,18 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
     (args[0] === "pr" && ["create", "comment", "review"].includes(args[1] ?? "")) ||
     (args[0] === "api" && args.some((arg) => /pulls\/\d+\/comments\/\d+\/replies/.test(arg)));
   if (!eligible) return args;
-  if (!sessionId) return { error: "Disclaimer required: missing Thor session id" };
-  const url = buildDisclaimerUrl(sessionId);
-  if (typeof url !== "string") return url;
-  const footer = `\n${formatThorDisclaimerFooter(url)}`;
+  let footer: string;
+  try {
+    footer = `\n${buildThorDisclaimerForSession(sessionId, RUNNER_BASE_URL).footer}`;
+  } catch (err) {
+    if (err instanceof ThorDisclaimerError) {
+      if (err.code === "missing_session_id") return { error: "Disclaimer required: missing Thor session id" };
+      return {
+        error: `Disclaimer required: no single active trigger for session ${sessionId ?? ""} (${err.activeTriggerReason ?? "unknown"})`,
+      };
+    }
+    throw err;
+  }
   return args[0] === "api"
     ? rewriteSingleValueFlag(args, ["-f", "--raw-field"], footer, "body=")
     : rewriteSingleValueFlag(args, ["--body", "-b"], footer);
