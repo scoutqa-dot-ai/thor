@@ -56,10 +56,11 @@ Reader contract:
 
 ## Lookup Indexes
 
-Two lookup needs:
+Three lookup needs:
 
-1. **Alias → session.** Slack thread id or git branch key must resolve to a session id.
-2. **Active triggers in a session.** Used only as a fallback for disclaimer injection if header propagation is unavailable.
+1. **External alias → session.** Slack thread id or git branch key must resolve to a Thor session id.
+2. **Child session → parent session.** When a parent OpenCode session spawns a child, the child's session id maps to the parent's. Lets disclaimer inference walk up to the session that owns the active trigger.
+3. **Active trigger in a session.** Used by remote-cli on disclaimer-eligible writes (PR create, PR comments, reviews, Jira ticket create, Jira comments) — a handful of reads per trigger.
 
 ### Alias index
 
@@ -70,8 +71,15 @@ Two lookup needs:
 A single append-only file. Each line:
 
 ```ts
-type AliasRecord = { ts: string; aliasType: "slack.thread_id" | "git.branch"; aliasValue: string; sessionId: string };
+type AliasRecord = {
+  ts: string;
+  aliasType: "slack.thread_id" | "git.branch" | "session.parent";
+  aliasValue: string;
+  sessionId: string;
+};
 ```
+
+For `session.parent`: `aliasValue` is the **child** OpenCode session id; `sessionId` is the **parent** OpenCode session id.
 
 Resolution: the resolver tails the file (read last N KiB), parses backwards or builds an in-memory map on cold start, returns the **newest** record for the given `(aliasType, aliasValue)`. The map is cached per process and rebuilt on miss.
 
@@ -81,21 +89,27 @@ Filename encoding for `aliasValue`:
 
 - Slack thread ids: validate as `[0-9.]+` before recording.
 - Git branch aliases: use base64url of the full canonical branch key (case-fold-safe on macOS APFS).
+- Child session ids: OpenCode session id format (alphanumeric + `_`); validate before use.
 
-### Active-trigger inference (fallback only)
+### Active-trigger inference
 
-Used **only** when `x-thor-trigger-id` is absent on a remote-cli call:
+remote-cli calls `findActiveTrigger(sessionId)` on each disclaimer-eligible write. The function walks the parent chain so a child session resolves to the parent's open trigger:
 
-1. Open `/workspace/worklog/sessions/<session-id>.jsonl`.
+1. Open `/workspace/worklog/sessions/<sessionId>.jsonl` if it exists.
 2. Tail-read last N KiB (size-bounded, never the whole file).
-3. Find `trigger_start` records without a matching `trigger_end` later in the slice.
-4. If exactly one active trigger, return it. Otherwise log and return none.
+3. Find `trigger_start` records without a matching `trigger_end` / `trigger_aborted` later in the slice.
+4. If exactly one open trigger → return its `triggerId`.
+5. If zero open triggers → look up `(aliasType: "session.parent", aliasValue: sessionId)` in `aliases.jsonl`. If a parent exists, recurse from step 1 with the parent's session id.
+6. Chain-walk depth is capped at 5 (defends against cycles and runaway recursion); cycle detection by tracking visited ids per resolution.
+7. If the chain exhausts with zero opens, or any node returns >1 open trigger, log and return `none`.
 
-The remote-cli inference cache stores the last-seen offset per session in memory to avoid re-reading on every disclaimer write.
+The remote-cli inference cache stores the last-seen offset and result per session in memory; cache TTL ~30s so a stale "active" result clears quickly after `trigger_end`.
+
+Failure mode: if inference returns `none`, remote-cli logs and skips disclaimer injection for that write. The write itself proceeds normally — the disclaimer is the optional decoration, not the operation.
 
 ## Trigger Slicing
 
-`triggerId` is propagated end-to-end via the existing header pipe (`packages/opencode-cli/src/remote-cli.ts:27`, `packages/remote-cli/src/index.ts:90-97`). The fallback inference above only fires if the header is missing for legacy/incompatible callers.
+`triggerId` is **not** propagated through OpenCode/bash/curl/remote-cli. It is generated and owned by the runner; remote-cli recovers it via active-trigger inference (see "Lookup Indexes") on the small set of disclaimer-eligible writes.
 
 The runner owns trigger boundaries:
 
@@ -125,12 +139,13 @@ Alias markers live in two places:
 
 Initial alias types:
 
-- `slack.thread_id`
-- `git.branch`
+- `slack.thread_id` — Slack thread id → Thor session id.
+- `git.branch` — base64url-encoded branch key → Thor session id.
+- `session.parent` — child OpenCode session id → parent OpenCode session id. Written by the runner whenever it observes a new sub-session on the OpenCode event bus that was spawned by a session already running an active trigger. Lets `findActiveTrigger` chain-walk from a child session up to the parent that owns the open trigger.
 
 No `github.pr` alias type in this phase.
 
-When a trigger creates a new session, the runner writes the alias to both locations as soon as enough context is known. Slack-triggered sessions write the incoming Slack thread id alias before any tool call; git branch aliases are added later from tool output.
+When a trigger creates a new session, the runner writes the alias to both locations as soon as enough context is known. Slack-triggered sessions write the incoming Slack thread id alias before any tool call; git branch aliases are added later from tool output; `session.parent` aliases are written from the runner's OpenCode event subscription as child sessions are discovered.
 
 If a trigger experiences `session_stale` recreate (`packages/runner/src/index.ts:440`), the new session inherits the aliases of the old one. The runner writes a back-reference alias on the new session pointing to the old `sessionId` so old viewer links can chain-follow rather than 404.
 
@@ -233,14 +248,16 @@ Thor-created content includes a disclaimer/viewer link for:
 
 Slack messages are skipped to avoid noise.
 
-`triggerId` is propagated via headers:
+remote-cli recovers the active trigger by inference, not header propagation. On each disclaimer-eligible write:
 
-- `packages/opencode-cli/src/remote-cli.ts` adds `x-thor-trigger-id` alongside the existing `x-thor-session-id` and `x-thor-call-id`.
-- `packages/remote-cli/src/index.ts` reads `x-thor-trigger-id` in the `thorIds` helper.
+1. Read `x-thor-session-id` from the request (already propagated by `packages/opencode-cli/src/remote-cli.ts:27`).
+2. Call `findActiveTrigger(sessionId)` (see "Lookup Indexes" — walks the `session.parent` chain so child sessions resolve to the parent's open trigger).
+3. If exactly one open trigger is found, build the HMAC-signed viewer URL and inject it.
+4. If zero or multiple open triggers (rare; suggests a races/abort window), log and skip injection. The write still goes through.
 
-remote-cli builds the HMAC-signed disclaimer URL deterministically from the headers — no inference required.
+This depends on the runner appending `trigger_start` before any tool can call remote-cli, and writing `session.parent` aliases as soon as child sessions are discovered on the event bus.
 
-If `x-thor-trigger-id` is absent (legacy callers, missing env), remote-cli falls back to active-trigger inference (see "Lookup Indexes"). When inference is ambiguous, the disclaimer is logged-and-skipped, but the header path closes off this case for any caller running through the standard wrapper.
+The set of inference reads is small — only the handful of writes that get disclaimers per trigger — so re-reading the JSONL tail per call is acceptable. An in-process LRU cache (TTL ~30s) absorbs repeated reads from the same trigger.
 
 ## Decision Log
 
@@ -249,8 +266,8 @@ If `x-thor-trigger-id` is absent (legacy callers, missing env), remote-cli falls
 | 2026-04-30 | Use `/workspace/worklog/sessions/<session-id>.jsonl` as the source of truth          | Flat session-keyed path; avoids symlink portability concerns and survives volume mount/backup/archival. |
 | 2026-04-30 | Drop absolute symlink indexes; use `aliases.jsonl` newest-wins for alias lookup       | No symlink fragility; in-process cache rebuilt on miss is faster than today's grep-based scan. |
 | 2026-04-30 | Do not add SQLite or another DB                                                     | Append-only JSONL + small in-memory cache is enough for v1. Revisit if alias scale becomes a problem. |
-| 2026-04-30 | Propagate `x-thor-trigger-id` via the existing header pipe                          | Header pipe already exists for `x-thor-session-id` and `x-thor-call-id`; one-line change. Removes the brittle "exactly one active trigger" inference path. (CHANGED 2026-04-30 from earlier "do not propagate" decision.) |
-| 2026-04-30 | Keep inference as a fallback for legacy callers without the header                   | Defense-in-depth; new wrapper-driven callers always use the header. |
+| 2026-04-30 | Do not propagate `triggerId` through OpenCode/bash/curl/remote-cli; recover via inference on disclaimer-eligible writes | Disclaimer-eligible writes are a small set (PR/Jira create/comment/review). Inference re-read is bounded to those calls; not an every-shell concern. Avoids touching OpenCode plugin, wrapper, and remote-cli auth surface. |
+| 2026-04-30 | Add `session.parent` alias type for child→parent session resolution                  | Lets inference walk from a child OpenCode session id up to the parent session that owns the open trigger. Reuses the alias mechanism rather than introducing a new state shape. Cycle-safe via depth cap (5) + visited-set. |
 | 2026-04-30 | Write `trigger_start` only after any prior busy session has settled                  | Prevents prior-run events from entering the new trigger slice.   |
 | 2026-04-30 | Abort timeout means no marker and no prompt                                          | Avoids ambiguous slices.                                         |
 | 2026-04-30 | Emit `trigger_aborted` if the runner crashes between `trigger_start` and `promptAsync` | Distinguishes orphan empty triggers from genuinely incomplete ones. |
@@ -271,16 +288,16 @@ If `x-thor-trigger-id` is absent (legacy callers, missing env), remote-cli falls
 
 Scope:
 
-1. Add the shared Zod schema in `@thor/common/event-log.ts` (`SessionEventLogRecord`, `AliasRecord`).
+1. Add the shared Zod schema in `@thor/common/event-log.ts` (`SessionEventLogRecord`, `AliasRecord`). `AliasRecord.aliasType` is `"slack.thread_id" | "git.branch" | "session.parent"`.
 2. Build typed helpers, layered on `appendJsonlWorklog` (`packages/common/src/worklog.ts:123`):
    - `appendSessionEvent(sessionId, record)` — single complete append, < 4 KiB cap with `_truncated` marker on overflow.
    - `appendAlias({ aliasType, aliasValue, sessionId })` — appends to global `aliases.jsonl`.
    - `readTriggerSlice(sessionId, triggerId)` — start..end (or aborted/incomplete) with malformed-line tolerance and partial-trailing-line discard.
-   - `findActiveTriggers(sessionId)` — tail-bounded read, returns open trigger ids.
+   - `findActiveTrigger(sessionId)` — tail-bounded read; if no open trigger in this session, walk `session.parent` chain (depth ≤ 5, cycle-detected); returns `{ triggerId } | { reason: "none" | "ambiguous" | "depth_exceeded" | "cycle" }`.
    - `resolveAlias({ aliasType, aliasValue })` — newest-wins lookup with in-process cache rebuilt on miss.
    - `listSessionAliases(sessionId)` — collects `alias` records from session log.
 3. Reader behaviors: `safeParse` each line, skip-with-counter on failure, drop unknown fields, tolerate partial trailing line.
-4. Unit tests for: append + 4KB truncation, slice extraction (happy/incomplete/aborted/malformed/partial-trailing), active-trigger inference (zero/one/many), alias resolution (newest wins), session→aliases listing, schema-drift handling (unknown field ignored).
+4. Unit tests for: append + 4KB truncation, slice extraction (happy/incomplete/aborted/malformed/partial-trailing), active-trigger lookup (zero/one/many in current session, walks `session.parent` chain to find parent's open trigger, depth-cap at 5, cycle detection), alias resolution (newest wins), session→aliases listing, schema-drift handling (unknown field ignored).
 5. Concurrency tests: multi-process append fuzz (no corrupt lines); reader observing partial trailing line during writer activity.
 
 Exit criteria:
@@ -288,6 +305,7 @@ Exit criteria:
 - Records append to `/workspace/worklog/sessions/<session-id>.jsonl` with size cap enforced.
 - Trigger slices extracted correctly across happy / incomplete / aborted / malformed inputs.
 - Alias resolution is newest-wins; cache rebuild on miss is verified.
+- `findActiveTrigger` walks `session.parent` chain correctly; depth cap and cycle detection both have failing-then-passing tests.
 - Multi-process append fuzz produces zero corrupt lines.
 
 ### Phase 2 - Runner Event Capture and Session Boundaries
@@ -305,7 +323,7 @@ Scope:
    - abort timeout returns busy/error with no marker and no prompt
 7. Append `trigger_start` before `promptAsync`. Reject duplicate `triggerId` already present in the session within the last hour (idempotency).
 8. Outer `try` emits `trigger_aborted` (with reason) if the runner crashes between `trigger_start` and successful `promptAsync` invocation.
-9. Stream and append OpenCode events for parent and discovered child sessions.
+9. Stream and append OpenCode events for parent and discovered child sessions. **When a new sub-session id appears on the event bus during an active trigger, append a `session.parent` alias record (`aliasValue=<child-id>`, `sessionId=<parent-id>`) to `aliases.jsonl`.** This is what lets `findActiveTrigger` chain-walk from a child session up to the parent's open trigger.
 10. Append `trigger_end` on completion or error.
 11. Write the Slack thread alias immediately on Slack-triggered sessions.
 12. On `session_stale` recreate, write a back-reference alias on the new session pointing to the old `sessionId`.
@@ -315,7 +333,7 @@ Exit criteria:
 - Every completed trigger has ordered start, event, and end records.
 - Busy, abort-timeout, and crash paths each produce the documented marker (none / `trigger_aborted` / `trigger_end{status:error}`).
 - Same-correlationKey concurrent triggers do not double-create.
-- Child-session activity appears inside the parent trigger slice.
+- Child-session activity appears inside the parent trigger slice **and** every discovered child session has a `session.parent` alias written before any tool call from that child reaches remote-cli.
 - With flag off, behavior matches today's notes-only path. With flag on in dual-write, both stores carry the same routing facts.
 
 ### Phase 3 - Public Trigger Viewer
@@ -359,23 +377,25 @@ Exit criteria:
 - A session holding both Slack and git aliases resolves correctly from either side.
 - Recreated sessions chain-follow without 404.
 
-### Phase 5 - Disclaimer Injection (header-propagated)
+### Phase 5 - Disclaimer Injection (inference-based)
 
 Scope:
 
-1. Add `x-thor-trigger-id` to the OpenCode wrapper at `packages/opencode-cli/src/remote-cli.ts:27`, alongside `x-thor-session-id` and `x-thor-call-id`. Source the value from `THOR_OPENCODE_TRIGGER_ID` env injected by the runner near the new `appendTriggerStart` call site.
-2. Add `x-thor-trigger-id` to the `thorIds` helper in `packages/remote-cli/src/index.ts:90-97`.
-3. Build the HMAC-signed disclaimer URL from the headers (deterministic; no inference).
-4. Inject the link into supported GitHub and Jira write operations (PR create, PR comments, reviews; Jira ticket, Jira comments).
-5. Skip Slack writes.
-6. Fallback path: if `x-thor-trigger-id` is absent, use `findActiveTriggers(sessionId)`. If exactly one open trigger exists, build the link; otherwise log + skip injection.
+1. Extend remote-cli to call `findActiveTrigger(sessionId)` from `@thor/common/event-log.ts` on each disclaimer-eligible write. The function walks `session.parent` chain so a child session resolves to the parent's open trigger.
+2. Build the HMAC-signed disclaimer URL from `(sessionId, triggerId)` once inference returns one open trigger.
+3. Inject the link into supported GitHub and Jira write operations (PR create, PR comments, reviews; Jira ticket, Jira comments).
+4. Skip Slack writes.
+5. Cache inference results in-process (LRU with TTL ~30s, keyed by sessionId) so repeated writes within the same trigger pay the JSONL read cost once.
+6. When inference returns `none` / `ambiguous` / `depth_exceeded` / `cycle`, log the reason and skip injection. The write itself proceeds.
 
 Exit criteria:
 
-- GitHub PR/comment/review writes include the HMAC-signed viewer link when the header is present.
-- Jira ticket/comment writes include the HMAC-signed viewer link when the header is present.
-- Header path never depends on inference; ambiguous inference fallback never injects a guessed link.
-- Tests: header path (deterministic), inference fallback (one/zero/many active triggers).
+- GitHub PR/comment/review writes include the HMAC-signed viewer link when inference returns one open trigger.
+- Jira ticket/comment writes include the HMAC-signed viewer link when inference returns one open trigger.
+- Child-session writes resolve via `session.parent` chain to the parent's open trigger and inject the correct link.
+- Ambiguous / no-result / cycle / depth-exceeded paths log and never inject a guessed link.
+- Cache hits avoid re-reading the JSONL on repeat writes inside the same trigger.
+- Tests cover: top-level session with one open trigger; child session resolving via parent alias (depth 1); chain depth exceeded; cycle detection; ambiguous case (>1 open in chain); cache TTL expiry.
 
 ### Phase 6 - Retention, Archival, and Janitor
 
@@ -397,7 +417,8 @@ Exit criteria:
 ## Out of Scope
 
 - SQLite or any database-backed index.
-- New alias types such as `github.pr`.
+- Propagating `triggerId` through OpenCode/bash/curl/remote-cli — recovered via inference + `session.parent` chain on the small set of disclaimer-eligible writes.
+- New alias types beyond `slack.thread_id`, `git.branch`, and `session.parent` (no `github.pr` in this phase).
 - Rich client-side viewer UI.
 - Slack disclaimer injection.
 - Blocking raw Slack writes through mitmproxy.
@@ -433,6 +454,8 @@ Rollout posture:
 Branch: `session-log-links` | Commit at start: `6da9b56c` | Date: 2026-04-30
 Mode: **SELECTIVE EXPANSION** (iteration on existing system, dual-voice review)
 Codex available: yes | UI scope: yes (public viewer is a server-rendered page) | DX scope: no
+
+> **Post-/autoplan amendment (2026-04-30):** UC1 (propagate `x-thor-trigger-id`) was initially accepted at the Phase 4 gate but subsequently reversed by user direction. The plan body now keeps `triggerId` runner-internal and recovers it at remote-cli via inference + a new `session.parent` alias type (added below in the Decision Log) that lets inference chain-walk from a child OpenCode session id up to the parent that owns the open trigger. UC2/UC3/UC4/UC5 stand. The dual-voice findings below are preserved verbatim as the audit record of the review at the time.
 
 ### Phase 1 — CEO/Strategy Review
 
