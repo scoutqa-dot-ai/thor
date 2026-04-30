@@ -95,9 +95,9 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
   "gh pr create": {
     reason:
-      "PR creation is limited to the current worktree branch and one non-interactive body source.",
+      "PR creation is limited to the current worktree branch and an explicit non-interactive body source.",
     instead:
-      "gh pr create --title <title> --body <body> or gh pr create --fill; omit --head unless it matches the current worktree branch",
+      "gh pr create --title <title> --body <body>; omit --head unless it matches the current worktree branch",
   },
   "gh issue create": {
     reason: "issue creation must be non-interactive and include a title plus body.",
@@ -325,17 +325,20 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
     }
   }
 
-  // --fill is mutually exclusive with explicit title/body/-F.
-  if (fill && (titles.length > 0 || bodies.length > 0 || bodyFiles.length > 0)) {
-    return denyMessage("gh pr create");
+  // --fill is denied: PR creation must include an explicit body so Thor can
+  // inject the trigger viewer link as a disclaimer footer.
+  if (fill) {
+    return denyMessage("gh pr create", {
+      reason:
+        "--fill is denied: PR creation must include an explicit --body so Thor can inject the trigger viewer link.",
+      instead: "gh pr create --title <title> --body <body>",
+    });
   }
   // --body and -F are mutually exclusive.
   if (bodies.length > 0 && bodyFiles.length > 0) {
     return denyMessage("gh pr create");
   }
   if (bodyFiles.length > 1) return denyMessage("gh pr create");
-
-  if (fill) return null;
 
   const hasBodySource = bodies.length > 0 || bodyFiles.length > 0;
   return titles.length > 0 && hasBodySource ? null : denyMessage("gh pr create");

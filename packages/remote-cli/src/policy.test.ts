@@ -691,9 +691,7 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["pr", "create", "--title=Add feature", "--body=Summary"])).toBeNull();
     });
 
-    it("allows pr create with --fill and creation-time metadata", () => {
-      expect(validateGhArgs(["pr", "create", "--fill"])).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--fill", "--draft"])).toBeNull();
+    it("allows pr create with explicit body and creation-time metadata", () => {
       expect(
         validateGhArgs([
           "pr",
@@ -719,6 +717,11 @@ describe("validateGhArgs", () => {
         validateGhArgs(["pr", "create", "--title", "x", "--body-file", "docs/pr-body.md"]),
       ).toBeNull();
       expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "/tmp/body.md"])).toBeNull();
+    });
+
+    it("denies pr create --fill (no body field for disclaimer injection)", () => {
+      expectGhDeniedWith(["pr", "create", "--fill"], ["--fill is denied"]);
+      expectGhDeniedWith(["pr", "create", "--fill", "--draft"], ["--fill is denied"]);
     });
 
     it("allows gh run rerun / run download / workflow run within policy", () => {
@@ -943,9 +946,6 @@ describe("validateGhArgs", () => {
           HEAD_CWD,
         ),
       ).toBeNull();
-      expect(
-        validateGhArgs(["pr", "create", "--fill", "--head", "feat/test"], HEAD_CWD),
-      ).toBeNull();
     });
 
     it("blocks --head when it does not match cwd's branch", () => {
@@ -1020,7 +1020,9 @@ describe("validateGhArgs", () => {
     });
 
     it("blocks conflicting pr create body sources", () => {
-      // --fill is exclusive with --title/--body/-F
+      // --fill is denied unconditionally (covered by its own test); these
+      // assertions confirm the deny still fires when --fill is combined with
+      // the explicit body shapes it used to be exclusive with.
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--fill"]);
       expectGhDenied(["pr", "create", "--fill", "--title", "x"]);
       expectGhDenied(["pr", "create", "--fill", "-F", "body.md"]);

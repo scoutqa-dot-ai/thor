@@ -30,7 +30,7 @@ For the same reason, `gh pr checkout <N>` is also denied — it would mutate the
 
 ### `gh pr create`
 
-One of: `--title`/`-t` plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`), OR `--fill` (no title/body needed; derived from commits). Optional: `--base`/`-B`, `--head`/`-H`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). Blocked: `--editor`, `--web`, `--repo`/`-R`, and combining `--fill` with `--title`/`--body`/`-F`.
+Required: `--title`/`-t` plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`). Optional: `--base`/`-B`, `--head`/`-H`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). Blocked: `--editor`, `--web`, `--repo`/`-R`, `--fill` (no body field for Thor to inject the trigger viewer link into — pass an explicit `--body`).
 
 `--head` must equal the branch implied by cwd (`/workspace/worktrees/<repo>/<branch>`) — the explicit form of the default that `gh pr create` would pick anyway. To PR from a different branch, `cd` into that worktree first. Cross-fork (`<owner>:<branch>`) and protected branches (`main`/`master`) fall out as side effects.
 
