@@ -266,8 +266,9 @@ Thor-created content includes a disclaimer/viewer link for:
 - Jira comment creation (`addCommentToJiraIssue`) — approve-gated MCP tool
 - GitHub PR creation (`gh pr create`) — direct, not approve-gated
 - GitHub PR comments and reviews (`gh pr comment`, `gh pr review`) — direct, not approve-gated
+- GitHub PR review-comment replies (`gh api repos/{owner}/{repo}/pulls/<pr>/comments/<comment>/replies --method POST -f body=...`) — direct, not approve-gated
 
-Slack messages are skipped to avoid noise. Confluence writes are denied entirely (removed from the approve list — see "Out of Scope").
+End-state rule: every Thor-authored content-creation surface gets a disclaimer link, except Slack messages (skipped to avoid noise). Surfaces without v1 injection support are denied rather than allowed to create disclaimer-less content. Confluence writes are denied entirely (removed from the approve list — see "Out of Scope"); GitHub issue creation/commenting (`gh issue create`, `gh issue comment`) is denied in v1 rather than expanded into the disclaimer injector.
 
 The disclaimer URL is the plain Vouch-gated viewer path: `/runner/v/<sessionId>/<triggerId>`. No HMAC, no TTL.
 
@@ -277,13 +278,18 @@ The disclaimer URL is the plain Vouch-gated viewer path: `/runner/v/<sessionId>/
 
 Inline at execute time. The shell command runs through remote-cli with `x-thor-session-id` already in the request context.
 
-1. remote-cli detects disclaimer-eligible commands: `gh pr create`, `gh pr comment`, `gh pr review`.
+1. remote-cli detects disclaimer-eligible commands: `gh pr create`, `gh pr comment`, `gh pr review`, and the explicit append-only `gh api repos/{owner}/{repo}/pulls/<pr>/comments/<comment>/replies --method POST -f body=...` shape.
 2. Call `findActiveTrigger(requestSessionId)`, which performs a full bounded scan of the capped session log and walks any recorded `session.parent` chain. **Fail-fast** if `none` / `ambiguous` / `cycle` / `depth_exceeded` / `oversized` / `parent_unknown`: the `gh` command exits non-zero with a clear error ("Disclaimer required: no single active trigger for session X — runner state may be broken"). No exec, no artifact.
 3. Build the URL using the **owner** session id from the return value, not the request session id: `${RUNNER_BASE_URL}/runner/v/${result.sessionId}/${result.triggerId}`. For top-level requests these are equal; for child-session requests `result.sessionId` is the resolved parent (where the `trigger_start` actually lives, so the viewer can find it).
-4. Rewrite the relevant `gh` flag (`--body`/`-b` for PR/comment/review; `-F <file>` is read, mutated, and re-passed via stdin or a temp file).
+4. Rewrite the relevant body field:
+   - `--body`/`-b` for PR/comment/review.
+   - `-F <file>` / `--body-file <file>` for PR/comment paths by reading, mutating, and re-passing via stdin or a temp file.
+   - `-f body=<text>` / `--raw-field body=<text>` for the allowed `gh api` PR review-comment reply path.
 5. Exec `gh` with the mutated body.
 
 **`gh pr create --fill` is denied at the policy layer.** `--fill` instructs `gh` to compose the PR body from local commit messages at exec time, leaving no body field for Thor to mutate. Allowing `--fill` would silently produce disclaimer-less PRs (worse than a 404 — undetected). The policy in `packages/remote-cli/src/policy-gh.ts` denies `--fill` unconditionally with guidance toward `--title <t> --body <b>`; `gh pr comment` and `gh pr review` have no analogous "fill from elsewhere" shape, so this is a `gh pr create`-specific restriction.
+
+**`gh issue create` and `gh issue comment` are denied in v1.** They create GitHub-visible content, but issue artifacts are outside the intended PR/Jira launch scope. Deny them at the policy layer with guidance to use Jira for tracked work or wait for a future issue-disclaimer injector. This keeps the end-state invariant true: all non-Slack Thor-authored content creation either gets a disclaimer link or is blocked.
 
 No cache — each disclaimer-eligible exec does a fresh `findActiveTrigger` full bounded JSONL scan. The per-trigger volume of these calls is small (a handful), so the I/O is not load-bearing; cache/index complexity is not warranted.
 
@@ -342,6 +348,8 @@ At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args:
 | 2026-04-30 | `findActiveTrigger` returns `{ sessionId, triggerId }` (owner pair, not request pair)  | The viewer reads `<sessionId>.jsonl` and looks for `trigger_start{triggerId}` there. For child-session requests, the `trigger_start` lives in the parent's session log, not the child's. Returning only `triggerId` and pairing it with the request sessionId would build URLs that 404 for every child-session-originated disclaimer. Returning the owner sessionId makes URL construction correct in both top-level and chain-walked cases. |
 | 2026-04-30 | `gh pr create --fill` denied at the policy layer                                       | `--fill` lets `gh` compose the body from commit messages at exec time, leaving no field for the disclaimer injector to mutate. Without a deny, `--fill` would silently produce disclaimer-less PRs. Policy is the right layer (rather than the disclaimer injector) so the LLM gets the deny early with the existing `instead`-text guidance, avoiding a doomed `--fill` retry. Code change shipped alongside this plan revision in `packages/remote-cli/src/policy-gh.ts`. |
 | 2026-04-30 | Direct writes (GitHub `gh`): inline injection at execute time                         | `gh` exec is synchronous within the runner-driven request; original Thor context is in scope. Inference + URL build + flag rewrite is straightforward; no approval store involvement. |
+| 2026-04-30 | Include PR review-comment replies in disclaimer injection                             | The allowed append-only `gh api .../pulls/<pr>/comments/<comment>/replies --method POST -f body=...` shape creates GitHub-visible content. It must receive the same disclaimer footer as other PR content rather than becoming an untraceable carve-out. |
+| 2026-04-30 | Deny `gh issue create` and `gh issue comment` in v1                                   | End-state rule is all non-Slack content creation gets a disclaimer link. GitHub issues are outside the PR/Jira launch scope, so deny them rather than shipping issue content without disclaimer injection. |
 | 2026-04-30 | Cap one event record at < 4 KiB serialized; truncate and mark `_truncated`           | Avoids cross-process append interleave; mirrors `worklog.ts:18` truncation pattern. |
 | 2026-04-30 | `triggerId` is UUIDv4 (≥128-bit random)                                              | Public viewer URL relies on it as an unguessable bearer.         |
 | 2026-04-30 | Reuse `appendJsonlWorklog` (`packages/common/src/worklog.ts:123`) as the underlying writer | DRY; the existing primitive already handles day-partitioning and graceful failure. |
@@ -457,11 +465,15 @@ Prerequisites (already shipped on this branch as part of this plan):
 - Commit `a4d755ca`: Confluence write tools removed from the approve list in `packages/common/src/proxies.ts`. Phase 5's per-tool injector covers only `createJiraIssue` and `addCommentToJiraIssue`.
 - `gh pr create --fill` denied in `packages/remote-cli/src/policy-gh.ts` (companion commit). Removes the only `gh` shape that has no body field for the disclaimer injector to mutate. `using-gh` skill doc updated to match.
 
+Additional Phase 5 policy change:
+
+- Deny `gh issue create` and `gh issue comment`. They are content-creation surfaces, but v1 disclaimer injection targets PR/Jira artifacts only. Denial is required so the end-state invariant holds: all non-Slack content creation either receives a disclaimer link or is blocked.
+
 #### Direct writes (GitHub `gh`) — inline at execute time
 
-1. Extend remote-cli's `gh` exec path to detect disclaimer-eligible commands: `gh pr create`, `gh pr comment`, `gh pr review`.
-2. For each, call `findActiveTrigger(sessionId)`. **Fail-fast** if `none`/`ambiguous`/`depth_exceeded`/`cycle`: the `gh` command exits non-zero with a clear error message; no upstream call.
-3. Build the URL and rewrite the relevant `--body`/`-b` flag (or `-F` file content) to append `\n\n---\n[View Thor trigger](<url>)`.
+1. Extend remote-cli's `gh` exec path to detect disclaimer-eligible commands: `gh pr create`, `gh pr comment`, `gh pr review`, and the explicit `gh api repos/{owner}/{repo}/pulls/<pr>/comments/<comment>/replies --method POST -f body=...` review-comment reply shape.
+2. For each, call `findActiveTrigger(sessionId)`. **Fail-fast** if `none`/`ambiguous`/`depth_exceeded`/`cycle`/`oversized`/`parent_unknown`: the `gh` command exits non-zero with a clear error message; no upstream call.
+3. Build the URL and rewrite the relevant body source (`--body`/`-b`, `-F`/`--body-file`, or the `gh api` raw field `body`) to append `\n\n---\n[View Thor trigger](<url>)`.
 4. Exec `gh` with the mutated body.
 
 No cache — each disclaimer-eligible exec does a fresh full bounded JSONL scan. The per-trigger call volume is small enough that I/O cost is irrelevant; cache/index complexity is not warranted.
@@ -482,11 +494,12 @@ No cache — each disclaimer-eligible exec does a fresh full bounded JSONL scan.
 
 Exit criteria:
 
-- `gh pr create`/`gh pr comment`/`gh pr review` inject the disclaimer link inline when inference returns one open trigger; otherwise exit non-zero with a clear error and no upstream call.
+- `gh pr create`/`gh pr comment`/`gh pr review` and the allowed `gh api` PR review-comment reply shape inject the disclaimer link inline when inference returns one open trigger; otherwise exit non-zero with a clear error and no upstream call.
+- `gh issue create` and `gh issue comment` are denied at the policy layer, with guidance that issue content is outside v1 disclaimer-injection scope.
 - `createJiraIssue` and `addCommentToJiraIssue` carry the disclaimer in `description` / `commentBody` from approval-create time. The Slack approval prompt shows the disclaimer.
 - Approve-create with no/ambiguous active trigger or missing args field returns an error and persists no action.
 - Child-session writes resolve via `session.parent` chain to the parent's open trigger after the relation is recorded AND inject a URL that uses the **parent** session id. A viewer GET with the injected URL renders the parent slice (which contains both parent and child events). If the relation is not yet recorded, the write fails closed with `parent_unknown`.
-- Tests cover: direct write with one open trigger (URL uses request sessionId, == owner); late disclaimer write with `trigger_start` near the beginning of a large capped log; oversized log fail-fast; child session before `session.parent` exists (`parent_unknown`, no exec/no action); child session 1-deep after `session.parent` exists (URL uses parent sessionId, not request); chain depth 2-3 (URL uses topmost owner); chain depth exceeded; cycle detection; ambiguous direct-write (`gh` exits non-zero, no exec); ambiguous approve-create (errors, no action persisted); per-tool injector throws on missing field; approve-resolve replays the same args (idempotent); end-to-end: a child-session-originated `gh pr create` after parent linkage produces a URL whose viewer GET returns 200 (not 404); policy denies `gh pr create --fill` (covered by `policy.test.ts`).
+- Tests cover: direct write with one open trigger (URL uses request sessionId, == owner); PR review-comment reply body mutation through `gh api`; late disclaimer write with `trigger_start` near the beginning of a large capped log; oversized log fail-fast; child session before `session.parent` exists (`parent_unknown`, no exec/no action); child session 1-deep after `session.parent` exists (URL uses parent sessionId, not request); chain depth 2-3 (URL uses topmost owner); chain depth exceeded; cycle detection; ambiguous direct-write (`gh` exits non-zero, no exec); ambiguous approve-create (errors, no action persisted); per-tool injector throws on missing field; approve-resolve replays the same args (idempotent); end-to-end: a child-session-originated `gh pr create` after parent linkage produces a URL whose viewer GET returns 200 (not 404); policy denies `gh pr create --fill`, `gh issue create`, and `gh issue comment` (covered by `policy.test.ts`).
 
 ### Phase 6 - Retention, Archival, and Janitor
 
@@ -511,6 +524,7 @@ Exit criteria:
 - Propagating `triggerId` through OpenCode/bash/curl/remote-cli — recovered via full bounded inference + recorded `session.parent` chain.
 - New alias types beyond `slack.thread_id`, `git.branch`, and `session.parent` (no `github.pr` in this phase).
 - Confluence write *features*. The three Confluence approve-gated tools (`createConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment`) are removed from `packages/common/src/proxies.ts` as part of this plan (commit `a4d755ca` on this branch) and denied by default. Re-introducing them is out of scope.
+- GitHub issue content creation in v1. `gh issue create` and `gh issue comment` are denied rather than injected. Re-introduce later only with explicit disclaimer support.
 - Public unauthenticated viewer access — viewer is Vouch-gated; external Jira reporters who don't have OAuth cannot click into the disclaimer link. Acceptable trade for content-protection simplicity.
 - HMAC-signed viewer URLs / TTL expiry — Vouch + UUIDv4 entropy is the access-control model.
 - Rich client-side viewer UI.
@@ -527,7 +541,7 @@ Local verification:
 - runner tests for marker order, busy behavior, interrupt behavior, abort timeout, caught-throw → `trigger_end{status:"error"}`, SIGTERM handler appends `trigger_end{status:"aborted", reason:"shutdown"}`, simulated SIGKILL leaves the trigger open and a follow-up trigger renders the prior slice as `crashed`, idempotent retry, same-correlationKey race, stale-session chain, `session.parent` alias write on child session discovery.
 - resolver tests for Slack and git aliases (newest wins, back-reference chain, type isolation).
 - viewer route tests for `completed` / `error` / `aborted` / `crashed` / `in_flight` rendering paths, soft staleness banner above 5 min, branded 401/404/503, mobile snapshot, two-view model, `X-Vouch-User` 401 path.
-- remote-cli tests for direct-write disclaimer injection (`gh pr create` flag rewrite); fail-fast on direct write when active trigger is missing/ambiguous/oversized/parent-unknown (`gh` exits non-zero, no exec); approve-gated args mutation at create time (Jira ticket/comment); fail-fast approve-create on missing/ambiguous active trigger or missing child parent relation (no action persisted); per-tool injector throws on missing/wrong-typed field (no action persisted); idempotent approve-resolve replay; **child-session URL correctness** — child-session-originated `gh pr create` and `createJiraIssue` after parent linkage produce URLs whose `<sessionId>` segment is the resolved parent (URL renders 200 in the viewer, not 404).
+- remote-cli tests for direct-write disclaimer injection (`gh pr create` flag rewrite, `gh pr comment`, `gh pr review`, and PR review-comment reply via `gh api` raw `body` field); fail-fast on direct write when active trigger is missing/ambiguous/oversized/parent-unknown (`gh` exits non-zero, no exec); policy denial for `gh pr create --fill`, `gh issue create`, and `gh issue comment`; approve-gated args mutation at create time (Jira ticket/comment); fail-fast approve-create on missing/ambiguous active trigger or missing child parent relation (no action persisted); per-tool injector throws on missing/wrong-typed field (no action persisted); idempotent approve-resolve replay; **child-session URL correctness** — child-session-originated `gh pr create` and `createJiraIssue` after parent linkage produce URLs whose `<sessionId>` segment is the resolved parent (URL renders 200 in the viewer, not 404).
 - ingress smoke test: `/runner/v/<sid>/<tid>` reaches the runner only with a valid Vouch session.
 - retention/janitor tests for gz round-trip, retention boundaries, dangling cleanup, aliases.jsonl rotation.
 
@@ -558,6 +572,7 @@ Codex available: yes | UI scope: yes (public viewer is a server-rendered page) |
 > - **`gh pr create --fill` gap surfaced post-review.** `--fill` lets `gh` compose the body from commit messages at exec time, leaving no body field for the disclaimer injector to mutate. The plan's injection flow only described `--body`/`-b`/`-F` rewrites, so `--fill` would silently produce disclaimer-less PRs. Fix: deny `--fill` at the policy layer (`packages/remote-cli/src/policy-gh.ts`) with guidance toward `--title <t> --body <b>`. `using-gh` skill doc updated to match.
 > - **Confluence writes denied entirely.** `createConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment` removed from the approve list in `packages/common/src/proxies.ts`. Out of scope until a real use case lands.
 > - **Tail-read active-trigger inference rejected post-review.** A long-running trigger can push its `trigger_start` outside a tail window before a late PR/Jira write. Because the plan avoids an additional active-trigger index, `findActiveTrigger` now scans the full capped session log and fails closed on oversized files. Child-session writes also fail closed with `parent_unknown` until the durable `session.parent` relation is recorded.
+> - **All non-Slack content creation must be traceable.** The allowed `gh api` PR review-comment reply path is now included in direct disclaimer injection. `gh issue create` and `gh issue comment` are denied in v1 rather than allowed to create GitHub-visible content without a disclaimer. Combined with Confluence denial and Slack exclusion, every remaining content-creation path either gets the viewer link or is blocked.
 > - UC3 (flat session file path), UC4 (retention as Phase 6), UC5 (cutover-not-greenfield) stand.
 >
 > The dual-voice findings below are preserved verbatim as the audit record of the review at the time.
