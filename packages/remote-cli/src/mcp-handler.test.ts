@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import { appendSessionEvent, type WorkspaceConfig } from "@thor/common";
+import { appendSessionEvent, formatThorDisclaimerFooter, type WorkspaceConfig } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.js";
 import type { UpstreamConnection } from "./upstream.js";
@@ -319,7 +319,7 @@ describe("remote-cli MCP endpoints", () => {
         arguments: {
           projectKey: "THOR",
           summary: "Fix it",
-          description: expect.stringContaining(`/runner/v/parent-session/${activeTriggerId}`),
+          description: `body\n${formatThorDisclaimerFooter(`/runner/v/parent-session/${activeTriggerId}`)}`,
         },
       },
     ]);

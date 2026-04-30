@@ -6,6 +6,7 @@ import {
   formatThorMeta,
   isProxyName,
   getRepoUpstreams,
+  formatThorDisclaimerFooter,
   interpolateHeaders,
   isAliasableMcpTool,
   logError,
@@ -43,7 +44,7 @@ function addDisclaimerToApprovalArgs(tool: string, args: Record<string, unknown>
   const url = `${RUNNER_BASE_URL}/runner/v/${active.sessionId}/${active.triggerId}`;
   const field = tool === "createJiraIssue" ? "description" : "commentBody";
   if (typeof args[field] !== "string") throw new Error(`Cannot create approval: ${tool}.${field} must be a string for disclaimer injection`);
-  return { ...args, [field]: `${args[field]}\n\n---\n[View Thor trigger](${url})` };
+  return { ...args, [field]: `${args[field]}\n${formatThorDisclaimerFooter(url)}` };
 }
 
 interface ProxyInstance {

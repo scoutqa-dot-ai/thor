@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { rmSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { normalize as normalizePosix } from "node:path/posix";
-import { appendAlias, appendSessionEvent } from "@thor/common";
+import { appendAlias, appendSessionEvent, formatThorDisclaimerFooter } from "@thor/common";
 
 vi.hoisted(() => {
   process.env.WORKLOG_DIR = "/tmp/thor-remote-cli-gh-test/worklog";
@@ -104,7 +104,7 @@ describe("gh disclaimer injection", () => {
         "--title",
         "x",
         "--body",
-        `body\n\n---\n[View Thor trigger](https://thor.example.com/runner/v/parent/${triggerId})`,
+        `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/parent/${triggerId}`)}`,
       ]);
     });
   });
@@ -120,7 +120,7 @@ describe("gh disclaimer injection", () => {
       );
       expect(response.status).toBe(200);
       expect(execCalls[0].args.at(-1)).toBe(
-        `body=Done\n\n---\n[View Thor trigger](https://thor.example.com/runner/v/parent/${triggerId})`,
+        `body=Done\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/parent/${triggerId}`)}`,
       );
     });
   });

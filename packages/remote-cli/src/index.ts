@@ -9,6 +9,7 @@ import {
   createLogger,
   deriveGitHubAppBotIdentity,
   formatThorMeta,
+  formatThorDisclaimerFooter,
   findActiveTrigger,
   logError,
   logInfo,
@@ -98,10 +99,6 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
   };
 }
 
-function disclaimerFooter(url: string): string {
-  return `\n\n---\n[View Thor trigger](${url})`;
-}
-
 function buildDisclaimerUrl(sessionId: string): string | { error: string } {
   const active = findActiveTrigger(sessionId);
   if (!active.ok) return { error: `Disclaimer required: no single active trigger for session ${sessionId} (${active.reason})` };
@@ -152,7 +149,7 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
   if (!sessionId) return { error: "Disclaimer required: missing Thor session id" };
   const url = buildDisclaimerUrl(sessionId);
   if (typeof url !== "string") return url;
-  const footer = disclaimerFooter(url);
+  const footer = `\n${formatThorDisclaimerFooter(url)}`;
   return args[0] === "api"
     ? rewriteSingleValueFlag(args, ["-f", "--raw-field"], footer, "body=")
     : rewriteSingleValueFlag(args, ["--body", "-b"], footer);

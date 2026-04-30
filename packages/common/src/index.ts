@@ -91,6 +91,7 @@ export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
 export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
 export { deriveGitHubAppBotIdentity } from "./github-identity.js";
 export type { GitHubAppBotIdentity, GitHubAppBotIdentityInput } from "./github-identity.js";
+export { formatThorDisclaimerFooter } from "./disclaimer.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,
