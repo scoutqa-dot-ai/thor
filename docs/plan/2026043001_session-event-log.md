@@ -96,19 +96,20 @@ remote-cli calls `findActiveTrigger(requestSessionId)` on each disclaimer-eligib
 
 1. Set `currentId = requestSessionId`; track `visited = {currentId}`.
 2. Open `/workspace/worklog/sessions/<currentId>.jsonl` if it exists.
-3. Tail-read last N KiB (size-bounded, never the whole file).
-4. Find `trigger_start` records without a matching `trigger_end` later in the slice.
-5. If exactly one open trigger → return `{ sessionId: currentId, triggerId }`.
-6. If zero open triggers → look up `(aliasType: "session.parent", aliasValue: currentId)` in `aliases.jsonl`. If a parent exists, set `currentId = parentId`, add to `visited` (return `cycle` if already present), check depth cap (≤5, return `depth_exceeded` otherwise), and loop to step 2.
-7. If the chain exhausts with zero opens, return `none`. If any node returns >1 open trigger, return `ambiguous` immediately.
+3. Scan the complete capped session log for `currentId` (Phase 1 cap: 50 MiB). This is intentionally not a tail read: a long-running trigger can write enough events that its `trigger_start` falls outside any tail window before a late PR/Jira write.
+4. If the file exceeds the cap or cannot be fully scanned within the read budget, return `oversized` and fail closed.
+5. Find `trigger_start` records without a matching `trigger_end` later in the full scanned log.
+6. If exactly one open trigger → return `{ sessionId: currentId, triggerId }`.
+7. If zero open triggers → look up `(aliasType: "session.parent", aliasValue: currentId)` in `aliases.jsonl`. If a parent exists, set `currentId = parentId`, add to `visited` (return `cycle` if already present), check depth cap (≤5, return `depth_exceeded` otherwise), and loop to step 2.
+8. If the request session appears to be a child session but no parent relation is recorded yet, return `parent_unknown`. If the chain exhausts with zero opens, return `none`. If any node returns >1 open trigger, return `ambiguous` immediately.
 
-No caching. Each disclaimer-eligible write does a fresh JSONL tail-read; the per-trigger call volume is small enough that I/O is not load-bearing.
+No current-trigger sidecar/index in v1. Each disclaimer-eligible write does a fresh full bounded scan of the capped JSONL file; the per-trigger call volume is small enough that I/O is not load-bearing, and correctness is more important than tail-scan speed.
 
-Failure mode: if inference returns anything other than exactly one open trigger (zero, ambiguous, depth-exceeded, cycle), the caller fails-fast. The write does not ship without a disclaimer. See "Disclaimer Links" for the per-path details.
+Failure mode: if inference returns anything other than exactly one open trigger (`none`, `ambiguous`, `depth_exceeded`, `cycle`, `oversized`, `parent_unknown`), the caller fails-fast. The write does not ship without a disclaimer. See "Disclaimer Links" for the per-path details.
 
 ## Trigger Slicing
 
-`triggerId` is **not** propagated through OpenCode/bash/curl/remote-cli. It is generated and owned by the runner; remote-cli recovers it via active-trigger inference (see "Lookup Indexes") on the small set of disclaimer-eligible writes.
+`triggerId` is **not** propagated through OpenCode/bash/curl/remote-cli. It is generated and owned by the runner; remote-cli recovers it via active-trigger inference (see "Lookup Indexes") on the small set of disclaimer-eligible writes. Prior research rejected direct propagation for v1: no trusted per-trigger env channel exists from runner into OpenCode shell hooks, and making one deterministic would require a new shared mapping, plugin contract, or remote lookup surface.
 
 The runner owns trigger boundaries:
 
@@ -147,18 +148,18 @@ A `trigger_start` with a `triggerId` already present in the session within the l
 
 Alias markers live in two places:
 
-- Inside `events.jsonl` for that session (audit trail; what aliases a session collected).
+- Inside `/workspace/worklog/sessions/<session-id>.jsonl` for that session (audit trail; what aliases a session collected).
 - In the global `/workspace/worklog/aliases.jsonl` (newest-wins resolution).
 
 Initial alias types:
 
 - `slack.thread_id` — Slack thread id → Thor session id.
 - `git.branch` — base64url-encoded branch key → Thor session id.
-- `session.parent` — child OpenCode session id → parent OpenCode session id. Written by the runner whenever it observes a new sub-session on the OpenCode event bus that was spawned by a session already running an active trigger. Lets `findActiveTrigger` chain-walk from a child session up to the parent that owns the open trigger.
+- `session.parent` — child OpenCode session id → parent OpenCode session id. Written by the runner whenever it observes a new sub-session on the OpenCode event bus that was spawned by a session already running an active trigger. Lets `findActiveTrigger` chain-walk from a child session up to the parent that owns the open trigger, after the relation is recorded.
 
 No `github.pr` alias type in this phase.
 
-When a trigger creates a new session, the runner writes the alias to both locations as soon as enough context is known. Slack-triggered sessions write the incoming Slack thread id alias before any tool call; git branch aliases are added later from tool output; `session.parent` aliases are written from the runner's OpenCode event subscription as child sessions are discovered.
+When a trigger creates a new session, the runner writes the alias to both locations as soon as enough context is known. Slack-triggered sessions write the incoming Slack thread id alias before any tool call; git branch aliases are added later from tool output; `session.parent` aliases are written from the runner's OpenCode event subscription as child sessions are discovered. Because child discovery is asynchronous, v1 treats child-session disclaimer support as fail-closed: if a child-session write reaches remote-cli before the parent relation is recorded, disclaimer injection fails with retry/delegate-to-parent guidance rather than shipping an untraceable artifact.
 
 If a trigger experiences `session_stale` recreate (`packages/runner/src/index.ts:440`), the new session inherits the aliases of the old one. The runner writes a back-reference alias on the new session pointing to the old `sessionId` so old viewer links can chain-follow rather than 404.
 
@@ -277,14 +278,14 @@ The disclaimer URL is the plain Vouch-gated viewer path: `/runner/v/<sessionId>/
 Inline at execute time. The shell command runs through remote-cli with `x-thor-session-id` already in the request context.
 
 1. remote-cli detects disclaimer-eligible commands: `gh pr create`, `gh pr comment`, `gh pr review`.
-2. Call `findActiveTrigger(requestSessionId)`. **Fail-fast** if zero / ambiguous / cycle / depth-exceeded: the `gh` command exits non-zero with a clear error ("Disclaimer required: no single active trigger for session X — runner state may be broken"). No exec, no artifact.
+2. Call `findActiveTrigger(requestSessionId)`, which performs a full bounded scan of the capped session log and walks any recorded `session.parent` chain. **Fail-fast** if `none` / `ambiguous` / `cycle` / `depth_exceeded` / `oversized` / `parent_unknown`: the `gh` command exits non-zero with a clear error ("Disclaimer required: no single active trigger for session X — runner state may be broken"). No exec, no artifact.
 3. Build the URL using the **owner** session id from the return value, not the request session id: `${RUNNER_BASE_URL}/runner/v/${result.sessionId}/${result.triggerId}`. For top-level requests these are equal; for child-session requests `result.sessionId` is the resolved parent (where the `trigger_start` actually lives, so the viewer can find it).
 4. Rewrite the relevant `gh` flag (`--body`/`-b` for PR/comment/review; `-F <file>` is read, mutated, and re-passed via stdin or a temp file).
 5. Exec `gh` with the mutated body.
 
 **`gh pr create --fill` is denied at the policy layer.** `--fill` instructs `gh` to compose the PR body from local commit messages at exec time, leaving no body field for Thor to mutate. Allowing `--fill` would silently produce disclaimer-less PRs (worse than a 404 — undetected). The policy in `packages/remote-cli/src/policy-gh.ts` denies `--fill` unconditionally with guidance toward `--title <t> --body <b>`; `gh pr comment` and `gh pr review` have no analogous "fill from elsewhere" shape, so this is a `gh pr create`-specific restriction.
 
-No cache — each disclaimer-eligible exec does a fresh `findActiveTrigger` JSONL tail-read. The per-trigger volume of these calls is small (a handful), so the I/O is not load-bearing; cache complexity is not warranted.
+No cache — each disclaimer-eligible exec does a fresh `findActiveTrigger` full bounded JSONL scan. The per-trigger volume of these calls is small (a handful), so the I/O is not load-bearing; cache/index complexity is not warranted.
 
 ### Approve-gated writes (Atlassian MCP)
 
@@ -292,7 +293,7 @@ The approval flow is async — humans review in Slack, can take minutes-to-hours
 
 At `packages/remote-cli/src/mcp-handler.ts:443`, before `approvalStore.create(toolInfo.name, args)`:
 
-1. Call `findActiveTrigger(requestSessionId)` using the current request's session id. **Fail-fast** if zero / ambiguous / cycle / depth-exceeded: return an error to the LLM ("Cannot create approval: no single active trigger for this session") and persist no action.
+1. Call `findActiveTrigger(requestSessionId)` using the current request's session id. **Fail-fast** if `none` / `ambiguous` / `cycle` / `depth_exceeded` / `oversized` / `parent_unknown`: return an error to the LLM ("Cannot create approval: no single active trigger for this session") and persist no action.
 2. Build the URL using the **owner** session id from the return value: `${RUNNER_BASE_URL}/runner/v/${result.sessionId}/${result.triggerId}`. Approve-gated calls also originate from child sessions during sub-agent work, so the owner-vs-request distinction matters here too.
 3. Mutate `args` per a small per-tool injector. **The injector throws if the expected field is missing on the args shape** — defense-in-depth against MCP schema drift or LLM passing the wrong field name. Throws bubble up as approval-create errors; no half-mutated action is persisted.
 
@@ -302,6 +303,8 @@ At `packages/remote-cli/src/mcp-handler.ts:443`, before `approvalStore.create(to
 | `addCommentToJiraIssue` | `commentBody` | Append the same footer to the comment body. Throw if `args.commentBody` is missing or non-string. |
 
 4. Call `approvalStore.create(toolInfo.name, mutatedArgs)`. The persisted action carries the URL in `args` from the start.
+
+Child-session failure copy: if `findActiveTrigger` returns `parent_unknown`, use: "Disclaimer required, but this child session is not yet linked to an active parent trigger. Retry from the parent session or wait and retry."
 
 At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args: action.args, ... })` unchanged — the disclaimer is already in the args. No execute-time mutation, no schema changes to `ApprovalActionSchema`, no Thor context required at resolve time.
 
@@ -319,14 +322,14 @@ At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args:
 | 2026-04-30 | Use `/workspace/worklog/sessions/<session-id>.jsonl` as the source of truth          | Flat session-keyed path; avoids symlink portability concerns and survives volume mount/backup/archival. |
 | 2026-04-30 | Drop absolute symlink indexes; use `aliases.jsonl` newest-wins for alias lookup       | No symlink fragility; in-process cache rebuilt on miss is faster than today's grep-based scan. |
 | 2026-04-30 | Do not add SQLite or another DB                                                     | Append-only JSONL + small in-memory cache is enough for v1. Revisit if alias scale becomes a problem. |
-| 2026-04-30 | Do not propagate `triggerId` through OpenCode/bash/curl/remote-cli; recover via inference on disclaimer-eligible writes | Disclaimer-eligible writes are a small set (PR/Jira create/comment/review). Inference re-read is bounded to those calls; not an every-shell concern. Avoids touching OpenCode plugin, wrapper, and remote-cli auth surface. |
-| 2026-04-30 | Add `session.parent` alias type for child→parent session resolution                  | Lets inference walk from a child OpenCode session id up to the parent session that owns the open trigger. Reuses the alias mechanism rather than introducing a new state shape. Cycle-safe via depth cap (5) + visited-set. |
+| 2026-04-30 | Do not propagate `triggerId` through OpenCode/bash/curl/remote-cli; recover via full bounded inference on disclaimer-eligible writes | No trusted per-trigger env channel exists between runner and OpenCode shell hooks; adding one requires a new shared mapping/plugin contract. Disclaimer-eligible writes are rare enough that scanning the capped session log is acceptable. |
+| 2026-04-30 | Add `session.parent` alias type for child→parent session resolution                  | Lets inference walk from a child OpenCode session id up to the parent session that owns the open trigger after the relation is recorded. Reuses the alias mechanism rather than introducing a new state shape. Cycle-safe via depth cap (5) + visited-set; child writes before parent linkage fail closed. |
 | 2026-04-30 | Write `trigger_start` only after any prior busy session has settled                  | Prevents prior-run events from entering the new trigger slice.   |
 | 2026-04-30 | Abort timeout means no marker and no prompt                                          | Avoids ambiguous slices.                                         |
 | 2026-04-30 | Drop the `trigger_aborted` record type; merge into `trigger_end{status:"aborted", reason?}` | One way to express "this trigger ended"; cleaner schema. The original separate type was a vestige of the (incorrect) plan that the runner could emit a marker on process crash. |
 | 2026-04-30 | Trigger slices terminate on conflict, not on time                                      | A subsequent `trigger_start` for the same session is unambiguous proof the prior trigger was abandoned (runner restart, lost state). Time-based "stale" detection only soft-warns inside the still-in-flight render — never assigns a "crashed" verdict from the clock alone. |
 | 2026-04-30 | Process-level crashes are not the runner's responsibility to mark                       | A `try/catch/finally` cannot run on SIGKILL / OOM / container kill / segfault. The plan no longer pretends it can. Best-effort SIGTERM handler covers graceful shutdowns; crashes are detected at viewer time via supersede. |
-| 2026-04-30 | Initial alias types are only `slack.thread_id` and `git.branch`                      | Matches actual producers.                                        |
+| 2026-04-30 | Initial alias types are `slack.thread_id`, `git.branch`, and `session.parent`        | Matches actual producers needed for routing and child→parent trigger attribution. |
 | 2026-04-30 | Treat phases 2-4 as a flag-gated cutover, not a greenfield build                     | Runner uses notes.ts at 5 call sites today; cutover with `SESSION_LOG_ENABLED` + dual-write window preserves rollback. |
 | 2026-04-30 | Viewer is Vouch-gated under `/runner/*` ingress prefix; no HMAC, no TTL on the URL    | Reuses the existing OAuth proxy pattern (`packages/admin/src/app.ts`); UUIDv4 entropy + Vouch is the access-control model. Drops HMAC operational cost (secret mgmt, signature code, "Invalid signature" UX). Audit-friendly: links in old artifacts keep working. (CHANGED 2026-04-30 from earlier "HMAC-signed public viewer" decision.) |
 | 2026-04-30 | Use `/runner/*` ingress prefix for runner-owned routes                                | Single ingress mount lets future runner routes ship without per-route ingress changes. Mirrors the existing `/admin/*` pattern. |
@@ -335,8 +338,8 @@ At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args:
 | 2026-04-30 | Approve-gated writes (Atlassian MCP): mutate `args` at approval-create time           | Approval is async; by execute time the original trigger is closed and inference would return zero opens. Create-time mutation keeps Thor context in scope, lets the human approver see the disclaimer in the Slack prompt, and avoids `ApprovalActionSchema` changes. |
 | 2026-04-30 | Both disclaimer paths fail-fast on missing/ambiguous active trigger                   | Every Thor-created artifact must be traceable to a trigger. Direct writes (`gh`) exit non-zero with no upstream call; approve-create returns an error and persists no action. Failing open would silently ship disclaimer-less artifacts and hide the underlying routing bug. |
 | 2026-04-30 | Per-tool args injector throws on missing/wrong-typed field                            | Defense-in-depth against MCP schema drift or LLM passing the wrong field name. A throw bubbles to approval-create and persists no action; never a half-mutated record. |
-| 2026-04-30 | No cache on the direct-write disclaimer path                                          | Per-trigger call volume is small (handful of disclaimer-eligible execs); JSONL tail-read I/O is not load-bearing. Cache complexity buys nothing. |
-| 2026-04-30 | `findActiveTrigger` returns `{ sessionId, triggerId }` (owner pair, not request pair)  | The viewer reads `<sessionId>.jsonl` and looks for `trigger_start{triggerId}` there. For child-session requests, the `trigger_start` lives in the parent's events.jsonl, not the child's. Returning only `triggerId` and pairing it with the request sessionId would build URLs that 404 for every child-session-originated disclaimer. Returning the owner sessionId makes URL construction correct in both top-level and chain-walked cases. |
+| 2026-04-30 | No cache/index on the direct-write disclaimer path                                    | Per-trigger call volume is small (handful of disclaimer-eligible execs); full bounded JSONL scans are acceptable and avoid maintaining a second active-trigger source of truth. |
+| 2026-04-30 | `findActiveTrigger` returns `{ sessionId, triggerId }` (owner pair, not request pair)  | The viewer reads `<sessionId>.jsonl` and looks for `trigger_start{triggerId}` there. For child-session requests, the `trigger_start` lives in the parent's session log, not the child's. Returning only `triggerId` and pairing it with the request sessionId would build URLs that 404 for every child-session-originated disclaimer. Returning the owner sessionId makes URL construction correct in both top-level and chain-walked cases. |
 | 2026-04-30 | `gh pr create --fill` denied at the policy layer                                       | `--fill` lets `gh` compose the body from commit messages at exec time, leaving no field for the disclaimer injector to mutate. Without a deny, `--fill` would silently produce disclaimer-less PRs. Policy is the right layer (rather than the disclaimer injector) so the LLM gets the deny early with the existing `instead`-text guidance, avoiding a doomed `--fill` retry. Code change shipped alongside this plan revision in `packages/remote-cli/src/policy-gh.ts`. |
 | 2026-04-30 | Direct writes (GitHub `gh`): inline injection at execute time                         | `gh` exec is synchronous within the runner-driven request; original Thor context is in scope. Inference + URL build + flag rewrite is straightforward; no approval store involvement. |
 | 2026-04-30 | Cap one event record at < 4 KiB serialized; truncate and mark `_truncated`           | Avoids cross-process append interleave; mirrors `worklog.ts:18` truncation pattern. |
@@ -345,6 +348,7 @@ At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args:
 | 2026-04-30 | Single shared Zod schema in `@thor/common/event-log.ts`                              | Writer-reader schema gate; readers `safeParse` and skip-with-counter; forward-compat by ignoring unknown fields. |
 | 2026-04-30 | Add Phase 6: retention/archival/janitor                                              | JSONL grows unbounded; viewer OOMs on large `readFileSync`; active-trigger inference becomes O(file). |
 | 2026-04-30 | No per-hit audit log on `/runner/v/*`                                                  | Vouch / ingress already log auth events; an additional Thor-side audit stream is bookkeeping debt without a clear consumer. Add only if a real incident-response need surfaces. |
+| 2026-04-30 | `findActiveTrigger` scans the full capped session log, not a tail window              | A long-running trigger can push its `trigger_start` outside a tail window before a late PR/Jira write. Full bounded scan preserves single-log source of truth without an active-trigger sidecar. |
 
 ## Phases
 
@@ -357,11 +361,11 @@ Scope:
    - `appendSessionEvent(sessionId, record)` — single complete append, < 4 KiB cap with `_truncated` marker on overflow.
    - `appendAlias({ aliasType, aliasValue, sessionId })` — appends to global `aliases.jsonl`.
    - `readTriggerSlice(sessionId, triggerId)` — returns `{ records, status: "completed"|"error"|"aborted"|"crashed"|"in_flight", reason?, lastEventTs? }`. Termination is conflict-based (see "Trigger Slicing"): the slice ends at the first matching `trigger_end`, OR at any subsequent `trigger_start` for the same session (status = `crashed`), OR at EOF (status = `in_flight`). Tolerates malformed lines and discards partial trailing lines.
-   - `findActiveTrigger(requestSessionId)` — tail-bounded read; if no open trigger in this session, walk `session.parent` chain (depth ≤ 5, cycle-detected); returns `{ sessionId: <owner>, triggerId } | { reason: "none" | "ambiguous" | "depth_exceeded" | "cycle" }`. The returned `sessionId` is the **owner** — the session whose events.jsonl contains the open `trigger_start` record. For top-level sessions it equals `requestSessionId`; for child sessions it is the resolved parent. Callers must use this `sessionId` to build viewer URLs, not the request sessionId.
+   - `findActiveTrigger(requestSessionId)` — full bounded scan of the capped session log; if no open trigger in this session, walk `session.parent` chain (depth ≤ 5, cycle-detected); returns `{ sessionId: <owner>, triggerId } | { reason: "none" | "ambiguous" | "depth_exceeded" | "cycle" | "oversized" | "parent_unknown" }`. The returned `sessionId` is the **owner** — the session whose session log contains the open `trigger_start` record. For top-level sessions it equals `requestSessionId`; for child sessions it is the resolved parent. Callers must use this `sessionId` to build viewer URLs, not the request sessionId.
    - `resolveAlias({ aliasType, aliasValue })` — newest-wins lookup with in-process cache rebuilt on miss.
    - `listSessionAliases(sessionId)` — collects `alias` records from session log.
 3. Reader behaviors: `safeParse` each line, skip-with-counter on failure, drop unknown fields, tolerate partial trailing line.
-4. Unit tests for: append + 4KB truncation, slice extraction across all five statuses (`completed`, `error`, `aborted`, `crashed` via subsequent `trigger_start`, `in_flight` via EOF), malformed-line tolerance, partial-trailing discard, active-trigger lookup (zero/one/many in current session; chain-walk to parent returns `{sessionId: parentId, triggerId}` not the child id; chain-walk depth 2-3 returns the topmost owner; depth-cap at 5; cycle detection), alias resolution (newest wins), session→aliases listing, schema-drift handling (unknown field ignored).
+4. Unit tests for: append + 4KB truncation, slice extraction across all five statuses (`completed`, `error`, `aborted`, `crashed` via subsequent `trigger_start`, `in_flight` via EOF), malformed-line tolerance, partial-trailing discard, active-trigger lookup (zero/one/many in current session; late write where `trigger_start` is near the beginning of a large-but-capped file; oversized file fails closed; chain-walk to parent returns `{sessionId: parentId, triggerId}` not the child id; chain-walk depth 2-3 returns the topmost owner; depth-cap at 5; cycle detection; child before `session.parent` exists returns `parent_unknown`), alias resolution (newest wins), session→aliases listing, schema-drift handling (unknown field ignored).
 5. Concurrency tests: multi-process append fuzz (no corrupt lines); reader observing partial trailing line during writer activity.
 
 Exit criteria:
@@ -369,7 +373,7 @@ Exit criteria:
 - Records append to `/workspace/worklog/sessions/<session-id>.jsonl` with size cap enforced.
 - `readTriggerSlice` returns the correct status for each of `completed`, `error`, `aborted`, `crashed` (subsequent `trigger_start` in same session), and `in_flight` (EOF). Malformed lines and partial trailing lines do not break extraction.
 - Alias resolution is newest-wins; cache rebuild on miss is verified.
-- `findActiveTrigger` walks `session.parent` chain correctly; depth cap and cycle detection both have failing-then-passing tests.
+- `findActiveTrigger` scans the full capped log, finds old open starts that a tail window would miss, fails closed on oversized logs, and walks `session.parent` chain correctly; depth cap, cycle detection, and `parent_unknown` all have failing-then-passing tests.
 - Multi-process append fuzz produces zero corrupt lines.
 
 ### Phase 2 - Runner Event Capture and Session Boundaries
@@ -388,7 +392,7 @@ Scope:
 7. Append `trigger_start` before `promptAsync`. Reject duplicate `triggerId` already present in the session within the last hour (idempotency).
 8. Wrap the trigger handler in `try/catch/finally`. The `catch` emits `trigger_end{status:"error", error: <message>}`; the user-initiated abort/interrupt path emits `trigger_end{status:"aborted", reason: <reason>}`. **Process-level crashes are not handled here** — by design, a `try/catch` cannot run on SIGKILL/OOM/container-kill/segfault. Those leave the trigger open and are detected at viewer time via supersede.
 9. Register a best-effort `SIGTERM` handler that, before exit, appends `trigger_end{status:"aborted", reason:"shutdown"}` for any in-flight trigger this process owns. Captures `docker stop`, k8s rolling restart, and similar graceful shutdowns. Does not capture SIGKILL/OOM/segfault.
-10. Stream and append OpenCode events for parent and discovered child sessions. **When a new sub-session id appears on the event bus during an active trigger, append a `session.parent` alias record (`aliasValue=<child-id>`, `sessionId=<parent-id>`) to `aliases.jsonl`.** This is what lets `findActiveTrigger` chain-walk from a child session up to the parent's open trigger.
+10. Stream and append OpenCode events for parent and discovered child sessions. **When a new sub-session id appears on the event bus during an active trigger, append a `session.parent` alias record (`aliasValue=<child-id>`, `sessionId=<parent-id>`) to `aliases.jsonl`.** This is what lets `findActiveTrigger` chain-walk from a child session up to the parent's open trigger after discovery.
 11. Append `trigger_end` on normal completion (`status:"completed"`).
 12. Write the Slack thread alias immediately on Slack-triggered sessions.
 13. On `session_stale` recreate, write a back-reference alias on the new session pointing to the old `sessionId`.
@@ -401,7 +405,7 @@ Exit criteria:
 - A simulated SIGKILL during a live trigger leaves the trigger open in the log; a subsequent runner restart followed by a new trigger on the same session lets the viewer render the original slice with `crashed` status (verified via integration test).
 - Busy and abort-timeout paths produce no marker (none for non-interrupt-busy; no trigger_start for abort-timeout).
 - Same-correlationKey concurrent triggers do not double-create.
-- Child-session activity appears inside the parent trigger slice **and** every discovered child session has a `session.parent` alias written before any tool call from that child reaches remote-cli.
+- Child-session activity appears inside the parent trigger slice; discovered child sessions get a `session.parent` alias. If a child tool call reaches remote-cli before the alias exists, disclaimer injection fails closed with retry/delegate-to-parent guidance.
 - With flag off, behavior matches today's notes-only path. With flag on in dual-write, both stores carry the same routing facts.
 
 ### Phase 3 - Trigger Viewer
@@ -446,7 +450,7 @@ Exit criteria:
 
 ### Phase 5 - Disclaimer Injection
 
-Two paths share the same `findActiveTrigger(requestSessionId)` helper from `@thor/common/event-log.ts` (walks `session.parent` chain). The helper returns `{ sessionId, triggerId }` where `sessionId` is the resolved owner — the session whose events.jsonl contains the open `trigger_start`. Both paths build the URL `${RUNNER_BASE_URL}/runner/v/${result.sessionId}/${result.triggerId}` from the returned owner pair — no HMAC, no TTL. **Both fail-fast** if inference cannot return exactly one open trigger or if the per-tool args injector cannot find the expected field.
+Two paths share the same `findActiveTrigger(requestSessionId)` helper from `@thor/common/event-log.ts` (full bounded scan, then walks any recorded `session.parent` chain). The helper returns `{ sessionId, triggerId }` where `sessionId` is the resolved owner — the session whose session log contains the open `trigger_start`. Both paths build the URL `${RUNNER_BASE_URL}/runner/v/${result.sessionId}/${result.triggerId}` from the returned owner pair — no HMAC, no TTL. **Both fail-fast** if inference cannot return exactly one open trigger or if the per-tool args injector cannot find the expected field.
 
 Prerequisites (already shipped on this branch as part of this plan):
 
@@ -460,7 +464,7 @@ Prerequisites (already shipped on this branch as part of this plan):
 3. Build the URL and rewrite the relevant `--body`/`-b` flag (or `-F` file content) to append `\n\n---\n[View Thor trigger](<url>)`.
 4. Exec `gh` with the mutated body.
 
-No cache — each disclaimer-eligible exec does a fresh JSONL tail-read. The per-trigger call volume is small enough that I/O cost is irrelevant; cache complexity is not warranted.
+No cache — each disclaimer-eligible exec does a fresh full bounded JSONL scan. The per-trigger call volume is small enough that I/O cost is irrelevant; cache/index complexity is not warranted.
 
 #### Approve-gated writes (Atlassian MCP) — args mutation at create time
 
@@ -481,14 +485,14 @@ Exit criteria:
 - `gh pr create`/`gh pr comment`/`gh pr review` inject the disclaimer link inline when inference returns one open trigger; otherwise exit non-zero with a clear error and no upstream call.
 - `createJiraIssue` and `addCommentToJiraIssue` carry the disclaimer in `description` / `commentBody` from approval-create time. The Slack approval prompt shows the disclaimer.
 - Approve-create with no/ambiguous active trigger or missing args field returns an error and persists no action.
-- Child-session writes resolve via `session.parent` chain to the parent's open trigger AND inject a URL that uses the **parent** session id. A viewer GET with the injected URL renders the parent slice (which contains both parent and child events).
-- Tests cover: direct write with one open trigger (URL uses request sessionId, == owner); child session 1-deep (URL uses parent sessionId, not request); chain depth 2-3 (URL uses topmost owner); chain depth exceeded; cycle detection; ambiguous direct-write (`gh` exits non-zero, no exec); ambiguous approve-create (errors, no action persisted); per-tool injector throws on missing field; approve-resolve replays the same args (idempotent); end-to-end: a child-session-originated `gh pr create` produces a URL whose viewer GET returns 200 (not 404); policy denies `gh pr create --fill` (covered by `policy.test.ts`).
+- Child-session writes resolve via `session.parent` chain to the parent's open trigger after the relation is recorded AND inject a URL that uses the **parent** session id. A viewer GET with the injected URL renders the parent slice (which contains both parent and child events). If the relation is not yet recorded, the write fails closed with `parent_unknown`.
+- Tests cover: direct write with one open trigger (URL uses request sessionId, == owner); late disclaimer write with `trigger_start` near the beginning of a large capped log; oversized log fail-fast; child session before `session.parent` exists (`parent_unknown`, no exec/no action); child session 1-deep after `session.parent` exists (URL uses parent sessionId, not request); chain depth 2-3 (URL uses topmost owner); chain depth exceeded; cycle detection; ambiguous direct-write (`gh` exits non-zero, no exec); ambiguous approve-create (errors, no action persisted); per-tool injector throws on missing field; approve-resolve replays the same args (idempotent); end-to-end: a child-session-originated `gh pr create` after parent linkage produces a URL whose viewer GET returns 200 (not 404); policy denies `gh pr create --fill` (covered by `policy.test.ts`).
 
 ### Phase 6 - Retention, Archival, and Janitor
 
 Scope:
 
-1. Per-session size cap on `events.jsonl` (e.g. 50 MiB). On exceed, rotate to `<session-id>-1.jsonl` (continuation file) and link the chain in a sidecar.
+1. Per-session size cap on `/workspace/worklog/sessions/<session-id>.jsonl` (e.g. 50 MiB). On exceed, rotate to `<session-id>-1.jsonl` (continuation file) and link the chain in a sidecar.
 2. Retention sweeper (cron job or one-shot script) that, after a configurable age (default 30 days), compresses session files to `<session-id>.jsonl.gz` and after a longer age (default 90 days) removes them.
 3. Symlink/tmp janitor — sweep stray `tmp.*` files left behind by partial alias writes (and any future symlink-based artifacts).
 4. Aliases.jsonl rotation: when the file exceeds (e.g.) 100 MiB, snapshot the current state into `aliases-snapshot-<date>.jsonl` and start a fresh `aliases.jsonl`. Resolver reads snapshot + current.
@@ -504,7 +508,7 @@ Exit criteria:
 ## Out of Scope
 
 - SQLite or any database-backed index.
-- Propagating `triggerId` through OpenCode/bash/curl/remote-cli — recovered via inference + `session.parent` chain.
+- Propagating `triggerId` through OpenCode/bash/curl/remote-cli — recovered via full bounded inference + recorded `session.parent` chain.
 - New alias types beyond `slack.thread_id`, `git.branch`, and `session.parent` (no `github.pr` in this phase).
 - Confluence write *features*. The three Confluence approve-gated tools (`createConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment`) are removed from `packages/common/src/proxies.ts` as part of this plan (commit `a4d755ca` on this branch) and denied by default. Re-introducing them is out of scope.
 - Public unauthenticated viewer access — viewer is Vouch-gated; external Jira reporters who don't have OAuth cannot click into the disclaimer link. Acceptable trade for content-protection simplicity.
@@ -519,11 +523,11 @@ Exit criteria:
 
 Local verification:
 
-- `@thor/common` tests for event log helpers (append, slice across all five statuses including `crashed`-via-supersede and `in_flight`-via-EOF, alias resolution including `session.parent` chain-walk + cycle/depth caps, schema drift, multi-process fuzz, partial trailing line).
+- `@thor/common` tests for event log helpers (append, slice across all five statuses including `crashed`-via-supersede and `in_flight`-via-EOF, full bounded active-trigger scan including old starts near the beginning of a capped file and oversized fail-fast, alias resolution including `session.parent` chain-walk + cycle/depth caps + `parent_unknown`, schema drift, multi-process fuzz, partial trailing line).
 - runner tests for marker order, busy behavior, interrupt behavior, abort timeout, caught-throw → `trigger_end{status:"error"}`, SIGTERM handler appends `trigger_end{status:"aborted", reason:"shutdown"}`, simulated SIGKILL leaves the trigger open and a follow-up trigger renders the prior slice as `crashed`, idempotent retry, same-correlationKey race, stale-session chain, `session.parent` alias write on child session discovery.
 - resolver tests for Slack and git aliases (newest wins, back-reference chain, type isolation).
 - viewer route tests for `completed` / `error` / `aborted` / `crashed` / `in_flight` rendering paths, soft staleness banner above 5 min, branded 401/404/503, mobile snapshot, two-view model, `X-Vouch-User` 401 path.
-- remote-cli tests for direct-write disclaimer injection (`gh pr create` flag rewrite); fail-fast on direct write when active trigger is missing/ambiguous (`gh` exits non-zero, no exec); approve-gated args mutation at create time (Jira ticket/comment); fail-fast approve-create on missing/ambiguous active trigger (no action persisted); per-tool injector throws on missing/wrong-typed field (no action persisted); idempotent approve-resolve replay; **child-session URL correctness** — child-session-originated `gh pr create` and `createJiraIssue` produce URLs whose `<sessionId>` segment is the resolved parent (URL renders 200 in the viewer, not 404).
+- remote-cli tests for direct-write disclaimer injection (`gh pr create` flag rewrite); fail-fast on direct write when active trigger is missing/ambiguous/oversized/parent-unknown (`gh` exits non-zero, no exec); approve-gated args mutation at create time (Jira ticket/comment); fail-fast approve-create on missing/ambiguous active trigger or missing child parent relation (no action persisted); per-tool injector throws on missing/wrong-typed field (no action persisted); idempotent approve-resolve replay; **child-session URL correctness** — child-session-originated `gh pr create` and `createJiraIssue` after parent linkage produce URLs whose `<sessionId>` segment is the resolved parent (URL renders 200 in the viewer, not 404).
 - ingress smoke test: `/runner/v/<sid>/<tid>` reaches the runner only with a valid Vouch session.
 - retention/janitor tests for gz round-trip, retention boundaries, dangling cleanup, aliases.jsonl rotation.
 
@@ -553,6 +557,7 @@ Codex available: yes | UI scope: yes (public viewer is a server-rendered page) |
 > - **Child-session URL bug surfaced post-review.** With the original `findActiveTrigger` return shape `{ triggerId }`, URL construction would have paired the request sessionId with the resolved triggerId. For child-session calls, the request sessionId is the child's id but the `trigger_start` lives in the parent's events.jsonl, so every disclaimer URL produced from a child session would 404. Fix: `findActiveTrigger` returns `{ sessionId: <owner>, triggerId }` and both disclaimer paths build URLs from the returned owner sessionId.
 > - **`gh pr create --fill` gap surfaced post-review.** `--fill` lets `gh` compose the body from commit messages at exec time, leaving no body field for the disclaimer injector to mutate. The plan's injection flow only described `--body`/`-b`/`-F` rewrites, so `--fill` would silently produce disclaimer-less PRs. Fix: deny `--fill` at the policy layer (`packages/remote-cli/src/policy-gh.ts`) with guidance toward `--title <t> --body <b>`. `using-gh` skill doc updated to match.
 > - **Confluence writes denied entirely.** `createConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment` removed from the approve list in `packages/common/src/proxies.ts`. Out of scope until a real use case lands.
+> - **Tail-read active-trigger inference rejected post-review.** A long-running trigger can push its `trigger_start` outside a tail window before a late PR/Jira write. Because the plan avoids an additional active-trigger index, `findActiveTrigger` now scans the full capped session log and fails closed on oversized files. Child-session writes also fail closed with `parent_unknown` until the durable `session.parent` relation is recorded.
 > - UC3 (flat session file path), UC4 (retention as Phase 6), UC5 (cutover-not-greenfield) stand.
 >
 > The dual-voice findings below are preserved verbatim as the audit record of the review at the time.
