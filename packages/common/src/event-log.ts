@@ -5,7 +5,7 @@ import {
   readFileSync,
   statSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { getWorklogRoot } from "./worklog.js";
 
@@ -99,7 +99,10 @@ function safeId(value: string): string {
 }
 
 export function sessionLogPath(sessionId: string): string {
-  return join(getWorklogRoot(), "sessions", `${safeId(sessionId)}.jsonl`);
+  const root = resolve(getWorklogRoot(), "sessions");
+  const resolved = resolve(root, `${safeId(sessionId)}.jsonl`);
+  if (!resolved.startsWith(`${root}${sep}`)) throw new Error(`Invalid session path: ${sessionId}`);
+  return resolved;
 }
 
 function aliasLogPath(): string {

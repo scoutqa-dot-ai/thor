@@ -1,4 +1,5 @@
 import express from "express";
+import type { RequestHandler } from "express";
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { z } from "zod/v4";
 import type {
@@ -53,6 +54,8 @@ const PORT = parseInt(process.env.PORT || "3000", 10);
 const OPENCODE_URL = (process.env.OPENCODE_URL || "http://127.0.0.1:4096").replace(/\/$/, "");
 const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
 const SESSION_LOG_ENABLED = process.env.SESSION_LOG_ENABLED === "true";
+const VIEWER_RATE_LIMIT_WINDOW_MS = parseInt(process.env.VIEWER_RATE_LIMIT_WINDOW_MS || "60000", 10);
+const VIEWER_RATE_LIMIT_MAX = parseInt(process.env.VIEWER_RATE_LIMIT_MAX || "60", 10);
 
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
@@ -68,6 +71,31 @@ const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
 /** Shared event buses — one SSE connection per directory, dispatches to per-session listeners. */
 const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
+
+function createSimpleRateLimit(options: { windowMs: number; max: number }): RequestHandler {
+  const hits = new Map<string, { count: number; resetAt: number }>();
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = req.ip || req.socket.remoteAddress || "unknown";
+    const current = hits.get(key);
+    if (!current || current.resetAt <= now) {
+      hits.set(key, { count: 1, resetAt: now + options.windowMs });
+      next();
+      return;
+    }
+    if (current.count >= options.max) {
+      res.status(429).type("text/plain").send("Too many requests");
+      return;
+    }
+    current.count += 1;
+    next();
+  };
+}
+
+const viewerRateLimit = createSimpleRateLimit({
+  windowMs: VIEWER_RATE_LIMIT_WINDOW_MS,
+  max: VIEWER_RATE_LIMIT_MAX,
+});
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 
@@ -163,6 +191,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   const checkOpencodeReachable = options.isOpencodeReachable ?? isOpencodeReachable;
   const waitForOpencode = options.ensureOpencodeAvailable ?? ensureOpencodeAvailable;
 
+  function routeParam(value: string | string[] | undefined): string {
+    return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+  }
+
 app.get("/health", async (_req, res) => {
   const opencodeHealthy = await checkOpencodeReachable();
 
@@ -174,12 +206,14 @@ app.get("/health", async (_req, res) => {
   });
 });
 
-  app.get("/runner/v/:sessionId/:triggerId", (req, res) => {
+  app.get("/runner/v/:sessionId/:triggerId", viewerRateLimit, (req, res) => {
     if (!req.get("X-Vouch-User")) {
       res.status(401).type("html").send(renderPage("Unauthorized", "Sign in with Vouch to view Thor trigger history."));
       return;
     }
-    const slice = readTriggerSlice(req.params.sessionId, req.params.triggerId);
+    const sessionId = routeParam(req.params.sessionId);
+    const triggerId = routeParam(req.params.triggerId);
+    const slice = readTriggerSlice(sessionId, triggerId);
     if ("notFound" in slice) {
       res.status(404).type("html").send(renderPage("Trigger not found", "No Thor trigger slice was found for this session."));
       return;
@@ -188,15 +222,16 @@ app.get("/health", async (_req, res) => {
       res.type("html").send(renderPage("Slice truncated", `<p>This session log is oversized.</p><p><a href="${escapeHtml(req.originalUrl)}/raw">Open raw JSONL</a></p>`));
       return;
     }
-    res.type("html").send(renderSlicePage(req.params.sessionId, req.params.triggerId, slice));
+    res.type("html").send(renderSlicePage(sessionId, triggerId, slice));
   });
 
-  app.get("/runner/v/:sessionId/:triggerId/raw", (req, res) => {
+  app.get("/runner/v/:sessionId/:triggerId/raw", viewerRateLimit, (req, res) => {
     if (!req.get("X-Vouch-User")) {
       res.status(401).type("text/plain").send("Unauthorized");
       return;
     }
-    const path = sessionLogPath(req.params.sessionId);
+    const sessionId = routeParam(req.params.sessionId);
+    const path = sessionLogPath(sessionId);
     try {
       const root = realpathSync(`${process.env.WORKLOG_DIR || "/workspace/worklog"}/sessions`);
       const real = realpathSync(path);
