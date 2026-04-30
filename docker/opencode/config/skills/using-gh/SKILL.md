@@ -36,7 +36,7 @@ Required: `--title`/`-t` plus a body source (`--body`/`-b` or `-F`/`--body-file 
 
 ### `gh issue create`
 
-Required: `--title`/`-t`, `--body`/`-b`. Optional: `--label`/`-l` (repeatable). Blocked: `--repo`/`-R`, `--assignee`, `--project`, `--milestone`, `--editor`, `--web`, `--body-file`, `--template`, `--recover`.
+Blocked in v1: GitHub issue content is outside Thor's disclaimer-injection scope. Use Jira for tracked work.
 
 ### `gh pr comment`
 
@@ -44,7 +44,7 @@ Required: numeric PR selector plus a body source (`--body`/`-b` or `-F`/`--body-
 
 ### `gh issue comment`
 
-Required: numeric issue selector plus `--body`/`-b`. Blocked: non-numeric selectors, interactive/file flags, and `--repo`/`-R`.
+Blocked in v1: GitHub issue content is outside Thor's disclaimer-injection scope. Use Jira for tracked work.
 
 ### `gh pr review`
 

@@ -50,8 +50,6 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "pr review",
   "issue view",
   "issue list",
-  "issue comment",
-  "issue create",
   "label list",
   "release list",
   "release view",
@@ -100,16 +98,16 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
       "gh pr create --title <title> --body <body>; omit --head unless it matches the current worktree branch",
   },
   "gh issue create": {
-    reason: "issue creation must be non-interactive and include a title plus body.",
-    instead: "gh issue create --title <title> --body <body>",
+    reason: "GitHub issue creation is outside v1 disclaimer-injection scope.",
+    instead: "Use Jira for tracked work or wait for future issue disclaimer support.",
   },
   "gh pr comment": {
     reason: "PR comments must target a numeric PR and provide exactly one body source.",
     instead: "gh pr comment <number> --body <text> or gh pr comment <number> -F <path>",
   },
   "gh issue comment": {
-    reason: "issue comments must target a numeric issue and provide an inline body.",
-    instead: "gh issue comment <number> --body <text>",
+    reason: "GitHub issue comments are outside v1 disclaimer-injection scope.",
+    instead: "Use Jira for tracked work or wait for future issue disclaimer support.",
   },
   "gh pr review": {
     reason: "reviews must be append-only comments or request-changes reviews with an inline body.",

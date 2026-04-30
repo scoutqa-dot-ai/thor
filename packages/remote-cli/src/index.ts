@@ -9,6 +9,7 @@ import {
   createLogger,
   deriveGitHubAppBotIdentity,
   formatThorMeta,
+  findActiveTrigger,
   logError,
   logInfo,
   requireEnv,
@@ -54,6 +55,7 @@ const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
+const RUNNER_BASE_URL = (process.env.RUNNER_BASE_URL || "").replace(/\/$/, "");
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   requireEnv("GITHUB_APP_ID", env);
@@ -94,6 +96,50 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
     ...(sessionId && { sessionId }),
     ...(callId && { callId }),
   };
+}
+
+function disclaimerFooter(url: string): string {
+  return `\n\n---\n[View Thor trigger](${url})`;
+}
+
+function buildDisclaimerUrl(sessionId: string): string | { error: string } {
+  const active = findActiveTrigger(sessionId);
+  if (!active.ok) return { error: `Disclaimer required: no single active trigger for session ${sessionId} (${active.reason})` };
+  const base = RUNNER_BASE_URL || "";
+  return `${base}/runner/v/${active.sessionId}/${active.triggerId}`;
+}
+
+function rewriteValueFlag(args: string[], names: string[], append: string): string[] | undefined {
+  const out = [...args];
+  for (let i = 0; i < out.length; i++) {
+    for (const name of names) {
+      if (out[i] === name && i + 1 < out.length) {
+        out[i + 1] = `${out[i + 1]}${append}`;
+        return out;
+      }
+      if (out[i].startsWith(`${name}=`)) {
+        out[i] = `${name}=${out[i].slice(name.length + 1)}${append}`;
+        return out;
+      }
+    }
+  }
+  return undefined;
+}
+
+function withGhDisclaimer(args: string[], sessionId?: string): string[] | { error: string } {
+  const eligible =
+    (args[0] === "pr" && ["create", "comment", "review"].includes(args[1] ?? "")) ||
+    (args[0] === "api" && args.some((arg) => /pulls\/\d+\/comments\/\d+\/replies/.test(arg)));
+  if (!eligible) return args;
+  if (!sessionId) return { error: "Disclaimer required: missing Thor session id" };
+  const url = buildDisclaimerUrl(sessionId);
+  if (typeof url !== "string") return url;
+  const footer = disclaimerFooter(url);
+  const rewritten =
+    args[0] === "api"
+      ? rewriteValueFlag(args, ["-f", "--raw-field", "-F"], footer)
+      : rewriteValueFlag(args, ["--body", "-b", "--body-file", "-F"], footer);
+  return rewritten ?? { error: "Disclaimer required: could not find a mutable gh body field" };
 }
 
 /**
@@ -433,10 +479,17 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      logInfo(log, "exec_gh", { args, cwd, ...thorIds(req) });
-      const result = await execCommand("gh", args, cwd);
+      const ids = thorIds(req);
+      const effectiveArgs = withGhDisclaimer(args, ids.sessionId);
+      if (!Array.isArray(effectiveArgs)) {
+        res.status(400).json({ stdout: "", stderr: effectiveArgs.error, exitCode: 1 });
+        return;
+      }
+
+      logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
+      const result = await execCommand("gh", effectiveArgs, cwd);
       if ((result.exitCode ?? 0) === 0) {
-        const alias = computeGitAlias("gh", args, cwd);
+        const alias = computeGitAlias("gh", effectiveArgs, cwd);
         if (alias) result.stdout = (result.stdout || "") + formatThorMeta(alias);
       }
       res.json(result);

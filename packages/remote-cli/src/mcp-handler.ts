@@ -16,6 +16,7 @@ import {
   type ProxyConfig,
   type WorkspaceConfig,
   writeToolCallLog,
+  findActiveTrigger,
 } from "@thor/common";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import {
@@ -32,6 +33,18 @@ const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
+const RUNNER_BASE_URL = (process.env.RUNNER_BASE_URL || "").replace(/\/$/, "");
+
+function addDisclaimerToApprovalArgs(tool: string, args: Record<string, unknown>, sessionId?: string): Record<string, unknown> {
+  if (tool !== "createJiraIssue" && tool !== "addCommentToJiraIssue") return args;
+  if (!sessionId) return args;
+  const active = findActiveTrigger(sessionId);
+  if (!active.ok) throw new Error(`Cannot create approval: no single active trigger for this session (${active.reason})`);
+  const url = `${RUNNER_BASE_URL}/runner/v/${active.sessionId}/${active.triggerId}`;
+  const field = tool === "createJiraIssue" ? "description" : "commentBody";
+  if (typeof args[field] !== "string") throw new Error(`Cannot create approval: ${tool}.${field} must be a string for disclaimer injection`);
+  return { ...args, [field]: `${args[field]}\n\n---\n[View Thor trigger](${url})` };
+}
 
 interface ProxyInstance {
   name: string;
@@ -440,14 +453,20 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
 
     if (toolInfo.classification === "approve") {
-      const action = instance.approvalStore.create(toolInfo.name, args);
+      let approvalArgs: Record<string, unknown>;
+      try {
+        approvalArgs = addDisclaimerToApprovalArgs(toolInfo.name, args, context.sessionId);
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+      const action = instance.approvalStore.create(toolInfo.name, approvalArgs);
       logInfo(log, "tool_call_pending_approval", {
         upstream: instance.name,
         tool: toolInfo.name,
         actionId: action.id,
         ...getThorIds(context),
       });
-      writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args });
+      writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args: approvalArgs });
       const approvalText = `Approval required for \`${toolInfo.name}\`. Run: approval status ${action.id}`;
       const approvalMeta = formatThorMeta({
         type: "approval",

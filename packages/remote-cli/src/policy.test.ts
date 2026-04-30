@@ -756,28 +756,18 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["workflow", "run", "ci.yml", "--field", "retries=null"])).toBeNull();
     });
 
-    it("allows append-only issue create with title/body and optional labels", () => {
-      expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toBeNull();
-      expect(
-        validateGhArgs([
-          "issue",
-          "create",
-          "--title",
-          "Bug",
-          "--body",
-          "Broken",
-          "--label",
-          "bug",
-          "--label",
-          "p1",
-        ]),
-      ).toBeNull();
+    it("denies issue create because v1 disclaimer injection does not cover issues", () => {
+      expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toContain(
+        "outside v1 disclaimer-injection scope",
+      );
     });
 
-    it("allows append-only pr/issue comments with explicit body", () => {
+    it("allows append-only pr comments and denies issue comments", () => {
       expect(validateGhArgs(["pr", "comment", "123", "--body", "noted"])).toBeNull();
       expect(validateGhArgs(["pr", "comment", "123", "-b", "noted"])).toBeNull();
-      expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toBeNull();
+      expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toContain(
+        "outside v1 disclaimer-injection scope",
+      );
       expect(validateGhArgs(["pr", "comment", "123", "-F", "comment.md"])).toBeNull();
     });
 
