@@ -1,0 +1,23 @@
+docs/plan/2026043001_session-event-log.md
+  60cf1ff76c971717 34,36,99,124,126,128,130-144,184,186-194,324-326,355,360,366,385-390,395-398,410,418-420,515-516,518
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "38a8a4c38b8b8ee9ca99906a4b9aefd0dc8eb0e1",
+  "prompts": {
+    "60cf1ff76c971717": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d6cfa77-7008-47fe-844c-e1a7eb077309",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 54,
+      "total_deletions": 31,
+      "accepted_lines": 54,
+      "overriden_lines": 0
+    }
+  }
+}
