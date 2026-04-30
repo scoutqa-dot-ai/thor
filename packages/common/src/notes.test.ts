@@ -19,6 +19,7 @@ const {
   extractAliases,
   hasSlackReply,
 } = await import("./notes.js");
+const { appendAlias } = await import("./event-log.js");
 
 describe("notes", () => {
   // Use a unique key per test to avoid collisions
@@ -81,15 +82,15 @@ describe("notes", () => {
       expect(readNotes("ghost-alias-key")).toBeUndefined();
     });
 
-    it("resolveCorrelationKeys returns canonical key for an aliased key", () => {
-      const canonical = "cron:daily-check:2026-03-13T06";
-      createNotes({ correlationKey: canonical, prompt: "test", sessionId: "session-resolve-1" });
-      registerAlias({ correlationKey: canonical, alias: "slack:thread:222.000" });
+    it("resolveCorrelationKeys returns the JSONL session id for a Slack alias", () => {
+      expect(
+        appendAlias({ aliasType: "slack.thread_id", aliasValue: "222.000", sessionId: "session-resolve-1" }),
+      ).toEqual({ ok: true });
 
-      expect(resolveCorrelationKeys(["slack:thread:222.000"])).toBe(canonical);
+      expect(resolveCorrelationKeys(["slack:thread:222.000"])).toBe("session-resolve-1");
     });
 
-    it("resolveCorrelationKeys returns canonical key when queried with canonical key", () => {
+    it("resolveCorrelationKeys returns the raw key when queried with a non-alias key", () => {
       const canonical = uniqueKey();
       createNotes({ correlationKey: canonical, prompt: "test", sessionId: "session-resolve-2" });
 
@@ -100,9 +101,8 @@ describe("notes", () => {
       expect(resolveCorrelationKeys(["unknown:key:xyz"])).toBe("unknown:key:xyz");
     });
 
-    it("resolveCorrelationKeys returns canonical key for continued files", () => {
+    it("resolveCorrelationKeys does not route from markdown aliases in continued files", () => {
       const canonical = "resolve-continued";
-      // Create old day file with alias
       const sanitized = canonical.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
       const dir = join(testDir, "2026-02-01", "notes");
       mkdirSync(dir, { recursive: true });
@@ -112,30 +112,26 @@ describe("notes", () => {
         `# Session: ${canonical}\nSession ID: sess-old\n\n---\n### Session: slack:thread:333.000\nAliased from old day\n`,
       );
 
-      // Alias from old day should still resolve
-      expect(resolveCorrelationKeys(["slack:thread:333.000"])).toBe(canonical);
+      expect(resolveCorrelationKeys(["slack:thread:333.000"])).toBe("slack:thread:333.000");
     });
 
-    it("resolveCorrelationKeys finds alias even when canonical file also exists for the raw key", () => {
-      // Scenario: git push → session A, then Slack review → session B aliases the branch key
-      const oldCanonical = "git:branch:org/repo:feat-y";
-      const newCanonical = "slack:thread:444.000";
+    it("resolveCorrelationKeys returns the JSONL session id for a git branch alias", () => {
+      const rawKey = "git:branch:org/repo:feat-y";
+      expect(
+        appendAlias({
+          aliasType: "git.branch",
+          aliasValue: Buffer.from(rawKey).toString("base64url"),
+          sessionId: "session-git-alias",
+        }),
+      ).toEqual({ ok: true });
 
-      createNotes({ correlationKey: oldCanonical, prompt: "old", sessionId: "session-old" });
-      createNotes({ correlationKey: newCanonical, prompt: "new", sessionId: "session-new" });
-      registerAlias({ correlationKey: newCanonical, alias: oldCanonical });
-
-      // Should resolve to the NEWER session that claimed this key via alias
-      const resolved = resolveCorrelationKeys([oldCanonical]);
-      expect(resolved).toBe(newCanonical);
+      expect(resolveCorrelationKeys([rawKey])).toBe("session-git-alias");
     });
 
-    it("resolveCorrelationKeys picks most recent file when alias exists across multiple days", () => {
-      const oldCanonical = "resolve-multi-day-old";
-      const newCanonical = "resolve-multi-day-new";
+    it("resolveCorrelationKeys ignores markdown aliases even when they exist across multiple days", () => {
       const alias = "slack:thread:multi-day-555.000";
 
-      // Day 1: old session registers alias
+      const oldCanonical = "resolve-multi-day-old";
       const oldSanitized = oldCanonical.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
       const oldDir = join(testDir, "2026-01-20", "notes");
       mkdirSync(oldDir, { recursive: true });
@@ -144,7 +140,7 @@ describe("notes", () => {
         `# Session: ${oldCanonical}\nSession ID: sess-old\n\n---\n### Session: ${alias}\nOld alias\n`,
       );
 
-      // Day 2: new session registers the same alias
+      const newCanonical = "resolve-multi-day-new";
       const newSanitized = newCanonical.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
       const newDir = join(testDir, "2026-01-21", "notes");
       mkdirSync(newDir, { recursive: true });
@@ -153,15 +149,13 @@ describe("notes", () => {
         `# Session: ${newCanonical}\nSession ID: sess-new\n\n---\n### Session: ${alias}\nNew alias\n`,
       );
 
-      // Should resolve to the NEWER session (day 2), not the older one
-      expect(resolveCorrelationKeys([alias])).toBe(newCanonical);
+      expect(resolveCorrelationKeys([alias])).toBe(alias);
     });
 
-    it("resolveCorrelationKeys checks h1 canonical keys, not just h3 aliases", () => {
+    it("resolveCorrelationKeys does not scan markdown h1 canonical keys", () => {
       const key = uniqueKey();
       createNotes({ correlationKey: key, prompt: "test", sessionId: "session-h1-check" });
 
-      // Should resolve to itself via h1 match (not just return rawKey as fallback)
       expect(resolveCorrelationKeys([key])).toBe(key);
     });
   });
@@ -295,7 +289,7 @@ describe("notes", () => {
       expect(todayContent).toContain("test-tool");
     });
 
-    it("alias registered on previous day resolves after continueNotes", () => {
+    it("markdown alias on previous day is preserved after continueNotes but not used for routing", () => {
       const canonical = "cross-day-alias-resolve";
       const aliasKey = "slack:thread:cross-day-555.000";
 
@@ -317,8 +311,7 @@ describe("notes", () => {
         previousNotesPath: oldPath,
       });
 
-      // Alias from old day should still resolve to canonical key
-      expect(resolveCorrelationKeys([aliasKey])).toBe(canonical);
+      expect(resolveCorrelationKeys([aliasKey])).toBe(aliasKey);
 
       // Old file should be untouched
       expect(readFileSync(oldPath, "utf-8")).toContain(`### Session: ${aliasKey}`);

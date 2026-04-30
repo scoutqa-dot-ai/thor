@@ -14,7 +14,7 @@ Deliver a session-scoped JSONL event log that powers:
 - disclaimer-link injection for Thor-created GitHub PRs/comments/reviews and Jira tickets/comments
 - a retention/archival/janitor story so the worklog stays bounded
 
-No database. No backwards-compatible markdown-notes layer, but the migration is treated as a flag-gated cutover, not a clean-sheet build. The source of truth is the session log.
+No database. No backwards-compatible markdown-notes routing layer. The source of truth is the session log; markdown notes remain only for human-readable continuity.
 
 ## Log Shape
 
@@ -412,7 +412,7 @@ Exit criteria:
 - Busy and abort-timeout paths produce no marker (none for non-interrupt-busy; no trigger_start for abort-timeout).
 - Same-correlationKey concurrent triggers do not double-create.
 - Child-session activity appears inside the parent trigger slice; discovered child sessions get a `session.parent` alias. If a child tool call reaches remote-cli before the alias exists, disclaimer injection fails closed with retry/delegate-to-parent guidance.
-- With flag off, behavior matches today's notes-only path. With flag on in dual-write, both stores carry the same routing facts.
+- Gateway and runner routing use JSONL aliases only; markdown notes are not consulted for routing.
 
 ### Phase 3 - Trigger Viewer
 
@@ -444,7 +444,7 @@ Scope:
 
 1. Emit `slack.thread_id` aliases from inbound Slack trigger context and Slack write artifacts (both per-session log and global `aliases.jsonl`).
 2. Emit `git.branch` aliases from existing git artifact detection.
-3. Route inbound Slack and GitHub/git events through the JSONL alias resolver (with the legacy notes resolver as the dual-write fallback while the flag's dual-write window is active).
+3. Route inbound Slack and GitHub/git events through the JSONL alias resolver with raw-key fallback only; do not consult markdown notes for routing.
 4. Tests cover: multiple aliases on one session; alias type isolation (same numeric value across types); newest-wins on alias move; back-reference chain after `session_stale` recreate.
 
 Exit criteria:

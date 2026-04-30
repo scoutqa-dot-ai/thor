@@ -29,7 +29,6 @@ import {
   existsSync,
 } from "node:fs";
 import { join, relative } from "node:path";
-import { execFileSync } from "node:child_process";
 import { resolveAlias } from "./event-log.js";
 import { truncate } from "./logger.js";
 import { z } from "zod/v4";
@@ -190,11 +189,12 @@ export function appendTrigger(opts: {
 }
 
 /**
- * Register an alias for a correlation key.
+ * Register an alias in the human-readable notes for a correlation key.
  *
  * Appends a `### Session: {alias}` block to today's notes file for the
- * canonical correlation key. This allows events arriving with the alias
- * key to be resolved back to the canonical session.
+ * canonical correlation key. Routing aliases live in the JSONL event log;
+ * this marker is kept only for human session continuity and Slack-reply
+ * detection in notes.
  *
  * No-op if today's notes file does not exist for the canonical key.
  */
@@ -527,11 +527,7 @@ export function computeSlackAlias(
 }
 
 /**
- * Resolve one or more candidate correlation keys, returning the most recent match.
- *
- * Scans all notes files for `### Session:` (h3 alias) and `# Session:`
- * (h1 canonical) lines matching each key. When multiple files match,
- * the most recent file (by directory date in the path) wins.
+ * Resolve one or more candidate correlation keys through the JSONL alias index.
  *
  * Falls back to the first key if nothing resolves.
  */
@@ -543,32 +539,7 @@ export function resolveCorrelationKeys(rawKeys: string[]): string {
     if (jsonlHit) return jsonlHit;
   }
 
-  const candidates: Array<{ canonical: string; file: string }> = [];
-
-  for (const key of rawKeys) {
-    try {
-      // Check as alias (h3)
-      const aliasFiles = grepAllNotesFiles(`^### Session: ${escapeRegExp(key)}$`);
-      for (const f of aliasFiles) {
-        const canonical = extractH1Key(f);
-        if (canonical) candidates.push({ canonical, file: f });
-      }
-
-      // Check as canonical (h1)
-      const h1Files = grepAllNotesFiles(`^# Session: ${escapeRegExp(key)}(\\s*\\(continued\\))?$`);
-      for (const f of h1Files) {
-        candidates.push({ canonical: key, file: f });
-      }
-    } catch {
-      // skip
-    }
-  }
-
-  if (candidates.length === 0) return rawKeys[0];
-
-  // Pick the most recent by file path (paths contain date: worklog/2026-03-17/notes/...)
-  candidates.sort((a, b) => b.file.localeCompare(a.file));
-  return candidates[0].canonical;
+  return rawKeys[0];
 }
 
 function resolveJsonlAliasKey(key: string): string | undefined {
@@ -579,48 +550,6 @@ function resolveJsonlAliasKey(key: string): string | undefined {
     return resolveAlias({ aliasType: "git.branch", aliasValue: Buffer.from(key).toString("base64url") });
   }
   return undefined;
-}
-
-/**
- * Run grep across all notes files, returning the first matching file path.
- * Returns undefined if no match or grep fails.
- */
-function grepNotesFiles(pattern: string): string | undefined {
-  const files = grepAllNotesFiles(pattern);
-  return files.length > 0 ? files[0] : undefined;
-}
-
-/**
- * Run grep across all notes files, returning all matching file paths.
- * Returns empty array if no match or grep fails.
- */
-function grepAllNotesFiles(pattern: string): string[] {
-  try {
-    const result = execFileSync("grep", ["-rl", "--include=*.md", "-E", pattern, "."], {
-      cwd: WORKLOG_DIR,
-      encoding: "utf-8",
-      timeout: 5000,
-    });
-    return result
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => join(WORKLOG_DIR, line));
-  } catch {
-    // grep returns exit code 1 for no matches, or WORKLOG_DIR doesn't exist
-    return [];
-  }
-}
-
-/** Extract the canonical correlation key from the h1 `# Session:` line. */
-function extractH1Key(filePath: string): string | undefined {
-  try {
-    const content = readFileSync(filePath, "utf-8");
-    const match = content.match(/^# Session: (.+?)(?:\s*\(continued\))?$/m);
-    return match?.[1]?.trim();
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -639,11 +568,6 @@ export function hasSlackReply(correlationKey: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** Escape special regex characters in a string. */
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
