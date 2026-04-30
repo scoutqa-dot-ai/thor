@@ -29,6 +29,8 @@ Instructions for AI agents working on this repository.
 
 5. **Document decisions** — When making a non-obvious choice (library, pattern, architecture), add it to the active plan's Decision Log table. Future sessions can read this to understand why things are the way they are.
 
+6. **Environment variable discipline** — When adding, renaming, or removing an environment variable, update every required surface in the same change: `docker-compose.yml`, `.env.example`, `README.md` Deployment Configuration, relevant GitHub workflow env blocks, tests/fixtures, and any active plan docs. Do not leave required env vars documented only in code or compose.
+
 ## Repository Structure
 
 ```
