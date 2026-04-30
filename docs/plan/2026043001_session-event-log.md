@@ -282,6 +282,8 @@ Inline at execute time. The shell command runs through remote-cli with `x-thor-s
 4. Rewrite the relevant `gh` flag (`--body`/`-b` for PR/comment/review; `-F <file>` is read, mutated, and re-passed via stdin or a temp file).
 5. Exec `gh` with the mutated body.
 
+**`gh pr create --fill` is denied at the policy layer.** `--fill` instructs `gh` to compose the PR body from local commit messages at exec time, leaving no body field for Thor to mutate. Allowing `--fill` would silently produce disclaimer-less PRs (worse than a 404 — undetected). The policy in `packages/remote-cli/src/policy-gh.ts` denies `--fill` unconditionally with guidance toward `--title <t> --body <b>`; `gh pr comment` and `gh pr review` have no analogous "fill from elsewhere" shape, so this is a `gh pr create`-specific restriction.
+
 No cache — each disclaimer-eligible exec does a fresh `findActiveTrigger` JSONL tail-read. The per-trigger volume of these calls is small (a handful), so the I/O is not load-bearing; cache complexity is not warranted.
 
 ### Approve-gated writes (Atlassian MCP)
@@ -335,6 +337,7 @@ At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args:
 | 2026-04-30 | Per-tool args injector throws on missing/wrong-typed field                            | Defense-in-depth against MCP schema drift or LLM passing the wrong field name. A throw bubbles to approval-create and persists no action; never a half-mutated record. |
 | 2026-04-30 | No cache on the direct-write disclaimer path                                          | Per-trigger call volume is small (handful of disclaimer-eligible execs); JSONL tail-read I/O is not load-bearing. Cache complexity buys nothing. |
 | 2026-04-30 | `findActiveTrigger` returns `{ sessionId, triggerId }` (owner pair, not request pair)  | The viewer reads `<sessionId>.jsonl` and looks for `trigger_start{triggerId}` there. For child-session requests, the `trigger_start` lives in the parent's events.jsonl, not the child's. Returning only `triggerId` and pairing it with the request sessionId would build URLs that 404 for every child-session-originated disclaimer. Returning the owner sessionId makes URL construction correct in both top-level and chain-walked cases. |
+| 2026-04-30 | `gh pr create --fill` denied at the policy layer                                       | `--fill` lets `gh` compose the body from commit messages at exec time, leaving no field for the disclaimer injector to mutate. Without a deny, `--fill` would silently produce disclaimer-less PRs. Policy is the right layer (rather than the disclaimer injector) so the LLM gets the deny early with the existing `instead`-text guidance, avoiding a doomed `--fill` retry. Code change shipped alongside this plan revision in `packages/remote-cli/src/policy-gh.ts`. |
 | 2026-04-30 | Direct writes (GitHub `gh`): inline injection at execute time                         | `gh` exec is synchronous within the runner-driven request; original Thor context is in scope. Inference + URL build + flag rewrite is straightforward; no approval store involvement. |
 | 2026-04-30 | Cap one event record at < 4 KiB serialized; truncate and mark `_truncated`           | Avoids cross-process append interleave; mirrors `worklog.ts:18` truncation pattern. |
 | 2026-04-30 | `triggerId` is UUIDv4 (≥128-bit random)                                              | Public viewer URL relies on it as an unguessable bearer.         |
@@ -445,7 +448,10 @@ Exit criteria:
 
 Two paths share the same `findActiveTrigger(requestSessionId)` helper from `@thor/common/event-log.ts` (walks `session.parent` chain). The helper returns `{ sessionId, triggerId }` where `sessionId` is the resolved owner — the session whose events.jsonl contains the open `trigger_start`. Both paths build the URL `${RUNNER_BASE_URL}/runner/v/${result.sessionId}/${result.triggerId}` from the returned owner pair — no HMAC, no TTL. **Both fail-fast** if inference cannot return exactly one open trigger or if the per-tool args injector cannot find the expected field.
 
-Prerequisite (already shipped on this branch in commit `a4d755ca`): Confluence write tools removed from the approve list in `packages/common/src/proxies.ts`. Phase 5's per-tool injector covers only `createJiraIssue` and `addCommentToJiraIssue`.
+Prerequisites (already shipped on this branch as part of this plan):
+
+- Commit `a4d755ca`: Confluence write tools removed from the approve list in `packages/common/src/proxies.ts`. Phase 5's per-tool injector covers only `createJiraIssue` and `addCommentToJiraIssue`.
+- `gh pr create --fill` denied in `packages/remote-cli/src/policy-gh.ts` (companion commit). Removes the only `gh` shape that has no body field for the disclaimer injector to mutate. `using-gh` skill doc updated to match.
 
 #### Direct writes (GitHub `gh`) — inline at execute time
 
@@ -476,7 +482,7 @@ Exit criteria:
 - `createJiraIssue` and `addCommentToJiraIssue` carry the disclaimer in `description` / `commentBody` from approval-create time. The Slack approval prompt shows the disclaimer.
 - Approve-create with no/ambiguous active trigger or missing args field returns an error and persists no action.
 - Child-session writes resolve via `session.parent` chain to the parent's open trigger AND inject a URL that uses the **parent** session id. A viewer GET with the injected URL renders the parent slice (which contains both parent and child events).
-- Tests cover: direct write with one open trigger (URL uses request sessionId, == owner); child session 1-deep (URL uses parent sessionId, not request); chain depth 2-3 (URL uses topmost owner); chain depth exceeded; cycle detection; ambiguous direct-write (`gh` exits non-zero, no exec); ambiguous approve-create (errors, no action persisted); per-tool injector throws on missing field; approve-resolve replays the same args (idempotent); end-to-end: a child-session-originated `gh pr create` produces a URL whose viewer GET returns 200 (not 404).
+- Tests cover: direct write with one open trigger (URL uses request sessionId, == owner); child session 1-deep (URL uses parent sessionId, not request); chain depth 2-3 (URL uses topmost owner); chain depth exceeded; cycle detection; ambiguous direct-write (`gh` exits non-zero, no exec); ambiguous approve-create (errors, no action persisted); per-tool injector throws on missing field; approve-resolve replays the same args (idempotent); end-to-end: a child-session-originated `gh pr create` produces a URL whose viewer GET returns 200 (not 404); policy denies `gh pr create --fill` (covered by `policy.test.ts`).
 
 ### Phase 6 - Retention, Archival, and Janitor
 
@@ -545,6 +551,7 @@ Codex available: yes | UI scope: yes (public viewer is a server-rendered page) |
 > - UC2 (HMAC-signed public viewer URL) was reversed. The viewer is Vouch-gated under `/runner/*` instead. UUIDv4 entropy + Vouch is the access-control model. Drops HMAC operational cost (secret mgmt, signature code, Invalid-signature 403, Expired 410). Trade-off: external Jira reporters without OAuth cannot click the disclaimer link.
 > - **Approve-gated disclaimer gap surfaced post-review.** Atlassian writes (`createJiraIssue`, `addCommentToJiraIssue`) go through the MCP approval store, which neither persists Thor identifiers nor receives them at resolve time. By execute time the original trigger has closed. Fix: mutate `args` at approval-create time (while context is in scope). **Both disclaimer paths fail-fast** if `findActiveTrigger` cannot return one open trigger or if the per-tool injector cannot find the expected field — the artifact never ships without a disclaimer. Documented in the Disclaimer Links section.
 > - **Child-session URL bug surfaced post-review.** With the original `findActiveTrigger` return shape `{ triggerId }`, URL construction would have paired the request sessionId with the resolved triggerId. For child-session calls, the request sessionId is the child's id but the `trigger_start` lives in the parent's events.jsonl, so every disclaimer URL produced from a child session would 404. Fix: `findActiveTrigger` returns `{ sessionId: <owner>, triggerId }` and both disclaimer paths build URLs from the returned owner sessionId.
+> - **`gh pr create --fill` gap surfaced post-review.** `--fill` lets `gh` compose the body from commit messages at exec time, leaving no body field for the disclaimer injector to mutate. The plan's injection flow only described `--body`/`-b`/`-F` rewrites, so `--fill` would silently produce disclaimer-less PRs. Fix: deny `--fill` at the policy layer (`packages/remote-cli/src/policy-gh.ts`) with guidance toward `--title <t> --body <b>`. `using-gh` skill doc updated to match.
 > - **Confluence writes denied entirely.** `createConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment` removed from the approve list in `packages/common/src/proxies.ts`. Out of scope until a real use case lands.
 > - UC3 (flat session file path), UC4 (retention as Phase 6), UC5 (cutover-not-greenfield) stand.
 >
