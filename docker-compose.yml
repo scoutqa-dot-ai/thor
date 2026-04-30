@@ -39,7 +39,7 @@ services:
       - DAYTONA_API_KEY=${DAYTONA_API_KEY:-}
       - DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}
       - DAYTONA_SNAPSHOT=${DAYTONA_SNAPSHOT:-}
-      - RUNNER_BASE_URL=${RUNNER_BASE_URL:-http://localhost:3000}
+      - RUNNER_BASE_URL=${RUNNER_BASE_URL:?set RUNNER_BASE_URL}
     volumes:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
@@ -166,7 +166,7 @@ services:
     environment:
       - NODE_ENV=production
       - OPENCODE_URL=http://opencode:4096
-      - SESSION_LOG_ENABLED=${SESSION_LOG_ENABLED:-true}
+      - SESSION_LOG_ENABLED=${SESSION_LOG_ENABLED:-false}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:
