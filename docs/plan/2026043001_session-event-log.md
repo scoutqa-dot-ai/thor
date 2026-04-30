@@ -31,10 +31,9 @@ Record kinds:
 ```ts
 type SessionEventLogRecord =
   | { schemaVersion: 1; ts: string; type: "trigger_start"; sessionId: string; triggerId: string; correlationKey?: string; promptPreview?: string }
-  | { schemaVersion: 1; ts: string; type: "trigger_end"; sessionId: string; triggerId: string; status: "completed" | "error" | "aborted"; durationMs?: number; error?: string }
-  | { schemaVersion: 1; ts: string; type: "trigger_aborted"; sessionId: string; triggerId: string; reason: string }
+  | { schemaVersion: 1; ts: string; type: "trigger_end"; sessionId: string; triggerId: string; status: "completed" | "error" | "aborted"; durationMs?: number; error?: string; reason?: string }
   | { schemaVersion: 1; ts: string; type: "opencode_event"; sessionId: string; event: unknown }
-  | { schemaVersion: 1; ts: string; type: "alias"; sessionId: string; aliasType: "slack.thread_id" | "git.branch"; aliasValue: string; source?: string }
+  | { schemaVersion: 1; ts: string; type: "alias"; sessionId: string; aliasType: "slack.thread_id" | "git.branch" | "session.parent"; aliasValue: string; source?: string }
   | { schemaVersion: 1; ts: string; type: "tool_call"; sessionId: string; callId?: string; tool: string; payload: unknown };
 ```
 
@@ -97,7 +96,7 @@ remote-cli calls `findActiveTrigger(sessionId)` on each disclaimer-eligible writ
 
 1. Open `/workspace/worklog/sessions/<sessionId>.jsonl` if it exists.
 2. Tail-read last N KiB (size-bounded, never the whole file).
-3. Find `trigger_start` records without a matching `trigger_end` / `trigger_aborted` later in the slice.
+3. Find `trigger_start` records without a matching `trigger_end` later in the slice.
 4. If exactly one open trigger → return its `triggerId`.
 5. If zero open triggers → look up `(aliasType: "session.parent", aliasValue: sessionId)` in `aliases.jsonl`. If a parent exists, recurse from step 1 with the parent's session id.
 6. Chain-walk depth is capped at 5 (defends against cycles and runaway recursion); cycle detection by tracking visited ids per resolution.
@@ -122,13 +121,27 @@ The runner owns trigger boundaries:
 7. Append `trigger_start`.
 8. Send `promptAsync`.
 9. Append OpenCode events for the parent and child sessions.
-10. Append `trigger_end` when the trigger finishes.
+10. Append `trigger_end` (with `status: completed | error | aborted`, plus optional `reason`) when the trigger finishes.
 
-Crash handling: if the runner exits between step 7 and step 8 (or anywhere before completion), the outer `try` emits `trigger_aborted` with the exception message. The viewer renders this as "incomplete (aborted)" with the reason rather than as a generic incomplete trigger.
+### What the runner can and cannot guarantee about close markers
 
-The viewer slices from the requested `trigger_start` to the matching `trigger_end`. If only a `trigger_aborted` is present, the slice ends there with an "aborted" badge. If neither is present, the slice ends at the next `trigger_start` or EOF and is marked incomplete.
+The trigger handler is wrapped in a `try/catch/finally` and emits `trigger_end{status:"error", error: <message>}` on caught throws and `trigger_end{status:"aborted", reason: <reason>}` on user-initiated abort/interrupt. **It does not — and cannot — emit a close marker on process-level crashes.** SIGKILL, OOM kill, container kill, host failure, V8 abort, segfault, and `process.exit()` from anywhere all skip userland code. A best-effort `SIGTERM` handler can capture the most common operational case (graceful Docker stop, k8s rolling restart) by appending `trigger_end{status:"aborted", reason:"shutdown"}` for any in-flight trigger before the process exits — pairs with the slice algorithm below as a safety net, not a guarantee.
 
-Idempotency: a `trigger_start` with a `triggerId` already present in the session within the last hour is rejected by the writer (replay/retry safety).
+### Slice algorithm (conflict-based termination)
+
+The viewer's `readTriggerSlice(sessionId, triggerId)` finds the requested `trigger_start` and walks forward to the first of:
+
+| Stop reason | Slice status |
+|---|---|
+| `trigger_end{triggerId=target}` reached | terminal — render with that record's `status` (`completed` / `error` / `aborted`) |
+| Any other `trigger_start` (same session, different triggerId) reached | **`crashed`** — slice ends just before the new start. The new start is unambiguous proof the session moved on without closing this trigger; runner must have died after step 7 of the trigger flow |
+| EOF reached | **`in_flight`** — no terminal marker, no superseder. Could be still running or could be a crashed-and-not-yet-superseded trigger. Viewer renders with auto-refresh; soft banner if last record is older than 5 min |
+
+The viewer never time-bounds a slice into a "crashed" verdict on its own — that label requires hard data (a superseding `trigger_start`). Time staleness only soft-warns inside the in-flight render.
+
+### Idempotency
+
+A `trigger_start` with a `triggerId` already present in the session within the last hour is rejected by the writer (replay/retry safety).
 
 ## Alias Routing
 
@@ -168,15 +181,17 @@ The runner reads `X-Vouch-User` from incoming requests on `/runner/*` (matches t
 
 ### States
 
-| State | Server response | UI |
+| Slice status (from `readTriggerSlice`) | Server response | UI |
 |---|---|---|
-| Valid + completed | 200 | Hero + outcome card + collapsed timeline |
-| Valid + running | 200 | Yellow "Running" pill + last-event timestamp + `<meta http-equiv="refresh" content="5">` |
-| Valid + incomplete (no `trigger_end`, last event old) | 200 | Red "Crashed" pill + reason copy |
-| Valid + aborted (`trigger_aborted` present) | 200 | Red "Aborted" pill + reason from record |
-| Valid + empty (zero events between markers) | 200 | "No recorded events" empty state |
-| Valid + oversized | 200 | "Slice truncated" marker + raw link |
-| Valid + redacted fields present | 200 | Inline `[redacted: tool output, NN bytes]` markers |
+| `completed` (terminal `trigger_end{status:"completed"}`) | 200 | Green "Completed" pill + hero + outcome card + collapsed timeline |
+| `error` (terminal `trigger_end{status:"error"}`) | 200 | Red "Error" pill + `error` field + collapsed timeline |
+| `aborted` (terminal `trigger_end{status:"aborted"}`) | 200 | Orange "Aborted" pill + `reason` if present + collapsed timeline |
+| `crashed` (superseded by another `trigger_start` in same session) | 200 | Red "Crashed" pill + copy: "This trigger was abandoned without a close marker. The runner started a new trigger at <ts>; whatever was in-flight here was lost." |
+| `in_flight` (no terminal record, no superseder, last event recent) | 200 | Yellow "Running" pill + last-event timestamp + `<meta http-equiv="refresh" content="5">` |
+| `in_flight` + last event > 5 min old | 200 | Yellow "Running" pill + soft banner: "No new events in N min — the runner may have crashed without a close marker. Reload to check." |
+| Empty (zero non-marker records between start and stop) | 200 | "No recorded events" empty state |
+| Oversized slice | 200 | "Slice truncated" marker + raw link |
+| Redacted fields present | 200 | Inline `[redacted: tool output, NN bytes]` markers |
 | Unknown session/trigger | 404 | Branded 404 |
 | Missing `X-Vouch-User` | 401 | Vouch redirects to OAuth |
 | Backend failure (parse, FS error) | 503 | Branded retry copy |
@@ -306,7 +321,9 @@ At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args:
 | 2026-04-30 | Add `session.parent` alias type for child→parent session resolution                  | Lets inference walk from a child OpenCode session id up to the parent session that owns the open trigger. Reuses the alias mechanism rather than introducing a new state shape. Cycle-safe via depth cap (5) + visited-set. |
 | 2026-04-30 | Write `trigger_start` only after any prior busy session has settled                  | Prevents prior-run events from entering the new trigger slice.   |
 | 2026-04-30 | Abort timeout means no marker and no prompt                                          | Avoids ambiguous slices.                                         |
-| 2026-04-30 | Emit `trigger_aborted` if the runner crashes between `trigger_start` and `promptAsync` | Distinguishes orphan empty triggers from genuinely incomplete ones. |
+| 2026-04-30 | Drop the `trigger_aborted` record type; merge into `trigger_end{status:"aborted", reason?}` | One way to express "this trigger ended"; cleaner schema. The original separate type was a vestige of the (incorrect) plan that the runner could emit a marker on process crash. |
+| 2026-04-30 | Trigger slices terminate on conflict, not on time                                      | A subsequent `trigger_start` for the same session is unambiguous proof the prior trigger was abandoned (runner restart, lost state). Time-based "stale" detection only soft-warns inside the still-in-flight render — never assigns a "crashed" verdict from the clock alone. |
+| 2026-04-30 | Process-level crashes are not the runner's responsibility to mark                       | A `try/catch/finally` cannot run on SIGKILL / OOM / container kill / segfault. The plan no longer pretends it can. Best-effort SIGTERM handler covers graceful shutdowns; crashes are detected at viewer time via supersede. |
 | 2026-04-30 | Initial alias types are only `slack.thread_id` and `git.branch`                      | Matches actual producers.                                        |
 | 2026-04-30 | Treat phases 2-4 as a flag-gated cutover, not a greenfield build                     | Runner uses notes.ts at 5 call sites today; cutover with `SESSION_LOG_ENABLED` + dual-write window preserves rollback. |
 | 2026-04-30 | Viewer is Vouch-gated under `/runner/*` ingress prefix; no HMAC, no TTL on the URL    | Reuses the existing OAuth proxy pattern (`packages/admin/src/app.ts`); UUIDv4 entropy + Vouch is the access-control model. Drops HMAC operational cost (secret mgmt, signature code, "Invalid signature" UX). Audit-friendly: links in old artifacts keep working. (CHANGED 2026-04-30 from earlier "HMAC-signed public viewer" decision.) |
@@ -335,18 +352,18 @@ Scope:
 2. Build typed helpers, layered on `appendJsonlWorklog` (`packages/common/src/worklog.ts:123`):
    - `appendSessionEvent(sessionId, record)` — single complete append, < 4 KiB cap with `_truncated` marker on overflow.
    - `appendAlias({ aliasType, aliasValue, sessionId })` — appends to global `aliases.jsonl`.
-   - `readTriggerSlice(sessionId, triggerId)` — start..end (or aborted/incomplete) with malformed-line tolerance and partial-trailing-line discard.
+   - `readTriggerSlice(sessionId, triggerId)` — returns `{ records, status: "completed"|"error"|"aborted"|"crashed"|"in_flight", reason?, lastEventTs? }`. Termination is conflict-based (see "Trigger Slicing"): the slice ends at the first matching `trigger_end`, OR at any subsequent `trigger_start` for the same session (status = `crashed`), OR at EOF (status = `in_flight`). Tolerates malformed lines and discards partial trailing lines.
    - `findActiveTrigger(sessionId)` — tail-bounded read; if no open trigger in this session, walk `session.parent` chain (depth ≤ 5, cycle-detected); returns `{ triggerId } | { reason: "none" | "ambiguous" | "depth_exceeded" | "cycle" }`.
    - `resolveAlias({ aliasType, aliasValue })` — newest-wins lookup with in-process cache rebuilt on miss.
    - `listSessionAliases(sessionId)` — collects `alias` records from session log.
 3. Reader behaviors: `safeParse` each line, skip-with-counter on failure, drop unknown fields, tolerate partial trailing line.
-4. Unit tests for: append + 4KB truncation, slice extraction (happy/incomplete/aborted/malformed/partial-trailing), active-trigger lookup (zero/one/many in current session, walks `session.parent` chain to find parent's open trigger, depth-cap at 5, cycle detection), alias resolution (newest wins), session→aliases listing, schema-drift handling (unknown field ignored).
+4. Unit tests for: append + 4KB truncation, slice extraction across all five statuses (`completed`, `error`, `aborted`, `crashed` via subsequent `trigger_start`, `in_flight` via EOF), malformed-line tolerance, partial-trailing discard, active-trigger lookup (zero/one/many in current session, walks `session.parent` chain to find parent's open trigger, depth-cap at 5, cycle detection), alias resolution (newest wins), session→aliases listing, schema-drift handling (unknown field ignored).
 5. Concurrency tests: multi-process append fuzz (no corrupt lines); reader observing partial trailing line during writer activity.
 
 Exit criteria:
 
 - Records append to `/workspace/worklog/sessions/<session-id>.jsonl` with size cap enforced.
-- Trigger slices extracted correctly across happy / incomplete / aborted / malformed inputs.
+- `readTriggerSlice` returns the correct status for each of `completed`, `error`, `aborted`, `crashed` (subsequent `trigger_start` in same session), and `in_flight` (EOF). Malformed lines and partial trailing lines do not break extraction.
 - Alias resolution is newest-wins; cache rebuild on miss is verified.
 - `findActiveTrigger` walks `session.parent` chain correctly; depth cap and cycle detection both have failing-then-passing tests.
 - Multi-process append fuzz produces zero corrupt lines.
@@ -365,16 +382,20 @@ Scope:
    - interrupt busy aborts and waits for settle
    - abort timeout returns busy/error with no marker and no prompt
 7. Append `trigger_start` before `promptAsync`. Reject duplicate `triggerId` already present in the session within the last hour (idempotency).
-8. Outer `try` emits `trigger_aborted` (with reason) if the runner crashes between `trigger_start` and successful `promptAsync` invocation.
-9. Stream and append OpenCode events for parent and discovered child sessions. **When a new sub-session id appears on the event bus during an active trigger, append a `session.parent` alias record (`aliasValue=<child-id>`, `sessionId=<parent-id>`) to `aliases.jsonl`.** This is what lets `findActiveTrigger` chain-walk from a child session up to the parent's open trigger.
-10. Append `trigger_end` on completion or error.
-11. Write the Slack thread alias immediately on Slack-triggered sessions.
-12. On `session_stale` recreate, write a back-reference alias on the new session pointing to the old `sessionId`.
+8. Wrap the trigger handler in `try/catch/finally`. The `catch` emits `trigger_end{status:"error", error: <message>}`; the user-initiated abort/interrupt path emits `trigger_end{status:"aborted", reason: <reason>}`. **Process-level crashes are not handled here** — by design, a `try/catch` cannot run on SIGKILL/OOM/container-kill/segfault. Those leave the trigger open and are detected at viewer time via supersede.
+9. Register a best-effort `SIGTERM` handler that, before exit, appends `trigger_end{status:"aborted", reason:"shutdown"}` for any in-flight trigger this process owns. Captures `docker stop`, k8s rolling restart, and similar graceful shutdowns. Does not capture SIGKILL/OOM/segfault.
+10. Stream and append OpenCode events for parent and discovered child sessions. **When a new sub-session id appears on the event bus during an active trigger, append a `session.parent` alias record (`aliasValue=<child-id>`, `sessionId=<parent-id>`) to `aliases.jsonl`.** This is what lets `findActiveTrigger` chain-walk from a child session up to the parent's open trigger.
+11. Append `trigger_end` on normal completion (`status:"completed"`).
+12. Write the Slack thread alias immediately on Slack-triggered sessions.
+13. On `session_stale` recreate, write a back-reference alias on the new session pointing to the old `sessionId`.
 
 Exit criteria:
 
 - Every completed trigger has ordered start, event, and end records.
-- Busy, abort-timeout, and crash paths each produce the documented marker (none / `trigger_aborted` / `trigger_end{status:error}`).
+- Caught throws inside the trigger handler land as `trigger_end{status:"error"}`; user-initiated aborts land as `trigger_end{status:"aborted", reason}`.
+- A simulated SIGTERM during a live trigger appends `trigger_end{status:"aborted", reason:"shutdown"}` before the process exits.
+- A simulated SIGKILL during a live trigger leaves the trigger open in the log; a subsequent runner restart followed by a new trigger on the same session lets the viewer render the original slice with `crashed` status (verified via integration test).
+- Busy and abort-timeout paths produce no marker (none for non-interrupt-busy; no trigger_start for abort-timeout).
 - Same-correlationKey concurrent triggers do not double-create.
 - Child-session activity appears inside the parent trigger slice **and** every discovered child session has a `session.parent` alias written before any tool call from that child reaches remote-cli.
 - With flag off, behavior matches today's notes-only path. With flag on in dual-write, both stores carry the same routing facts.
@@ -386,7 +407,7 @@ Scope:
 1. Add `GET /runner/v/:sessionId/:triggerId` and `GET /runner/v/:sessionId/:triggerId/raw` routes to the runner service. Routes read `X-Vouch-User`; absence → 401.
 2. Update `docker/ingress/nginx.conf` with a `location /runner/ { ... }` block proxying to the runner service, behind the existing Vouch flow used for `/admin/`.
 3. Server-side render HTML using the hierarchy in this plan (hero / outcome / collapsed timeline / raw toggle).
-4. Implement the state matrix: valid/completed, valid/running (with `<meta refresh>`), valid/incomplete, valid/aborted, valid/empty, valid/oversized, redacted markers, branded 401/404/503.
+4. Implement the state matrix from "Trigger Viewer" above: `completed` / `error` / `aborted` (terminal); `crashed` (superseded); `in_flight` with `<meta refresh>` and a soft staleness banner if the last record is > 5 min old; empty / oversized / redacted variants; branded 401/404/503.
 5. Implement redaction allowlist (default-deny on tool outputs); per-tool field rules ship iteratively starting with safe metadata.
 6. Mobile-first CSS, semantic landmarks, `<time datetime>`, branded 401/404/503 pages.
 7. Path validation: `realpath` + prefix-check on `/workspace/worklog/sessions/`.
@@ -394,7 +415,9 @@ Scope:
 
 Exit criteria:
 
-- Authenticated request renders the requested trigger slice with appropriate state.
+- Authenticated request renders the requested trigger slice with the correct status from `readTriggerSlice` (one of `completed` / `error` / `aborted` / `crashed` / `in_flight`).
+- A trigger that was superseded by a later `trigger_start` for the same session renders with the red "Crashed" pill and abandonment copy — without any time threshold required.
+- A trigger with no terminal record and no superseder renders as "Running" with `<meta refresh>`; the soft staleness banner appears only when the last record is older than 5 min.
 - Missing `X-Vouch-User` returns 401 (Vouch handles the OAuth redirect upstream of the runner).
 - Unknown session/trigger returns branded 404.
 - Redaction default-deny is enforced (snapshot tests assert no raw tool output appears in HTML for non-allowlisted fields).
@@ -489,10 +512,10 @@ Exit criteria:
 
 Local verification:
 
-- `@thor/common` tests for event log helpers (append, slice, alias resolution including `session.parent` chain-walk + cycle/depth caps, schema drift, multi-process fuzz, partial trailing line).
-- runner tests for marker order, busy behavior, interrupt behavior, abort timeout, crash window (`trigger_aborted`), idempotent retry, same-correlationKey race, stale-session chain, `session.parent` alias write on child session discovery.
+- `@thor/common` tests for event log helpers (append, slice across all five statuses including `crashed`-via-supersede and `in_flight`-via-EOF, alias resolution including `session.parent` chain-walk + cycle/depth caps, schema drift, multi-process fuzz, partial trailing line).
+- runner tests for marker order, busy behavior, interrupt behavior, abort timeout, caught-throw → `trigger_end{status:"error"}`, SIGTERM handler appends `trigger_end{status:"aborted", reason:"shutdown"}`, simulated SIGKILL leaves the trigger open and a follow-up trigger renders the prior slice as `crashed`, idempotent retry, same-correlationKey race, stale-session chain, `session.parent` alias write on child session discovery.
 - resolver tests for Slack and git aliases (newest wins, back-reference chain, type isolation).
-- viewer route tests for valid completed/running/incomplete/aborted/empty/oversized/redacted states, branded 401/404/503, mobile snapshot, two-view model, `X-Vouch-User` 401 path.
+- viewer route tests for `completed` / `error` / `aborted` / `crashed` / `in_flight` rendering paths, soft staleness banner above 5 min, branded 401/404/503, mobile snapshot, two-view model, `X-Vouch-User` 401 path.
 - remote-cli tests for direct-write disclaimer injection (`gh pr create` flag rewrite); fail-fast on direct write when active trigger is missing/ambiguous (`gh` exits non-zero, no exec); approve-gated args mutation at create time (Jira ticket/comment); fail-fast approve-create on missing/ambiguous active trigger (no action persisted); per-tool injector throws on missing/wrong-typed field (no action persisted); idempotent approve-resolve replay.
 - ingress smoke test: `/runner/v/<sid>/<tid>` reaches the runner only with a valid Vouch session.
 - retention/janitor tests for gz round-trip, retention boundaries, dangling cleanup, aliases.jsonl rotation.
