@@ -2,100 +2,126 @@
 # Session Event Log and Public Trigger Viewer
 
 **Date**: 2026-04-30
-**Status**: Draft
+**Status**: Draft (revised by /autoplan 2026-04-30)
 
 ## Goal
 
 Deliver a session-scoped JSONL event log that powers:
 
-- trigger-scoped public viewer links
+- HMAC-signed, time-limited public viewer links for completed and in-flight triggers
 - OpenCode session event history
 - Slack thread and git branch alias routing
 - disclaimer-link injection for Thor-created GitHub and Jira content
+- a retention/archival/janitor story so the worklog stays bounded
 
-No database. No markdown-notes compatibility layer. The source of truth is the session log.
+No database. No backwards-compatible markdown-notes layer, but the migration is treated as a flag-gated cutover, not a clean-sheet build. The source of truth is the session log.
 
 ## Log Shape
 
-Each OpenCode session has one append-only log:
+Each OpenCode session has one append-only log at a flat, day-independent path:
 
 ```text
-/workspace/worklog/<yyyy-mm-dd>/<session-id>/events.jsonl
+/workspace/worklog/sessions/<session-id>.jsonl
 ```
 
-The day is when the session log is created. Later appends find the existing session directory through the session symlink index.
+The flat layout (no day-partition for session files) avoids absolute-symlink fragility across volume mounts, backups, and archival. Day-based archival happens later via the retention sweeper, not via the live read path.
 
-Initial record kinds:
+Record kinds:
 
 ```ts
 type SessionEventLogRecord =
   | { schemaVersion: 1; ts: string; type: "trigger_start"; sessionId: string; triggerId: string; correlationKey?: string; promptPreview?: string }
   | { schemaVersion: 1; ts: string; type: "trigger_end"; sessionId: string; triggerId: string; status: "completed" | "error" | "aborted"; durationMs?: number; error?: string }
+  | { schemaVersion: 1; ts: string; type: "trigger_aborted"; sessionId: string; triggerId: string; reason: string }
   | { schemaVersion: 1; ts: string; type: "opencode_event"; sessionId: string; event: unknown }
   | { schemaVersion: 1; ts: string; type: "alias"; sessionId: string; aliasType: "slack.thread_id" | "git.branch"; aliasValue: string; source?: string }
   | { schemaVersion: 1; ts: string; type: "tool_call"; sessionId: string; callId?: string; tool: string; payload: unknown };
 ```
 
-One JSON object per line. Writers use one complete append per line.
+Writer contract:
 
-## Symlink Indexes
+- One JSON object per line, terminated by `\n`. Writers use `appendFileSync` with a single complete append per record.
+- Every record is capped at **< 4 KiB** serialized. Larger `event` and `payload` fields are truncated; truncation marker `"_truncated": true` is set on the record. Mirrors the existing pattern in `packages/common/src/worklog.ts`.
+- Writers extend the existing `appendJsonlWorklog` primitive in `packages/common/src/worklog.ts:123` rather than building parallel infrastructure. New helper: `appendSessionEvent(sessionId, record)`.
+- `triggerId` is generated as a UUIDv4 (≥128-bit random) by the runner. The format is documented and asserted in tests so the viewer URL stays an unguessable bearer.
+- Single-writer-per-session is assumed. Runner is single-replica today; if multi-replica is ever required, an advisory `flock` on the session file is added then.
 
-JSONL is the source of truth. Absolute symlinks provide cheap lookup paths.
+Reader contract:
+
+- Single shared Zod schema in `@thor/common/event-log.ts`, imported by writer, viewer, alias resolver, and any active-trigger inference fallback.
+- Readers `safeParse` each line and skip-with-counter on failure. Counter surfaces in the viewer footer.
+- Readers tolerate a partial trailing line: a fragment without `\n` is dropped without error.
+- Unknown record types render as a generic `<details>` with `type` and the JSON body.
+- Forward-compatibility: readers drop unknown fields, render best-effort.
+
+## Lookup Indexes
+
+Two lookup needs:
+
+1. **Alias → session.** Slack thread id or git branch key must resolve to a session id.
+2. **Active triggers in a session.** Used only as a fallback for disclaimer injection if header propagation is unavailable.
+
+### Alias index
 
 ```text
-/workspace/worklog/index/sessions/<session-id>
-  -> /workspace/worklog/<yyyy-mm-dd>/<session-id>
-
-/workspace/worklog/index/aliases/slack.thread_id/<thread-id>
-  -> /workspace/worklog/<yyyy-mm-dd>/<session-id>
-
-/workspace/worklog/index/aliases/git.branch/<encoded-key>
-  -> /workspace/worklog/<yyyy-mm-dd>/<session-id>
+/workspace/worklog/aliases.jsonl
 ```
 
-Lookup rules:
+A single append-only file. Each line:
 
-- Session id: open `/workspace/worklog/index/sessions/<session-id>/events.jsonl`.
-- Slack thread id: open `/workspace/worklog/index/aliases/slack.thread_id/<thread-id>/events.jsonl`.
-- Git branch: encode the canonical branch key, then open `/workspace/worklog/index/aliases/git.branch/<encoded-key>/events.jsonl`.
-- Active trigger: resolve the session symlink and scan that one `events.jsonl`.
+```ts
+type AliasRecord = { ts: string; aliasType: "slack.thread_id" | "git.branch"; aliasValue: string; sessionId: string };
+```
 
-Symlink writes:
+Resolution: the resolver tails the file (read last N KiB), parses backwards or builds an in-memory map on cold start, returns the **newest** record for the given `(aliasType, aliasValue)`. The map is cached per process and rebuilt on miss.
 
-1. Ensure the index directory exists.
-2. Create a temporary symlink in the same index directory.
-3. Rename the temporary symlink over the final path.
+This replaces the absolute-symlink layout in the original plan. No symlinks → no portability concerns across volume mounts, backup tools, or archival. Day-partitioning is a write-time decision in `appendJsonlWorklog`, not a path requirement.
 
-If an alias moves to a different session, the newest symlink target wins. This matches the desired routing behavior.
+Filename encoding for `aliasValue`:
 
-Filename encoding:
+- Slack thread ids: validate as `[0-9.]+` before recording.
+- Git branch aliases: use base64url of the full canonical branch key (case-fold-safe on macOS APFS).
 
-- Slack thread ids can be used directly after validating `[0-9.]+`.
-- Git branch aliases use base64url of the full canonical branch key.
+### Active-trigger inference (fallback only)
 
-Thor runs on Ubuntu/macOS, so symlink support is assumed.
+Used **only** when `x-thor-trigger-id` is absent on a remote-cli call:
+
+1. Open `/workspace/worklog/sessions/<session-id>.jsonl`.
+2. Tail-read last N KiB (size-bounded, never the whole file).
+3. Find `trigger_start` records without a matching `trigger_end` later in the slice.
+4. If exactly one active trigger, return it. Otherwise log and return none.
+
+The remote-cli inference cache stores the last-seen offset per session in memory to avoid re-reading on every disclaimer write.
 
 ## Trigger Slicing
 
-We will not propagate `triggerId` through OpenCode, bash, curl, or remote-cli.
+`triggerId` is propagated end-to-end via the existing header pipe (`packages/opencode-cli/src/remote-cli.ts:27`, `packages/remote-cli/src/index.ts:90-97`). The fallback inference above only fires if the header is missing for legacy/incompatible callers.
 
 The runner owns trigger boundaries:
 
-1. Resolve or create the OpenCode session.
+1. Resolve or create the OpenCode session via the JSONL alias resolver, with an advisory lock on the alias key during resolve+create to prevent same-`correlationKey` race.
 2. If the session is busy and the trigger is non-interrupting, return busy and write no marker.
 3. If the session is busy and the trigger may interrupt, abort the session.
 4. Wait for `session.idle` or `session.error`.
 5. If settle times out, write no marker and do not call `promptAsync`.
-6. Append `trigger_start`.
-7. Send `promptAsync`.
-8. Append OpenCode events for the parent and child sessions.
-9. Append `trigger_end` when the trigger finishes.
+6. Generate `triggerId` (UUIDv4).
+7. Append `trigger_start`.
+8. Send `promptAsync`.
+9. Append OpenCode events for the parent and child sessions.
+10. Append `trigger_end` when the trigger finishes.
 
-The viewer slices from the requested `trigger_start` to the matching `trigger_end`. If a crash leaves no end marker, the slice ends at the next `trigger_start` for that session or EOF and is marked incomplete.
+Crash handling: if the runner exits between step 7 and step 8 (or anywhere before completion), the outer `try` emits `trigger_aborted` with the exception message. The viewer renders this as "incomplete (aborted)" with the reason rather than as a generic incomplete trigger.
+
+The viewer slices from the requested `trigger_start` to the matching `trigger_end`. If only a `trigger_aborted` is present, the slice ends there with an "aborted" badge. If neither is present, the slice ends at the next `trigger_start` or EOF and is marked incomplete.
+
+Idempotency: a `trigger_start` with a `triggerId` already present in the session within the last hour is rejected by the writer (replay/retry safety).
 
 ## Alias Routing
 
-Alias markers live in `events.jsonl`.
+Alias markers live in two places:
+
+- Inside `events.jsonl` for that session (audit trail; what aliases a session collected).
+- In the global `/workspace/worklog/aliases.jsonl` (newest-wins resolution).
 
 Initial alias types:
 
@@ -104,26 +130,95 @@ Initial alias types:
 
 No `github.pr` alias type in this phase.
 
-Index lookup rules:
+When a trigger creates a new session, the runner writes the alias to both locations as soon as enough context is known. Slack-triggered sessions write the incoming Slack thread id alias before any tool call; git branch aliases are added later from tool output.
 
-- Slack thread id to session id: resolve the `index/aliases/slack.thread_id/<thread-id>` symlink.
-- Git branch to session id: resolve the `index/aliases/git.branch/<encoded-key>` symlink.
-- Session id to aliases: read that session log and collect `alias` records.
-
-When a trigger creates a new session, the runner writes aliases as soon as enough context is known. For example, a Slack-triggered session should immediately write the incoming Slack thread id alias, and later writes can add git branch aliases discovered from tool output.
+If a trigger experiences `session_stale` recreate (`packages/runner/src/index.ts:440`), the new session inherits the aliases of the old one. The runner writes a back-reference alias on the new session pointing to the old `sessionId` so old viewer links can chain-follow rather than 404.
 
 ## Public Viewer
 
-The viewer link uses `sessionId + triggerId` as a bearer pair. It is public, ingress-exposed, server-side rendered, and simple.
+The viewer is **HMAC-signed**, ingress-exposed, server-side rendered, and treated as a brand surface.
 
-Viewer behavior:
+URL shape:
 
-- Open `/workspace/worklog/index/sessions/<session-id>/events.jsonl`.
-- Find `trigger_start` with the requested `triggerId`.
-- Render only that trigger slice.
-- Include trigger status, OpenCode events, tool calls, memory reads, and delegate/task events.
-- Return 404 for unknown session or trigger.
-- Apply conservative output limits and basic redaction.
+```text
+/v/<sessionId>/<triggerId>?exp=<unix-ts>&sig=<base64url>
+```
+
+`sig` is `HMAC-SHA256(secret, "<sessionId>|<triggerId>|<exp>")` truncated to 32 bytes. Secret is read from `THOR_VIEWER_HMAC_SECRET` env. Default TTL is 30 days; configurable per disclaimer call.
+
+### States
+
+| State | Server response | UI |
+|---|---|---|
+| Valid + completed | 200 | Hero + outcome card + collapsed timeline |
+| Valid + running | 200 | Yellow "Running" pill + last-event timestamp + `<meta http-equiv="refresh" content="5">` |
+| Valid + incomplete (no `trigger_end`, last event old) | 200 | Red "Crashed" pill + reason copy |
+| Valid + aborted (`trigger_aborted` present) | 200 | Red "Aborted" pill + reason from record |
+| Valid + empty (zero events between markers) | 200 | "No recorded events" empty state |
+| Valid + oversized | 200 | "Slice truncated" marker + raw link |
+| Valid + redacted fields present | 200 | Inline `[redacted: tool output, NN bytes]` markers |
+| Unknown session/trigger | 404 | Branded 404 |
+| Invalid signature | 403 | Branded 403 |
+| Expired link | 410 | Branded 410 with refresh-instruction copy |
+| Backend failure (parse, FS error) | 503 | Branded retry copy |
+
+### Information hierarchy
+
+```
+HERO
+  "Thor opened PR #123 in 4m 12s"
+  [✓ Completed]   2026-04-30 14:22 UTC
+  Triggered by @user from #channel
+
+OUTCOME
+  • Created PR: scoutqa-dot-ai/thor#123 →
+  • Edited 4 files
+
+▾ TIMELINE   (collapsed by default)
+  • Memory reads (3)
+  • Tool calls (12)
+  • OpenCode events (87)
+
+▾ Show raw JSONL   →  /v/<sid>/<tid>/raw
+
+Generated by Thor.   Report an issue.
+```
+
+### Two-view model
+
+- `/v/<sid>/<tid>` — curated view (hero + outcome + collapsed timeline).
+- `/v/<sid>/<tid>/raw` — raw JSONL dump as `text/plain` for engineers.
+
+### Redaction (allowlist, default-deny)
+
+Tool outputs are redacted by default. A per-tool field allowlist names which fields render verbatim. Initial allowlist:
+
+- `tool_call.tool` — always shown
+- `tool_call.callId` — always shown
+- `trigger_*.status` — always shown
+- everything in `tool_call.payload` — **default-deny**, replaced with `[redacted: tool output, NN bytes]` until per-tool fields are added
+
+Per-tool field rules ship iteratively in Phase 3 starting with safe metadata (status codes, durations) and never raw input/output bodies.
+
+Base64-detection: any field matching `^[A-Za-z0-9+/=]{200,}$` is rendered as `<base64 hidden, NN bytes>` regardless of allowlist.
+
+### Page chrome
+
+- System font stack: `-apple-system, system-ui, sans-serif`.
+- Reuse status-pill colors from `packages/admin/src/views.ts:69`.
+- Mobile-first: single column at <600px; 16px base font; 44px tap targets for `<details>`.
+- Semantic landmarks (`<main>`, `<header>`, `<section>`); `aria-live="polite"` for streaming.
+- `<time datetime>` for timestamps; render relative ("4m ago") with absolute on hover via `Intl.DateTimeFormat`.
+- OG metadata: `og:title` "Thor trigger: <one-line summary>"; `og:description`; `og:image=/social-share.png`.
+- Branded 403/404/410 pages.
+- Footer: "Generated by Thor at <time>" + "Report an issue" mailto.
+
+### Operational guards
+
+- Express `express-rate-limit` middleware on `/v/*` (e.g. 60 req/min/IP).
+- Per-hit audit log via `appendJsonlWorklog("viewer-audit", ...)`: request-id, IP, UA, sessionId, triggerId, status, ts.
+- Symlink target validation: although the new layout has no symlinks, the viewer still `realpath`s any input and asserts prefix `/workspace/worklog/sessions/` before opening.
+- Per-file size cap (e.g. 50 MiB) — beyond that, viewer returns oversized state with a raw link only.
 
 No client-side framework is needed.
 
@@ -138,29 +233,37 @@ Thor-created content includes a disclaimer/viewer link for:
 
 Slack messages are skipped to avoid noise.
 
-Since `triggerId` is not propagated, remote-cli infers the active trigger from `x-thor-session-id`:
+`triggerId` is propagated via headers:
 
-1. Open `/workspace/worklog/index/sessions/<session-id>/events.jsonl`.
-2. Find open trigger slices in that one file: a `trigger_start` without a later matching `trigger_end`.
-3. If exactly one active trigger exists, build the viewer link and inject it.
-4. If zero or multiple active triggers exist, log and skip injection.
+- `packages/opencode-cli/src/remote-cli.ts` adds `x-thor-trigger-id` alongside the existing `x-thor-session-id` and `x-thor-call-id`.
+- `packages/remote-cli/src/index.ts` reads `x-thor-trigger-id` in the `thorIds` helper.
 
-This depends on the runner appending `trigger_start` before any OpenCode tool can call remote-cli.
+remote-cli builds the HMAC-signed disclaimer URL deterministically from the headers — no inference required.
+
+If `x-thor-trigger-id` is absent (legacy callers, missing env), remote-cli falls back to active-trigger inference (see "Lookup Indexes"). When inference is ambiguous, the disclaimer is logged-and-skipped, but the header path closes off this case for any caller running through the standard wrapper.
 
 ## Decision Log
 
 | Date       | Decision                                                                            | Why                                                             |
 | ---------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| 2026-04-30 | Use `/workspace/worklog/<day>/<session-id>/events.jsonl` as the source of truth      | Keeps trigger, event, and alias data together                   |
-| 2026-04-30 | Use absolute symlink indexes for session and alias lookup                            | Avoids repeated global scans without introducing a database      |
-| 2026-04-30 | Do not add SQLite or another DB                                                     | Symlink indexes are enough for this phase                       |
-| 2026-04-30 | Do not propagate `THOR_TRIGGER_ID` through OpenCode/bash/curl/remote-cli             | Ordered trigger markers are simpler                            |
-| 2026-04-30 | Write `trigger_start` only after any prior busy session has settled                  | Prevents prior-run events from entering the new trigger slice   |
-| 2026-04-30 | Abort timeout means no marker and no prompt                                          | Avoids ambiguous slices                                         |
-| 2026-04-30 | remote-cli infers trigger from the latest open session marker                        | Enables disclaimer links without extra propagation              |
-| 2026-04-30 | remote-cli skips injection when inference is ambiguous                               | Avoids attaching the wrong public link                          |
-| 2026-04-30 | Initial alias types are only `slack.thread_id` and `git.branch`                      | Matches actual producers                                        |
-| 2026-04-30 | No markdown-notes compatibility or migration path                                    | Project is greenfield; build the intended feature directly      |
+| 2026-04-30 | Use `/workspace/worklog/sessions/<session-id>.jsonl` as the source of truth          | Flat session-keyed path; avoids symlink portability concerns and survives volume mount/backup/archival. |
+| 2026-04-30 | Drop absolute symlink indexes; use `aliases.jsonl` newest-wins for alias lookup       | No symlink fragility; in-process cache rebuilt on miss is faster than today's grep-based scan. |
+| 2026-04-30 | Do not add SQLite or another DB                                                     | Append-only JSONL + small in-memory cache is enough for v1. Revisit if alias scale becomes a problem. |
+| 2026-04-30 | Propagate `x-thor-trigger-id` via the existing header pipe                          | Header pipe already exists for `x-thor-session-id` and `x-thor-call-id`; one-line change. Removes the brittle "exactly one active trigger" inference path. (CHANGED 2026-04-30 from earlier "do not propagate" decision.) |
+| 2026-04-30 | Keep inference as a fallback for legacy callers without the header                   | Defense-in-depth; new wrapper-driven callers always use the header. |
+| 2026-04-30 | Write `trigger_start` only after any prior busy session has settled                  | Prevents prior-run events from entering the new trigger slice.   |
+| 2026-04-30 | Abort timeout means no marker and no prompt                                          | Avoids ambiguous slices.                                         |
+| 2026-04-30 | Emit `trigger_aborted` if the runner crashes between `trigger_start` and `promptAsync` | Distinguishes orphan empty triggers from genuinely incomplete ones. |
+| 2026-04-30 | Initial alias types are only `slack.thread_id` and `git.branch`                      | Matches actual producers.                                        |
+| 2026-04-30 | Treat phases 2-4 as a flag-gated cutover, not a greenfield build                     | Runner uses notes.ts at 5 call sites today; cutover with `SESSION_LOG_ENABLED` + dual-write window preserves rollback. |
+| 2026-04-30 | Public viewer URL is HMAC-signed with TTL                                            | Bearer-pair without signing is unsafe for public ingress; slices contain Slack/Jira/MCP outputs, repo names, env-var names. |
+| 2026-04-30 | Redaction is allowlist (default-deny) on tool outputs                                | Denylist will miss new fields; allowlist is the secure-by-default posture for public ingress. |
+| 2026-04-30 | Cap one event record at < 4 KiB serialized; truncate and mark `_truncated`           | Avoids cross-process append interleave; mirrors `worklog.ts:18` truncation pattern. |
+| 2026-04-30 | `triggerId` is UUIDv4 (≥128-bit random)                                              | Public viewer URL relies on it as an unguessable bearer.         |
+| 2026-04-30 | Reuse `appendJsonlWorklog` (`packages/common/src/worklog.ts:123`) as the underlying writer | DRY; the existing primitive already handles day-partitioning and graceful failure. |
+| 2026-04-30 | Single shared Zod schema in `@thor/common/event-log.ts`                              | Writer-reader schema gate; readers `safeParse` and skip-with-counter; forward-compat by ignoring unknown fields. |
+| 2026-04-30 | Add Phase 6: retention/archival/janitor                                              | JSONL grows unbounded; viewer OOMs on large `readFileSync`; active-trigger inference becomes O(file). |
+| 2026-04-30 | Per-hit JSONL audit log on `/v/*` + Express rate-limit                                | Public ingress requires incident-response capability and DoS guard. |
 
 ## Phases
 
@@ -168,118 +271,160 @@ This depends on the runner appending `trigger_start` before any OpenCode tool ca
 
 Scope:
 
-1. Add typed append/read helpers in `@thor/common`.
-2. Resolve session log path through `index/sessions/<session-id>`, else create today's session directory and symlink.
-3. Add helpers to:
-   - append trigger markers
-   - append OpenCode events
-   - append alias markers
-   - read a trigger slice
-   - find the active trigger for a session
-   - resolve aliases to session ids
-4. Add helpers to write absolute symlinks atomically.
-5. Add unit tests for append, read, slicing, active-trigger inference, alias symlinks, and malformed-line tolerance.
+1. Add the shared Zod schema in `@thor/common/event-log.ts` (`SessionEventLogRecord`, `AliasRecord`).
+2. Build typed helpers, layered on `appendJsonlWorklog` (`packages/common/src/worklog.ts:123`):
+   - `appendSessionEvent(sessionId, record)` — single complete append, < 4 KiB cap with `_truncated` marker on overflow.
+   - `appendAlias({ aliasType, aliasValue, sessionId })` — appends to global `aliases.jsonl`.
+   - `readTriggerSlice(sessionId, triggerId)` — start..end (or aborted/incomplete) with malformed-line tolerance and partial-trailing-line discard.
+   - `findActiveTriggers(sessionId)` — tail-bounded read, returns open trigger ids.
+   - `resolveAlias({ aliasType, aliasValue })` — newest-wins lookup with in-process cache rebuilt on miss.
+   - `listSessionAliases(sessionId)` — collects `alias` records from session log.
+3. Reader behaviors: `safeParse` each line, skip-with-counter on failure, drop unknown fields, tolerate partial trailing line.
+4. Unit tests for: append + 4KB truncation, slice extraction (happy/incomplete/aborted/malformed/partial-trailing), active-trigger inference (zero/one/many), alias resolution (newest wins), session→aliases listing, schema-drift handling (unknown field ignored).
+5. Concurrency tests: multi-process append fuzz (no corrupt lines); reader observing partial trailing line during writer activity.
 
 Exit criteria:
 
-- Records append to the agreed path.
-- Session and alias symlinks are created and replaced atomically.
-- Trigger slices are extracted correctly.
-- Missing `trigger_end` is handled as incomplete.
-- Alias lookup works both alias-to-session and session-to-aliases.
+- Records append to `/workspace/worklog/sessions/<session-id>.jsonl` with size cap enforced.
+- Trigger slices extracted correctly across happy / incomplete / aborted / malformed inputs.
+- Alias resolution is newest-wins; cache rebuild on miss is verified.
+- Multi-process append fuzz produces zero corrupt lines.
 
 ### Phase 2 - Runner Event Capture and Session Boundaries
 
 Scope:
 
-1. Generate a `triggerId` for each accepted `/trigger`.
-2. Replace notes-based session lookup for new routing with JSONL alias/session lookup.
-3. Enforce the busy-session rules:
+1. Add `SESSION_LOG_ENABLED` config flag (default off in prod for first deploy, on in staging).
+2. Generate `triggerId` (UUIDv4) for each accepted `/trigger`.
+3. When the flag is on, dual-write: continue calling notes.ts helpers AND write to the JSONL session log. Readers prefer JSONL but fall back to notes if absent.
+4. Resolve session via `resolveAlias` first (JSONL); fall back to `getSessionIdFromNotes` if no alias hit and the flag's dual-write window is still active.
+5. Advisory lock on the alias key during resolve+create to prevent same-`correlationKey` race.
+6. Enforce busy-session rules:
    - non-interrupt busy returns busy with no marker
    - interrupt busy aborts and waits for settle
    - abort timeout returns busy/error with no marker and no prompt
-4. Append `trigger_start` before `promptAsync`.
-5. Stream and append OpenCode events for parent and discovered child sessions.
-6. Append `trigger_end` on completion or error.
-7. Write initial aliases from trigger context, such as Slack thread id.
+7. Append `trigger_start` before `promptAsync`. Reject duplicate `triggerId` already present in the session within the last hour (idempotency).
+8. Outer `try` emits `trigger_aborted` (with reason) if the runner crashes between `trigger_start` and successful `promptAsync` invocation.
+9. Stream and append OpenCode events for parent and discovered child sessions.
+10. Append `trigger_end` on completion or error.
+11. Write the Slack thread alias immediately on Slack-triggered sessions.
+12. On `session_stale` recreate, write a back-reference alias on the new session pointing to the old `sessionId`.
 
 Exit criteria:
 
 - Every completed trigger has ordered start, event, and end records.
-- Busy and abort-timeout paths produce no partial trigger slice.
+- Busy, abort-timeout, and crash paths each produce the documented marker (none / `trigger_aborted` / `trigger_end{status:error}`).
+- Same-correlationKey concurrent triggers do not double-create.
 - Child-session activity appears inside the parent trigger slice.
-- Incoming Slack/git context can route to an existing session through JSONL aliases.
+- With flag off, behavior matches today's notes-only path. With flag on in dual-write, both stores carry the same routing facts.
 
 ### Phase 3 - Public Trigger Viewer
 
 Scope:
 
-1. Add a public route for `sessionId + triggerId`.
-2. Expose the route through ingress without auth.
-3. Render server-side HTML.
-4. Show trigger metadata, status, OpenCode events, tool calls, memory reads, and delegate/task events.
-5. Add output limits and redaction.
+1. Add a public route `GET /v/:sessionId/:triggerId[?exp=&sig=]` in a new viewer service (or new route on admin's express app, ingress-exposed under unauthenticated `location /v/` block).
+2. Implement HMAC-signed URL builder (`buildSignedViewerUrl(sessionId, triggerId, ttl)`); secret from `THOR_VIEWER_HMAC_SECRET`.
+3. Server-side render HTML using the hierarchy in this plan (hero / outcome / collapsed timeline / raw toggle).
+4. Implement the full state matrix: valid/completed, valid/running (with `<meta refresh>`), valid/incomplete, valid/aborted, valid/empty, valid/oversized, redacted markers, branded 403/404/410, 503.
+5. Implement redaction allowlist (default-deny on tool outputs); per-tool field rules ship iteratively starting with safe metadata.
+6. Add `/v/:sessionId/:triggerId/raw` for engineers (raw JSONL, `text/plain`).
+7. Mobile-first CSS, semantic landmarks, `<time datetime>`, OG metadata pointing to existing `docker/ingress/static/social-share.png`.
+8. Express rate-limit middleware on `/v/*`.
+9. Per-hit audit log via `appendJsonlWorklog("viewer-audit", ...)`.
+10. Symlink-target validation: `realpath` + prefix-check on `/workspace/worklog/sessions/`.
+11. Per-file size cap (50 MiB default); oversized state returns curated view + raw link only.
 
 Exit criteria:
 
-- Valid links render only the requested trigger slice.
-- Unknown session or trigger returns 404.
-- Incomplete slices are labeled incomplete.
-- Route is publicly reachable through ingress.
+- Valid signed link renders the requested trigger slice with appropriate state.
+- Tampered signature → 403; expired link → 410; unknown session/trigger → 404 (all branded).
+- Redaction default-deny is enforced (snapshot tests assert no raw tool output appears in HTML for non-allowlisted fields).
+- Mobile snapshot at 375px viewport renders single-column with 16px base font.
+- Per-hit audit log records every render with sessionId/triggerId/IP/UA.
+- Rate-limit returns 429 after configured threshold.
 
 ### Phase 4 - Alias Marker Producers
 
 Scope:
 
-1. Emit `slack.thread_id` aliases from inbound Slack trigger context and Slack write artifacts.
+1. Emit `slack.thread_id` aliases from inbound Slack trigger context and Slack write artifacts (both per-session log and global `aliases.jsonl`).
 2. Emit `git.branch` aliases from existing git artifact detection.
-3. Route Slack and GitHub/git events through the JSONL resolver.
-4. Add tests covering multiple aliases on one session.
+3. Route inbound Slack and GitHub/git events through the JSONL alias resolver (with the legacy notes resolver as the dual-write fallback while the flag's dual-write window is active).
+4. Tests cover: multiple aliases on one session; alias type isolation (same numeric value across types); newest-wins on alias move; back-reference chain after `session_stale` recreate.
 
 Exit criteria:
 
-- Slack thread replies route to the session with the matching `slack.thread_id`.
-- Git branch activity routes to the session with the matching `git.branch`.
-- A session can hold both Slack and git aliases.
+- Slack thread replies route to the session with the matching `slack.thread_id` via JSONL.
+- Git branch activity routes to the session with the matching `git.branch` via JSONL.
+- A session holding both Slack and git aliases resolves correctly from either side.
+- Recreated sessions chain-follow without 404.
 
-### Phase 5 - Disclaimer Injection
+### Phase 5 - Disclaimer Injection (header-propagated)
 
 Scope:
 
-1. Extend remote-cli request context to infer the active trigger by session id.
-2. Build the public viewer link from the inferred trigger.
-3. Inject the link into supported GitHub and Jira write operations.
-4. Skip Slack writes.
-5. Log and skip injection when active-trigger inference is ambiguous.
+1. Add `x-thor-trigger-id` to the OpenCode wrapper at `packages/opencode-cli/src/remote-cli.ts:27`, alongside `x-thor-session-id` and `x-thor-call-id`. Source the value from `THOR_OPENCODE_TRIGGER_ID` env injected by the runner near the new `appendTriggerStart` call site.
+2. Add `x-thor-trigger-id` to the `thorIds` helper in `packages/remote-cli/src/index.ts:90-97`.
+3. Build the HMAC-signed disclaimer URL from the headers (deterministic; no inference).
+4. Inject the link into supported GitHub and Jira write operations (PR create, PR comments, reviews; Jira ticket, Jira comments).
+5. Skip Slack writes.
+6. Fallback path: if `x-thor-trigger-id` is absent, use `findActiveTriggers(sessionId)`. If exactly one open trigger exists, build the link; otherwise log + skip injection.
 
 Exit criteria:
 
-- GitHub PR/comment/review writes include the viewer link when exactly one trigger is active.
-- Jira ticket/comment writes include the viewer link when exactly one trigger is active.
-- Ambiguous inference never injects a guessed link.
+- GitHub PR/comment/review writes include the HMAC-signed viewer link when the header is present.
+- Jira ticket/comment writes include the HMAC-signed viewer link when the header is present.
+- Header path never depends on inference; ambiguous inference fallback never injects a guessed link.
+- Tests: header path (deterministic), inference fallback (one/zero/many active triggers).
+
+### Phase 6 - Retention, Archival, and Janitor
+
+Scope:
+
+1. Per-session size cap on `events.jsonl` (e.g. 50 MiB). On exceed, rotate to `<session-id>-1.jsonl` (continuation file) and link the chain in a sidecar.
+2. Retention sweeper (cron job or one-shot script) that, after a configurable age (default 30 days), compresses session files to `<session-id>.jsonl.gz` and after a longer age (default 90 days) removes them.
+3. Symlink janitor — even though sessions are flat, viewer-audit and any future symlink uses get a sweeper that prunes broken symlinks and stray `tmp.*` files.
+4. Aliases.jsonl rotation: when the file exceeds (e.g.) 100 MiB, snapshot the current state into `aliases-snapshot-<date>.jsonl` and start a fresh `aliases.jsonl`. Resolver reads snapshot + current.
+5. Viewer behavior on archived sessions: gzipped session loads transparently; removed sessions return branded 410 ("This trigger has been archived").
+
+Exit criteria:
+
+- Bounded disk usage under continuous load (worst-case = retention-age × peak rate).
+- Archived sessions still render in the viewer (gz transparent decode).
+- Removed sessions return a clean 410 with explanation copy.
+- Sweeper job has tests for retention boundary, gz round-trip, and dangling cleanup.
 
 ## Out of Scope
 
 - SQLite or any database-backed index.
-- In-memory rebuildable indexes.
-- Propagating trigger id through OpenCode, bash, curl, or remote-cli.
 - New alias types such as `github.pr`.
 - Rich client-side viewer UI.
 - Slack disclaimer injection.
-- Retention, archival, and pruning automation.
 - Blocking raw Slack writes through mitmproxy.
+- Per-tool field allowlist beyond a starter set (iterates after Phase 3 ships).
+- Multi-replica runner support — current scope assumes single writer; revisit if/when scale-out becomes a need.
 
 ## Verification
 
 Local verification:
 
-- `@thor/common` tests for event log helpers
-- runner tests for marker order, busy behavior, interrupt behavior, and abort timeout
-- resolver tests for Slack and git aliases
-- viewer route tests for valid, missing, incomplete, and oversized slices
-- remote-cli tests for active-trigger inference and disclaimer injection fallback
+- `@thor/common` tests for event log helpers (append, slice, alias resolution, schema drift, multi-process fuzz, partial trailing line).
+- runner tests for marker order, busy behavior, interrupt behavior, abort timeout, crash window (`trigger_aborted`), idempotent retry, same-correlationKey race, stale-session chain.
+- resolver tests for Slack and git aliases (newest wins, back-reference chain, type isolation).
+- viewer route tests for valid completed/running/incomplete/aborted/empty/oversized/redacted states, branded 403/404/410, mobile snapshot, OG metadata, audit log per hit, rate-limit threshold, two-view model.
+- remote-cli tests for header-driven disclaimer injection (deterministic) and inference fallback (zero/one/many).
+- retention/janitor tests for gz round-trip, retention boundaries, dangling cleanup, aliases.jsonl rotation.
 
 Final verification follows the repository workflow: push the branch, wait for required GitHub checks, then open a PR.
+
+Rollout posture:
+
+- Deploy code dark with `SESSION_LOG_ENABLED=false` in prod.
+- Flip flag in staging; soak; verify viewer/disclaimer/alias paths against staging traffic.
+- Flip flag in prod; soak in dual-write mode for 24-48h.
+- Cut readers over to JSONL-only; leave dual-write writers for one more deploy as a safety net.
+- Remove notes-write call sites in a follow-up PR after the soak window.
+- Rollback: flip flag off; runtime returns to notes-only path.
 
 ---
 
