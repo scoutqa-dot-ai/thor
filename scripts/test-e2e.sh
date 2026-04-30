@@ -335,10 +335,12 @@ else
 
   # 4b. remote-cli-level: call the approval-required tool directly
   echo "  Calling tool via remote-cli (expecting approval interception)..."
+  approval_args_json='{"description":"e2e approval body"}'
+  escaped_approval_args=$(node -e "console.log(JSON.stringify(process.argv[1]))" "$approval_args_json")
   call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
     -H "x-thor-session-id: $E2E_THOR_SESSION_ID" \
-    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",\"{}\"],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
+    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",$escaped_approval_args],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
     2>/dev/null || echo '{}')
 
   # Parse action ID — check stdout, stderr (thor:meta), and content (legacy MCP format)
