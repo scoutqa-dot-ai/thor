@@ -30,6 +30,7 @@ import {
 } from "node:fs";
 import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
+import { resolveAlias } from "./event-log.js";
 import { truncate } from "./logger.js";
 import { z } from "zod/v4";
 
@@ -554,6 +555,11 @@ export function computeSlackAlias(
 export function resolveCorrelationKeys(rawKeys: string[]): string {
   if (rawKeys.length === 0) return "";
 
+  for (const key of rawKeys) {
+    const jsonlHit = resolveJsonlAliasKey(key);
+    if (jsonlHit) return jsonlHit;
+  }
+
   const candidates: Array<{ canonical: string; file: string }> = [];
 
   for (const key of rawKeys) {
@@ -580,6 +586,16 @@ export function resolveCorrelationKeys(rawKeys: string[]): string {
   // Pick the most recent by file path (paths contain date: worklog/2026-03-17/notes/...)
   candidates.sort((a, b) => b.file.localeCompare(a.file));
   return candidates[0].canonical;
+}
+
+function resolveJsonlAliasKey(key: string): string | undefined {
+  if (key.startsWith("slack:thread:")) {
+    return resolveAlias({ aliasType: "slack.thread_id", aliasValue: key.slice("slack:thread:".length) });
+  }
+  if (key.startsWith("git:branch:")) {
+    return resolveAlias({ aliasType: "git.branch", aliasValue: Buffer.from(key).toString("base64url") });
+  }
+  return undefined;
 }
 
 /**

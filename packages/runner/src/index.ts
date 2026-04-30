@@ -895,6 +895,11 @@ app.post("/trigger", async (req, res) => {
           const aliases = extractAliases(collectedArtifacts);
           for (const { alias, context } of aliases) {
             registerAlias({ correlationKey, alias, context });
+            if (alias.startsWith("slack:thread:")) {
+              appendAliasOrFail({ aliasType: "slack.thread_id", aliasValue: alias.slice("slack:thread:".length), sessionId });
+            } else if (alias.startsWith("git:branch:")) {
+              appendAliasOrFail({ aliasType: "git.branch", aliasValue: Buffer.from(alias).toString("base64url"), sessionId });
+            }
             logInfo(log, "alias_registered", { correlationKey, alias });
           }
         } catch (err) {
