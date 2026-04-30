@@ -336,7 +336,7 @@ At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args:
 | 2026-04-30 | Trigger slices terminate on conflict, not on time                                      | A subsequent `trigger_start` for the same session is unambiguous proof the prior trigger was abandoned (runner restart, lost state). Time-based "stale" detection only soft-warns inside the still-in-flight render — never assigns a "crashed" verdict from the clock alone. |
 | 2026-04-30 | Process-level crashes are not the runner's responsibility to mark                       | A `try/catch/finally` cannot run on SIGKILL / OOM / container kill / segfault. The plan no longer pretends it can. Best-effort SIGTERM handler covers graceful shutdowns; crashes are detected at viewer time via supersede. |
 | 2026-04-30 | Initial alias types are `slack.thread_id`, `git.branch`, and `session.parent`        | Matches actual producers needed for routing and child→parent trigger attribution. |
-| 2026-04-30 | Treat phases 2-4 as a flag-gated cutover, not a greenfield build                     | Runner uses notes.ts at 5 call sites today; cutover with `SESSION_LOG_ENABLED` + dual-write window preserves rollback. |
+| 2026-04-30 | Treat phases 2-4 as greenfield JSONL logging, not a flag-gated cutover               | This project can fail closed on event-log writes and route session aliases from JSONL directly; notes remain only for unrelated session continuity. |
 | 2026-04-30 | Viewer is Vouch-gated under `/runner/*` ingress prefix; no HMAC, no TTL on the URL    | Reuses the existing OAuth proxy pattern (`packages/admin/src/app.ts`); UUIDv4 entropy + Vouch is the access-control model. Drops HMAC operational cost (secret mgmt, signature code, "Invalid signature" UX). Audit-friendly: links in old artifacts keep working. (CHANGED 2026-04-30 from earlier "HMAC-signed public viewer" decision.) |
 | 2026-04-30 | Use `/runner/*` ingress prefix for runner-owned routes                                | Single ingress mount lets future runner routes ship without per-route ingress changes. Mirrors the existing `/admin/*` pattern. |
 | 2026-04-30 | Redaction is allowlist (default-deny) on tool outputs                                | Defense-in-depth — Vouch fronts the route, but allowlist redaction keeps screenshots / copy-paste / log-share from leaking content the page itself shouldn't render. |
@@ -388,22 +388,20 @@ Exit criteria:
 
 Scope:
 
-1. Add `SESSION_LOG_ENABLED` config flag (default off in prod for first deploy, on in staging).
-2. Generate `triggerId` (UUIDv4) for each accepted `/trigger`.
-3. When the flag is on, dual-write: continue calling notes.ts helpers AND write to the JSONL session log. Readers prefer JSONL but fall back to notes if absent.
-4. Resolve session via `resolveAlias` first (JSONL); fall back to `getSessionIdFromNotes` if no alias hit and the flag's dual-write window is still active.
-5. Advisory lock on the alias key during resolve+create to prevent same-`correlationKey` race.
-6. Enforce busy-session rules:
+1. Generate `triggerId` (UUIDv4) for each accepted `/trigger`.
+2. Always write accepted triggers to the JSONL session log; write failures fail the trigger before publishing downstream content.
+3. Resolve correlated sessions via JSONL aliases (`resolveAlias`) with no notes-based routing fallback.
+4. Advisory lock on the alias key during resolve+create to prevent same-`correlationKey` race.
+5. Enforce busy-session rules:
    - non-interrupt busy returns busy with no marker
    - interrupt busy aborts and waits for settle
    - abort timeout returns busy/error with no marker and no prompt
-7. Append `trigger_start` before `promptAsync`. Reject duplicate `triggerId` already present in the session within the last hour (idempotency).
-8. Wrap the trigger handler in `try/catch/finally`. The `catch` emits `trigger_end{status:"error", error: <message>}`; the user-initiated abort/interrupt path emits `trigger_end{status:"aborted", reason: <reason>}`. **Process-level crashes are not handled here** — by design, a `try/catch` cannot run on SIGKILL/OOM/container-kill/segfault. Those leave the trigger open and are detected at viewer time via supersede.
-9. Register a best-effort `SIGTERM` handler that, before exit, appends `trigger_end{status:"aborted", reason:"shutdown"}` for any in-flight trigger this process owns. Captures `docker stop`, k8s rolling restart, and similar graceful shutdowns. Does not capture SIGKILL/OOM/segfault.
-10. Stream and append OpenCode events for parent and discovered child sessions. **When a new sub-session id appears on the event bus during an active trigger, append a `session.parent` alias record (`aliasValue=<child-id>`, `sessionId=<parent-id>`) to `aliases.jsonl`.** This is what lets `findActiveTrigger` chain-walk from a child session up to the parent's open trigger after discovery.
-11. Append `trigger_end` on normal completion (`status:"completed"`).
-12. Write the Slack thread alias immediately on Slack-triggered sessions.
-13. On `session_stale` recreate, write a back-reference alias on the new session pointing to the old `sessionId`.
+6. Append `trigger_start` before `promptAsync`. Reject duplicate `triggerId` already present in the session within the last hour (idempotency).
+7. Wrap the trigger handler in `try/catch/finally`. The `catch` emits `trigger_end{status:"error", error: <message>}`; the user-initiated abort/interrupt path emits `trigger_end{status:"aborted", reason: <reason>}`. **Process-level crashes are not handled here** — by design, a `try/catch` cannot run on SIGKILL/OOM/container-kill/segfault. Those leave the trigger open and are detected at viewer time via supersede.
+8. Register a best-effort `SIGTERM` handler that, before exit, appends `trigger_end{status:"aborted", reason:"shutdown"}` for any in-flight trigger this process owns. Captures `docker stop`, k8s rolling restart, and similar graceful shutdowns. Does not capture SIGKILL/OOM/segfault.
+9. Stream and append OpenCode events for parent and discovered child sessions. **When a new sub-session id appears on the event bus during an active trigger, append a `session.parent` alias record (`aliasValue=<child-id>`, `sessionId=<parent-id>`) to `aliases.jsonl`.** This is what lets `findActiveTrigger` chain-walk from a child session up to the parent's open trigger after discovery.
+10. Append `trigger_end` on normal completion (`status:"completed"`).
+11. Write the Slack thread alias immediately on Slack-triggered sessions.
 
 Exit criteria:
 
@@ -549,12 +547,10 @@ Final verification follows the repository workflow: push the branch, wait for re
 
 Rollout posture:
 
-- Deploy code dark with `SESSION_LOG_ENABLED=false` in prod.
-- Flip flag in staging; soak; verify viewer/disclaimer/alias paths against staging traffic.
-- Flip flag in prod; soak in dual-write mode for 24-48h.
-- Cut readers over to JSONL-only; leave dual-write writers for one more deploy as a safety net.
-- Remove notes-write call sites in a follow-up PR after the soak window.
-- Rollback: flip flag off; runtime returns to notes-only path.
+- Ship JSONL session/event logging as the only implementation path.
+- Verify viewer/disclaimer/alias paths against staging traffic before prod rollout.
+- Keep markdown notes only for unrelated continuity summaries; do not use notes as routing fallback.
+- Rollback requires reverting the feature change rather than toggling a runtime cutover switch.
 
 ---
 
@@ -573,7 +569,7 @@ Codex available: yes | UI scope: yes (public viewer is a server-rendered page) |
 > - **Confluence writes denied entirely.** `createConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment` removed from the approve list in `packages/common/src/proxies.ts`. Out of scope until a real use case lands.
 > - **Tail-read active-trigger inference rejected post-review.** A long-running trigger can push its `trigger_start` outside a tail window before a late PR/Jira write. Because the plan avoids an additional active-trigger index, `findActiveTrigger` now scans the full capped session log and fails closed on oversized files. Child-session writes also fail closed with `none` until the durable `session.parent` relation is recorded.
 > - **All non-Slack content creation must be traceable.** The allowed `gh api` PR review-comment reply path is now included in direct disclaimer injection. `gh issue create` and `gh issue comment` are denied in v1 rather than allowed to create GitHub-visible content without a disclaimer. Combined with Confluence denial and Slack exclusion, every remaining content-creation path either gets the viewer link or is blocked.
-> - UC3 (flat session file path), UC4 (retention as Phase 6), UC5 (cutover-not-greenfield) stand.
+> - UC3 (flat session file path) and UC4 (retention as Phase 6) stand. UC5 was superseded by the greenfield simplification: JSONL is unconditional and notes are not a routing fallback.
 >
 > The dual-voice findings below are preserved verbatim as the audit record of the review at the time.
 
@@ -588,7 +584,7 @@ The plan's stated and implicit premises, with verdicts grounded in the codebase:
 | P1 | Symlink support is enough; "Ubuntu/macOS, symlinks assumed" (line 76) | **WEAK** | `/workspace/worklog` is a Docker bind mount. Absolute symlink targets `/workspace/worklog/...` do not resolve outside the container. Volume rsync/backup tools may not preserve symlinks. Future archival creates dangling links. |
 | P2 | One-line append per writer is enough concurrency control (line 39) | **WEAK** | No `O_APPEND` contract or per-line size cap stated. Posix guarantees atomic appends only ≤ `PIPE_BUF` (4KB). Long OpenCode events can exceed that and interleave. |
 | P3 | Session-id is a stable bearer over time | **ACCEPTABLE WITH CAVEAT** | OpenCode session IDs are high-entropy. But `runner/src/index.ts:413-449` recreates a session on stale; old viewer links 404 silently. Should be documented behavior. |
-| P4 | "Greenfield, no markdown-notes compatibility or migration" (line 16, 163) | **WRONG** | `runner/src/index.ts` calls `getSessionIdFromNotes` (414), `appendTrigger` (511), `createNotes` (515), `appendSummary` (798), `registerAlias` (812). Phases 2–4 are a hard cutover, not a greenfield build. |
+| P4 | "Greenfield, no markdown-notes compatibility or migration" (line 16, 163) | **SUPERSEDED** | JSONL now owns session/event routing unconditionally. Notes helpers remain only for unrelated continuity summaries and are not a routing fallback. |
 | P5 | Don't propagate `triggerId` through OpenCode/bash/curl/remote-cli (line 79–80, decision-log) | **WRONG** | The wrapper at `packages/opencode-cli/src/remote-cli.ts:27` already propagates `x-thor-session-id` and `x-thor-call-id`. Adding `x-thor-trigger-id` is one line and removes the entire "exactly one active trigger" inference, which is the failure mode flagged below. |
 | P6 | "Conservative output limits and basic redaction" (line 127) is sufficient for public ingress | **WRONG** | Slices contain Slack thread content, Jira bodies, MCP tool outputs (Atlassian queries, Metabase SQL with schema names), repo names, error stack traces with env-var names, memory file contents. Public bearer-pair link → search engine indexable, copy-paste leakable. |
 | P7 | "Exactly one active trigger" inference (line 144) covers the disclaimer injection cases | **WRONG** | Plan's own scope (Phase 2) lists child sessions, retries, mention-interrupt, and parallel triggers. The "log and skip" fallback drops disclaimers in exactly the busy-session cases the feature is meant to cover. Solved by P5. |
@@ -762,7 +758,7 @@ Architecture findings:
 - **Coupling**: viewer reads `events.jsonl` directly. If the writer's line format ever changes mid-trigger, the reader breaks. Need explicit reader contract: drop unknown fields, render best-effort, handle malformed lines.
 - **Single point of failure**: every Thor-created GitHub/Jira write goes through remote-cli's inference. If inference is wrong, the disclaimer is wrong. P5 fix removes this.
 - **Scaling**: at 100x trigger rate, alias symlink rename-over rate becomes a bottleneck (rename is fast but not free). Linear scan of one events.jsonl for active trigger is fine until file >50MB. Cap at Phase 1.
-- **Rollback**: ship behind a config flag (`SESSION_LOG_ENABLED`); fallback to today's notes-based path. Plan does not mention rollback posture.
+- **Rollback**: revert the feature change; there is no runtime cutover switch or notes-based routing fallback.
 
 #### Sections 2–10 (auto-decided)
 
@@ -841,9 +837,9 @@ For LLM/prompt changes: none — this is infrastructure.
 - Debuggability: structured per-trigger slices are themselves the debug aid. Score 9/10.
 
 **Section 9 — Deployment & Rollout.**
-- Plan does not specify a config flag. ACTION: gate behind `SESSION_LOG_ENABLED`; fallback to notes path. Two-deploy rollout: deploy code dark, flip flag, verify, then make notes.ts writes a no-op.
-- Migration risk window: while flag flips, two stores diverge. Acceptable for ~24-48h validation period.
-- Rollback: flip flag back; old notes path still reads markdown.
+- Plan uses unconditional JSONL logging; no runtime cutover switch.
+- Migration risk window is avoided by not dual-writing for routing.
+- Rollback requires reverting the feature change; markdown notes remain readable for continuity only.
 - Environment parity: dev, staging, prod all have same `/workspace/worklog` mount semantics. Verify in staging.
 - First 5 minutes after deploy: monitor viewer 5xx, event log write error rate, runner trigger latency.
 
@@ -1132,10 +1128,10 @@ NEW ERROR/RESCUE PATHS:
 #### Section 7 — Deployment & Rollout
 
 Plan does not mention rollout posture. **Required additions:**
-- Config flag `SESSION_LOG_ENABLED` gates the new writer.
-- Dual-write window (notes + new event log) for ~24-48h validation period; readers prefer JSONL but fall back to notes if absent.
-- Rollback: flip flag; old notes path still reads markdown.
-- Two-deploy rollout: deploy code dark, flip flag on staging, verify, flip on prod.
+- JSONL event logging is unconditional for new feature paths.
+- No dual-write routing window; readers use JSONL and do not fall back to notes.
+- Rollback requires reverting the feature change; old notes remain readable for continuity.
+- Rollout verifies staging first, then prod, without a runtime cutover switch.
 - Post-deploy verification: viewer 5xx rate, event-log write error rate, runner trigger latency. First 5 min + first hour.
 
 #### Section 8 — Long-Term Trajectory
@@ -1152,7 +1148,7 @@ Plan does not mention rollout posture. **Required additions:**
 |---|---|---|---|
 | F1 | Public viewer is unsigned bearer-pair URL; raw tool outputs leak | **critical** | HMAC-sign URL with TTL; allowlist redaction |
 | F2 | Disclaimer inference fails in busy/parallel cases — exactly the cases it must cover | **critical** | Propagate `x-thor-trigger-id` (one line in `packages/opencode-cli/src/remote-cli.ts:27` + add to `packages/remote-cli/src/index.ts:90`); deletes inference branch entirely |
-| F3 | "Greenfield, no migration" claim is false — runner uses notes.ts heavily | **high** | Add cutover plan + `SESSION_LOG_ENABLED` flag; dual-write window |
+| F3 | "Greenfield, no migration" claim is false — runner uses notes.ts heavily | **high** | Superseded: JSONL is unconditional; notes remain only for unrelated continuity summaries |
 | F4 | Absolute symlink indexes are fragile across volume mounts, archival, backup tools | **high** | Use flat session files (`<workdir>/sessions/<session-id>.jsonl`); drop symlink layer |
 | F5 | No retention/archival/janitor; `worklog/` grows unbounded | **high** | Add Phase 6 (retention) with per-file size cap + rotation |
 | F6 | "Basic redaction" undefined; tool outputs leak | **high** | Allowlist-based default-deny; per-tool field whitelist |
@@ -1185,7 +1181,7 @@ DX scope detection (10 matches) was driven by mentions of `remote-cli` and `webh
 | UC2 | HMAC-sign the public viewer URL with TTL | "Conservative output limits and basic redaction" + raw bearer-pair URL | Signed URL + redaction allowlist + audit log + rate limit | Slices contain Slack/Jira/MCP outputs, repo names, env-var names, memory contents; bearer-pair is unsafe for public ingress | **Highest stakes.** Link leak (copy-paste, search index, referrer) exposes internal data to the open internet |
 | UC3 | Flat session file path; drop absolute symlink indexes | Symlinks for `index/sessions/*` and `index/aliases/*/*` | Flat `/workspace/worklog/sessions/<session-id>.jsonl` | Absolute targets break across volume mounts/backup tools; dangle on archival; complicate retention | Symlinks work fine on a single host; cost surfaces on archival/migration day |
 | UC4 | Add retention/archival/janitor (Phase 6) | "Out of scope" (line 268) | In scope | Unbounded JSONL growth → viewer OOMs; active-trigger inference becomes O(file) | In 6 months: ops debt manifests as a fire-fight; recoverable but costly |
-| UC5 | Treat Phase 2-4 as a cutover, not greenfield | "No migration path; greenfield" (line 16, 163) | `SESSION_LOG_ENABLED` flag + dual-write window for ~24-48h validation | Runner uses notes.ts at 5 call sites (414/511/515/798/812); deploy boundary loses in-flight sessions | Manual recovery on deploy boundary; or accept session loss for one deploy |
+| UC5 | Treat Phase 2-4 as a cutover, not greenfield | "No migration path; greenfield" (line 16, 163) | Superseded: unconditional JSONL, no notes routing fallback | Runner still writes notes for unrelated continuity summaries, but JSONL owns session/event routing | Revert feature change if rollback is needed |
 
 **None of UC1–UC5 are flagged as security/feasibility blockers** by both models simultaneously, except UC2 which is the leakage risk. UC2's framing for the user: this is closer to "both models think this is a security risk, not just a preference" than the others.
 

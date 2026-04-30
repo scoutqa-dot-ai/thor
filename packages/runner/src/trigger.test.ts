@@ -4,12 +4,11 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Event, TextPart } from "@opencode-ai/sdk";
 import { createRunnerApp, type RunnerAppOptions } from "./index.js";
-import { appendSessionEvent } from "@thor/common";
+import { appendAlias, appendSessionEvent } from "@thor/common";
 
 const worklogDir = "/tmp/thor-runner-trigger-test/worklog";
 vi.hoisted(() => {
   process.env.WORKLOG_DIR = "/tmp/thor-runner-trigger-test/worklog";
-  process.env.SESSION_LOG_ENABLED = "true";
 });
 const sessionDir = "/workspace/repos/runner-trigger-test";
 const memoryDir = "/tmp/thor-runner-trigger-test/memory";
@@ -186,7 +185,6 @@ async function trigger(url: string, body: Record<string, unknown>) {
 
 beforeEach(() => {
   process.env.WORKLOG_DIR = worklogDir;
-  process.env.SESSION_LOG_ENABLED = "true";
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
 });
 
@@ -262,9 +260,7 @@ describe("runner /trigger orchestration", () => {
 
   it("returns busy without prompting when a resumed session is busy and interrupt is absent", async () => {
     const h = createHarness({ existingSessions: new Set(["busy-session"]), busySessions: new Set(["busy-session"]) });
-
-    mkdirSync(`${worklogDir}/2026-04-28/notes`, { recursive: true });
-    writeFileSync(`${worklogDir}/2026-04-28/notes/busy-key.md`, "Session ID: busy-session\n");
+    expect(appendAlias({ aliasType: "slack.thread_id", aliasValue: "busy-key", sessionId: "busy-session" })).toEqual({ ok: true });
 
     await withServer(h.app, async (url) => {
       const response = await fetch(`${url}/trigger`, {
@@ -280,8 +276,7 @@ describe("runner /trigger orchestration", () => {
 
   it("aborts then prompts when a resumed session is busy and interrupt is true", async () => {
     const h = createHarness({ existingSessions: new Set(["busy-session"]), busySessions: new Set(["busy-session"]) });
-    mkdirSync(`${worklogDir}/2026-04-28/notes`, { recursive: true });
-    writeFileSync(`${worklogDir}/2026-04-28/notes/busy-key.md`, "Session ID: busy-session\n");
+    expect(appendAlias({ aliasType: "slack.thread_id", aliasValue: "busy-key", sessionId: "busy-session" })).toEqual({ ok: true });
 
     await withServer(h.app, async (url) => {
       const result = await trigger(url, { prompt: "now", correlationKey: "busy-key", interrupt: true });

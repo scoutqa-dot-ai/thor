@@ -166,7 +166,6 @@ services:
     environment:
       - NODE_ENV=production
       - OPENCODE_URL=http://opencode:4096
-      - SESSION_LOG_ENABLED=${SESSION_LOG_ENABLED:-false}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:

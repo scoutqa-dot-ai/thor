@@ -14,7 +14,6 @@ const {
   appendTrigger,
   appendSummary,
   findNotesFile,
-  getSessionIdFromNotes,
   registerAlias,
   resolveCorrelationKeys,
   extractAliases,
@@ -56,49 +55,6 @@ describe("notes", () => {
       prompt: "nobody home",
     });
     expect(readNotes("ghost-key")).toBeUndefined();
-  });
-
-  it("getSessionIdFromNotes returns session ID from notes file", () => {
-    const key = uniqueKey();
-    createNotes({
-      correlationKey: key,
-      prompt: "test",
-      sessionId: "session-lookup-123",
-    });
-
-    expect(getSessionIdFromNotes(key)).toBe("session-lookup-123");
-  });
-
-  it("getSessionIdFromNotes returns undefined for unknown key", () => {
-    expect(getSessionIdFromNotes("nonexistent-key-xyz")).toBeUndefined();
-  });
-
-  it("getSessionIdFromNotes returns undefined when notes file has no Session ID line", () => {
-    const key = uniqueKey();
-    // Create notes file, then overwrite it with content missing the Session ID header
-    createNotes({ correlationKey: key, prompt: "test", sessionId: "will-be-removed" });
-    const path = findNotesFile(key)!;
-    writeFileSync(path, "# Session: test\nNo session ID here\n");
-
-    expect(getSessionIdFromNotes(key)).toBeUndefined();
-  });
-
-  it("getSessionIdFromNotes returns latest session ID after overwrite", () => {
-    const key = uniqueKey();
-    createNotes({
-      correlationKey: key,
-      prompt: "first",
-      sessionId: "session-old",
-    });
-
-    // Overwrite with new notes (same day, same key → overwrites)
-    createNotes({
-      correlationKey: key,
-      prompt: "second",
-      sessionId: "session-new",
-    });
-
-    expect(getSessionIdFromNotes(key)).toBe("session-new");
   });
 
   it("sanitizes correlation keys with special characters", () => {
@@ -337,21 +293,6 @@ describe("notes", () => {
       const todayContent = readFileSync(findNotesFile(key)!, "utf-8");
       expect(todayContent).toContain("## Result");
       expect(todayContent).toContain("test-tool");
-    });
-
-    it("getSessionIdFromNotes finds session from continued file", () => {
-      const key = "cross-day-lookup";
-      const prevPath = createNotesOnDay("2026-01-06", key, "session-original");
-
-      continueNotes({
-        correlationKey: key,
-        sessionId: "session-original",
-        prompt: "continued",
-        previousNotesPath: prevPath,
-      });
-
-      // Should find today's (most recent) session ID
-      expect(getSessionIdFromNotes(key)).toBe("session-original");
     });
 
     it("alias registered on previous day resolves after continueNotes", () => {

@@ -26,7 +26,6 @@ import {
   appendTrigger,
   appendSummary,
   findNotesFile,
-  getSessionIdFromNotes,
   isAliasableTool,
   extractAliases,
   extractThorMeta,
@@ -53,7 +52,6 @@ const log = createLogger("runner");
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const OPENCODE_URL = (process.env.OPENCODE_URL || "http://127.0.0.1:4096").replace(/\/$/, "");
 const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
-const SESSION_LOG_ENABLED = process.env.SESSION_LOG_ENABLED === "true";
 const VIEWER_RATE_LIMIT_WINDOW_MS = parseInt(process.env.VIEWER_RATE_LIMIT_WINDOW_MS || "60000", 10);
 const VIEWER_RATE_LIMIT_MAX = parseInt(process.env.VIEWER_RATE_LIMIT_MAX || "60", 10);
 
@@ -122,13 +120,11 @@ function getToolInstructions(directory: string): string | undefined {
 }
 
 function appendSessionEventOrFail(sessionId: string, record: Record<string, unknown>): void {
-  if (!SESSION_LOG_ENABLED) return;
   const result = appendSessionEvent(sessionId, record);
   if (!result.ok) throw result.error;
 }
 
 function appendAliasOrFail(record: Parameters<typeof appendAlias>[0]): void {
-  if (!SESSION_LOG_ENABLED) return;
   const result = appendAlias(record);
   if (!result.ok) throw result.error;
 }
@@ -486,10 +482,9 @@ app.post("/trigger", async (req, res) => {
 
     const candidateSessionId =
       requestedSessionId ||
-      (correlationKey && SESSION_LOG_ENABLED
+      (correlationKey
         ? resolveAlias({ aliasType: "slack.thread_id", aliasValue: correlationKey })
-        : undefined) ||
-      (correlationKey ? getSessionIdFromNotes(correlationKey) : undefined);
+        : undefined);
 
     if (candidateSessionId) {
       // Verify the session still exists in OpenCode

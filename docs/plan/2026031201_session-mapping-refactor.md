@@ -1,6 +1,6 @@
 # Session Mapping Refactor — 2026-03-12-01
 
-> Eliminate `session-map.json` by deriving session mappings from existing worklog notes files. Add an archival tool to manage old worklog data and bound the search scope.
+> Historical plan. Superseded on 2026-04-30 by JSONL session aliases; notes are no longer a session-routing source of truth.
 
 ## Context
 
@@ -27,7 +27,7 @@ OpenCode sessions have no custom metadata or tags — only `id`, `title`, and ti
 
 Steps:
 
-1. Add a `getSessionIdFromNotes(correlationKey)` function in `@thor/common/notes.ts`:
+1. Add a notes-based session lookup function in `@thor/common/notes.ts`:
    - Use `findNotesFile(correlationKey)` to locate the most recent notes file
    - Read the file and parse `Session ID: <id>` from the header
    - Return `sessionId` or `undefined`
@@ -36,7 +36,7 @@ Steps:
    - Used when a stale session is replaced with a new one
 3. Update `runner/src/index.ts`:
    - Replace all `getSession()` / `setSession()` / `touchSession()` / `removeSession()` calls with notes-based equivalents
-   - Session lookup: `getSessionIdFromNotes(correlationKey)`
+   - Session lookup: notes-based correlation key lookup
    - Session create: `createNotes()` already writes session ID — no change
    - Stale session replace: `updateSessionId()` + `createNotes()` for new day
    - Remove `listSessions()` usage from GET `/sessions` endpoint (or derive from notes)
@@ -64,7 +64,7 @@ Deferred until we detect slowness in notes-based lookup. Will compress old date 
 
 Steps:
 
-1. Add unit tests for `getSessionIdFromNotes()` and `updateSessionId()` in `packages/common`
+1. Add unit tests for notes-based lookup and `updateSessionId()` in `packages/common`
 2. Update or replace GET `/sessions` endpoint:
    - Without `correlationKey`: scan active notes dirs, return all correlation keys with session IDs
    - With `correlationKey`: return the session ID from notes, or 404

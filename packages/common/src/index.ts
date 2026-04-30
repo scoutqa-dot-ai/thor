@@ -62,7 +62,6 @@ export {
   appendTrigger,
   appendSummary,
   findNotesFile,
-  getSessionIdFromNotes,
   registerAlias,
   resolveCorrelationKeys,
   isAliasableTool,
