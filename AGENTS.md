@@ -31,7 +31,7 @@ Instructions for AI agents working on this repository.
 
 6. **Environment variable discipline** — When adding, renaming, or removing an environment variable, update every required surface in the same change: `docker-compose.yml`, `.env.example`, `README.md` Deployment Configuration, relevant GitHub workflow env blocks, tests/fixtures, and any active plan docs. Do not leave required env vars documented only in code or compose.
 
-7. **Behavior-focused tests** — Prefer tests that prove user-visible behavior, safety boundaries, and fail-fast paths. Avoid tests that only lock obvious string construction or implementation details unless the exact formatting is itself meaningful behavior.
+7. **Behavior-focused tests** — Prefer tests that prove user-visible behavior, safety boundaries, integration contracts, and non-obvious fail-fast paths. Avoid tests that only lock obvious string construction, env-var trimming/default wrappers, one-line pass-through helpers, or other implementation details unless that exact output is a meaningful product/API contract. If the code is straightforward and already covered through a higher-level behavior test, prefer no direct unit test over low-value coverage.
 
 8. **Rate limiting** — App-level rate limiters / DDoS protection are deferred to infrastructure (ingress, proxy, WAF, or platform controls). CodeQL missing-rate-limit alerts are acknowledged, but do not add Express middleware limiters unless a future plan explicitly changes this policy.
 
