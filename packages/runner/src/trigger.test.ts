@@ -7,8 +7,11 @@ import { createRunnerApp, type RunnerAppOptions } from "./index.js";
 import { appendAlias, appendSessionEvent } from "@thor/common";
 
 const worklogDir = "/tmp/thor-runner-trigger-test/worklog";
-vi.hoisted(() => {
+const originalEnv = vi.hoisted(() => {
+  const sessionErrorGraceMs = process.env.SESSION_ERROR_GRACE_MS;
   process.env.WORKLOG_DIR = "/tmp/thor-runner-trigger-test/worklog";
+  process.env.SESSION_ERROR_GRACE_MS = "20";
+  return { sessionErrorGraceMs };
 });
 const sessionDir = "/workspace/repos/runner-trigger-test";
 const memoryDir = "/tmp/thor-runner-trigger-test/memory";
@@ -93,7 +96,28 @@ function taskRunningEvent(sessionId: string): Event {
   } as unknown as Event;
 }
 
-function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Set<string>; children?: Array<{ id: string }>; promptEvents?: (sessionId: string) => Event[] } = {}) {
+function statusEvent(sessionId: string): Event {
+  return { type: "session.status", properties: { sessionID: sessionId, status: "busy" } } as Event;
+}
+
+function sessionErrorEvent(sessionId: string, message: string): Event {
+  return {
+    type: "session.error",
+    properties: {
+      sessionID: sessionId,
+      error: { name: "ProviderError", data: { message } },
+    },
+  } as Event;
+}
+
+function createHarness(
+  opts: {
+    existingSessions?: Set<string>;
+    busySessions?: Set<string>;
+    children?: Array<{ id: string }>;
+    promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
+  } = {},
+) {
   const buses = new FakeEventBuses();
   const existingSessions = opts.existingSessions ?? new Set<string>();
   const busySessions = opts.busySessions ?? new Set<string>();
@@ -114,9 +138,7 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
         return { data: { id: path.id } };
       },
       status: async () => ({
-        data: Object.fromEntries(
-          [...busySessions].map((id) => [id, { type: "busy" }]),
-        ),
+        data: Object.fromEntries([...busySessions].map((id) => [id, { type: "busy" }])),
       }),
       abort: async ({ path }: { path: { id: string } }) => {
         aborts.push(path.id);
@@ -124,11 +146,20 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
         abortedPending.add(path.id);
         return { data: {} };
       },
-      promptAsync: async ({ path, body }: { path: { id: string }; body: { parts: Array<{ text: string }> } }) => {
+      promptAsync: async ({
+        path,
+        body,
+      }: {
+        path: { id: string };
+        body: { parts: Array<{ text: string }> };
+      }) => {
         prompts.push(body.parts[0]?.text ?? "");
         queueMicrotask(() => {
           const sub = buses.latest();
-          const events = opts.promptEvents?.(path.id) ?? [textEvent(path.id, `ok ${path.id}`), idleEvent(path.id)];
+          const events = opts.promptEvents
+            ? opts.promptEvents(path.id, sub)
+            : [textEvent(path.id, `ok ${path.id}`), idleEvent(path.id)];
+          if (!events) return;
           for (const event of events) sub.push(event);
         });
         return { data: {} };
@@ -149,7 +180,8 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
       },
     } as unknown as RunnerAppOptions["eventBuses"],
     memoryDir,
-    createClient: () => client as unknown as ReturnType<NonNullable<RunnerAppOptions["createClient"]>>,
+    createClient: () =>
+      client as unknown as ReturnType<NonNullable<RunnerAppOptions["createClient"]>>,
     ensureOpencodeAvailable: async () => {},
     isOpencodeReachable: async () => true,
   });
@@ -157,7 +189,10 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
   return { app, prompts, aborts, existingSessions, busySessions };
 }
 
-async function withServer<T>(app: ReturnType<typeof createRunnerApp>, fn: (url: string) => Promise<T>) {
+async function withServer<T>(
+  app: ReturnType<typeof createRunnerApp>,
+  fn: (url: string) => Promise<T>,
+) {
   const server: Server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
@@ -189,6 +224,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalEnv.sessionErrorGraceMs === undefined) delete process.env.SESSION_ERROR_GRACE_MS;
+  else process.env.SESSION_ERROR_GRACE_MS = originalEnv.sessionErrorGraceMs;
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
 });
 
@@ -196,17 +233,24 @@ describe("runner /trigger orchestration", () => {
   it("serves the Vouch-gated trigger viewer with 401, 404, and rendered status", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-4000-8000-000000000301";
-    expect(appendSessionEvent("viewer-session", { type: "trigger_start", triggerId })).toEqual({ ok: true });
-    expect(appendSessionEvent("viewer-session", { type: "trigger_end", triggerId, status: "completed" })).toEqual({ ok: true });
+    expect(appendSessionEvent("viewer-session", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
+    expect(
+      appendSessionEvent("viewer-session", { type: "trigger_end", triggerId, status: "completed" }),
+    ).toEqual({ ok: true });
 
     await withServer(h.app, async (url) => {
       const unauthorized = await fetch(`${url}/runner/v/viewer-session/${triggerId}`);
       expect(unauthorized.status).toBe(401);
       expect(await unauthorized.text()).toContain("Unauthorized");
 
-      const missing = await fetch(`${url}/runner/v/viewer-session/00000000-0000-4000-8000-000000000399`, {
-        headers: { "X-Vouch-User": "u@example.com" },
-      });
+      const missing = await fetch(
+        `${url}/runner/v/viewer-session/00000000-0000-4000-8000-000000000399`,
+        {
+          headers: { "X-Vouch-User": "u@example.com" },
+        },
+      );
       expect(missing.status).toBe(404);
       expect(await missing.text()).toContain("Trigger not found");
 
@@ -228,7 +272,11 @@ describe("runner /trigger orchestration", () => {
       const firstStart = first.events.find((e) => e.type === "start");
       const firstDone = first.events.find((e) => e.type === "done");
       expect(firstStart).toMatchObject({ sessionId: "session-1", resumed: false });
-      expect(firstDone).toMatchObject({ sessionId: "session-1", resumed: false, status: "completed" });
+      expect(firstDone).toMatchObject({
+        sessionId: "session-1",
+        resumed: false,
+        status: "completed",
+      });
       const logText = readFileSync(`${worklogDir}/sessions/session-1.jsonl`, "utf8");
       expect(logText).toContain('"type":"trigger_start"');
       expect(logText).toContain('"type":"trigger_end"');
@@ -237,7 +285,11 @@ describe("runner /trigger orchestration", () => {
       const secondStart = second.events.find((e) => e.type === "start");
       const secondDone = second.events.find((e) => e.type === "done");
       expect(secondStart).toMatchObject({ sessionId: "session-1", resumed: true });
-      expect(secondDone).toMatchObject({ sessionId: "session-1", resumed: true, status: "completed" });
+      expect(secondDone).toMatchObject({
+        sessionId: "session-1",
+        resumed: true,
+        status: "completed",
+      });
     });
   });
 
@@ -259,14 +311,27 @@ describe("runner /trigger orchestration", () => {
   });
 
   it("returns busy without prompting when a resumed session is busy and interrupt is absent", async () => {
-    const h = createHarness({ existingSessions: new Set(["busy-session"]), busySessions: new Set(["busy-session"]) });
-    expect(appendAlias({ aliasType: "slack.thread_id", aliasValue: "busy-key", sessionId: "busy-session" })).toEqual({ ok: true });
+    const h = createHarness({
+      existingSessions: new Set(["busy-session"]),
+      busySessions: new Set(["busy-session"]),
+    });
+    expect(
+      appendAlias({
+        aliasType: "slack.thread_id",
+        aliasValue: "busy-key",
+        sessionId: "busy-session",
+      }),
+    ).toEqual({ ok: true });
 
     await withServer(h.app, async (url) => {
       const response = await fetch(`${url}/trigger`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: "later", correlationKey: "busy-key", directory: sessionDir }),
+        body: JSON.stringify({
+          prompt: "later",
+          correlationKey: "busy-key",
+          directory: sessionDir,
+        }),
       });
       expect(await response.json()).toEqual({ busy: true });
     });
@@ -275,11 +340,24 @@ describe("runner /trigger orchestration", () => {
   });
 
   it("aborts then prompts when a resumed session is busy and interrupt is true", async () => {
-    const h = createHarness({ existingSessions: new Set(["busy-session"]), busySessions: new Set(["busy-session"]) });
-    expect(appendAlias({ aliasType: "slack.thread_id", aliasValue: "busy-key", sessionId: "busy-session" })).toEqual({ ok: true });
+    const h = createHarness({
+      existingSessions: new Set(["busy-session"]),
+      busySessions: new Set(["busy-session"]),
+    });
+    expect(
+      appendAlias({
+        aliasType: "slack.thread_id",
+        aliasValue: "busy-key",
+        sessionId: "busy-session",
+      }),
+    ).toEqual({ ok: true });
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, { prompt: "now", correlationKey: "busy-key", interrupt: true });
+      const result = await trigger(url, {
+        prompt: "now",
+        correlationKey: "busy-key",
+        interrupt: true,
+      });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         sessionId: "busy-session",
         resumed: true,
@@ -324,5 +402,59 @@ describe("runner /trigger orchestration", () => {
     expect(aliases).toContain('"aliasType":"session.parent"');
     expect(aliases).toContain('"aliasValue":"child-session"');
     expect(aliases).toContain('"sessionId":"session-1"');
+  });
+
+  it("emits session errors as tool progress and continues when later activity arrives", async () => {
+    const h = createHarness({
+      promptEvents: (sessionId) => [
+        sessionErrorEvent(sessionId, "Input exceeds context window of this model"),
+        textEvent(sessionId, "continued after compaction"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, { prompt: "large search", correlationKey: "compact-key" });
+      expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "completed",
+        response: "continued after compaction",
+      });
+    });
+  });
+
+  it("uses the latest session error as terminal failure when no later activity arrives", async () => {
+    const h = createHarness({
+      promptEvents: (sessionId) => [sessionErrorEvent(sessionId, "provider unavailable")],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, { prompt: "fail", correlationKey: "error-key" });
+      expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "error",
+        error: "provider unavailable",
+      });
+    });
+  });
+
+  it("does not let status events extend the session error grace period", async () => {
+    const h = createHarness({
+      promptEvents: (sessionId, sub) => {
+        sub.push(sessionErrorEvent(sessionId, "provider unavailable"));
+        setTimeout(() => sub.push(statusEvent(sessionId)), 5);
+        setTimeout(() => sub.push(statusEvent(sessionId)), 15);
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const startedAt = Date.now();
+      const result = await trigger(url, { prompt: "fail", correlationKey: "status-key" });
+      expect(Date.now() - startedAt).toBeLessThan(100);
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "error",
+        error: "provider unavailable",
+      });
+    });
   });
 });

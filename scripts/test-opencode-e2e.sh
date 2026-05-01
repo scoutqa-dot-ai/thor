@@ -64,9 +64,9 @@ parse_done() {
 json_field() {
   local json="$1"
   local field="$2"
-  echo "$json" | node -e "
+  echo "$json" | FIELD="$field" node -e "
     const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-    const v = d["$field"];
+    const v = d[process.env.FIELD];
     console.log(v === undefined ? '' : typeof v === 'boolean' ? String(v) : String(v));
   " 2>/dev/null || echo ""
 }
@@ -74,10 +74,10 @@ json_field() {
 exec_stdout_field() {
   local json="$1"
   local field="$2"
-  echo "$json" | node -e "
+  echo "$json" | FIELD="$field" node -e "
     const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
     const stdout = JSON.parse(d.stdout || '{}');
-    const v = stdout["$field"];
+    const v = stdout[process.env.FIELD];
     console.log(v === undefined ? '' : typeof v === 'boolean' ? String(v) : String(v));
   " 2>/dev/null || echo ""
 }
