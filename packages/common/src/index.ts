@@ -27,7 +27,7 @@ export type {
   ValidationResult,
 } from "./workspace-config.js";
 export type { ProxyName } from "./proxies.js";
-export { writeToolCallLog, appendJsonlWorklog } from "./worklog.js";
+export { writeToolCallLog, appendJsonlWorklog, getWorklogDir } from "./worklog.js";
 export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.js";
 export {
   SessionEventLogRecordSchema,
@@ -39,8 +39,14 @@ export {
   resolveAlias,
   listSessionAliases,
   sessionLogPath,
+  MAX_SESSION_FILE_BYTES,
 } from "./event-log.js";
-export type { SessionEventLogRecord, AliasRecord, TriggerSlice, ActiveTriggerResult } from "./event-log.js";
+export type {
+  SessionEventLogRecord,
+  AliasRecord,
+  TriggerSlice,
+  ActiveTriggerResult,
+} from "./event-log.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
 export type { Logger } from "./logger.js";
 export { errorToMetadata } from "./errors.js";
