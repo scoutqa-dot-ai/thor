@@ -74,6 +74,14 @@ services:
     environment:
       - GRAFANA_URL=${GRAFANA_URL:?set GRAFANA_URL}
       - GRAFANA_SERVICE_ACCOUNT_TOKEN=${GRAFANA_SERVICE_ACCOUNT_TOKEN:?set GRAFANA_SERVICE_ACCOUNT_TOKEN}
+      # GOMEMLIMIT matches the chart's example request; the Docker memory
+      # limit matches the chart's example limit.
+      # https://github.com/grafana-community/helm-charts/blob/5f0ac2b/charts/grafana-mcp/values.yaml#L191-L197
+      - GOMEMLIMIT=256MiB
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     healthcheck:
       test:
         [
