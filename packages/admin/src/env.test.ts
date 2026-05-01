@@ -12,9 +12,9 @@ describe("admin env", () => {
     expect(config.auditLogPath).toBe(join(dirname(WORKSPACE_CONFIG_PATH), "config.audit.log"));
   });
 
-  it("uses custom paths and legacy parseInt-compatible port behavior", () => {
+  it("uses custom paths and strictly parses port", () => {
     const config = loadAdminConfig({
-      PORT: "03005x",
+      PORT: "3005",
       CONFIG_PATH: "/tmp/thor/config.json",
       AUDIT_LOG_PATH: "/tmp/thor/audit.log",
     });
@@ -24,7 +24,8 @@ describe("admin env", () => {
     expect(config.auditLogPath).toBe("/tmp/thor/audit.log");
   });
 
-  it("keeps invalid legacy integer results as NaN instead of throwing", () => {
-    expect(Number.isNaN(loadAdminConfig({ PORT: "bad" }).port)).toBe(true);
+  it("throws for invalid port", () => {
+    expect(() => loadAdminConfig({ PORT: "bad" })).toThrow("PORT must be an integer");
+    expect(() => loadAdminConfig({ PORT: "+3005" })).toThrow("PORT must be an integer");
   });
 });

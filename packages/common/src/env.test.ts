@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createEnvLoader, requireEnv, stripTrailingSlashes } from "./env.js";
+import { createEnvLoader, stripTrailingSlashes } from "./env.js";
 
 describe("env loader", () => {
   it("reads required and optional strings with trim/default semantics", () => {
@@ -20,15 +20,6 @@ describe("env loader", () => {
     expect(() => env.int("LOW", { min: 1 })).toThrow("LOW must be >= 1");
   });
 
-  it("supports legacy parseInt-compatible integer parsing", () => {
-    const env = createEnvLoader({ PORT: "03004x ", EMPTY: "", SPACES: "   " });
-
-    expect(env.legacyInt("PORT", { defaultValue: 3000 })).toBe(3004);
-    expect(env.legacyInt("EMPTY", { defaultValue: 3000 })).toBe(3000);
-    expect(env.legacyInt("MISSING", { defaultValue: 3000 })).toBe(3000);
-    expect(Number.isNaN(env.legacyInt("SPACES", { defaultValue: 3000 }))).toBe(true);
-  });
-
   it("parses booleans and csv lists", () => {
     const env = createEnvLoader({ ENABLED: "true", LIST: " a, b ,, c " });
 
@@ -37,13 +28,12 @@ describe("env loader", () => {
     expect(env.csv("LIST")).toEqual(["a", "b", "c"]);
   });
 
-  it("normalizes trailing slashes and keeps requireEnv compatibility", () => {
-    const env = { URL: "https://example.test///", REQUIRED: " ok " };
+  it("normalizes trailing slashes without regex backtracking", () => {
+    const env = { URL: "https://example.test///" };
 
     expect(createEnvLoader(env).string("URL", { normalizeTrailingSlash: true })).toBe(
       "https://example.test",
     );
     expect(stripTrailingSlashes("https://example.test///")).toBe("https://example.test");
-    expect(requireEnv("REQUIRED", env)).toBe("ok");
   });
 });

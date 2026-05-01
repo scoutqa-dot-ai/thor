@@ -55,7 +55,7 @@ export function loadRemoteCliConfig(env: NodeJS.ProcessEnv = process.env): Remot
   const internal = loadRemoteCliInternalConfig(env);
 
   return {
-    port: loader.legacyInt("PORT", { defaultValue: 3004 }),
+    port: loader.int("PORT", { defaultValue: 3004 }),
     thorInternalSecret: internal.thorInternalSecret,
     nodeEnv: loader.optionalString("NODE_ENV", { defaultValue: "" }) ?? "",
     ...github,
@@ -74,7 +74,7 @@ export function loadMetabaseConfig(env: NodeJS.ProcessEnv = process.env): Metaba
   return {
     url: loader.string("METABASE_URL", { normalizeTrailingSlash: true }),
     apiKey: loader.string("METABASE_API_KEY"),
-    dbId: loader.legacyInt("METABASE_DATABASE_ID"),
+    dbId: loader.int("METABASE_DATABASE_ID"),
     schemas: new Set(loader.csv("METABASE_ALLOWED_SCHEMAS")),
   };
 }

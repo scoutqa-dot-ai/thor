@@ -24,17 +24,23 @@ describe("gateway env", () => {
     expect(config.githubAppBotEmail).toBe("12345+thor-app[bot]@users.noreply.github.com");
   });
 
-  it("preserves legacy parseInt-compatible integer behavior", () => {
+  it("strictly parses integer fields", () => {
     const config = loadGatewayConfig({
       ...requiredEnv,
-      PORT: "03002x ",
-      REMOTE_CLI_PORT: "+03004",
-      SLACK_TIMESTAMP_TOLERANCE_SECONDS: "300seconds",
+      PORT: "3002",
+      REMOTE_CLI_PORT: "3004",
+      SLACK_TIMESTAMP_TOLERANCE_SECONDS: "300",
     });
 
     expect(config.port).toBe(3002);
     expect(config.remoteCliPort).toBe(3004);
     expect(config.slackTimestampToleranceSeconds).toBe(300);
+    expect(() => loadGatewayConfig({ ...requiredEnv, PORT: "03002x" })).toThrow(
+      "PORT must be an integer",
+    );
+    expect(() => loadGatewayConfig({ ...requiredEnv, REMOTE_CLI_PORT: "+03004" })).toThrow(
+      "REMOTE_CLI_PORT must be an integer",
+    );
   });
 
   it("requires internal and GitHub vars and validates bot id", () => {

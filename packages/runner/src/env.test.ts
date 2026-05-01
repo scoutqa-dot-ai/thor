@@ -12,21 +12,25 @@ describe("runner env", () => {
     expect(config.sessionErrorGraceMs).toBe(10000);
   });
 
-  it("preserves legacy parseInt-compatible integer behavior", () => {
+  it("strictly parses integer fields", () => {
     const config = loadRunnerConfig({
-      PORT: "03000x",
-      OPENCODE_CONNECT_TIMEOUT: "+15000ms",
-      ABORT_TIMEOUT: "10000 ",
-      SESSION_ERROR_GRACE_MS: "20ms",
+      PORT: "3000",
+      OPENCODE_CONNECT_TIMEOUT: "15000",
+      ABORT_TIMEOUT: "10000",
+      SESSION_ERROR_GRACE_MS: "20",
     });
 
     expect(config.port).toBe(3000);
     expect(config.opencodeConnectTimeout).toBe(15000);
     expect(config.abortTimeout).toBe(10000);
     expect(config.sessionErrorGraceMs).toBe(20);
+    expect(() => loadRunnerConfig({ PORT: "03000x" })).toThrow("PORT must be an integer");
+    expect(() => loadRunnerConfig({ OPENCODE_CONNECT_TIMEOUT: "+15000" })).toThrow(
+      "OPENCODE_CONNECT_TIMEOUT must be an integer",
+    );
   });
 
-  it("keeps invalid legacy integer results as NaN instead of throwing", () => {
-    expect(Number.isNaN(loadRunnerConfig({ PORT: "not-a-number" }).port)).toBe(true);
+  it("throws for invalid integers", () => {
+    expect(() => loadRunnerConfig({ PORT: "not-a-number" })).toThrow("PORT must be an integer");
   });
 });

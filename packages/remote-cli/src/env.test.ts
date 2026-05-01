@@ -26,9 +26,14 @@ describe("remote-cli env", () => {
     expect(config.gitIdentityEmail).toBe("12345+thor-app[bot]@users.noreply.github.com");
   });
 
-  it("preserves legacy parseInt-compatible port behavior", () => {
-    expect(loadRemoteCliConfig({ ...requiredEnv, PORT: "+03004x" }).port).toBe(3004);
-    expect(Number.isNaN(loadRemoteCliConfig({ ...requiredEnv, PORT: "bad" }).port)).toBe(true);
+  it("strictly parses port", () => {
+    expect(loadRemoteCliConfig({ ...requiredEnv, PORT: "3004" }).port).toBe(3004);
+    expect(() => loadRemoteCliConfig({ ...requiredEnv, PORT: "+03004x" })).toThrow(
+      "PORT must be an integer",
+    );
+    expect(() => loadRemoteCliConfig({ ...requiredEnv, PORT: "bad" })).toThrow(
+      "PORT must be an integer",
+    );
   });
 
   it("validates required GitHub and internal vars separately", () => {
@@ -51,11 +56,11 @@ describe("remote-cli env", () => {
     expect(config.appDir).toBe("/var/lib/remote-cli/github-app");
   });
 
-  it("loads Metabase config with legacy database id parsing and required vars", () => {
+  it("loads Metabase config with strict database id parsing and required vars", () => {
     const config = loadMetabaseConfig({
       METABASE_URL: "https://metabase.test///",
       METABASE_API_KEY: "mb-key",
-      METABASE_DATABASE_ID: "042dw",
+      METABASE_DATABASE_ID: "42",
       METABASE_ALLOWED_SCHEMAS: "dm_products, dm_growth,, dw_testops",
     });
 
@@ -65,6 +70,14 @@ describe("remote-cli env", () => {
     expect(() => loadMetabaseConfig({ METABASE_URL: "https://metabase.test" })).toThrow(
       "Missing required env var METABASE_API_KEY",
     );
+    expect(() =>
+      loadMetabaseConfig({
+        METABASE_URL: "https://metabase.test",
+        METABASE_API_KEY: "mb-key",
+        METABASE_DATABASE_ID: "042dw",
+        METABASE_ALLOWED_SCHEMAS: "dm_products",
+      }),
+    ).toThrow("METABASE_DATABASE_ID must be an integer");
   });
 
   it("loads Daytona defaults and requires API key", () => {

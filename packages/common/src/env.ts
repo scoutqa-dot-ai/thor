@@ -1,9 +1,5 @@
 export type EnvSource = Record<string, string | undefined>;
 
-export interface EnvLoaderOptions {
-  env?: EnvSource;
-}
-
 export interface EnvValueOptions<T> {
   defaultValue?: T;
 }
@@ -54,25 +50,6 @@ export class EnvLoader {
     return value;
   }
 
-  /**
-   * Compatibility parser for legacy `parseInt(process.env.X || default, 10)` paths.
-   * Keeps parseInt's prefix parsing behavior for migrated service startup config.
-   */
-  legacyInt(name: string, options: EnvIntOptions = {}): number {
-    const raw = this.env[name];
-    let input: string;
-    if (options.defaultValue !== undefined) {
-      input = raw || String(options.defaultValue);
-    } else {
-      input = this.string(name);
-    }
-    const value = Number.parseInt(input, 10);
-    if (options.min !== undefined && (!Number.isFinite(value) || value < options.min)) {
-      throw new Error(`${name} must be >= ${options.min}, got: ${input}`);
-    }
-    return value;
-  }
-
   bool(name: string, options: EnvValueOptions<boolean> = {}): boolean {
     const raw = this.optionalString(name);
     if (raw === undefined) {
@@ -99,10 +76,6 @@ export class EnvLoader {
 
 export function createEnvLoader(env: EnvSource = process.env): EnvLoader {
   return new EnvLoader(env);
-}
-
-export function requireEnv(name: string, env: NodeJS.ProcessEnv = process.env): string {
-  return createEnvLoader(env).string(name);
 }
 
 export function stripTrailingSlashes(value: string): string {

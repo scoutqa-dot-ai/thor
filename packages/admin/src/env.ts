@@ -11,7 +11,7 @@ export function loadAdminConfig(env: NodeJS.ProcessEnv = process.env): AdminConf
   const loader = createEnvLoader(env);
   const configPath = loader.string("CONFIG_PATH", { defaultValue: WORKSPACE_CONFIG_PATH });
   return {
-    port: loader.legacyInt("PORT", { defaultValue: 3005 }),
+    port: loader.int("PORT", { defaultValue: 3005 }),
     configPath,
     auditLogPath: loader.string("AUDIT_LOG_PATH", {
       defaultValue: join(dirname(configPath), "config.audit.log"),
