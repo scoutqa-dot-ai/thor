@@ -1035,7 +1035,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         if (collectedArtifacts.length > 0) {
           try {
             const aliases = extractAliases(collectedArtifacts);
-            for (const { alias, context } of aliases) {
+            for (const { alias } of aliases) {
               if (alias.startsWith("slack:thread:")) {
                 appendAliasOrFail({
                   aliasType: "slack.thread_id",
