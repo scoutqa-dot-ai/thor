@@ -31,9 +31,12 @@ import {
 import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { truncate } from "./logger.js";
+import { createEnvLoader } from "./env.js";
 import { z } from "zod/v4";
 
-const WORKLOG_DIR = process.env.WORKLOG_DIR || "/workspace/worklog";
+function getWorklogDir(): string {
+  return createEnvLoader().string("WORKLOG_DIR", { defaultValue: "/workspace/worklog" });
+}
 
 /** Sanitize a correlation key for use as a filename. */
 function sanitizeKey(key: string): string {
@@ -43,7 +46,7 @@ function sanitizeKey(key: string): string {
 /** Get the notes directory for today. */
 function todayNotesDir(): string {
   const day = new Date().toISOString().slice(0, 10);
-  return join(WORKLOG_DIR, day, "notes");
+  return join(getWorklogDir(), day, "notes");
 }
 
 /** Get the full path for a notes file in today's directory. */
@@ -61,7 +64,8 @@ export function findNotesFile(correlationKey: string): string | undefined {
   const filename = `${sanitizeKey(correlationKey)}.md`;
 
   try {
-    const entries = readdirSync(WORKLOG_DIR, { withFileTypes: true });
+    const worklogDir = getWorklogDir();
+    const entries = readdirSync(worklogDir, { withFileTypes: true });
     const days = entries
       .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
       .map((e) => e.name)
@@ -69,7 +73,7 @@ export function findNotesFile(correlationKey: string): string | undefined {
       .reverse();
 
     for (const day of days) {
-      const candidate = join(WORKLOG_DIR, day, "notes", filename);
+      const candidate = join(worklogDir, day, "notes", filename);
       if (existsSync(candidate)) return candidate;
     }
   } catch {
@@ -597,8 +601,9 @@ function grepNotesFiles(pattern: string): string | undefined {
  */
 function grepAllNotesFiles(pattern: string): string[] {
   try {
+    const worklogDir = getWorklogDir();
     const result = execFileSync("grep", ["-rl", "--include=*.md", "-E", pattern, "."], {
-      cwd: WORKLOG_DIR,
+      cwd: worklogDir,
       encoding: "utf-8",
       timeout: 5000,
     });
@@ -606,7 +611,7 @@ function grepAllNotesFiles(pattern: string): string[] {
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map((line) => join(WORKLOG_DIR, line));
+      .map((line) => join(worklogDir, line));
   } catch {
     // grep returns exit code 1 for no matches, or WORKLOG_DIR doesn't exist
     return [];

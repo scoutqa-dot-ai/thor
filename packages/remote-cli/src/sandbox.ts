@@ -4,14 +4,13 @@ import { join, dirname, resolve, sep } from "node:path";
 import { rm, unlink, mkdir, stat } from "node:fs/promises";
 import { Daytona, type FileUpload, type Sandbox } from "@daytonaio/sdk";
 import { execCommand } from "./exec.js";
+import { loadDaytonaConfig } from "./env.js";
 
 export interface ExecStreamCallbacks {
   onStdout: (chunk: string) => void;
   onStderr: (chunk: string) => void;
 }
 
-const DAYTONA_DEFAULT_API_URL = "https://app.daytona.io/api";
-const DAYTONA_DEFAULT_SNAPSHOT = "daytona-medium";
 const DAYTONA_REPO_DIR = "/workspace/sandbox";
 const SANDBOX_SYNC_BUNDLE_PATH = "/tmp/sync.bundle";
 
@@ -52,8 +51,10 @@ function getDaytona(): Daytona {
     return daytonaSingleton;
   }
 
-  const apiKey = process.env.DAYTONA_API_KEY;
-  if (!apiKey) {
+  let config: ReturnType<typeof loadDaytonaConfig>;
+  try {
+    config = loadDaytonaConfig();
+  } catch {
     throw new SandboxError(
       "Sandbox auth failed, check DAYTONA_API_KEY",
       "DAYTONA_API_KEY is not configured",
@@ -61,8 +62,8 @@ function getDaytona(): Daytona {
   }
 
   daytonaSingleton = new Daytona({
-    apiKey,
-    apiUrl: process.env.DAYTONA_API_URL || DAYTONA_DEFAULT_API_URL,
+    apiKey: config.apiKey,
+    apiUrl: config.apiUrl,
   });
   return daytonaSingleton;
 }
@@ -77,7 +78,7 @@ export async function createSandbox(
   try {
     sandbox = await getDaytona().create({
       name,
-      snapshot: process.env.DAYTONA_SNAPSHOT || DAYTONA_DEFAULT_SNAPSHOT,
+      snapshot: loadDaytonaConfig().snapshot,
       ephemeral: true,
       autoStopInterval: 15,
       labels,

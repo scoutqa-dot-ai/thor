@@ -13,6 +13,7 @@
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createEnvLoader } from "./env.js";
 
 /** Max bytes for JSON-serialized args/result payloads. */
 const MAX_PAYLOAD_BYTES = 4096;
@@ -37,11 +38,11 @@ function ensureDir(dir: string): void {
 }
 
 function getWorklogDir(): string {
-  return process.env.WORKLOG_DIR || "/workspace/worklog";
+  return createEnvLoader().string("WORKLOG_DIR", { defaultValue: "/workspace/worklog" });
 }
 
 function isWorklogEnabled(): boolean {
-  return process.env.WORKLOG_ENABLED !== "false";
+  return createEnvLoader().optionalString("WORKLOG_ENABLED") !== "false";
 }
 
 /** Write a JSON file into the day-partitioned worklog/day/json/ directory. */

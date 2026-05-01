@@ -7,11 +7,9 @@ import {
   computeGitAlias,
   createConfigLoader,
   createLogger,
-  deriveGitHubAppBotIdentity,
   formatThorMeta,
   logError,
   logInfo,
-  requireEnv,
   type ConfigLoader,
   type ExecStreamEvent,
   WORKSPACE_CONFIG_PATH,
@@ -45,10 +43,14 @@ import {
   validateMetabaseArgs,
   validateScoutqaArgs,
 } from "./policy.js";
+import {
+  loadRemoteCliConfig,
+  loadRemoteCliGitHubConfig,
+  loadRemoteCliInternalConfig,
+} from "./env.js";
 
 const log = createLogger("remote-cli");
 
-const PORT = parseInt(process.env.PORT || "3004", 10);
 const LDCLI_MAX_OUTPUT = 1024 * 1024;
 const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
@@ -56,24 +58,19 @@ const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
-  requireEnv("GITHUB_APP_ID", env);
-  requireEnv("GITHUB_APP_SLUG", env);
-  requireEnv("GITHUB_APP_BOT_ID", env);
-  requireEnv("GITHUB_APP_PRIVATE_KEY_FILE", env);
+  loadRemoteCliGitHubConfig(env);
 }
 
 export function validateRemoteCliInternalEnv(env: NodeJS.ProcessEnv = process.env): void {
-  requireEnv("THOR_INTERNAL_SECRET", env);
+  loadRemoteCliInternalConfig(env);
 }
 
 function deriveBotGitIdentity(env: NodeJS.ProcessEnv = process.env): {
   name: string;
   email: string;
 } {
-  return deriveGitHubAppBotIdentity({
-    slug: requireEnv("GITHUB_APP_SLUG", env),
-    botId: requireEnv("GITHUB_APP_BOT_ID", env),
-  });
+  const config = loadRemoteCliGitHubConfig(env);
+  return { name: config.gitIdentityName, email: config.gitIdentityEmail };
 }
 
 export interface RemoteCliAppConfig {
@@ -888,17 +885,16 @@ function hasLdcliOutputOverride(args: string[]): boolean {
 }
 
 export async function startRemoteCliServer(): Promise<void> {
-  validateRemoteCliGitHubEnv();
-  validateRemoteCliInternalEnv();
+  const envConfig = loadRemoteCliConfig();
   const gitIdentity = deriveBotGitIdentity();
   const remoteCli = createRemoteCliApp();
   logInfo(log, "remote_cli_starting", {
-    port: PORT,
+    port: envConfig.port,
     gitIdentityName: gitIdentity.name,
     gitIdentityEmail: gitIdentity.email,
   });
-  const server = remoteCli.app.listen(PORT, () => {
-    logInfo(log, "remote_cli_listening", { port: PORT });
+  const server = remoteCli.app.listen(envConfig.port, () => {
+    logInfo(log, "remote_cli_listening", { port: envConfig.port });
   });
 
   void remoteCli.warmUp();

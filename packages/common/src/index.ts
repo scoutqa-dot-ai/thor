@@ -15,7 +15,14 @@ export {
   interpolateHeaders,
 } from "./workspace-config.js";
 export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.js";
-export { requireEnv } from "./env.js";
+export { EnvLoader, createEnvLoader, requireEnv, stripTrailingSlashes } from "./env.js";
+export type {
+  EnvSource,
+  EnvLoaderOptions,
+  EnvValueOptions,
+  EnvStringOptions,
+  EnvIntOptions,
+} from "./env.js";
 export type {
   WorkspaceConfig,
   RepoConfig,

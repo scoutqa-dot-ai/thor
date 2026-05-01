@@ -40,18 +40,16 @@ import type { ProgressEvent } from "@thor/common";
 import { buildToolInstructions } from "./tool-instructions.js";
 import { getMemoryProgressEvents } from "./memory-progress.js";
 import { pathToFileURL } from "node:url";
+import { loadRunnerConfig } from "./env.js";
 
 const log = createLogger("runner");
 
-const PORT = parseInt(process.env.PORT || "3000", 10);
-const OPENCODE_URL = (process.env.OPENCODE_URL || "http://127.0.0.1:4096").replace(/\/$/, "");
-const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
-
-/** Timeout for waiting for a busy session to become idle after abort (ms). */
-const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
-
-/** Grace period after a session.error for OpenCode to emit recovery events before treating it as terminal. */
-const SESSION_ERROR_GRACE_MS = parseInt(process.env.SESSION_ERROR_GRACE_MS || "10000", 10);
+const config = loadRunnerConfig();
+const PORT = config.port;
+const OPENCODE_URL = config.opencodeUrl;
+const OPENCODE_CONNECT_TIMEOUT = config.opencodeConnectTimeout;
+const ABORT_TIMEOUT = config.abortTimeout;
+const SESSION_ERROR_GRACE_MS = config.sessionErrorGraceMs;
 
 /** Memory directory root. */
 const MEMORY_DIR = "/workspace/memory";
