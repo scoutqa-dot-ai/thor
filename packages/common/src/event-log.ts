@@ -6,6 +6,18 @@ import { getWorklogDir } from "./worklog.js";
 export const ALIAS_TYPES = ["slack.thread_id", "git.branch", "session.parent"] as const;
 export const AliasTypeSchema = z.enum(ALIAS_TYPES);
 
+/**
+ * Alias value safety: rejects empty values, oversized values, and any control
+ * characters that could corrupt the JSONL line (newlines, tabs, NUL).
+ */
+const AliasValueSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .refine((v) => !/[\n\r\t\0]/.test(v), {
+    message: "alias value contains control characters",
+  });
+
 const BaseRecordSchema = z.object({
   schemaVersion: z.literal(1),
   ts: z.string(),
@@ -37,7 +49,7 @@ export const OpencodeEventRecordSchema = BaseRecordSchema.extend({
 export const AliasEventRecordSchema = BaseRecordSchema.extend({
   type: z.literal("alias"),
   aliasType: AliasTypeSchema,
-  aliasValue: z.string(),
+  aliasValue: AliasValueSchema,
   source: z.string().optional(),
 });
 
@@ -61,7 +73,7 @@ export type SessionEventLogRecord = z.infer<typeof SessionEventLogRecordSchema>;
 export const AliasRecordSchema = z.object({
   ts: z.string(),
   aliasType: AliasTypeSchema,
-  aliasValue: z.string(),
+  aliasValue: AliasValueSchema,
   sessionId: z.string(),
 });
 
@@ -90,6 +102,15 @@ export const MAX_SESSION_FILE_BYTES = Number.parseInt(
 const PARENT_CHAIN_DEPTH_LIMIT = 5;
 const aliasCache = new Map<string, string>();
 let aliasCacheLoaded = false;
+let aliasCacheLastSize = -1;
+
+interface SessionRecordsCacheEntry {
+  signature: string;
+  records: SessionEventLogRecord[];
+  skippedMalformed: number;
+  oversized: boolean;
+}
+const sessionRecordsCache = new Map<string, SessionRecordsCacheEntry>();
 
 function safeId(value: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(value)) throw new Error(`Invalid session id: ${value}`);
@@ -148,6 +169,7 @@ export function appendSessionEvent(
     });
     const parsed = SessionEventLogRecordSchema.parse(full);
     appendJsonlFileOrThrow(sessionLogPath(sessionId), parsed);
+    sessionRecordsCache.delete(sessionId);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
@@ -184,15 +206,43 @@ function completeLines(path: string): string[] {
   return lines.filter((line) => line.length > 0);
 }
 
+function fileSignature(path: string): string {
+  if (!existsSync(path)) return "missing";
+  const stat = statSync(path);
+  return `${stat.size}:${stat.mtimeMs}`;
+}
+
 function readSessionRecords(sessionId: string): {
   records: SessionEventLogRecord[];
   skippedMalformed: number;
   oversized?: true;
 } {
   const path = sessionLogPath(sessionId);
-  if (!existsSync(path)) return { records: [], skippedMalformed: 0 };
-  if (statSync(path).size > MAX_SESSION_FILE_BYTES)
+  const signature = fileSignature(path);
+  const cached = sessionRecordsCache.get(sessionId);
+  if (cached && cached.signature === signature) {
+    return cached.oversized
+      ? { records: [], skippedMalformed: cached.skippedMalformed, oversized: true }
+      : { records: cached.records, skippedMalformed: cached.skippedMalformed };
+  }
+  if (!existsSync(path)) {
+    sessionRecordsCache.set(sessionId, {
+      signature,
+      records: [],
+      skippedMalformed: 0,
+      oversized: false,
+    });
+    return { records: [], skippedMalformed: 0 };
+  }
+  if (statSync(path).size > MAX_SESSION_FILE_BYTES) {
+    sessionRecordsCache.set(sessionId, {
+      signature,
+      records: [],
+      skippedMalformed: 0,
+      oversized: true,
+    });
     return { records: [], skippedMalformed: 0, oversized: true };
+  }
   let skippedMalformed = 0;
   const records: SessionEventLogRecord[] = [];
   for (const line of completeLines(path)) {
@@ -204,6 +254,7 @@ function readSessionRecords(sessionId: string): {
       skippedMalformed++;
     }
   }
+  sessionRecordsCache.set(sessionId, { signature, records, skippedMalformed, oversized: false });
   return { records, skippedMalformed };
 }
 
@@ -254,9 +305,20 @@ export function readTriggerSlice(
   };
 }
 
-function loadAliasCache(): void {
+function loadAliasCacheIfChanged(): void {
+  const path = aliasLogPath();
+  if (!existsSync(path)) {
+    if (aliasCacheLastSize !== 0) {
+      aliasCache.clear();
+      aliasCacheLastSize = 0;
+    }
+    aliasCacheLoaded = true;
+    return;
+  }
+  const size = statSync(path).size;
+  if (aliasCacheLoaded && size === aliasCacheLastSize) return;
   aliasCache.clear();
-  for (const line of completeLines(aliasLogPath())) {
+  for (const line of completeLines(path)) {
     try {
       const parsed = AliasRecordSchema.safeParse(JSON.parse(line));
       if (parsed.success)
@@ -268,6 +330,7 @@ function loadAliasCache(): void {
       // ignored: malformed alias records are not routing facts
     }
   }
+  aliasCacheLastSize = size;
   aliasCacheLoaded = true;
 }
 
@@ -275,12 +338,8 @@ export function resolveAlias(input: {
   aliasType: AliasRecord["aliasType"];
   aliasValue: string;
 }): string | undefined {
-  if (!aliasCacheLoaded) loadAliasCache();
-  const key = `${input.aliasType}\0${input.aliasValue}`;
-  const hit = aliasCache.get(key);
-  if (hit) return hit;
-  loadAliasCache();
-  return aliasCache.get(key);
+  loadAliasCacheIfChanged();
+  return aliasCache.get(`${input.aliasType}\0${input.aliasValue}`);
 }
 
 export function listSessionAliases(sessionId: string): AliasRecord[] {
