@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { appendAlias } from "./event-log.js";
 import {
+  aliasForCorrelationKey,
   hasSessionForCorrelationKey,
   resolveCorrelationKeys,
   resolveSessionForCorrelationKey,
@@ -31,9 +32,22 @@ describe("correlation key resolution", () => {
 
     const rawKey = "slack:thread:1710000000.001";
 
+    expect(aliasForCorrelationKey(rawKey)).toEqual({
+      aliasType: "slack.thread_id",
+      aliasValue: "1710000000.001",
+    });
     expect(resolveCorrelationKeys([rawKey])).toBe(rawKey);
     expect(hasSessionForCorrelationKey(rawKey)).toBe(true);
     expect(resolveSessionForCorrelationKey(rawKey)).toBe("session-1");
+  });
+
+  it("normalizes git branch correlation keys to git alias values", () => {
+    const rawKey = "git:branch:thor:feature/refactor";
+
+    expect(aliasForCorrelationKey(rawKey)).toEqual({
+      aliasType: "git.branch",
+      aliasValue: Buffer.from(rawKey).toString("base64url"),
+    });
   });
 
   it("does not treat untyped keys as alias values", () => {
@@ -42,6 +56,7 @@ describe("correlation key resolution", () => {
     ).toEqual({ ok: true });
 
     expect(resolveCorrelationKeys(["same-key"])).toBe("same-key");
+    expect(aliasForCorrelationKey("same-key")).toBeUndefined();
     expect(hasSessionForCorrelationKey("same-key")).toBe(false);
     expect(resolveSessionForCorrelationKey("same-key")).toBeUndefined();
   });

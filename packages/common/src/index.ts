@@ -75,6 +75,7 @@ export {
   formatThorMeta,
   computeGitAlias,
   computeSlackAlias,
+  aliasForCorrelationKey,
   resolveSessionForCorrelationKey,
   inferRepoFromPath,
   extractBranchFromGitArgs,
@@ -85,6 +86,7 @@ export type {
   ThorMeta,
   ThorMetaAlias,
   ThorMetaApproval,
+  CorrelationAlias,
 } from "./thor-meta.js";
 export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
 export type { ExecResult, ExecStreamEvent } from "./exec-result.js";

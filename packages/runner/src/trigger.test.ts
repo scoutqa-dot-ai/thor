@@ -266,9 +266,10 @@ describe("runner /trigger orchestration", () => {
 
   it("creates a correlation-key session, records JSONL events, and resumes the same session", async () => {
     const h = createHarness();
+    const correlationKey = "slack:thread:1710000000.001";
 
     await withServer(h.app, async (url) => {
-      const first = await trigger(url, { prompt: "first", correlationKey: "same-key" });
+      const first = await trigger(url, { prompt: "first", correlationKey });
       const firstStart = first.events.find((e) => e.type === "start");
       const firstDone = first.events.find((e) => e.type === "done");
       expect(firstStart).toMatchObject({ sessionId: "session-1", resumed: false });
@@ -280,8 +281,20 @@ describe("runner /trigger orchestration", () => {
       const logText = readFileSync(`${worklogDir}/sessions/session-1.jsonl`, "utf8");
       expect(logText).toContain('"type":"trigger_start"');
       expect(logText).toContain('"type":"trigger_end"');
+      const aliases = readFileSync(`${worklogDir}/aliases.jsonl`, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(aliases).toContainEqual(
+        expect.objectContaining({
+          aliasType: "slack.thread_id",
+          aliasValue: "1710000000.001",
+          sessionId: "session-1",
+        }),
+      );
+      expect(aliases).not.toContainEqual(expect.objectContaining({ aliasValue: correlationKey }));
 
-      const second = await trigger(url, { prompt: "second", correlationKey: "same-key" });
+      const second = await trigger(url, { prompt: "second", correlationKey });
       const secondStart = second.events.find((e) => e.type === "start");
       const secondDone = second.events.find((e) => e.type === "done");
       expect(secondStart).toMatchObject({ sessionId: "session-1", resumed: true });
@@ -295,12 +308,13 @@ describe("runner /trigger orchestration", () => {
 
   it("falls back from stale stored session without markdown-notes continuity", async () => {
     const h = createHarness();
+    const correlationKey = "slack:thread:1710000000.002";
 
     await withServer(h.app, async (url) => {
-      await trigger(url, { prompt: "old", correlationKey: "stale-key" });
+      await trigger(url, { prompt: "old", correlationKey });
       h.existingSessions.delete("session-1");
 
-      const next = await trigger(url, { prompt: "new", correlationKey: "stale-key" });
+      const next = await trigger(url, { prompt: "new", correlationKey });
       expect(next.events.find((e) => e.type === "start")).toMatchObject({
         sessionId: "session-2",
         resumed: false,
@@ -318,7 +332,7 @@ describe("runner /trigger orchestration", () => {
     expect(
       appendAlias({
         aliasType: "slack.thread_id",
-        aliasValue: "busy-key",
+        aliasValue: "1710000000.003",
         sessionId: "busy-session",
       }),
     ).toEqual({ ok: true });
@@ -329,7 +343,7 @@ describe("runner /trigger orchestration", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           prompt: "later",
-          correlationKey: "busy-key",
+          correlationKey: "slack:thread:1710000000.003",
           directory: sessionDir,
         }),
       });
@@ -347,7 +361,7 @@ describe("runner /trigger orchestration", () => {
     expect(
       appendAlias({
         aliasType: "slack.thread_id",
-        aliasValue: "busy-key",
+        aliasValue: "1710000000.004",
         sessionId: "busy-session",
       }),
     ).toEqual({ ok: true });
@@ -355,7 +369,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "now",
-        correlationKey: "busy-key",
+        correlationKey: "slack:thread:1710000000.004",
         interrupt: true,
       });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
@@ -376,12 +390,18 @@ describe("runner /trigger orchestration", () => {
     const h = createHarness();
 
     await withServer(h.app, async (url) => {
-      const first = await trigger(url, { prompt: "first", correlationKey: "memory-key" });
+      const first = await trigger(url, {
+        prompt: "first",
+        correlationKey: "slack:thread:1710000000.005",
+      });
       expect(first.events.filter((e) => e.type === "memory")).toHaveLength(2);
       expect(h.prompts[0]).toContain("root memory text");
       expect(h.prompts[0]).toContain("repo memory text");
 
-      await trigger(url, { prompt: "second", correlationKey: "memory-key" });
+      await trigger(url, {
+        prompt: "second",
+        correlationKey: "slack:thread:1710000000.005",
+      });
       expect(h.prompts[1]).not.toContain("root memory text");
       expect(h.prompts[1]).not.toContain("repo memory text");
     });
@@ -394,7 +414,10 @@ describe("runner /trigger orchestration", () => {
     });
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, { prompt: "delegate", correlationKey: "child-key" });
+      const result = await trigger(url, {
+        prompt: "delegate",
+        correlationKey: "slack:thread:1710000000.006",
+      });
       expect(result.events.find((e) => e.type === "delegate")).toMatchObject({ agent: "general" });
     });
 
@@ -414,7 +437,10 @@ describe("runner /trigger orchestration", () => {
     });
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, { prompt: "large search", correlationKey: "compact-key" });
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.007",
+      });
       expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "completed",
@@ -429,7 +455,10 @@ describe("runner /trigger orchestration", () => {
     });
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, { prompt: "fail", correlationKey: "error-key" });
+      const result = await trigger(url, {
+        prompt: "fail",
+        correlationKey: "slack:thread:1710000000.008",
+      });
       expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "error",
@@ -449,7 +478,10 @@ describe("runner /trigger orchestration", () => {
 
     await withServer(h.app, async (url) => {
       const startedAt = Date.now();
-      const result = await trigger(url, { prompt: "fail", correlationKey: "status-key" });
+      const result = await trigger(url, {
+        prompt: "fail",
+        correlationKey: "slack:thread:1710000000.009",
+      });
       expect(Date.now() - startedAt).toBeLessThan(100);
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "error",

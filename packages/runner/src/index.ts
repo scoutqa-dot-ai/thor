@@ -29,6 +29,7 @@ import {
   extractRepoFromCwd,
   appendSessionEvent,
   appendAlias,
+  aliasForCorrelationKey,
   resolveSessionForCorrelationKey,
   readTriggerSlice,
   sessionLogPath,
@@ -118,6 +119,12 @@ function appendSessionEventOrFail(sessionId: string, record: Record<string, unkn
 function appendAliasOrFail(record: Parameters<typeof appendAlias>[0]): void {
   const result = appendAlias(record);
   if (!result.ok) throw result.error;
+}
+
+function appendCorrelationAliasOrFail(correlationKey: string, sessionId: string): void {
+  const alias = aliasForCorrelationKey(correlationKey);
+  if (!alias) return;
+  appendAliasOrFail({ ...alias, sessionId });
 }
 
 /**
@@ -749,11 +756,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         }
 
         if (correlationKey) {
-          appendAliasOrFail({
-            aliasType: "slack.thread_id",
-            aliasValue: correlationKey,
-            sessionId: id,
-          });
+          appendCorrelationAliasOrFail(correlationKey, id);
         }
 
         return { sessionId: id, resumed: didResume };

@@ -8,7 +8,7 @@ import {
   flushInflightTriggersOnShutdown,
   type RunnerAppOptions,
 } from "./index.js";
-import { appendAlias, appendSessionEvent, sessionLogPath } from "@thor/common";
+import { appendSessionEvent, sessionLogPath } from "@thor/common";
 
 const worklogDir = "/tmp/thor-runner-plan-exit/worklog";
 const sessionDir = "/workspace/repos/runner-trigger-test";
@@ -118,7 +118,11 @@ describe("runner plan exit criteria", () => {
       const response = await fetch(`${url}/trigger`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: "go", correlationKey: "throw-key", directory: sessionDir }),
+        body: JSON.stringify({
+          prompt: "go",
+          correlationKey: "slack:thread:1710000200.001",
+          directory: sessionDir,
+        }),
       });
       expect(response.status).toBe(500);
     });
@@ -216,7 +220,7 @@ describe("runner plan exit criteria", () => {
           "content-type": "application/json",
           "x-thor-internal-secret": process.env.THOR_INTERNAL_SECRET!,
         },
-        body: JSON.stringify({ correlationKey: "e2e-test-key" }),
+        body: JSON.stringify({ correlationKey: "slack:thread:1710000200.002" }),
       });
       expect(okResp.status).toBe(200);
       const data = (await okResp.json()) as { sessionId: string; triggerId: string };
@@ -227,20 +231,6 @@ describe("runner plan exit criteria", () => {
     });
 
     delete process.env.THOR_E2E_TEST_HELPERS;
-  });
-});
-
-describe("runner alias write on fresh slack trigger", () => {
-  it("writes the slack.thread_id alias before the prompt streams", async () => {
-    const sessionId = "slack-alias-session";
-    appendAlias({ aliasType: "slack.thread_id", aliasValue: "1710000123.456", sessionId });
-    // The runner hands back the same session via resolveAlias. This verifies the
-    // resolve path works against the expected aliasValue shape (raw thread_ts,
-    // not the prefixed correlation key form). Without the alias, the runner would
-    // create a fresh session and routing would diverge.
-    expect(readFileSync(`${worklogDir}/aliases.jsonl`, "utf8")).toContain(
-      '"aliasValue":"1710000123.456"',
-    );
   });
 });
 

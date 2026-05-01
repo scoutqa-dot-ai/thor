@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { resolveAlias } from "./event-log.js";
+import type { AliasRecord } from "./event-log.js";
 
 export interface ToolArtifact {
   tool: string;
@@ -11,6 +12,8 @@ export interface ExtractedAlias {
   alias: string;
   context: string;
 }
+
+export type CorrelationAlias = Pick<AliasRecord, "aliasType" | "aliasValue">;
 
 const ALIASABLE_TOOLS = new Set(["slack_post_message", "bash"]);
 
@@ -216,18 +219,23 @@ export function hasSessionForCorrelationKey(key: string): boolean {
   return resolveSessionForCorrelationKey(key) !== undefined;
 }
 
-export function resolveSessionForCorrelationKey(key: string): string | undefined {
+export function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
   if (key.startsWith("slack:thread:")) {
-    return resolveAlias({
+    return {
       aliasType: "slack.thread_id",
       aliasValue: key.slice("slack:thread:".length),
-    });
+    };
   }
   if (key.startsWith("git:branch:")) {
-    return resolveAlias({
+    return {
       aliasType: "git.branch",
       aliasValue: Buffer.from(key).toString("base64url"),
-    });
+    };
   }
   return undefined;
+}
+
+export function resolveSessionForCorrelationKey(key: string): string | undefined {
+  const alias = aliasForCorrelationKey(key);
+  return alias ? resolveAlias(alias) : undefined;
 }
