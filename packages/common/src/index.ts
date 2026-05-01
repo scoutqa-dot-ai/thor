@@ -75,6 +75,7 @@ export {
   formatThorMeta,
   computeGitAlias,
   computeSlackAlias,
+  resolveSessionForCorrelationKey,
   inferRepoFromPath,
   extractBranchFromGitArgs,
 } from "./thor-meta.js";

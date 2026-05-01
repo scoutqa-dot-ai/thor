@@ -172,7 +172,11 @@ export function computeGitAlias(
   const branch = extractBranchFromGitArgs(args);
   const repo = inferRepoFromPath(cwd);
   if (!branch || !repo) return undefined;
-  return { type: "alias", alias: `git:branch:${repo}:${branch}`, context: `${cmd} ${args[0]} in ${cwd}` };
+  return {
+    type: "alias",
+    alias: `git:branch:${repo}:${branch}`,
+    context: `${cmd} ${args[0]} in ${cwd}`,
+  };
 }
 
 export function computeSlackAlias(
@@ -181,7 +185,11 @@ export function computeSlackAlias(
 ): ThorMetaAlias | undefined {
   const channel = (toolArgs.channel as string) || "unknown";
   if (toolArgs.thread_ts) {
-    return { type: "alias", alias: `slack:thread:${toolArgs.thread_ts}`, context: `Replied in thread in ${channel}` };
+    return {
+      type: "alias",
+      alias: `slack:thread:${toolArgs.thread_ts}`,
+      context: `Replied in thread in ${channel}`,
+    };
   }
   try {
     const output = SlackPostMessageOutput.safeParse(JSON.parse(result));
@@ -199,22 +207,27 @@ export function computeSlackAlias(
 export function resolveCorrelationKeys(rawKeys: string[]): string {
   if (rawKeys.length === 0) return "";
   for (const key of rawKeys) {
-    const hit = resolveCorrelationKeyToSession(key);
-    if (hit) return hit;
+    if (resolveSessionForCorrelationKey(key)) return key;
   }
   return rawKeys[0];
 }
 
 export function hasSessionForCorrelationKey(key: string): boolean {
-  return resolveCorrelationKeyToSession(key) !== undefined;
+  return resolveSessionForCorrelationKey(key) !== undefined;
 }
 
-function resolveCorrelationKeyToSession(key: string): string | undefined {
+export function resolveSessionForCorrelationKey(key: string): string | undefined {
   if (key.startsWith("slack:thread:")) {
-    return resolveAlias({ aliasType: "slack.thread_id", aliasValue: key.slice("slack:thread:".length) });
+    return resolveAlias({
+      aliasType: "slack.thread_id",
+      aliasValue: key.slice("slack:thread:".length),
+    });
   }
   if (key.startsWith("git:branch:")) {
-    return resolveAlias({ aliasType: "git.branch", aliasValue: Buffer.from(key).toString("base64url") });
+    return resolveAlias({
+      aliasType: "git.branch",
+      aliasValue: Buffer.from(key).toString("base64url"),
+    });
   }
   return undefined;
 }

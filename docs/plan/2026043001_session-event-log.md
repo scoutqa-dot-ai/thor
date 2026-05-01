@@ -1,4 +1,5 @@
 <!-- /autoplan restore point: /Users/son.dao/.gstack/projects/scoutqa-dot-ai-thor/session-log-links-autoplan-restore-20260430-091720.md -->
+
 # Session Event Log and Public Trigger Viewer
 
 **Date**: 2026-04-30
@@ -30,11 +31,45 @@ Record kinds:
 
 ```ts
 type SessionEventLogRecord =
-  | { schemaVersion: 1; ts: string; type: "trigger_start"; sessionId: string; triggerId: string; correlationKey?: string; promptPreview?: string }
-  | { schemaVersion: 1; ts: string; type: "trigger_end"; sessionId: string; triggerId: string; status: "completed" | "error" | "aborted"; durationMs?: number; error?: string; reason?: string }
+  | {
+      schemaVersion: 1;
+      ts: string;
+      type: "trigger_start";
+      sessionId: string;
+      triggerId: string;
+      correlationKey?: string;
+      promptPreview?: string;
+    }
+  | {
+      schemaVersion: 1;
+      ts: string;
+      type: "trigger_end";
+      sessionId: string;
+      triggerId: string;
+      status: "completed" | "error" | "aborted";
+      durationMs?: number;
+      error?: string;
+      reason?: string;
+    }
   | { schemaVersion: 1; ts: string; type: "opencode_event"; sessionId: string; event: unknown }
-  | { schemaVersion: 1; ts: string; type: "alias"; sessionId: string; aliasType: "slack.thread_id" | "git.branch" | "session.parent"; aliasValue: string; source?: string }
-  | { schemaVersion: 1; ts: string; type: "tool_call"; sessionId: string; callId?: string; tool: string; payload: unknown };
+  | {
+      schemaVersion: 1;
+      ts: string;
+      type: "alias";
+      sessionId: string;
+      aliasType: "slack.thread_id" | "git.branch" | "session.parent";
+      aliasValue: string;
+      source?: string;
+    }
+  | {
+      schemaVersion: 1;
+      ts: string;
+      type: "tool_call";
+      sessionId: string;
+      callId?: string;
+      tool: string;
+      payload: unknown;
+    };
 ```
 
 Writer contract:
@@ -132,11 +167,11 @@ The trigger handler is wrapped in a `try/catch/finally` and emits `trigger_end{s
 
 The viewer's `readTriggerSlice(sessionId, triggerId)` finds the requested `trigger_start` and walks forward to the first of:
 
-| Stop reason | Slice status |
-|---|---|
-| `trigger_end{triggerId=target}` reached | terminal — render with that record's `status` (`completed` / `error` / `aborted`) |
-| Any other `trigger_start` (same session, different triggerId) reached | **`crashed`** — slice ends just before the new start. The new start is unambiguous proof the session moved on without closing this trigger; runner must have died after step 7 of the trigger flow |
-| EOF reached | **`in_flight`** — no terminal marker, no superseder. Could be still running or could be a crashed-and-not-yet-superseded trigger. Viewer renders with auto-refresh; soft banner if last record is older than 5 min |
+| Stop reason                                                           | Slice status                                                                                                                                                                                                       |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `trigger_end{triggerId=target}` reached                               | terminal — render with that record's `status` (`completed` / `error` / `aborted`)                                                                                                                                  |
+| Any other `trigger_start` (same session, different triggerId) reached | **`crashed`** — slice ends just before the new start. The new start is unambiguous proof the session moved on without closing this trigger; runner must have died after step 7 of the trigger flow                 |
+| EOF reached                                                           | **`in_flight`** — no terminal marker, no superseder. Could be still running or could be a crashed-and-not-yet-superseded trigger. Viewer renders with auto-refresh; soft banner if last record is older than 5 min |
 
 The viewer never time-bounds a slice into a "crashed" verdict on its own — that label requires hard data (a superseding `trigger_start`). Time staleness only soft-warns inside the in-flight render.
 
@@ -182,20 +217,20 @@ The runner reads `X-Vouch-User` from incoming requests on `/runner/*` (matches t
 
 ### States
 
-| Slice status (from `readTriggerSlice`) | Server response | UI |
-|---|---|---|
-| `completed` (terminal `trigger_end{status:"completed"}`) | 200 | Green "Completed" pill + hero + outcome card + collapsed timeline |
-| `error` (terminal `trigger_end{status:"error"}`) | 200 | Red "Error" pill + `error` field + collapsed timeline |
-| `aborted` (terminal `trigger_end{status:"aborted"}`) | 200 | Orange "Aborted" pill + `reason` if present + collapsed timeline |
-| `crashed` (superseded by another `trigger_start` in same session) | 200 | Red "Crashed" pill + copy: "This trigger was abandoned without a close marker. The runner started a new trigger at <ts>; whatever was in-flight here was lost." |
-| `in_flight` (no terminal record, no superseder, last event recent) | 200 | Yellow "Running" pill + last-event timestamp + `<meta http-equiv="refresh" content="5">` |
-| `in_flight` + last event > 5 min old | 200 | Yellow "Running" pill + soft banner: "No new events in N min — the runner may have crashed without a close marker. Reload to check." |
-| Empty (zero non-marker records between start and stop) | 200 | "No recorded events" empty state |
-| Oversized slice | 200 | "Slice truncated" marker + raw link |
-| Redacted fields present | 200 | Inline `[redacted: tool output, NN bytes]` markers |
-| Unknown session/trigger | 404 | Branded 404 |
-| Missing `X-Vouch-User` | 401 | Vouch redirects to OAuth |
-| Backend failure (parse, FS error) | 503 | Branded retry copy |
+| Slice status (from `readTriggerSlice`)                             | Server response | UI                                                                                                                                                              |
+| ------------------------------------------------------------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `completed` (terminal `trigger_end{status:"completed"}`)           | 200             | Green "Completed" pill + hero + outcome card + collapsed timeline                                                                                               |
+| `error` (terminal `trigger_end{status:"error"}`)                   | 200             | Red "Error" pill + `error` field + collapsed timeline                                                                                                           |
+| `aborted` (terminal `trigger_end{status:"aborted"}`)               | 200             | Orange "Aborted" pill + `reason` if present + collapsed timeline                                                                                                |
+| `crashed` (superseded by another `trigger_start` in same session)  | 200             | Red "Crashed" pill + copy: "This trigger was abandoned without a close marker. The runner started a new trigger at <ts>; whatever was in-flight here was lost." |
+| `in_flight` (no terminal record, no superseder, last event recent) | 200             | Yellow "Running" pill + last-event timestamp + `<meta http-equiv="refresh" content="5">`                                                                        |
+| `in_flight` + last event > 5 min old                               | 200             | Yellow "Running" pill + soft banner: "No new events in N min — the runner may have crashed without a close marker. Reload to check."                            |
+| Empty (zero non-marker records between start and stop)             | 200             | "No recorded events" empty state                                                                                                                                |
+| Oversized slice                                                    | 200             | "Slice truncated" marker + raw link                                                                                                                             |
+| Redacted fields present                                            | 200             | Inline `[redacted: tool output, NN bytes]` markers                                                                                                              |
+| Unknown session/trigger                                            | 404             | Branded 404                                                                                                                                                     |
+| Missing `X-Vouch-User`                                             | 401             | Vouch redirects to OAuth                                                                                                                                        |
+| Backend failure (parse, FS error)                                  | 503             | Branded retry copy                                                                                                                                              |
 
 ### Information hierarchy
 
@@ -303,10 +338,10 @@ At `packages/remote-cli/src/mcp-handler.ts:443`, before `approvalStore.create(to
 2. Build the URL using the **owner** session id from the return value: `${RUNNER_BASE_URL}/runner/v/${result.sessionId}/${result.triggerId}`. Approve-gated calls also originate from child sessions during sub-agent work, so the owner-vs-request distinction matters here too.
 3. Mutate `args` per a small per-tool injector. **The injector throws if the expected field is missing on the args shape** — defense-in-depth against MCP schema drift or LLM passing the wrong field name. Throws bubble up as approval-create errors; no half-mutated action is persisted.
 
-| Tool | Injection field | Strategy |
-|---|---|---|
-| `createJiraIssue` | `description` | Append `\n\n---\n[View Thor trigger](<url>)` to the description body. Throw if `args.description` is missing or non-string. |
-| `addCommentToJiraIssue` | `commentBody` | Append the same footer to the comment body. Throw if `args.commentBody` is missing or non-string. |
+| Tool                    | Injection field | Strategy                                                                                                                    |
+| ----------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `createJiraIssue`       | `description`   | Append `\n\n---\n[View Thor trigger](<url>)` to the description body. Throw if `args.description` is missing or non-string. |
+| `addCommentToJiraIssue` | `commentBody`   | Append the same footer to the comment body. Throw if `args.commentBody` is missing or non-string.                           |
 
 4. Call `approvalStore.create(toolInfo.name, mutatedArgs)`. The persisted action carries the URL in `args` from the start.
 
@@ -323,40 +358,41 @@ At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args:
 
 ## Decision Log
 
-| Date       | Decision                                                                            | Why                                                             |
-| ---------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| 2026-04-30 | Use `/workspace/worklog/sessions/<session-id>.jsonl` as the source of truth          | Flat session-keyed path; avoids symlink portability concerns and survives volume mount/backup/archival. |
-| 2026-04-30 | Drop absolute symlink indexes; use `aliases.jsonl` newest-wins for alias lookup       | No symlink fragility; in-process cache rebuilt on miss is faster than today's grep-based scan. |
-| 2026-04-30 | Do not add SQLite or another DB                                                     | Append-only JSONL + small in-memory cache is enough for v1. Revisit if alias scale becomes a problem. |
-| 2026-04-30 | Do not propagate `triggerId` through OpenCode/bash/curl/remote-cli; recover via full bounded inference on disclaimer-eligible writes | No trusted per-trigger env channel exists between runner and OpenCode shell hooks; adding one requires a new shared mapping/plugin contract. Disclaimer-eligible writes are rare enough that scanning the capped session log is acceptable. |
-| 2026-04-30 | Add `session.parent` alias type for child→parent session resolution                  | Lets inference walk from a child OpenCode session id up to the parent session that owns the open trigger after the relation is recorded. Reuses the alias mechanism rather than introducing a new state shape. Cycle-safe via depth cap (5) + visited-set; child writes before parent linkage fail closed. |
-| 2026-04-30 | Write `trigger_start` only after any prior busy session has settled                  | Prevents prior-run events from entering the new trigger slice.   |
-| 2026-04-30 | Abort timeout means no marker and no prompt                                          | Avoids ambiguous slices.                                         |
-| 2026-04-30 | Drop the `trigger_aborted` record type; merge into `trigger_end{status:"aborted", reason?}` | One way to express "this trigger ended"; cleaner schema. The original separate type was a vestige of the (incorrect) plan that the runner could emit a marker on process crash. |
-| 2026-04-30 | Trigger slices terminate on conflict, not on time                                      | A subsequent `trigger_start` for the same session is unambiguous proof the prior trigger was abandoned (runner restart, lost state). Time-based "stale" detection only soft-warns inside the still-in-flight render — never assigns a "crashed" verdict from the clock alone. |
-| 2026-04-30 | Process-level crashes are not the runner's responsibility to mark                       | A `try/catch/finally` cannot run on SIGKILL / OOM / container kill / segfault. The plan no longer pretends it can. Best-effort SIGTERM handler covers graceful shutdowns; crashes are detected at viewer time via supersede. |
-| 2026-04-30 | Initial alias types are `slack.thread_id`, `git.branch`, and `session.parent`        | Matches actual producers needed for routing and child→parent trigger attribution. |
-| 2026-04-30 | Treat phases 2-4 as greenfield JSONL logging, not a flag-gated cutover               | This project can fail closed on event-log writes and route session aliases from JSONL directly; the old markdown notes implementation is removed. |
-| 2026-04-30 | Viewer is Vouch-gated under `/runner/*` ingress prefix; no HMAC, no TTL on the URL    | Reuses the existing OAuth proxy pattern (`packages/admin/src/app.ts`); UUIDv4 entropy + Vouch is the access-control model. Drops HMAC operational cost (secret mgmt, signature code, "Invalid signature" UX). Audit-friendly: links in old artifacts keep working. (CHANGED 2026-04-30 from earlier "HMAC-signed public viewer" decision.) |
-| 2026-04-30 | Use `/runner/*` ingress prefix for runner-owned routes                                | Single ingress mount lets future runner routes ship without per-route ingress changes. Mirrors the existing `/admin/*` pattern. |
-| 2026-04-30 | Redaction is allowlist (default-deny) on tool outputs                                | Defense-in-depth — Vouch fronts the route, but allowlist redaction keeps screenshots / copy-paste / log-share from leaking content the page itself shouldn't render. |
-| 2026-04-30 | Confluence writes removed from the atlassian approve list (commit `a4d755ca` on this branch) | Reduces blast radius; the only approve-gated MCP tools that need disclaimer support are `createJiraIssue` and `addCommentToJiraIssue`. Re-introduce later if a real Confluence write use case lands. Tracked as part of this plan, not just deferred. |
-| 2026-04-30 | Approve-gated writes (Atlassian MCP): mutate `args` at approval-create time           | Approval is async; by execute time the original trigger is closed and inference would return zero opens. Create-time mutation keeps Thor context in scope, lets the human approver see the disclaimer in the Slack prompt, and avoids `ApprovalActionSchema` changes. |
-| 2026-04-30 | Both disclaimer paths fail-fast on missing/ambiguous active trigger                   | Every Thor-created artifact must be traceable to a trigger. Direct writes (`gh`) exit non-zero with no upstream call; approve-create returns an error and persists no action. Failing open would silently ship disclaimer-less artifacts and hide the underlying routing bug. |
-| 2026-04-30 | Per-tool args injector throws on missing/wrong-typed field                            | Defense-in-depth against MCP schema drift or LLM passing the wrong field name. A throw bubbles to approval-create and persists no action; never a half-mutated record. |
-| 2026-04-30 | No cache/index on the direct-write disclaimer path                                    | Per-trigger call volume is small (handful of disclaimer-eligible execs); full bounded JSONL scans are acceptable and avoid maintaining a second active-trigger source of truth. |
-| 2026-04-30 | `findActiveTrigger` returns `{ sessionId, triggerId }` (owner pair, not request pair)  | The viewer reads `<sessionId>.jsonl` and looks for `trigger_start{triggerId}` there. For child-session requests, the `trigger_start` lives in the parent's session log, not the child's. Returning only `triggerId` and pairing it with the request sessionId would build URLs that 404 for every child-session-originated disclaimer. Returning the owner sessionId makes URL construction correct in both top-level and chain-walked cases. |
-| 2026-04-30 | `gh pr create --fill` denied at the policy layer                                       | `--fill` lets `gh` compose the body from commit messages at exec time, leaving no field for the disclaimer injector to mutate. Without a deny, `--fill` would silently produce disclaimer-less PRs. Policy is the right layer (rather than the disclaimer injector) so the LLM gets the deny early with the existing `instead`-text guidance, avoiding a doomed `--fill` retry. Code change shipped alongside this plan revision in `packages/remote-cli/src/policy-gh.ts`. |
-| 2026-04-30 | Direct writes (GitHub `gh`): inline injection at execute time                         | `gh` exec is synchronous within the runner-driven request; original Thor context is in scope. Inference + URL build + flag rewrite is straightforward; no approval store involvement. |
-| 2026-04-30 | Include PR review-comment replies in disclaimer injection                             | The allowed append-only `gh api .../pulls/<pr>/comments/<comment>/replies --method POST -f body=...` shape creates GitHub-visible content. It must receive the same disclaimer footer as other PR content rather than becoming an untraceable carve-out. |
-| 2026-04-30 | Deny `gh issue create` and `gh issue comment` in v1                                   | End-state rule is all non-Slack content creation gets a disclaimer link. GitHub issues are outside the PR/Jira launch scope, so deny them rather than shipping issue content without disclaimer injection. |
-| 2026-04-30 | Cap one event record at < 4 KiB serialized; truncate and mark `_truncated`           | Avoids cross-process append interleave; mirrors `worklog.ts:18` truncation pattern. |
-| 2026-04-30 | `triggerId` is UUIDv4 (≥128-bit random)                                              | Public viewer URL relies on it as an unguessable bearer.         |
-| 2026-04-30 | Reuse `appendJsonlWorklog` (`packages/common/src/worklog.ts:123`) as the underlying writer | DRY; the existing primitive already handles day-partitioning and graceful failure. |
-| 2026-04-30 | Single shared Zod schema in `@thor/common/event-log.ts`                              | Writer-reader schema gate; readers `safeParse` and skip-with-counter; forward-compat by ignoring unknown fields. |
-| 2026-05-01 | Defer retention/archival/janitor out of this implementation                         | Current v1 keeps bounded reads and fail-closed oversized handling, but does not ship pruning/compression/cleanup automation. Retention is future operational work, not part of this PR. |
-| 2026-04-30 | No per-hit audit log on `/runner/v/*`                                                  | Vouch / ingress already log auth events; an additional Thor-side audit stream is bookkeeping debt without a clear consumer. Add only if a real incident-response need surfaces. |
-| 2026-04-30 | `findActiveTrigger` scans the full capped session log, not a tail window              | A long-running trigger can push its `trigger_start` outside a tail window before a late PR/Jira write. Full bounded scan preserves single-log source of truth without an active-trigger sidecar. |
+| Date       | Decision                                                                                                                             | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-30 | Use `/workspace/worklog/sessions/<session-id>.jsonl` as the source of truth                                                          | Flat session-keyed path; avoids symlink portability concerns and survives volume mount/backup/archival.                                                                                                                                                                                                                                                                                                                                                                     |
+| 2026-04-30 | Drop absolute symlink indexes; use `aliases.jsonl` newest-wins for alias lookup                                                      | No symlink fragility; in-process cache rebuilt on miss is faster than today's grep-based scan.                                                                                                                                                                                                                                                                                                                                                                              |
+| 2026-04-30 | Do not add SQLite or another DB                                                                                                      | Append-only JSONL + small in-memory cache is enough for v1. Revisit if alias scale becomes a problem.                                                                                                                                                                                                                                                                                                                                                                       |
+| 2026-04-30 | Do not propagate `triggerId` through OpenCode/bash/curl/remote-cli; recover via full bounded inference on disclaimer-eligible writes | No trusted per-trigger env channel exists between runner and OpenCode shell hooks; adding one requires a new shared mapping/plugin contract. Disclaimer-eligible writes are rare enough that scanning the capped session log is acceptable.                                                                                                                                                                                                                                 |
+| 2026-04-30 | Add `session.parent` alias type for child→parent session resolution                                                                  | Lets inference walk from a child OpenCode session id up to the parent session that owns the open trigger after the relation is recorded. Reuses the alias mechanism rather than introducing a new state shape. Cycle-safe via depth cap (5) + visited-set; child writes before parent linkage fail closed.                                                                                                                                                                  |
+| 2026-04-30 | Write `trigger_start` only after any prior busy session has settled                                                                  | Prevents prior-run events from entering the new trigger slice.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 2026-04-30 | Abort timeout means no marker and no prompt                                                                                          | Avoids ambiguous slices.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2026-04-30 | Drop the `trigger_aborted` record type; merge into `trigger_end{status:"aborted", reason?}`                                          | One way to express "this trigger ended"; cleaner schema. The original separate type was a vestige of the (incorrect) plan that the runner could emit a marker on process crash.                                                                                                                                                                                                                                                                                             |
+| 2026-04-30 | Trigger slices terminate on conflict, not on time                                                                                    | A subsequent `trigger_start` for the same session is unambiguous proof the prior trigger was abandoned (runner restart, lost state). Time-based "stale" detection only soft-warns inside the still-in-flight render — never assigns a "crashed" verdict from the clock alone.                                                                                                                                                                                               |
+| 2026-04-30 | Process-level crashes are not the runner's responsibility to mark                                                                    | A `try/catch/finally` cannot run on SIGKILL / OOM / container kill / segfault. The plan no longer pretends it can. Best-effort SIGTERM handler covers graceful shutdowns; crashes are detected at viewer time via supersede.                                                                                                                                                                                                                                                |
+| 2026-04-30 | Initial alias types are `slack.thread_id`, `git.branch`, and `session.parent`                                                        | Matches actual producers needed for routing and child→parent trigger attribution.                                                                                                                                                                                                                                                                                                                                                                                           |
+| 2026-04-30 | Treat phases 2-4 as greenfield JSONL logging, not a flag-gated cutover                                                               | This project can fail closed on event-log writes and route session aliases from JSONL directly; the old markdown notes implementation is removed.                                                                                                                                                                                                                                                                                                                           |
+| 2026-04-30 | Viewer is Vouch-gated under `/runner/*` ingress prefix; no HMAC, no TTL on the URL                                                   | Reuses the existing OAuth proxy pattern (`packages/admin/src/app.ts`); UUIDv4 entropy + Vouch is the access-control model. Drops HMAC operational cost (secret mgmt, signature code, "Invalid signature" UX). Audit-friendly: links in old artifacts keep working. (CHANGED 2026-04-30 from earlier "HMAC-signed public viewer" decision.)                                                                                                                                  |
+| 2026-04-30 | Use `/runner/*` ingress prefix for runner-owned routes                                                                               | Single ingress mount lets future runner routes ship without per-route ingress changes. Mirrors the existing `/admin/*` pattern.                                                                                                                                                                                                                                                                                                                                             |
+| 2026-04-30 | Redaction is allowlist (default-deny) on tool outputs                                                                                | Defense-in-depth — Vouch fronts the route, but allowlist redaction keeps screenshots / copy-paste / log-share from leaking content the page itself shouldn't render.                                                                                                                                                                                                                                                                                                        |
+| 2026-04-30 | Confluence writes removed from the atlassian approve list (commit `a4d755ca` on this branch)                                         | Reduces blast radius; the only approve-gated MCP tools that need disclaimer support are `createJiraIssue` and `addCommentToJiraIssue`. Re-introduce later if a real Confluence write use case lands. Tracked as part of this plan, not just deferred.                                                                                                                                                                                                                       |
+| 2026-04-30 | Approve-gated writes (Atlassian MCP): mutate `args` at approval-create time                                                          | Approval is async; by execute time the original trigger is closed and inference would return zero opens. Create-time mutation keeps Thor context in scope, lets the human approver see the disclaimer in the Slack prompt, and avoids `ApprovalActionSchema` changes.                                                                                                                                                                                                       |
+| 2026-04-30 | Both disclaimer paths fail-fast on missing/ambiguous active trigger                                                                  | Every Thor-created artifact must be traceable to a trigger. Direct writes (`gh`) exit non-zero with no upstream call; approve-create returns an error and persists no action. Failing open would silently ship disclaimer-less artifacts and hide the underlying routing bug.                                                                                                                                                                                               |
+| 2026-04-30 | Per-tool args injector throws on missing/wrong-typed field                                                                           | Defense-in-depth against MCP schema drift or LLM passing the wrong field name. A throw bubbles to approval-create and persists no action; never a half-mutated record.                                                                                                                                                                                                                                                                                                      |
+| 2026-04-30 | No cache/index on the direct-write disclaimer path                                                                                   | Per-trigger call volume is small (handful of disclaimer-eligible execs); full bounded JSONL scans are acceptable and avoid maintaining a second active-trigger source of truth.                                                                                                                                                                                                                                                                                             |
+| 2026-04-30 | `findActiveTrigger` returns `{ sessionId, triggerId }` (owner pair, not request pair)                                                | The viewer reads `<sessionId>.jsonl` and looks for `trigger_start{triggerId}` there. For child-session requests, the `trigger_start` lives in the parent's session log, not the child's. Returning only `triggerId` and pairing it with the request sessionId would build URLs that 404 for every child-session-originated disclaimer. Returning the owner sessionId makes URL construction correct in both top-level and chain-walked cases.                               |
+| 2026-04-30 | `gh pr create --fill` denied at the policy layer                                                                                     | `--fill` lets `gh` compose the body from commit messages at exec time, leaving no field for the disclaimer injector to mutate. Without a deny, `--fill` would silently produce disclaimer-less PRs. Policy is the right layer (rather than the disclaimer injector) so the LLM gets the deny early with the existing `instead`-text guidance, avoiding a doomed `--fill` retry. Code change shipped alongside this plan revision in `packages/remote-cli/src/policy-gh.ts`. |
+| 2026-04-30 | Direct writes (GitHub `gh`): inline injection at execute time                                                                        | `gh` exec is synchronous within the runner-driven request; original Thor context is in scope. Inference + URL build + flag rewrite is straightforward; no approval store involvement.                                                                                                                                                                                                                                                                                       |
+| 2026-04-30 | Include PR review-comment replies in disclaimer injection                                                                            | The allowed append-only `gh api .../pulls/<pr>/comments/<comment>/replies --method POST -f body=...` shape creates GitHub-visible content. It must receive the same disclaimer footer as other PR content rather than becoming an untraceable carve-out.                                                                                                                                                                                                                    |
+| 2026-04-30 | Deny `gh issue create` and `gh issue comment` in v1                                                                                  | End-state rule is all non-Slack content creation gets a disclaimer link. GitHub issues are outside the PR/Jira launch scope, so deny them rather than shipping issue content without disclaimer injection.                                                                                                                                                                                                                                                                  |
+| 2026-04-30 | Cap one event record at < 4 KiB serialized; truncate and mark `_truncated`                                                           | Avoids cross-process append interleave; mirrors `worklog.ts:18` truncation pattern.                                                                                                                                                                                                                                                                                                                                                                                         |
+| 2026-04-30 | `triggerId` is UUIDv4 (≥128-bit random)                                                                                              | Public viewer URL relies on it as an unguessable bearer.                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2026-04-30 | Reuse `appendJsonlWorklog` (`packages/common/src/worklog.ts:123`) as the underlying writer                                           | DRY; the existing primitive already handles day-partitioning and graceful failure.                                                                                                                                                                                                                                                                                                                                                                                          |
+| 2026-04-30 | Single shared Zod schema in `@thor/common/event-log.ts`                                                                              | Writer-reader schema gate; readers `safeParse` and skip-with-counter; forward-compat by ignoring unknown fields.                                                                                                                                                                                                                                                                                                                                                            |
+| 2026-05-01 | Defer retention/archival/janitor out of this implementation                                                                          | Current v1 keeps bounded reads and fail-closed oversized handling, but does not ship pruning/compression/cleanup automation. Retention is future operational work, not part of this PR.                                                                                                                                                                                                                                                                                     |
+| 2026-04-30 | No per-hit audit log on `/runner/v/*`                                                                                                | Vouch / ingress already log auth events; an additional Thor-side audit stream is bookkeeping debt without a clear consumer. Add only if a real incident-response need surfaces.                                                                                                                                                                                                                                                                                             |
+| 2026-04-30 | `findActiveTrigger` scans the full capped session log, not a tail window                                                             | A long-running trigger can push its `trigger_start` outside a tail window before a late PR/Jira write. Full bounded scan preserves single-log source of truth without an active-trigger sidecar.                                                                                                                                                                                                                                                                            |
+| 2026-05-01 | Keep correlation keys distinct from resolved session IDs                                                                             | Gateway queue keys must remain external correlation keys for batching/logging. Runner resume uses a separate `resolveSessionForCorrelationKey()` helper so alias hits do not turn into malformed correlation keys.                                                                                                                                                                                                                                                          |
 
 ## Phases
 
@@ -523,7 +559,7 @@ Exit criteria:
 - SQLite or any database-backed index.
 - Propagating `triggerId` through OpenCode/bash/curl/remote-cli — recovered via full bounded inference + recorded `session.parent` chain.
 - New alias types beyond `slack.thread_id`, `git.branch`, and `session.parent` (no `github.pr` in this phase).
-- Confluence write *features*. The three Confluence approve-gated tools (`createConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment`) are removed from `packages/common/src/proxies.ts` as part of this plan (commit `a4d755ca` on this branch) and denied by default. Re-introducing them is out of scope.
+- Confluence write _features_. The three Confluence approve-gated tools (`createConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment`) are removed from `packages/common/src/proxies.ts` as part of this plan (commit `a4d755ca` on this branch) and denied by default. Re-introducing them is out of scope.
 - GitHub issue content creation in v1. `gh issue create` and `gh issue comment` are denied rather than injected. Re-introduce later only with explicit disclaimer support.
 - Public unauthenticated viewer access — viewer is Vouch-gated; external Jira reporters who don't have OAuth cannot click into the disclaimer link. Acceptable trade for content-protection simplicity.
 - HMAC-signed viewer URLs / TTL expiry — Vouch + UUIDv4 entropy is the access-control model.
@@ -564,6 +600,7 @@ Mode: **SELECTIVE EXPANSION** (iteration on existing system, dual-voice review)
 Codex available: yes | UI scope: yes (public viewer is a server-rendered page) | DX scope: no
 
 > **Post-/autoplan amendments (2026-04-30):**
+>
 > - UC1 (propagate `x-thor-trigger-id`) was reversed. The plan body keeps `triggerId` runner-internal and recovers it at remote-cli via inference + a new `session.parent` alias type that lets inference chain-walk from a child OpenCode session id up to the parent that owns the open trigger.
 > - UC2 (HMAC-signed public viewer URL) was reversed. The viewer is Vouch-gated under `/runner/*` instead. UUIDv4 entropy + Vouch is the access-control model. Drops HMAC operational cost (secret mgmt, signature code, Invalid-signature 403, Expired 410). Trade-off: external Jira reporters without OAuth cannot click the disclaimer link.
 > - **Approve-gated disclaimer gap surfaced post-review.** Atlassian writes (`createJiraIssue`, `addCommentToJiraIssue`) go through the MCP approval store, which neither persists Thor identifiers nor receives them at resolve time. By execute time the original trigger has closed. Fix: mutate `args` at approval-create time (while context is in scope). **Both disclaimer paths fail-fast** if `findActiveTrigger` cannot return one open trigger or if the per-tool injector cannot find the expected field — the artifact never ships without a disclaimer. Documented in the Disclaimer Links section.
@@ -583,31 +620,31 @@ Codex available: yes | UI scope: yes (public viewer is a server-rendered page) |
 
 The plan's stated and implicit premises, with verdicts grounded in the codebase:
 
-| # | Premise (stated or implicit) | Verdict | Evidence |
-|---|---|---|---|
-| P1 | Symlink support is enough; "Ubuntu/macOS, symlinks assumed" (line 76) | **WEAK** | `/workspace/worklog` is a Docker bind mount. Absolute symlink targets `/workspace/worklog/...` do not resolve outside the container. Volume rsync/backup tools may not preserve symlinks. Future archival creates dangling links. |
-| P2 | One-line append per writer is enough concurrency control (line 39) | **WEAK** | No `O_APPEND` contract or per-line size cap stated. Posix guarantees atomic appends only ≤ `PIPE_BUF` (4KB). Long OpenCode events can exceed that and interleave. |
-| P3 | Session-id is a stable bearer over time | **ACCEPTABLE WITH CAVEAT** | OpenCode session IDs are high-entropy. But `runner/src/index.ts:413-449` recreates a session on stale; old viewer links 404 silently. Should be documented behavior. |
-| P4 | "Greenfield, no markdown-notes compatibility or migration" (line 16, 163) | **SUPERSEDED** | JSONL now owns session/event routing unconditionally. Markdown notes helpers were removed from the live code path in the PR cleanup. |
-| P5 | Don't propagate `triggerId` through OpenCode/bash/curl/remote-cli (line 79–80, decision-log) | **WRONG** | The wrapper at `packages/opencode-cli/src/remote-cli.ts:27` already propagates `x-thor-session-id` and `x-thor-call-id`. Adding `x-thor-trigger-id` is one line and removes the entire "exactly one active trigger" inference, which is the failure mode flagged below. |
-| P6 | "Conservative output limits and basic redaction" (line 127) is sufficient for public ingress | **WRONG** | Slices contain Slack thread content, Jira bodies, MCP tool outputs (Atlassian queries, Metabase SQL with schema names), repo names, error stack traces with env-var names, memory file contents. Public bearer-pair link → search engine indexable, copy-paste leakable. |
-| P7 | "Exactly one active trigger" inference (line 144) covers the disclaimer injection cases | **WRONG** | Plan's own scope (Phase 2) lists child sessions, retries, mention-interrupt, and parallel triggers. The "log and skip" fallback drops disclaimers in exactly the busy-session cases the feature is meant to cover. Solved by P5. |
-| P8 | Existing JSONL primitive cannot serve this need | **PARTIALLY WRONG** | `packages/common/src/worklog.ts:123` exports `appendJsonlWorklog` for day-partitioned streams. The plan does not reference it or explain why it is insufficient. At minimum, the rationale belongs in the decision log; better, extend it. |
-| P9 | "Out of scope: retention, archival, pruning" (line 268) is acceptable for v1 | **WRONG-AGES-WORST** | One large trigger logs hundreds of MB. JSONL grows unbounded. Six months: `worklog/` is the largest thing on disk and viewer route OOMs on `readFileSync`. |
+| #   | Premise (stated or implicit)                                                                 | Verdict                    | Evidence                                                                                                                                                                                                                                                                 |
+| --- | -------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| P1  | Symlink support is enough; "Ubuntu/macOS, symlinks assumed" (line 76)                        | **WEAK**                   | `/workspace/worklog` is a Docker bind mount. Absolute symlink targets `/workspace/worklog/...` do not resolve outside the container. Volume rsync/backup tools may not preserve symlinks. Future archival creates dangling links.                                        |
+| P2  | One-line append per writer is enough concurrency control (line 39)                           | **WEAK**                   | No `O_APPEND` contract or per-line size cap stated. Posix guarantees atomic appends only ≤ `PIPE_BUF` (4KB). Long OpenCode events can exceed that and interleave.                                                                                                        |
+| P3  | Session-id is a stable bearer over time                                                      | **ACCEPTABLE WITH CAVEAT** | OpenCode session IDs are high-entropy. But `runner/src/index.ts:413-449` recreates a session on stale; old viewer links 404 silently. Should be documented behavior.                                                                                                     |
+| P4  | "Greenfield, no markdown-notes compatibility or migration" (line 16, 163)                    | **SUPERSEDED**             | JSONL now owns session/event routing unconditionally. Markdown notes helpers were removed from the live code path in the PR cleanup.                                                                                                                                     |
+| P5  | Don't propagate `triggerId` through OpenCode/bash/curl/remote-cli (line 79–80, decision-log) | **WRONG**                  | The wrapper at `packages/opencode-cli/src/remote-cli.ts:27` already propagates `x-thor-session-id` and `x-thor-call-id`. Adding `x-thor-trigger-id` is one line and removes the entire "exactly one active trigger" inference, which is the failure mode flagged below.  |
+| P6  | "Conservative output limits and basic redaction" (line 127) is sufficient for public ingress | **WRONG**                  | Slices contain Slack thread content, Jira bodies, MCP tool outputs (Atlassian queries, Metabase SQL with schema names), repo names, error stack traces with env-var names, memory file contents. Public bearer-pair link → search engine indexable, copy-paste leakable. |
+| P7  | "Exactly one active trigger" inference (line 144) covers the disclaimer injection cases      | **WRONG**                  | Plan's own scope (Phase 2) lists child sessions, retries, mention-interrupt, and parallel triggers. The "log and skip" fallback drops disclaimers in exactly the busy-session cases the feature is meant to cover. Solved by P5.                                         |
+| P8  | Existing JSONL primitive cannot serve this need                                              | **PARTIALLY WRONG**        | `packages/common/src/worklog.ts:123` exports `appendJsonlWorklog` for day-partitioned streams. The plan does not reference it or explain why it is insufficient. At minimum, the rationale belongs in the decision log; better, extend it.                               |
+| P9  | "Out of scope: retention, archival, pruning" (line 268) is acceptable for v1                 | **WRONG-AGES-WORST**       | One large trigger logs hundreds of MB. JSONL grows unbounded. Six months: `worklog/` is the largest thing on disk and viewer route OOMs on `readFileSync`.                                                                                                               |
 
 #### Step 0B. Existing Code Leverage
 
 Sub-problems mapped to existing code:
 
-| Sub-problem | Existing code | Reuse plan |
-|---|---|---|
-| Append JSONL line | `packages/common/src/worklog.ts:123` (`appendJsonlWorklog`) | Extend with session-keyed variant; keep day-partitioning as a write-time decision, not a path requirement. |
-| Day-partitioned worklog dir | `packages/common/src/worklog.ts:129` (`getWorklogDir() / yyyy-mm-dd`) | Reuse the helper. |
-| Atomic write pattern | `packages/admin/src/app.ts:68-74` (custom `atomicWrite` for renames) | Promote to `@thor/common`; reuse for symlink-or-flat-file writes. |
-| Slack thread alias extraction | `packages/common/src/thor-meta.ts` (`extractAliases`, `computeSlackAlias`, `computeGitAlias`) | Reuse the alias extractors as-is; only the storage layer changes. |
-| Trigger header propagation | `packages/opencode-cli/src/remote-cli.ts:27` already passes `x-thor-session-id`, `x-thor-call-id` | Add `x-thor-trigger-id` here (one line). Per P5 verdict. |
-| OpenCode event subscription | `packages/runner/src/event-bus.ts` (`DirectoryEventBus`) | No change; tap the existing dispatcher to fan events into the new event log. |
-| Remote-cli session-id read | `packages/remote-cli/src/index.ts:90-97` (`thorIds`) | Add `triggerId` to the same helper. |
+| Sub-problem                   | Existing code                                                                                     | Reuse plan                                                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Append JSONL line             | `packages/common/src/worklog.ts:123` (`appendJsonlWorklog`)                                       | Extend with session-keyed variant; keep day-partitioning as a write-time decision, not a path requirement. |
+| Day-partitioned worklog dir   | `packages/common/src/worklog.ts:129` (`getWorklogDir() / yyyy-mm-dd`)                             | Reuse the helper.                                                                                          |
+| Atomic write pattern          | `packages/admin/src/app.ts:68-74` (custom `atomicWrite` for renames)                              | Promote to `@thor/common`; reuse for symlink-or-flat-file writes.                                          |
+| Slack thread alias extraction | `packages/common/src/thor-meta.ts` (`extractAliases`, `computeSlackAlias`, `computeGitAlias`)     | Reuse the alias extractors as-is; only the storage layer changes.                                          |
+| Trigger header propagation    | `packages/opencode-cli/src/remote-cli.ts:27` already passes `x-thor-session-id`, `x-thor-call-id` | Add `x-thor-trigger-id` here (one line). Per P5 verdict.                                                   |
+| OpenCode event subscription   | `packages/runner/src/event-bus.ts` (`DirectoryEventBus`)                                          | No change; tap the existing dispatcher to fan events into the new event log.                               |
+| Remote-cli session-id read    | `packages/remote-cli/src/index.ts:90-97` (`thorIds`)                                              | Add `triggerId` to the same helper.                                                                        |
 
 #### Step 0C. Dream State
 
@@ -628,6 +665,7 @@ Delta this plan ships toward the ideal: structured event log, alias routing, vie
 #### Step 0C-bis. Implementation Alternatives
 
 **APPROACH A — Plan as written (symlink indexes + inference)**
+
 - Summary: Day-partitioned `events.jsonl` per session; absolute symlink indexes for `sessions/<id>` and `aliases/<type>/<key>`; `triggerId` not propagated, inferred at remote-cli.
 - Effort: M (5 phases as described). Human ~5 days / CC ~3 hours.
 - Risk: **High**. Symlink portability, public viewer leakage, inference ambiguity in busy sessions, hard cutover from notes.
@@ -637,6 +675,7 @@ Delta this plan ships toward the ideal: structured event log, alias routing, vie
 - Completeness: 6/10 (functionality covered; foundation gaps surface within 6 months).
 
 **APPROACH B — Header propagation + flat session file + signed URLs (recommended)**
+
 - Summary: Flat `/workspace/worklog/sessions/<session-id>.jsonl` (no symlink indexes). Propagate `x-thor-trigger-id` via `packages/opencode-cli/src/remote-cli.ts` (one line). Viewer link is HMAC-signed with TTL; redaction is allowlist; alias routing reads JSONL directly via a small in-process cache rebuilt on first miss.
 - Effort: M-L. Human ~6 days / CC ~3.5 hours.
 - Risk: **Medium**. Single-day archive job is the only ops piece deferred. Cache rebuild on first miss is well-understood.
@@ -646,6 +685,7 @@ Delta this plan ships toward the ideal: structured event log, alias routing, vie
 - Completeness: 9/10.
 
 **APPROACH C — SQLite-backed index (rejected by plan, worth reconsidering)**
+
 - Summary: SQLite for session→aliases→trigger lookup. JSONL still primary log. Schema: `sessions`, `aliases`, `triggers`. ~50 LOC of `INSERT INTO`.
 - Effort: L. Human ~7 days / CC ~4 hours.
 - Risk: **Low** for the storage layer; **Medium** for adding a new dependency.
@@ -684,17 +724,17 @@ Minimum viable subset (if HOLD-SCOPE-style triage): Phase 1 (event log helpers) 
 
 Cherry-pick candidates surfaced by the dual voices (presented as Phase 4 User Challenges, not auto-added):
 
-| # | Cherry-pick | Effort | Recommend |
-|---|---|---|---|
-| C1 | Propagate `x-thor-trigger-id` header (replaces inference) | XS (1 line + tests) | **ACCEPT** |
-| C2 | Flat session file path; drop absolute symlink indexes | S (path layout change in Phase 1) | **ACCEPT** |
-| C3 | HMAC-signed viewer URL with TTL | S | **ACCEPT** |
-| C4 | Redaction allowlist (default-deny tool outputs) | M | **ACCEPT** |
-| C5 | Per-file size cap + rotation in Phase 1 | S | **ACCEPT** |
-| C6 | Curated default viewer ("what Thor did") with raw events behind toggle | M | DEFER to follow-up |
-| C7 | Document stale-session behavior: old viewer links 404 by design | XS | **ACCEPT** |
-| C8 | Extend `appendJsonlWorklog` rather than build parallel writer | XS | **ACCEPT** |
-| C9 | Audit log for viewer hits (request-id, ip, ua, sessionId, triggerId) | S | **ACCEPT** |
+| #   | Cherry-pick                                                            | Effort                            | Recommend          |
+| --- | ---------------------------------------------------------------------- | --------------------------------- | ------------------ |
+| C1  | Propagate `x-thor-trigger-id` header (replaces inference)              | XS (1 line + tests)               | **ACCEPT**         |
+| C2  | Flat session file path; drop absolute symlink indexes                  | S (path layout change in Phase 1) | **ACCEPT**         |
+| C3  | HMAC-signed viewer URL with TTL                                        | S                                 | **ACCEPT**         |
+| C4  | Redaction allowlist (default-deny tool outputs)                        | M                                 | **ACCEPT**         |
+| C5  | Per-file size cap + rotation in Phase 1                                | S                                 | **ACCEPT**         |
+| C6  | Curated default viewer ("what Thor did") with raw events behind toggle | M                                 | DEFER to follow-up |
+| C7  | Document stale-session behavior: old viewer links 404 by design        | XS                                | **ACCEPT**         |
+| C8  | Extend `appendJsonlWorklog` rather than build parallel writer          | XS                                | **ACCEPT**         |
+| C9  | Audit log for viewer hits (request-id, ip, ua, sessionId, triggerId)   | S                                 | **ACCEPT**         |
 
 #### Step 0E. Temporal Interrogation
 
@@ -759,6 +799,7 @@ Auto-decided per autoplan rules: **SELECTIVE EXPANSION**. Greenfield expansion w
 ```
 
 Architecture findings:
+
 - **Coupling**: viewer reads `events.jsonl` directly. If the writer's line format ever changes mid-trigger, the reader breaks. Need explicit reader contract: drop unknown fields, render best-effort, handle malformed lines.
 - **Single point of failure**: every Thor-created GitHub/Jira write goes through remote-cli's inference. If inference is wrong, the disclaimer is wrong. P5 fix removes this.
 - **Scaling**: at 100x trigger rate, alias symlink rename-over rate becomes a bottleneck (rename is fast but not free). Linear scan of one events.jsonl for active trigger is fine until file >50MB. Cap at Phase 1.
@@ -767,6 +808,7 @@ Architecture findings:
 #### Sections 2–10 (auto-decided)
 
 **Section 2 — Error & Rescue Map.** New failure modes:
+
 - `events.jsonl` write fails (disk full, FS error) → today: append helpers in `worklog.ts` log to stderr and continue. New helpers should match. ACTION: do not let event log failures crash trigger handling.
 - Symlink rename fails (race with another trigger swapping same alias) → fall back to `unlink + symlink` second try; if still fails, log and continue without the index update.
 - Active-trigger inference returns >1 → log + skip (plan); P5 cherry-pick removes this case entirely.
@@ -788,6 +830,7 @@ Architecture findings:
 Critical mitigations to add: HMAC-signed URL with TTL; redaction allowlist (deny by default); rate limit on `/v/*`; access log per hit. All in C3/C4/C9.
 
 **Section 4 — Data Flow Edge Cases.** Trigger slice is the data flow.
+
 - Empty session log (just-created): `trigger_start` not written yet → viewer 404 (plan says so). OK.
 - Crashed mid-trigger (no `trigger_end`): plan slices to next start or EOF, marks incomplete. OK.
 - Two `trigger_start` for same triggerId (replay/retry): plan does not address. ACTION: writer must reject duplicate `triggerId` in same session.
@@ -795,6 +838,7 @@ Critical mitigations to add: HMAC-signed URL with TTL; redaction allowlist (deny
 - Alias collision (two sessions claim same Slack thread): newest symlink wins per plan. OK and matches notes.ts behavior.
 
 **Section 5 — Code Quality.**
+
 - DRY: `appendJsonlWorklog` already exists; new writer should extend or wrap, not duplicate. Plan does not call this out.
 - Naming: `triggerId` vs `trigger_id` consistency — pick one (camelCase in TS, snake in JSONL field names is fine, but be explicit).
 - The `correlationKey` field in `trigger_start` partially overlaps with `aliasValue` records. Consider whether it can be derived from the first alias instead.
@@ -802,23 +846,28 @@ Critical mitigations to add: HMAC-signed URL with TTL; redaction allowlist (deny
 **Section 6 — Test Review.**
 
 NEW UX FLOWS:
+
 - Public viewer rendering valid slice, missing slice, oversized slice, partially-written slice
 - Disclaimer link appearing in GitHub PR body, Jira ticket, GitHub comment, Jira comment
 
 NEW DATA FLOWS:
+
 - Trigger context → event log writer → JSONL append (happy, full disk, EAGAIN)
 - Slack inbound → alias write → session resolve via JSONL
 - Git-detected branch → alias write → session resolve via JSONL
 
 NEW CODEPATHS:
+
 - Symlink atomic create-rename
 - Active-trigger inference (>1 / 0 / exactly 1)
 - Trigger slice extraction (start→end, start→EOF, malformed line)
 
 NEW BACKGROUND JOBS / ASYNC:
+
 - None added by plan; retention deferred (and that's a problem).
 
 NEW INTEGRATIONS:
+
 - None new; reuses OpenCode event bus.
 
 NEW ERROR/RESCUE PATHS: see Section 2 above.
@@ -828,12 +877,14 @@ Test plan artifact: `~/.gstack/projects/scoutqa-dot-ai-thor/session-log-links-te
 For LLM/prompt changes: none — this is infrastructure.
 
 **Section 7 — Performance.**
+
 - Linear `events.jsonl` scan in viewer route: fine until ~50MB per file. Cap with size limit + early-exit.
 - Symlink resolution: O(1) per lookup. No concern.
 - Alias-to-session lookup via symlink read: faster than today's grep-based scan in `notes.ts` (which scans every notes file). **Net win** vs current implementation.
 - Active-trigger inference reads tail of `events.jsonl`: fine if size capped; tail-read pattern (read last N KB and parse forward) is the correct shape.
 
 **Section 8 — Observability.**
+
 - Logging: every append failure → stderr (matches `worklog.ts` pattern). Append success: silent (high volume).
 - Metrics: counter for `event_log.appends_total{type}`, `event_log.bytes_total`, `viewer.hits_total{status}`. Plan adds none. ACTION: add at least counters.
 - Alerting: viewer 5xx rate; event log write error rate.
@@ -841,6 +892,7 @@ For LLM/prompt changes: none — this is infrastructure.
 - Debuggability: structured per-trigger slices are themselves the debug aid. Score 9/10.
 
 **Section 9 — Deployment & Rollout.**
+
 - Plan uses unconditional JSONL logging; no runtime cutover switch.
 - Migration risk window is avoided by not dual-writing for routing.
 - Rollback requires reverting the feature change; there is no markdown-notes compatibility layer.
@@ -848,6 +900,7 @@ For LLM/prompt changes: none — this is infrastructure.
 - First 5 minutes after deploy: monitor viewer 5xx, event log write error rate, runner trigger latency.
 
 **Section 10 — Long-Term Trajectory.**
+
 - Tech debt: P9 (no retention) is debt that compounds linearly with time.
 - Path dependency: if symlinks ship and break, migrating to flat-file is a one-time data migration (read symlink → resolve → rewrite path map). Not catastrophic, but real work.
 - Reversibility: 3/5. Schema is durable, format is JSONL, but symlink layout is the part that could need migration.
@@ -920,6 +973,7 @@ DESIGN DUAL VOICES — CONSENSUS TABLE
 Plan's flat list (line 121–123): trigger metadata, status, events, tool calls, memory reads, delegate/task events. Implicit equal weight.
 
 Recommended (consensus across both voices):
+
 ```
 ┌──────────────────────────────────────────────────┐
 │  HERO                                              │
@@ -943,17 +997,17 @@ Recommended (consensus across both voices):
 
 #### Pass 2 — Interaction State Coverage
 
-| State | Plan specifies? | Required behavior |
-|---|---|---|
-| Loading | NO | Server-render is sync; need a 2s read budget; if exceeded, return cached "loading" placeholder with auto-refresh meta tag |
-| Empty (zero events) | NO | "This trigger has no recorded events. It may have been a no-op." |
-| Error (events.jsonl unreachable / parse failure) | NO | Branded 503 with retry copy |
-| Incomplete (no trigger_end) | YES | Banner: "This trigger did not complete cleanly." |
-| Partial / streaming (active) | NO (conflated with incomplete) | Yellow "Running" pill + last-event timestamp + `<meta refresh="5">`; remove on completion |
-| Oversized (slice exceeds output limit) | YES (loose) | "Slice truncated for display. View full raw events." |
-| Redacted (allowlist) | NO | "[redacted: tool output, 4.2KB]" inline marker |
-| Invalid signature (HMAC fails) | NEW (per Phase 1 cherry-pick) | Branded 403 |
-| Expired link | NEW | Branded 410 with refresh-instruction |
+| State                                            | Plan specifies?                | Required behavior                                                                                                         |
+| ------------------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Loading                                          | NO                             | Server-render is sync; need a 2s read budget; if exceeded, return cached "loading" placeholder with auto-refresh meta tag |
+| Empty (zero events)                              | NO                             | "This trigger has no recorded events. It may have been a no-op."                                                          |
+| Error (events.jsonl unreachable / parse failure) | NO                             | Branded 503 with retry copy                                                                                               |
+| Incomplete (no trigger_end)                      | YES                            | Banner: "This trigger did not complete cleanly."                                                                          |
+| Partial / streaming (active)                     | NO (conflated with incomplete) | Yellow "Running" pill + last-event timestamp + `<meta refresh="5">`; remove on completion                                 |
+| Oversized (slice exceeds output limit)           | YES (loose)                    | "Slice truncated for display. View full raw events."                                                                      |
+| Redacted (allowlist)                             | NO                             | "[redacted: tool output, 4.2KB]" inline marker                                                                            |
+| Invalid signature (HMAC fails)                   | NEW (per Phase 1 cherry-pick)  | Branded 403                                                                                                               |
+| Expired link                                     | NEW                            | Branded 410 with refresh-instruction                                                                                      |
 
 #### Pass 3 — User Journey & Emotional Arc
 
@@ -968,6 +1022,7 @@ Required arc: **Status pill → one-line summary → outcome card → trust** in
 #### Pass 5 — Design System Alignment
 
 No DESIGN.md exists. Reuse the admin pattern (`packages/admin/src/views.ts:69`):
+
 - System font stack: `-apple-system, system-ui, sans-serif`.
 - Status pill colors: green `#e7f5e7` / `#1a5a1a` (passes WCAG 4.5:1).
 - Max-width 960px.
@@ -978,6 +1033,7 @@ Diverge from admin: it's an SSR debug page; the public viewer needs a hero zone,
 #### Pass 6 — Responsive & Accessibility
 
 Mobile-first additions required:
+
 - Single column at <600px; 16px base font; 44px tap targets for `<details>`.
 - `overflow-x: auto` on inner `<pre>` (not the page).
 - Semantic landmarks: `<main>`, `<header>`, `<section>`.
@@ -988,19 +1044,19 @@ Mobile-first additions required:
 
 #### Pass 7 — Unresolved Design Decisions
 
-| Decision | Plan says | Recommendation |
-|---|---|---|
-| Tool calls expanded by default | nothing | Collapsed; first 80 chars of payload as preview |
-| Tool call payload truncation | "conservative output limits" | Per-record cap 8KB display; allowlisted fields only |
-| Syntax highlighting | nothing | None — plain monospace `<pre>` |
-| Base64 payloads | nothing | Detect `^[A-Za-z0-9+/=]{200,}$`; render `<base64 hidden, 4.2KB>` |
-| Memory reads — full or truncated | nothing | First 200 chars + "Show full" toggle (default-deny) |
-| Timestamps | nothing | Relative ("4m ago") with absolute on hover |
-| Auto-refresh while running | nothing | `<meta http-equiv="refresh" content="5">` only on running state |
-| Unknown event type | nothing | Generic `<details>` with `type` and JSON body |
-| Failed-parse line | "malformed-line tolerance" | Skip silently; surface count in footer |
-| OG metadata | nothing | Set `og:title`, `og:description`, `og:image=/social-share.png` |
-| Two views, one URL | conflates curated + raw | `/v/<sid>/<tid>` curated; `/v/<sid>/<tid>/raw` JSONL dump |
+| Decision                         | Plan says                    | Recommendation                                                   |
+| -------------------------------- | ---------------------------- | ---------------------------------------------------------------- |
+| Tool calls expanded by default   | nothing                      | Collapsed; first 80 chars of payload as preview                  |
+| Tool call payload truncation     | "conservative output limits" | Per-record cap 8KB display; allowlisted fields only              |
+| Syntax highlighting              | nothing                      | None — plain monospace `<pre>`                                   |
+| Base64 payloads                  | nothing                      | Detect `^[A-Za-z0-9+/=]{200,}$`; render `<base64 hidden, 4.2KB>` |
+| Memory reads — full or truncated | nothing                      | First 200 chars + "Show full" toggle (default-deny)              |
+| Timestamps                       | nothing                      | Relative ("4m ago") with absolute on hover                       |
+| Auto-refresh while running       | nothing                      | `<meta http-equiv="refresh" content="5">` only on running state  |
+| Unknown event type               | nothing                      | Generic `<details>` with `type` and JSON body                    |
+| Failed-parse line                | "malformed-line tolerance"   | Skip silently; surface count in footer                           |
+| OG metadata                      | nothing                      | Set `og:title`, `og:description`, `og:image=/social-share.png`   |
+| Two views, one URL               | conflates curated + raw      | `/v/<sid>/<tid>` curated; `/v/<sid>/<tid>/raw` JSONL dump        |
 
 #### Phase 2 Output Summary
 
@@ -1037,13 +1093,14 @@ ENG DUAL VOICES — CONSENSUS TABLE
 #### Section 1 — Architecture (with diagram)
 
 Rendered at the end of Phase 1's report (above). Key coupling concerns confirmed:
+
 - **Writer ↔ readers:** schema gate needed. Single Zod schema in `@thor/common/event-log.ts`, imported by writer, viewer, remote-cli inference, alias resolver. All readers `safeParse` and skip-with-counter on failure.
 - **Symlink target ↔ FS layout:** absolute targets bake `<yyyy-mm-dd>/<session-id>` paths; archival or volume migration silently breaks them. Approach B (flat session file path) eliminates this coupling.
 - **remote-cli inference ↔ runner ordering:** plan assumes `trigger_start` lands before any tool can call remote-cli. There is no enforcement. Header propagation (one line in `packages/opencode-cli/src/remote-cli.ts:27` + `packages/remote-cli/src/index.ts:90`) deletes the inference subsystem entirely.
 
 #### Section 2 — Concurrency
 
-- **Append atomicity for large records.** PIPE_BUF (4KB) is a pipe semantic, not a regular-file semantic. POSIX gives weaker guarantees on regular files — same-FD `O_APPEND` writes from one process are typically atomic up to filesystem block size, but multiple *processes* writing the same file have no guarantee. OpenCode `message.part.updated` events with embedded tool output trivially exceed 4KB. **Fix:** cap one record at < 4KB by truncating `payload`/`event` (mirror the pattern in `packages/common/src/worklog.ts:18`); for guaranteed safety across processes, hold an advisory `flock` for the write.
+- **Append atomicity for large records.** PIPE_BUF (4KB) is a pipe semantic, not a regular-file semantic. POSIX gives weaker guarantees on regular files — same-FD `O_APPEND` writes from one process are typically atomic up to filesystem block size, but multiple _processes_ writing the same file have no guarantee. OpenCode `message.part.updated` events with embedded tool output trivially exceed 4KB. **Fix:** cap one record at < 4KB by truncating `payload`/`event` (mirror the pattern in `packages/common/src/worklog.ts:18`); for guaranteed safety across processes, hold an advisory `flock` for the write.
 - **Symlink rename-over.** `rename(2)` on the same filesystem is atomic per POSIX, but two writers racing to swap the same alias may leak `tmp.*` if not stable-named. Use `tmp.<pid>.<rand>`; sweeper janitor.
 - **Reader vs writer.** Viewer route may `readFileSync` while runner is `appendFileSync`-ing → reader can observe a partial trailing line (no `\n`). Splitter must discard fragments without trailing `\n`.
 - **Multi-replica.** Plan assumes single runner. If ever scaled horizontally on the same `/workspace/worklog` mount, races corrupt the log. Document the single-writer assumption explicitly; add `flock` if defense-in-depth is wanted.
@@ -1051,12 +1108,14 @@ Rendered at the end of Phase 1's report (above). Key coupling concerns confirmed
 #### Section 3 — Test Review
 
 NEW UX FLOWS:
+
 1. Reporter clicks viewer link in Slack/Jira/PR → SSR HTML status page → states: valid, missing, incomplete, running, oversized, redacted, expired, signature-invalid.
 2. Disclaimer link surfaces inside Thor-authored PR body, Jira ticket, GitHub comment.
 3. Slack thread reply routes to existing session via `slack.thread_id` alias.
 4. Git branch activity routes to existing session via `git.branch` alias.
 
 NEW DATA FLOWS:
+
 1. Trigger ingress → runner appends `trigger_start` → events.jsonl (append-only).
 2. OpenCode SSE event → runner → events.jsonl (append; child sessions inline).
 3. Tool output → runner extracts alias → atomic symlink swap (or flat path map under Approach B).
@@ -1064,12 +1123,14 @@ NEW DATA FLOWS:
 5. Viewer GET → resolve sessionId → slice `trigger_start..trigger_end` → redact → SSR.
 
 NEW CODEPATHS:
+
 - `@thor/common/event-log.ts`: appendRecord, atomicSymlinkSwap (or flat-path resolve), readSlice, findActiveTriggers, resolveAliasToSession.
 - runner: trigger marker emit, alias write on tool completion, stale-session-recreate alias bridge.
 - remote-cli: inferActiveTrigger(sessionId) — or removed by header propagation; buildSignedViewerUrl.
 - admin/ingress: GET `/v/<sessionId>/<triggerId>?sig=...&ttl=...`.
 
 NEW BACKGROUND JOBS — **none in plan** (this is a finding):
+
 - Symlink janitor (sweep dangling links + stray `tmp.*` files daily).
 - Retention sweeper (compress + remove sessions > N days).
 - Audit-log rotation for `/v/*` hits.
@@ -1077,6 +1138,7 @@ NEW BACKGROUND JOBS — **none in plan** (this is a finding):
 NEW INTEGRATIONS: none external. Internal: viewer route on ingress.
 
 NEW ERROR/RESCUE PATHS:
+
 - Append failure (ENOSPC, EIO) → log to stderr, do not block trigger handling.
 - Symlink rename collision → retry once with `unlink+symlink`, then log.
 - Reader on partial trailing line → discard fragment, render rest.
@@ -1085,6 +1147,7 @@ NEW ERROR/RESCUE PATHS:
 - HMAC signature failure → branded 403; expired link → branded 410.
 
 **Tests missing from plan lines 273–280** (consensus across both voices):
+
 1. Multi-process append fuzz (two `node` processes appending 1k records each, assert no corrupt lines).
 2. Symlink rename race: spawn N parallel `swap-alias` calls, assert exactly one target wins and no `tmp.*` leaks.
 3. Reader observing a partial trailing line during writer activity.
@@ -1110,17 +1173,17 @@ NEW ERROR/RESCUE PATHS:
 
 #### Section 5 — Security & Threat Model
 
-| Threat | Likelihood | Impact | Mitigated? | Fix |
-|---|---|---|---|---|
-| Public link leakage (copy-paste, search indexing, referrer) | High | High | NO | HMAC-sign URL with TTL; signature failure → 403; expiry → 410 |
-| Direct object reference (guess sessionId+triggerId) | Low | High | Partial — but only if both IDs are ≥128-bit random | Specify UUIDv4/v7 for `triggerId`; `sessionId` is OpenCode's (ULID, 128-bit) |
-| Tool output exfil (Slack content, Jira bodies, MCP results, env vars in stack traces) | High | High | NO — "basic redaction" undefined | Allowlist-based default-deny; per-tool field whitelist |
-| Symlink traversal in `<thread-id>` filename | Medium | Medium | YES — plan validates `[0-9.]+` | OK |
-| Symlink traversal in encoded git branch | Medium | Medium | YES — base64url normalizes | OK |
-| Symlink target escape from `/workspace/worklog/` | Low | High | NO | Viewer must `realpath` + prefix-check before opening |
-| `sessionId` injection into symlink path | Medium | Medium | NO | Validate `sessionId` matches OpenCode format (alphanumeric + `_`) before use |
-| Viewer rate-limit DoS / enumeration | Medium | Low | NO | Express rate-limit middleware on `/v/*` |
-| Audit gap (who viewed what) | High | Low | NO | Per-hit JSONL audit log via `appendJsonlWorklog` |
+| Threat                                                                                | Likelihood | Impact | Mitigated?                                         | Fix                                                                          |
+| ------------------------------------------------------------------------------------- | ---------- | ------ | -------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Public link leakage (copy-paste, search indexing, referrer)                           | High       | High   | NO                                                 | HMAC-sign URL with TTL; signature failure → 403; expiry → 410                |
+| Direct object reference (guess sessionId+triggerId)                                   | Low        | High   | Partial — but only if both IDs are ≥128-bit random | Specify UUIDv4/v7 for `triggerId`; `sessionId` is OpenCode's (ULID, 128-bit) |
+| Tool output exfil (Slack content, Jira bodies, MCP results, env vars in stack traces) | High       | High   | NO — "basic redaction" undefined                   | Allowlist-based default-deny; per-tool field whitelist                       |
+| Symlink traversal in `<thread-id>` filename                                           | Medium     | Medium | YES — plan validates `[0-9.]+`                     | OK                                                                           |
+| Symlink traversal in encoded git branch                                               | Medium     | Medium | YES — base64url normalizes                         | OK                                                                           |
+| Symlink target escape from `/workspace/worklog/`                                      | Low        | High   | NO                                                 | Viewer must `realpath` + prefix-check before opening                         |
+| `sessionId` injection into symlink path                                               | Medium     | Medium | NO                                                 | Validate `sessionId` matches OpenCode format (alphanumeric + `_`) before use |
+| Viewer rate-limit DoS / enumeration                                                   | Medium     | Low    | NO                                                 | Express rate-limit middleware on `/v/*`                                      |
+| Audit gap (who viewed what)                                                           | High       | Low    | NO                                                 | Per-hit JSONL audit log via `appendJsonlWorklog`                             |
 
 #### Section 6 — Hidden Complexity
 
@@ -1132,6 +1195,7 @@ NEW ERROR/RESCUE PATHS:
 #### Section 7 — Deployment & Rollout
 
 Plan does not mention rollout posture. **Required additions:**
+
 - JSONL event logging is unconditional for new feature paths.
 - No dual-write routing window; readers use JSONL and do not fall back to notes.
 - Rollback requires reverting the feature change; there is no markdown-notes compatibility layer.
@@ -1148,18 +1212,18 @@ Plan does not mention rollout posture. **Required additions:**
 
 **Top 10 ranked findings (consensus):**
 
-| # | Finding | Severity | Fix |
-|---|---|---|---|
-| F1 | Public viewer is unsigned bearer-pair URL; raw tool outputs leak | **critical** | HMAC-sign URL with TTL; allowlist redaction |
-| F2 | Disclaimer inference fails in busy/parallel cases — exactly the cases it must cover | **critical** | Propagate `x-thor-trigger-id` (one line in `packages/opencode-cli/src/remote-cli.ts:27` + add to `packages/remote-cli/src/index.ts:90`); deletes inference branch entirely |
-| F3 | "Greenfield, no migration" claim is false — runner used notes.ts heavily | **high** | Superseded: JSONL is unconditional; markdown notes were removed |
-| F4 | Absolute symlink indexes are fragile across volume mounts, archival, backup tools | **high** | Use flat session files (`<workdir>/sessions/<session-id>.jsonl`); drop symlink layer |
-| F5 | No retention/archival/janitor; `worklog/` grows unbounded | **high** | Add Phase 6 (retention) with per-file size cap + rotation |
-| F6 | "Basic redaction" undefined; tool outputs leak | **high** | Allowlist-based default-deny; per-tool field whitelist |
-| F7 | `triggerId` generation entropy/format unspecified; if sequential, viewer enumeration is trivial | **high** | UUIDv4 (≥128-bit random); document |
-| F8 | `>4KB` line writes can corrupt JSONL across processes | **high** | Cap one record at < 4KB; truncate payload field; reuse `worklog.ts:18` truncation pattern |
-| F9 | No rate limit, no audit log on public `/v/*` | **high** | Express rate-limit + per-hit JSONL audit log |
-| F10 | Crash between `trigger_start` and `promptAsync` leaves orphan empty triggers | **medium** | Outer-try emits `trigger_aborted`; viewer renders incomplete with reason |
+| #   | Finding                                                                                         | Severity     | Fix                                                                                                                                                                        |
+| --- | ----------------------------------------------------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | Public viewer is unsigned bearer-pair URL; raw tool outputs leak                                | **critical** | HMAC-sign URL with TTL; allowlist redaction                                                                                                                                |
+| F2  | Disclaimer inference fails in busy/parallel cases — exactly the cases it must cover             | **critical** | Propagate `x-thor-trigger-id` (one line in `packages/opencode-cli/src/remote-cli.ts:27` + add to `packages/remote-cli/src/index.ts:90`); deletes inference branch entirely |
+| F3  | "Greenfield, no migration" claim is false — runner used notes.ts heavily                        | **high**     | Superseded: JSONL is unconditional; markdown notes were removed                                                                                                            |
+| F4  | Absolute symlink indexes are fragile across volume mounts, archival, backup tools               | **high**     | Use flat session files (`<workdir>/sessions/<session-id>.jsonl`); drop symlink layer                                                                                       |
+| F5  | No retention/archival/janitor; `worklog/` grows unbounded                                       | **high**     | Add Phase 6 (retention) with per-file size cap + rotation                                                                                                                  |
+| F6  | "Basic redaction" undefined; tool outputs leak                                                  | **high**     | Allowlist-based default-deny; per-tool field whitelist                                                                                                                     |
+| F7  | `triggerId` generation entropy/format unspecified; if sequential, viewer enumeration is trivial | **high**     | UUIDv4 (≥128-bit random); document                                                                                                                                         |
+| F8  | `>4KB` line writes can corrupt JSONL across processes                                           | **high**     | Cap one record at < 4KB; truncate payload field; reuse `worklog.ts:18` truncation pattern                                                                                  |
+| F9  | No rate limit, no audit log on public `/v/*`                                                    | **high**     | Express rate-limit + per-hit JSONL audit log                                                                                                                               |
+| F10 | Crash between `trigger_start` and `promptAsync` leaves orphan empty triggers                    | **medium**   | Outer-try emits `trigger_aborted`; viewer renders incomplete with reason                                                                                                   |
 
 **Architecture diagram, test diagram, and consensus table above.** Mandatory artifacts delivered.
 
@@ -1179,49 +1243,49 @@ DX scope detection (10 matches) was driven by mentions of `remote-cli` and `webh
 
 #### User Challenges (both models disagree with the plan's stated direction)
 
-| # | Challenge | Plan says | Both models recommend | Why | Cost if we're wrong |
-|---|---|---|---|---|---|
-| UC1 | Propagate `x-thor-trigger-id` | Don't propagate; infer from log (line 158) | Add one line to `packages/opencode-cli/src/remote-cli.ts:27` and `packages/remote-cli/src/index.ts:90` | Inference fails in busy/parallel cases — exactly the cases disclaimers must cover; header pipe already exists | Disclaimer silently drops in complex sessions; not a security regression but loses the feature value |
-| UC2 | HMAC-sign the public viewer URL with TTL | "Conservative output limits and basic redaction" + raw bearer-pair URL | Signed URL + redaction allowlist + audit log + rate limit | Slices contain Slack/Jira/MCP outputs, repo names, env-var names, memory contents; bearer-pair is unsafe for public ingress | **Highest stakes.** Link leak (copy-paste, search index, referrer) exposes internal data to the open internet |
-| UC3 | Flat session file path; drop absolute symlink indexes | Symlinks for `index/sessions/*` and `index/aliases/*/*` | Flat `/workspace/worklog/sessions/<session-id>.jsonl` | Absolute targets break across volume mounts/backup tools; dangle on archival; complicate retention | Symlinks work fine on a single host; cost surfaces on archival/migration day |
-| UC4 | Add retention/archival/janitor (Phase 6) | "Out of scope" (line 268) | In scope | Unbounded JSONL growth → viewer OOMs; active-trigger inference becomes O(file) | In 6 months: ops debt manifests as a fire-fight; recoverable but costly |
-| UC5 | Treat Phase 2-4 as a cutover, not greenfield | "No migration path; greenfield" (line 16, 163) | Superseded: unconditional JSONL, no notes routing fallback | Markdown notes were removed, so JSONL owns session/event routing | Revert feature change if rollback is needed |
+| #   | Challenge                                             | Plan says                                                              | Both models recommend                                                                                  | Why                                                                                                                         | Cost if we're wrong                                                                                           |
+| --- | ----------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| UC1 | Propagate `x-thor-trigger-id`                         | Don't propagate; infer from log (line 158)                             | Add one line to `packages/opencode-cli/src/remote-cli.ts:27` and `packages/remote-cli/src/index.ts:90` | Inference fails in busy/parallel cases — exactly the cases disclaimers must cover; header pipe already exists               | Disclaimer silently drops in complex sessions; not a security regression but loses the feature value          |
+| UC2 | HMAC-sign the public viewer URL with TTL              | "Conservative output limits and basic redaction" + raw bearer-pair URL | Signed URL + redaction allowlist + audit log + rate limit                                              | Slices contain Slack/Jira/MCP outputs, repo names, env-var names, memory contents; bearer-pair is unsafe for public ingress | **Highest stakes.** Link leak (copy-paste, search index, referrer) exposes internal data to the open internet |
+| UC3 | Flat session file path; drop absolute symlink indexes | Symlinks for `index/sessions/*` and `index/aliases/*/*`                | Flat `/workspace/worklog/sessions/<session-id>.jsonl`                                                  | Absolute targets break across volume mounts/backup tools; dangle on archival; complicate retention                          | Symlinks work fine on a single host; cost surfaces on archival/migration day                                  |
+| UC4 | Add retention/archival/janitor (Phase 6)              | "Out of scope" (line 268)                                              | In scope                                                                                               | Unbounded JSONL growth → viewer OOMs; active-trigger inference becomes O(file)                                              | In 6 months: ops debt manifests as a fire-fight; recoverable but costly                                       |
+| UC5 | Treat Phase 2-4 as a cutover, not greenfield          | "No migration path; greenfield" (line 16, 163)                         | Superseded: unconditional JSONL, no notes routing fallback                                             | Markdown notes were removed, so JSONL owns session/event routing                                                            | Revert feature change if rollback is needed                                                                   |
 
 **None of UC1–UC5 are flagged as security/feasibility blockers** by both models simultaneously, except UC2 which is the leakage risk. UC2's framing for the user: this is closer to "both models think this is a security risk, not just a preference" than the others.
 
 #### Taste Decisions (surfaced for transparency)
 
-| # | Topic | Recommendation |
-|---|---|---|
-| T1 | Public Viewer Design Spec subsection (wireframe, copy, state matrix, mobile, a11y, OG metadata, two-view model) | Add at line 128, ~80–100 lines |
-| T2 | Extend `appendJsonlWorklog` rather than build parallel writer | Reuse existing primitive |
-| T3 | Cap one event record < 4KB; truncate payload field | Mirror `worklog.ts:18` truncation pattern |
-| T4 | `triggerId` is UUIDv4 (≥128-bit) | Specify in plan + tests assert |
-| T5 | Reader contract: drop unknown fields, render best-effort | Document in Phase 1 scope |
-| T6 | Per-hit audit log on `/v/*` | New JSONL stream `viewer-audit` |
-| T7 | `<meta refresh>` for streaming state (no JS framework) | Match plan's no-framework intent |
+| #   | Topic                                                                                                           | Recommendation                            |
+| --- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| T1  | Public Viewer Design Spec subsection (wireframe, copy, state matrix, mobile, a11y, OG metadata, two-view model) | Add at line 128, ~80–100 lines            |
+| T2  | Extend `appendJsonlWorklog` rather than build parallel writer                                                   | Reuse existing primitive                  |
+| T3  | Cap one event record < 4KB; truncate payload field                                                              | Mirror `worklog.ts:18` truncation pattern |
+| T4  | `triggerId` is UUIDv4 (≥128-bit)                                                                                | Specify in plan + tests assert            |
+| T5  | Reader contract: drop unknown fields, render best-effort                                                        | Document in Phase 1 scope                 |
+| T6  | Per-hit audit log on `/v/*`                                                                                     | New JSONL stream `viewer-audit`           |
+| T7  | `<meta refresh>` for streaming state (no JS framework)                                                          | Match plan's no-framework intent          |
 
 #### Decisions Auto-Decided (audit trail)
 
-| # | Phase | Decision | Classification | Principle | Rationale |
-|---|---|---|---|---|---|
-| AD1 | 0F | Mode = SELECTIVE EXPANSION | Mechanical | autoplan rule | Iteration on existing system; not greenfield, not bug fix |
-| AD2 | 0 | UI scope = YES | Mechanical | scope detection | 18 matches; viewer is SSR HTML page, even if minimal |
-| AD3 | 0 | DX scope = NO | Mechanical | scope detection | No SDK/CLI/MCP/skill/external-API surface produced |
-| AD4 | 0C-bis | Recommended Approach B over A and C | Taste | P3+P5+P1 | Smallest delta from plan's intent; fixes all premise concerns; no new dependency |
-| AD5 | 0D | Accept cherry-picks C1-C5, C7-C9; defer C6 | Taste | P2+P3 | All in blast radius and < 1 day CC; C6 is product polish, not foundation |
-| AD6 | 0.5 | Run dual voices for every phase | Mechanical | autoplan rule + P6 | Codex available; both voices add signal |
-| AD7 | 3 | Write test plan artifact to disk | Mechanical | autoplan rule | Required Phase 3 deliverable |
-| AD8 | 3.5 | Skip DX phase | Mechanical | scope detection | DX scope = NO |
+| #   | Phase  | Decision                                   | Classification | Principle          | Rationale                                                                        |
+| --- | ------ | ------------------------------------------ | -------------- | ------------------ | -------------------------------------------------------------------------------- |
+| AD1 | 0F     | Mode = SELECTIVE EXPANSION                 | Mechanical     | autoplan rule      | Iteration on existing system; not greenfield, not bug fix                        |
+| AD2 | 0      | UI scope = YES                             | Mechanical     | scope detection    | 18 matches; viewer is SSR HTML page, even if minimal                             |
+| AD3 | 0      | DX scope = NO                              | Mechanical     | scope detection    | No SDK/CLI/MCP/skill/external-API surface produced                               |
+| AD4 | 0C-bis | Recommended Approach B over A and C        | Taste          | P3+P5+P1           | Smallest delta from plan's intent; fixes all premise concerns; no new dependency |
+| AD5 | 0D     | Accept cherry-picks C1-C5, C7-C9; defer C6 | Taste          | P2+P3              | All in blast radius and < 1 day CC; C6 is product polish, not foundation         |
+| AD6 | 0.5    | Run dual voices for every phase            | Mechanical     | autoplan rule + P6 | Codex available; both voices add signal                                          |
+| AD7 | 3      | Write test plan artifact to disk           | Mechanical     | autoplan rule      | Required Phase 3 deliverable                                                     |
+| AD8 | 3.5    | Skip DX phase                              | Mechanical     | scope detection    | DX scope = NO                                                                    |
 
 #### Review Scores
 
-| Phase | Codex | Claude Subagent | Consensus |
-|---|---|---|---|
-| CEO | 6 strategic concerns | 7 issues | 6/6 confirmed disagreement |
-| Design | 7 dimensions all fail | 8 findings (3 critical, 4 high) | 7/7 confirmed disagreement |
-| Eng | 10 ranked findings (2 critical, 6 high) | 16 ranked findings (1 critical, 8 high) | 6/6 confirmed disagreement |
-| DX | skipped | skipped | n/a |
+| Phase  | Codex                                   | Claude Subagent                         | Consensus                  |
+| ------ | --------------------------------------- | --------------------------------------- | -------------------------- |
+| CEO    | 6 strategic concerns                    | 7 issues                                | 6/6 confirmed disagreement |
+| Design | 7 dimensions all fail                   | 8 findings (3 critical, 4 high)         | 7/7 confirmed disagreement |
+| Eng    | 10 ranked findings (2 critical, 6 high) | 16 ranked findings (1 critical, 8 high) | 6/6 confirmed disagreement |
+| DX     | skipped                                 | skipped                                 | n/a                        |
 
 #### Cross-Phase Themes
 

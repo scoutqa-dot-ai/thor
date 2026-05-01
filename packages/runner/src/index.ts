@@ -29,7 +29,7 @@ import {
   extractRepoFromCwd,
   appendSessionEvent,
   appendAlias,
-  resolveAlias,
+  resolveSessionForCorrelationKey,
   readTriggerSlice,
   sessionLogPath,
   getWorklogDir,
@@ -707,9 +707,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       const resolution = await withCorrelationKeyLock(correlationKey, async () => {
         const candidateSessionId =
           requestedSessionId ||
-          (correlationKey
-            ? resolveAlias({ aliasType: "slack.thread_id", aliasValue: correlationKey })
-            : undefined);
+          (correlationKey ? resolveSessionForCorrelationKey(correlationKey) : undefined);
 
         let id: string;
         let didResume = false;
