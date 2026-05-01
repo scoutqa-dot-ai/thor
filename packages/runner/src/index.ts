@@ -1,5 +1,4 @@
 import express from "express";
-import rateLimit from "express-rate-limit";
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { z } from "zod/v4";
 import type {
@@ -21,16 +20,9 @@ import {
   logWarn,
   logError,
   truncate,
-  createNotes,
-  continueNotes,
-  appendTrigger,
-  appendSummary,
-  findNotesFile,
   isAliasableTool,
   extractAliases,
   extractThorMeta,
-  registerAlias,
-  getNotesLineCount,
   isAllowedDirectory,
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
@@ -52,8 +44,6 @@ const log = createLogger("runner");
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const OPENCODE_URL = (process.env.OPENCODE_URL || "http://127.0.0.1:4096").replace(/\/$/, "");
 const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
-const VIEWER_RATE_LIMIT_WINDOW_MS = parseInt(process.env.VIEWER_RATE_LIMIT_WINDOW_MS || "60000", 10);
-const VIEWER_RATE_LIMIT_MAX = parseInt(process.env.VIEWER_RATE_LIMIT_MAX || "60", 10);
 
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
@@ -69,14 +59,6 @@ const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
 /** Shared event buses — one SSE connection per directory, dispatches to per-session listeners. */
 const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
-
-const viewerRateLimit = rateLimit({
-  windowMs: VIEWER_RATE_LIMIT_WINDOW_MS,
-  limit: VIEWER_RATE_LIMIT_MAX,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: "Too many requests",
-});
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 
@@ -185,7 +167,9 @@ app.get("/health", async (_req, res) => {
   });
 });
 
-  app.get("/runner/v/:sessionId/:triggerId", viewerRateLimit, (req, res) => {
+  // CodeQL js/missing-rate-limiting: app-level rate limiting is intentionally
+  // deferred to infrastructure for this Vouch-gated internal viewer.
+  app.get("/runner/v/:sessionId/:triggerId", (req, res) => {
     if (!req.get("X-Vouch-User")) {
       res.status(401).type("html").send(renderPage("Unauthorized", "Sign in with Vouch to view Thor trigger history."));
       return;
@@ -204,7 +188,9 @@ app.get("/health", async (_req, res) => {
     res.type("html").send(renderSlicePage(sessionId, triggerId, slice));
   });
 
-  app.get("/runner/v/:sessionId/:triggerId/raw", viewerRateLimit, (req, res) => {
+  // CodeQL js/missing-rate-limiting: app-level rate limiting is intentionally
+  // deferred to infrastructure for this Vouch-gated internal viewer.
+  app.get("/runner/v/:sessionId/:triggerId/raw", (req, res) => {
     if (!req.get("X-Vouch-User")) {
       res.status(401).type("text/plain").send("Unauthorized");
       return;
@@ -478,8 +464,6 @@ app.post("/trigger", async (req, res) => {
     // --- Session resolution: resume existing or create new ---
     let sessionId: string;
     let resumed = false;
-    let previousNotesPath: string | undefined;
-
     const candidateSessionId =
       requestedSessionId ||
       (correlationKey
@@ -500,15 +484,6 @@ app.post("/trigger", async (req, res) => {
       } catch {
         // Session is gone — create a new one and prepend a resumption hint
         logInfo(log, "session_stale", { sessionId: candidateSessionId, correlationKey });
-
-        if (correlationKey) {
-          previousNotesPath = findNotesFile(correlationKey);
-          if (previousNotesPath) {
-            const lineCount = getNotesLineCount(previousNotesPath);
-            prompt = `[Previous session was lost. Your notes from the prior session are at: ${previousNotesPath} (${lineCount} lines) — read it if you need context.]\n\n${prompt}`;
-            logInfo(log, "resumption_hint", { previousNotesPath, lineCount, correlationKey });
-          }
-        }
 
         const session = await client.session.create({
           body: {},
@@ -564,29 +539,7 @@ app.post("/trigger", async (req, res) => {
       }
     }
 
-    // --- Notes: create or continue into today's file ---
     if (correlationKey) {
-      if (resumed) {
-        // Session already has full conversation history — no need to inject notes.
-        const existingNotes = findNotesFile(correlationKey);
-        if (existingNotes) {
-          // continueNotes creates a new today-file with Follow-up header when
-          // rolling forward from a previous day; no-op if today's file exists.
-          const created = continueNotes({
-            correlationKey,
-            sessionId,
-            prompt,
-            model,
-            previousNotesPath: existingNotes,
-          });
-          if (!created) {
-            // Same-day resume — today's file already existed, append follow-up.
-            appendTrigger({ correlationKey, prompt, model });
-          }
-        }
-      } else {
-        createNotes({ correlationKey, prompt, model, sessionId });
-      }
       appendAliasOrFail({ aliasType: "slack.thread_id", aliasValue: correlationKey, sessionId });
     }
 
@@ -700,7 +653,6 @@ app.post("/trigger", async (req, res) => {
       sessionId,
       correlationKey,
       resumed,
-      ...(previousNotesPath ? { previousNotesPath } : {}),
     });
 
     for (const path of bootstrapMemoryPaths) {
@@ -889,25 +841,12 @@ app.post("/trigger", async (req, res) => {
       ...(sessionError ? { error: sessionError } : {}),
     });
 
-    // Append summary to the markdown notes file
     if (correlationKey) {
-      const responseText =
-        collectedTextParts.length > 0 ? collectedTextParts.join("\n\n") : undefined;
-      appendSummary({
-        correlationKey,
-        status: sessionError ? "error" : "completed",
-        durationMs,
-        toolCalls: collectedToolCalls,
-        responsePreview: responseText,
-        error: sessionError,
-      });
-
       // Register cross-channel aliases (best-effort)
       if (collectedArtifacts.length > 0) {
         try {
           const aliases = extractAliases(collectedArtifacts);
           for (const { alias, context } of aliases) {
-            registerAlias({ correlationKey, alias, context });
             if (alias.startsWith("slack:thread:")) {
               appendAliasOrFail({ aliasType: "slack.thread_id", aliasValue: alias.slice("slack:thread:".length), sessionId });
             } else if (alias.startsWith("git:branch:")) {

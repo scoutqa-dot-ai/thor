@@ -139,25 +139,3 @@ export function appendJsonlWorklog(stream: string, entry: object): void {
     );
   }
 }
-
-/**
- * Throwing JSONL append primitive for records that are source-of-truth state.
- * Unlike appendJsonlWorklog, callers can fail closed when this append fails.
- */
-export function appendJsonlWorklogOrThrow(stream: string, entry: object): void {
-  if (!isWorklogEnabled()) return;
-
-  const now = new Date();
-  const streamName = sanitize(stream).replace(/-+/g, "-");
-  const jsonlDir = join(getWorklogDir(), now.toISOString().slice(0, 10), "jsonl");
-  ensureDir(jsonlDir);
-  appendFileSync(join(jsonlDir, `${streamName}.jsonl`), `${JSON.stringify(entry)}\n`);
-}
-
-/**
- * Write Slack webhook history to the durable JSONL stream.
- * Never throws — logs to stderr on failure so it doesn't break the caller.
- */
-export function writeSlackWebhookHistory(entry: InboundWebhookHistoryEntry): void {
-  appendJsonlWorklog("slack-webhook", entry);
-}

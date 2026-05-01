@@ -10,7 +10,6 @@ import {
   createLogger,
   deriveGitHubAppBotIdentity,
   formatThorMeta,
-  ThorDisclaimerError,
   logError,
   logInfo,
   requireEnv,
@@ -143,13 +142,7 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
   try {
     footer = `\n${buildThorDisclaimerForSession(sessionId, RUNNER_BASE_URL).footer}`;
   } catch (err) {
-    if (err instanceof ThorDisclaimerError) {
-      if (err.code === "missing_session_id") return { error: "Disclaimer required: missing Thor session id" };
-      return {
-        error: `Disclaimer required: no single active trigger for session ${sessionId ?? ""} (${err.activeTriggerReason ?? "unknown"})`,
-      };
-    }
-    throw err;
+    return { error: err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer" };
   }
   return args[0] === "api"
     ? rewriteSingleValueFlag(args, ["-f", "--raw-field"], footer, "body=")

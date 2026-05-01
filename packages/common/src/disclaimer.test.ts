@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { appendAlias, appendSessionEvent } from "./event-log.js";
-import { buildThorDisclaimerForSession, ThorDisclaimerError } from "./disclaimer.js";
+import { buildThorDisclaimerForSession } from "./disclaimer.js";
 
 const worklogRoot = "/tmp/thor-common-disclaimer-test";
 const triggerId = "00000000-0000-4000-8000-000000000301";
@@ -31,16 +31,13 @@ describe("buildThorDisclaimerForSession", () => {
     expect(disclaimer.footer).toContain(`[View Thor trigger](${disclaimer.triggerUrl})`);
   });
 
-  it("fails fast with typed reasons when disclaimer context is unsafe", () => {
-    expect(() => buildThorDisclaimerForSession(undefined)).toThrowError(ThorDisclaimerError);
+  it("fails fast with actionable reasons when disclaimer context is unsafe", () => {
+    expect(() => buildThorDisclaimerForSession(undefined)).toThrowError(
+      "Disclaimer required: missing Thor session id",
+    );
 
-    try {
-      buildThorDisclaimerForSession("missing");
-      throw new Error("expected missing trigger to fail");
-    } catch (err) {
-      expect(err).toBeInstanceOf(ThorDisclaimerError);
-      expect((err as ThorDisclaimerError).code).toBe("active_trigger_unavailable");
-      expect((err as ThorDisclaimerError).activeTriggerReason).toBe("none");
-    }
+    expect(() => buildThorDisclaimerForSession("missing")).toThrowError(
+      "Disclaimer required: no single active trigger for session missing (none)",
+    );
   });
 });

@@ -3,13 +3,12 @@ import {
   appendJsonlWorklog,
   createLogger,
   errorToMetadata,
-  findNotesFile,
   getWorkspaceWorktreesRoot,
+  hasSessionForCorrelationKey,
   logError,
   logInfo,
   resolveExistingDirectoryWithinRoot,
   resolveCorrelationKeys,
-  hasSlackReply,
   getAllowedChannelIds,
   getChannelRepoMap,
   truncate,
@@ -819,7 +818,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const rawKey = buildCorrelationKey(localRepo, branch);
     const correlationKey = resolveCorrelationKeys([rawKey]);
-    if (!findNotesFile(correlationKey)) {
+    if (!hasSessionForCorrelationKey(rawKey)) {
       record("push_wake_skipped_no_session", { targetDir, rawKey, correlationKey });
       return { status: "push_wake_skipped_no_session" };
     }
@@ -1182,9 +1181,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
       }
 
-      // Only forward if Thor is engaged in this thread (has notes with a
-      // slack:thread canonical or alias). Users must @mention to start new conversations.
-      const engaged = hasSlackReply(correlationKey);
+      // Only forward if Thor is engaged in this thread via the JSONL alias index.
+      // Users must @mention to start new conversations.
+      const engaged = hasSessionForCorrelationKey(rawKey);
       if (!engaged) {
         logInfo(log, "event_ignored_not_engaged", { eventId, correlationKey });
         res.status(200).json({ ok: true, ignored: true });
@@ -1472,7 +1471,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
       const rawKey = buildCorrelationKey(localRepo, branch);
       const resolvedKey = resolveCorrelationKeys([rawKey]);
-      if (!findNotesFile(resolvedKey)) {
+      if (!hasSessionForCorrelationKey(rawKey)) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
         history.action = parsed.data.action;

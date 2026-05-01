@@ -12,7 +12,7 @@ Deliver a session-scoped JSONL event log that powers:
 - OpenCode session event history
 - Slack thread and git branch alias routing (plus a `session.parent` alias for child→parent resolution)
 - disclaimer-link injection for Thor-created GitHub PRs/comments/reviews and Jira tickets/comments
-- a retention/archival/janitor story so the worklog stays bounded
+- a bounded reader story for v1; retention/archival/janitor is deferred out of this implementation
 
 No database. No backwards-compatible markdown-notes routing layer. The source of truth is the session log; markdown notes remain only for human-readable continuity.
 
@@ -354,7 +354,7 @@ At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args:
 | 2026-04-30 | `triggerId` is UUIDv4 (≥128-bit random)                                              | Public viewer URL relies on it as an unguessable bearer.         |
 | 2026-04-30 | Reuse `appendJsonlWorklog` (`packages/common/src/worklog.ts:123`) as the underlying writer | DRY; the existing primitive already handles day-partitioning and graceful failure. |
 | 2026-04-30 | Single shared Zod schema in `@thor/common/event-log.ts`                              | Writer-reader schema gate; readers `safeParse` and skip-with-counter; forward-compat by ignoring unknown fields. |
-| 2026-04-30 | Add Phase 6: retention/archival/janitor                                              | JSONL grows unbounded; viewer OOMs on large `readFileSync`; active-trigger inference becomes O(file). |
+| 2026-05-01 | Defer retention/archival/janitor out of this implementation                         | Current v1 keeps bounded reads and fail-closed oversized handling, but does not ship pruning/compression/cleanup automation. Retention is future operational work, not part of this PR. |
 | 2026-04-30 | No per-hit audit log on `/runner/v/*`                                                  | Vouch / ingress already log auth events; an additional Thor-side audit stream is bookkeeping debt without a clear consumer. Add only if a real incident-response need surfaces. |
 | 2026-04-30 | `findActiveTrigger` scans the full capped session log, not a tail window              | A long-running trigger can push its `trigger_start` outside a tail window before a late PR/Jira write. Full bounded scan preserves single-log source of truth without an active-trigger sidecar. |
 
@@ -499,7 +499,9 @@ Exit criteria:
 - Child-session writes resolve via `session.parent` chain to the parent's open trigger after the relation is recorded AND inject a URL that uses the **parent** session id. A viewer GET with the injected URL renders the parent slice (which contains both parent and child events). If the relation is not yet recorded, the lookup returns `none` and the write fails closed.
 - Tests cover: direct write with one open trigger (URL uses request sessionId, == owner); PR review-comment reply body mutation through `gh api`; late disclaimer write with `trigger_start` near the beginning of a large capped log; oversized log fail-fast; child session before `session.parent` exists (`none`, no exec/no action); child session 1-deep after `session.parent` exists (URL uses parent sessionId, not request); chain depth 2-3 (URL uses topmost owner); chain depth exceeded; cycle detection; ambiguous direct-write (`gh` exits non-zero, no exec); ambiguous approve-create (errors, no action persisted); per-tool injector throws on missing field; approve-resolve replays the same args (idempotent); end-to-end: a child-session-originated `gh pr create` after parent linkage produces a URL whose viewer GET returns 200 (not 404); policy denies `gh pr create --fill`, `gh issue create`, and `gh issue comment` (covered by `policy.test.ts`), and `using-gh` docs no longer list issue create/comment as allowed.
 
-### Phase 6 - Retention, Archival, and Janitor
+### Deferred Future Work - Retention, Archival, and Janitor
+
+Retention/archival/janitor automation is explicitly **out of scope for this PR**. The v1 safety boundary is bounded reads (oversized session logs fail closed / render oversized states), not automatic pruning. The previously proposed `scripts/session-log-janitor.ts` one-shot is removed to avoid implying an unowned retention contract.
 
 Scope:
 
@@ -527,6 +529,7 @@ Exit criteria:
 - HMAC-signed viewer URLs / TTL expiry — Vouch + UUIDv4 entropy is the access-control model.
 - Rich client-side viewer UI.
 - Slack disclaimer injection.
+- Retention, archival, pruning, and janitor automation for session logs/aliases. Future work should define ownership, retention windows, archive UX, and operational rollout before adding scripts or cron jobs.
 - Blocking raw Slack writes through mitmproxy.
 - Per-tool field allowlist beyond a starter set (iterates after Phase 3 ships).
 - Multi-replica runner support — current scope assumes single writer; revisit if/when scale-out becomes a need.
@@ -584,7 +587,7 @@ The plan's stated and implicit premises, with verdicts grounded in the codebase:
 | P1 | Symlink support is enough; "Ubuntu/macOS, symlinks assumed" (line 76) | **WEAK** | `/workspace/worklog` is a Docker bind mount. Absolute symlink targets `/workspace/worklog/...` do not resolve outside the container. Volume rsync/backup tools may not preserve symlinks. Future archival creates dangling links. |
 | P2 | One-line append per writer is enough concurrency control (line 39) | **WEAK** | No `O_APPEND` contract or per-line size cap stated. Posix guarantees atomic appends only ≤ `PIPE_BUF` (4KB). Long OpenCode events can exceed that and interleave. |
 | P3 | Session-id is a stable bearer over time | **ACCEPTABLE WITH CAVEAT** | OpenCode session IDs are high-entropy. But `runner/src/index.ts:413-449` recreates a session on stale; old viewer links 404 silently. Should be documented behavior. |
-| P4 | "Greenfield, no markdown-notes compatibility or migration" (line 16, 163) | **SUPERSEDED** | JSONL now owns session/event routing unconditionally. Notes helpers remain only for unrelated continuity summaries and are not a routing fallback. |
+| P4 | "Greenfield, no markdown-notes compatibility or migration" (line 16, 163) | **SUPERSEDED** | JSONL now owns session/event routing unconditionally. Markdown notes helpers were removed from the live code path in the PR cleanup. |
 | P5 | Don't propagate `triggerId` through OpenCode/bash/curl/remote-cli (line 79–80, decision-log) | **WRONG** | The wrapper at `packages/opencode-cli/src/remote-cli.ts:27` already propagates `x-thor-session-id` and `x-thor-call-id`. Adding `x-thor-trigger-id` is one line and removes the entire "exactly one active trigger" inference, which is the failure mode flagged below. |
 | P6 | "Conservative output limits and basic redaction" (line 127) is sufficient for public ingress | **WRONG** | Slices contain Slack thread content, Jira bodies, MCP tool outputs (Atlassian queries, Metabase SQL with schema names), repo names, error stack traces with env-var names, memory file contents. Public bearer-pair link → search engine indexable, copy-paste leakable. |
 | P7 | "Exactly one active trigger" inference (line 144) covers the disclaimer injection cases | **WRONG** | Plan's own scope (Phase 2) lists child sessions, retries, mention-interrupt, and parallel triggers. The "log and skip" fallback drops disclaimers in exactly the busy-session cases the feature is meant to cover. Solved by P5. |
@@ -600,7 +603,7 @@ Sub-problems mapped to existing code:
 | Append JSONL line | `packages/common/src/worklog.ts:123` (`appendJsonlWorklog`) | Extend with session-keyed variant; keep day-partitioning as a write-time decision, not a path requirement. |
 | Day-partitioned worklog dir | `packages/common/src/worklog.ts:129` (`getWorklogDir() / yyyy-mm-dd`) | Reuse the helper. |
 | Atomic write pattern | `packages/admin/src/app.ts:68-74` (custom `atomicWrite` for renames) | Promote to `@thor/common`; reuse for symlink-or-flat-file writes. |
-| Slack thread alias extraction | `packages/common/src/notes.ts` (`extractAliases`, `computeSlackAlias`, `computeGitAlias`) | Reuse the alias extractors as-is; only the storage layer changes. |
+| Slack thread alias extraction | `packages/common/src/thor-meta.ts` (`extractAliases`, `computeSlackAlias`, `computeGitAlias`) | Reuse the alias extractors as-is; only the storage layer changes. |
 | Trigger header propagation | `packages/opencode-cli/src/remote-cli.ts:27` already passes `x-thor-session-id`, `x-thor-call-id` | Add `x-thor-trigger-id` here (one line). Per P5 verdict. |
 | OpenCode event subscription | `packages/runner/src/event-bus.ts` (`DirectoryEventBus`) | No change; tap the existing dispatcher to fan events into the new event log. |
 | Remote-cli session-id read | `packages/remote-cli/src/index.ts:90-97` (`thorIds`) | Add `triggerId` to the same helper. |
@@ -636,7 +639,7 @@ Delta this plan ships toward the ideal: structured event log, alias routing, vie
 - Summary: Flat `/workspace/worklog/sessions/<session-id>.jsonl` (no symlink indexes). Propagate `x-thor-trigger-id` via `packages/opencode-cli/src/remote-cli.ts` (one line). Viewer link is HMAC-signed with TTL; redaction is allowlist; alias routing reads JSONL directly via a small in-process cache rebuilt on first miss.
 - Effort: M-L. Human ~6 days / CC ~3.5 hours.
 - Risk: **Medium**. Single-day archive job is the only ops piece deferred. Cache rebuild on first miss is well-understood.
-- Reuses: `appendJsonlWorklog` (extend), `notes.ts` alias extractors, `opencode-cli` header pipe, admin `atomicWrite`.
+- Reuses: `appendJsonlWorklog` (extend), `thor-meta.ts` alias extractors, `opencode-cli` header pipe, admin `atomicWrite`.
 - Pros: No symlink portability concerns. Disclaimer injection deterministic. Public viewer is signed (link leak ≠ content leak). Retention is just `find -mtime`.
 - Cons: HMAC signing key needs to be managed. Cache rebuild on first miss adds ~50ms cold-start latency.
 - Completeness: 9/10.

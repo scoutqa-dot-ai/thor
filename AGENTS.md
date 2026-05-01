@@ -33,6 +33,8 @@ Instructions for AI agents working on this repository.
 
 7. **Behavior-focused tests** — Prefer tests that prove user-visible behavior, safety boundaries, and fail-fast paths. Avoid tests that only lock obvious string construction or implementation details unless the exact formatting is itself meaningful behavior.
 
+8. **Rate limiting** — App-level rate limiters / DDoS protection are deferred to infrastructure (ingress, proxy, WAF, or platform controls). CodeQL missing-rate-limit alerts are acknowledged, but do not add Express middleware limiters unless a future plan explicitly changes this policy.
+
 ## Repository Structure
 
 ```

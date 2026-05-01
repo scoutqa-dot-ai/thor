@@ -220,7 +220,7 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("creates a correlation-key session, records notes, and resumes the same session", async () => {
+  it("creates a correlation-key session, records JSONL events, and resumes the same session", async () => {
     const h = createHarness();
 
     await withServer(h.app, async (url) => {
@@ -241,7 +241,7 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("falls back from stale stored session and includes a previous-notes hint", async () => {
+  it("falls back from stale stored session without markdown-notes continuity", async () => {
     const h = createHarness();
 
     await withServer(h.app, async (url) => {
@@ -253,8 +253,8 @@ describe("runner /trigger orchestration", () => {
         sessionId: "session-2",
         resumed: false,
       });
-      expect(h.prompts.at(-1)).toContain("Previous session was lost");
-      expect(h.prompts.at(-1)).toContain("Your notes from the prior session are at:");
+      expect(h.prompts.at(-1)).not.toContain("Previous session was lost");
+      expect(h.prompts.at(-1)).not.toContain("Your notes from the prior session are at:");
     });
   });
 

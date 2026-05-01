@@ -62,10 +62,9 @@ function fakeConfigLoader(
   return loader;
 }
 
-let mockHasSlackReply = false;
 let mappedRepos = new Set<string>(["test-repo", "thor"]);
 let correlationKeyAliases = new Map<string, string>();
-let notesKeys = new Set<string>();
+let sessionKeys = new Set<string>();
 vi.mock("@thor/common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@thor/common")>();
   return {
@@ -74,9 +73,7 @@ vi.mock("@thor/common", async (importOriginal) => {
       mappedRepos.has(repoName) ? `/workspace/repos/${repoName}` : undefined,
     resolveCorrelationKeys: (rawKeys: string[]) =>
       correlationKeyAliases.get(rawKeys[0] ?? "") ?? rawKeys[0] ?? "",
-    hasSlackReply: () => mockHasSlackReply,
-    findNotesFile: (correlationKey: string) =>
-      notesKeys.has(correlationKey) ? `/workspace/worklog/test/${correlationKey}.md` : undefined,
+    hasSessionForCorrelationKey: (correlationKey: string) => sessionKeys.has(correlationKey),
   };
 });
 
@@ -254,10 +251,9 @@ async function withServer<T>(
 
 afterEach(() => {
   vi.restoreAllMocks();
-  mockHasSlackReply = false;
   mappedRepos = new Set(["test-repo", "thor"]);
   correlationKeyAliases = new Map();
-  notesKeys = new Set();
+  sessionKeys = new Set();
 });
 
 describe("gateway", () => {
@@ -1397,7 +1393,7 @@ describe("gateway", () => {
     );
   });
 
-  it("fast-forwards default branch pushes without waking when no notes exist", async () => {
+  it("fast-forwards default branch pushes without waking when no session alias exists", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
 
@@ -1565,7 +1561,7 @@ describe("gateway", () => {
     });
   });
 
-  it("fast-forwards existing nested branch worktrees and wakes through the repo-scoped GitHub queue when notes exist", async () => {
+  it("fast-forwards existing nested branch worktrees and wakes through the repo-scoped GitHub queue when a session alias exists", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
 
@@ -1573,7 +1569,7 @@ describe("gateway", () => {
       const worktreeRoot = join(worktreesRoot, "test-repo");
       const worktreeDir = join(worktreeRoot, "feat/nested");
       mkdirSync(worktreeDir, { recursive: true });
-      notesKeys.add("git:branch:test-repo:feat/nested");
+      sessionKeys.add("git:branch:test-repo:feat/nested");
       await withServer(
         fetchImpl,
         async (baseUrl, _queue, queueDir) => {
@@ -1722,7 +1718,7 @@ describe("gateway", () => {
       const worktreeRoot = join(worktreesRoot, "test-repo");
       const worktreeDir = join(worktreeRoot, "feat/nested");
       mkdirSync(worktreeDir, { recursive: true });
-      notesKeys.add("git:branch:test-repo:feat/nested");
+      sessionKeys.add("git:branch:test-repo:feat/nested");
       await withServer(
         fetchImpl,
         async (baseUrl, _queue, queueDir) => {
@@ -1775,7 +1771,7 @@ describe("gateway", () => {
       const worktreeRoot = join(worktreesRoot, "test-repo");
       const worktreeDir = join(worktreeRoot, "feat/nested");
       mkdirSync(worktreeDir, { recursive: true });
-      notesKeys.add("git:branch:test-repo:feat/nested");
+      sessionKeys.add("git:branch:test-repo:feat/nested");
       await withServer(
         fetchImpl,
         async (baseUrl, _queue, queueDir) => {
@@ -1856,7 +1852,7 @@ describe("gateway", () => {
     });
   });
 
-  it("enqueues check_suite events only when the branch has an existing notes-backed session", async () => {
+  it("enqueues check_suite events only when the branch has an existing session alias", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi
       .fn()
@@ -1868,7 +1864,7 @@ describe("gateway", () => {
       });
 
     await withWorklogDir(async (worklogDir) => {
-      notesKeys.add("git:branch:thor:feature/refactor");
+      sessionKeys.add("git:branch:thor:feature/refactor");
 
       await withServer(
         fetchImpl,
@@ -1967,7 +1963,7 @@ describe("gateway", () => {
       }
 
       await withWorklogDir(async (worklogDir) => {
-        notesKeys.add("git:branch:thor:feature/refactor");
+        sessionKeys.add("git:branch:thor:feature/refactor");
 
         await withServer(
           fetchImpl,
@@ -2011,7 +2007,7 @@ describe("gateway", () => {
     },
   );
 
-  it("ignores check_suite events without an existing notes-backed session", async () => {
+  it("ignores check_suite events without an existing session alias", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
     await withWorklogDir(async (worklogDir) => {
@@ -2372,7 +2368,7 @@ describe("gateway", () => {
 
   it("ignores thread replies in unengaged threads (Thor has not replied)", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    mockHasSlackReply = false;
+    sessionKeys.delete("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2415,7 +2411,7 @@ describe("gateway", () => {
       .fn<typeof fetch>()
       // POST /trigger → 200 (fire-and-forget)
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    mockHasSlackReply = true;
+    sessionKeys.add("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2459,7 +2455,7 @@ describe("gateway", () => {
 
   it("ignores new channel messages (not in a thread) when not engaged", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    mockHasSlackReply = false;
+    sessionKeys.delete("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2569,7 +2565,7 @@ describe("gateway", () => {
       .fn<typeof fetch>()
       // POST /trigger → 200
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    mockHasSlackReply = true;
+    sessionKeys.add("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({

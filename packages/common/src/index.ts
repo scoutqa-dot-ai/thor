@@ -27,7 +27,7 @@ export type {
   ValidationResult,
 } from "./workspace-config.js";
 export type { ProxyName } from "./proxies.js";
-export { writeToolCallLog, appendJsonlWorklog, appendJsonlWorklogOrThrow, writeSlackWebhookHistory } from "./worklog.js";
+export { writeToolCallLog, appendJsonlWorklog } from "./worklog.js";
 export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.js";
 export {
   SessionEventLogRecordSchema,
@@ -56,20 +56,12 @@ export {
   resolveExistingDirectoryWithinRoot,
 } from "./paths.js";
 export {
-  readNotes,
-  createNotes,
-  continueNotes,
-  appendTrigger,
-  appendSummary,
-  findNotesFile,
-  registerAlias,
   resolveCorrelationKeys,
+  hasSessionForCorrelationKey,
   isAliasableTool,
   isAliasableGitCommand,
   isAliasableMcpTool,
   extractAliases,
-  getNotesLineCount,
-  hasSlackReply,
   ThorMetaSchema,
   ThorMetaAliasSchema,
   ThorMetaApprovalSchema,
@@ -79,14 +71,14 @@ export {
   computeSlackAlias,
   inferRepoFromPath,
   extractBranchFromGitArgs,
-} from "./notes.js";
+} from "./thor-meta.js";
 export type {
   ToolArtifact,
   ExtractedAlias,
   ThorMeta,
   ThorMetaAlias,
   ThorMetaApproval,
-} from "./notes.js";
+} from "./thor-meta.js";
 export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
 export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
 export { deriveGitHubAppBotIdentity } from "./github-identity.js";
@@ -95,9 +87,8 @@ export {
   buildThorDisclaimerForSession,
   buildThorTriggerUrl,
   formatThorDisclaimerFooter,
-  ThorDisclaimerError,
 } from "./disclaimer.js";
-export type { ThorDisclaimerContext, ThorDisclaimerErrorCode } from "./disclaimer.js";
+export type { ThorDisclaimerContext } from "./disclaimer.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,

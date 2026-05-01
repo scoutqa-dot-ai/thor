@@ -17,7 +17,6 @@ import {
   type ProxyConfig,
   type WorkspaceConfig,
   writeToolCallLog,
-  ThorDisclaimerError,
 } from "@thor/common";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import {
@@ -42,13 +41,8 @@ function addDisclaimerToApprovalArgs(tool: string, args: Record<string, unknown>
   try {
     footer = buildThorDisclaimerForSession(sessionId, RUNNER_BASE_URL).footer;
   } catch (err) {
-    if (err instanceof ThorDisclaimerError) {
-      if (err.code === "missing_session_id") {
-        throw new Error("Cannot create approval: missing Thor session id for disclaimer injection");
-      }
-      throw new Error(`Cannot create approval: no single active trigger for this session (${err.activeTriggerReason ?? "unknown"})`);
-    }
-    throw err;
+    const message = err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer";
+    throw new Error(`Cannot create approval: ${message}`);
   }
   const field = tool === "createJiraIssue" ? "description" : "commentBody";
   if (typeof args[field] !== "string") throw new Error(`Cannot create approval: ${tool}.${field} must be a string for disclaimer injection`);
