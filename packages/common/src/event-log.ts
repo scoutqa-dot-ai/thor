@@ -92,7 +92,7 @@ export interface TriggerSlice {
 
 export type ActiveTriggerResult =
   | { ok: true; sessionId: string; triggerId: string }
-  | { ok: false; reason: "none" | "ambiguous" | "depth_exceeded" | "cycle" | "oversized" };
+  | { ok: false; reason: "none" | "depth_exceeded" | "cycle" | "oversized" };
 
 const MAX_RECORD_BYTES = 4095;
 export const MAX_SESSION_FILE_BYTES = Number.parseInt(
@@ -350,13 +350,13 @@ export function listSessionAliases(sessionId: string): AliasRecord[] {
   );
 }
 
-function openTriggers(records: SessionEventLogRecord[]): string[] {
-  const open = new Set<string>();
+function openTrigger(records: SessionEventLogRecord[]): string | undefined {
+  let open: string | undefined;
   for (const record of records) {
-    if (record.type === "trigger_start") open.add(record.triggerId);
-    if (record.type === "trigger_end") open.delete(record.triggerId);
+    if (record.type === "trigger_start") open = record.triggerId;
+    if (record.type === "trigger_end" && record.triggerId === open) open = undefined;
   }
-  return [...open];
+  return open;
 }
 
 export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult {
@@ -367,9 +367,8 @@ export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult
     visited.add(current);
     const read = readSessionRecords(current);
     if (read.oversized) return { ok: false, reason: "oversized" };
-    const open = openTriggers(read.records);
-    if (open.length === 1) return { ok: true, sessionId: current, triggerId: open[0] };
-    if (open.length > 1) return { ok: false, reason: "ambiguous" };
+    const open = openTrigger(read.records);
+    if (open) return { ok: true, sessionId: current, triggerId: open };
     const parent = resolveAlias({ aliasType: "session.parent", aliasValue: current });
     if (!parent) return { ok: false, reason: "none" };
     current = parent;

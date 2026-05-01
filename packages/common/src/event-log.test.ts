@@ -145,15 +145,28 @@ describe("session event log", () => {
       triggerId: "00000000-0000-4000-8000-000000000021",
     });
 
-    appendSessionEvent("amb", {
+    appendSessionEvent("superseded", {
       type: "trigger_start",
       triggerId: "00000000-0000-4000-8000-000000000022",
     });
-    appendSessionEvent("amb", {
+    appendSessionEvent("superseded", {
       type: "trigger_start",
       triggerId: "00000000-0000-4000-8000-000000000023",
     });
-    expect(findActiveTrigger("amb")).toEqual({ ok: false, reason: "ambiguous" });
+    expect(readTriggerSlice("superseded", "00000000-0000-4000-8000-000000000022")).toMatchObject({
+      status: "crashed",
+    });
+    expect(findActiveTrigger("superseded")).toEqual({
+      ok: true,
+      sessionId: "superseded",
+      triggerId: "00000000-0000-4000-8000-000000000023",
+    });
+    appendSessionEvent("superseded", {
+      type: "trigger_end",
+      triggerId: "00000000-0000-4000-8000-000000000023",
+      status: "completed",
+    });
+    expect(findActiveTrigger("superseded")).toEqual({ ok: false, reason: "none" });
 
     appendAlias({ aliasType: "session.parent", aliasValue: "a", sessionId: "b" });
     appendAlias({ aliasType: "session.parent", aliasValue: "b", sessionId: "a" });

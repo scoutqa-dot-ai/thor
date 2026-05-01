@@ -38,7 +38,9 @@ async function withServer<T>(fn: (url: string) => Promise<T>): Promise<T> {
   try {
     return await fn(url);
   } finally {
-    await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
     await remoteCli.close();
   }
 }
@@ -46,10 +48,16 @@ async function withServer<T>(fn: (url: string) => Promise<T>): Promise<T> {
 async function postGh(url: string, args: string[], sessionId?: string) {
   const response = await fetch(`${url}/exec/gh`, {
     method: "POST",
-    headers: { "content-type": "application/json", ...(sessionId ? { "x-thor-session-id": sessionId } : {}) },
+    headers: {
+      "content-type": "application/json",
+      ...(sessionId ? { "x-thor-session-id": sessionId } : {}),
+    },
     body: JSON.stringify({ args, cwd }),
   });
-  return { response, body: (await response.json()) as { stdout: string; stderr: string; exitCode: number } };
+  return {
+    response,
+    body: (await response.json()) as { stdout: string; stderr: string; exitCode: number },
+  };
 }
 
 beforeEach(() => {
@@ -74,28 +82,54 @@ describe("gh disclaimer injection", () => {
     });
   });
 
-  it("fails closed when the session has no single active trigger", async () => {
-    expect(appendSessionEvent("ambiguous", { type: "trigger_start", triggerId })).toEqual({ ok: true });
-    expect(appendSessionEvent("ambiguous", { type: "trigger_start", triggerId: secondTriggerId })).toEqual({ ok: true });
-
+  it("fails closed when the session has no active trigger", async () => {
     await withServer(async (url) => {
       const missing = await postGh(url, ["pr", "comment", "123", "--body", "note"], "missing");
       expect(missing.response.status).toBe(400);
       expect(missing.body.stderr).toContain("(none)");
-
-      const ambiguous = await postGh(url, ["pr", "comment", "123", "--body", "note"], "ambiguous");
-      expect(ambiguous.response.status).toBe(400);
-      expect(ambiguous.body.stderr).toContain("(ambiguous)");
       expect(execCalls).toHaveLength(0);
     });
   });
 
-  it("uses the owning parent session in child-session viewer URLs", async () => {
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({ ok: true });
-    expect(appendAlias({ aliasType: "session.parent", aliasValue: "child", sessionId: "parent" })).toEqual({ ok: true });
+  it("uses the latest trigger when a previous orphaned trigger was superseded", async () => {
+    expect(appendSessionEvent("superseded", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
+    expect(
+      appendSessionEvent("superseded", { type: "trigger_start", triggerId: secondTriggerId }),
+    ).toEqual({ ok: true });
 
     await withServer(async (url) => {
-      const { response } = await postGh(url, ["pr", "create", "--title", "x", "--body", "body"], "child");
+      const { response } = await postGh(
+        url,
+        ["pr", "comment", "123", "--body", "note"],
+        "superseded",
+      );
+      expect(response.status).toBe(200);
+      expect(execCalls[0].args).toEqual([
+        "pr",
+        "comment",
+        "123",
+        "--body",
+        `note\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/superseded/${secondTriggerId}`)}`,
+      ]);
+    });
+  });
+
+  it("uses the owning parent session in child-session viewer URLs", async () => {
+    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
+    expect(
+      appendAlias({ aliasType: "session.parent", aliasValue: "child", sessionId: "parent" }),
+    ).toEqual({ ok: true });
+
+    await withServer(async (url) => {
+      const { response } = await postGh(
+        url,
+        ["pr", "create", "--title", "x", "--body", "body"],
+        "child",
+      );
       expect(response.status).toBe(200);
       expect(execCalls[0]).toMatchObject({ bin: "gh" });
       expect(execCalls[0].args).toEqual([
@@ -110,12 +144,21 @@ describe("gh disclaimer injection", () => {
   });
 
   it("injects into PR review-comment reply bodies", async () => {
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({ ok: true });
+    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
 
     await withServer(async (url) => {
       const { response } = await postGh(
         url,
-        ["api", "repos/{owner}/{repo}/pulls/53/comments/123/replies", "--method", "POST", "-f", "body=Done"],
+        [
+          "api",
+          "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+          "--method",
+          "POST",
+          "-f",
+          "body=Done",
+        ],
         "parent",
       );
       expect(response.status).toBe(200);
@@ -126,14 +169,20 @@ describe("gh disclaimer injection", () => {
   });
 
   it("denies gh body-file content creation shapes", async () => {
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({ ok: true });
+    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
 
     await withServer(async (url) => {
       const pr = await postGh(url, ["pr", "create", "--title", "x", "-F", "body.md"], "parent");
       expect(pr.response.status).toBe(400);
       expect(pr.body.stderr).toContain("gh pr create");
 
-      const comment = await postGh(url, ["pr", "comment", "123", "--body-file", "body.md"], "parent");
+      const comment = await postGh(
+        url,
+        ["pr", "comment", "123", "--body-file", "body.md"],
+        "parent",
+      );
       expect(comment.response.status).toBe(400);
       expect(comment.body.stderr).toContain("gh pr comment");
       expect(execCalls).toHaveLength(0);
@@ -141,7 +190,9 @@ describe("gh disclaimer injection", () => {
   });
 
   it("fails closed for duplicate mutable body fields", async () => {
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({ ok: true });
+    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
 
     await withServer(async (url) => {
       const comment = await postGh(
