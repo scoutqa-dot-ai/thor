@@ -28,8 +28,6 @@ describe("env loader", () => {
   });
 
   it("normalizes trailing slashes without regex backtracking", () => {
-    const env = { URL: "https://example.test///" };
-
     expect(stripTrailingSlashes("https://example.test///")).toBe("https://example.test");
   });
 });
