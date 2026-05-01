@@ -120,6 +120,96 @@ function appendAliasOrFail(record: Parameters<typeof appendAlias>[0]): void {
   if (!result.ok) throw result.error;
 }
 
+/**
+ * In-flight trigger registry. Drives reliable trigger_end emission across normal
+ * completion, caught throws, user-initiated aborts, and graceful shutdown.
+ */
+const inflightTriggers = new Map<string, { sessionId: string; startTime: number }>();
+
+function startTrigger(
+  sessionId: string,
+  triggerId: string,
+  payload: { correlationKey?: string; promptPreview?: string },
+): void {
+  appendSessionEventOrFail(sessionId, {
+    type: "trigger_start",
+    triggerId,
+    ...(payload.correlationKey ? { correlationKey: payload.correlationKey } : {}),
+    promptPreview: payload.promptPreview ?? "",
+  });
+  inflightTriggers.set(triggerId, { sessionId, startTime: Date.now() });
+}
+
+function endTrigger(
+  triggerId: string,
+  status: "completed" | "error" | "aborted",
+  extras: { error?: string; reason?: string } = {},
+): void {
+  const entry = inflightTriggers.get(triggerId);
+  if (!entry) return;
+  inflightTriggers.delete(triggerId);
+  const result = appendSessionEvent(entry.sessionId, {
+    type: "trigger_end",
+    triggerId,
+    status,
+    durationMs: Date.now() - entry.startTime,
+    ...extras,
+  });
+  if (!result.ok) {
+    logError(log, "trigger_end_write_failed", result.error.message, {
+      sessionId: entry.sessionId,
+      triggerId,
+      status,
+    });
+  }
+}
+
+function findInflightTriggerForSession(sessionId: string): string | undefined {
+  for (const [triggerId, entry] of inflightTriggers) {
+    if (entry.sessionId === sessionId) return triggerId;
+  }
+  return undefined;
+}
+
+/**
+ * Best-effort: emit trigger_end{status:'aborted', reason:'shutdown'} for every
+ * still-open trigger this process owns. Captures graceful Docker stop / k8s
+ * rolling restart. Does NOT cover SIGKILL/OOM/segfault. Exported for tests.
+ */
+export function flushInflightTriggersOnShutdown(): void {
+  for (const [triggerId, entry] of inflightTriggers) {
+    appendSessionEvent(entry.sessionId, {
+      type: "trigger_end",
+      triggerId,
+      status: "aborted",
+      reason: "shutdown",
+      durationMs: Date.now() - entry.startTime,
+    });
+  }
+  inflightTriggers.clear();
+}
+
+/**
+ * Per-correlation-key advisory lock around resolve+create. Prevents two
+ * concurrent triggers with the same correlationKey from creating duplicate
+ * sessions. Sequenced as a chained promise per key (single-process).
+ */
+const correlationKeyLocks = new Map<string, Promise<unknown>>();
+
+function withCorrelationKeyLock<T>(key: string | undefined, fn: () => Promise<T>): Promise<T> {
+  if (!key) return fn();
+  const prev = correlationKeyLocks.get(key) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  correlationKeyLocks.set(
+    key,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return next;
+}
+
 async function fetchOpencode(path: string): Promise<Response> {
   return fetch(`${OPENCODE_URL}${path}`);
 }
@@ -588,6 +678,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     }
 
     let { prompt, model, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
+    let inflightTriggerId: string | undefined;
 
     try {
       await waitForOpencode();
@@ -612,52 +703,66 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         directory: sessionDirectory,
       });
 
-      // --- Session resolution: resume existing or create new ---
-      let sessionId: string;
-      let resumed = false;
-      const candidateSessionId =
-        requestedSessionId ||
-        (correlationKey
-          ? resolveAlias({ aliasType: "slack.thread_id", aliasValue: correlationKey })
-          : undefined);
+      // --- Session resolution: resume existing or create new (locked per correlationKey) ---
+      const resolution = await withCorrelationKeyLock(correlationKey, async () => {
+        const candidateSessionId =
+          requestedSessionId ||
+          (correlationKey
+            ? resolveAlias({ aliasType: "slack.thread_id", aliasValue: correlationKey })
+            : undefined);
 
-      if (candidateSessionId) {
-        // Verify the session still exists in OpenCode
-        try {
-          const existing = await client.session.get({ path: { id: candidateSessionId } });
-          if (existing.data) {
-            sessionId = candidateSessionId;
-            resumed = true;
-            logInfo(log, "session_resumed", { sessionId, correlationKey });
-          } else {
-            throw new Error("Session not found");
+        let id: string;
+        let didResume = false;
+        let staleSessionId: string | undefined;
+
+        if (candidateSessionId) {
+          try {
+            const existing = await client.session.get({ path: { id: candidateSessionId } });
+            if (existing.data) {
+              id = candidateSessionId;
+              didResume = true;
+              logInfo(log, "session_resumed", { sessionId: id, correlationKey });
+            } else {
+              throw new Error("Session not found");
+            }
+          } catch {
+            logInfo(log, "session_stale", { sessionId: candidateSessionId, correlationKey });
+            const session = await client.session.create({ body: {} });
+            if (!session.data) throw new Error("Failed to create session");
+            id = session.data.id;
+            staleSessionId = candidateSessionId;
+            logInfo(log, "session_created", { sessionId: id, correlationKey });
           }
-        } catch {
-          // Session is gone — create a new one and prepend a resumption hint
-          logInfo(log, "session_stale", { sessionId: candidateSessionId, correlationKey });
+        } else {
+          const session = await client.session.create({ body: {} });
+          if (!session.data) throw new Error("Failed to create session");
+          id = session.data.id;
+          logInfo(log, "session_created", { sessionId: id, correlationKey });
+        }
 
-          const session = await client.session.create({
-            body: {},
+        // Back-reference alias on session_stale recreate so old viewer links chain-walk
+        // to the new session via findActiveTrigger (`session.parent` traversal).
+        if (staleSessionId) {
+          appendAliasOrFail({
+            aliasType: "session.parent",
+            aliasValue: staleSessionId,
+            sessionId: id,
           });
-          if (!session.data) {
-            res.status(500).json({ error: "Failed to create session" });
-            return;
-          }
-          sessionId = session.data.id;
-          logInfo(log, "session_created", { sessionId, correlationKey });
         }
-      } else {
-        // No session to resume — create a new one
-        const session = await client.session.create({
-          body: {},
-        });
-        if (!session.data) {
-          res.status(500).json({ error: "Failed to create session" });
-          return;
+
+        if (correlationKey) {
+          appendAliasOrFail({
+            aliasType: "slack.thread_id",
+            aliasValue: correlationKey,
+            sessionId: id,
+          });
         }
-        sessionId = session.data.id;
-        logInfo(log, "session_created", { sessionId, correlationKey });
-      }
+
+        return { sessionId: id, resumed: didResume };
+      });
+
+      const sessionId = resolution.sessionId;
+      const resumed = resolution.resumed;
 
       // --- If resuming a busy session, abort or bail ---
       if (resumed) {
@@ -673,6 +778,13 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             return;
           }
 
+          // End any in-flight trigger this process owns for the session before aborting,
+          // so the prior trigger renders as `aborted` rather than `completed`.
+          const priorTriggerId = findInflightTriggerForSession(sessionId);
+          if (priorTriggerId) {
+            endTrigger(priorTriggerId, "aborted", { reason: "user_interrupt" });
+          }
+
           logInfo(log, "session_busy_aborting", { sessionId, correlationKey });
           await client.session.abort({ path: { id: sessionId } });
 
@@ -685,18 +797,14 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
               log,
               "session_abort_timeout",
               `Session did not idle within ${ABORT_TIMEOUT}ms`,
-              {
-                sessionId,
-              },
+              { sessionId },
             );
-          } else {
-            logInfo(log, "session_abort_complete", { sessionId });
+            // Per plan: "If settle times out, write no marker and do not call promptAsync."
+            res.status(503).json({ error: "Session abort did not settle", sessionId });
+            return;
           }
+          logInfo(log, "session_abort_complete", { sessionId });
         }
-      }
-
-      if (correlationKey) {
-        appendAliasOrFail({ aliasType: "slack.thread_id", aliasValue: correlationKey, sessionId });
       }
 
       const bootstrapMemoryPaths: string[] = [];
@@ -749,9 +857,8 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       const subscription = await eventBuses.subscribe(sessionDirectory, [sessionId]);
 
       const triggerId = randomUUID();
-      appendSessionEventOrFail(sessionId, {
-        type: "trigger_start",
-        triggerId,
+      inflightTriggerId = triggerId;
+      startTrigger(sessionId, triggerId, {
         correlationKey,
         promptPreview: truncate(prompt, 500),
       });
@@ -766,12 +873,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       });
 
       if (asyncResult.error) {
-        appendSessionEventOrFail(sessionId, {
-          type: "trigger_end",
-          triggerId,
-          status: "error",
-          error: JSON.stringify(asyncResult.error),
-        });
+        endTrigger(triggerId, "error", { error: JSON.stringify(asyncResult.error) });
         res.status(500).json({
           error: "Failed to send prompt",
           detail: asyncResult.error,
@@ -948,19 +1050,34 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   client.session
                     .children({ path: { id: sessionId } })
                     .then((resp) => {
-                      if (resp.data) {
-                        for (const child of resp.data) {
-                          childSessionIds.add(child.id);
-                          subscription.addSessionId(child.id);
-                          appendAliasOrFail({
-                            aliasType: "session.parent",
-                            aliasValue: child.id,
-                            sessionId,
-                          });
+                      if (!resp.data) return;
+                      for (const child of resp.data) {
+                        if (childSessionIds.has(child.id)) continue;
+                        childSessionIds.add(child.id);
+                        subscription.addSessionId(child.id);
+                        const aliasResult = appendAlias({
+                          aliasType: "session.parent",
+                          aliasValue: child.id,
+                          sessionId,
+                        });
+                        if (!aliasResult.ok) {
+                          logError(
+                            log,
+                            "session_parent_alias_write_failed",
+                            aliasResult.error.message,
+                            { sessionId, childId: child.id },
+                          );
                         }
                       }
                     })
-                    .catch(() => {});
+                    .catch((err) => {
+                      logError(
+                        log,
+                        "child_session_discovery_failed",
+                        err instanceof Error ? err.message : String(err),
+                        { sessionId },
+                      );
+                    });
                 }
 
                 if (status === "running") {
@@ -1036,13 +1153,11 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       }
 
       const durationMs = Date.now() - promptStart;
-      appendSessionEventOrFail(sessionId, {
-        type: "trigger_end",
+      endTrigger(
         triggerId,
-        status: terminalError ? "error" : "completed",
-        durationMs,
-        ...(terminalError ? { error: terminalError } : {}),
-      });
+        terminalError ? "error" : "completed",
+        terminalError ? { error: terminalError } : {},
+      );
 
       if (correlationKey) {
         // Register cross-channel aliases (best-effort)
@@ -1103,6 +1218,13 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       res.end();
     } catch (err) {
       logError(log, "trigger_error", err);
+      // Emit trigger_end{status:"error"} so the trigger doesn't render as `in_flight`
+      // forever or get superseded into `crashed`. No-op if endTrigger already ran.
+      if (inflightTriggerId) {
+        endTrigger(inflightTriggerId, "error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       if (!res.headersSent) {
         res.status(500).json({
           error: err instanceof Error ? err.message : String(err),
@@ -1224,12 +1346,22 @@ function renderSlicePage(
 
 export function startRunner(): void {
   const app = createRunnerApp();
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     logInfo(log, "runner_started", {
       port: PORT,
       opencodeUrl: OPENCODE_URL,
     });
   });
+
+  const shutdown = (signal: string) => {
+    logInfo(log, "runner_shutting_down", { signal });
+    flushInflightTriggersOnShutdown();
+    server.close(() => process.exit(0));
+    // Hard exit if server.close hangs.
+    setTimeout(() => process.exit(0), 5000).unref();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
