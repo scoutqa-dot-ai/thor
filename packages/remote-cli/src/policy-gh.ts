@@ -168,15 +168,11 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
     case "pr create":
       return validateGhPrCreateArgs(args, cwd);
     case "pr comment":
-      return validateGhCommentArgs(args, "gh pr comment", true);
+      return validateGhPrCommentArgs(args);
     case "pr review":
       return validateGhPrReviewArgs(args);
     case "issue view":
       return validateRequiredNumericSelector(args, "gh issue view");
-    case "issue comment":
-      return validateGhCommentArgs(args, "gh issue comment", false);
-    case "issue create":
-      return validateGhIssueCreateArgs(args);
     case "run view":
       return validateRequiredNumericSelector(args, "gh run view");
     case "run watch":
@@ -340,45 +336,27 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
   return titles.length > 0 && bodies.length === 1 ? null : denyMessage("gh pr create");
 }
 
-function validateGhIssueCreateArgs(args: string[]): string | null {
-  const parsed = scanPolicyArgs(args, 2, [
-    { name: "title", kind: "value", aliases: ["-t", "--title"] },
-    { name: "body", kind: "value", aliases: ["-b", "--body"] },
-    { name: "label", kind: "value", aliases: ["-l", "--label"] },
-  ]);
-  if (!parsed || parsed.positionals.length > 0) {
-    return denyMessage("gh issue create");
-  }
-  return valueFlagValues(parsed, "title").length > 0 && valueFlagValues(parsed, "body").length > 0
-    ? null
-    : denyMessage("gh issue create");
-}
-
-function validateGhCommentArgs(
-  args: string[],
-  command: "gh pr comment" | "gh issue comment",
-  _supportBodyFile: boolean,
-): string | null {
+function validateGhPrCommentArgs(args: string[]): string | null {
   const selector = args[2];
   if (!selector || !DIGITS_ONLY.test(selector)) {
-    return denyMessage(command);
+    return denyMessage("gh pr comment");
   }
 
-  const flags: Parameters<typeof scanPolicyArgs>[2] = [{ name: "body", kind: "value", aliases: ["-b", "--body"] }];
-
-  const parsed = scanPolicyArgs(args, 3, flags);
+  const parsed = scanPolicyArgs(args, 3, [
+    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+  ]);
   if (!parsed || parsed.positionals.length > 0) {
-    return denyMessage(command);
+    return denyMessage("gh pr comment");
   }
 
   const bodies = valueFlagValues(parsed, "body");
   if (bodies.length > 1) {
-    return denyMessage(command, {
+    return denyMessage("gh pr comment", {
       reason: "multiple --body values are ambiguous for disclaimer injection.",
       instead: "provide exactly one --body value",
     });
   }
-  return bodies.length === 1 ? null : denyMessage(command);
+  return bodies.length === 1 ? null : denyMessage("gh pr comment");
 }
 
 function validateGhPrReviewArgs(args: string[]): string | null {
