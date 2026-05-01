@@ -32,6 +32,8 @@ import {
   resolveAlias,
   readTriggerSlice,
   sessionLogPath,
+  getWorklogDir,
+  MAX_SESSION_FILE_BYTES,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -153,16 +155,22 @@ type RawSessionLogResponse = {
   body: string;
 };
 
-function readRawSessionLogResponse(sessionId: string): RawSessionLogResponse {
-  const path = sessionLogPath(sessionId);
+function readRawSessionLogResponse(sessionId: string, triggerId: string): RawSessionLogResponse {
   try {
-    const root = realpathSync(`${process.env.WORKLOG_DIR || "/workspace/worklog"}/sessions`);
+    const path = sessionLogPath(sessionId);
+    const root = realpathSync(`${getWorklogDir()}/sessions`);
     const real = realpathSync(path);
     if (!real.startsWith(`${root}/`) || !existsSync(real)) throw new Error("invalid path");
-    if (statSync(real).size > 50 * 1024 * 1024) {
+    if (statSync(real).size > MAX_SESSION_FILE_BYTES) {
       return { status: 503, contentType: "text/plain", body: "Session log is oversized" };
     }
-    return { status: 200, contentType: "text/plain", body: readFileSync(real, "utf8") };
+    const slice = readTriggerSlice(sessionId, triggerId);
+    if ("notFound" in slice) return { status: 404, contentType: "text/plain", body: "Not found" };
+    if ("oversized" in slice) {
+      return { status: 503, contentType: "text/plain", body: "Session log is oversized" };
+    }
+    const body = slice.records.map((record) => JSON.stringify(record)).join("\n") + "\n";
+    return { status: 200, contentType: "text/plain", body };
   } catch {
     return { status: 404, contentType: "text/plain", body: "Not found" };
   }
@@ -305,7 +313,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         res.status(401).type("text/plain").send("Unauthorized");
         return;
       }
-      const raw = readRawSessionLogResponse(routeParam(req.params.sessionId));
+      const raw = readRawSessionLogResponse(
+        routeParam(req.params.sessionId),
+        routeParam(req.params.triggerId),
+      );
       res.status(raw.status).type(raw.contentType).send(raw.body);
     },
   );
