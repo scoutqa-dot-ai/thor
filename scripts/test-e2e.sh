@@ -28,8 +28,6 @@ REMOTE_CLI_AUTH_TS="${REMOTE_CLI_AUTH_TS:-$(date +%s)}"
 REMOTE_CLI_WORKTREE_BRANCH="${REMOTE_CLI_WORKTREE_BRANCH:-e2e-remote-cli-${REMOTE_CLI_AUTH_TS}}"
 REMOTE_CLI_WORKTREE_DIR="${REMOTE_CLI_WORKTREE_DIR:-/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
 HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
-E2E_THOR_SESSION_ID="${E2E_THOR_SESSION_ID:-e2e-session}"
-E2E_THOR_TRIGGER_ID="${E2E_THOR_TRIGGER_ID:-00000000-0000-4000-8000-000000000e2e}"
 passed=0
 failed=0
 
@@ -315,24 +313,16 @@ elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
-  mkdir -p "${HOST_WORKSPACE}/worklog/sessions"
-  HOST_WORKSPACE="$HOST_WORKSPACE" E2E_THOR_SESSION_ID="$E2E_THOR_SESSION_ID" E2E_THOR_TRIGGER_ID="$E2E_THOR_TRIGGER_ID" \
-    node -e "
-      const fs = require('fs');
-      const path = require('path');
-      const sessionId = process.env.E2E_THOR_SESSION_ID;
-      const triggerId = process.env.E2E_THOR_TRIGGER_ID;
-      const file = path.join(process.env.HOST_WORKSPACE || './docker-volumes/workspace', 'worklog', 'sessions', sessionId + '.jsonl');
-      fs.writeFileSync(file, JSON.stringify({
-        schemaVersion: 1,
-        ts: new Date().toISOString(),
-        type: 'trigger_start',
-        sessionId,
-        triggerId,
-        correlationKey: 'e2e-approval-flow',
-        promptPreview: 'e2e approval disclaimer context'
-      }) + '\n');
-    "
+  trigger_context_raw=$(curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
+    -H 'Content-Type: application/json' \
+    -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+    -d '{"correlationKey":"e2e-approval-flow","promptPreview":"e2e approval disclaimer context"}' \
+    2>/dev/null || echo '{}')
+  E2E_THOR_SESSION_ID=$(json_field "$trigger_context_raw" "sessionId")
+  E2E_THOR_TRIGGER_ID=$(json_field "$trigger_context_raw" "triggerId")
+  assert '[[ -n "$E2E_THOR_SESSION_ID" && -n "$E2E_THOR_TRIGGER_ID" ]]' \
+    "runner: created e2e trigger context" \
+    "response: ${trigger_context_raw:0:300}; set THOR_E2E_TEST_HELPERS=1 for the runner service"
 
   # 4b. remote-cli-level: call the approval-required tool directly
   echo "  Calling tool via remote-cli (expecting approval interception)..."

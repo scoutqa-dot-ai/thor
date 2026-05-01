@@ -52,6 +52,7 @@ jobs:
       METABASE_DATABASE_ID: "1"
       METABASE_ALLOWED_SCHEMAS: public
       RUNNER_BASE_URL: http://localhost:3000
+      THOR_E2E_TEST_HELPERS: "1"
       VOUCH_GOOGLE_CLIENT_ID: ci-fake
       VOUCH_GOOGLE_CLIENT_SECRET: ci-fake
       VOUCH_JWT_SECRET: ci-fake

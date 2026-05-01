@@ -166,6 +166,8 @@ services:
     environment:
       - NODE_ENV=production
       - OPENCODE_URL=http://opencode:4096
+      - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
+      - THOR_E2E_TEST_HELPERS=${THOR_E2E_TEST_HELPERS:-}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:

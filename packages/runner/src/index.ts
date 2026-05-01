@@ -13,7 +13,7 @@ import type {
 } from "@opencode-ai/sdk";
 import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
   createLogger,
   logInfo,
@@ -44,6 +44,7 @@ const log = createLogger("runner");
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const OPENCODE_URL = (process.env.OPENCODE_URL || "http://127.0.0.1:4096").replace(/\/$/, "");
 const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT || "15000", 10);
+const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
@@ -161,6 +162,21 @@ function readRawSessionLogResponse(sessionId: string): RawSessionLogResponse {
   }
 }
 
+function matchesInternalSecret(
+  expectedSecret: string,
+  providedSecret: string | undefined,
+): boolean {
+  if (!expectedSecret || !providedSecret) return false;
+  if (expectedSecret.length !== providedSecret.length) return false;
+  return timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret));
+}
+
+const E2eTriggerContextSchema = z.object({
+  sessionId: z.string().trim().min(1).optional(),
+  correlationKey: z.string().trim().min(1).optional(),
+  promptPreview: z.string().trim().min(1).optional(),
+});
+
 // --- Express app ---
 
 export function createRunnerApp(options: RunnerAppOptions = {}): express.Express {
@@ -187,6 +203,40 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       opencodeUrl,
     });
   });
+
+  if (process.env.THOR_E2E_TEST_HELPERS === "1") {
+    // Rate limiting for this opt-in CI-only helper is intentionally enforced at
+    // the infrastructure/test harness boundary, not in the app process.
+    // codeql[js/missing-rate-limiting]
+    // lgtm[js/missing-rate-limiting]
+    app.post(
+      "/internal/e2e/trigger-context",
+      // codeql[js/missing-rate-limiting]
+      // lgtm[js/missing-rate-limiting]
+      (req, res) => {
+        if (!matchesInternalSecret(process.env.THOR_INTERNAL_SECRET || "", req.get(INTERNAL_SECRET_HEADER) ?? undefined)) {
+          res.status(401).json({ error: "Unauthorized" });
+          return;
+        }
+
+        const parsed = E2eTriggerContextSchema.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ error: "Invalid request body", details: parsed.error.issues });
+          return;
+        }
+
+        const sessionId = parsed.data.sessionId ?? `e2e-${randomUUID()}`;
+        const triggerId = randomUUID();
+        appendSessionEventOrFail(sessionId, {
+          type: "trigger_start",
+          triggerId,
+          ...(parsed.data.correlationKey ? { correlationKey: parsed.data.correlationKey } : {}),
+          promptPreview: parsed.data.promptPreview ?? "e2e approval disclaimer context",
+        });
+        res.json({ sessionId, triggerId });
+      },
+    );
+  }
 
   // Rate limiting for the Vouch-gated runner viewer is intentionally enforced
   // at the infrastructure edge, not in the app process.
