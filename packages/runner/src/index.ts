@@ -140,6 +140,27 @@ async function ensureOpencodeAvailable(): Promise<void> {
   );
 }
 
+type RawSessionLogResponse = {
+  status: number;
+  contentType: "text/plain";
+  body: string;
+};
+
+function readRawSessionLogResponse(sessionId: string): RawSessionLogResponse {
+  const path = sessionLogPath(sessionId);
+  try {
+    const root = realpathSync(`${process.env.WORKLOG_DIR || "/workspace/worklog"}/sessions`);
+    const real = realpathSync(path);
+    if (!real.startsWith(`${root}/`) || !existsSync(real)) throw new Error("invalid path");
+    if (statSync(real).size > 50 * 1024 * 1024) {
+      return { status: 503, contentType: "text/plain", body: "Session log is oversized" };
+    }
+    return { status: 200, contentType: "text/plain", body: readFileSync(real, "utf8") };
+  } catch {
+    return { status: 404, contentType: "text/plain", body: "Not found" };
+  }
+}
+
 // --- Express app ---
 
 export function createRunnerApp(options: RunnerAppOptions = {}): express.Express {
@@ -156,16 +177,16 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     return Array.isArray(value) ? value[0] ?? "" : value ?? "";
   }
 
-app.get("/health", async (_req, res) => {
-  const opencodeHealthy = await checkOpencodeReachable();
+  app.get("/health", async (_req, res) => {
+    const opencodeHealthy = await checkOpencodeReachable();
 
-  res.json({
-    status: "ok",
-    service: "runner",
-    opencode: opencodeHealthy ? "connected" : "disconnected",
-    opencodeUrl,
+    res.json({
+      status: "ok",
+      service: "runner",
+      opencode: opencodeHealthy ? "connected" : "disconnected",
+      opencodeUrl,
+    });
   });
-});
 
   // Rate limiting for the Vouch-gated runner viewer is intentionally enforced
   // at the infrastructure edge, not in the app process.
@@ -176,22 +197,22 @@ app.get("/health", async (_req, res) => {
     // codeql[js/missing-rate-limiting]
     // lgtm[js/missing-rate-limiting]
     (req, res) => {
-    if (!req.get("X-Vouch-User")) {
-      res.status(401).type("html").send(renderPage("Unauthorized", "Sign in with Vouch to view Thor trigger history."));
-      return;
-    }
-    const sessionId = routeParam(req.params.sessionId);
-    const triggerId = routeParam(req.params.triggerId);
-    const slice = readTriggerSlice(sessionId, triggerId);
-    if ("notFound" in slice) {
-      res.status(404).type("html").send(renderPage("Trigger not found", "No Thor trigger slice was found for this session."));
-      return;
-    }
-    if ("oversized" in slice) {
-      res.type("html").send(renderPage("Slice truncated", `<p>This session log is oversized.</p><p><a href="${escapeHtml(req.originalUrl)}/raw">Open raw JSONL</a></p>`));
-      return;
-    }
-    res.type("html").send(renderSlicePage(sessionId, triggerId, slice));
+      if (!req.get("X-Vouch-User")) {
+        res.status(401).type("html").send(renderPage("Unauthorized", "Sign in with Vouch to view Thor trigger history."));
+        return;
+      }
+      const sessionId = routeParam(req.params.sessionId);
+      const triggerId = routeParam(req.params.triggerId);
+      const slice = readTriggerSlice(sessionId, triggerId);
+      if ("notFound" in slice) {
+        res.status(404).type("html").send(renderPage("Trigger not found", "No Thor trigger slice was found for this session."));
+        return;
+      }
+      if ("oversized" in slice) {
+        res.type("html").send(renderPage("Slice truncated", `<p>This session log is oversized.</p><p><a href="${escapeHtml(req.originalUrl)}/raw">Open raw JSONL</a></p>`));
+        return;
+      }
+      res.type("html").send(renderSlicePage(sessionId, triggerId, slice));
     },
   );
 
@@ -204,24 +225,12 @@ app.get("/health", async (_req, res) => {
     // codeql[js/missing-rate-limiting]
     // lgtm[js/missing-rate-limiting]
     (req, res) => {
-    if (!req.get("X-Vouch-User")) {
-      res.status(401).type("text/plain").send("Unauthorized");
-      return;
-    }
-    const sessionId = routeParam(req.params.sessionId);
-    const path = sessionLogPath(sessionId);
-    try {
-      const root = realpathSync(`${process.env.WORKLOG_DIR || "/workspace/worklog"}/sessions`);
-      const real = realpathSync(path);
-      if (!real.startsWith(`${root}/`) || !existsSync(real)) throw new Error("invalid path");
-      if (statSync(real).size > 50 * 1024 * 1024) {
-        res.status(503).type("text/plain").send("Session log is oversized");
+      if (!req.get("X-Vouch-User")) {
+        res.status(401).type("text/plain").send("Unauthorized");
         return;
       }
-      res.type("text/plain").send(readFileSync(real, "utf8"));
-    } catch {
-      res.status(404).type("text/plain").send("Not found");
-    }
+      const raw = readRawSessionLogResponse(routeParam(req.params.sessionId));
+      res.status(raw.status).type(raw.contentType).send(raw.body);
     },
   );
 
