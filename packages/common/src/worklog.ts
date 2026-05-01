@@ -36,12 +36,8 @@ function ensureDir(dir: string): void {
   mkdirSync(dir, { recursive: true });
 }
 
-function getWorklogDir(): string {
+export function getWorklogDir(): string {
   return process.env.WORKLOG_DIR || "/workspace/worklog";
-}
-
-export function getWorklogRoot(): string {
-  return getWorklogDir();
 }
 
 function isWorklogEnabled(): boolean {

@@ -5,3 +5,7 @@ export function requireEnv(name: string, env: NodeJS.ProcessEnv = process.env): 
   }
   return value;
 }
+
+export function getRunnerBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return requireEnv("RUNNER_BASE_URL", env).replace(/\/$/, "");
+}

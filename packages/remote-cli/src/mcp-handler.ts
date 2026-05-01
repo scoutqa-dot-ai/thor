@@ -7,6 +7,7 @@ import {
   isProxyName,
   getRepoUpstreams,
   formatThorMeta,
+  getRunnerBaseUrl,
   interpolateHeaders,
   isAliasableMcpTool,
   logError,
@@ -33,13 +34,12 @@ const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
-const RUNNER_BASE_URL = (process.env.RUNNER_BASE_URL || "").replace(/\/$/, "");
 
 function addDisclaimerToApprovalArgs(tool: string, args: Record<string, unknown>, sessionId?: string): Record<string, unknown> {
   if (tool !== "createJiraIssue" && tool !== "addCommentToJiraIssue") return args;
   let footer: string;
   try {
-    footer = buildThorDisclaimerForSession(sessionId, RUNNER_BASE_URL).footer;
+    footer = buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer";
     throw new Error(`Cannot create approval: ${message}`);

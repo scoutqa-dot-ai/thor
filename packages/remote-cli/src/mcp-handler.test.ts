@@ -56,6 +56,7 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
     vi.stubEnv("WORKLOG_DIR", worklogDir);
+    vi.stubEnv("RUNNER_BASE_URL", "https://thor.example.com/");
     rmSync("/tmp/thor-remote-cli-mcp-test", { recursive: true, force: true });
     approvalsDir = mkdtempSync(join(tmpdir(), "remote-cli-mcp-"));
     toolCalls = [];
@@ -319,7 +320,7 @@ describe("remote-cli MCP endpoints", () => {
         arguments: {
           projectKey: "THOR",
           summary: "Fix it",
-          description: `body\n${formatThorDisclaimerFooter(`/runner/v/parent-session/${activeTriggerId}`)}`,
+          description: `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/parent-session/${activeTriggerId}`)}`,
         },
       },
     ]);

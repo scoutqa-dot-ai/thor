@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { z } from "zod/v4";
-import { getWorklogRoot } from "./worklog.js";
+import { getWorklogDir } from "./worklog.js";
 
 export const ALIAS_TYPES = ["slack.thread_id", "git.branch", "session.parent"] as const;
 export const AliasTypeSchema = z.enum(ALIAS_TYPES);
@@ -99,14 +99,14 @@ function safeId(value: string): string {
 }
 
 export function sessionLogPath(sessionId: string): string {
-  const root = resolve(getWorklogRoot(), "sessions");
+  const root = resolve(getWorklogDir(), "sessions");
   const resolved = resolve(root, `${safeId(sessionId)}.jsonl`);
   if (!resolved.startsWith(`${root}${sep}`)) throw new Error(`Invalid session path: ${sessionId}`);
   return resolved;
 }
 
 function aliasLogPath(): string {
-  return join(getWorklogRoot(), "aliases.jsonl");
+  return join(getWorklogDir(), "aliases.jsonl");
 }
 
 function appendJsonlFileOrThrow(path: string, record: object): void {

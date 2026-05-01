@@ -10,6 +10,7 @@ import {
   createLogger,
   deriveGitHubAppBotIdentity,
   formatThorMeta,
+  getRunnerBaseUrl,
   logError,
   logInfo,
   requireEnv,
@@ -55,7 +56,6 @@ const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
-const RUNNER_BASE_URL = (process.env.RUNNER_BASE_URL || "").replace(/\/$/, "");
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   requireEnv("GITHUB_APP_ID", env);
@@ -140,7 +140,7 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
   if (!eligible) return args;
   let footer: string;
   try {
-    footer = `\n${buildThorDisclaimerForSession(sessionId, RUNNER_BASE_URL).footer}`;
+    footer = `\n${buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer}`;
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer" };
   }

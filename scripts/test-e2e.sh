@@ -2,7 +2,8 @@
 #
 # End-to-end test for Thor.
 #
-# Deterministic direct service checks only; no OpenCode/LLM-backed /trigger calls.
+# Deterministic direct service checks only; no OpenCode/LLM-backed /trigger or
+# cron/hey-thor calls. Use scripts/test-opencode-e2e.sh for model-backed smoke.
 #
 # Prerequisites:
 #   - Both services running (either `pnpm dev` or `docker compose up`)
