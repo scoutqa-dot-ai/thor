@@ -106,5 +106,9 @@ export function requireEnv(name: string, env: NodeJS.ProcessEnv = process.env): 
 }
 
 export function stripTrailingSlashes(value: string): string {
-  return value.replace(/\/+$/, "");
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
 }
