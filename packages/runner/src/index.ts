@@ -52,6 +52,9 @@ const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
 /** Grace period after a session.error for OpenCode to emit recovery events before treating it as terminal. */
 const SESSION_ERROR_GRACE_MS = parseInt(process.env.SESSION_ERROR_GRACE_MS || "10000", 10);
 
+/** Threshold above which an in-flight slice renders the soft staleness banner. */
+const SLICE_STALE_AFTER_MS = 5 * 60_000;
+
 /** Memory directory root. */
 const MEMORY_DIR = "/workspace/memory";
 
@@ -1173,7 +1176,8 @@ function escapeHtml(value: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function renderPage(title: string, body: string): string {
@@ -1196,7 +1200,7 @@ function renderSlicePage(
   const isStale =
     slice.status === "in_flight" &&
     slice.lastEventTs &&
-    Date.now() - Date.parse(slice.lastEventTs) > 5 * 60_000;
+    Date.now() - Date.parse(slice.lastEventTs) > SLICE_STALE_AFTER_MS;
   const refresh = slice.status === "in_flight" ? '<meta http-equiv="refresh" content="5">' : "";
   const records = slice.records
     .map((record) => JSON.stringify(redactRecord(record), null, 2))
