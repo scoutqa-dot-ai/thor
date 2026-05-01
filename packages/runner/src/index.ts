@@ -50,6 +50,9 @@ const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT |
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
 
+/** Grace period after a session.error for OpenCode to emit recovery events before treating it as terminal. */
+const SESSION_ERROR_GRACE_MS = parseInt(process.env.SESSION_ERROR_GRACE_MS || "10000", 10);
+
 /** Memory directory root. */
 const MEMORY_DIR = "/workspace/memory";
 
@@ -284,6 +287,36 @@ function emitMemoryEventsFromToolPart(
   }
 }
 
+function sessionErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") return "Unknown error";
+
+  const candidate = error as {
+    name?: string;
+    message?: string;
+    data?: { name?: string; message?: string };
+  };
+
+  return candidate.data?.message || candidate.message || candidate.data?.name || candidate.name || "Unknown error";
+}
+
+async function nextWithTimeout(
+  iterator: AsyncIterator<Event>,
+  timeoutMs: number,
+): Promise<IteratorResult<Event> | "timeout"> {
+  if (timeoutMs <= 0) return "timeout";
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      iterator.next(),
+      new Promise<"timeout">((resolve) => {
+        timeout = setTimeout(() => resolve("timeout"), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 /** Log a part to stdout if it's interesting. */
 function logPartToStdout(sessionId: string, part: Part): void {
   const sid = sessionId.slice(0, 12);
@@ -370,7 +403,8 @@ function logPartToStdout(sessionId: string, part: Part): void {
  * 1. Resolves or creates an OpenCode session (correlation key → session ID).
  * 2. Subscribes to the SSE event stream.
  * 3. Sends the prompt via promptAsync.
- * 4. Streams until `session.idle` or `session.error` (no timeout).
+ * 4. Streams until `session.idle`; `session.error` is reported as progress and becomes
+ *    terminal only if no recovery activity arrives within `SESSION_ERROR_GRACE_MS`.
  * 5. Returns the aggregated response to the HTTP caller.
  */
 app.post("/trigger", async (req, res) => {
@@ -628,7 +662,10 @@ app.post("/trigger", async (req, res) => {
     let lastMessageId: string | undefined;
     let totalCost = 0;
     const totalTokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
-    let sessionError: string | undefined;
+    let terminalError: string | undefined;
+    let latestSessionError: string | undefined;
+    let latestSessionErrorSeq: number | undefined;
+    let latestSessionErrorAt: number | undefined;
     let finished = false;
 
     // Track child session IDs for progress forwarding.
@@ -665,10 +702,30 @@ app.post("/trigger", async (req, res) => {
     }
 
     await withNdjsonHeartbeat(emit, async () => {
-      for await (const event of subscription) {
-        if (finished) break;
+      const iterator = subscription[Symbol.asyncIterator]();
+      try {
+        while (!finished) {
+          const remainingSessionErrorGraceMs = latestSessionErrorAt
+            ? SESSION_ERROR_GRACE_MS - (Date.now() - latestSessionErrorAt)
+            : undefined;
+          const next = latestSessionError
+            ? await nextWithTimeout(iterator, remainingSessionErrorGraceMs ?? SESSION_ERROR_GRACE_MS)
+            : await iterator.next();
 
-        const isParent = isSessionEvent(event, sessionId);
+          if (next === "timeout") {
+            terminalError = latestSessionError;
+            finished = true;
+            break;
+          }
+          if (next.done) {
+            terminalError = latestSessionError;
+            break;
+          }
+
+          const event = next.value;
+          if (finished) break;
+
+          const isParent = isSessionEvent(event, sessionId);
 
         // Forward tool progress from child sessions so
         // Slack progress isn't silent while a task runs.
@@ -696,6 +753,12 @@ app.post("/trigger", async (req, res) => {
         if (event.type === "message.part.updated") {
           const part = event.properties.part;
           seq++;
+
+          if (latestSessionErrorSeq !== undefined && seq > latestSessionErrorSeq) {
+            latestSessionError = undefined;
+            latestSessionErrorSeq = undefined;
+            latestSessionErrorAt = undefined;
+          }
 
           // Stdout logging (selective)
           logPartToStdout(sessionId, part);
@@ -771,23 +834,31 @@ app.post("/trigger", async (req, res) => {
           }
         } else if (event.type === "session.error") {
           const errorProps = event.properties;
-          sessionError =
-            errorProps.error && "data" in errorProps.error
-              ? (errorProps.error.data as { message?: string }).message || errorProps.error.name
-              : "Unknown error";
-          logError(log, "session_error", sessionError, {
+          const errorMessage = sessionErrorMessage(errorProps.error);
+          latestSessionError = errorMessage;
+          latestSessionErrorSeq = seq;
+          latestSessionErrorAt = Date.now();
+          collectedToolCalls.push({ tool: "error", state: "error" });
+          emit({ type: "tool", tool: "error", status: "error" });
+          logError(log, "session_error", errorMessage, {
             sessionId,
             errorDetail: JSON.stringify(errorProps.error),
           });
-          finished = true;
-          break;
         } else if (event.type === "session.idle") {
+          terminalError = latestSessionError;
           finished = true;
           break;
         }
+        }
+      } finally {
+        await iterator.return?.();
+        subscription.close();
       }
     });
-    subscription.close();
+
+    if (!finished && latestSessionError) {
+      terminalError = latestSessionError;
+    }
 
     const durationMs = Date.now() - promptStart;
 
@@ -797,11 +868,11 @@ app.post("/trigger", async (req, res) => {
         collectedTextParts.length > 0 ? collectedTextParts.join("\n\n") : undefined;
       appendSummary({
         correlationKey,
-        status: sessionError ? "error" : "completed",
+        status: terminalError ? "error" : "completed",
         durationMs,
         toolCalls: collectedToolCalls,
         responsePreview: responseText,
-        error: sessionError,
+        error: terminalError,
       });
 
       // Register cross-channel aliases (best-effort)
@@ -827,7 +898,7 @@ app.post("/trigger", async (req, res) => {
 
     logInfo(log, "session_done", {
       sessionId,
-      status: sessionError ? "error" : "completed",
+      status: terminalError ? "error" : "completed",
       textParts: collectedTextParts.length,
       toolCalls: collectedToolCalls.length,
       totalParts: seq,
@@ -840,8 +911,8 @@ app.post("/trigger", async (req, res) => {
       sessionId,
       correlationKey,
       resumed,
-      status: sessionError ? "error" : "completed",
-      ...(sessionError ? { error: sessionError } : {}),
+      status: terminalError ? "error" : "completed",
+      ...(terminalError ? { error: terminalError } : {}),
       response: collectedTextParts.join("\n\n"),
       toolCalls: collectedToolCalls,
       messageId: lastMessageId,

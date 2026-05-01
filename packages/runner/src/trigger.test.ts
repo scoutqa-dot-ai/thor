@@ -6,8 +6,11 @@ import type { Event, TextPart } from "@opencode-ai/sdk";
 import { createRunnerApp, type RunnerAppOptions } from "./index.js";
 
 const worklogDir = "/tmp/thor-runner-trigger-test/worklog";
-vi.hoisted(() => {
+const originalEnv = vi.hoisted(() => {
+  const sessionErrorGraceMs = process.env.SESSION_ERROR_GRACE_MS;
   process.env.WORKLOG_DIR = "/tmp/thor-runner-trigger-test/worklog";
+  process.env.SESSION_ERROR_GRACE_MS = "20";
+  return { sessionErrorGraceMs };
 });
 const sessionDir = "/workspace/repos/runner-trigger-test";
 const memoryDir = "/tmp/thor-runner-trigger-test/memory";
@@ -76,7 +79,21 @@ function idleEvent(sessionId: string): Event {
   return { type: "session.idle", properties: { sessionID: sessionId } } as Event;
 }
 
-function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Set<string> } = {}) {
+function statusEvent(sessionId: string): Event {
+  return { type: "session.status", properties: { sessionID: sessionId, status: "busy" } } as Event;
+}
+
+function sessionErrorEvent(sessionId: string, message: string): Event {
+  return {
+    type: "session.error",
+    properties: {
+      sessionID: sessionId,
+      error: { name: "ProviderError", data: { message } },
+    },
+  } as Event;
+}
+
+function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Set<string>; promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void } = {}) {
   const buses = new FakeEventBuses();
   const existingSessions = opts.existingSessions ?? new Set<string>();
   const busySessions = opts.busySessions ?? new Set<string>();
@@ -111,8 +128,11 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
         prompts.push(body.parts[0]?.text ?? "");
         queueMicrotask(() => {
           const sub = buses.latest();
-          sub.push(textEvent(path.id, `ok ${path.id}`));
-          sub.push(idleEvent(path.id));
+          const events = opts.promptEvents
+            ? opts.promptEvents(path.id, sub)
+            : [textEvent(path.id, `ok ${path.id}`), idleEvent(path.id)];
+          if (!events) return;
+          for (const event of events) sub.push(event);
         });
         return { data: {} };
       },
@@ -172,6 +192,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalEnv.sessionErrorGraceMs === undefined) delete process.env.SESSION_ERROR_GRACE_MS;
+  else process.env.SESSION_ERROR_GRACE_MS = originalEnv.sessionErrorGraceMs;
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
 });
 
@@ -262,6 +284,60 @@ describe("runner /trigger orchestration", () => {
       await trigger(url, { prompt: "second", correlationKey: "memory-key" });
       expect(h.prompts[1]).not.toContain("root memory text");
       expect(h.prompts[1]).not.toContain("repo memory text");
+    });
+  });
+
+  it("emits session errors as tool progress and continues when later activity arrives", async () => {
+    const h = createHarness({
+      promptEvents: (sessionId) => [
+        sessionErrorEvent(sessionId, "Input exceeds context window of this model"),
+        textEvent(sessionId, "continued after compaction"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, { prompt: "large search", correlationKey: "compact-key" });
+      expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "completed",
+        response: "continued after compaction",
+      });
+    });
+  });
+
+  it("uses the latest session error as terminal failure when no later activity arrives", async () => {
+    const h = createHarness({
+      promptEvents: (sessionId) => [sessionErrorEvent(sessionId, "provider unavailable")],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, { prompt: "fail", correlationKey: "error-key" });
+      expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "error",
+        error: "provider unavailable",
+      });
+    });
+  });
+
+  it("does not let status events extend the session error grace period", async () => {
+    const h = createHarness({
+      promptEvents: (sessionId, sub) => {
+        sub.push(sessionErrorEvent(sessionId, "provider unavailable"));
+        setTimeout(() => sub.push(statusEvent(sessionId)), 5);
+        setTimeout(() => sub.push(statusEvent(sessionId)), 15);
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const startedAt = Date.now();
+      const result = await trigger(url, { prompt: "fail", correlationKey: "status-key" });
+      expect(Date.now() - startedAt).toBeLessThan(100);
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "error",
+        error: "provider unavailable",
+      });
     });
   });
 });
