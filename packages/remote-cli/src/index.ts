@@ -10,6 +10,10 @@ import {
   formatThorMeta,
   logError,
   logInfo,
+  loadRemoteCliAppEnv,
+  loadRemoteCliEnv,
+  loadRemoteCliGitHubEnv,
+  loadRemoteCliInternalEnv,
   type ConfigLoader,
   type ExecStreamEvent,
   WORKSPACE_CONFIG_PATH,
@@ -43,11 +47,6 @@ import {
   validateMetabaseArgs,
   validateScoutqaArgs,
 } from "./policy.js";
-import {
-  loadRemoteCliConfig,
-  loadRemoteCliGitHubConfig,
-  loadRemoteCliInternalConfig,
-} from "./env.js";
 
 const log = createLogger("remote-cli");
 
@@ -58,23 +57,24 @@ const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
-  loadRemoteCliGitHubConfig(env);
+  loadRemoteCliGitHubEnv(env);
 }
 
 export function validateRemoteCliInternalEnv(env: NodeJS.ProcessEnv = process.env): void {
-  loadRemoteCliInternalConfig(env);
+  loadRemoteCliInternalEnv(env);
 }
 
 function deriveBotGitIdentity(env: NodeJS.ProcessEnv = process.env): {
   name: string;
   email: string;
 } {
-  const config = loadRemoteCliGitHubConfig(env);
+  const config = loadRemoteCliGitHubEnv(env);
   return { name: config.gitIdentityName, email: config.gitIdentityEmail };
 }
 
 export interface RemoteCliAppConfig {
   getConfig?: ConfigLoader;
+  appEnv?: ReturnType<typeof loadRemoteCliAppEnv>;
   mcp?: Omit<McpServiceDeps, "getConfig">;
 }
 
@@ -360,10 +360,11 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const getConfig = config.getConfig ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const internalSecret = process.env.THOR_INTERNAL_SECRET || "";
+  const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
+  const internalSecret = appEnv.thorInternalSecret;
   const mcpService = createMcpService({
     getConfig,
-    isProduction: process.env.NODE_ENV === "production",
+    isProduction: appEnv.isProduction,
     ...config.mcp,
   });
 
@@ -885,7 +886,7 @@ function hasLdcliOutputOverride(args: string[]): boolean {
 }
 
 export async function startRemoteCliServer(): Promise<void> {
-  const envConfig = loadRemoteCliConfig();
+  const envConfig = loadRemoteCliEnv();
   const gitIdentity = deriveBotGitIdentity();
   const remoteCli = createRemoteCliApp();
   logInfo(log, "remote_cli_starting", {

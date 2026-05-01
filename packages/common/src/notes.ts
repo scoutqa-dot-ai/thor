@@ -31,11 +31,11 @@ import {
 import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { truncate } from "./logger.js";
-import { createEnvLoader } from "./env.js";
+import { envString } from "./env.js";
 import { z } from "zod/v4";
 
 function getWorklogDir(): string {
-  return createEnvLoader().string("WORKLOG_DIR", { defaultValue: "/workspace/worklog" });
+  return envString(process.env, "WORKLOG_DIR", "/workspace/worklog");
 }
 
 /** Sanitize a correlation key for use as a filename. */

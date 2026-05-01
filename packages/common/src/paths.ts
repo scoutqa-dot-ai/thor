@@ -1,16 +1,14 @@
 import { realpath, stat } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import path from "node:path";
-import { createEnvLoader, type EnvSource } from "./env.js";
+import { envString, type EnvSource } from "./env.js";
 
 export const WORKSPACE_REPOS_ROOT = "/workspace/repos";
 export const WORKSPACE_WORKTREES_ROOT = "/workspace/worktrees";
 export const THOR_WORKTREES_ROOT_ENV = "THOR_WORKTREES_ROOT";
 
 export function getWorkspaceWorktreesRoot(env: EnvSource = process.env): string {
-  return createEnvLoader(env).string(THOR_WORKTREES_ROOT_ENV, {
-    defaultValue: WORKSPACE_WORKTREES_ROOT,
-  });
+  return envString(env, THOR_WORKTREES_ROOT_ENV, WORKSPACE_WORKTREES_ROOT);
 }
 
 export function isPathWithin(parent: string, child: string): boolean {

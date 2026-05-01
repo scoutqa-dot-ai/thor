@@ -1,10 +1,9 @@
-import { createLogger, logInfo } from "@thor/common";
+import { createLogger, loadAdminEnv, logInfo } from "@thor/common";
 import { createAdminApp } from "./app.js";
-import { loadAdminConfig } from "./env.js";
 
 const log = createLogger("admin");
 
-const config = loadAdminConfig();
+const config = loadAdminEnv();
 
 const app = createAdminApp({ configPath: config.configPath, auditLogPath: config.auditLogPath });
 

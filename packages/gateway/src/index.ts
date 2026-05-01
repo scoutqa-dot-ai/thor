@@ -4,15 +4,15 @@ import {
   logInfo,
   createConfigLoader,
   getAllowedChannelIds,
+  loadGatewayEnv,
   WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 import { createGatewayApp } from "./app.js";
-import { loadGatewayConfig } from "./env.js";
 import { buildMentionLogins } from "./github.js";
 
 const log = createLogger("gateway");
 
-const config = loadGatewayConfig();
+const config = loadGatewayEnv();
 const githubMentionLogins = buildMentionLogins(config.githubAppSlug);
 const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 

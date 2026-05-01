@@ -8,15 +8,15 @@
  *   METABASE_ALLOWED_SCHEMAS — comma-separated schema allowlist (UX filtering only)
  */
 
-import { loadMetabaseConfig, type MetabaseConfig } from "./env.js";
+import { loadMetabaseEnv } from "@thor/common";
 
 // ── Config (read once at startup, cached) ──────────────────────────────────
 
-let _config: MetabaseConfig | null = null;
+let _config: ReturnType<typeof loadMetabaseEnv> | null = null;
 
 function config() {
   if (!_config) {
-    _config = loadMetabaseConfig();
+    _config = loadMetabaseEnv();
   }
   return _config;
 }

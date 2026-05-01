@@ -34,17 +34,17 @@ import {
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
   extractRepoFromCwd,
+  loadRunnerEnv,
 } from "@thor/common";
 import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { buildToolInstructions } from "./tool-instructions.js";
 import { getMemoryProgressEvents } from "./memory-progress.js";
 import { pathToFileURL } from "node:url";
-import { loadRunnerConfig } from "./env.js";
 
 const log = createLogger("runner");
 
-const config = loadRunnerConfig();
+const config = loadRunnerEnv();
 const PORT = config.port;
 const OPENCODE_URL = config.opencodeUrl;
 const OPENCODE_CONNECT_TIMEOUT = config.opencodeConnectTimeout;

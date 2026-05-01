@@ -4,7 +4,7 @@ import { join, dirname, resolve, sep } from "node:path";
 import { rm, unlink, mkdir, stat } from "node:fs/promises";
 import { Daytona, type FileUpload, type Sandbox } from "@daytonaio/sdk";
 import { execCommand } from "./exec.js";
-import { loadDaytonaConfig } from "./env.js";
+import { loadDaytonaEnv } from "@thor/common";
 
 export interface ExecStreamCallbacks {
   onStdout: (chunk: string) => void;
@@ -51,9 +51,9 @@ function getDaytona(): Daytona {
     return daytonaSingleton;
   }
 
-  let config: ReturnType<typeof loadDaytonaConfig>;
+  let config: ReturnType<typeof loadDaytonaEnv>;
   try {
-    config = loadDaytonaConfig();
+    config = loadDaytonaEnv();
   } catch {
     throw new SandboxError(
       "Sandbox auth failed, check DAYTONA_API_KEY",
@@ -78,7 +78,7 @@ export async function createSandbox(
   try {
     sandbox = await getDaytona().create({
       name,
-      snapshot: loadDaytonaConfig().snapshot,
+      snapshot: loadDaytonaEnv().snapshot,
       ephemeral: true,
       autoStopInterval: 15,
       labels,

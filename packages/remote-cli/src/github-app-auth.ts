@@ -7,10 +7,10 @@ import { createSign } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   getInstallationIdForOwner,
+  loadGitHubAppAuthEnv,
   loadWorkspaceConfig,
   WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
-import { loadGitHubAppAuthConfig } from "./env.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ export function getInstallationIdFromWorkspace(owner: string): number {
 }
 
 function resolveGitHubAppEnv(): { appId: string; privateKeyPath: string; apiUrl: string } {
-  const config = loadGitHubAppAuthConfig();
+  const config = loadGitHubAppAuthEnv();
   return { appId: config.appId, privateKeyPath: config.privateKeyPath, apiUrl: config.apiUrl };
 }
 
@@ -205,7 +205,7 @@ function lockPath(owner: string): string {
 }
 
 function getGitHubAppDir(): string {
-  return loadGitHubAppAuthConfig().appDir;
+  return loadGitHubAppAuthEnv().appDir;
 }
 
 function getCacheDir(): string {
