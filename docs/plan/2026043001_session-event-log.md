@@ -14,7 +14,7 @@ Deliver a session-scoped JSONL event log that powers:
 - disclaimer-link injection for Thor-created GitHub PRs/comments/reviews and Jira tickets/comments
 - a bounded reader story for v1; retention/archival/janitor is deferred out of this implementation
 
-No database. No backwards-compatible markdown-notes routing layer. The source of truth is the session log; markdown notes remain only for human-readable continuity.
+No database. No backwards-compatible markdown-notes routing layer. The source of truth is the session log; the old markdown notes implementation is removed.
 
 ## Log Shape
 
@@ -336,7 +336,7 @@ At resolve+execute time, `mcp-handler.ts:515` calls `executeUpstreamCall({ args:
 | 2026-04-30 | Trigger slices terminate on conflict, not on time                                      | A subsequent `trigger_start` for the same session is unambiguous proof the prior trigger was abandoned (runner restart, lost state). Time-based "stale" detection only soft-warns inside the still-in-flight render — never assigns a "crashed" verdict from the clock alone. |
 | 2026-04-30 | Process-level crashes are not the runner's responsibility to mark                       | A `try/catch/finally` cannot run on SIGKILL / OOM / container kill / segfault. The plan no longer pretends it can. Best-effort SIGTERM handler covers graceful shutdowns; crashes are detected at viewer time via supersede. |
 | 2026-04-30 | Initial alias types are `slack.thread_id`, `git.branch`, and `session.parent`        | Matches actual producers needed for routing and child→parent trigger attribution. |
-| 2026-04-30 | Treat phases 2-4 as greenfield JSONL logging, not a flag-gated cutover               | This project can fail closed on event-log writes and route session aliases from JSONL directly; notes remain only for unrelated session continuity. |
+| 2026-04-30 | Treat phases 2-4 as greenfield JSONL logging, not a flag-gated cutover               | This project can fail closed on event-log writes and route session aliases from JSONL directly; the old markdown notes implementation is removed. |
 | 2026-04-30 | Viewer is Vouch-gated under `/runner/*` ingress prefix; no HMAC, no TTL on the URL    | Reuses the existing OAuth proxy pattern (`packages/admin/src/app.ts`); UUIDv4 entropy + Vouch is the access-control model. Drops HMAC operational cost (secret mgmt, signature code, "Invalid signature" UX). Audit-friendly: links in old artifacts keep working. (CHANGED 2026-04-30 from earlier "HMAC-signed public viewer" decision.) |
 | 2026-04-30 | Use `/runner/*` ingress prefix for runner-owned routes                                | Single ingress mount lets future runner routes ship without per-route ingress changes. Mirrors the existing `/admin/*` pattern. |
 | 2026-04-30 | Redaction is allowlist (default-deny) on tool outputs                                | Defense-in-depth — Vouch fronts the route, but allowlist redaction keeps screenshots / copy-paste / log-share from leaking content the page itself shouldn't render. |
@@ -544,7 +544,7 @@ Local verification:
 - viewer route tests for `completed` / `error` / `aborted` / `crashed` / `in_flight` rendering paths, soft staleness banner above 5 min, branded 401/404/503, mobile snapshot, two-view model, `X-Vouch-User` 401 path.
 - remote-cli tests for direct-write disclaimer injection (`gh pr create` flag rewrite, `gh pr comment`, `gh pr review`, and PR review-comment reply via `gh api` raw `body` field); fail-fast on direct write when active trigger is missing/ambiguous/oversized (`gh` exits non-zero, no exec); policy denial for `gh pr create --fill`, `gh issue create`, and `gh issue comment`; approve-gated args mutation at create time (Jira ticket/comment); fail-fast approve-create on missing/ambiguous active trigger or missing child parent relation (which returns `none`; no action persisted); per-tool injector throws on missing/wrong-typed field (no action persisted); idempotent approve-resolve replay; **child-session URL correctness** — child-session-originated `gh pr create` and `createJiraIssue` after parent linkage produce URLs whose `<sessionId>` segment is the resolved parent (URL renders 200 in the viewer, not 404).
 - ingress smoke test: `/runner/v/<sid>/<tid>` reaches the runner only with a valid Vouch session.
-- retention/janitor tests for gz round-trip, retention boundaries, dangling cleanup, aliases.jsonl rotation.
+- Retention/janitor automation is out of scope for this PR; future retention work should add its own tests for gz round-trip, retention boundaries, dangling cleanup, and aliases.jsonl rotation.
 
 Final verification follows the repository workflow: push the branch, wait for required GitHub checks, then open a PR.
 
@@ -552,7 +552,7 @@ Rollout posture:
 
 - Ship JSONL session/event logging as the only implementation path.
 - Verify viewer/disclaimer/alias paths against staging traffic before prod rollout.
-- Keep markdown notes only for unrelated continuity summaries; do not use notes as routing fallback.
+- Do not keep a markdown-notes continuity/routing fallback; JSONL is the only session/event implementation path.
 - Rollback requires reverting the feature change rather than toggling a runtime cutover switch.
 
 ---
@@ -575,6 +575,7 @@ Codex available: yes | UI scope: yes (public viewer is a server-rendered page) |
 > - UC3 (flat session file path) and UC4 (retention as Phase 6) stand. UC5 was superseded by the greenfield simplification: JSONL is unconditional and notes are not a routing fallback.
 >
 > The dual-voice findings below are preserved verbatim as the audit record of the review at the time.
+> Historical review text below may mention earlier notes.ts, symlink, janitor, or app-level rate-limit proposals; those references are superseded by the implementation decisions above.
 
 ### Phase 1 — CEO/Strategy Review
 
@@ -842,7 +843,7 @@ For LLM/prompt changes: none — this is infrastructure.
 **Section 9 — Deployment & Rollout.**
 - Plan uses unconditional JSONL logging; no runtime cutover switch.
 - Migration risk window is avoided by not dual-writing for routing.
-- Rollback requires reverting the feature change; markdown notes remain readable for continuity only.
+- Rollback requires reverting the feature change; there is no markdown-notes compatibility layer.
 - Environment parity: dev, staging, prod all have same `/workspace/worklog` mount semantics. Verify in staging.
 - First 5 minutes after deploy: monitor viewer 5xx, event log write error rate, runner trigger latency.
 
@@ -1133,7 +1134,7 @@ NEW ERROR/RESCUE PATHS:
 Plan does not mention rollout posture. **Required additions:**
 - JSONL event logging is unconditional for new feature paths.
 - No dual-write routing window; readers use JSONL and do not fall back to notes.
-- Rollback requires reverting the feature change; old notes remain readable for continuity.
+- Rollback requires reverting the feature change; there is no markdown-notes compatibility layer.
 - Rollout verifies staging first, then prod, without a runtime cutover switch.
 - Post-deploy verification: viewer 5xx rate, event-log write error rate, runner trigger latency. First 5 min + first hour.
 
@@ -1151,7 +1152,7 @@ Plan does not mention rollout posture. **Required additions:**
 |---|---|---|---|
 | F1 | Public viewer is unsigned bearer-pair URL; raw tool outputs leak | **critical** | HMAC-sign URL with TTL; allowlist redaction |
 | F2 | Disclaimer inference fails in busy/parallel cases — exactly the cases it must cover | **critical** | Propagate `x-thor-trigger-id` (one line in `packages/opencode-cli/src/remote-cli.ts:27` + add to `packages/remote-cli/src/index.ts:90`); deletes inference branch entirely |
-| F3 | "Greenfield, no migration" claim is false — runner uses notes.ts heavily | **high** | Superseded: JSONL is unconditional; notes remain only for unrelated continuity summaries |
+| F3 | "Greenfield, no migration" claim is false — runner used notes.ts heavily | **high** | Superseded: JSONL is unconditional; markdown notes were removed |
 | F4 | Absolute symlink indexes are fragile across volume mounts, archival, backup tools | **high** | Use flat session files (`<workdir>/sessions/<session-id>.jsonl`); drop symlink layer |
 | F5 | No retention/archival/janitor; `worklog/` grows unbounded | **high** | Add Phase 6 (retention) with per-file size cap + rotation |
 | F6 | "Basic redaction" undefined; tool outputs leak | **high** | Allowlist-based default-deny; per-tool field whitelist |
@@ -1184,7 +1185,7 @@ DX scope detection (10 matches) was driven by mentions of `remote-cli` and `webh
 | UC2 | HMAC-sign the public viewer URL with TTL | "Conservative output limits and basic redaction" + raw bearer-pair URL | Signed URL + redaction allowlist + audit log + rate limit | Slices contain Slack/Jira/MCP outputs, repo names, env-var names, memory contents; bearer-pair is unsafe for public ingress | **Highest stakes.** Link leak (copy-paste, search index, referrer) exposes internal data to the open internet |
 | UC3 | Flat session file path; drop absolute symlink indexes | Symlinks for `index/sessions/*` and `index/aliases/*/*` | Flat `/workspace/worklog/sessions/<session-id>.jsonl` | Absolute targets break across volume mounts/backup tools; dangle on archival; complicate retention | Symlinks work fine on a single host; cost surfaces on archival/migration day |
 | UC4 | Add retention/archival/janitor (Phase 6) | "Out of scope" (line 268) | In scope | Unbounded JSONL growth → viewer OOMs; active-trigger inference becomes O(file) | In 6 months: ops debt manifests as a fire-fight; recoverable but costly |
-| UC5 | Treat Phase 2-4 as a cutover, not greenfield | "No migration path; greenfield" (line 16, 163) | Superseded: unconditional JSONL, no notes routing fallback | Runner still writes notes for unrelated continuity summaries, but JSONL owns session/event routing | Revert feature change if rollback is needed |
+| UC5 | Treat Phase 2-4 as a cutover, not greenfield | "No migration path; greenfield" (line 16, 163) | Superseded: unconditional JSONL, no notes routing fallback | Markdown notes were removed, so JSONL owns session/event routing | Revert feature change if rollback is needed |
 
 **None of UC1–UC5 are flagged as security/feasibility blockers** by both models simultaneously, except UC2 which is the leakage risk. UC2's framing for the user: this is closer to "both models think this is a security risk, not just a preference" than the others.
 
