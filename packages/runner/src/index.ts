@@ -284,6 +284,18 @@ function emitMemoryEventsFromToolPart(
   }
 }
 
+function sessionErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") return "Unknown error";
+
+  const candidate = error as {
+    name?: string;
+    message?: string;
+    data?: { name?: string; message?: string };
+  };
+
+  return candidate.data?.message || candidate.message || candidate.data?.name || candidate.name || "Unknown error";
+}
+
 /** Log a part to stdout if it's interesting. */
 function logPartToStdout(sessionId: string, part: Part): void {
   const sid = sessionId.slice(0, 12);
@@ -370,7 +382,7 @@ function logPartToStdout(sessionId: string, part: Part): void {
  * 1. Resolves or creates an OpenCode session (correlation key → session ID).
  * 2. Subscribes to the SSE event stream.
  * 3. Sends the prompt via promptAsync.
- * 4. Streams until `session.idle` or `session.error` (no timeout).
+ * 4. Streams until `session.idle` (no timeout); `session.error` is reported as progress.
  * 5. Returns the aggregated response to the HTTP caller.
  */
 app.post("/trigger", async (req, res) => {
@@ -628,7 +640,9 @@ app.post("/trigger", async (req, res) => {
     let lastMessageId: string | undefined;
     let totalCost = 0;
     const totalTokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
-    let sessionError: string | undefined;
+    let terminalError: string | undefined;
+    let latestSessionError: string | undefined;
+    let latestSessionErrorSeq: number | undefined;
     let finished = false;
 
     // Track child session IDs for progress forwarding.
@@ -696,6 +710,11 @@ app.post("/trigger", async (req, res) => {
         if (event.type === "message.part.updated") {
           const part = event.properties.part;
           seq++;
+
+          if (latestSessionErrorSeq !== undefined && seq > latestSessionErrorSeq) {
+            latestSessionError = undefined;
+            latestSessionErrorSeq = undefined;
+          }
 
           // Stdout logging (selective)
           logPartToStdout(sessionId, part);
@@ -771,23 +790,27 @@ app.post("/trigger", async (req, res) => {
           }
         } else if (event.type === "session.error") {
           const errorProps = event.properties;
-          sessionError =
-            errorProps.error && "data" in errorProps.error
-              ? (errorProps.error.data as { message?: string }).message || errorProps.error.name
-              : "Unknown error";
-          logError(log, "session_error", sessionError, {
+          const errorMessage = sessionErrorMessage(errorProps.error);
+          latestSessionError = errorMessage;
+          latestSessionErrorSeq = seq;
+          collectedToolCalls.push({ tool: "error", state: "error" });
+          emit({ type: "tool", tool: "error", status: "error" });
+          logError(log, "session_error", errorMessage, {
             sessionId,
             errorDetail: JSON.stringify(errorProps.error),
           });
-          finished = true;
-          break;
         } else if (event.type === "session.idle") {
+          terminalError = latestSessionError;
           finished = true;
           break;
         }
       }
     });
     subscription.close();
+
+    if (!finished && latestSessionError) {
+      terminalError = latestSessionError;
+    }
 
     const durationMs = Date.now() - promptStart;
 
@@ -797,11 +820,11 @@ app.post("/trigger", async (req, res) => {
         collectedTextParts.length > 0 ? collectedTextParts.join("\n\n") : undefined;
       appendSummary({
         correlationKey,
-        status: sessionError ? "error" : "completed",
+        status: terminalError ? "error" : "completed",
         durationMs,
         toolCalls: collectedToolCalls,
         responsePreview: responseText,
-        error: sessionError,
+        error: terminalError,
       });
 
       // Register cross-channel aliases (best-effort)
@@ -827,7 +850,7 @@ app.post("/trigger", async (req, res) => {
 
     logInfo(log, "session_done", {
       sessionId,
-      status: sessionError ? "error" : "completed",
+      status: terminalError ? "error" : "completed",
       textParts: collectedTextParts.length,
       toolCalls: collectedToolCalls.length,
       totalParts: seq,
@@ -840,8 +863,8 @@ app.post("/trigger", async (req, res) => {
       sessionId,
       correlationKey,
       resumed,
-      status: sessionError ? "error" : "completed",
-      ...(sessionError ? { error: sessionError } : {}),
+      status: terminalError ? "error" : "completed",
+      ...(terminalError ? { error: terminalError } : {}),
       response: collectedTextParts.join("\n\n"),
       toolCalls: collectedToolCalls,
       messageId: lastMessageId,

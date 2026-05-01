@@ -76,7 +76,17 @@ function idleEvent(sessionId: string): Event {
   return { type: "session.idle", properties: { sessionID: sessionId } } as Event;
 }
 
-function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Set<string> } = {}) {
+function sessionErrorEvent(sessionId: string, message: string): Event {
+  return {
+    type: "session.error",
+    properties: {
+      sessionID: sessionId,
+      error: { name: "ProviderError", data: { message } },
+    },
+  } as Event;
+}
+
+function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Set<string>; promptEvents?: (sessionId: string) => Event[] } = {}) {
   const buses = new FakeEventBuses();
   const existingSessions = opts.existingSessions ?? new Set<string>();
   const busySessions = opts.busySessions ?? new Set<string>();
@@ -111,8 +121,8 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
         prompts.push(body.parts[0]?.text ?? "");
         queueMicrotask(() => {
           const sub = buses.latest();
-          sub.push(textEvent(path.id, `ok ${path.id}`));
-          sub.push(idleEvent(path.id));
+          const events = opts.promptEvents?.(path.id) ?? [textEvent(path.id, `ok ${path.id}`), idleEvent(path.id)];
+          for (const event of events) sub.push(event);
         });
         return { data: {} };
       },
@@ -262,6 +272,40 @@ describe("runner /trigger orchestration", () => {
       await trigger(url, { prompt: "second", correlationKey: "memory-key" });
       expect(h.prompts[1]).not.toContain("root memory text");
       expect(h.prompts[1]).not.toContain("repo memory text");
+    });
+  });
+
+  it("emits session errors as tool progress and continues when later activity arrives", async () => {
+    const h = createHarness({
+      promptEvents: (sessionId) => [
+        sessionErrorEvent(sessionId, "Input exceeds context window of this model"),
+        textEvent(sessionId, "continued after compaction"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, { prompt: "large search", correlationKey: "compact-key" });
+      expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "completed",
+        response: "continued after compaction",
+      });
+    });
+  });
+
+  it("uses the latest session error as terminal failure when no later activity arrives", async () => {
+    const h = createHarness({
+      promptEvents: (sessionId) => [sessionErrorEvent(sessionId, "provider unavailable"), idleEvent(sessionId)],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, { prompt: "fail", correlationKey: "error-key" });
+      expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "error",
+        error: "provider unavailable",
+      });
     });
   });
 });
