@@ -35,17 +35,25 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
 
-function addDisclaimerToApprovalArgs(tool: string, args: Record<string, unknown>, sessionId?: string): Record<string, unknown> {
+function addDisclaimerToApprovalArgs(
+  tool: string,
+  args: Record<string, unknown>,
+  sessionId?: string,
+): Record<string, unknown> {
   if (tool !== "createJiraIssue" && tool !== "addCommentToJiraIssue") return args;
   let footer: string;
   try {
     footer = buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer;
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer";
+    const message =
+      err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer";
     throw new Error(`Cannot create approval: ${message}`);
   }
   const field = tool === "createJiraIssue" ? "description" : "commentBody";
-  if (typeof args[field] !== "string") throw new Error(`Cannot create approval: ${tool}.${field} must be a string for disclaimer injection`);
+  if (typeof args[field] !== "string")
+    throw new Error(
+      `Cannot create approval: ${tool}.${field} must be a string for disclaimer injection`,
+    );
   return { ...args, [field]: `${args[field]}\n${footer}` };
 }
 
@@ -516,17 +524,17 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (lookup.action.status !== "pending") {
       return fail("Not found or already resolved");
     }
-    const action = lookup.store.resolveLoaded(lookup.action, decision, reviewer, reason);
 
     if (decision === "rejected") {
+      const rejected = lookup.store.resolveLoaded(lookup.action, decision, reviewer, reason);
       logInfo(log, "tool_call_rejected", {
         upstream: lookup.upstreamName,
-        tool: action.tool,
-        actionId: action.id,
+        tool: rejected.tool,
+        actionId: rejected.id,
         reviewer,
       });
-      writeToolCallLogFn({ tool: action.tool, decision: "rejected", args: action.args });
-      return ok(stringify(action));
+      writeToolCallLogFn({ tool: rejected.tool, decision: "rejected", args: rejected.args });
+      return ok(stringify(rejected));
     }
 
     const instance = await getInstance(lookup.upstreamName);
@@ -534,20 +542,26 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return fail(`Unknown upstream "${lookup.upstreamName}".`);
     }
 
+    // Status flip is deferred until the upstream call succeeds. If the call
+    // throws (network blip, upstream down, process crash mid-call), the action
+    // remains `pending` so the gateway's retry-up-to-3-attempts loop can replay
+    // it. The error is captured on the still-pending record for operator visibility.
+    const pendingAction = lookup.action;
     return executeUpstreamCall({
       instance,
-      toolName: action.tool,
-      args: action.args,
+      toolName: pendingAction.tool,
+      args: pendingAction.args,
       logEvent: "tool_call_approved",
       decision: "approved",
-      extraLogFields: { actionId: action.id },
+      extraLogFields: { actionId: pendingAction.id },
       onSuccess: (rawResult) => {
-        action.result = rawResult;
-        lookup.store.update(action);
+        const resolved = lookup.store.resolveLoaded(pendingAction, "approved", reviewer, reason);
+        resolved.result = rawResult;
+        lookup.store.update(resolved);
       },
       onError: (message) => {
-        action.error = message;
-        lookup.store.update(action);
+        pendingAction.error = message;
+        lookup.store.update(pendingAction);
       },
     });
   }
