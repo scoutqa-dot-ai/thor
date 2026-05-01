@@ -93,13 +93,7 @@ function sessionErrorEvent(sessionId: string, message: string): Event {
   } as Event;
 }
 
-function createHarness(
-  opts: {
-    existingSessions?: Set<string>;
-    busySessions?: Set<string>;
-    promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
-  } = {},
-) {
+function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Set<string>; promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void } = {}) {
   const buses = new FakeEventBuses();
   const existingSessions = opts.existingSessions ?? new Set<string>();
   const busySessions = opts.busySessions ?? new Set<string>();
@@ -120,7 +114,9 @@ function createHarness(
         return { data: { id: path.id } };
       },
       status: async () => ({
-        data: Object.fromEntries([...busySessions].map((id) => [id, { type: "busy" }])),
+        data: Object.fromEntries(
+          [...busySessions].map((id) => [id, { type: "busy" }]),
+        ),
       }),
       abort: async ({ path }: { path: { id: string } }) => {
         aborts.push(path.id);
@@ -128,13 +124,7 @@ function createHarness(
         abortedPending.add(path.id);
         return { data: {} };
       },
-      promptAsync: async ({
-        path,
-        body,
-      }: {
-        path: { id: string };
-        body: { parts: Array<{ text: string }> };
-      }) => {
+      promptAsync: async ({ path, body }: { path: { id: string }; body: { parts: Array<{ text: string }> } }) => {
         prompts.push(body.parts[0]?.text ?? "");
         queueMicrotask(() => {
           const sub = buses.latest();
@@ -162,8 +152,7 @@ function createHarness(
       },
     } as unknown as RunnerAppOptions["eventBuses"],
     memoryDir,
-    createClient: () =>
-      client as unknown as ReturnType<NonNullable<RunnerAppOptions["createClient"]>>,
+    createClient: () => client as unknown as ReturnType<NonNullable<RunnerAppOptions["createClient"]>>,
     ensureOpencodeAvailable: async () => {},
     isOpencodeReachable: async () => true,
   });
@@ -171,10 +160,7 @@ function createHarness(
   return { app, prompts, aborts, existingSessions, busySessions };
 }
 
-async function withServer<T>(
-  app: ReturnType<typeof createRunnerApp>,
-  fn: (url: string) => Promise<T>,
-) {
+async function withServer<T>(app: ReturnType<typeof createRunnerApp>, fn: (url: string) => Promise<T>) {
   const server: Server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
@@ -220,21 +206,13 @@ describe("runner /trigger orchestration", () => {
       const firstStart = first.events.find((e) => e.type === "start");
       const firstDone = first.events.find((e) => e.type === "done");
       expect(firstStart).toMatchObject({ sessionId: "session-1", resumed: false });
-      expect(firstDone).toMatchObject({
-        sessionId: "session-1",
-        resumed: false,
-        status: "completed",
-      });
+      expect(firstDone).toMatchObject({ sessionId: "session-1", resumed: false, status: "completed" });
 
       const second = await trigger(url, { prompt: "second", correlationKey: "same-key" });
       const secondStart = second.events.find((e) => e.type === "start");
       const secondDone = second.events.find((e) => e.type === "done");
       expect(secondStart).toMatchObject({ sessionId: "session-1", resumed: true });
-      expect(secondDone).toMatchObject({
-        sessionId: "session-1",
-        resumed: true,
-        status: "completed",
-      });
+      expect(secondDone).toMatchObject({ sessionId: "session-1", resumed: true, status: "completed" });
     });
   });
 
@@ -256,10 +234,7 @@ describe("runner /trigger orchestration", () => {
   });
 
   it("returns busy without prompting when a resumed session is busy and interrupt is absent", async () => {
-    const h = createHarness({
-      existingSessions: new Set(["busy-session"]),
-      busySessions: new Set(["busy-session"]),
-    });
+    const h = createHarness({ existingSessions: new Set(["busy-session"]), busySessions: new Set(["busy-session"]) });
 
     mkdirSync(`${worklogDir}/2026-04-28/notes`, { recursive: true });
     writeFileSync(`${worklogDir}/2026-04-28/notes/busy-key.md`, "Session ID: busy-session\n");
@@ -268,11 +243,7 @@ describe("runner /trigger orchestration", () => {
       const response = await fetch(`${url}/trigger`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          prompt: "later",
-          correlationKey: "busy-key",
-          directory: sessionDir,
-        }),
+        body: JSON.stringify({ prompt: "later", correlationKey: "busy-key", directory: sessionDir }),
       });
       expect(await response.json()).toEqual({ busy: true });
     });
@@ -281,19 +252,12 @@ describe("runner /trigger orchestration", () => {
   });
 
   it("aborts then prompts when a resumed session is busy and interrupt is true", async () => {
-    const h = createHarness({
-      existingSessions: new Set(["busy-session"]),
-      busySessions: new Set(["busy-session"]),
-    });
+    const h = createHarness({ existingSessions: new Set(["busy-session"]), busySessions: new Set(["busy-session"]) });
     mkdirSync(`${worklogDir}/2026-04-28/notes`, { recursive: true });
     writeFileSync(`${worklogDir}/2026-04-28/notes/busy-key.md`, "Session ID: busy-session\n");
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: "now",
-        correlationKey: "busy-key",
-        interrupt: true,
-      });
+      const result = await trigger(url, { prompt: "now", correlationKey: "busy-key", interrupt: true });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         sessionId: "busy-session",
         resumed: true,
