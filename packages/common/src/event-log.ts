@@ -1,10 +1,4 @@
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  statSync,
-} from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { getWorklogDir } from "./worklog.js";
@@ -89,7 +83,11 @@ export type ActiveTriggerResult =
   | { ok: false; reason: "none" | "ambiguous" | "depth_exceeded" | "cycle" | "oversized" };
 
 const MAX_RECORD_BYTES = 4095;
-const MAX_SESSION_FILE_BYTES = Number.parseInt(process.env.SESSION_LOG_MAX_BYTES || "52428800", 10);
+export const MAX_SESSION_FILE_BYTES = Number.parseInt(
+  process.env.SESSION_LOG_MAX_BYTES || "52428800",
+  10,
+);
+const PARENT_CHAIN_DEPTH_LIMIT = 5;
 const aliasCache = new Map<string, string>();
 let aliasCacheLoaded = false;
 
@@ -116,7 +114,8 @@ function appendJsonlFileOrThrow(path: string, record: object): void {
 
 function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncated?: true } {
   let candidate: Record<string, unknown> = { ...record };
-  if (Buffer.byteLength(JSON.stringify(candidate), "utf8") < MAX_RECORD_BYTES) return candidate as T;
+  if (Buffer.byteLength(JSON.stringify(candidate), "utf8") < MAX_RECORD_BYTES)
+    return candidate as T;
 
   if ("event" in candidate) candidate.event = { _truncated: true };
   if ("payload" in candidate) candidate.payload = { _truncated: true };
@@ -124,7 +123,14 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
 
   while (Buffer.byteLength(JSON.stringify(candidate), "utf8") >= MAX_RECORD_BYTES) {
     const preview = JSON.stringify(candidate).slice(0, MAX_RECORD_BYTES - 200);
-    candidate = { schemaVersion: 1, ts: String(record.ts), type: record.type, sessionId: record.sessionId, _truncated: true, preview };
+    candidate = {
+      schemaVersion: 1,
+      ts: String(record.ts),
+      type: record.type,
+      sessionId: record.sessionId,
+      _truncated: true,
+      preview,
+    };
   }
   return candidate as T & { _truncated?: true };
 }
@@ -134,7 +140,12 @@ export function appendSessionEvent(
   record: Record<string, unknown>,
 ): { ok: true } | { ok: false; error: Error } {
   try {
-    const full = capRecord({ schemaVersion: 1, ts: new Date().toISOString(), sessionId, ...record });
+    const full = capRecord({
+      schemaVersion: 1,
+      ts: new Date().toISOString(),
+      sessionId,
+      ...record,
+    });
     const parsed = SessionEventLogRecordSchema.parse(full);
     appendJsonlFileOrThrow(sessionLogPath(sessionId), parsed);
     return { ok: true };
@@ -143,7 +154,9 @@ export function appendSessionEvent(
   }
 }
 
-export function appendAlias(record: Omit<AliasRecord, "ts"> & { ts?: string }): { ok: true } | { ok: false; error: Error } {
+export function appendAlias(
+  record: Omit<AliasRecord, "ts"> & { ts?: string },
+): { ok: true } | { ok: false; error: Error } {
   try {
     const alias = AliasRecordSchema.parse({ ts: new Date().toISOString(), ...record });
     appendJsonlFileOrThrow(aliasLogPath(), alias);
@@ -171,10 +184,15 @@ function completeLines(path: string): string[] {
   return lines.filter((line) => line.length > 0);
 }
 
-function readSessionRecords(sessionId: string): { records: SessionEventLogRecord[]; skippedMalformed: number; oversized?: true } {
+function readSessionRecords(sessionId: string): {
+  records: SessionEventLogRecord[];
+  skippedMalformed: number;
+  oversized?: true;
+} {
   const path = sessionLogPath(sessionId);
   if (!existsSync(path)) return { records: [], skippedMalformed: 0 };
-  if (statSync(path).size > MAX_SESSION_FILE_BYTES) return { records: [], skippedMalformed: 0, oversized: true };
+  if (statSync(path).size > MAX_SESSION_FILE_BYTES)
+    return { records: [], skippedMalformed: 0, oversized: true };
   let skippedMalformed = 0;
   const records: SessionEventLogRecord[] = [];
   for (const line of completeLines(path)) {
@@ -189,24 +207,51 @@ function readSessionRecords(sessionId: string): { records: SessionEventLogRecord
   return { records, skippedMalformed };
 }
 
-export function readTriggerSlice(sessionId: string, triggerId: string): TriggerSlice | { notFound: true; skippedMalformed: number } | { oversized: true } {
+export function readTriggerSlice(
+  sessionId: string,
+  triggerId: string,
+): TriggerSlice | { notFound: true; skippedMalformed: number } | { oversized: true } {
   const read = readSessionRecords(sessionId);
   if (read.oversized) return { oversized: true };
-  const startIndex = read.records.findIndex((r) => r.type === "trigger_start" && r.triggerId === triggerId);
+  const startIndex = read.records.findIndex(
+    (r) => r.type === "trigger_start" && r.triggerId === triggerId,
+  );
   if (startIndex === -1) return { notFound: true, skippedMalformed: read.skippedMalformed };
 
   const records: SessionEventLogRecord[] = [];
   for (let i = startIndex; i < read.records.length; i++) {
     const record = read.records[i];
-    if (i > startIndex && record.type === "trigger_start" && record.sessionId === sessionId && record.triggerId !== triggerId) {
-      return { records, status: "crashed", reason: `superseded by ${record.triggerId}`, lastEventTs: records.at(-1)?.ts, skippedMalformed: read.skippedMalformed };
+    if (
+      i > startIndex &&
+      record.type === "trigger_start" &&
+      record.sessionId === sessionId &&
+      record.triggerId !== triggerId
+    ) {
+      return {
+        records,
+        status: "crashed",
+        reason: `superseded by ${record.triggerId}`,
+        lastEventTs: records.at(-1)?.ts,
+        skippedMalformed: read.skippedMalformed,
+      };
     }
     records.push(record);
     if (record.type === "trigger_end" && record.triggerId === triggerId) {
-      return { records, status: record.status, reason: record.reason ?? record.error, lastEventTs: record.ts, skippedMalformed: read.skippedMalformed };
+      return {
+        records,
+        status: record.status,
+        reason: record.reason ?? record.error,
+        lastEventTs: record.ts,
+        skippedMalformed: read.skippedMalformed,
+      };
     }
   }
-  return { records, status: "in_flight", lastEventTs: records.at(-1)?.ts, skippedMalformed: read.skippedMalformed };
+  return {
+    records,
+    status: "in_flight",
+    lastEventTs: records.at(-1)?.ts,
+    skippedMalformed: read.skippedMalformed,
+  };
 }
 
 function loadAliasCache(): void {
@@ -214,7 +259,11 @@ function loadAliasCache(): void {
   for (const line of completeLines(aliasLogPath())) {
     try {
       const parsed = AliasRecordSchema.safeParse(JSON.parse(line));
-      if (parsed.success) aliasCache.set(`${parsed.data.aliasType}\0${parsed.data.aliasValue}`, parsed.data.sessionId);
+      if (parsed.success)
+        aliasCache.set(
+          `${parsed.data.aliasType}\0${parsed.data.aliasValue}`,
+          parsed.data.sessionId,
+        );
     } catch {
       // ignored: malformed alias records are not routing facts
     }
@@ -222,7 +271,10 @@ function loadAliasCache(): void {
   aliasCacheLoaded = true;
 }
 
-export function resolveAlias(input: { aliasType: AliasRecord["aliasType"]; aliasValue: string }): string | undefined {
+export function resolveAlias(input: {
+  aliasType: AliasRecord["aliasType"];
+  aliasValue: string;
+}): string | undefined {
   if (!aliasCacheLoaded) loadAliasCache();
   const key = `${input.aliasType}\0${input.aliasValue}`;
   const hit = aliasCache.get(key);
@@ -251,7 +303,7 @@ function openTriggers(records: SessionEventLogRecord[]): string[] {
 export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult {
   let current = requestSessionId;
   const visited = new Set<string>();
-  for (let depth = 0; depth <= 5; depth++) {
+  for (let depth = 0; depth <= PARENT_CHAIN_DEPTH_LIMIT; depth++) {
     if (visited.has(current)) return { ok: false, reason: "cycle" };
     visited.add(current);
     const read = readSessionRecords(current);
