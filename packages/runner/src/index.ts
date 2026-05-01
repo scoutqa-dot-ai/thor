@@ -167,8 +167,10 @@ app.get("/health", async (_req, res) => {
   });
 });
 
-  // CodeQL js/missing-rate-limiting: app-level rate limiting is intentionally
-  // deferred to infrastructure for this Vouch-gated internal viewer.
+  // Rate limiting for the Vouch-gated runner viewer is intentionally enforced
+  // at the infrastructure edge, not in the app process.
+  // codeql[js/missing-rate-limiting]
+  // lgtm[js/missing-rate-limiting]
   app.get("/runner/v/:sessionId/:triggerId", (req, res) => {
     if (!req.get("X-Vouch-User")) {
       res.status(401).type("html").send(renderPage("Unauthorized", "Sign in with Vouch to view Thor trigger history."));
@@ -188,8 +190,10 @@ app.get("/health", async (_req, res) => {
     res.type("html").send(renderSlicePage(sessionId, triggerId, slice));
   });
 
-  // CodeQL js/missing-rate-limiting: app-level rate limiting is intentionally
-  // deferred to infrastructure for this Vouch-gated internal viewer.
+  // Rate limiting for the Vouch-gated runner viewer is intentionally enforced
+  // at the infrastructure edge, not in the app process.
+  // codeql[js/missing-rate-limiting]
+  // lgtm[js/missing-rate-limiting]
   app.get("/runner/v/:sessionId/:triggerId/raw", (req, res) => {
     if (!req.get("X-Vouch-User")) {
       res.status(401).type("text/plain").send("Unauthorized");
