@@ -14,7 +14,6 @@ import {
   getChannelRepoMap,
   truncate,
   resolveRepoDirectory,
-  writeInboundWebhookHistory,
   type ConfigLoader,
   type InboundWebhookHistoryEntry,
 } from "@thor/common";
@@ -166,12 +165,170 @@ function getRawBufferFromBody(body: unknown): Buffer {
   return Buffer.alloc(0);
 }
 
-function buildRawBodyFields(
+function buildJsonPayloadField(payload: unknown): Pick<InboundWebhookHistoryEntry, "payload"> {
+  return { payload };
+}
+
+function buildNonJsonBodyField(
+  rawBodyBuffer: Buffer,
+): Pick<InboundWebhookHistoryEntry, "rawBodyBase64"> {
+  return { rawBodyBase64: rawBodyBuffer.toString("base64") };
+}
+
+function buildUnsupportedGitHubBodyFields(
   rawBodyBuffer: Buffer,
 ): Pick<InboundWebhookHistoryEntry, "rawBodyUtf8" | "rawBodyBase64"> {
+  const rawBodyUtf8 = rawBodyBuffer.toString("utf8");
+  try {
+    JSON.parse(rawBodyUtf8);
+    return { rawBodyUtf8 };
+  } catch {
+    return buildNonJsonBodyField(rawBodyBuffer);
+  }
+}
+
+type WebhookBodyPolicy =
+  | { kind: "json"; payload: unknown }
+  | { kind: "none" }
+  | { kind: "base64"; rawBodyBuffer: Buffer }
+  | { kind: "unsupported_github"; rawBodyBuffer: Buffer };
+
+interface WebhookHistoryState {
+  provider: "slack" | "github";
+  route: "/slack/events" | "/github/webhook";
+  headers: Record<string, HeaderValue>;
+  rawBodyBuffer: Buffer;
+  parsedPayload?: unknown;
+  signatureVerified: boolean;
+  parseStatus: string;
+  requestId?: string;
+  eventType?: string;
+  action?: string;
+  reason?: string;
+  githubStream?: "ingested" | "ignored";
+  bodyPolicy?: "default" | "unsupported_github";
+  metadata?: Record<string, unknown>;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled webhook history outcome: ${JSON.stringify(value)}`);
+}
+
+function resolveWebhookBodyFields(
+  body: WebhookBodyPolicy,
+): Pick<InboundWebhookHistoryEntry, "payload" | "rawBodyUtf8" | "rawBodyBase64"> {
+  switch (body.kind) {
+    case "json":
+      return buildJsonPayloadField(body.payload);
+    case "none":
+      return {};
+    case "base64":
+      return buildNonJsonBodyField(body.rawBodyBuffer);
+    case "unsupported_github":
+      return buildUnsupportedGitHubBodyFields(body.rawBodyBuffer);
+    default:
+      return assertNever(body);
+  }
+}
+
+function resolveWebhookBodyPolicy(state: WebhookHistoryState): WebhookBodyPolicy {
+  if (state.bodyPolicy === "unsupported_github") {
+    return { kind: "unsupported_github", rawBodyBuffer: state.rawBodyBuffer };
+  }
+  if (state.parsedPayload !== undefined) {
+    return { kind: "json", payload: state.parsedPayload };
+  }
+  if (!state.signatureVerified) {
+    return { kind: "none" };
+  }
+  return { kind: "base64", rawBodyBuffer: state.rawBodyBuffer };
+}
+
+function resolveWebhookHistoryWrite(state: WebhookHistoryState): {
+  stream: string;
+  entry: InboundWebhookHistoryEntry;
+} {
+  const stream = (() => {
+    switch (state.provider) {
+      case "slack":
+        return "slack-webhook";
+      case "github":
+        return state.githubStream === "ingested"
+          ? GITHUB_WEBHOOK_INGESTED_STREAM
+          : GITHUB_WEBHOOK_IGNORED_STREAM;
+      default:
+        return assertNever(state.provider);
+    }
+  })();
+
   return {
-    rawBodyUtf8: rawBodyBuffer.toString("utf8"),
-    rawBodyBase64: rawBodyBuffer.toString("base64"),
+    stream,
+    entry: {
+      timestamp: new Date().toISOString(),
+      route: state.route,
+      provider: state.provider,
+      signatureVerified: state.signatureVerified,
+      parseStatus: state.parseStatus,
+      requestId: state.requestId,
+      eventType: state.eventType,
+      action: state.action,
+      reason: state.reason,
+      headers: state.headers,
+      ...resolveWebhookBodyFields(resolveWebhookBodyPolicy(state)),
+      metadata: state.metadata,
+    },
+  };
+}
+
+function writeWebhookHistory(state: WebhookHistoryState): void {
+  const { stream, entry } = resolveWebhookHistoryWrite(state);
+  appendJsonlWorklog(stream, entry);
+}
+
+function parseRawJson(rawBodyBuffer: Buffer): { ok: true; payload: unknown } | { ok: false } {
+  try {
+    return { ok: true, payload: JSON.parse(rawBodyBuffer.toString("utf8")) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function parseWebhookJson(history: WebhookHistoryState): unknown | undefined {
+  const parsed = parseRawJson(history.rawBodyBuffer);
+  if (!parsed.ok) return undefined;
+  history.parsedPayload = parsed.payload;
+  return parsed.payload;
+}
+
+function withWebhookHistory(
+  provider: "slack" | "github",
+  route: "/slack/events" | "/github/webhook",
+  headerNames: string[],
+  handler: (req: Request, res: Response, history: WebhookHistoryState) => void | Promise<void>,
+): (req: Request, res: Response) => Promise<void> {
+  return async (req, res) => {
+    const rawBodyBuffer = getRawBufferFromBody(req.body);
+    const history: WebhookHistoryState = {
+      provider,
+      route,
+      headers: getHeaderSnapshot(req, headerNames),
+      rawBodyBuffer,
+      signatureVerified: false,
+      parseStatus: "not_parsed",
+      reason: "handled",
+      githubStream: provider === "github" ? "ignored" : undefined,
+      bodyPolicy: "default",
+    };
+
+    try {
+      await handler(req, res, history);
+    } catch (error) {
+      history.reason = "handler_exception";
+      history.metadata = { ...history.metadata, ...errorToMetadata(error) };
+      throw error;
+    } finally {
+      writeWebhookHistory(history);
+    }
   };
 }
 
@@ -534,25 +691,15 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     });
   };
 
-  const writeGitHubWebhookHistory = (
-    stream: "ingested" | "ignored",
-    entry: InboundWebhookHistoryEntry,
-  ) => {
-    appendJsonlWorklog(
-      stream === "ingested" ? GITHUB_WEBHOOK_INGESTED_STREAM : GITHUB_WEBHOOK_IGNORED_STREAM,
-      entry,
-    );
-  };
-
   const handleGitHubPushEvent = async (input: {
     event: PushEvent;
     deliveryId: string;
     repoFullName: string;
     localRepo: string;
     repoDir: string;
-    baseEntry: Omit<InboundWebhookHistoryEntry, "signatureVerified" | "parseStatus">;
+    history: WebhookHistoryState;
   }): Promise<{ status: PushStatus; ignored?: boolean }> => {
-    const { event, deliveryId, repoFullName, localRepo, repoDir, baseEntry } = input;
+    const { event, deliveryId, repoFullName, localRepo, repoDir, history } = input;
     const branch = getGitHubEventBranch(event);
     const commonMeta = {
       deliveryId,
@@ -564,13 +711,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       forced: event.forced,
     };
     const record = (status: PushStatus, metadata: Record<string, unknown> = {}) => {
-      writeGitHubWebhookHistory(IGNORED_PUSH_STATUSES.has(status) ? "ignored" : "ingested", {
-        ...baseEntry,
-        signatureVerified: true,
-        parseStatus: "schema_valid",
-        reason: status,
-        metadata: { ...commonMeta, ...metadata },
-      });
+      history.githubStream = IGNORED_PUSH_STATUSES.has(status) ? "ignored" : "ingested";
+      history.signatureVerified = true;
+      history.parseStatus = "schema_valid";
+      history.reason = status;
+      history.metadata = { ...commonMeta, ...metadata };
       logInfo(log, "github_push_event_handled", { status, ...commonMeta, ...metadata });
     };
     const execGit = async (
@@ -584,7 +729,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     };
 
     if (!branch) {
-      const status = event.deleted ? "push_delete_non_branch_ref_ignored" : "push_sync_non_branch_ref_ignored";
+      const status = event.deleted
+        ? "push_delete_non_branch_ref_ignored"
+        : "push_sync_non_branch_ref_ignored";
       record(status);
       return { status, ignored: true };
     }
@@ -641,7 +788,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     const isDefaultBranch = branch === event.repository.default_branch;
-    const targetDir = isDefaultBranch ? repoDir : await resolveExistingWorktreePath(localRepo, branch);
+    const targetDir = isDefaultBranch
+      ? repoDir
+      : await resolveExistingWorktreePath(localRepo, branch);
     if (!targetDir) {
       record("push_sync_worktree_missing");
       return { status: "push_sync_worktree_missing", ignored: true };
@@ -854,7 +1003,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       (request as RawBodyRequest).rawBodyBuffer = Buffer.from(buf);
     },
   });
-
   app.use((req, res, next) => {
     if (isRawWebhookRoute(req.path)) {
       next();
@@ -889,21 +1037,16 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     });
   });
 
-  app.post("/slack/events", webhookRawParser, (req: Request, res: Response) => {
-    const rawBodyBuffer = getRawBufferFromBody(req.body);
-    const { rawBodyUtf8, rawBodyBase64 } = buildRawBodyFields(rawBodyBuffer);
+  const handleSlackEventsWebhook = (req: Request, res: Response, history: WebhookHistoryState) => {
+    const rawBodyUtf8 = history.rawBodyBuffer.toString("utf8");
     const signature = req.header("x-slack-signature");
     const timestamp = req.header("x-slack-request-timestamp");
-    const headers = getHeaderSnapshot(req, [
-      "content-type",
-      "user-agent",
-      "x-request-id",
-      "x-slack-request-id",
-      "x-slack-request-timestamp",
-      "x-slack-signature",
-      "x-slack-retry-num",
-      "x-slack-retry-reason",
-    ]);
+    const slackRequestId =
+      (typeof history.headers["x-slack-request-id"] === "string" &&
+        history.headers["x-slack-request-id"]) ||
+      (typeof history.headers["x-request-id"] === "string" && history.headers["x-request-id"]) ||
+      undefined;
+    history.requestId = slackRequestId;
 
     const verified = verifySlackSignature({
       signingSecret: config.signingSecret,
@@ -912,116 +1055,51 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       timestamp,
       toleranceSeconds: config.timestampToleranceSeconds,
     });
+    history.signatureVerified = verified;
 
     if (!verified) {
-      writeInboundWebhookHistory({
-        timestamp: new Date().toISOString(),
-        route: "/slack/events",
-        provider: "slack",
-        signatureVerified: false,
-        parseStatus: "not_parsed",
-        requestId:
-          (typeof headers["x-slack-request-id"] === "string" && headers["x-slack-request-id"]) ||
-          (typeof headers["x-request-id"] === "string" && headers["x-request-id"]) ||
-          undefined,
-        reason: "signature_invalid",
-        headers,
-        rawBodyUtf8,
-        rawBodyBase64,
-      });
+      history.parseStatus = "not_parsed";
+      history.reason = "signature_invalid";
       res.status(401).json({ error: "Invalid Slack signature" });
       return;
     }
 
-    let parsedBody: unknown;
-    try {
-      parsedBody = JSON.parse(rawBodyUtf8);
-    } catch {
-      writeInboundWebhookHistory({
-        timestamp: new Date().toISOString(),
-        route: "/slack/events",
-        provider: "slack",
-        signatureVerified: true,
-        parseStatus: "json_invalid",
-        requestId:
-          (typeof headers["x-slack-request-id"] === "string" && headers["x-slack-request-id"]) ||
-          (typeof headers["x-request-id"] === "string" && headers["x-request-id"]) ||
-          undefined,
-        reason: "json_parse_error",
-        headers,
-        rawBodyUtf8,
-        rawBodyBase64,
-      });
+    const parsedBody = parseWebhookJson(history);
+    if (parsedBody === undefined) {
+      history.parseStatus = "json_invalid";
+      history.reason = "json_parse_error";
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
 
     const urlVerification = SlackUrlVerificationSchema.safeParse(parsedBody);
     if (urlVerification.success) {
-      writeInboundWebhookHistory({
-        timestamp: new Date().toISOString(),
-        route: "/slack/events",
-        provider: "slack",
-        signatureVerified: true,
-        parseStatus: "url_verification",
-        requestId:
-          (typeof headers["x-slack-request-id"] === "string" && headers["x-slack-request-id"]) ||
-          (typeof headers["x-request-id"] === "string" && headers["x-request-id"]) ||
-          undefined,
-        eventType: "url_verification",
-        headers,
-        rawBodyUtf8,
-        rawBodyBase64,
-      });
-      res.json({ challenge: urlVerification.data.challenge });
+      history.parseStatus = "url_verification";
+      history.eventType = "url_verification";
+      res.status(200).json({ challenge: urlVerification.data.challenge });
       return;
     }
 
     const envelope = SlackEventEnvelopeSchema.safeParse(parsedBody);
     if (!envelope.success) {
-      writeInboundWebhookHistory({
-        timestamp: new Date().toISOString(),
-        route: "/slack/events",
-        provider: "slack",
-        signatureVerified: true,
-        parseStatus: "schema_invalid",
-        requestId:
-          (typeof headers["x-slack-request-id"] === "string" && headers["x-slack-request-id"]) ||
-          (typeof headers["x-request-id"] === "string" && headers["x-request-id"]) ||
-          undefined,
-        reason: "schema_validation_failed",
-        headers,
-        rawBodyUtf8,
-        rawBodyBase64,
-      });
+      history.parseStatus = "schema_invalid";
+      history.reason = "schema_validation_failed";
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
 
     const event = envelope.data.event;
     const eventId = envelope.data.event_id;
-    const requestId =
-      (typeof headers["x-slack-request-id"] === "string" && headers["x-slack-request-id"]) ||
-      (typeof headers["x-request-id"] === "string" && headers["x-request-id"]) ||
-      eventId;
+    const requestId = slackRequestId || eventId;
 
-    writeInboundWebhookHistory({
-      timestamp: new Date().toISOString(),
-      route: "/slack/events",
-      provider: "slack",
-      signatureVerified: true,
-      parseStatus: "schema_valid",
-      requestId,
-      eventType: event.type,
-      reason: "received",
-      headers,
-      rawBodyUtf8,
-      rawBodyBase64,
-      metadata: {
-        eventId,
-        teamId: envelope.data.team_id,
-      },
-    });
+    history.requestId = requestId;
+    history.parseStatus = "schema_valid";
+    history.eventType = event.type;
+    history.reason = "received";
+    history.metadata = {
+      eventId,
+      teamId: envelope.data.team_id,
+    };
 
     // Skip all Slack events when bot user ID is not configured
     if (!selfUserId) {
@@ -1057,7 +1135,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     // app_mention — always forward
     if (event.type === "app_mention") {
-      res.status(200).json({ ok: true });
       void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
         logError(log, "reaction_failed", err, { eventId }),
       );
@@ -1086,6 +1163,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         delayMs: 0,
         interrupt: true,
       });
+      res.status(200).json({ ok: true });
       return;
     }
 
@@ -1113,7 +1191,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         return;
       }
 
-      res.status(200).json({ ok: true });
       logInfo(log, "event_accepted", {
         eventId,
         teamId: envelope.data.team_id,
@@ -1133,6 +1210,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         readyAt: Date.now() + shortDelay,
         delayMs: shortDelay,
       });
+      res.status(200).json({ ok: true });
       return;
     }
 
@@ -1142,7 +1220,33 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       eventType: event.type,
     });
     res.status(200).json({ ok: true, ignored: true, eventType: event.type });
-  });
+  };
+
+  // Rate limiting for public webhook ingestion is intentionally enforced at the
+  // infrastructure edge (API gateway/CDN), not in the app process.
+  // codeql[js/missing-rate-limiting]
+  // lgtm[js/missing-rate-limiting]
+  app.post(
+    "/slack/events",
+    // codeql[js/missing-rate-limiting]
+    // lgtm[js/missing-rate-limiting]
+    webhookRawParser,
+    withWebhookHistory(
+      "slack",
+      "/slack/events",
+      [
+        "content-type",
+        "user-agent",
+        "x-request-id",
+        "x-slack-request-id",
+        "x-slack-request-timestamp",
+        "x-slack-signature",
+        "x-slack-retry-num",
+        "x-slack-retry-reason",
+      ],
+      handleSlackEventsWebhook,
+    ),
+  );
 
   app.post("/slack/interactivity", (req: Request, res: Response) => {
     const rawRequest = req as RawBodyRequest;
@@ -1198,56 +1302,27 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   // --- GitHub webhook ---
 
-  app.post("/github/webhook", webhookRawParser, async (req: Request, res: Response) => {
-    const rawBodyBuffer = getRawBufferFromBody(req.body);
-    const { rawBodyUtf8, rawBodyBase64 } = buildRawBodyFields(rawBodyBuffer);
+  const handleGitHubWebhook = async (
+    req: Request,
+    res: Response,
+    history: WebhookHistoryState,
+  ): Promise<void> => {
     const deliveryId = req.header("x-github-delivery") ?? "unknown";
     const eventTypeHeader = (req.header("x-github-event") ?? "").toLowerCase();
     const signature = req.header("x-hub-signature-256");
-    const headers = getHeaderSnapshot(req, [
-      "content-type",
-      "user-agent",
-      "x-request-id",
-      "x-github-delivery",
-      "x-github-event",
-      "x-hub-signature-256",
-      "x-github-hook-id",
-      "x-github-hook-installation-target-id",
-      "x-github-hook-installation-target-type",
-    ]);
-    const baseEntry = {
-      timestamp: new Date().toISOString(),
-      route: "/github/webhook",
-      provider: "github",
-      requestId: deliveryId,
-      eventType: eventTypeHeader || undefined,
-      headers,
-      rawBodyUtf8,
-      rawBodyBase64,
-    } satisfies Pick<
-      InboundWebhookHistoryEntry,
-      | "timestamp"
-      | "route"
-      | "provider"
-      | "requestId"
-      | "eventType"
-      | "headers"
-      | "rawBodyUtf8"
-      | "rawBodyBase64"
-    >;
+    history.requestId = deliveryId;
+    history.eventType = eventTypeHeader || undefined;
 
     const verified = verifyGitHubSignature({
       secret: config.githubWebhookSecret ?? "",
-      rawBody: rawBodyBuffer,
+      rawBody: history.rawBodyBuffer,
       header: signature,
     });
+    history.signatureVerified = verified;
     if (!verified) {
-      writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
-        signatureVerified: false,
-        parseStatus: "not_parsed",
-        reason: "signature_invalid",
-      });
+      history.githubStream = "ignored";
+      history.parseStatus = "not_parsed";
+      history.reason = "signature_invalid";
       logGitHubIgnored({
         deliveryId,
         eventType: eventTypeHeader || undefined,
@@ -1258,12 +1333,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     if (!GITHUB_SUPPORTED_EVENTS.has(eventTypeHeader)) {
-      writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
-        signatureVerified: true,
-        parseStatus: "not_parsed",
-        reason: "event_unsupported",
-      });
+      history.githubStream = "ignored";
+      history.parseStatus = "not_parsed";
+      history.reason = "event_unsupported";
+      history.bodyPolicy = "unsupported_github";
       logGitHubIgnored({
         deliveryId,
         eventType: eventTypeHeader || undefined,
@@ -1273,16 +1346,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    let parsedBody: unknown;
-    try {
-      parsedBody = JSON.parse(rawBodyUtf8);
-    } catch {
-      writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
-        signatureVerified: true,
-        parseStatus: "json_invalid",
-        reason: "json_parse_error",
-      });
+    const parsedBody = parseWebhookJson(history);
+    if (parsedBody === undefined) {
+      history.githubStream = "ignored";
+      history.parseStatus = "json_invalid";
+      history.reason = "json_parse_error";
       logGitHubIgnored({
         deliveryId,
         eventType: eventTypeHeader || undefined,
@@ -1294,12 +1362,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const parsed = GitHubWebhookEnvelopeSchema.safeParse(parsedBody);
     if (!parsed.success) {
-      writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
-        signatureVerified: true,
-        parseStatus: "schema_invalid",
-        reason: "schema_validation_failed",
-      });
+      history.githubStream = "ignored";
+      history.parseStatus = "schema_invalid";
+      history.reason = "schema_validation_failed";
       logGitHubIgnored({
         deliveryId,
         eventType: eventTypeHeader || undefined,
@@ -1314,17 +1379,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const repoDir = localRepo ? resolveRepoDirectory(localRepo) : undefined;
     const action = "action" in parsed.data ? parsed.data.action : undefined;
     if (!localRepo || !repoDir) {
-      writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
-        signatureVerified: true,
-        parseStatus: "schema_valid",
-        action,
-        reason: "repo_not_mapped",
-        metadata: {
-          repoFullName,
-          localRepo,
-        },
-      });
+      history.githubStream = "ignored";
+      history.parseStatus = "schema_valid";
+      history.action = action;
+      history.reason = "repo_not_mapped";
+      history.metadata = { repoFullName, localRepo };
       logGitHubIgnored({
         deliveryId,
         repoFullName,
@@ -1338,17 +1397,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const eventType = getGitHubEventType(parsed.data);
     if (eventType !== eventTypeHeader) {
-      writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
-        signatureVerified: true,
-        parseStatus: "schema_valid",
-        action,
-        reason: "event_unsupported",
-        metadata: {
-          repoFullName,
-          localRepo,
-        },
-      });
+      history.githubStream = "ignored";
+      history.parseStatus = "schema_valid";
+      history.action = action;
+      history.reason = "event_unsupported";
+      history.metadata = { repoFullName, localRepo };
       logGitHubIgnored({
         deliveryId,
         repoFullName,
@@ -1361,15 +1414,15 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     if (isPushEvent(parsed.data)) {
-      const result = await handleGitHubPushEvent({
+      const pushResult = await handleGitHubPushEvent({
         event: parsed.data,
         deliveryId,
         repoFullName,
         localRepo,
         repoDir,
-        baseEntry,
+        history,
       });
-      res.status(200).json({ ok: true, ignored: result.ignored, status: result.status });
+      res.status(200).json({ ok: true, ignored: pushResult.ignored, status: pushResult.status });
       return;
     }
 
@@ -1378,17 +1431,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       botId: githubAppBotId,
     });
     if (ignoreReason) {
-      writeGitHubWebhookHistory("ignored", {
-        ...baseEntry,
-        signatureVerified: true,
-        parseStatus: "schema_valid",
-        action: parsed.data.action,
-        reason: ignoreReason,
-        metadata: {
-          repoFullName,
-          localRepo,
-        },
-      });
+      history.githubStream = "ignored";
+      history.parseStatus = "schema_valid";
+      history.action = parsed.data.action;
+      history.reason = ignoreReason;
+      history.metadata = { repoFullName, localRepo };
       logGitHubIgnored({
         deliveryId,
         repoFullName,
@@ -1407,18 +1454,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     if (isCheckSuiteCompletedEvent(parsed.data)) {
       if (!branch) {
-        writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
-          signatureVerified: true,
-          parseStatus: "schema_valid",
-          action: parsed.data.action,
-          reason: "check_suite_branch_missing",
-          metadata: {
-            repoFullName,
-            localRepo,
-            headSha: parsed.data.check_suite.head_sha,
-          },
-        });
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "check_suite_branch_missing";
+        history.metadata = { repoFullName, localRepo, headSha: parsed.data.check_suite.head_sha };
         logGitHubIgnored({
           deliveryId,
           repoFullName,
@@ -1433,20 +1473,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       const rawKey = buildCorrelationKey(localRepo, branch);
       const resolvedKey = resolveCorrelationKeys([rawKey]);
       if (!findNotesFile(resolvedKey)) {
-        writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
-          signatureVerified: true,
-          parseStatus: "schema_valid",
-          action: parsed.data.action,
-          reason: "correlation_key_unresolved",
-          metadata: {
-            repoFullName,
-            localRepo,
-            rawKey,
-            resolvedKey,
-            headSha: parsed.data.check_suite.head_sha,
-          },
-        });
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "correlation_key_unresolved";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          rawKey,
+          resolvedKey,
+          headSha: parsed.data.check_suite.head_sha,
+        };
         logGitHubIgnored({
           deliveryId,
           repoFullName,
@@ -1468,21 +1505,18 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           })
         : { ok: false as const, reason: "exec_failed" as const };
       if (!gate.ok) {
-        writeGitHubWebhookHistory("ignored", {
-          ...baseEntry,
-          signatureVerified: true,
-          parseStatus: "schema_valid",
-          action: parsed.data.action,
-          reason: "check_suite_gate_failed",
-          metadata: {
-            repoFullName,
-            localRepo,
-            rawKey,
-            resolvedKey,
-            headSha: parsed.data.check_suite.head_sha,
-            gateReason: gate.reason,
-          },
-        });
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "check_suite_gate_failed";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          rawKey,
+          resolvedKey,
+          headSha: parsed.data.check_suite.head_sha,
+          gateReason: gate.reason,
+        };
         logGitHubIgnored({
           deliveryId,
           repoFullName,
@@ -1517,18 +1551,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       interrupt,
     });
 
-    writeGitHubWebhookHistory("ingested", {
-      ...baseEntry,
-      signatureVerified: true,
-      parseStatus: "schema_valid",
-      action: parsed.data.action,
-      reason: "accepted",
-      metadata: {
-        repoFullName,
-        localRepo,
-        correlationKey,
-      },
-    });
+    history.githubStream = "ingested";
+    history.signatureVerified = true;
+    history.parseStatus = "schema_valid";
+    history.action = parsed.data.action;
+    history.reason = "accepted";
+    history.metadata = { repoFullName, localRepo, correlationKey };
 
     logInfo(log, "github_event_accepted", {
       deliveryId,
@@ -1542,7 +1570,34 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     });
 
     res.status(200).json({ ok: true });
-  });
+  };
+
+  // Rate limiting for public webhook ingestion is intentionally enforced at the
+  // infrastructure edge (API gateway/CDN), not in the app process.
+  // codeql[js/missing-rate-limiting]
+  // lgtm[js/missing-rate-limiting]
+  app.post(
+    "/github/webhook",
+    // codeql[js/missing-rate-limiting]
+    // lgtm[js/missing-rate-limiting]
+    webhookRawParser,
+    withWebhookHistory(
+      "github",
+      "/github/webhook",
+      [
+        "content-type",
+        "user-agent",
+        "x-request-id",
+        "x-github-delivery",
+        "x-github-event",
+        "x-hub-signature-256",
+        "x-github-hook-id",
+        "x-github-hook-installation-target-id",
+        "x-github-hook-installation-target-type",
+      ],
+      handleGitHubWebhook,
+    ),
+  );
 
   // --- Cron trigger ---
 

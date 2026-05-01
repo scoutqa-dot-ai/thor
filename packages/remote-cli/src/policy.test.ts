@@ -222,6 +222,10 @@ describe("validateGitArgs", () => {
         ["merge", "--abort"],
         ["merge", "--continue"],
         ["merge", "--quit"],
+        ["revert", "HEAD~1"],
+        ["revert", "--no-edit", "abc1234"],
+        ["revert", "--no-commit", "HEAD~3..HEAD"],
+        ["revert", "-m", "1", "abc1234"],
       ];
 
       for (const args of allowedCommands) {
@@ -796,6 +800,37 @@ describe("validateGhArgs", () => {
       ).toBeNull();
     });
 
+    it("allows append-only gh api replies to current-repo PR review comments", () => {
+      expect(
+        validateGhArgs([
+          "api",
+          "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+          "--method",
+          "POST",
+          "-f",
+          "body=Thanks, I fixed this.",
+        ]),
+      ).toBeNull();
+      expect(
+        validateGhArgs([
+          "api",
+          "/repos/{owner}/{repo}/pulls/53/comments/123/replies",
+          "--method=POST",
+          "--raw-field=body=Thanks, I fixed this.",
+        ]),
+      ).toBeNull();
+      expect(
+        validateGhArgs([
+          "api",
+          "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+          "-X",
+          "POST",
+          "--raw-field",
+          "body=Done.",
+        ]),
+      ).toBeNull();
+    });
+
     it("does not route body values that look like help flags into the help path", () => {
       expect(validateGhArgs(["pr", "comment", "123", "--body", "-h"])).toBeNull();
       expect(validateGhArgs(["pr", "review", "123", "--comment", "--body", "--help"])).toBeNull();
@@ -867,7 +902,7 @@ describe("validateGhArgs", () => {
       );
       expectGhDeniedWith(
         ["api", "repos/org/repo", "--method", "GET"],
-        ["implicit GET requests", "gh api <endpoint> --jq <filter>"],
+        ["implicit GET reads", "gh api <endpoint> --jq <filter>"],
       );
       expectGhDeniedWith(
         ["pr", "comment", "123"],
@@ -1094,6 +1129,7 @@ describe("validateGhArgs", () => {
       expectGhDenied(["api", "graphql"]);
       expectGhDenied(["api", "-X", "GET", "repos/org/repo"]);
       expectGhDenied(["api", "repos/org/repo", "--method", "GET"]);
+      expectGhDenied(["api", "repos/org/repo", "--method", "POST"]);
       expectGhDenied(["api", "repos/org/repo", "--input", "body.json"]);
       expectGhDenied(["api", "repos/org/repo", "-H", "Accept: application/json"]);
       expectGhDenied(["api", "repos/org/repo", "--preview", "corsair"]);
@@ -1101,6 +1137,91 @@ describe("validateGhArgs", () => {
       expectGhDenied(["api", "repos/org/repo", "-f", "state=open"]);
       expectGhDenied(["api", "repos/org/repo", "-F", "q=@query.graphql"]);
       expectGhDenied(["api", "--silent", "repos/org/repo"]);
+    });
+
+    it("blocks unsafe gh api review-comment reply shapes", () => {
+      expectGhDenied([
+        "api",
+        "repos/acme/web/pulls/53/comments/123/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=Done.",
+      ]);
+      expectGhDenied(["api", "repos/{owner}/{repo}/pulls/53/comments/123", "--method", "PATCH"]);
+      expectGhDenied(["api", "repos/{owner}/{repo}/pulls/53/comments/123", "--method", "DELETE"]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "GET",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/comments/123/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=Done.",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "POST",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=   ",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "POST",
+        "-F",
+        "body=@reply.md",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=Done.",
+        "-f",
+        "extra=value",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/not-a-number/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=Done.",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/not-a-number/comments/123/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=Done.",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=Done.",
+        "--jq",
+        ".id",
+      ]);
     });
   });
 

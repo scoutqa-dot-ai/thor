@@ -110,8 +110,9 @@ export interface InboundWebhookHistoryEntry {
   action?: string;
   reason?: string;
   headers: Record<string, string | string[] | undefined>;
-  rawBodyUtf8: string;
-  rawBodyBase64: string;
+  payload?: unknown;
+  rawBodyUtf8?: string;
+  rawBodyBase64?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -136,9 +137,9 @@ export function appendJsonlWorklog(stream: string, entry: object): void {
 }
 
 /**
- * Write inbound webhook history to the durable JSONL stream.
+ * Write Slack webhook history to the durable JSONL stream.
  * Never throws — logs to stderr on failure so it doesn't break the caller.
  */
-export function writeInboundWebhookHistory(entry: InboundWebhookHistoryEntry): void {
-  appendJsonlWorklog("inbound-webhook-history", entry);
+export function writeSlackWebhookHistory(entry: InboundWebhookHistoryEntry): void {
+  appendJsonlWorklog("slack-webhook", entry);
 }

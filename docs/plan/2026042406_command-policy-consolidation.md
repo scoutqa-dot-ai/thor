@@ -76,6 +76,8 @@ Thor supports the following `git` workflows:
   `git push origin HEAD:refs/heads/<branch>` with optional `--dry-run` and either `-u` or `--set-upstream` in any order Git accepts
 - merge:
   passthrough — any `git merge ...` shape except `--no-verify`
+- revert:
+  passthrough — any `git revert ...` shape
 
 Notable exclusions:
 
@@ -88,7 +90,7 @@ Notable exclusions:
 - `git check-ignore`
 - `git check-ref-format`
 - `git --no-pager`
-- local history-rewrite helpers such as `rebase`, `reset`, `cherry-pick`, `revert`, `am`, and `apply`
+- local history-rewrite helpers such as `rebase`, `reset`, `cherry-pick`, `am`, and `apply`
 
 ### GH Surface
 
@@ -124,13 +126,15 @@ Thor supports the following `gh` workflows:
   `gh pr review [<number>] (--comment | --request-changes) --body <text>`
 - REST read gap:
   `gh api <endpoint> [output flags]` with the restricted subset below
+- PR review-comment reply:
+  `gh api repos/{owner}/{repo}/pulls/<pull-number>/comments/<comment-id>/replies --method POST -f body=<text>`
 
-The supported `gh api` subset is intentionally tiny:
+The supported `gh api` subset is intentionally tiny and shape-based:
 
 - REST endpoints only, never `graphql`
-- implicit GET only
-- allowed output flags only: `--jq`, `--template`, `--silent`, `--include`
-- blocked: `--method`, `--input`, `-H/--header`, `--preview`, `--hostname`, `-f/--raw-field`, `-F/--field`
+- implicit GET reads allow output flags only: `--jq`, `--template`, `--silent`, `--include`, `--paginate`
+- append-only POST is allowed only for current-repo PR review-comment replies: `repos/{owner}/{repo}/pulls/<numeric-pr>/comments/<numeric-comment-id>/replies --method POST -f body=<non-empty text>`
+- blocked outside that explicit POST shape: `--method`, `--input`, `-H/--header`, `--preview`, `--hostname`, `-f/--raw-field`, `-F/--field`
 
 Notable exclusions:
 
@@ -141,6 +145,14 @@ Notable exclusions:
 - editor/browser/body-file modes
 - PR approval, merge, edit, delete-last, and similar mutating shortcuts
 - mutating or side-effecting release flows such as `gh release download`, create, edit, and delete
+
+### 2026-04-29 update — Review-comment replies
+
+Decision Log:
+
+| Date       | Decision                                                                                                                                            | Rationale                                                                                                                                                                                                   |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-29 | Model `gh api` as an explicit REST-shape registry and add only `POST repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies -f body=<text>` for now. | This enables true inline replies to PR review comments while preserving append-only, current-repo-only behavior through GitHub's `{owner}/{repo}` placeholder and avoiding broad `gh api` mutation support. |
 
 ### Skill Docs
 
@@ -232,6 +244,7 @@ Notable exclusions:
 - Passthrough `git rev-parse`: every ref `rev-parse` could resolve is already exposed via `show-ref`, `for-each-ref`, `cat-file`, `name-rev`, and `log` (all passthrough), and `rev-parse` is read-only by design (no writes, no fetches, no hooks). The eight-exact-form gate was asymmetric friction without a corresponding security boundary. Drop `validateRevParse`, route `rev-parse` to the same passthrough switch case as the other read commands, drop the `### git rev-parse` section from `using-git`, and add `git rev-parse` to its passthrough list. Unlocks idiomatic shapes like `rev-parse origin/main`, `rev-parse --verify --quiet`, `rev-parse --abbrev-ref @{upstream}`, `rev-parse HEAD~3`, and `rev-parse HEAD:<path>`. Status: Completed.
 - Passthrough `gh workflow run` inputs: the prior policy denied `-F` entirely and rejected `-f key=@file`, in the name of "no local-file exfil via dispatch payload." But the same exfil channel exists via committing a workflow that reads files and posts them, then dispatching it via `gh workflow run --ref <branch>` (both allowed). Two-step instead of one-step, same outcome. Trade the theatre for typed-input ergonomics: accept `-f`, `-F`, `--raw-field`, `--field` as repeatable workflow inputs with no key/value validation. Selector and duplicate-`--ref` guards stay. Note that the parallel `=@` rejection on `gh api -f`/`-F` is left in place since `gh api` talks straight to the GitHub API rather than dispatching a workflow we control. Status: Completed.
 - Passthrough `git merge`: agents need to integrate upstream changes into a feature branch (the workflow `git pull` would do), but `pull` itself stays denied because it depends on local upstream config — same Decision #4 reasoning as implicit push. Add `merge` to the allowlist as a near-passthrough that only blocks `--no-verify` (mirrors the `git commit` deny, since merge runs `pre-merge-commit` and `commit-msg` hooks). Other merge flags (`--squash`, `-s`/`-X` strategies, `--allow-unrelated-histories`, `--signoff`, octopus, `--abort`/`--continue`/`--quit`) carry no boundary that isn't already enforced by the push protected-branch rule. Replaces `git pull` with the redirect `git fetch origin <branch>` + `git merge origin/<branch>`. Status: Completed.
+- Passthrough `git revert`: reverting creates new inverse commits rather than rewriting existing history, so it fits Thor's append-only git posture. Allow the subcommand with all arguments and rely on the existing protected-branch and explicit-push rules for externally-visible safety. Status: Completed.
 - Multi-segment worktree paths: support branch names with `/` in both policy and sandbox root resolution. For `git worktree add`, validate that the branch string and the exact path segment under `/workspace/worktrees/<repo>/` match verbatim (not just basename/suffix), and reject malformed branch/path values (empty, leading/trailing slash, `//`, `..`, NUL, absolute). In sandbox execution, validate `git rev-parse --show-toplevel` as `/workspace/worktrees/<repo>/<branch-with-slashes>` and preserve subpath handling for nested cwd values. Status: Completed.
 - Actionable deny messages: keep the existing string-returning policy API, but enrich Git/GH denials with stable plaintext `Reason`, `Try instead`, and `Details` lines. Cover common recovery paths for blocked branch switching, restore, pull, push, worktree, PR checkout/diff, repo override, PR creation, comments, reviews, workflow dispatch, releases, and `gh api`. Status: Completed.
 

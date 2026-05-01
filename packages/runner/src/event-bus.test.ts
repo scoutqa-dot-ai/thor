@@ -114,6 +114,15 @@ describe("SessionSubscription", () => {
     expect(collected).toHaveLength(1);
   });
 
+  it("deduplicates initial session IDs", () => {
+    const sub = new SessionSubscription(emitter, ["s1", "s1"]);
+
+    expect(emitter.listenerCount("s1")).toBe(1);
+
+    sub.close();
+    expect(emitter.listenerCount("s1")).toBe(0);
+  });
+
   it("close() unblocks a pending next()", async () => {
     const sub = new SessionSubscription(emitter, ["s1"]);
 
@@ -238,6 +247,23 @@ describe("waitForSessionSettled", () => {
     sub.close();
     expect(settled).toBe(false);
   });
+
+  it("clears the timeout when a settle event wins", async () => {
+    vi.useFakeTimers();
+    try {
+      const emitter = new EventEmitter();
+      const sub = new SessionSubscription(emitter, ["s1"]);
+      emitter.emit("s1", makeIdleEvent("s1"));
+
+      const settled = await waitForSessionSettled(sub, 1_000);
+      sub.close();
+
+      expect(settled).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -257,6 +283,11 @@ function createMockStream() {
   const events: Event[] = [];
   let resolve: (() => void) | null = null;
   let closed = false;
+  const iteratorReturn = vi.fn(async () => {
+    closed = true;
+    resolve?.();
+    return { value: undefined as never, done: true };
+  });
 
   const push = (event: Event) => {
     events.push(event);
@@ -283,22 +314,25 @@ function createMockStream() {
           }
           return { value: undefined as never, done: true };
         },
+        return: iteratorReturn,
       };
     },
   };
 
-  return { stream, push, end };
+  return { stream, push, end, iteratorReturn };
 }
 
 describe("EventBusRegistry", () => {
   let mockStream: ReturnType<typeof createMockStream>;
+  let subscribeMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockStream = createMockStream();
+    subscribeMock = vi.fn().mockResolvedValue({ stream: mockStream.stream });
     vi.mocked(createOpencodeClient).mockReturnValue({
       event: {
-        subscribe: vi.fn().mockResolvedValue({ stream: mockStream.stream }),
+        subscribe: subscribeMock,
       },
     } as never);
   });
@@ -442,5 +476,63 @@ describe("EventBusRegistry", () => {
 
     sub1.close();
     sub2.close();
+  });
+
+  it("keeps a directory bus until its last subscription closes", async () => {
+    const reg = new EventBusRegistry("http://localhost:4096");
+
+    const sub1 = await reg.subscribe("/repo/a", ["s1"]);
+    const sub2 = await reg.subscribe("/repo/a", ["s2"]);
+    expect(createOpencodeClient).toHaveBeenCalledTimes(1);
+
+    sub1.close();
+    const sub3 = await reg.subscribe("/repo/a", ["s3"]);
+    expect(createOpencodeClient).toHaveBeenCalledTimes(1);
+
+    sub2.close();
+    sub3.close();
+  });
+
+  it("removes and closes a directory bus when its last subscription closes", async () => {
+    const reg = new EventBusRegistry("http://localhost:4096");
+
+    const sub1 = await reg.subscribe("/repo/a", ["s1"]);
+    sub1.close();
+
+    await vi.waitFor(() => expect(mockStream.iteratorReturn).toHaveBeenCalledTimes(1));
+
+    const newMockStream = createMockStream();
+    vi.mocked(createOpencodeClient).mockReturnValue({
+      event: {
+        subscribe: vi.fn().mockResolvedValue({ stream: newMockStream.stream }),
+      },
+    } as never);
+
+    const sub2 = await reg.subscribe("/repo/a", ["s2"]);
+    expect(createOpencodeClient).toHaveBeenCalledTimes(2);
+
+    newMockStream.push(makeIdleEvent("s2"));
+    const collected: Event[] = [];
+    for await (const event of sub2) {
+      collected.push(event);
+      break;
+    }
+    expect(collected).toHaveLength(1);
+
+    sub2.close();
+  });
+
+  it("aborts the SDK event subscription when the last subscription closes", async () => {
+    const reg = new EventBusRegistry("http://localhost:4096");
+
+    const sub = await reg.subscribe("/repo/a", ["s1"]);
+    const subscribeOptions = subscribeMock.mock.calls[0]?.[0] as { signal?: AbortSignal };
+
+    expect(subscribeOptions.signal).toBeInstanceOf(AbortSignal);
+    expect(subscribeOptions.signal?.aborted).toBe(false);
+
+    sub.close();
+
+    expect(subscribeOptions.signal?.aborted).toBe(true);
   });
 });

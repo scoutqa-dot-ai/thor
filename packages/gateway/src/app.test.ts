@@ -1,5 +1,13 @@
 import { createHmac } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebClient } from "@slack/web-api";
@@ -132,8 +140,8 @@ function readQueuedEvents(queueDir: string, subdir?: string): Array<Record<strin
     .map((entry) => JSON.parse(readFileSync(join(dir, entry), "utf8")) as Record<string, unknown>);
 }
 
-function readInboundWebhookHistoryEntries(worklogDir: string): Array<Record<string, unknown>> {
-  return readJsonlStreamEntries(worklogDir, "inbound-webhook-history");
+function readSlackWebhookEntries(worklogDir: string): Array<Record<string, unknown>> {
+  return readJsonlStreamEntries(worklogDir, "slack-webhook");
 }
 
 function readGitHubIngestedEntries(worklogDir: string): Array<Record<string, unknown>> {
@@ -733,7 +741,7 @@ describe("gateway", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ challenge: "challenge-token" });
 
-        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        const entries = readSlackWebhookEntries(worklogDir);
         expect(entries).toHaveLength(1);
         expect(entries[0]).toMatchObject({
           route: "/slack/events",
@@ -742,9 +750,10 @@ describe("gateway", () => {
           parseStatus: "url_verification",
           requestId: "slack-req-1",
           eventType: "url_verification",
-          rawBodyUtf8: body,
-          rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+          payload: JSON.parse(body),
         });
+        expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+        expect(entries[0]).not.toHaveProperty("rawBodyBase64");
       });
     });
   });
@@ -769,7 +778,7 @@ describe("gateway", () => {
 
         expect(response.status).toBe(401);
 
-        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        const entries = readSlackWebhookEntries(worklogDir);
         expect(entries).toHaveLength(1);
         expect(entries[0]).toMatchObject({
           route: "/slack/events",
@@ -777,9 +786,10 @@ describe("gateway", () => {
           signatureVerified: false,
           parseStatus: "not_parsed",
           reason: "signature_invalid",
-          rawBodyUtf8: body,
-          rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
         });
+        expect(entries[0]).not.toHaveProperty("payload");
+        expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+        expect(entries[0]).not.toHaveProperty("rawBodyBase64");
       });
     });
   });
@@ -804,15 +814,17 @@ describe("gateway", () => {
 
         expect(response.status).toBe(401);
 
-        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        const entries = readSlackWebhookEntries(worklogDir);
         expect(entries).toHaveLength(1);
         expect(entries[0]).toMatchObject({
           route: "/slack/events",
           provider: "slack",
           signatureVerified: false,
           reason: "signature_invalid",
-          rawBodyUtf8: body,
         });
+        expect(entries[0]).not.toHaveProperty("payload");
+        expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+        expect(entries[0]).not.toHaveProperty("rawBodyBase64");
       });
     });
   });
@@ -838,7 +850,7 @@ describe("gateway", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ ok: true, ignored: true });
 
-        const entries = readInboundWebhookHistoryEntries(worklogDir);
+        const entries = readSlackWebhookEntries(worklogDir);
         expect(entries).toHaveLength(1);
         expect(entries[0]).toMatchObject({
           route: "/slack/events",
@@ -846,9 +858,9 @@ describe("gateway", () => {
           signatureVerified: true,
           parseStatus: "json_invalid",
           reason: "json_parse_error",
-          rawBodyUtf8: body,
           rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
         });
+        expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
       });
     });
   });
@@ -901,11 +913,12 @@ describe("gateway", () => {
             eventType: "issue_comment",
             action: "created",
             reason: "accepted",
-            rawBodyUtf8: body,
-            rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+            payload: JSON.parse(body),
           });
+          expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+          expect(entries[0]).not.toHaveProperty("rawBodyBase64");
           expect(readGitHubIgnoredEntries(worklogDir)).toHaveLength(0);
-          expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
+          expect(readSlackWebhookEntries(worklogDir)).toHaveLength(0);
         },
         {
           githubWebhookSecret: "github-secret",
@@ -950,11 +963,55 @@ describe("gateway", () => {
             parseStatus: "not_parsed",
             requestId: "delivery-archive-bad-sig",
             reason: "signature_invalid",
-            rawBodyUtf8: body,
-            rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
           });
+          expect(entries[0]).not.toHaveProperty("payload");
+          expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+          expect(entries[0]).not.toHaveProperty("rawBodyBase64");
           expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
-          expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
+          expect(readSlackWebhookEntries(worklogDir)).toHaveLength(0);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("keeps raw UTF-8 for unsupported GitHub JSON events", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl) => {
+          const body = JSON.stringify({ zen: "Keep it logically awesome." });
+
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-unsupported",
+              "X-GitHub-Event": "ping",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+          const entries = readGitHubIgnoredEntries(worklogDir);
+          expect(entries).toHaveLength(1);
+          expect(entries[0]).toMatchObject({
+            requestId: "delivery-unsupported",
+            eventType: "ping",
+            reason: "event_unsupported",
+            rawBodyUtf8: body,
+          });
+          expect(entries[0]).not.toHaveProperty("rawBodyBase64");
+          expect(entries[0]).not.toHaveProperty("payload");
         },
         {
           githubWebhookSecret: "github-secret",
@@ -998,8 +1055,10 @@ describe("gateway", () => {
             signatureVerified: false,
             requestId: "delivery-trailing-slash-bad-sig",
             reason: "signature_invalid",
-            rawBodyUtf8: body,
           });
+          expect(entries[0]).not.toHaveProperty("payload");
+          expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
+          expect(entries[0]).not.toHaveProperty("rawBodyBase64");
         },
         {
           githubWebhookSecret: "github-secret",
@@ -1042,11 +1101,11 @@ describe("gateway", () => {
             parseStatus: "json_invalid",
             requestId: "delivery-archive-bad-json",
             reason: "json_parse_error",
-            rawBodyUtf8: body,
             rawBodyBase64: Buffer.from(body, "utf8").toString("base64"),
           });
+          expect(entries[0]).not.toHaveProperty("rawBodyUtf8");
           expect(readGitHubIngestedEntries(worklogDir)).toHaveLength(0);
-          expect(readInboundWebhookHistoryEntries(worklogDir)).toHaveLength(0);
+          expect(readSlackWebhookEntries(worklogDir)).toHaveLength(0);
         },
         {
           githubWebhookSecret: "github-secret",
@@ -1342,27 +1401,36 @@ describe("gateway", () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
 
-    await withServer(
-      fetchImpl,
-      async (baseUrl, _queue, queueDir) => {
-        const body = pushWebhookBody({ ref: "refs/heads/main" });
-        const response = await fetch(`${baseUrl}/github/webhook`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
-            "X-GitHub-Delivery": "delivery-push-main",
-            "X-GitHub-Event": "push",
-          },
-          body,
-        });
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pushWebhookBody({ ref: "refs/heads/main" });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-main",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
 
-        expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ ok: true, status: "push_wake_skipped_no_session" });
-        expect(readQueuedEvents(queueDir)).toHaveLength(0);
-      },
-      { githubWebhookSecret: "github-secret", internalExec },
-    );
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({
+            ok: true,
+            status: "push_wake_skipped_no_session",
+          });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          expect(readGitHubIngestedEntries(worklogDir)).toMatchObject([
+            { reason: "push_wake_skipped_no_session", eventType: "push" },
+          ]);
+          expect(readGitHubIgnoredEntries(worklogDir)).toHaveLength(0);
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+    });
 
     expect(internalExec).toHaveBeenCalledWith({
       bin: "git",
@@ -1454,7 +1522,9 @@ describe("gateway", () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi
       .fn()
-      .mockRejectedValue(new Error("remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git"));
+      .mockRejectedValue(
+        new Error("remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git"),
+      );
 
     await withWorklogDir(async (worklogDir) => {
       await withServer(
@@ -1473,14 +1543,19 @@ describe("gateway", () => {
           });
 
           expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true, ignored: true, status: "push_sync_failed" });
+          expect(await response.json()).toEqual({
+            ok: true,
+            ignored: true,
+            status: "push_sync_failed",
+          });
           expect(readQueuedEvents(queueDir)).toHaveLength(0);
           expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
             {
               reason: "push_sync_failed",
               metadata: {
                 errorName: "Error",
-                errorMessage: "remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git",
+                errorMessage:
+                  "remote-cli timeout with token abc123 at https://ghp_secret@github.com/repo.git",
               },
             },
           ]);
@@ -1566,7 +1641,10 @@ describe("gateway", () => {
           });
 
           expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true, status: "push_wake_skipped_no_session" });
+          expect(await response.json()).toEqual({
+            ok: true,
+            status: "push_wake_skipped_no_session",
+          });
         },
         { githubWebhookSecret: "github-secret", internalExec },
       );
@@ -1610,7 +1688,10 @@ describe("gateway", () => {
           });
 
           expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true, status: "push_wake_skipped_no_session" });
+          expect(await response.json()).toEqual({
+            ok: true,
+            status: "push_wake_skipped_no_session",
+          });
         },
         { githubWebhookSecret: "github-secret", internalExec },
       );
@@ -1662,13 +1743,20 @@ describe("gateway", () => {
           });
 
           expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true, status: "push_delete_worktree_removed" });
+          expect(await response.json()).toEqual({
+            ok: true,
+            status: "push_delete_worktree_removed",
+          });
           expect(readQueuedEvents(queueDir)).toHaveLength(0);
         },
         { githubWebhookSecret: "github-secret", internalExec },
       );
 
-      expect(internalExec).toHaveBeenCalledWith({ bin: "git", args: ["status", "--porcelain"], cwd: worktreeDir });
+      expect(internalExec).toHaveBeenCalledWith({
+        bin: "git",
+        args: ["status", "--porcelain"],
+        cwd: worktreeDir,
+      });
       expect(internalExec).toHaveBeenCalledWith({
         bin: "git",
         args: ["worktree", "remove", worktreeDir],
@@ -1679,7 +1767,9 @@ describe("gateway", () => {
 
   it("preserves dirty deleted branch worktrees and never wakes", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi.fn().mockResolvedValue({ stdout: " M file.txt\n", stderr: "", exitCode: 0 });
+    const internalExec = vi
+      .fn()
+      .mockResolvedValue({ stdout: " M file.txt\n", stderr: "", exitCode: 0 });
 
     await withWorktreesRoot(async (worktreesRoot) => {
       const worktreeRoot = join(worktreesRoot, "test-repo");
@@ -1750,7 +1840,11 @@ describe("gateway", () => {
             expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
               {
                 reason: "push_delete_cleanup_failed",
-                metadata: { targetDir: worktreeDir, errorName: "Error", errorMessage: "remote-cli unavailable" },
+                metadata: {
+                  targetDir: worktreeDir,
+                  errorName: "Error",
+                  errorMessage: "remote-cli unavailable",
+                },
               },
             ]);
           },
