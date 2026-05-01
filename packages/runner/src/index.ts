@@ -50,6 +50,9 @@ const OPENCODE_CONNECT_TIMEOUT = parseInt(process.env.OPENCODE_CONNECT_TIMEOUT |
 /** Timeout for waiting for a busy session to become idle after abort (ms). */
 const ABORT_TIMEOUT = parseInt(process.env.ABORT_TIMEOUT || "10000", 10);
 
+/** Grace period after a session.error for OpenCode to emit recovery events before treating it as terminal. */
+const SESSION_ERROR_GRACE_MS = parseInt(process.env.SESSION_ERROR_GRACE_MS || "10000", 10);
+
 /** Memory directory root. */
 const MEMORY_DIR = "/workspace/memory";
 
@@ -294,6 +297,23 @@ function sessionErrorMessage(error: unknown): string {
   };
 
   return candidate.data?.message || candidate.message || candidate.data?.name || candidate.name || "Unknown error";
+}
+
+async function nextWithTimeout(
+  iterator: AsyncIterator<Event>,
+  timeoutMs: number,
+): Promise<IteratorResult<Event> | "timeout"> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      iterator.next(),
+      new Promise<"timeout">((resolve) => {
+        timeout = setTimeout(() => resolve("timeout"), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 /** Log a part to stdout if it's interesting. */
@@ -679,7 +699,23 @@ app.post("/trigger", async (req, res) => {
     }
 
     await withNdjsonHeartbeat(emit, async () => {
-      for await (const event of subscription) {
+      const iterator = subscription[Symbol.asyncIterator]();
+      while (!finished) {
+        const next = latestSessionError
+          ? await nextWithTimeout(iterator, SESSION_ERROR_GRACE_MS)
+          : await iterator.next();
+
+        if (next === "timeout") {
+          terminalError = latestSessionError;
+          finished = true;
+          break;
+        }
+        if (next.done) {
+          terminalError = latestSessionError;
+          break;
+        }
+
+        const event = next.value;
         if (finished) break;
 
         const isParent = isSessionEvent(event, sessionId);

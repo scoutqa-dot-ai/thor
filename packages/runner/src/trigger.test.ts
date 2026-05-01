@@ -8,6 +8,7 @@ import { createRunnerApp, type RunnerAppOptions } from "./index.js";
 const worklogDir = "/tmp/thor-runner-trigger-test/worklog";
 vi.hoisted(() => {
   process.env.WORKLOG_DIR = "/tmp/thor-runner-trigger-test/worklog";
+  process.env.SESSION_ERROR_GRACE_MS = "20";
 });
 const sessionDir = "/workspace/repos/runner-trigger-test";
 const memoryDir = "/tmp/thor-runner-trigger-test/memory";
@@ -296,7 +297,7 @@ describe("runner /trigger orchestration", () => {
 
   it("uses the latest session error as terminal failure when no later activity arrives", async () => {
     const h = createHarness({
-      promptEvents: (sessionId) => [sessionErrorEvent(sessionId, "provider unavailable"), idleEvent(sessionId)],
+      promptEvents: (sessionId) => [sessionErrorEvent(sessionId, "provider unavailable")],
     });
 
     await withServer(h.app, async (url) => {
