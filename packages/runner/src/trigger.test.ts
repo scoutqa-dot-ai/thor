@@ -394,7 +394,7 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("returns busy without prompting when a resumed session is busy and interrupt is absent", async () => {
+  it("aborts then prompts when a resumed session is busy and interrupt is absent", async () => {
     const h = createHarness({
       existingSessions: new Set(["busy-session"]),
       busySessions: new Set(["busy-session"]),
@@ -408,19 +408,19 @@ describe("runner /trigger orchestration", () => {
     ).toEqual({ ok: true });
 
     await withServer(h.app, async (url) => {
-      const response = await fetch(`${url}/trigger`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          prompt: "later",
-          correlationKey: "slack:thread:1710000000.003",
-          directory: sessionDir,
-        }),
+      const result = await trigger(url, {
+        prompt: "later",
+        correlationKey: "slack:thread:1710000000.003",
       });
-      expect(await response.json()).toEqual({ busy: true });
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        sessionId: "busy-session",
+        resumed: true,
+        status: "completed",
+      });
     });
 
-    expect(h.prompts).toHaveLength(0);
+    expect(h.aborts).toEqual(["busy-session"]);
+    expect(h.prompts).toHaveLength(1);
   });
 
   it("aborts then prompts when a resumed session is busy and interrupt is true", async () => {
@@ -451,6 +451,36 @@ describe("runner /trigger orchestration", () => {
 
     expect(h.aborts).toEqual(["busy-session"]);
     expect(h.prompts).toHaveLength(1);
+  });
+
+  it("returns busy without prompting when a resumed session is busy and interrupt is false", async () => {
+    const h = createHarness({
+      existingSessions: new Set(["busy-session"]),
+      busySessions: new Set(["busy-session"]),
+    });
+    expect(
+      appendAlias({
+        aliasType: "slack.thread_id",
+        aliasValue: "1710000000.011",
+        sessionId: "busy-session",
+      }),
+    ).toEqual({ ok: true });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/trigger`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt: "later",
+          correlationKey: "slack:thread:1710000000.011",
+          directory: sessionDir,
+          interrupt: false,
+        }),
+      });
+      expect(await response.json()).toEqual({ busy: true });
+    });
+
+    expect(h.prompts).toHaveLength(0);
   });
 
   it("injects memory/tool bootstrap instructions only on new sessions", async () => {

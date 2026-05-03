@@ -782,7 +782,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
         if (sessionStatus?.type === "busy") {
           // Non-interrupt triggers don't abort — return busy so gateway can re-enqueue.
-          const shouldInterrupt = parsed.data.interrupt === true;
+          const shouldInterrupt = parsed.data.interrupt !== false;
           if (!shouldInterrupt) {
             logInfo(log, "session_busy_nointerrupt", { sessionId, correlationKey });
             res.json({ busy: true });
