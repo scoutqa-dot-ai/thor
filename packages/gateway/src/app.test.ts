@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -195,7 +196,9 @@ async function withWorklogDir<T>(run: (worklogDir: string) => Promise<T>): Promi
 }
 
 async function withWorktreesRoot<T>(run: (worktreesRoot: string) => Promise<T>): Promise<T> {
-  const worktreesRoot = mkdtempSync(join(tmpdir(), "gateway-worktrees-test-"));
+  // realpathSync to match the gateway's internal canonicalization
+  // (macOS /tmp is a symlink to /private/var/folders/...)
+  const worktreesRoot = realpathSync(mkdtempSync(join(tmpdir(), "gateway-worktrees-test-")));
   const prev = process.env.THOR_WORKTREES_ROOT;
   process.env.THOR_WORKTREES_ROOT = worktreesRoot;
 
@@ -1675,7 +1678,7 @@ describe("gateway", () => {
   it("resolves worktrees under a symlinked worktrees root", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
-    const tempRoot = mkdtempSync(join(tmpdir(), "gateway-worktrees-symlink-"));
+    const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), "gateway-worktrees-symlink-")));
     const realRoot = join(tempRoot, "real");
     const linkRoot = join(tempRoot, "link");
     mkdirSync(realRoot, { recursive: true });
