@@ -22,6 +22,8 @@ describe("buildToolInstructions", () => {
     expect(instructions).toContain("real Slack Web API URLs over mitmproxy");
     expect(instructions).toContain("do not use `mcp slack`");
     expect(instructions).toContain("chat.postMessage");
+    expect(instructions).toContain("reactions.add");
+    expect(instructions).toContain("reaction remove");
     expect(instructions).toContain("preserve raw JSON stdout");
     expect(instructions).not.toContain("## slack (allow)");
     expect(instructions).not.toContain("## unknown");
@@ -40,6 +42,7 @@ describe("buildToolInstructions", () => {
 
     expect(instructions).toContain("[Slack capability]");
     expect(instructions).toContain("chat.postMessage");
+    expect(instructions).toContain("reactions.add");
     expect(instructions).not.toContain("[Available MCP tools");
   });
 

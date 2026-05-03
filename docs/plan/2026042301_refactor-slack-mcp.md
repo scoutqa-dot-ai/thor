@@ -119,6 +119,7 @@ follow-up, not part of the `slack-mcp` removal.
 | D10 | Keep Slack writes on plain `curl` without proxy response mutation                                           | The refactor removes the Slack MCP transport. It should not also make mitmproxy parse Slack request bodies or rewrite Slack JSON responses.                                                                                        |
 | D11 | Fail gateway startup when `SLACK_BOT_TOKEN` is missing                                                      | Gateway now owns all Slack side effects. Starting without the bot token only creates a half-configured service that will accept work and then fail at runtime.                                                                     |
 | D12 | Drain accepted approval-outcome runner responses in the background                                          | Approval re-entry shares the same per-thread queue key as normal Slack traffic. Once runner accepts the event, gateway should release the queue lock immediately instead of waiting for the resumed session to finish.             |
+| D13 | Permit direct-curl `reactions.add` as the only agent reaction mutation                                      | Agents need to mark Slack work done with emoji reactions. Keep `chat.update`, `chat.delete`, and reaction removal out of the mitmproxy allowlist to avoid broad Slack mutation access.                                             |
 
 ## Phases
 
