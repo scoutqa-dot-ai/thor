@@ -694,6 +694,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     }
 
     let { prompt, model, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
+    const userPromptPreview = truncate(prompt, 500);
     let inflightTriggerId: string | undefined;
 
     try {
@@ -874,7 +875,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       inflightTriggerId = triggerId;
       startTrigger(sessionId, triggerId, {
         correlationKey,
-        promptPreview: truncate(prompt, 500),
+        promptPreview: userPromptPreview,
       });
 
       const promptStart = Date.now();

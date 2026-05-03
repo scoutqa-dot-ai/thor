@@ -268,9 +268,12 @@ describe("runner /trigger orchestration", () => {
       expect(missing.status).toBe(404);
       expect(await missing.text()).toContain("Trigger not found");
 
-      const invalidSession = await fetch(`${url}/runner/v/viewer-session%2F..%2Fescape/${triggerId}`, {
-        headers: { "X-Vouch-User": "u@example.com" },
-      });
+      const invalidSession = await fetch(
+        `${url}/runner/v/viewer-session%2F..%2Fescape/${triggerId}`,
+        {
+          headers: { "X-Vouch-User": "u@example.com" },
+        },
+      );
       expect(invalidSession.status).toBe(404);
       expect(await invalidSession.text()).toContain("Trigger not found");
 
@@ -464,6 +467,15 @@ describe("runner /trigger orchestration", () => {
       expect(first.events.filter((e) => e.type === "memory")).toHaveLength(2);
       expect(h.prompts[0]).toContain("root memory text");
       expect(h.prompts[0]).toContain("repo memory text");
+      const firstLogRecords = readFileSync(sessionLogPath("session-1"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const firstTriggerStart = firstLogRecords.find((record) => record.type === "trigger_start");
+      expect(firstTriggerStart).toMatchObject({ promptPreview: "first" });
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("root memory text");
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("repo memory text");
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("correlation-key");
 
       await trigger(url, {
         prompt: "second",
