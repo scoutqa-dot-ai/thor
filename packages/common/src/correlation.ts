@@ -2,6 +2,9 @@ import { z } from "zod/v4";
 import { appendAlias, resolveAlias } from "./event-log.js";
 import type { AliasRecord } from "./event-log.js";
 
+const SLACK_THREAD_PREFIX = "slack:thread:";
+const GIT_BRANCH_PREFIX = "git:branch:";
+
 const GIT_CORRELATION_SUBCOMMANDS = new Set(["push", "checkout", "switch", "worktree"]);
 
 function isGitCorrelationCommand(args: string[]): boolean {
@@ -68,7 +71,7 @@ export function computeGitCorrelationKey(args: string[], cwd: string): string | 
   const branch = extractBranchFromGitArgs(args);
   const repo = inferRepoFromPath(cwd);
   if (!branch || !repo) return undefined;
-  return `git:branch:${repo}:${branch}`;
+  return `${GIT_BRANCH_PREFIX}${repo}:${branch}`;
 }
 
 export function computeSlackCorrelationKey(
@@ -77,12 +80,12 @@ export function computeSlackCorrelationKey(
 ): string | undefined {
   const input = SlackPostMessageInput.safeParse(toolArgs);
   if (!input.success) return undefined;
-  if (input.data.thread_ts) return `slack:thread:${input.data.thread_ts}`;
+  if (input.data.thread_ts) return `${SLACK_THREAD_PREFIX}${input.data.thread_ts}`;
 
   try {
     const output = SlackPostMessageOutput.safeParse(JSON.parse(result));
     if (!output.success) return undefined;
-    return `slack:thread:${output.data.ts}`;
+    return `${SLACK_THREAD_PREFIX}${output.data.ts}`;
   } catch {
     return undefined;
   }
@@ -115,13 +118,13 @@ export function resolveCorrelationLockKey(key: string): string {
 }
 
 function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
-  if (key.startsWith("slack:thread:")) {
+  if (key.startsWith(SLACK_THREAD_PREFIX)) {
     return {
       aliasType: "slack.thread_id",
-      aliasValue: key.slice("slack:thread:".length),
+      aliasValue: key.slice(SLACK_THREAD_PREFIX.length),
     };
   }
-  if (key.startsWith("git:branch:")) {
+  if (key.startsWith(GIT_BRANCH_PREFIX)) {
     return {
       aliasType: "git.branch",
       aliasValue: Buffer.from(key).toString("base64url"),

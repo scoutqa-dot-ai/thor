@@ -12,8 +12,8 @@ import type {
   ToolStateError,
 } from "@opencode-ai/sdk";
 import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import {
   createLogger,
   logInfo,
@@ -34,6 +34,7 @@ import {
   getWorklogDir,
   MAX_SESSION_FILE_BYTES,
   loadRunnerEnv,
+  matchesInternalSecret,
 } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { buildToolInstructions } from "./tool-instructions.js";
@@ -263,7 +264,7 @@ function readRawSessionLogResponse(sessionId: string, triggerId: string): RawSes
     const path = sessionLogPath(sessionId);
     const root = realpathSync(`${getWorklogDir()}/sessions`);
     const real = realpathSync(path);
-    if (!real.startsWith(`${root}/`) || !existsSync(real)) throw new Error("invalid path");
+    if (!real.startsWith(`${root}/`)) throw new Error("invalid path");
     if (statSync(real).size > MAX_SESSION_FILE_BYTES) {
       return { status: 503, contentType: "text/plain", body: "Session log is oversized" };
     }
@@ -277,15 +278,6 @@ function readRawSessionLogResponse(sessionId: string, triggerId: string): RawSes
   } catch {
     return { status: 404, contentType: "text/plain", body: "Not found" };
   }
-}
-
-function matchesInternalSecret(
-  expectedSecret: string,
-  providedSecret: string | undefined,
-): boolean {
-  if (!expectedSecret || !providedSecret) return false;
-  if (expectedSecret.length !== providedSecret.length) return false;
-  return timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret));
 }
 
 const E2eTriggerContextSchema = z.object({

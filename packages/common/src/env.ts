@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+
 export type EnvSource = Record<string, string | undefined>;
 
 export function envOptionalString(env: EnvSource, name: string): string | undefined {
@@ -46,4 +48,13 @@ export function stripTrailingSlashes(value: string): string {
 
 export function getRunnerBaseUrl(env: EnvSource = process.env): string {
   return stripTrailingSlashes(envString(env, "RUNNER_BASE_URL"));
+}
+
+export function matchesInternalSecret(
+  expectedSecret: string,
+  providedSecret: string | undefined,
+): boolean {
+  if (!expectedSecret || !providedSecret) return false;
+  if (expectedSecret.length !== providedSecret.length) return false;
+  return timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret));
 }

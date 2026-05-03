@@ -22,6 +22,7 @@ export {
   envCsv,
   stripTrailingSlashes,
   getRunnerBaseUrl,
+  matchesInternalSecret,
 } from "./env.js";
 export type { EnvSource } from "./env.js";
 export {

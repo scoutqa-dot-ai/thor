@@ -1,5 +1,4 @@
 import express, { type Express } from "express";
-import { timingSafeEqual } from "node:crypto";
 import { access } from "node:fs/promises";
 import { dirname, normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
@@ -16,6 +15,7 @@ import {
   loadRemoteCliEnv,
   loadRemoteCliGitHubEnv,
   loadRemoteCliInternalEnv,
+  matchesInternalSecret,
   type ConfigLoader,
   type ExecStreamEvent,
   WORKSPACE_CONFIG_PATH,
@@ -201,15 +201,6 @@ function parseArgs(body: unknown): string[] | undefined {
     return undefined;
   }
   return args;
-}
-
-function matchesInternalSecret(
-  expectedSecret: string,
-  providedSecret: string | undefined,
-): boolean {
-  if (!expectedSecret || !providedSecret) return false;
-  if (expectedSecret.length !== providedSecret.length) return false;
-  return timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret));
 }
 
 function getInternalSecretHeader(req: express.Request): string | undefined {

@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { getWorklogDir } from "./worklog.js";
@@ -102,7 +102,7 @@ export const MAX_SESSION_FILE_BYTES = Number.parseInt(
 );
 const PARENT_CHAIN_DEPTH_LIMIT = 5;
 const aliasCache = new Map<string, string>();
-let aliasCacheLoaded = false;
+/** Last observed size of aliases.jsonl. -1 = never loaded. */
 let aliasCacheLastSize = -1;
 
 interface SessionRecordsCacheEntry {
@@ -150,7 +150,9 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
       type: "trigger_start",
       sessionId: String(record.sessionId),
       triggerId: String(record.triggerId),
-      ...(typeof record.correlationKey === "string" ? { correlationKey: record.correlationKey } : {}),
+      ...(typeof record.correlationKey === "string"
+        ? { correlationKey: record.correlationKey }
+        : {}),
       ...(typeof record.promptPreview === "string"
         ? { promptPreview: truncate(record.promptPreview, 512) }
         : {}),
@@ -202,11 +204,17 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
     }
     if (candidate.type === "trigger_end") {
       if (typeof candidate.error === "string" && candidate.error.length > 32) {
-        candidate.error = truncate(candidate.error, Math.max(32, Math.floor(candidate.error.length / 2)));
+        candidate.error = truncate(
+          candidate.error,
+          Math.max(32, Math.floor(candidate.error.length / 2)),
+        );
         continue;
       }
       if (typeof candidate.reason === "string" && candidate.reason.length > 32) {
-        candidate.reason = truncate(candidate.reason, Math.max(32, Math.floor(candidate.reason.length / 2)));
+        candidate.reason = truncate(
+          candidate.reason,
+          Math.max(32, Math.floor(candidate.reason.length / 2)),
+        );
         continue;
       }
     }
@@ -214,7 +222,9 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
       delete candidate.callId;
       if (Buffer.byteLength(JSON.stringify(candidate), "utf8") < MAX_RECORD_BYTES) break;
     }
-    throw new Error(`Unable to cap oversized ${String(record.type)} record without losing required fields`);
+    throw new Error(
+      `Unable to cap oversized ${String(record.type)} record without losing required fields`,
+    );
   }
   return candidate as T & { _truncated?: true };
 }
@@ -246,7 +256,6 @@ export function appendAlias(
     const alias = AliasRecordSchema.parse({ ts: new Date().toISOString(), ...record });
     appendJsonlFileOrThrow(aliasLogPath(), alias);
     aliasCache.set(`${alias.aliasType}\0${alias.aliasValue}`, alias.sessionId);
-    aliasCacheLoaded = true;
     if (alias.aliasType !== "session.parent") {
       const audit = appendSessionEvent(alias.sessionId, {
         type: "alias",
@@ -262,17 +271,24 @@ export function appendAlias(
 }
 
 function completeLines(path: string): string[] {
-  if (!existsSync(path)) return [];
-  const text = readFileSync(path, "utf8");
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return [];
+  }
   const lines = text.split("\n");
   if (!text.endsWith("\n")) lines.pop();
   return lines.filter((line) => line.length > 0);
 }
 
-function fileSignature(path: string): string {
-  if (!existsSync(path)) return "missing";
-  const stat = statSync(path);
-  return `${stat.size}:${stat.mtimeMs}`;
+function fileStat(path: string): { signature: string; size: number } | null {
+  try {
+    const stat = statSync(path);
+    return { signature: `${stat.size}:${stat.mtimeMs}`, size: stat.size };
+  } catch {
+    return null;
+  }
 }
 
 function readSessionRecords(sessionId: string): {
@@ -281,14 +297,15 @@ function readSessionRecords(sessionId: string): {
   oversized?: true;
 } {
   const path = sessionLogPath(sessionId);
-  const signature = fileSignature(path);
+  const stat = fileStat(path);
+  const signature = stat?.signature ?? "missing";
   const cached = sessionRecordsCache.get(sessionId);
   if (cached && cached.signature === signature) {
     return cached.oversized
       ? { records: [], skippedMalformed: cached.skippedMalformed, oversized: true }
       : { records: cached.records, skippedMalformed: cached.skippedMalformed };
   }
-  if (!existsSync(path)) {
+  if (!stat) {
     sessionRecordsCache.set(sessionId, {
       signature,
       records: [],
@@ -297,7 +314,7 @@ function readSessionRecords(sessionId: string): {
     });
     return { records: [], skippedMalformed: 0 };
   }
-  if (statSync(path).size > MAX_SESSION_FILE_BYTES) {
+  if (stat.size > MAX_SESSION_FILE_BYTES) {
     sessionRecordsCache.set(sessionId, {
       signature,
       records: [],
@@ -370,31 +387,29 @@ export function readTriggerSlice(
 
 function loadAliasCacheIfChanged(): void {
   const path = aliasLogPath();
-  if (!existsSync(path)) {
-    if (aliasCacheLastSize !== 0) {
-      aliasCache.clear();
-      aliasCacheLastSize = 0;
-    }
-    aliasCacheLoaded = true;
-    return;
+  let currentSize = 0;
+  try {
+    currentSize = statSync(path).size;
+  } catch {
+    // missing file → treat as size 0
   }
-  const size = statSync(path).size;
-  if (aliasCacheLoaded && size === aliasCacheLastSize) return;
+  if (currentSize === aliasCacheLastSize) return;
   aliasCache.clear();
-  for (const line of completeLines(path)) {
-    try {
-      const parsed = AliasRecordSchema.safeParse(JSON.parse(line));
-      if (parsed.success)
-        aliasCache.set(
-          `${parsed.data.aliasType}\0${parsed.data.aliasValue}`,
-          parsed.data.sessionId,
-        );
-    } catch {
-      // ignored: malformed alias records are not routing facts
+  if (currentSize > 0) {
+    for (const line of completeLines(path)) {
+      try {
+        const parsed = AliasRecordSchema.safeParse(JSON.parse(line));
+        if (parsed.success)
+          aliasCache.set(
+            `${parsed.data.aliasType}\0${parsed.data.aliasValue}`,
+            parsed.data.sessionId,
+          );
+      } catch {
+        // ignored: malformed alias records are not routing facts
+      }
     }
   }
-  aliasCacheLastSize = size;
-  aliasCacheLoaded = true;
+  aliasCacheLastSize = currentSize;
 }
 
 export function resolveAlias(input: {
