@@ -40,14 +40,7 @@ function addDisclaimerToApprovalArgs(
   sessionId?: string,
 ): Record<string, unknown> {
   if (tool !== "createJiraIssue" && tool !== "addCommentToJiraIssue") return args;
-  let footer: string;
-  try {
-    footer = buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer;
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer";
-    throw new Error(`Cannot create approval: ${message}`);
-  }
+  const footer = buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer;
   const field = tool === "createJiraIssue" ? "description" : "commentBody";
   if (typeof args[field] !== "string")
     throw new Error(

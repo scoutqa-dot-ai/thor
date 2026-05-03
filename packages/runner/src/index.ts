@@ -116,18 +116,7 @@ function getToolInstructions(directory: string): string | undefined {
   }
 }
 
-function appendSessionEventOrFail(sessionId: string, record: Record<string, unknown>): void {
-  const result = appendSessionEvent(sessionId, record);
-  if (!result.ok) throw result.error;
-}
-
-function appendAliasOrFail(record: Parameters<typeof appendAlias>[0]): void {
-  const result = appendAlias(record);
-  if (!result.ok) throw result.error;
-}
-
-function appendCorrelationAliasOrFail(correlationKey: string, sessionId: string): void {
-  const result = appendCorrelationAlias(sessionId, correlationKey);
+function unwrap(result: { ok: true } | { ok: false; error: Error }): void {
   if (!result.ok) throw result.error;
 }
 
@@ -142,12 +131,14 @@ function startTrigger(
   triggerId: string,
   payload: { correlationKey?: string; promptPreview?: string },
 ): void {
-  appendSessionEventOrFail(sessionId, {
-    type: "trigger_start",
-    triggerId,
-    ...(payload.correlationKey ? { correlationKey: payload.correlationKey } : {}),
-    promptPreview: payload.promptPreview ?? "",
-  });
+  unwrap(
+    appendSessionEvent(sessionId, {
+      type: "trigger_start",
+      triggerId,
+      ...(payload.correlationKey ? { correlationKey: payload.correlationKey } : {}),
+      promptPreview: payload.promptPreview ?? "",
+    }),
+  );
   inflightTriggers.set(triggerId, { sessionId, startTime: Date.now() });
 }
 
@@ -341,12 +332,14 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
         const sessionId = parsed.data.sessionId ?? `e2e-${randomUUID()}`;
         const triggerId = randomUUID();
-        appendSessionEventOrFail(sessionId, {
-          type: "trigger_start",
-          triggerId,
-          ...(parsed.data.correlationKey ? { correlationKey: parsed.data.correlationKey } : {}),
-          promptPreview: parsed.data.promptPreview ?? "e2e approval disclaimer context",
-        });
+        unwrap(
+          appendSessionEvent(sessionId, {
+            type: "trigger_start",
+            triggerId,
+            ...(parsed.data.correlationKey ? { correlationKey: parsed.data.correlationKey } : {}),
+            promptPreview: parsed.data.promptPreview ?? "e2e approval disclaimer context",
+          }),
+        );
         res.json({ sessionId, triggerId });
       },
     );
@@ -763,15 +756,17 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         // Back-reference alias on session_stale recreate so old viewer links chain-walk
         // to the new session via findActiveTrigger (`session.parent` traversal).
         if (staleSessionId) {
-          appendAliasOrFail({
-            aliasType: "session.parent",
-            aliasValue: staleSessionId,
-            sessionId: id,
-          });
+          unwrap(
+            appendAlias({
+              aliasType: "session.parent",
+              aliasValue: staleSessionId,
+              sessionId: id,
+            }),
+          );
         }
 
         if (correlationKey) {
-          appendCorrelationAliasOrFail(correlationKey, id);
+          unwrap(appendCorrelationAlias(id, correlationKey));
         }
 
         return { sessionId: id, resumed: didResume };
@@ -1009,7 +1004,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             const event = next.value;
             if (finished) break;
 
-            appendSessionEventOrFail(sessionId, { type: "opencode_event", event });
+            unwrap(appendSessionEvent(sessionId, { type: "opencode_event", event }));
 
             const isParent = isSessionEvent(event, sessionId);
 
