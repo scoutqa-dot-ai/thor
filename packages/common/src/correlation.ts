@@ -109,6 +109,11 @@ export function hasSessionForCorrelationKey(key: string): boolean {
   return resolveSessionForCorrelationKey(key) !== undefined;
 }
 
+export function resolveCorrelationLockKey(key: string): string {
+  const sessionId = resolveSessionForCorrelationKey(key);
+  return sessionId ? `session:${sessionId}` : key;
+}
+
 function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
   if (key.startsWith("slack:thread:")) {
     return {

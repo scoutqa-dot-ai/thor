@@ -4,7 +4,12 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Event, TextPart } from "@opencode-ai/sdk";
 import { createRunnerApp, type RunnerAppOptions } from "./index.js";
-import { appendAlias, appendSessionEvent, sessionLogPath } from "@thor/common";
+import {
+  appendAlias,
+  appendCorrelationAlias,
+  appendSessionEvent,
+  sessionLogPath,
+} from "@thor/common";
 
 const worklogDir = "/tmp/thor-runner-trigger-test/worklog";
 const originalEnv = vi.hoisted(() => {
@@ -115,6 +120,7 @@ function createHarness(
     existingSessions?: Set<string>;
     busySessions?: Set<string>;
     children?: Array<{ id: string }>;
+    onGet?: (sessionId: string) => Promise<void>;
     promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
     throwInSubscribe?: boolean;
   } = {},
@@ -135,6 +141,7 @@ function createHarness(
         return { data: { id } };
       },
       get: async ({ path }: { path: { id: string } }) => {
+        await opts.onGet?.(path.id);
         if (!existingSessions.has(path.id)) throw new Error("missing");
         return { data: { id: path.id } };
       },
@@ -155,8 +162,8 @@ function createHarness(
         body: { parts: Array<{ text: string }> };
       }) => {
         prompts.push(body.parts[0]?.text ?? "");
+        const sub = buses.latest();
         queueMicrotask(() => {
-          const sub = buses.latest();
           const events = opts.promptEvents
             ? opts.promptEvents(path.id, sub)
             : [textEvent(path.id, `ok ${path.id}`), idleEvent(path.id)];
@@ -311,6 +318,53 @@ describe("runner /trigger orchestration", () => {
         status: "completed",
       });
     });
+  });
+
+  it("serializes session resolution for different aliases of the same session", async () => {
+    const slackKey = "slack:thread:1710000000.010";
+    const gitKey = "git:branch:runner-trigger-test:feature/shared";
+    expect(appendCorrelationAlias("shared-session", slackKey)).toEqual({ ok: true });
+    expect(appendCorrelationAlias("shared-session", gitKey)).toEqual({ ok: true });
+
+    let activeGets = 0;
+    let maxActiveGets = 0;
+    let delayedFirstGet = false;
+    let resolveFirstGetStarted!: () => void;
+    let releaseFirstGet!: () => void;
+    const firstGetStarted = new Promise<void>((resolve) => {
+      resolveFirstGetStarted = resolve;
+    });
+    const releaseFirstGetPromise = new Promise<void>((resolve) => {
+      releaseFirstGet = resolve;
+    });
+    const h = createHarness({
+      existingSessions: new Set(["shared-session"]),
+      onGet: async () => {
+        activeGets++;
+        maxActiveGets = Math.max(maxActiveGets, activeGets);
+        try {
+          if (!delayedFirstGet) {
+            delayedFirstGet = true;
+            resolveFirstGetStarted();
+            await releaseFirstGetPromise;
+          }
+        } finally {
+          activeGets--;
+        }
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const first = trigger(url, { prompt: "from slack", correlationKey: slackKey });
+      await firstGetStarted;
+      const second = trigger(url, { prompt: "from github", correlationKey: gitKey });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(maxActiveGets).toBe(1);
+      releaseFirstGet();
+      await Promise.all([first, second]);
+    });
+
+    expect(maxActiveGets).toBe(1);
   });
 
   it("falls back from stale stored session without markdown-notes continuity", async () => {

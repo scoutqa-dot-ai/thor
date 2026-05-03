@@ -6,6 +6,7 @@ import {
   computeGitCorrelationKey,
   computeSlackCorrelationKey,
   hasSessionForCorrelationKey,
+  resolveCorrelationLockKey,
   resolveCorrelationKeys,
   resolveSessionForCorrelationKey,
 } from "./correlation.js";
@@ -37,6 +38,7 @@ describe("correlation key resolution", () => {
     expect(resolveCorrelationKeys([rawKey])).toBe(rawKey);
     expect(hasSessionForCorrelationKey(rawKey)).toBe(true);
     expect(resolveSessionForCorrelationKey(rawKey)).toBe("session-1");
+    expect(resolveCorrelationLockKey(rawKey)).toBe("session:session-1");
   });
 
   it("normalizes git branch correlation keys to git alias values", () => {
@@ -73,5 +75,18 @@ describe("correlation key resolution", () => {
     expect(resolveCorrelationKeys(["same-key"])).toBe("same-key");
     expect(hasSessionForCorrelationKey("same-key")).toBe(false);
     expect(resolveSessionForCorrelationKey("same-key")).toBeUndefined();
+    expect(resolveCorrelationLockKey("same-key")).toBe("same-key");
+  });
+
+  it("resolves different aliases for one session to the same lock key", () => {
+    expect(appendCorrelationAlias("session-3", "slack:thread:1710000000.005")).toEqual({
+      ok: true,
+    });
+    expect(appendCorrelationAlias("session-3", "git:branch:thor:feature/shared")).toEqual({
+      ok: true,
+    });
+
+    expect(resolveCorrelationLockKey("slack:thread:1710000000.005")).toBe("session:session-3");
+    expect(resolveCorrelationLockKey("git:branch:thor:feature/shared")).toBe("session:session-3");
   });
 });

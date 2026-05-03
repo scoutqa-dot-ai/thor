@@ -83,6 +83,7 @@ export {
 } from "./paths.js";
 export {
   resolveCorrelationKeys,
+  resolveCorrelationLockKey,
   hasSessionForCorrelationKey,
   appendCorrelationAlias,
   computeGitCorrelationKey,

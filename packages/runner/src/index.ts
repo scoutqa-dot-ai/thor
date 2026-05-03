@@ -27,6 +27,7 @@ import {
   appendSessionEvent,
   appendAlias,
   appendCorrelationAlias,
+  resolveCorrelationLockKey,
   resolveSessionForCorrelationKey,
   readTriggerSlice,
   sessionLogPath,
@@ -712,8 +713,13 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         directory: sessionDirectory,
       });
 
-      // --- Session resolution: resume existing or create new (locked per correlationKey) ---
-      const resolution = await withCorrelationKeyLock(correlationKey, async () => {
+      // --- Session resolution: resume existing or create new (locked per resolved session/key) ---
+      const lockKey = requestedSessionId
+        ? `session:${requestedSessionId}`
+        : correlationKey
+          ? resolveCorrelationLockKey(correlationKey)
+          : undefined;
+      const resolution = await withCorrelationKeyLock(lockKey, async () => {
         const candidateSessionId =
           requestedSessionId ||
           (correlationKey ? resolveSessionForCorrelationKey(correlationKey) : undefined);

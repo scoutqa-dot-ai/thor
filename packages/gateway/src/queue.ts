@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod/v4";
-import { createLogger, logError, logInfo } from "@thor/common";
+import { createLogger, logError, logInfo, resolveCorrelationLockKey } from "@thor/common";
 
 const log = createLogger("event-queue");
 
@@ -100,7 +100,7 @@ export class EventQueue {
   private readonly deadLetterDir: string;
   private readonly handler: EventHandler;
 
-  /** Per-key in-flight promise. Prevents the same key from dispatching twice in one cycle. */
+  /** Per-lock-key in-flight promise. Prevents one session/key from dispatching twice in one cycle. */
   private readonly processing = new Map<string, Promise<void>>();
   /** Incremented each time a handler calls ack or reject. Used by flush() to detect progress. */
   private ackCount = 0;
@@ -231,7 +231,7 @@ export class EventQueue {
       try {
         const raw = readFileSync(join(this.dir, file), "utf8");
         const event = QueuedEventSchema.parse(JSON.parse(raw));
-        const key = event.correlationKey;
+        const key = resolveCorrelationLockKey(event.correlationKey);
         if (!byKey.has(key)) byKey.set(key, []);
         byKey.get(key)!.push({ file, event });
       } catch {
@@ -280,12 +280,16 @@ export class EventQueue {
   }
 
   private async processBatch(
-    key: string,
+    lockKey: string,
     entries: Array<{ file: string; event: QueuedEvent }>,
   ): Promise<void> {
     try {
+      const correlationKeys = [...new Set(entries.map((entry) => entry.event.correlationKey))];
+      const keyMetadata =
+        correlationKeys.length === 1 ? { correlationKey: correlationKeys[0] } : { correlationKeys };
       logInfo(log, "event_processing", {
-        correlationKey: key,
+        lockKey,
+        ...keyMetadata,
         count: entries.length,
         source: entries[0].event.source,
       });
@@ -311,16 +315,16 @@ export class EventQueue {
       );
 
       if (settled) {
-        logInfo(log, "event_completed", { correlationKey: key });
+        logInfo(log, "event_completed", { lockKey, ...keyMetadata });
       } else {
-        logInfo(log, "event_deferred", { correlationKey: key });
+        logInfo(log, "event_deferred", { lockKey, ...keyMetadata });
       }
     } catch (err) {
-      logError(log, "event_handler_error", err, { correlationKey: key });
+      logError(log, "event_handler_error", err, { lockKey });
       // Delete on error to prevent infinite retry loops.
       this.deleteFiles(entries);
     } finally {
-      this.processing.delete(key);
+      this.processing.delete(lockKey);
     }
   }
 }
