@@ -56,6 +56,14 @@ Decision rule:
 Do not use fixed paths like `/tmp/report.txt` or relative paths like
 `./report.txt` for temporary Slack artifacts.
 
+## Allowed Slack endpoints
+
+The proxy injects Slack auth only for the narrow endpoint set used by this
+skill: `chat.postMessage`, `reactions.add`, `conversations.replies`,
+`conversations.history`, `files.info`, Slack's external upload endpoints, and
+supported `files.slack.com` file URLs. Do not call Slack update/delete methods
+or reaction update/remove methods through this path.
+
 ## Core workflow
 
 ### 1. Resolve the reply target
@@ -142,7 +150,20 @@ curl -sS -X POST https://slack.com/api/chat.postMessage \
   --data-urlencode "text@${TEXT_FILE}"
 ```
 
-### 5. Upload a file
+### 5. Add a reaction when requested
+
+Use `reactions.add` only when the user explicitly asks for an emoji reaction or
+when a workflow instruction calls for one, such as marking a Slack message done.
+
+```bash
+curl -sS -X POST https://slack.com/api/reactions.add \
+  -H 'content-type: application/x-www-form-urlencoded' \
+  --data-urlencode 'channel=C123' \
+  --data-urlencode 'timestamp=1710000000.001' \
+  --data-urlencode 'name=done'
+```
+
+### 6. Upload a file
 
 Use the helper instead of re-creating Slack's external upload flow inline.
 Generate the file in a unique temp path first unless the user explicitly asks
@@ -184,6 +205,8 @@ Common failures to report as-is:
 - Tool inputs use Slack IDs such as `C...` and `F...`, not channel names.
 - `thread_ts` should be the parent message timestamp for the thread.
 - Use real Slack URLs. Do not route Slack work through `mcp slack`.
+- `reactions.add` is the only reaction mutation supported through the proxy; do
+  not call reaction update/remove methods.
 - Do not send multiline Slack text as an inline shell string. Default to a
   unique temp file under `/tmp` plus `--data-urlencode "text@${TEXT_FILE}"`.
 - Do not use literal `\n` inside single-quoted `text=...` arguments.

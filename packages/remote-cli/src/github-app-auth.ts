@@ -7,14 +7,12 @@ import { createSign } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   getInstallationIdForOwner,
+  loadGitHubAppAuthEnv,
   loadWorkspaceConfig,
-  requireEnv,
   WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 
 // ── Constants ────────────────────────────────────────────────────────────────
-
-const DEFAULT_API_URL = "https://api.github.com";
 
 /** Refresh token when less than this many seconds remain. */
 const EARLY_REFRESH_SECONDS = 300; // 5 minutes
@@ -124,11 +122,8 @@ export function getInstallationIdFromWorkspace(owner: string): number {
 }
 
 function resolveGitHubAppEnv(): { appId: string; privateKeyPath: string; apiUrl: string } {
-  return {
-    appId: requireEnv("GITHUB_APP_ID"),
-    privateKeyPath: requireEnv("GITHUB_APP_PRIVATE_KEY_FILE"),
-    apiUrl: process.env.GITHUB_API_URL || DEFAULT_API_URL,
-  };
+  const config = loadGitHubAppAuthEnv();
+  return { appId: config.appId, privateKeyPath: config.privateKeyPath, apiUrl: config.apiUrl };
 }
 
 // ── JWT generation ───────────────────────────────────────────────────────────
@@ -210,7 +205,7 @@ function lockPath(owner: string): string {
 }
 
 function getGitHubAppDir(): string {
-  return process.env.GITHUB_APP_DIR ?? "/var/lib/remote-cli/github-app";
+  return loadGitHubAppAuthEnv().appDir;
 }
 
 function getCacheDir(): string {

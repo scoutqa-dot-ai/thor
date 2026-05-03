@@ -129,6 +129,7 @@ The proxy image ships with these default injection rules:
 - `api.atlassian.com` -> `Authorization: ${ATLASSIAN_AUTH}` (`readonly: true`)
 - `.atlassian.net` -> `Authorization: ${ATLASSIAN_AUTH}` (`readonly: true`)
 - `slack.com/api/chat.postMessage` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
+- `slack.com/api/reactions.add` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
 - `slack.com/api/conversations.replies` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
 - `slack.com/api/conversations.history` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
 - `slack.com/api/files.info` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`

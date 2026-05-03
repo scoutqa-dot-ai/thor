@@ -97,6 +97,11 @@ BUILTIN_RULES = [
     InjectRule(
         host="slack.com",
         headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+        path_prefix="/api/reactions.add",
+    ),
+    InjectRule(
+        host="slack.com",
+        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
         path_prefix="/api/conversations.replies",
     ),
     InjectRule(

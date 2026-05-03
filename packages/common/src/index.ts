@@ -15,7 +15,27 @@ export {
   interpolateHeaders,
 } from "./workspace-config.js";
 export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.js";
-export { getRunnerBaseUrl, requireEnv } from "./env.js";
+export {
+  envOptionalString,
+  envString,
+  envInt,
+  envCsv,
+  stripTrailingSlashes,
+  getRunnerBaseUrl,
+} from "./env.js";
+export type { EnvSource } from "./env.js";
+export {
+  loadGatewayEnv,
+  loadRunnerEnv,
+  loadRemoteCliEnv,
+  loadRemoteCliAppEnv,
+  loadRemoteCliGitHubEnv,
+  loadRemoteCliInternalEnv,
+  loadAdminEnv,
+  loadMetabaseEnv,
+  loadGitHubAppAuthEnv,
+  loadDaytonaEnv,
+} from "./service-env.js";
 export type {
   WorkspaceConfig,
   RepoConfig,
