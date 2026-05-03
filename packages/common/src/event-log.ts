@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "n
 import { dirname, join, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { getWorklogDir } from "./worklog.js";
+import { truncate } from "./logger.js";
 
 export const ALIAS_TYPES = ["slack.thread_id", "git.branch", "session.parent"] as const;
 export const AliasTypeSchema = z.enum(ALIAS_TYPES);
@@ -133,11 +134,6 @@ function appendJsonlFileOrThrow(path: string, record: object): void {
   appendFileSync(path, `${JSON.stringify(record)}\n`);
 }
 
-function truncateText(value: unknown, maxChars: number): string | undefined {
-  if (typeof value !== "string") return undefined;
-  return value.length <= maxChars ? value : value.slice(0, maxChars);
-}
-
 function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncated?: true } {
   let candidate: Record<string, unknown> = { ...record };
   if (Buffer.byteLength(JSON.stringify(candidate), "utf8") < MAX_RECORD_BYTES)
@@ -156,7 +152,7 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
       triggerId: String(record.triggerId),
       ...(typeof record.correlationKey === "string" ? { correlationKey: record.correlationKey } : {}),
       ...(typeof record.promptPreview === "string"
-        ? { promptPreview: truncateText(record.promptPreview, 512) }
+        ? { promptPreview: truncate(record.promptPreview, 512) }
         : {}),
       _truncated: true,
     };
@@ -169,8 +165,8 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
       triggerId: String(record.triggerId),
       status: record.status,
       ...(typeof record.durationMs === "number" ? { durationMs: record.durationMs } : {}),
-      ...(typeof record.error === "string" ? { error: truncateText(record.error, 512) } : {}),
-      ...(typeof record.reason === "string" ? { reason: truncateText(record.reason, 512) } : {}),
+      ...(typeof record.error === "string" ? { error: truncate(record.error, 512) } : {}),
+      ...(typeof record.reason === "string" ? { reason: truncate(record.reason, 512) } : {}),
       _truncated: true,
     };
   } else if (record.type === "tool_call") {
@@ -198,16 +194,19 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
 
   while (Buffer.byteLength(JSON.stringify(candidate), "utf8") >= MAX_RECORD_BYTES) {
     if (candidate.type === "trigger_start" && typeof candidate.promptPreview === "string") {
-      candidate.promptPreview = truncateText(candidate.promptPreview, Math.max(32, Math.floor(candidate.promptPreview.length / 2)));
+      candidate.promptPreview = truncate(
+        candidate.promptPreview,
+        Math.max(32, Math.floor(candidate.promptPreview.length / 2)),
+      );
       continue;
     }
     if (candidate.type === "trigger_end") {
       if (typeof candidate.error === "string" && candidate.error.length > 32) {
-        candidate.error = truncateText(candidate.error, Math.max(32, Math.floor(candidate.error.length / 2)));
+        candidate.error = truncate(candidate.error, Math.max(32, Math.floor(candidate.error.length / 2)));
         continue;
       }
       if (typeof candidate.reason === "string" && candidate.reason.length > 32) {
-        candidate.reason = truncateText(candidate.reason, Math.max(32, Math.floor(candidate.reason.length / 2)));
+        candidate.reason = truncate(candidate.reason, Math.max(32, Math.floor(candidate.reason.length / 2)));
         continue;
       }
     }
