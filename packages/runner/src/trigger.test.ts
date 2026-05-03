@@ -268,6 +268,12 @@ describe("runner /trigger orchestration", () => {
       expect(missing.status).toBe(404);
       expect(await missing.text()).toContain("Trigger not found");
 
+      const invalidSession = await fetch(`${url}/runner/v/viewer-session%2F..%2Fescape/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      expect(invalidSession.status).toBe(404);
+      expect(await invalidSession.text()).toContain("Trigger not found");
+
       const ok = await fetch(`${url}/runner/v/viewer-session/${triggerId}`, {
         headers: { "X-Vouch-User": "u@example.com" },
       });

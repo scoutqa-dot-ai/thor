@@ -51,6 +51,28 @@ describe("session event log", () => {
     expect(statSync(sessionLogPath("s1")).size).toBeLessThan(4096);
   });
 
+  it("preserves required trigger_end fields when truncating oversized errors", () => {
+    const triggerId = "00000000-0000-4000-8000-000000000009";
+    expect(
+      appendSessionEvent("truncated-end", {
+        type: "trigger_start",
+        triggerId,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      appendSessionEvent("truncated-end", {
+        type: "trigger_end",
+        triggerId,
+        status: "error",
+        error: "x".repeat(20_000),
+      }),
+    ).toEqual({ ok: true });
+
+    expect(readTriggerSlice("truncated-end", triggerId)).toMatchObject({
+      status: "error",
+    });
+  });
+
   it("extracts completed, error, aborted, crashed, and in-flight slices", () => {
     appendSessionEvent("s1", {
       type: "trigger_start",

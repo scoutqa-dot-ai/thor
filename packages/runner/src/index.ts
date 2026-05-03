@@ -210,13 +210,16 @@ function withCorrelationKeyLock<T>(key: string | undefined, fn: () => Promise<T>
   if (!key) return fn();
   const prev = correlationKeyLocks.get(key) ?? Promise.resolve();
   const next = prev.then(fn, fn);
-  correlationKeyLocks.set(
-    key,
-    next.then(
-      () => undefined,
-      () => undefined,
-    ),
+  const settled = next.then(
+    () => undefined,
+    () => undefined,
   );
+  correlationKeyLocks.set(key, settled);
+  settled.finally(() => {
+    if (correlationKeyLocks.get(key) === settled) {
+      correlationKeyLocks.delete(key);
+    }
+  });
   return next;
 }
 
@@ -375,7 +378,18 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       }
       const sessionId = routeParam(req.params.sessionId);
       const triggerId = routeParam(req.params.triggerId);
-      const slice = readTriggerSlice(sessionId, triggerId);
+      let slice;
+      try {
+        slice = readTriggerSlice(sessionId, triggerId);
+      } catch {
+        res
+          .status(404)
+          .type("html")
+          .send(
+            renderPage("Trigger not found", "No Thor trigger slice was found for this session."),
+          );
+        return;
+      }
       if ("notFound" in slice) {
         res
           .status(404)

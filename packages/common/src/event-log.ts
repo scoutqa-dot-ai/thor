@@ -133,6 +133,11 @@ function appendJsonlFileOrThrow(path: string, record: object): void {
   appendFileSync(path, `${JSON.stringify(record)}\n`);
 }
 
+function truncateText(value: unknown, maxChars: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.length <= maxChars ? value : value.slice(0, maxChars);
+}
+
 function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncated?: true } {
   let candidate: Record<string, unknown> = { ...record };
   if (Buffer.byteLength(JSON.stringify(candidate), "utf8") < MAX_RECORD_BYTES)
@@ -142,16 +147,75 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   if ("payload" in candidate) candidate.payload = { _truncated: true };
   candidate._truncated = true;
 
-  while (Buffer.byteLength(JSON.stringify(candidate), "utf8") >= MAX_RECORD_BYTES) {
-    const preview = JSON.stringify(candidate).slice(0, MAX_RECORD_BYTES - 200);
+  if (record.type === "trigger_start") {
     candidate = {
       schemaVersion: 1,
       ts: String(record.ts),
-      type: record.type,
-      sessionId: record.sessionId,
+      type: "trigger_start",
+      sessionId: String(record.sessionId),
+      triggerId: String(record.triggerId),
+      ...(typeof record.correlationKey === "string" ? { correlationKey: record.correlationKey } : {}),
+      ...(typeof record.promptPreview === "string"
+        ? { promptPreview: truncateText(record.promptPreview, 512) }
+        : {}),
       _truncated: true,
-      preview,
     };
+  } else if (record.type === "trigger_end") {
+    candidate = {
+      schemaVersion: 1,
+      ts: String(record.ts),
+      type: "trigger_end",
+      sessionId: String(record.sessionId),
+      triggerId: String(record.triggerId),
+      status: record.status,
+      ...(typeof record.durationMs === "number" ? { durationMs: record.durationMs } : {}),
+      ...(typeof record.error === "string" ? { error: truncateText(record.error, 512) } : {}),
+      ...(typeof record.reason === "string" ? { reason: truncateText(record.reason, 512) } : {}),
+      _truncated: true,
+    };
+  } else if (record.type === "tool_call") {
+    candidate = {
+      schemaVersion: 1,
+      ts: String(record.ts),
+      type: "tool_call",
+      sessionId: String(record.sessionId),
+      ...(typeof record.callId === "string" ? { callId: record.callId } : {}),
+      tool: String(record.tool),
+      payload: { _truncated: true },
+      _truncated: true,
+    };
+  } else if (record.type === "alias") {
+    candidate = {
+      schemaVersion: 1,
+      ts: String(record.ts),
+      type: "alias",
+      sessionId: String(record.sessionId),
+      aliasType: record.aliasType,
+      aliasValue: String(record.aliasValue),
+      _truncated: true,
+    };
+  }
+
+  while (Buffer.byteLength(JSON.stringify(candidate), "utf8") >= MAX_RECORD_BYTES) {
+    if (candidate.type === "trigger_start" && typeof candidate.promptPreview === "string") {
+      candidate.promptPreview = truncateText(candidate.promptPreview, Math.max(32, Math.floor(candidate.promptPreview.length / 2)));
+      continue;
+    }
+    if (candidate.type === "trigger_end") {
+      if (typeof candidate.error === "string" && candidate.error.length > 32) {
+        candidate.error = truncateText(candidate.error, Math.max(32, Math.floor(candidate.error.length / 2)));
+        continue;
+      }
+      if (typeof candidate.reason === "string" && candidate.reason.length > 32) {
+        candidate.reason = truncateText(candidate.reason, Math.max(32, Math.floor(candidate.reason.length / 2)));
+        continue;
+      }
+    }
+    if (candidate.type === "tool_call") {
+      delete candidate.callId;
+      if (Buffer.byteLength(JSON.stringify(candidate), "utf8") < MAX_RECORD_BYTES) break;
+    }
+    throw new Error(`Unable to cap oversized ${String(record.type)} record without losing required fields`);
   }
   return candidate as T & { _truncated?: true };
 }
