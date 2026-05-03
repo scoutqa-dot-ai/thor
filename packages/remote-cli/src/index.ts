@@ -102,7 +102,7 @@ function registerGitCorrelationAlias(
   cwd: string,
 ): void {
   if (!sessionId) return;
-  const correlationKey = computeGitCorrelationKey(cmd, args, cwd);
+  const correlationKey = computeGitCorrelationKey(args, cwd);
   if (!correlationKey) return;
 
   const result = appendCorrelationAlias(sessionId, correlationKey);

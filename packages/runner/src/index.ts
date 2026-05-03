@@ -26,7 +26,7 @@ import {
   extractRepoFromCwd,
   appendSessionEvent,
   appendAlias,
-  aliasForCorrelationKey,
+  appendCorrelationAlias,
   resolveSessionForCorrelationKey,
   readTriggerSlice,
   sessionLogPath,
@@ -125,9 +125,8 @@ function appendAliasOrFail(record: Parameters<typeof appendAlias>[0]): void {
 }
 
 function appendCorrelationAliasOrFail(correlationKey: string, sessionId: string): void {
-  const alias = aliasForCorrelationKey(correlationKey);
-  if (!alias) return;
-  appendAliasOrFail({ ...alias, sessionId });
+  const result = appendCorrelationAlias(sessionId, correlationKey);
+  if (!result.ok) throw result.error;
 }
 
 /**

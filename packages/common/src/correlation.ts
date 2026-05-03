@@ -2,8 +2,6 @@ import { z } from "zod/v4";
 import { appendAlias, resolveAlias } from "./event-log.js";
 import type { AliasRecord } from "./event-log.js";
 
-export type CorrelationAlias = Pick<AliasRecord, "aliasType" | "aliasValue">;
-
 const GIT_CORRELATION_SUBCOMMANDS = new Set(["push", "checkout", "switch", "worktree"]);
 
 function isGitCorrelationCommand(args: string[]): boolean {
@@ -20,12 +18,14 @@ const SlackPostMessageOutput = z.object({
   channel: z.string().optional(),
 });
 
-export function inferRepoFromPath(cwdPath: string): string | undefined {
+type CorrelationAlias = Pick<AliasRecord, "aliasType" | "aliasValue">;
+
+function inferRepoFromPath(cwdPath: string): string | undefined {
   if (!cwdPath) return undefined;
   return cwdPath.match(/\/workspace\/(?:repos|worktrees)\/([^/]+)/)?.[1];
 }
 
-export function extractBranchFromGitArgs(args: string[]): string | undefined {
+function extractBranchFromGitArgs(args: string[]): string | undefined {
   if (args.length < 2) return undefined;
   const subcommand = args[0];
 
@@ -63,11 +63,7 @@ export function extractBranchFromGitArgs(args: string[]): string | undefined {
   return undefined;
 }
 
-export function computeGitCorrelationKey(
-  _cmd: "git" | "gh",
-  args: string[],
-  cwd: string,
-): string | undefined {
+export function computeGitCorrelationKey(args: string[], cwd: string): string | undefined {
   if (!isGitCorrelationCommand(args)) return undefined;
   const branch = extractBranchFromGitArgs(args);
   const repo = inferRepoFromPath(cwd);
@@ -113,7 +109,7 @@ export function hasSessionForCorrelationKey(key: string): boolean {
   return resolveSessionForCorrelationKey(key) !== undefined;
 }
 
-export function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
+function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
   if (key.startsWith("slack:thread:")) {
     return {
       aliasType: "slack.thread_id",

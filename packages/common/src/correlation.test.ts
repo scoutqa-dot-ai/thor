@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { appendAlias } from "./event-log.js";
 import {
-  aliasForCorrelationKey,
   appendCorrelationAlias,
   computeGitCorrelationKey,
   computeSlackCorrelationKey,
@@ -35,10 +34,6 @@ describe("correlation key resolution", () => {
 
     const rawKey = "slack:thread:1710000000.001";
 
-    expect(aliasForCorrelationKey(rawKey)).toEqual({
-      aliasType: "slack.thread_id",
-      aliasValue: "1710000000.001",
-    });
     expect(resolveCorrelationKeys([rawKey])).toBe(rawKey);
     expect(hasSessionForCorrelationKey(rawKey)).toBe(true);
     expect(resolveSessionForCorrelationKey(rawKey)).toBe("session-1");
@@ -47,19 +42,13 @@ describe("correlation key resolution", () => {
   it("normalizes git branch correlation keys to git alias values", () => {
     const rawKey = "git:branch:thor:feature/refactor";
 
-    expect(aliasForCorrelationKey(rawKey)).toEqual({
-      aliasType: "git.branch",
-      aliasValue: Buffer.from(rawKey).toString("base64url"),
-    });
+    expect(appendCorrelationAlias("session-git", rawKey)).toEqual({ ok: true });
+    expect(resolveSessionForCorrelationKey(rawKey)).toBe("session-git");
   });
 
   it("computes correlation keys without embedding tool output metadata", () => {
     expect(
-      computeGitCorrelationKey(
-        "git",
-        ["push", "origin", "feature/refactor"],
-        "/workspace/repos/thor",
-      ),
+      computeGitCorrelationKey(["push", "origin", "feature/refactor"], "/workspace/repos/thor"),
     ).toBe("git:branch:thor:feature/refactor");
     expect(
       computeSlackCorrelationKey({ channel: "C123" }, JSON.stringify({ ts: "1710000000.002" })),
@@ -82,7 +71,6 @@ describe("correlation key resolution", () => {
     ).toEqual({ ok: true });
 
     expect(resolveCorrelationKeys(["same-key"])).toBe("same-key");
-    expect(aliasForCorrelationKey("same-key")).toBeUndefined();
     expect(hasSessionForCorrelationKey("same-key")).toBe(false);
     expect(resolveSessionForCorrelationKey("same-key")).toBeUndefined();
   });

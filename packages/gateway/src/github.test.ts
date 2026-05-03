@@ -414,7 +414,6 @@ describe("mention and correlation helpers", () => {
   it("buildCorrelationKey matches computeGitCorrelationKey format", () => {
     const built = buildCorrelationKey("thor", "feature/refactor");
     const computed = computeGitCorrelationKey(
-      "git",
       ["push", "origin", "feature/refactor"],
       "/workspace/repos/thor",
     );

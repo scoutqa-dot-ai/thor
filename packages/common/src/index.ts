@@ -87,12 +87,8 @@ export {
   appendCorrelationAlias,
   computeGitCorrelationKey,
   computeSlackCorrelationKey,
-  aliasForCorrelationKey,
   resolveSessionForCorrelationKey,
-  inferRepoFromPath,
-  extractBranchFromGitArgs,
 } from "./correlation.js";
-export type { CorrelationAlias } from "./correlation.js";
 export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
 export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
 export { deriveGitHubAppBotIdentity } from "./github-identity.js";
