@@ -20,9 +20,6 @@ import {
   logWarn,
   logError,
   truncate,
-  isAliasableTool,
-  extractAliases,
-  extractThorMeta,
   isAllowedDirectory,
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
@@ -37,7 +34,6 @@ import {
   MAX_SESSION_FILE_BYTES,
   loadRunnerEnv,
 } from "@thor/common";
-import type { ToolArtifact } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { buildToolInstructions } from "./tool-instructions.js";
 import { getMemoryProgressEvents } from "./memory-progress.js";
@@ -62,6 +58,15 @@ const MEMORY_DIR = "/workspace/memory";
 const TaskDelegateInputSchema = z.object({
   subagent_type: z.string().trim().min(1),
 });
+
+const ApprovalRequiredOutputSchema = z
+  .object({
+    type: z.literal("approval_required"),
+    actionId: z.string().min(1),
+    tool: z.string().min(1).optional(),
+    proxyName: z.string().min(1).optional(),
+  })
+  .passthrough();
 
 const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
@@ -921,7 +926,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       let seq = 0;
       const collectedTextParts: string[] = [];
       const collectedToolCalls: Array<{ tool: string; state: string }> = [];
-      const collectedArtifacts: ToolArtifact[] = [];
       let lastMessageId: string | undefined;
       let totalCost = 0;
       const totalTokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
@@ -1101,16 +1105,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                       emit(approval);
                     }
                   }
-
-                  // Collect input/output for aliasable tools
-                  if (status === "completed" && isAliasableTool(toolPart.tool)) {
-                    const completed = toolPart.state as ToolStateCompleted;
-                    collectedArtifacts.push({
-                      tool: toolPart.tool,
-                      input: completed.input as Record<string, unknown>,
-                      output: typeof completed.output === "string" ? completed.output : "",
-                    });
-                  }
                 }
                 lastMessageId = toolPart.messageID;
               } else if (part.type === "step-finish") {
@@ -1157,40 +1151,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         terminalError ? "error" : "completed",
         terminalError ? { error: terminalError } : {},
       );
-
-      if (correlationKey) {
-        // Register cross-channel aliases (best-effort)
-        if (collectedArtifacts.length > 0) {
-          try {
-            const aliases = extractAliases(collectedArtifacts);
-            for (const { alias } of aliases) {
-              if (alias.startsWith("slack:thread:")) {
-                appendAliasOrFail({
-                  aliasType: "slack.thread_id",
-                  aliasValue: alias.slice("slack:thread:".length),
-                  sessionId,
-                });
-              } else if (alias.startsWith("git:branch:")) {
-                appendAliasOrFail({
-                  aliasType: "git.branch",
-                  aliasValue: Buffer.from(alias).toString("base64url"),
-                  sessionId,
-                });
-              }
-              logInfo(log, "alias_registered", { correlationKey, alias });
-            }
-          } catch (err) {
-            logError(
-              log,
-              "alias_registration_error",
-              err instanceof Error ? err.message : String(err),
-              {
-                correlationKey,
-              },
-            );
-          }
-        }
-      }
 
       logInfo(log, "session_done", {
         sessionId,
@@ -1280,27 +1240,28 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
   return false;
 }
 
-/**
- * Parse a tool result for approval-required signal.
- * remote-cli emits a [thor:meta] line with { type: "approval", actionId, proxyName, tool }.
- */
 function parseApprovalResult(
   output: string,
   tool: string,
   args: Record<string, unknown>,
 ): ProgressEvent | undefined {
-  for (const meta of extractThorMeta(output)) {
-    if (meta.type === "approval") {
-      return {
-        type: "approval_required",
-        actionId: meta.actionId,
-        tool,
-        args,
-        proxyName: meta.proxyName,
-      };
-    }
+  let parsedOutput: unknown;
+  try {
+    parsedOutput = JSON.parse(output);
+  } catch {
+    return undefined;
   }
-  return undefined;
+
+  const parsed = ApprovalRequiredOutputSchema.safeParse(parsedOutput);
+  if (!parsed.success) return undefined;
+
+  return {
+    type: "approval_required",
+    actionId: parsed.data.actionId,
+    tool: parsed.data.tool ?? tool,
+    args,
+    proxyName: parsed.data.proxyName,
+  };
 }
 
 function escapeHtml(value: string): string {

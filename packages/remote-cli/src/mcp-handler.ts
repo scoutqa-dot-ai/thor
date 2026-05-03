@@ -1,15 +1,14 @@
 import {
-  computeSlackAlias,
+  appendCorrelationAlias,
+  computeSlackCorrelationKey,
   createLogger,
   extractRepoFromCwd,
   getProxyConfig,
   buildThorDisclaimerForSession,
   isProxyName,
   getRepoUpstreams,
-  formatThorMeta,
   getRunnerBaseUrl,
   interpolateHeaders,
-  isAliasableMcpTool,
   logError,
   logInfo,
   logWarn,
@@ -403,6 +402,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     logEvent: string;
     decision: "allowed" | "blocked" | "pending" | "approved" | "rejected";
     extraLogFields?: Record<string, unknown>;
+    sessionId?: string;
     inputSchema?: unknown;
     onSuccess?: (rawResult: unknown) => void;
     onError?: (message: string) => void;
@@ -426,10 +426,24 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       writeToolCallLogFn({ tool: toolName, decision, args, result, durationMs: duration });
       opts.onSuccess?.(result);
 
-      let stdout = unwrapResult(result);
-      if (isAliasableMcpTool(toolName)) {
-        const alias = computeSlackAlias(args, stdout);
-        if (alias) stdout += formatThorMeta(alias);
+      const stdout = unwrapResult(result);
+      if (toolName === "post_message" && opts.sessionId) {
+        const correlationKey = computeSlackCorrelationKey(args, stdout);
+        if (correlationKey) {
+          const aliasResult = appendCorrelationAlias(opts.sessionId, correlationKey);
+          if (aliasResult.ok) {
+            logInfo(log, "alias_registered", {
+              sessionId: opts.sessionId,
+              correlationKey,
+              source: "mcp:post_message",
+            });
+          } else {
+            logError(log, "alias_registration_error", aliasResult.error.message, {
+              sessionId: opts.sessionId,
+              correlationKey,
+            });
+          }
+        }
       }
       return ok(stdout);
     } catch (err) {
@@ -478,14 +492,15 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         ...getThorIds(context),
       });
       writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args: approvalArgs });
-      const approvalText = `Approval required for \`${toolInfo.name}\`. Run: approval status ${action.id}`;
-      const approvalMeta = formatThorMeta({
-        type: "approval",
-        actionId: action.id,
-        proxyName: instance.name,
-        tool: toolInfo.name,
-      });
-      return ok(`${approvalText}${approvalMeta}`);
+      return ok(
+        stringify({
+          type: "approval_required",
+          actionId: action.id,
+          proxyName: instance.name,
+          tool: toolInfo.name,
+          command: `approval status ${action.id}`,
+        }),
+      );
     }
 
     return executeUpstreamCall({
@@ -495,6 +510,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       logEvent: "tool_call",
       decision: "allowed",
       extraLogFields: getThorIds(context),
+      sessionId: context.sessionId,
       inputSchema: toolInfo.inputSchema,
     });
   }

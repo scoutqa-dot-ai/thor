@@ -233,11 +233,19 @@ describe("remote-cli MCP endpoints", () => {
 
   it("fails closed for Jira approvals when Thor session context is missing", async () => {
     const pending = await postJson("/exec/mcp", {
-      args: ["atlassian", "createJiraIssue", '{"projectKey":"THOR","summary":"Fix it","description":"body"}'],
+      args: [
+        "atlassian",
+        "createJiraIssue",
+        '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+      ],
       cwd: "/workspace/repos/acme",
       directory: "/workspace/repos/acme",
     });
-    const pendingBody = (await pending.json()) as { stdout: string; stderr: string; exitCode: number };
+    const pendingBody = (await pending.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
 
     expect(pending.status).toBe(200);
     expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
@@ -250,20 +258,41 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("creates approvals with Jira disclaimers, exposes them via approval commands, and returns 401 for resolve without the internal secret", async () => {
-    expect(appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId })).toEqual({ ok: true });
-    const pending = await postJson("/exec/mcp", {
-      args: ["atlassian", "createJiraIssue", '{"projectKey":"THOR","summary":"Fix it","description":"body"}'],
-      cwd: "/workspace/repos/acme",
-      directory: "/workspace/repos/acme",
-    }, { "x-thor-session-id": "parent-session" });
+    expect(
+      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
+    ).toEqual({ ok: true });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
     const pendingBody = (await pending.json()) as { stdout: string };
 
     expect(pending.status).toBe(200);
-    expect(pendingBody.stdout).toContain("Approval required for `createJiraIssue`");
     expect(toolCalls).toEqual([]);
 
-    const actionId = pendingBody.stdout.match(/"actionId":"([^"]+)"/)?.[1];
-    expect(actionId).toBeTruthy();
+    const approvalOutput = JSON.parse(pendingBody.stdout) as {
+      type: string;
+      actionId: string;
+      proxyName: string;
+      tool: string;
+      command: string;
+    };
+    expect(approvalOutput).toMatchObject({
+      type: "approval_required",
+      proxyName: "atlassian",
+      tool: "createJiraIssue",
+    });
+    expect(approvalOutput.command).toBe(`approval status ${approvalOutput.actionId}`);
+    const actionId = approvalOutput.actionId;
 
     const status = await postJson("/exec/approval", {
       args: ["status", actionId],

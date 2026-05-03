@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { computeGitAlias } from "@thor/common";
+import { computeGitCorrelationKey } from "@thor/common";
 import {
   buildCorrelationKey,
   CheckSuiteCompletedEventSchema,
@@ -168,7 +168,11 @@ describe("GitHubWebhookEnvelopeSchema", () => {
 
   it("accepts deleted push events with null head_commit", () => {
     const parsed = GitHubWebhookEnvelopeSchema.safeParse(
-      basePushEvent({ deleted: true, after: "0000000000000000000000000000000000000000", head_commit: null }),
+      basePushEvent({
+        deleted: true,
+        after: "0000000000000000000000000000000000000000",
+        head_commit: null,
+      }),
     );
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
@@ -407,13 +411,13 @@ describe("mention and correlation helpers", () => {
     expect(detectMention("Please check @thorbot", ["thor"])).toBe(false);
   });
 
-  it("buildCorrelationKey matches computeGitAlias format", () => {
+  it("buildCorrelationKey matches computeGitCorrelationKey format", () => {
     const built = buildCorrelationKey("thor", "feature/refactor");
-    const alias = computeGitAlias(
+    const computed = computeGitCorrelationKey(
       "git",
       ["push", "origin", "feature/refactor"],
       "/workspace/repos/thor",
     );
-    expect(alias?.alias).toBe(built);
+    expect(computed).toBe(built);
   });
 });

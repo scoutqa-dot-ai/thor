@@ -4,11 +4,11 @@ import { access } from "node:fs/promises";
 import { dirname, normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import {
-  computeGitAlias,
+  appendCorrelationAlias,
   buildThorDisclaimerForSession,
+  computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
-  formatThorMeta,
   getRunnerBaseUrl,
   logError,
   logInfo,
@@ -93,6 +93,24 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
     ...(sessionId && { sessionId }),
     ...(callId && { callId }),
   };
+}
+
+function registerGitCorrelationAlias(
+  sessionId: string | undefined,
+  cmd: "git" | "gh",
+  args: string[],
+  cwd: string,
+): void {
+  if (!sessionId) return;
+  const correlationKey = computeGitCorrelationKey(cmd, args, cwd);
+  if (!correlationKey) return;
+
+  const result = appendCorrelationAlias(sessionId, correlationKey);
+  if (!result.ok) {
+    logError(log, "alias_registration_error", result.error.message, { sessionId, correlationKey });
+    return;
+  }
+  logInfo(log, "alias_registered", { sessionId, correlationKey, source: cmd });
 }
 
 function rewriteSingleValueFlag(
@@ -448,17 +466,17 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
       const effectiveArgs = gitResolution.args;
+      const ids = thorIds(req);
 
       logInfo(log, "exec_git", {
         args,
         ...(JSON.stringify(effectiveArgs) !== JSON.stringify(args) ? { effectiveArgs } : {}),
         cwd,
-        ...thorIds(req),
+        ...ids,
       });
       const result = await execCommand("git", effectiveArgs, cwd);
       if ((result.exitCode ?? 0) === 0) {
-        const alias = computeGitAlias("git", effectiveArgs, cwd);
-        if (alias) result.stdout = (result.stdout || "") + formatThorMeta(alias);
+        registerGitCorrelationAlias(ids.sessionId, "git", effectiveArgs, cwd);
       }
       res.json(result);
     } catch (err) {
@@ -498,8 +516,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
       const result = await execCommand("gh", effectiveArgs, cwd);
       if ((result.exitCode ?? 0) === 0) {
-        const alias = computeGitAlias("gh", effectiveArgs, cwd);
-        if (alias) result.stdout = (result.stdout || "") + formatThorMeta(alias);
+        registerGitCorrelationAlias(ids.sessionId, "gh", effectiveArgs, cwd);
       }
       res.json(result);
     } catch (err) {

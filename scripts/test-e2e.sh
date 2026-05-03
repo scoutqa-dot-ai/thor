@@ -334,7 +334,7 @@ else
     -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",$escaped_approval_args],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
     2>/dev/null || echo '{}')
 
-  # Parse action ID — check stdout, stderr (thor:meta), and content (legacy MCP format)
+  # Parse action ID from the remote-cli approval-required response.
   action_id=$(echo "$call_raw" | node -e "
     const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
     const parts = [d.stdout || '', d.stderr || ''];

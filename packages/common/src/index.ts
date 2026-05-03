@@ -84,30 +84,15 @@ export {
 export {
   resolveCorrelationKeys,
   hasSessionForCorrelationKey,
-  isAliasableTool,
-  isAliasableGitCommand,
-  isAliasableMcpTool,
-  extractAliases,
-  ThorMetaSchema,
-  ThorMetaAliasSchema,
-  ThorMetaApprovalSchema,
-  extractThorMeta,
-  formatThorMeta,
-  computeGitAlias,
-  computeSlackAlias,
+  appendCorrelationAlias,
+  computeGitCorrelationKey,
+  computeSlackCorrelationKey,
   aliasForCorrelationKey,
   resolveSessionForCorrelationKey,
   inferRepoFromPath,
   extractBranchFromGitArgs,
-} from "./thor-meta.js";
-export type {
-  ToolArtifact,
-  ExtractedAlias,
-  ThorMeta,
-  ThorMetaAlias,
-  ThorMetaApproval,
-  CorrelationAlias,
-} from "./thor-meta.js";
+} from "./correlation.js";
+export type { CorrelationAlias } from "./correlation.js";
 export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
 export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
 export { deriveGitHubAppBotIdentity } from "./github-identity.js";

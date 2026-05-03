@@ -3,22 +3,25 @@ import { rmSync } from "node:fs";
 import { appendAlias } from "./event-log.js";
 import {
   aliasForCorrelationKey,
+  appendCorrelationAlias,
+  computeGitCorrelationKey,
+  computeSlackCorrelationKey,
   hasSessionForCorrelationKey,
   resolveCorrelationKeys,
   resolveSessionForCorrelationKey,
-} from "./thor-meta.js";
+} from "./correlation.js";
 
-const worklogRoot = "/tmp/thor-common-meta-test/worklog";
+const worklogRoot = "/tmp/thor-common-correlation-test/worklog";
 
 describe("correlation key resolution", () => {
   beforeEach(() => {
     vi.stubEnv("WORKLOG_DIR", worklogRoot);
-    rmSync("/tmp/thor-common-meta-test", { recursive: true, force: true });
+    rmSync("/tmp/thor-common-correlation-test", { recursive: true, force: true });
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
-    rmSync("/tmp/thor-common-meta-test", { recursive: true, force: true });
+    rmSync("/tmp/thor-common-correlation-test", { recursive: true, force: true });
   });
 
   it("keeps correlation keys separate from resolved session ids", () => {
@@ -48,6 +51,29 @@ describe("correlation key resolution", () => {
       aliasType: "git.branch",
       aliasValue: Buffer.from(rawKey).toString("base64url"),
     });
+  });
+
+  it("computes correlation keys without embedding tool output metadata", () => {
+    expect(
+      computeGitCorrelationKey(
+        "git",
+        ["push", "origin", "feature/refactor"],
+        "/workspace/repos/thor",
+      ),
+    ).toBe("git:branch:thor:feature/refactor");
+    expect(
+      computeSlackCorrelationKey({ channel: "C123" }, JSON.stringify({ ts: "1710000000.002" })),
+    ).toBe("slack:thread:1710000000.002");
+    expect(computeSlackCorrelationKey({ thread_ts: "1710000000.003" }, "{}")).toBe(
+      "slack:thread:1710000000.003",
+    );
+  });
+
+  it("registers correlation aliases through the alias log", () => {
+    expect(appendCorrelationAlias("session-2", "slack:thread:1710000000.004")).toEqual({
+      ok: true,
+    });
+    expect(resolveSessionForCorrelationKey("slack:thread:1710000000.004")).toBe("session-2");
   });
 
   it("does not treat untyped keys as alias values", () => {

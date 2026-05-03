@@ -77,18 +77,18 @@ After a trigger completes, the runner inspects tool call results for cross-chann
 
 ## Decision Log
 
-| #   | Decision                                                                 | Rationale                                                                                                                                                                                               |
-| --- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | **Store aliases in notes files, not a central index**                    | Append-only, no parallel write conflicts, no staleness. Each notes file is self-contained.                                                                                                              |
-| D2  | **Use `### Session:` (h3) for aliases, `# Session:` (h1) for canonical** | Visually distinct in markdown. Single grep pattern `^#{1,3} Session:` matches both. Resolution reads h1 from matched file.                                                                              |
-| D3  | **Resolve in gateway before queueing**                                   | Ensures the event queue groups aliased events with the canonical key. No changes needed to runner session lookup.                                                                                       |
-| D4  | **Register aliases in runner after trigger completes**                   | Runner already has the corr key and processes tool call results. Keeps correlation logic centralized.                                                                                                   |
-| D5  | **Scan window bounded by worklog retention**                             | Only active (non-archived) day directories are scanned. Natural TTL via existing archival.                                                                                                              |
-| D6  | **No transitive resolution**                                             | All aliases point directly to a canonical key's notes file. Cron→Slack→GitHub: both Slack and GitHub aliases go in the cron's notes file. No chain lookups.                                             |
-| D7  | **Extract aliases from SSE stream tool call data**                       | `ToolStateCompleted` includes `input` (args) and `output` (result string). The runner already receives these via SSE — just needs to collect them for aliasable tools. No worklog file scanning needed. |
-| D8  | **Alias both new threads and replies**                                   | New thread: alias the returned `ts`. Reply (`thread_ts` present): alias the `thread_ts` so future thread events route to this session. Self-aliases (key === alias) are skipped.                        |
-| D9  | **Alias on checkout/switch, not just push**                              | Agent checking out a remote branch for review should receive future GitHub events for that branch. `pull`/`fetch` not needed — agent must already have checked out the branch.                          |
-| D10 | **No `github:pr:` aliases**                                              | GitHub events all use `git:branch:{repo}:{branch}` keys. PR activity arrives as push/PR events keyed by branch. A `github:pr:` alias would never be looked up.                                          |
+| #   | Decision                                                                 | Rationale                                                                                                                                                                        |
+| --- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **Store aliases in notes files, not a central index**                    | Append-only, no parallel write conflicts, no staleness. Each notes file is self-contained.                                                                                       |
+| D2  | **Use `### Session:` (h3) for aliases, `# Session:` (h1) for canonical** | Visually distinct in markdown. Single grep pattern `^#{1,3} Session:` matches both. Resolution reads h1 from matched file.                                                       |
+| D3  | **Resolve in gateway before queueing**                                   | Ensures the event queue groups aliased events with the canonical key. No changes needed to runner session lookup.                                                                |
+| D4  | **Register aliases in runner after trigger completes**                   | Runner already has the corr key and processes tool call results. Keeps correlation logic centralized.                                                                            |
+| D5  | **Scan window bounded by worklog retention**                             | Only active (non-archived) day directories are scanned. Natural TTL via existing archival.                                                                                       |
+| D6  | **No transitive resolution**                                             | All aliases point directly to a canonical key's notes file. Cron→Slack→GitHub: both Slack and GitHub aliases go in the cron's notes file. No chain lookups.                      |
+| D7  | **Superseded: extract aliases from SSE stream tool call data**           | Current code registers aliases directly in producers that already have session context. The runner no longer collects completed tool artifacts for alias registration.           |
+| D8  | **Alias both new threads and replies**                                   | New thread: alias the returned `ts`. Reply (`thread_ts` present): alias the `thread_ts` so future thread events route to this session. Self-aliases (key === alias) are skipped. |
+| D9  | **Alias on checkout/switch, not just push**                              | Agent checking out a remote branch for review should receive future GitHub events for that branch. `pull`/`fetch` not needed — agent must already have checked out the branch.   |
+| D10 | **No `github:pr:` aliases**                                              | GitHub events all use `git:branch:{repo}:{branch}` keys. PR activity arrives as push/PR events keyed by branch. A `github:pr:` alias would never be looked up.                   |
 
 ## Phases
 
@@ -142,9 +142,9 @@ The OpenCode SDK's `ToolStateCompleted` type includes:
 
 The runner already receives `ToolPart` events via SSE. Currently it only collects `{ tool, state }` — but it can collect `input` and `output` too. No need to scan proxy worklog files.
 
-#### Tools that produce aliasable artifacts
+#### Tools that produce alias artifacts
 
-> **OUTDATED** — `post_message` → `slack_post_message`, `git` tool → `bash` with `[thor:meta]`, repo inference changed. See [Amendment: Multi-key correlation resolution](#amendment-multi-key-correlation-resolution--2026-03-18).
+> **OUTDATED** — `post_message` became `slack_post_message`; git alias registration now happens in `remote-cli` with direct session context; repo inference changed. See [Amendment: Multi-key correlation resolution](#amendment-multi-key-correlation-resolution--2026-03-18).
 
 | Tool name      | Input to inspect                | Output to extract         | Alias format                 |
 | -------------- | ------------------------------- | ------------------------- | ---------------------------- |
@@ -158,11 +158,11 @@ The runner already receives `ToolPart` events via SSE. Currently it only collect
 
 #### Implementation
 
-1. `ToolArtifactSchema` — Zod discriminated union on `tool` field validates input shape per tool. Loose `ToolArtifact` interface accepted from runner, narrowed via `safeParse`.
+1. Tool result schema — Zod discriminated union on `tool` field validates input shape per tool. Loose tool artifacts from the runner were narrowed via `safeParse`.
 
-2. In the runner's stream loop, when a `ToolPart` has `status === "completed"` and `isAliasableTool(tool)`, collect `{ tool, input, output }` into `collectedArtifacts`.
+2. In the older runner stream loop, when a completed `ToolPart` matched an alias-producing tool, collect `{ tool, input, output }` into `collectedArtifacts`.
 
-3. `extractAliases(artifacts)` in `@thor/common`:
+3. Alias extraction in `@thor/common`:
    - **`post_message`** (new thread): parse output JSON for `ts` → `slack:thread:{ts}`
    - **`post_message`** (reply): `thread_ts` in input → `slack:thread:{thread_ts}` (session is engaging with that thread)
    - **`git`** (`push`/`checkout`/`switch`): extract branch from args, infer repo from `cwd` path convention (`/workspace/repos/{owner}-{repo}`) → `git:branch:{repo}:{branch}`
@@ -227,7 +227,7 @@ The original design assumed the runner could infer the full `owner/repo` from th
 Additionally:
 
 - **Worktree paths** (`/workspace/worktrees/{name}/{branch}`) were not matched by `inferRepoFromPath`, which only checked `/workspace/repos/`.
-- **Tool names changed**: the `git` MCP tool was removed; git operations now go through the `bash` tool with `[thor:meta]` structured output from `remote-cli.mjs`. Similarly `post_message` became `slack_post_message`.
+- **Tool names changed**: the `git` MCP tool was removed; git operations now go through the shell wrapper with direct alias registration in `remote-cli`. Similarly `post_message` became `slack_post_message`.
 
 ### Design change: multi-key resolution
 
@@ -259,24 +259,24 @@ This ensures that when an old session matches the canonical key but a newer sess
 
 ### Changes
 
-| Component               | Change                                                                                                      |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `gateway/src/github.ts` | `getGitHubCorrelationKey()` → `getGitHubCorrelationKeys()`, returns `string[]` with canonical + short alias |
-| `gateway/src/app.ts`    | Uses `resolveCorrelationKeys(rawKeys)` for GitHub events                                                    |
-| `common/src/notes.ts`   | New `resolveCorrelationKeys()` — tries all keys, picks most recent match                                    |
-| `common/src/notes.ts`   | New `grepAllNotesFiles()` — returns all matches instead of just first                                       |
-| `common/src/notes.ts`   | `inferRepoFromPath` — matches `/workspace/worktrees/` paths, drops hyphen-split heuristic                   |
-| `common/src/notes.ts`   | `ALIASABLE_TOOLS` — `bash` + `slack_post_message` (was `git` + `post_message`)                              |
+| Component                   | Change                                                                                                      |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `gateway/src/github.ts`     | `getGitHubCorrelationKey()` → `getGitHubCorrelationKeys()`, returns `string[]` with canonical + short alias |
+| `gateway/src/app.ts`        | Uses `resolveCorrelationKeys(rawKeys)` for GitHub events                                                    |
+| `common/src/notes.ts`       | New `resolveCorrelationKeys()` — tries all keys, picks most recent match                                    |
+| `common/src/notes.ts`       | New `grepAllNotesFiles()` — returns all matches instead of just first                                       |
+| `common/src/notes.ts`       | `inferRepoFromPath` — matches `/workspace/worktrees/` paths, drops hyphen-split heuristic                   |
+| `common/src/correlation.ts` | Git and Slack correlation helpers used by direct producer-side alias registration                           |
 
 ### Updated tool → alias mapping
 
-| Tool name             | Input to inspect                 | Output to extract         | Alias format                     |
-| --------------------- | -------------------------------- | ------------------------- | -------------------------------- |
-| `slack_post_message`  | `thread_ts` absent → new thread  | parse JSON for `ts` field | `slack:thread:{ts}`              |
-| `slack_post_message`  | `thread_ts` present → reply      | (not needed)              | `slack:thread:{thread_ts}`       |
-| `bash` (git via meta) | `[thor:meta]` with push args     | (not needed)              | `git:branch:{repo-dir}:{branch}` |
-| `bash` (git via meta) | `[thor:meta]` with checkout args | (not needed)              | `git:branch:{repo-dir}:{branch}` |
-| `bash` (git via meta) | `[thor:meta]` with switch args   | (not needed)              | `git:branch:{repo-dir}:{branch}` |
+| Tool name                | Input to inspect                | Output to extract         | Alias format                     |
+| ------------------------ | ------------------------------- | ------------------------- | -------------------------------- |
+| `slack_post_message`     | `thread_ts` absent → new thread | parse JSON for `ts` field | `slack:thread:{ts}`              |
+| `slack_post_message`     | `thread_ts` present → reply     | (not needed)              | `slack:thread:{thread_ts}`       |
+| `remote-cli` git wrapper | push args                       | (not needed)              | `git:branch:{repo-dir}:{branch}` |
+| `remote-cli` git wrapper | checkout args                   | (not needed)              | `git:branch:{repo-dir}:{branch}` |
+| `remote-cli` git wrapper | switch args                     | (not needed)              | `git:branch:{repo-dir}:{branch}` |
 
 ### Decision log (continued)
 
