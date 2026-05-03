@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Event, TextPart } from "@opencode-ai/sdk";
 import { createRunnerApp, type RunnerAppOptions } from "./index.js";
-import { appendAlias, appendSessionEvent } from "@thor/common";
+import { appendAlias, appendSessionEvent, sessionLogPath } from "@thor/common";
 
 const worklogDir = "/tmp/thor-runner-trigger-test/worklog";
 const originalEnv = vi.hoisted(() => {
@@ -116,6 +116,7 @@ function createHarness(
     busySessions?: Set<string>;
     children?: Array<{ id: string }>;
     promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
+    throwInSubscribe?: boolean;
   } = {},
 ) {
   const buses = new FakeEventBuses();
@@ -169,16 +170,22 @@ function createHarness(
   };
 
   const app = createRunnerApp({
-    eventBuses: {
-      subscribe: async () => {
-        const sub = await buses.subscribe();
-        for (const id of abortedPending) {
-          queueMicrotask(() => sub.push(idleEvent(id)));
-          abortedPending.delete(id);
-        }
-        return sub;
-      },
-    } as unknown as RunnerAppOptions["eventBuses"],
+    eventBuses: opts.throwInSubscribe
+      ? ({
+          subscribe: async () => {
+            throw new Error("subscribe failed");
+          },
+        } as unknown as RunnerAppOptions["eventBuses"])
+      : ({
+          subscribe: async () => {
+            const sub = await buses.subscribe();
+            for (const id of abortedPending) {
+              queueMicrotask(() => sub.push(idleEvent(id)));
+              abortedPending.delete(id);
+            }
+            return sub;
+          },
+        } as unknown as RunnerAppOptions["eventBuses"]),
     memoryDir,
     createClient: () =>
       client as unknown as ReturnType<NonNullable<RunnerAppOptions["createClient"]>>,
@@ -465,6 +472,116 @@ describe("runner /trigger orchestration", () => {
         error: "provider unavailable",
       });
     });
+  });
+
+  it("returns 500 and writes no orphan trigger_start when subscribe throws before startTrigger", async () => {
+    const h = createHarness({ throwInSubscribe: true });
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/trigger`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt: "go",
+          correlationKey: "slack:thread:1710000200.001",
+          directory: sessionDir,
+        }),
+      });
+      expect(response.status).toBe(500);
+    });
+    // No trigger_start should be on disk because subscribe threw before startTrigger ran.
+    let logged = "";
+    try {
+      logged = readFileSync(sessionLogPath("session-1"), "utf8");
+    } catch {
+      // File may not exist at all — that also satisfies the invariant.
+    }
+    expect(logged).not.toContain('"type":"trigger_start"');
+  });
+
+  it("renders a previously orphaned trigger as 'crashed' when a newer trigger_start lands in the same session", async () => {
+    const olderTriggerId = "00000000-0000-4000-8000-000000000602";
+    const newerTriggerId = "00000000-0000-4000-8000-000000000603";
+    appendSessionEvent("crash-session", { type: "trigger_start", triggerId: olderTriggerId });
+    appendSessionEvent("crash-session", { type: "trigger_start", triggerId: newerTriggerId });
+
+    const h = createHarness();
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/crash-session/${olderTriggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("crashed");
+      expect(html).toContain("abandoned without a close marker");
+    });
+  });
+
+  it("/raw returns only the requested trigger's slice and rejects path traversal in session id", async () => {
+    const triggerId = "00000000-0000-4000-8000-000000000601";
+    const otherTriggerId = "00000000-0000-4000-8000-000000000698";
+    appendSessionEvent("raw-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("raw-session", { type: "trigger_end", triggerId, status: "completed" });
+    appendSessionEvent("raw-session", { type: "trigger_start", triggerId: otherTriggerId });
+    appendSessionEvent("raw-session", {
+      type: "trigger_end",
+      triggerId: otherTriggerId,
+      status: "completed",
+    });
+
+    const h = createHarness();
+    await withServer(h.app, async (url) => {
+      const ok = await fetch(`${url}/runner/v/raw-session/${triggerId}/raw`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      expect(ok.status).toBe(200);
+      const body = await ok.text();
+      expect(body).toContain(triggerId);
+      expect(body).not.toContain(otherTriggerId);
+
+      const traversal = await fetch(
+        `${url}/runner/v/${encodeURIComponent("../etc/passwd")}/${triggerId}/raw`,
+        { headers: { "X-Vouch-User": "u@example.com" } },
+      );
+      expect(traversal.status).toBe(404);
+    });
+  });
+
+  it("/internal/e2e/trigger-context rejects wrong secret and writes trigger_start on success", async () => {
+    process.env.THOR_E2E_TEST_HELPERS = "1";
+    process.env.THOR_INTERNAL_SECRET = "fixed-test-secret-1234567890123456";
+
+    try {
+      const h = createHarness();
+      await withServer(h.app, async (url) => {
+        const wrong = await fetch(`${url}/internal/e2e/trigger-context`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-thor-internal-secret": "wrong-secret-with-correct-length123",
+          },
+          body: JSON.stringify({}),
+        });
+        expect(wrong.status).toBe(401);
+
+        const okResp = await fetch(`${url}/internal/e2e/trigger-context`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-thor-internal-secret": process.env.THOR_INTERNAL_SECRET!,
+          },
+          body: JSON.stringify({ correlationKey: "slack:thread:1710000200.002" }),
+        });
+        expect(okResp.status).toBe(200);
+        const data = (await okResp.json()) as { sessionId: string; triggerId: string };
+        expect(data.sessionId).toMatch(/^e2e-/);
+        expect(data.triggerId).toMatch(/^[0-9a-f-]{36}$/);
+        const text = readFileSync(sessionLogPath(data.sessionId), "utf8");
+        expect(text).toContain(`"triggerId":"${data.triggerId}"`);
+      });
+    } finally {
+      delete process.env.THOR_E2E_TEST_HELPERS;
+      delete process.env.THOR_INTERNAL_SECRET;
+    }
   });
 
   it("does not let status events extend the session error grace period", async () => {
