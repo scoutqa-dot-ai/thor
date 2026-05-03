@@ -814,7 +814,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
               `Session did not idle within ${ABORT_TIMEOUT}ms`,
               { sessionId },
             );
-            // Per plan: "If settle times out, write no marker and do not call promptAsync."
             res.status(503).json({ error: "Session abort did not settle", sessionId });
             return;
           }
