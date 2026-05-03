@@ -14,6 +14,7 @@ Deliver a session-scoped JSONL event log that powers:
 - Slack thread and git branch alias routing (plus a `session.parent` alias for child→parent resolution)
 - disclaimer-link injection for Thor-created GitHub PRs/comments/reviews and Jira tickets/comments
 - a bounded reader story for v1; retention/archival/janitor is deferred out of this implementation
+- an end-to-end architecture reference at [`docs/feat/event-flow.md`](../feat/event-flow.md) covering inbound ingestion, queue serialization, runner trigger handling, alias resolution, and outbound approval-card emission — the runtime context this plan plugs into
 
 No database. No backwards-compatible markdown-notes routing layer. The source of truth is the session log; the old markdown notes implementation is removed.
 
