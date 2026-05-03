@@ -796,19 +796,35 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return { status: "push_sync_worktree_missing", ignored: true };
     }
 
-    let pullResult: Awaited<ReturnType<InternalExecClient>>;
+    let fetchResult: Awaited<ReturnType<InternalExecClient>>;
     try {
-      pullResult = await execGit({
+      fetchResult = await execGit({
         bin: "git",
-        args: ["pull", "--ff-only", "origin", `refs/heads/${branch}`],
+        args: ["fetch", "origin", `refs/heads/${branch}`],
         cwd: targetDir,
       });
     } catch (error) {
       record("push_sync_failed", { targetDir, ...errorToMetadata(error) });
       return { status: "push_sync_failed", ignored: true };
     }
-    if (pullResult.exitCode !== 0) {
-      record("push_sync_failed", { targetDir, exitCode: pullResult.exitCode });
+    if (fetchResult.exitCode !== 0) {
+      record("push_sync_failed", { targetDir, exitCode: fetchResult.exitCode });
+      return { status: "push_sync_failed", ignored: true };
+    }
+
+    let resetResult: Awaited<ReturnType<InternalExecClient>>;
+    try {
+      resetResult = await execGit({
+        bin: "git",
+        args: ["reset", "--hard", "FETCH_HEAD"],
+        cwd: targetDir,
+      });
+    } catch (error) {
+      record("push_sync_failed", { targetDir, ...errorToMetadata(error) });
+      return { status: "push_sync_failed", ignored: true };
+    }
+    if (resetResult.exitCode !== 0) {
+      record("push_sync_failed", { targetDir, exitCode: resetResult.exitCode });
       return { status: "push_sync_failed", ignored: true };
     }
 
