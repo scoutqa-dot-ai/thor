@@ -1,0 +1,33 @@
+packages/common/src/index.ts
+  d7eb215e73cfb1d5 25
+packages/common/src/env.ts
+  d7eb215e73cfb1d5 1-2,52-60
+packages/runner/src/index.ts
+  d7eb215e73cfb1d5 15,37
+packages/common/src/correlation.ts
+  d7eb215e73cfb1d5 5-7,74,83,88,121,124,127
+packages/common/src/event-log.ts
+  d7eb215e73cfb1d5 1,105,275-276,278-279,290-291,399,402
+packages/remote-cli/src/index.ts
+  d7eb215e73cfb1d5 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ec69ebaf549177237acf057d903a60d3bb34d186",
+  "prompts": {
+    "d7eb215e73cfb1d5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d32023b-5798-4543-ba16-5f19243c5552",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 66,
+      "total_deletions": 63,
+      "accepted_lines": 51,
+      "overriden_lines": 0
+    }
+  }
+}
