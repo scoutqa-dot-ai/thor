@@ -73,6 +73,23 @@ afterEach(() => {
 });
 
 describe("gh disclaimer injection", () => {
+  it("passes mutating command help requests without requiring a Thor session", async () => {
+    await withServer(async (url) => {
+      const commands = [
+        ["pr", "create", "--help"],
+        ["pr", "comment", "--help"],
+        ["pr", "review", "-h"],
+      ];
+
+      for (const args of commands) {
+        const { response } = await postGh(url, args);
+        expect(response.status).toBe(200);
+      }
+
+      expect(execCalls.map((call) => call.args)).toEqual(commands);
+    });
+  });
+
   it("fails closed without a Thor session id", async () => {
     await withServer(async (url) => {
       const { response, body } = await postGh(url, ["pr", "comment", "123", "--body", "note"]);

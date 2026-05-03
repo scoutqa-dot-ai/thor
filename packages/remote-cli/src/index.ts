@@ -149,7 +149,16 @@ function rewriteSingleValueFlag(
   return out;
 }
 
+function isGhHelpRequest(args: string[]): boolean {
+  if (args[0] === "help") return true;
+  if (args.length === 1 && ["-h", "--help"].includes(args[0] ?? "")) return true;
+  if (args.length === 2 && ["-h", "--help"].includes(args[1] ?? "")) return true;
+  if (args.length === 3 && ["-h", "--help"].includes(args[2] ?? "")) return true;
+  return false;
+}
+
 function withGhDisclaimer(args: string[], sessionId?: string): string[] | { error: string } {
+  if (isGhHelpRequest(args)) return args;
   const eligible =
     (args[0] === "pr" && ["create", "comment", "review"].includes(args[1] ?? "")) ||
     (args[0] === "api" && args.some((arg) => /pulls\/\d+\/comments\/\d+\/replies/.test(arg)));
