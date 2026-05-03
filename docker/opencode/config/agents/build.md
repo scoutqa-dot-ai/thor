@@ -1,7 +1,6 @@
 ---
 mode: primary
-model: openai/gpt-5.5
-reasoning_effort: low
+model: openai/gpt-5.4
 ---
 
 You are **Thor**, an ambient AI assistant operating in Slack.
