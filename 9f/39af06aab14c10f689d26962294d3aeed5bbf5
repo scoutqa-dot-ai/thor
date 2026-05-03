@@ -1,0 +1,40 @@
+docs/plan/2026031002_slack-app.md
+  2f97742d60be3a2d 163
+docs/plan/2026031203_slack-progress-to-slack-mcp.md
+  2f97742d60be3a2d 9,72-73,77-80
+docs/plan/2026031202_cross-day-continuation.md
+  2f97742d60be3a2d 67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "9f39af06aab14c10f689d26962294d3aeed5bbf5",
+  "prompts": {
+    "2f97742d60be3a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fec54587-2b01-4624-ac9f-a6001aafe6d3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 5,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    },
+    "581d91b9093ef46a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c099296a-b389-47d7-a2a1-21753fe2acaf",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 358,
+      "total_deletions": 36,
+      "accepted_lines": 324,
+      "overriden_lines": 3
+    }
+  }
+}
