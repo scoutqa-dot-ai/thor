@@ -7,11 +7,13 @@ import {
   computeGitAlias,
   createConfigLoader,
   createLogger,
-  deriveGitHubAppBotIdentity,
   formatThorMeta,
   logError,
   logInfo,
-  requireEnv,
+  loadRemoteCliAppEnv,
+  loadRemoteCliEnv,
+  loadRemoteCliGitHubEnv,
+  loadRemoteCliInternalEnv,
   type ConfigLoader,
   type ExecStreamEvent,
   WORKSPACE_CONFIG_PATH,
@@ -48,7 +50,6 @@ import {
 
 const log = createLogger("remote-cli");
 
-const PORT = parseInt(process.env.PORT || "3004", 10);
 const LDCLI_MAX_OUTPUT = 1024 * 1024;
 const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
@@ -56,28 +57,24 @@ const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
-  requireEnv("GITHUB_APP_ID", env);
-  requireEnv("GITHUB_APP_SLUG", env);
-  requireEnv("GITHUB_APP_BOT_ID", env);
-  requireEnv("GITHUB_APP_PRIVATE_KEY_FILE", env);
+  loadRemoteCliGitHubEnv(env);
 }
 
 export function validateRemoteCliInternalEnv(env: NodeJS.ProcessEnv = process.env): void {
-  requireEnv("THOR_INTERNAL_SECRET", env);
+  loadRemoteCliInternalEnv(env);
 }
 
 function deriveBotGitIdentity(env: NodeJS.ProcessEnv = process.env): {
   name: string;
   email: string;
 } {
-  return deriveGitHubAppBotIdentity({
-    slug: requireEnv("GITHUB_APP_SLUG", env),
-    botId: requireEnv("GITHUB_APP_BOT_ID", env),
-  });
+  const config = loadRemoteCliGitHubEnv(env);
+  return { name: config.gitIdentityName, email: config.gitIdentityEmail };
 }
 
 export interface RemoteCliAppConfig {
   getConfig?: ConfigLoader;
+  appEnv?: ReturnType<typeof loadRemoteCliAppEnv>;
   mcp?: Omit<McpServiceDeps, "getConfig">;
 }
 
@@ -363,10 +360,11 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const getConfig = config.getConfig ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const internalSecret = process.env.THOR_INTERNAL_SECRET || "";
+  const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
+  const internalSecret = appEnv.thorInternalSecret;
   const mcpService = createMcpService({
     getConfig,
-    isProduction: process.env.NODE_ENV === "production",
+    isProduction: appEnv.isProduction,
     ...config.mcp,
   });
 
@@ -888,17 +886,16 @@ function hasLdcliOutputOverride(args: string[]): boolean {
 }
 
 export async function startRemoteCliServer(): Promise<void> {
-  validateRemoteCliGitHubEnv();
-  validateRemoteCliInternalEnv();
+  const envConfig = loadRemoteCliEnv();
   const gitIdentity = deriveBotGitIdentity();
   const remoteCli = createRemoteCliApp();
   logInfo(log, "remote_cli_starting", {
-    port: PORT,
+    port: envConfig.port,
     gitIdentityName: gitIdentity.name,
     gitIdentityEmail: gitIdentity.email,
   });
-  const server = remoteCli.app.listen(PORT, () => {
-    logInfo(log, "remote_cli_listening", { port: PORT });
+  const server = remoteCli.app.listen(envConfig.port, () => {
+    logInfo(log, "remote_cli_listening", { port: envConfig.port });
   });
 
   void remoteCli.warmUp();

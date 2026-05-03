@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -195,7 +196,9 @@ async function withWorklogDir<T>(run: (worklogDir: string) => Promise<T>): Promi
 }
 
 async function withWorktreesRoot<T>(run: (worktreesRoot: string) => Promise<T>): Promise<T> {
-  const worktreesRoot = mkdtempSync(join(tmpdir(), "gateway-worktrees-test-"));
+  // realpathSync to match the gateway's internal canonicalization
+  // (macOS /tmp is a symlink to /private/var/folders/...)
+  const worktreesRoot = realpathSync(mkdtempSync(join(tmpdir(), "gateway-worktrees-test-")));
   const prev = process.env.THOR_WORKTREES_ROOT;
   process.env.THOR_WORKTREES_ROOT = worktreesRoot;
 
@@ -1397,7 +1400,7 @@ describe("gateway", () => {
     );
   });
 
-  it("fast-forwards default branch pushes without waking when no notes exist", async () => {
+  it("syncs default branch pushes without waking when no notes exist", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
 
@@ -1432,9 +1435,14 @@ describe("gateway", () => {
       );
     });
 
-    expect(internalExec).toHaveBeenCalledWith({
+    expect(internalExec).toHaveBeenNthCalledWith(1, {
       bin: "git",
-      args: ["pull", "--ff-only", "origin", "refs/heads/main"],
+      args: ["fetch", "origin", "refs/heads/main"],
+      cwd: "/workspace/repos/test-repo",
+    });
+    expect(internalExec).toHaveBeenNthCalledWith(2, {
+      bin: "git",
+      args: ["reset", "--hard", "FETCH_HEAD"],
       cwd: "/workspace/repos/test-repo",
     });
   });
@@ -1518,7 +1526,7 @@ describe("gateway", () => {
     expect(internalExec).not.toHaveBeenCalled();
   });
 
-  it("returns push_sync_failed when pull internalExec rejects", async () => {
+  it("returns push_sync_failed when sync internalExec rejects", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi
       .fn()
@@ -1565,7 +1573,7 @@ describe("gateway", () => {
     });
   });
 
-  it("fast-forwards existing nested branch worktrees and wakes through the repo-scoped GitHub queue when notes exist", async () => {
+  it("syncs existing nested branch worktrees and wakes through the repo-scoped GitHub queue when notes exist", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
 
@@ -1609,9 +1617,14 @@ describe("gateway", () => {
         { githubWebhookSecret: "github-secret", internalExec },
       );
 
-      expect(internalExec).toHaveBeenCalledWith({
+      expect(internalExec).toHaveBeenNthCalledWith(1, {
         bin: "git",
-        args: ["pull", "--ff-only", "origin", "refs/heads/feat/nested"],
+        args: ["fetch", "origin", "refs/heads/feat/nested"],
+        cwd: worktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(2, {
+        bin: "git",
+        args: ["reset", "--hard", "FETCH_HEAD"],
         cwd: worktreeDir,
       });
     });
@@ -1649,9 +1662,14 @@ describe("gateway", () => {
         { githubWebhookSecret: "github-secret", internalExec },
       );
 
-      expect(internalExec).toHaveBeenCalledWith({
+      expect(internalExec).toHaveBeenNthCalledWith(1, {
         bin: "git",
-        args: ["pull", "--ff-only", "origin", "refs/heads/-c"],
+        args: ["fetch", "origin", "refs/heads/-c"],
+        cwd: worktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(2, {
+        bin: "git",
+        args: ["reset", "--hard", "FETCH_HEAD"],
         cwd: worktreeDir,
       });
     });
@@ -1660,7 +1678,7 @@ describe("gateway", () => {
   it("resolves worktrees under a symlinked worktrees root", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
-    const tempRoot = mkdtempSync(join(tmpdir(), "gateway-worktrees-symlink-"));
+    const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), "gateway-worktrees-symlink-")));
     const realRoot = join(tempRoot, "real");
     const linkRoot = join(tempRoot, "link");
     mkdirSync(realRoot, { recursive: true });
@@ -1696,9 +1714,14 @@ describe("gateway", () => {
         { githubWebhookSecret: "github-secret", internalExec },
       );
 
-      expect(internalExec).toHaveBeenCalledWith({
+      expect(internalExec).toHaveBeenNthCalledWith(1, {
         bin: "git",
-        args: ["pull", "--ff-only", "origin", "refs/heads/feat/nested"],
+        args: ["fetch", "origin", "refs/heads/feat/nested"],
+        cwd: realWorktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(2, {
+        bin: "git",
+        args: ["reset", "--hard", "FETCH_HEAD"],
         cwd: realWorktreeDir,
       });
     } finally {

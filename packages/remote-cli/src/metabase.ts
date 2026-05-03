@@ -8,25 +8,15 @@
  *   METABASE_ALLOWED_SCHEMAS — comma-separated schema allowlist (UX filtering only)
  */
 
-import { requireEnv } from "@thor/common";
+import { loadMetabaseEnv } from "@thor/common";
 
 // ── Config (read once at startup, cached) ──────────────────────────────────
 
-let _config: { url: string; apiKey: string; dbId: number; schemas: Set<string> } | null = null;
+let _config: ReturnType<typeof loadMetabaseEnv> | null = null;
 
 function config() {
   if (!_config) {
-    _config = {
-      url: requireEnv("METABASE_URL").replace(/\/+$/, ""),
-      apiKey: requireEnv("METABASE_API_KEY"),
-      dbId: parseInt(requireEnv("METABASE_DATABASE_ID"), 10),
-      schemas: new Set(
-        requireEnv("METABASE_ALLOWED_SCHEMAS")
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-      ),
-    };
+    _config = loadMetabaseEnv();
   }
   return _config;
 }
