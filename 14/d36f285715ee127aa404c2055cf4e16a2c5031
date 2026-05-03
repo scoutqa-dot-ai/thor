@@ -1,0 +1,29 @@
+docker/opencode/config/agents/build.md
+  731eb246ad8ef2de 176-191
+packages/gateway/src/app.test.ts
+  731eb246ad8ef2de 1400,1435,1437-1442,1526,1573,1617,1619-1622,1624,1662,1664-1669,1714,1716-1719,1721
+packages/gateway/src/app.ts
+  731eb246ad8ef2de 799,801,803,810-827
+docs/plan/2026042801_github-push-events.md
+  731eb246ad8ef2de 270,281,288
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "14d36f285715ee127aa404c2055cf4e16a2c5031",
+  "prompts": {
+    "731eb246ad8ef2de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed5e5b12-2cc8-4135-9bf6-2333421ffd6b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 98,
+      "total_deletions": 44,
+      "accepted_lines": 71,
+      "overriden_lines": 0
+    }
+  }
+}
