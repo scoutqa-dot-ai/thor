@@ -19,6 +19,7 @@ export const THOR_CWD_LABEL = "thor-cwd";
 export const THOR_SHA_LABEL = "thor-sha";
 
 let daytonaSingleton: Daytona | null = null;
+let daytonaEnv: ReturnType<typeof loadDaytonaEnv> | null = null;
 const cwdLocks = new Map<string, Promise<void>>();
 
 export function withCwdLock<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
@@ -46,21 +47,26 @@ export class SandboxError extends Error {
   }
 }
 
-function getDaytona(): Daytona {
-  if (daytonaSingleton) {
-    return daytonaSingleton;
-  }
+function getDaytonaEnv(): ReturnType<typeof loadDaytonaEnv> {
+  if (daytonaEnv) return daytonaEnv;
 
-  let config: ReturnType<typeof loadDaytonaEnv>;
   try {
-    config = loadDaytonaEnv();
+    daytonaEnv = loadDaytonaEnv();
+    return daytonaEnv;
   } catch {
     throw new SandboxError(
       "Sandbox auth failed, check DAYTONA_API_KEY",
       "DAYTONA_API_KEY is not configured",
     );
   }
+}
 
+function getDaytona(): Daytona {
+  if (daytonaSingleton) {
+    return daytonaSingleton;
+  }
+
+  const config = getDaytonaEnv();
   daytonaSingleton = new Daytona({
     apiKey: config.apiKey,
     apiUrl: config.apiUrl,
@@ -76,9 +82,10 @@ export async function createSandbox(
 ): Promise<Sandbox> {
   let sandbox: Sandbox | null = null;
   try {
+    const config = getDaytonaEnv();
     sandbox = await getDaytona().create({
       name,
-      snapshot: loadDaytonaEnv().snapshot,
+      snapshot: config.snapshot,
       ephemeral: true,
       autoStopInterval: 15,
       labels,
@@ -504,6 +511,7 @@ export const _testing = {
   parseGitStatus,
   resetDaytona(): void {
     daytonaSingleton = null;
+    daytonaEnv = null;
   },
   resetCwdLocks(): void {
     cwdLocks.clear();
