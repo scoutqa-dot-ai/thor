@@ -96,6 +96,9 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     slack_update = ruleset.classify("slack.com", "/api/chat.update")
     assert slack_update.action == "deny"
 
+    slack_delete = ruleset.classify("slack.com", "/api/chat.delete")
+    assert slack_delete.action == "deny"
+
     slack_unknown = ruleset.classify("slack.com", "/api/users.list")
     assert slack_unknown.action == "deny"
 
