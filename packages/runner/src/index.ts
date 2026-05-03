@@ -429,8 +429,8 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     correlationKey: z.string().optional(),
     /** Direct session ID to resume (bypasses correlation key lookup). */
     sessionId: z.string().optional(),
-    /** If true (default), abort a busy session before sending the prompt.
-     *  If false, return {busy: true} without aborting. */
+    /** If true, abort a busy session before sending the prompt.
+     *  Defaults to false: return {busy: true} without aborting. */
     interrupt: z.boolean().optional(),
     /** Working directory for the OpenCode session. */
     directory: z.string(),
@@ -782,7 +782,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
         if (sessionStatus?.type === "busy") {
           // Non-interrupt triggers don't abort — return busy so gateway can re-enqueue.
-          const shouldInterrupt = parsed.data.interrupt !== false;
+          const shouldInterrupt = parsed.data.interrupt === true;
           if (!shouldInterrupt) {
             logInfo(log, "session_busy_nointerrupt", { sessionId, correlationKey });
             res.json({ busy: true });

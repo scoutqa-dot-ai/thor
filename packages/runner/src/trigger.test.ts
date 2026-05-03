@@ -394,7 +394,7 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("aborts then prompts when a resumed session is busy and interrupt is absent", async () => {
+  it("returns busy without prompting when a resumed session is busy and interrupt is absent", async () => {
     const h = createHarness({
       existingSessions: new Set(["busy-session"]),
       busySessions: new Set(["busy-session"]),
@@ -408,19 +408,20 @@ describe("runner /trigger orchestration", () => {
     ).toEqual({ ok: true });
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: "later",
-        correlationKey: "slack:thread:1710000000.003",
+      const response = await fetch(`${url}/trigger`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt: "later",
+          correlationKey: "slack:thread:1710000000.003",
+          directory: sessionDir,
+        }),
       });
-      expect(result.events.find((e) => e.type === "done")).toMatchObject({
-        sessionId: "busy-session",
-        resumed: true,
-        status: "completed",
-      });
+      expect(await response.json()).toEqual({ busy: true });
     });
 
-    expect(h.aborts).toEqual(["busy-session"]);
-    expect(h.prompts).toHaveLength(1);
+    expect(h.aborts).toHaveLength(0);
+    expect(h.prompts).toHaveLength(0);
   });
 
   it("aborts then prompts when a resumed session is busy and interrupt is true", async () => {
