@@ -39,6 +39,8 @@ import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKey,
+  isForwardableSlackMessage,
+  isSupportedSlackMessageSubtype,
   parseSlackTs,
   SlackEventEnvelopeSchema,
   SlackInteractivityPayloadSchema,
@@ -151,6 +153,10 @@ interface RawBodyRequest extends Request {
 }
 
 type HeaderValue = string | string[] | undefined;
+
+function slackMessageHasFilesMetadata(event: { files?: unknown[] }): boolean {
+  return Array.isArray(event.files) && event.files.length > 0;
+}
 
 function getHeaderSnapshot(req: Request, names: string[]): Record<string, HeaderValue> {
   const headers: Record<string, HeaderValue> = {};
@@ -1116,6 +1122,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     history.metadata = {
       eventId,
       teamId: envelope.data.team_id,
+      subtype: event.type === "message" ? event.subtype : undefined,
     };
 
     // Skip all Slack events when bot user ID is not configured
@@ -1125,9 +1132,21 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    // Ignore empty messages (e.g. bot messages with attachments only)
-    if ("text" in event && event.text === "") {
-      logInfo(log, "event_ignored_empty_text", { eventId });
+    // Ignore empty messages (e.g. bot messages with attachments only), except
+    // user file shares where file metadata is the meaningful payload.
+    if (
+      "text" in event &&
+      event.text === "" &&
+      !(
+        event.type === "message" &&
+        event.subtype === "file_share" &&
+        slackMessageHasFilesMetadata(event)
+      )
+    ) {
+      logInfo(log, "event_ignored_empty_text", {
+        eventId,
+        subtype: event.type === "message" ? event.subtype : undefined,
+      });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
@@ -1185,14 +1204,19 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     // Skip if it's a duplicate of an app_mention (Slack sends both events)
-    if (event.type === "message" && !event.subtype && event.text?.includes(`<@${selfUserId}>`)) {
-      logInfo(log, "event_ignored_mention_duplicate", { eventId });
+    if (
+      event.type === "message" &&
+      isForwardableSlackMessage(event) &&
+      event.text?.includes(`<@${selfUserId}>`)
+    ) {
+      logInfo(log, "event_ignored_mention_duplicate", { eventId, subtype: event.subtype });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
 
-    // Message (no subtype — excludes system events like channel_join)
-    if (event.type === "message" && !event.subtype) {
+    // Message continuations. Supported subtypes are user-authored messages;
+    // unsupported/system subtypes remain ignored below.
+    if (event.type === "message" && isForwardableSlackMessage(event)) {
       const rawKey = getSlackCorrelationKey(event);
       const correlationKey = resolveCorrelationKeys([rawKey]);
       if (correlationKey !== rawKey) {
@@ -1203,7 +1227,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       // slack:thread canonical or alias). Users must @mention to start new conversations.
       const engaged = hasSlackReply(correlationKey);
       if (!engaged) {
-        logInfo(log, "event_ignored_not_engaged", { eventId, correlationKey });
+        logInfo(log, "event_ignored_not_engaged", {
+          eventId,
+          correlationKey,
+          subtype: event.subtype,
+        });
         res.status(200).json({ ok: true, ignored: true });
         return;
       }
@@ -1212,6 +1240,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         eventId,
         teamId: envelope.data.team_id,
         eventType: event.type,
+        subtype: event.subtype,
         channel: event.channel,
         ts: event.ts,
         threadTs: event.thread_ts,
@@ -1235,6 +1264,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       eventId,
       teamId: envelope.data.team_id,
       eventType: event.type,
+      subtype: event.type === "message" ? event.subtype : undefined,
+      supportedSubtype:
+        event.type === "message" ? isSupportedSlackMessageSubtype(event.subtype) : undefined,
     });
     res.status(200).json({ ok: true, ignored: true, eventType: event.type });
   };

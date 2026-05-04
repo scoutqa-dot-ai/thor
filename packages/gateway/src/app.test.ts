@@ -280,6 +280,28 @@ async function withServer<T>(
   }
 }
 
+function slackEventBody(eventId: string, event: Record<string, unknown>): string {
+  return JSON.stringify({
+    type: "event_callback",
+    event_id: eventId,
+    team_id: "T123",
+    event,
+  });
+}
+
+async function postSignedSlackEvent(baseUrl: string, body: string): Promise<Response> {
+  const timestamp = `${Math.floor(Date.now() / 1000)}`;
+  return fetch(`${baseUrl}/slack/events`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Slack-Request-Timestamp": timestamp,
+      "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+    },
+    body,
+  });
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   mockHasSlackReply = false;
@@ -2740,6 +2762,183 @@ describe("gateway", () => {
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
       expect(triggerBody.interrupt).toBe(false);
+    });
+  });
+
+  it("enqueues file_share messages with file metadata in engaged threads", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    mockHasSlackReply = true;
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = slackEventBody("EvFileShare", {
+        type: "message",
+        subtype: "file_share",
+        user: "U123",
+        text: "",
+        ts: "1710000000.003",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+        files: [
+          {
+            id: "F123",
+            name: "debug.log",
+            mimetype: "text/plain",
+            url_private: "https://files.slack.com/files-pri/T123-F123/debug.log",
+            custom_slack_field: { keep: true },
+          },
+        ],
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+
+      await queue.flush();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+      expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
+      const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
+      expect(JSON.parse(promptJson)).toMatchObject({
+        subtype: "file_share",
+        text: "",
+        files: [{ id: "F123", custom_slack_field: { keep: true } }],
+      });
+    });
+  });
+
+  it("ignores file_share messages in unengaged threads", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    mockHasSlackReply = false;
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = slackEventBody("EvFileShareUnengaged", {
+        type: "message",
+        subtype: "file_share",
+        user: "U123",
+        text: "",
+        ts: "1710000000.004",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+        files: [{ id: "F123", name: "debug.log" }],
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+      await queue.flush();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("routes thread_broadcast messages to the original thread when engaged", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    mockHasSlackReply = true;
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = slackEventBody("EvThreadBroadcast", {
+        type: "message",
+        subtype: "thread_broadcast",
+        user: "U123",
+        text: "sharing this back to channel",
+        ts: "1710000000.900",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+        root: { ts: "1710000000.001", text: "original thread" },
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+
+      await queue.flush();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+      expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
+      expect(triggerBody.prompt).toContain("thread_broadcast");
+      expect(triggerBody.prompt).toContain("original thread");
+    });
+  });
+
+  it("ignores thread_broadcast messages in unengaged threads", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    mockHasSlackReply = false;
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = slackEventBody("EvThreadBroadcastUnengaged", {
+        type: "message",
+        subtype: "thread_broadcast",
+        user: "U123",
+        text: "sharing this back to channel",
+        ts: "1710000000.900",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+      await queue.flush();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("ignores supported subtype messages that duplicate an app_mention", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    mockHasSlackReply = true;
+
+    await withServer(fetchImpl, async (baseUrl) => {
+      const body = slackEventBody("EvSubtypeDup", {
+        type: "message",
+        subtype: "thread_broadcast",
+        user: "U123",
+        text: "<@U0BOTEXAMPLE> please see this",
+        ts: "1710000000.005",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("ignores unsupported message subtypes", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    mockHasSlackReply = true;
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = slackEventBody("EvMessageChanged", {
+        type: "message",
+        subtype: "message_changed",
+        user: "U123",
+        text: "edited text",
+        ts: "1710000000.006",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true, eventType: "message" });
+
+      await queue.flush();
+      expect(fetchImpl).not.toHaveBeenCalled();
     });
   });
 
