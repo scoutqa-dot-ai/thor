@@ -94,7 +94,7 @@ export function parseOwnerFromRemoteUrl(url: string): string | undefined {
 
 export function parseOwnerRepoFromRemoteUrl(url: string): OwnerRepo | undefined {
   // SSH: git@github.com:owner/repo.git
-  const sshMatch = url.match(/^git@([^:]+):([^/]+)\/([^/]+)$/);
+  const sshMatch = url.match(/^git@([^:]+):([^/]+)\/([^/]+)\/?$/);
   if (sshMatch) return normalizeOwnerRepo(sshMatch[1], sshMatch[2], sshMatch[3]);
 
   // HTTPS: https://github.com/owner/repo or https://github.com/owner/repo.git

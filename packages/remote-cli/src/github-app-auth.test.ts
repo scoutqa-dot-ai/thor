@@ -67,6 +67,11 @@ describe("parseOwnerRepoFromRemoteUrl", () => {
       owner: "acme",
       repo: "web",
     });
+    expect(parseOwnerRepoFromRemoteUrl("git@github.com:acme/web.git/")).toEqual({
+      host: "github.com",
+      owner: "acme",
+      repo: "web",
+    });
   });
 
   it("includes non-GitHub remote hosts for policy-level checks", () => {
