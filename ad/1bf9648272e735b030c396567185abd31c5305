@@ -1,0 +1,25 @@
+packages/common/src/correlation.test.ts
+  356577b4ecc201dc 98-115
+packages/common/src/correlation.ts
+  356577b4ecc201dc 116-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ad1bf9648272e735b030c396567185abd31c5305",
+  "prompts": {
+    "356577b4ecc201dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21a5e140-a439-4111-b61a-9b49173d7e81",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 1,
+      "accepted_lines": 24,
+      "overriden_lines": 0
+    }
+  }
+}
