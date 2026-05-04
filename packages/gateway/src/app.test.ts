@@ -1445,7 +1445,15 @@ describe("gateway", () => {
 
   it("fast-forwards default branch pushes without waking when no session alias exists", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+    const internalExec = vi.fn().mockImplementation((req: { args: string[] }) => {
+      if (req.args[0] === "rev-parse") {
+        return Promise.resolve({ stdout: "deadbeef\n", stderr: "", exitCode: 0 });
+      }
+      if (req.args[0] === "merge-base") {
+        return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+      }
+      return Promise.resolve({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
 
     await withWorklogDir(async (worklogDir) => {
       await withServer(
@@ -1466,11 +1474,11 @@ describe("gateway", () => {
           expect(response.status).toBe(200);
           expect(await response.json()).toEqual({
             ok: true,
-            status: "push_wake_skipped_no_session",
+            status: "push_sync_default_branch_fast_forwarded",
           });
           expect(readQueuedEvents(queueDir)).toHaveLength(0);
           expect(readGitHubIngestedEntries(worklogDir)).toMatchObject([
-            { reason: "push_wake_skipped_no_session", eventType: "push" },
+            { reason: "push_sync_default_branch_fast_forwarded", eventType: "push" },
           ]);
           expect(readGitHubIgnoredEntries(worklogDir)).toHaveLength(0);
         },
@@ -1480,13 +1488,76 @@ describe("gateway", () => {
 
     expect(internalExec).toHaveBeenNthCalledWith(1, {
       bin: "git",
-      args: ["fetch", "origin", "refs/heads/main"],
+      args: ["rev-parse", "HEAD"],
       cwd: "/workspace/repos/test-repo",
     });
     expect(internalExec).toHaveBeenNthCalledWith(2, {
       bin: "git",
+      args: ["fetch", "origin", "refs/heads/main"],
+      cwd: "/workspace/repos/test-repo",
+    });
+    expect(internalExec).toHaveBeenNthCalledWith(3, {
+      bin: "git",
+      args: ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"],
+      cwd: "/workspace/repos/test-repo",
+    });
+    expect(internalExec).toHaveBeenNthCalledWith(4, {
+      bin: "git",
       args: ["reset", "--hard", "FETCH_HEAD"],
       cwd: "/workspace/repos/test-repo",
+    });
+  });
+
+  it("skips work when local HEAD already matches the push commit", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockResolvedValue({
+      stdout: "2222222222222222222222222222222222222222\n",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeDir = join(worktreesRoot, "test-repo", "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
+      notesKeys.add("git:branch:test-repo:feat/nested");
+
+      await withWorklogDir(async (worklogDir) => {
+        await withServer(
+          fetchImpl,
+          async (baseUrl, _queue, queueDir) => {
+            const body = pushWebhookBody();
+            const response = await fetch(`${baseUrl}/github/webhook`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+                "X-GitHub-Delivery": "delivery-push-already-synced",
+                "X-GitHub-Event": "push",
+              },
+              body,
+            });
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({
+              ok: true,
+              ignored: true,
+              status: "push_sync_already_up_to_date",
+            });
+            expect(readQueuedEvents(queueDir)).toHaveLength(0);
+            expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
+              { reason: "push_sync_already_up_to_date", eventType: "push" },
+            ]);
+          },
+          { githubWebhookSecret: "github-secret", internalExec },
+        );
+      });
+
+      expect(internalExec).toHaveBeenCalledTimes(1);
+      expect(internalExec).toHaveBeenNthCalledWith(1, {
+        bin: "git",
+        args: ["rev-parse", "HEAD"],
+        cwd: worktreeDir,
+      });
     });
   });
 
@@ -1618,7 +1689,15 @@ describe("gateway", () => {
 
   it("fast-forwards existing nested branch worktrees and wakes through the repo-scoped GitHub queue when a session alias exists", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+    const internalExec = vi.fn().mockImplementation((req: { args: string[] }) => {
+      if (req.args[0] === "rev-parse") {
+        return Promise.resolve({ stdout: "deadbeef\n", stderr: "", exitCode: 0 });
+      }
+      if (req.args[0] === "merge-base") {
+        return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+      }
+      return Promise.resolve({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
 
     await withWorktreesRoot(async (worktreesRoot) => {
       const worktreeRoot = join(worktreesRoot, "test-repo");
@@ -1662,10 +1741,20 @@ describe("gateway", () => {
 
       expect(internalExec).toHaveBeenNthCalledWith(1, {
         bin: "git",
-        args: ["fetch", "origin", "refs/heads/feat/nested"],
+        args: ["rev-parse", "HEAD"],
         cwd: worktreeDir,
       });
       expect(internalExec).toHaveBeenNthCalledWith(2, {
+        bin: "git",
+        args: ["fetch", "origin", "refs/heads/feat/nested"],
+        cwd: worktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(3, {
+        bin: "git",
+        args: ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"],
+        cwd: worktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(4, {
         bin: "git",
         args: ["reset", "--hard", "FETCH_HEAD"],
         cwd: worktreeDir,
@@ -1673,9 +1762,65 @@ describe("gateway", () => {
     });
   });
 
+  it("triggers worktree wake with interrupt when a force-push diverges", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockImplementation((req: { args: string[] }) => {
+      if (req.args[0] === "rev-parse") {
+        return Promise.resolve({ stdout: "deadbeef\n", stderr: "", exitCode: 0 });
+      }
+      if (req.args[0] === "merge-base") {
+        return Promise.resolve({ stdout: "", stderr: "", exitCode: 1 });
+      }
+      return Promise.resolve({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
+
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeRoot = join(worktreesRoot, "test-repo");
+      const worktreeDir = join(worktreeRoot, "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
+      notesKeys.add("git:branch:test-repo:feat/nested");
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pushWebhookBody({ forced: true });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-force",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, status: "push_wake_triggered" });
+          expect(readQueuedEvents(queueDir)).toMatchObject([
+            {
+              id: "delivery-push-force",
+              source: "github",
+              correlationKey: "git:branch:test-repo:feat/nested",
+              interrupt: true,
+            },
+          ]);
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+    });
+  });
+
   it("uses a full branch ref for push sync so dash-prefixed branch names are not parsed as options", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+    const internalExec = vi.fn().mockImplementation((req: { args: string[] }) => {
+      if (req.args[0] === "rev-parse") {
+        return Promise.resolve({ stdout: "deadbeef\n", stderr: "", exitCode: 0 });
+      }
+      if (req.args[0] === "merge-base") {
+        return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+      }
+      return Promise.resolve({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
 
     await withWorktreesRoot(async (worktreesRoot) => {
       const worktreeDir = join(worktreesRoot, "test-repo", "-c");
@@ -1707,10 +1852,20 @@ describe("gateway", () => {
 
       expect(internalExec).toHaveBeenNthCalledWith(1, {
         bin: "git",
-        args: ["fetch", "origin", "refs/heads/-c"],
+        args: ["rev-parse", "HEAD"],
         cwd: worktreeDir,
       });
       expect(internalExec).toHaveBeenNthCalledWith(2, {
+        bin: "git",
+        args: ["fetch", "origin", "refs/heads/-c"],
+        cwd: worktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(3, {
+        bin: "git",
+        args: ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"],
+        cwd: worktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(4, {
         bin: "git",
         args: ["reset", "--hard", "FETCH_HEAD"],
         cwd: worktreeDir,
@@ -1720,7 +1875,15 @@ describe("gateway", () => {
 
   it("resolves worktrees under a symlinked worktrees root", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+    const internalExec = vi.fn().mockImplementation((req: { args: string[] }) => {
+      if (req.args[0] === "rev-parse") {
+        return Promise.resolve({ stdout: "deadbeef\n", stderr: "", exitCode: 0 });
+      }
+      if (req.args[0] === "merge-base") {
+        return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+      }
+      return Promise.resolve({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
     const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), "gateway-worktrees-symlink-")));
     const realRoot = join(tempRoot, "real");
     const linkRoot = join(tempRoot, "link");
@@ -1759,10 +1922,20 @@ describe("gateway", () => {
 
       expect(internalExec).toHaveBeenNthCalledWith(1, {
         bin: "git",
-        args: ["fetch", "origin", "refs/heads/feat/nested"],
+        args: ["rev-parse", "HEAD"],
         cwd: realWorktreeDir,
       });
       expect(internalExec).toHaveBeenNthCalledWith(2, {
+        bin: "git",
+        args: ["fetch", "origin", "refs/heads/feat/nested"],
+        cwd: realWorktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(3, {
+        bin: "git",
+        args: ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"],
+        cwd: realWorktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(4, {
         bin: "git",
         args: ["reset", "--hard", "FETCH_HEAD"],
         cwd: realWorktreeDir,

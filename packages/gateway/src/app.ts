@@ -379,8 +379,11 @@ async function resolveExistingWorktreePath(
 }
 
 type PushStatus =
-  | "push_sync_default_branch_pulled"
-  | "push_sync_worktree_pulled"
+  | "push_sync_already_up_to_date"
+  | "push_sync_default_branch_fast_forwarded"
+  | "push_sync_default_branch_reset"
+  | "push_sync_worktree_fast_forwarded"
+  | "push_sync_worktree_reset"
   | "push_sync_worktree_missing"
   | "push_sync_non_branch_ref_ignored"
   | "push_sync_failed"
@@ -394,6 +397,7 @@ type PushStatus =
   | "push_delete_cleanup_failed";
 
 const IGNORED_PUSH_STATUSES = new Set<PushStatus>([
+  "push_sync_already_up_to_date",
   "push_sync_worktree_missing",
   "push_sync_non_branch_ref_ignored",
   "push_sync_failed",
@@ -802,6 +806,28 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return { status: "push_sync_worktree_missing", ignored: true };
     }
 
+    let headBefore: string;
+    try {
+      const headResult = await execGit({
+        bin: "git",
+        args: ["rev-parse", "HEAD"],
+        cwd: targetDir,
+      });
+      if (headResult.exitCode !== 0) {
+        record("push_sync_failed", { targetDir, exitCode: headResult.exitCode });
+        return { status: "push_sync_failed", ignored: true };
+      }
+      headBefore = headResult.stdout.trim();
+    } catch (error) {
+      record("push_sync_failed", { targetDir, ...errorToMetadata(error) });
+      return { status: "push_sync_failed", ignored: true };
+    }
+
+    if (headBefore && headBefore === event.after) {
+      record("push_sync_already_up_to_date", { targetDir, head: headBefore });
+      return { status: "push_sync_already_up_to_date", ignored: true };
+    }
+
     let fetchResult: Awaited<ReturnType<InternalExecClient>>;
     try {
       fetchResult = await execGit({
@@ -815,6 +841,26 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
     if (fetchResult.exitCode !== 0) {
       record("push_sync_failed", { targetDir, exitCode: fetchResult.exitCode });
+      return { status: "push_sync_failed", ignored: true };
+    }
+
+    let canFastForward: boolean;
+    try {
+      const ancestorResult = await execGit({
+        bin: "git",
+        args: ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"],
+        cwd: targetDir,
+      });
+      if (ancestorResult.exitCode === 0) {
+        canFastForward = true;
+      } else if (ancestorResult.exitCode === 1) {
+        canFastForward = false;
+      } else {
+        record("push_sync_failed", { targetDir, exitCode: ancestorResult.exitCode });
+        return { status: "push_sync_failed", ignored: true };
+      }
+    } catch (error) {
+      record("push_sync_failed", { targetDir, ...errorToMetadata(error) });
       return { status: "push_sync_failed", ignored: true };
     }
 
@@ -835,9 +881,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     const syncStatus: PushStatus = isDefaultBranch
-      ? "push_sync_default_branch_pulled"
-      : "push_sync_worktree_pulled";
-    record(syncStatus, { targetDir });
+      ? canFastForward
+        ? "push_sync_default_branch_fast_forwarded"
+        : "push_sync_default_branch_reset"
+      : canFastForward
+        ? "push_sync_worktree_fast_forwarded"
+        : "push_sync_worktree_reset";
+    record(syncStatus, { targetDir, fastForward: canFastForward, headBefore });
+
+    if (isDefaultBranch) {
+      return { status: syncStatus };
+    }
 
     const rawKey = buildCorrelationKey(localRepo, branch);
     const correlationKey = resolveCorrelationKeys([rawKey]);
@@ -856,9 +910,14 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       sourceTs,
       readyAt: sourceTs,
       delayMs: 0,
-      interrupt: false,
+      interrupt: !canFastForward,
     });
-    record("push_wake_triggered", { targetDir, rawKey, correlationKey });
+    record("push_wake_triggered", {
+      targetDir,
+      rawKey,
+      correlationKey,
+      interrupt: !canFastForward,
+    });
     return { status: "push_wake_triggered" };
   };
 
