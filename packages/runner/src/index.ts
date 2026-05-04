@@ -12,7 +12,7 @@ import type {
   ToolStateError,
 } from "@opencode-ai/sdk";
 import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   createLogger,
