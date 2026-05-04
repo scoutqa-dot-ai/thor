@@ -95,6 +95,32 @@ const PullRequestReviewTypedEnvelopeSchema = PullRequestReviewEnvelopeSchema.ext
   action: z.literal("submitted"),
 });
 
+export const PullRequestClosedEventSchema = z.object({
+  event_type: z.literal("pull_request"),
+  action: z.literal("closed"),
+  installation: GitHubInstallationSchema,
+  repository: GitHubRepositorySchema,
+  sender: GitHubSenderSchema,
+  pull_request: z.object({
+    number: z.number().int().positive(),
+    merged: z.boolean(),
+    merged_at: IsoDateTimeSchema.nullable(),
+    merge_commit_sha: z.string().nullable(),
+    closed_at: IsoDateTimeSchema,
+    html_url: z.string(),
+    user: GitHubUserSchema,
+    head: z.object({
+      ref: z.string(),
+      sha: z.string(),
+      repo: z.object({ full_name: z.string() }),
+    }),
+    base: z.object({
+      ref: z.string(),
+      repo: z.object({ full_name: z.string() }),
+    }),
+  }),
+});
+
 const CheckSuitePullRequestSchema = z.object({
   number: z.number().int().positive(),
   url: z.string().optional(),
@@ -173,6 +199,7 @@ function withEventType(raw: unknown): unknown {
   if ("pull_request" in obj && "review" in obj) {
     return { ...obj, event_type: "pull_request_review" };
   }
+  if ("pull_request" in obj) return { ...obj, event_type: "pull_request" };
   return raw;
 }
 
@@ -182,6 +209,7 @@ export const GitHubWebhookEnvelopeSchema = z.preprocess(
     IssueCommentTypedEnvelopeSchema,
     PullRequestReviewCommentTypedEnvelopeSchema,
     PullRequestReviewTypedEnvelopeSchema,
+    PullRequestClosedEventSchema,
     CheckSuiteCompletedEventSchema,
     PushEventSchema,
   ]),
@@ -195,6 +223,7 @@ export type PullRequestReviewCommentEvent = z.infer<
   typeof PullRequestReviewCommentTypedEnvelopeSchema
 >;
 export type PullRequestReviewEvent = z.infer<typeof PullRequestReviewTypedEnvelopeSchema>;
+export type PullRequestClosedEvent = z.infer<typeof PullRequestClosedEventSchema>;
 export type CheckSuiteCompletedEvent = z.infer<typeof CheckSuiteCompletedEventSchema>;
 export type PushEvent = z.infer<typeof PushEventSchema>;
 
@@ -272,9 +301,11 @@ export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number {
     ? raw.comment.created_at
     : isPullRequestReviewCommentEvent(raw)
       ? raw.comment.created_at
-      : isCheckSuiteCompletedEvent(raw)
-        ? raw.check_suite.updated_at
-        : raw.review.submitted_at;
+      : isPullRequestClosedEvent(raw)
+        ? raw.pull_request.closed_at
+        : isCheckSuiteCompletedEvent(raw)
+          ? raw.check_suite.updated_at
+          : raw.review.submitted_at;
   return Date.parse(iso);
 }
 
@@ -282,12 +313,19 @@ export function getGitHubEventBranch(raw: GitHubWebhookEvent): string | null {
   if (isPushEvent(raw)) return extractGitHubBranchFromRef(raw.ref);
   if (isIssueCommentEvent(raw)) return null;
   if (isCheckSuiteCompletedEvent(raw)) return raw.check_suite.head_branch?.trim() || null;
+  if (isPullRequestClosedEvent(raw)) return raw.pull_request.head.ref;
   return raw.pull_request.head.ref;
 }
 
 export function getGitHubEventType(
   raw: GitHubWebhookEvent,
-): "issue_comment" | "pull_request_review_comment" | "pull_request_review" | "check_suite" | "push" {
+):
+  | "issue_comment"
+  | "pull_request_review_comment"
+  | "pull_request_review"
+  | "pull_request"
+  | "check_suite"
+  | "push" {
   return raw.event_type;
 }
 
@@ -368,6 +406,7 @@ export function shouldIgnoreGitHubEvent(
 ): GitHubIgnoreReason | null {
   if (isPushEvent(raw)) return null;
   if (isCheckSuiteCompletedEvent(raw)) return null;
+  if (isPullRequestClosedEvent(raw)) return null;
   if (isIssueCommentEvent(raw)) return shouldIgnoreIssueCommentEvent(raw, options);
   if (isPullRequestReviewCommentEvent(raw)) {
     return shouldIgnorePullRequestReviewCommentEvent(raw, options);
@@ -397,4 +436,8 @@ export function isPullRequestReviewCommentEvent(
 
 export function isPullRequestReviewEvent(raw: GitHubWebhookEvent): raw is PullRequestReviewEvent {
   return "pull_request" in raw && "review" in raw;
+}
+
+export function isPullRequestClosedEvent(raw: GitHubWebhookEvent): raw is PullRequestClosedEvent {
+  return raw.event_type === "pull_request";
 }
