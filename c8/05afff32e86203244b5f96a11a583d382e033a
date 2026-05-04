@@ -1,0 +1,31 @@
+docker/opencode/config/agents/build.md
+  123f0e83d7ff175f 187
+docs/plan/2026042801_github-push-events.md
+  123f0e83d7ff175f 158-162,165-167,249-253,257-258,276-278,288-289,297
+docs/github-app-webhooks.md
+  123f0e83d7ff175f 68,139
+packages/gateway/src/app.ts
+  123f0e83d7ff175f 376-380,394,803-824,841-857,878-888,907-913
+packages/gateway/src/app.test.ts
+  123f0e83d7ff175f 1403,1405-1412,1434,1438,1448,1452-1461,1468-1519,1651-1657,1707-1714,1724-1769,1774-1780,1818-1825,1837-1843,1888-1895
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "c805afff32e86203244b5f96a11a583d382e033a",
+  "prompts": {
+    "123f0e83d7ff175f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4cde2099-6ec6-4d7a-825e-22dc4b42d605",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 282,
+      "total_deletions": 39,
+      "accepted_lines": 272,
+      "overriden_lines": 0
+    }
+  }
+}
