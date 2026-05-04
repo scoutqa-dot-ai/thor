@@ -1,4 +1,7 @@
-import { realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { normalize as normalizePosix } from "node:path/posix";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import {
@@ -604,6 +607,29 @@ describe("validateGhArgs", () => {
 
   const HEAD_CWD = "/workspace/worktrees/myrepo/feat/test";
 
+  function withOriginRemote(remoteUrl: string, fn: (cwd: string) => void): void {
+    const cwd = mkdtempSync(join(tmpdir(), "thor-policy-gh-"));
+    try {
+      execFileSync("/usr/bin/git", ["init"], { cwd, stdio: "ignore" });
+      execFileSync("/usr/bin/git", ["remote", "add", "origin", remoteUrl], {
+        cwd,
+        stdio: "ignore",
+      });
+      fn(cwd);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }
+
+  function withTempCwd(fn: (cwd: string) => void): void {
+    const cwd = mkdtempSync(join(tmpdir(), "thor-policy-gh-"));
+    try {
+      fn(cwd);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }
+
   describe("allowed commands", () => {
     it("allows common gh read-only workflows", () => {
       const allowedCommands: string[][] = [
@@ -829,6 +855,32 @@ describe("validateGhArgs", () => {
           "body=Done.",
         ]),
       ).toBeNull();
+      withOriginRemote("git@github.com:acme/web.git", (cwd) => {
+        expect(
+          validateGhArgs(
+            [
+              "api",
+              "repos/acme/web/pulls/53/comments/123/replies",
+              "--method",
+              "POST",
+              "-f",
+              "body=Thanks, I fixed this.",
+            ],
+            cwd,
+          ),
+        ).toBeNull();
+        expect(
+          validateGhArgs(
+            [
+              "api",
+              "/repos/ACME/WEB/pulls/53/comments/123/replies",
+              "--method=POST",
+              "--raw-field=body=Thanks, I fixed this.",
+            ],
+            cwd,
+          ),
+        ).toBeNull();
+      });
     });
 
     it("does not route body values that look like help flags into the help path", () => {
@@ -1140,6 +1192,82 @@ describe("validateGhArgs", () => {
     });
 
     it("blocks unsafe gh api review-comment reply shapes", () => {
+      withOriginRemote("git@github.com:acme/web.git", (cwd) => {
+        expectGhDenied(
+          [
+            "api",
+            "repos/acme/other/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+        expectGhDenied(
+          [
+            "api",
+            "repos/other/web/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+      });
+      withOriginRemote("git@gitlab.com:acme/web.git", (cwd) => {
+        expectGhDenied(
+          [
+            "api",
+            "repos/acme/web/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+      });
+      withOriginRemote("https://example.com/acme/web.git", (cwd) => {
+        expectGhDenied(
+          [
+            "api",
+            "repos/acme/web/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+      });
+      withOriginRemote("not-a-url", (cwd) => {
+        expectGhDenied(
+          [
+            "api",
+            "repos/acme/web/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+      });
+      withTempCwd((cwd) => {
+        expectGhDenied(
+          [
+            "api",
+            "repos/acme/web/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+      });
       expectGhDenied([
         "api",
         "repos/acme/web/pulls/53/comments/123/replies",
