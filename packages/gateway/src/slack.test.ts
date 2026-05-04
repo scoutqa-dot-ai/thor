@@ -1,6 +1,11 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { getSlackCorrelationKey, verifySlackSignature } from "./slack.js";
+import {
+  getSlackCorrelationKey,
+  isForwardableSlackMessage,
+  SlackEventEnvelopeSchema,
+  verifySlackSignature,
+} from "./slack.js";
 
 function sign(body: string, secret: string, timestamp: string): string {
   return `v0=${createHmac("sha256", secret).update(`v0:${timestamp}:${body}`).digest("hex")}`;
@@ -51,5 +56,59 @@ describe("slack helpers", () => {
         channel: "C123",
       }),
     ).toBe("slack:thread:1710000000.000");
+  });
+
+  it("preserves file_share metadata and unknown Slack fields", () => {
+    const parsed = SlackEventEnvelopeSchema.parse({
+      type: "event_callback",
+      event_id: "EvFile",
+      team_id: "T123",
+      event: {
+        type: "message",
+        subtype: "file_share",
+        user: "U123",
+        text: "",
+        ts: "1710000000.002",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+        upload: true,
+        files: [
+          {
+            id: "F123",
+            name: "debug.log",
+            mimetype: "text/plain",
+            url_private: "https://files.slack.com/files-pri/T123-F123/debug.log",
+            extra_file_field: { nested: true },
+          },
+        ],
+      },
+    });
+
+    expect(parsed.event).toMatchObject({
+      subtype: "file_share",
+      text: "",
+      upload: true,
+      files: [{ id: "F123", extra_file_field: { nested: true } }],
+    });
+  });
+
+  it("classifies only normal messages and supported subtypes as forwardable", () => {
+    expect(isForwardableSlackMessage({ type: "message", ts: "1", channel: "C123" })).toBe(true);
+    expect(
+      isForwardableSlackMessage({
+        type: "message",
+        subtype: "thread_broadcast",
+        ts: "1",
+        channel: "C123",
+      }),
+    ).toBe(true);
+    expect(
+      isForwardableSlackMessage({
+        type: "message",
+        subtype: "message_changed",
+        ts: "1",
+        channel: "C123",
+      }),
+    ).toBe(false);
   });
 });

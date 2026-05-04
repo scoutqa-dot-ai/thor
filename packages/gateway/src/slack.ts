@@ -3,27 +3,47 @@ import { z } from "zod/v4";
 
 const SLACK_SIGNATURE_VERSION = "v0";
 
-const SlackAppMentionEventSchema = z.object({
-  type: z.literal("app_mention"),
-  user: z.string(),
-  text: z.string(),
-  ts: z.string(),
-  channel: z.string(),
-  thread_ts: z.string().optional(),
-  bot_id: z.string().optional(),
-});
+const SlackAppMentionEventSchema = z
+  .object({
+    type: z.literal("app_mention"),
+    user: z.string(),
+    text: z.string(),
+    ts: z.string(),
+    channel: z.string(),
+    thread_ts: z.string().optional(),
+    bot_id: z.string().optional(),
+  })
+  .passthrough();
 
-const SlackMessageEventSchema = z.object({
-  type: z.literal("message"),
-  user: z.string().optional(),
-  text: z.string().optional(),
-  ts: z.string(),
-  channel: z.string(),
-  thread_ts: z.string().optional(),
-  channel_type: z.enum(["channel", "im", "group", "mpim"]).optional(),
-  bot_id: z.string().optional(),
-  subtype: z.string().optional(),
-});
+export const SUPPORTED_SLACK_MESSAGE_SUBTYPES = ["file_share", "thread_broadcast"] as const;
+
+const SlackFileMetadataSchema = z
+  .object({
+    id: z.string().optional(),
+    name: z.string().optional(),
+    title: z.string().optional(),
+    mimetype: z.string().optional(),
+    filetype: z.string().optional(),
+    url_private: z.string().optional(),
+    permalink: z.string().optional(),
+    size: z.number().optional(),
+  })
+  .passthrough();
+
+const SlackMessageEventSchema = z
+  .object({
+    type: z.literal("message"),
+    user: z.string().optional(),
+    text: z.string().optional(),
+    ts: z.string(),
+    channel: z.string(),
+    thread_ts: z.string().optional(),
+    channel_type: z.enum(["channel", "im", "group", "mpim"]).optional(),
+    bot_id: z.string().optional(),
+    subtype: z.string().optional(),
+    files: z.array(SlackFileMetadataSchema).optional(),
+  })
+  .passthrough();
 
 const SlackReactionEventSchema = z.object({
   type: z.enum(["reaction_added", "reaction_removed"]),
@@ -147,6 +167,19 @@ export function getSlackThreadTs(event: SlackThreadEvent): string {
 
 export function getSlackCorrelationKey(event: SlackThreadEvent): string {
   return `slack:thread:${getSlackThreadTs(event)}`;
+}
+
+export function isSupportedSlackMessageSubtype(
+  subtype: string | undefined,
+): subtype is (typeof SUPPORTED_SLACK_MESSAGE_SUBTYPES)[number] {
+  return (
+    subtype !== undefined &&
+    (SUPPORTED_SLACK_MESSAGE_SUBTYPES as readonly string[]).includes(subtype)
+  );
+}
+
+export function isForwardableSlackMessage(event: SlackMessageEvent): boolean {
+  return event.subtype === undefined || isSupportedSlackMessageSubtype(event.subtype);
 }
 
 export function parseSlackTs(ts: string): number {
