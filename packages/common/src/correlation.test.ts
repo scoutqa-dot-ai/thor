@@ -95,6 +95,24 @@ describe("correlation key resolution", () => {
     }
   });
 
+  it("appendCorrelationAlias resolves child sessions via opencode.subsession to the parent's anchor", () => {
+    bindSession("parent-session", anchor1);
+    expect(
+      appendAlias({
+        aliasType: "opencode.subsession",
+        aliasValue: "child-session",
+        anchorId: anchor1,
+      }),
+    ).toEqual({ ok: true });
+
+    // Delegated subagent's git push: x-thor-session-id is the child's id.
+    expect(appendCorrelationAlias("child-session", "git:branch:thor:feat-x")).toEqual({ ok: true });
+
+    // Future GitHub events for the branch route to the parent's anchor.
+    expect(resolveAnchorForCorrelationKey("git:branch:thor:feat-x")).toBe(anchor1);
+    expect(resolveSessionForCorrelationKey("git:branch:thor:feat-x")).toBe("parent-session");
+  });
+
   it("does not treat untyped keys as alias values", () => {
     bindSession("session-1", anchor1);
 

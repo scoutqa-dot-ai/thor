@@ -113,7 +113,12 @@ export function appendCorrelationAlias(
   correlationKey: string,
 ): { ok: true } | { ok: false; error: Error } {
   if (!aliasForCorrelationKey(correlationKey)) return { ok: true };
-  const anchorId = resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId });
+  // Delegated subagents run under an opencode.subsession; fall back so their
+  // git/Slack producer calls bind to the parent's anchor instead of being
+  // silently dropped.
+  const anchorId =
+    resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) ??
+    resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId });
   if (!anchorId) {
     return {
       ok: false,
