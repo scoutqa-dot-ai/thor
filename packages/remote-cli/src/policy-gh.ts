@@ -7,6 +7,7 @@
  */
 
 import { normalize as normalizePosix } from "node:path/posix";
+import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
 import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
 
 interface DenyGuidance {
@@ -16,13 +17,16 @@ interface DenyGuidance {
 
 interface GhApiMutationShape {
   endpoint: RegExp;
-  validate: (args: string[]) => string | null;
+  validate: (args: string[], cwd?: string) => string | null;
 }
 
 const USING_GH_HINT = "Load skill using-gh for the supported command patterns.";
 const DIGITS_ONLY = /^\d+$/;
+const GH_API_DEFAULT_HOST = "github.com";
 const CURRENT_REPO_REVIEW_REPLY_ENDPOINT =
   /^\/?repos\/\{owner\}\/\{repo\}\/pulls\/(\d+)\/comments\/(\d+)\/replies$/;
+const EXPLICIT_REVIEW_REPLY_ENDPOINT =
+  /^\/?repos\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\/pulls\/(\d+)\/comments\/(\d+)\/replies$/;
 const PROTECTED_PR_HEAD_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
 const WORKTREE_PREFIX = "/workspace/worktrees/";
 
@@ -30,6 +34,10 @@ const ALLOWED_GH_API_MUTATION_SHAPES: readonly GhApiMutationShape[] = [
   {
     endpoint: CURRENT_REPO_REVIEW_REPLY_ENDPOINT,
     validate: validateGhApiReviewReplyArgs,
+  },
+  {
+    endpoint: EXPLICIT_REVIEW_REPLY_ENDPOINT,
+    validate: validateGhApiExplicitReviewReplyArgs,
   },
 ];
 
@@ -164,7 +172,7 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
 
   switch (key) {
     case "api":
-      return validateGhApiArgs(args);
+      return validateGhApiArgs(args, cwd);
     case "auth status":
       return matchesExactArgs(args, ["auth", "status"]) ? null : denyMessage("gh auth status");
     case "pr create":
@@ -469,7 +477,7 @@ function validateGhWorkflowRunArgs(args: string[]): string | null {
   return null;
 }
 
-function validateGhApiArgs(args: string[]): string | null {
+function validateGhApiArgs(args: string[], cwd?: string): string | null {
   const endpoint = args[1];
   if (!endpoint || endpoint.startsWith("-") || endpoint === "graphql") {
     return denyMessage("gh api");
@@ -479,7 +487,7 @@ function validateGhApiArgs(args: string[]): string | null {
     shape.endpoint.test(endpoint),
   );
   if (mutationShape) {
-    return mutationShape.validate(args);
+    return mutationShape.validate(args, cwd);
   }
 
   const parsed = scanPolicyArgs(args, 2, [
@@ -518,6 +526,33 @@ function validateGhApiReviewReplyArgs(args: string[]): string | null {
   const [field] = rawFields;
   if (!field?.startsWith("body=") || field.slice("body=".length).trim().length === 0) {
     return denyMessage("gh api");
+  }
+
+  return null;
+}
+
+function validateGhApiExplicitReviewReplyArgs(args: string[], cwd?: string): string | null {
+  const argsError = validateGhApiReviewReplyArgs(args);
+  if (argsError) return argsError;
+
+  const match = args[1]?.match(EXPLICIT_REVIEW_REPLY_ENDPOINT);
+  const endpointOwner = match?.[1];
+  const endpointRepo = match?.[2];
+  if (!endpointOwner || !endpointRepo || !cwd) return denyMessage("gh api");
+
+  const currentRepo = resolveOwnerRepoFromRemote(cwd);
+  if (
+    !currentRepo ||
+    currentRepo.host !== GH_API_DEFAULT_HOST ||
+    currentRepo.owner.toLowerCase() !== endpointOwner.toLowerCase() ||
+    currentRepo.repo.toLowerCase() !== endpointRepo.toLowerCase()
+  ) {
+    return denyMessage("gh api", {
+      reason:
+        "explicit review-comment reply endpoints must target the current github.com repo from origin.",
+      instead:
+        "use repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies or cd into the target repo worktree",
+    });
   }
 
   return null;
