@@ -28,7 +28,7 @@ flowchart LR
     PBD <-->|resolve| AL
 ```
 
-The entire flow is "raw correlation key in → maybe-resolved session out". Aliases are how a `slack:thread:1234` becomes `session:abc123` — once that mapping exists, every subsequent event for that thread serializes onto the same session lock and resumes the same OpenCode session.
+The entire flow is "raw correlation key in → maybe-resolved anchor out → resumed (or freshly created) OpenCode session". Aliases are how a `slack:thread:1234` becomes `anchor:019df…88` — once that mapping exists, every subsequent event for that thread serializes onto the same anchor lock, resolves to the anchor's current `opencode.session`, and resumes the same OpenCode session.
 
 ---
 
@@ -112,12 +112,12 @@ All ingestion lands in a single directory queue (`packages/gateway/src/queue.ts`
 
 `scan()` runs every 100 ms and groups files by **`resolveCorrelationLockKey(event.correlationKey)`** (queue.ts:234). This is the critical line that makes ingestion session-aware:
 
-- If the raw key resolves to an alias → lock key is `session:<sessionId>`.
+- If the raw key resolves to an anchor → lock key is `anchor:<anchorId>`.
 - Otherwise → lock key is the raw key itself.
 
 Two consequences:
 
-1. **Cross-key coalescing.** If a single OpenCode session has both a Slack thread and a Git branch alias bound to it, a `git:branch:thor:feat-x` push and a `slack:thread:1701...` reply land in the **same batch** because both resolve to the same `session:<id>` lock key. The runner sees one combined prompt instead of two parallel triggers.
+1. **Cross-key coalescing.** If a conversation has both a Slack thread and a git branch alias bound to its anchor, a `git:branch:thor:feat-x` push and a `slack:thread:1701...` reply land in the **same batch** because both resolve to the same `anchor:<id>` lock key. The runner sees one combined prompt instead of two parallel triggers.
 2. **A pending resolve waits on its own bucket.** `pending:branch-resolve:<repo>:<num>` doesn't match any alias type, so it keeps its raw key as the lock key until §3.1 reroutes it.
 
 ### 2.2 Interrupt-aware batching
@@ -149,7 +149,7 @@ This is the only place an event's correlation key changes after enqueue. Everyth
 
 For non-pending batches:
 
-- **Directory**: each event resolves to a working directory (Slack channel→repo map, GitHub repo path lookup, cron-supplied, approval channel→repo map). All events in the batch must agree — mixed-directory batches are dropped to dead-letter (service.ts:557). **TODO — improve**: cross-source mixed-directory batches happen legitimately when a session bridges repos via aliases (e.g. a Slack thread session in repoA's channel pushes a branch in repoB, registering `git:branch:repoB:* → s1`; a later Slack reply and GitHub push then batch under `session:s1` with two different directories). Dead-lettering silently drops the user's click/comment, which Slack already 200'd and cannot replay. Worth revisiting; design open.
+- **Directory**: each event resolves to a working directory (Slack channel→repo map, GitHub repo path lookup, cron-supplied, approval channel→repo map). All events in the batch must agree — mixed-directory batches are dropped to dead-letter (service.ts:557). **TODO — improve**: cross-source mixed-directory batches happen legitimately when a conversation bridges repos via aliases (e.g. a Slack thread anchor in repoA's channel ends up bound to a branch in repoB; a later Slack reply and GitHub push then batch under the same `anchor:<id>` with two different directories). Dead-lettering silently drops the user's click/comment, which Slack already 200'd and cannot replay. Worth revisiting; design open.
 - **Prompt**: each source has a renderer (`renderSlackPrompt`, `renderGitHubPrompt`, `buildApprovalOutcomePrompt`, raw cron prompt). Parts are joined with `\n\n`.
 - **Progress target**: the last Slack event (or approval) provides `{channel, threadTs, ts}` for streaming relays. Cron-only batches have no progress target and drain in the foreground.
 
@@ -288,40 +288,46 @@ In all the failure cases the **action is still persisted** in `approvalStore` �
 
 ## 6. Aliases — the entire mechanism
 
-There are exactly **three alias types**, declared as a closed enum at `packages/common/src/event-log.ts:7`:
+External correlation keys (Slack thread, git branch) and OpenCode entities (sessions, sub-sessions) bind to an opaque **anchor id** — a UUIDv7 with no record of its own that gives all four entity types equal-class membership in the same logical conversation. There are exactly **four alias types**, declared as a closed enum at `packages/common/src/event-log.ts`:
 
 ```ts
-export const ALIAS_TYPES = ["slack.thread_id", "git.branch", "session.parent"] as const;
+export const ALIAS_TYPES = [
+  "slack.thread_id",
+  "git.branch",
+  "opencode.session",
+  "opencode.subsession",
+] as const;
 ```
 
-Alias values are validated: 1–512 chars, no control characters (`\n`, `\r`, `\t`, `\0`) — anything that could corrupt the JSONL line.
+Alias values are validated: 1–512 chars, no control characters (`\n`, `\r`, `\t`, `\0`) — anything that could corrupt the JSONL line. Anchor ids are validated as canonical UUIDv7.
 
 ### 6.1 Storage
 
-All aliases live in a single append-only file: `<worklog>/aliases.jsonl`. Each line is an `AliasRecord` (`event-log.ts:74`):
+All aliases live in a single append-only file: `<worklog>/aliases.jsonl`. Each line is an `AliasRecord`:
 
 ```json
 {
   "ts": "...",
   "aliasType": "slack.thread_id",
   "aliasValue": "1701234567.123",
-  "sessionId": "abc..."
+  "anchorId": "019df502-3244-7705-8376-9c23c5e49c88"
 }
 ```
 
-`appendAlias()` (event-log.ts:252) writes the line, updates an in-memory cache keyed by `<aliasType>:<aliasValue>` → `sessionId`, and (except for `session.parent`) also appends a corresponding `alias` record into the session's own event log so the alias is visible in the viewer.
+`appendAlias()` writes the line and updates an in-memory cache keyed by `<aliasType>:<aliasValue>` → `anchorId` (forward map) plus a parallel reverse map keyed by `<anchorId>` → `{ sessionIds, subsessionIds, externalKeys, currentSessionId }`. Both maps populate on the same single pass over the file.
 
-`resolveAlias()` (event-log.ts:415) looks up the cache. The cache reloads only when `aliases.jsonl`'s size changes (signature check) — cheap and consistent with append-only semantics.
+`resolveAlias()` looks up the forward map; `reverseLookupAnchor()` returns the bound entities for a given anchor. The cache reloads only when `aliases.jsonl`'s size changes (signature check) — cheap and consistent with append-only semantics.
 
-### 6.2 The three alias types
+### 6.2 The four alias types
 
-| Alias type        | Alias value                               | Sessions it points at            | Created when                                                                                                                                            |
-| ----------------- | ----------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `slack.thread_id` | `<thread_ts>` (raw, 1:1)                  | the live session for that thread | (a) gateway accepts a Slack event for an engaged thread; (b) agent calls `slack post_message` and remote-cli sees a `thread_ts` in the args or response |
-| `git.branch`      | `base64url("git:branch:<repo>:<branch>")` | the live session for that branch | (a) gateway accepts a GitHub event for a known branch; (b) remote-cli sees `git push`, `git checkout`, `git switch`, or `git worktree add`              |
-| `session.parent`  | `<some-sessionId>`                        | a successor / parent session     | (a) runner re-creates after `session_stale`; (b) runner discovers a child session from a `task` tool call                                               |
+| Alias type            | Alias value                               | Binding target                 | Created when                                                                                                                                            |
+| --------------------- | ----------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `slack.thread_id`     | `<thread_ts>` (raw, 1:1)                  | anchor for that thread         | (a) gateway accepts a Slack event for an engaged thread; (b) agent calls `slack post_message` and remote-cli sees a `thread_ts` in the args or response |
+| `git.branch`          | `base64url("git:branch:<repo>:<branch>")` | anchor for that branch         | (a) gateway accepts a GitHub event for a known branch; (b) remote-cli sees `git push`, `git checkout`, `git switch`, or `git worktree add`              |
+| `opencode.session`    | `<sessionId>` (OpenCode format)           | anchor this session belongs to | runner trigger handler appends on every session create/resume; `session_stale` recreate adds a fresh binding alongside the old                          |
+| `opencode.subsession` | `<childSessionId>` (OpenCode format)      | anchor the parent belongs to   | runner discovers a child session on the OpenCode event bus during an active trigger and binds the child to the parent's anchor                          |
 
-The first two are correlation-key aliases — `aliasForCorrelationKey()` (correlation.ts:120) is the single function that maps a key prefix to an alias spec:
+The first two are correlation-key aliases — `aliasForCorrelationKey()` is the single function that maps a key prefix to an alias spec:
 
 ```ts
 "slack:thread:..."  → {aliasType: "slack.thread_id", aliasValue: <suffix>}
@@ -329,17 +335,18 @@ The first two are correlation-key aliases — `aliasForCorrelationKey()` (correl
 otherwise           → undefined  // includes cron:..., pending:branch-resolve:...
 ```
 
-This is why `cron:` keys never resolve to a session unless the caller passes a different key.
+This is why `cron:` keys never resolve to an anchor unless the caller passes a different key.
 
 ### 6.3 Where aliases are written
 
-| Site                                            | Code                                                                                                              | What it does                                                                     |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Runner trigger, on session create/resume        | `index.ts:768` `appendCorrelationAlias(id, correlationKey)`                                                       | binds the incoming `slack:thread:` or `git:branch:` key to the session           |
-| Runner trigger, on `session_stale` recreate     | `index.ts:758` `appendAlias({aliasType: "session.parent", aliasValue: oldId, sessionId: newId})`                  | so old viewer links chain-walk to the new session                                |
-| Runner stream handler, on subagent discovery    | `index.ts:1067` `appendAlias({aliasType: "session.parent", aliasValue: childId, sessionId: parentId})`            | so child session viewer links walk up to the orchestrator                        |
-| Remote-cli, after every `git`/`gh` exec         | `remote-cli/src/index.ts:108` `appendCorrelationAlias(sessionId, computeGitCorrelationKey(args, cwd))`            | binds `git:branch:<repo>:<branch>` whenever the agent pushes/checks out a branch |
-| Remote-cli, after Slack `post_message` MCP call | `remote-cli/src/mcp-handler.ts:426` `appendCorrelationAlias(sessionId, computeSlackCorrelationKey(args, stdout))` | binds `slack:thread:<ts>` on first message in a new thread, and on every reply   |
+| Site                                                | Code                                                                                                          | What it does                                                                                                     |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Runner trigger, on session create/resume            | `index.ts` `appendAlias({aliasType: "opencode.session", aliasValue: id, anchorId})`                           | binds the resumed-or-created session to the resolved/minted anchor                                               |
+| Runner trigger, on first sight of a correlation key | `index.ts` `appendCorrelationAliasForAnchor(anchorId, correlationKey)`                                        | binds the inbound `slack:thread:` or `git:branch:` key to the anchor (idempotent under newest-wins)              |
+| Runner trigger, on `session_stale` recreate         | `index.ts` `appendAlias({aliasType: "opencode.session", aliasValue: newId, anchorId})`                        | same anchor, new session id — Slack/git aliases never move because they bind the anchor, not the session         |
+| Runner stream handler, on subagent discovery        | `index.ts` `appendAlias({aliasType: "opencode.subsession", aliasValue: childId, anchorId})`                   | binds the child session to the parent's anchor so disclaimer routing reaches the parent's open trigger           |
+| Remote-cli, after every `git`/`gh` exec             | `remote-cli/src/index.ts` `appendCorrelationAlias(sessionId, computeGitCorrelationKey(args, cwd))`            | resolves the executing session's anchor first (`opencode.session` lookup) then binds `git.branch` to that anchor |
+| Remote-cli, after Slack `post_message` MCP call     | `remote-cli/src/mcp-handler.ts` `appendCorrelationAlias(sessionId, computeSlackCorrelationKey(args, stdout))` | resolves the executing session's anchor first, then binds `slack.thread_id` to that anchor                       |
 
 The agent itself never touches the alias file — every write happens in code paths that already see both `sessionId` and the correlating identifier.
 
@@ -347,31 +354,32 @@ The agent itself never touches the alias file — every write happens in code pa
 
 ```mermaid
 flowchart LR
-    A[gateway accepts event] --> B{rawKey resolves?<br/>resolveSessionForCorrelationKey}
-    B -- yes --> C[lockKey = session:&lt;id&gt;<br/>batch coalesces with other keys for same session]
-    B -- no --> D[lockKey = rawKey<br/>new session if dispatched]
+    A[gateway accepts event] --> B{rawKey resolves to anchor?<br/>resolveAnchorForCorrelationKey}
+    B -- yes --> C[lockKey = anchor:&lt;id&gt;<br/>batch coalesces with other keys on same anchor]
+    B -- no --> D[lockKey = rawKey<br/>new anchor minted if dispatched]
     C --> E[runner /trigger]
     D --> E
-    E --> F{candidate session<br/>still alive in OpenCode?}
-    F -- yes --> G[resume, append alias]
-    F -- no --> H[create new + session.parent alias from old to new]
+    E --> F{anchor has current<br/>opencode.session?}
+    F -- yes --> G[try resume; on success append fresh<br/>opencode.session binding only if changed]
+    F -- no --> H[create new session,<br/>append opencode.session → anchor]
 ```
 
 Three call sites read aliases:
 
-1. **`EventQueue.scan()`** (queue.ts:234) — `resolveCorrelationLockKey()` decides batch grouping. This is what makes `slack:thread:X` and `git:branch:Y` for the same session share a lock.
-2. **Gateway filters** — `hasSessionForCorrelationKey()` decides whether a non-mention Slack `message` should be forwarded (only if Thor is engaged) and whether a `check_suite` completed event has a session to wake.
-3. **Runner trigger** (index.ts:725) — picks the candidate session ID from the correlation key when the gateway didn't pin one explicitly.
+1. **`EventQueue.scan()`** — `resolveCorrelationLockKey()` decides batch grouping. This is what makes `slack:thread:X` and `git:branch:Y` for the same anchor share a lock (`anchor:<id>`).
+2. **Gateway filters** — `hasSessionForCorrelationKey()` decides whether a non-mention Slack `message` should be forwarded (only if Thor is engaged for that thread) and whether a `check_suite` completed event has a session to wake. "Engaged" means the correlation key resolves to an anchor that has a current `opencode.session`.
+3. **Runner trigger** — picks the candidate session id by walking the correlation key → anchor → `currentSessionForAnchor` chain when the gateway didn't pin one explicitly.
 
-`session.parent` is read separately by **`findActiveTrigger()`** (event-log.ts:440), which the trigger viewer (`/raw/:sessionId/:triggerId`) calls to walk up to depth 5 from a stale-or-child session ID to the live trigger. It's not used for ingestion routing — only for the viewer URL chain.
+**`findActiveTrigger()`** (used by disclaimer routing and the viewer) is anchor-based: it resolves the request session id to its anchor (via `opencode.session` or `opencode.subsession`), reverse-looks-up every `opencode.session` bound to that anchor, and scans each session log for an unclosed `trigger_start`. No depth cap, no cycle detection — anchors flatten the parent relationship into a flat membership set. Failure modes collapse to `none` / `ambiguous` / `oversized`.
 
 ### 6.5 Non-obvious properties
 
-- **Append-only, no revocation.** A `slack.thread_id` alias never points anywhere new after the first write — once `slack:thread:1701...` binds to session A, it binds forever. If session A goes stale, the runner creates session B and adds a `session.parent` from A→B; subsequent threads still resolve to A first, but then `client.session.get(A)` 404s, and the runner does a fresh create. This is **not** a re-bind of the Slack alias; it's a per-trigger fallback.
-  - Net effect: a Slack thread can outlive multiple OpenCode sessions, with each generation linked by a `session.parent` chain readable through the viewer.
+- **Append-only, no revocation.** A `slack.thread_id` alias never points anywhere new after the first write — once `slack:thread:1701...` binds to anchor A, it binds forever. If the OpenCode session under that anchor goes stale, the runner creates a new session and appends `opencode.session → A` for it; the Slack alias never moves. The viewer URL `/runner/v/<A>/<triggerId>` keeps resolving correctly because the anchor is the durable identity.
+  - Net effect: a Slack thread can outlive multiple OpenCode sessions, all bound to the same anchor.
 - **`git.branch` aliases are base64url'd** because branch names contain `/` and other characters; the value is round-tripped through the alias schema's safety check. The Slack form uses the raw `ts` (digits + dot) which is already safe.
-- **`pending:branch-resolve:` is an unaliased key**, so it never resolves to a session and never coalesces with anything. It's a queue-only construct that exists for at most one batch cycle before §3.1 reroutes it.
-- **The session log mirrors `slack.thread_id` and `git.branch` aliases** as `alias` records (`AliasEventRecordSchema`, event-log.ts:50). `session.parent` is suppressed from the per-session log to avoid noise — it lives only in `aliases.jsonl`.
+- **`pending:branch-resolve:` is an unaliased key**, so it never resolves to an anchor and never coalesces with anything. It's a queue-only construct that exists for at most one batch cycle before §3.1 reroutes it.
+- **Per-session-log writes for child events.** OpenCode events from a discovered child sub-session land in the child's own `sessions/<childId>.jsonl`, not the parent's log. The viewer reads only the owner session log when assembling a trigger slice; child activity is intentionally not surfaced inside the parent slice. Sub-sessions remain trackable via `opencode.subsession → anchor` for routing and disclaimer URL correctness.
+- **The session log mirrors session-relevant aliases** as `alias` records when explicitly written by the runner, but no `SessionEventLogRecord` variant carries a `sessionId` field — the file path (`sessions/<sessionId>.jsonl`) is the sole source of truth for the owning session id.
 
 ---
 
@@ -380,10 +388,12 @@ Three call sites read aliases:
 A user types `@thor look at this PR` in a Slack thread, then later pushes commits to the PR's branch.
 
 1. **Slack mention arrives** → `POST /slack/events` → validator + signature pass → `app_mention` filter pass → enqueue with `correlationKey="slack:thread:1701234567.123"`, `interrupt=true`, `delayMs=0`.
-2. **Queue scan** groups the file under lock key `slack:thread:1701234567.123` (no alias yet). Batch ready, `planBatchDispatch` resolves channel→repo, builds the prompt, posts to `runner/trigger`.
-3. **Runner** has no candidate session → creates `session abc123`, appends `(slack.thread_id, 1701234567.123) → abc123`. Returns NDJSON stream; the agent does work.
-4. **Agent pushes a branch** via `gh pr create` / `git push`. Remote-cli's `/exec/git` and `/exec/gh` shims call `computeGitCorrelationKey(["push", "origin", "feat-x"], cwd)` → `git:branch:thor:feat-x`, then `appendCorrelationAlias(abc123, ...)`. Now `(git.branch, base64url("git:branch:thor:feat-x")) → abc123` is bound.
-5. **GitHub push webhook fires** → `POST /github/webhook` → `handleGitHubPushEvent` syncs the worktree → `hasSessionForCorrelationKey("git:branch:thor:feat-x")` returns true → enqueue with `interrupt=false`.
-6. **Queue scan** sees the new file. `resolveCorrelationLockKey("git:branch:thor:feat-x")` → `session:abc123`. If a Slack reply also arrived in the same window, it has lock key `session:abc123` too — they batch together. One `runner/trigger` call, one resumed session, one combined prompt.
+2. **Queue scan** groups the file under the raw key `slack:thread:1701234567.123` (no anchor yet). Batch ready, `planBatchDispatch` resolves channel→repo, builds the prompt, posts to `runner/trigger`.
+3. **Runner** has no anchor for the key → mints anchor `019df…88`, appends `(slack.thread_id, 1701234567.123) → 019df…88`. Creates `session abc123`, appends `(opencode.session, abc123) → 019df…88`. Returns NDJSON stream; the agent does work.
+4. **Agent pushes a branch** via `gh pr create` / `git push`. Remote-cli's `/exec/git` and `/exec/gh` shims compute `git:branch:thor:feat-x`, resolve `abc123`'s anchor (`019df…88`), then append `(git.branch, base64url("git:branch:thor:feat-x")) → 019df…88`. Both correlation keys now bind to the same anchor.
+5. **GitHub push webhook fires** → `POST /github/webhook` → `handleGitHubPushEvent` syncs the worktree → `hasSessionForCorrelationKey("git:branch:thor:feat-x")` returns true (the key resolves to anchor `019df…88` which has a current `opencode.session`) → enqueue with `interrupt=false`.
+6. **Queue scan** sees the new file. `resolveCorrelationLockKey("git:branch:thor:feat-x")` → `anchor:019df…88`. If a Slack reply also arrived in the same window, it has lock key `anchor:019df…88` too — they batch together. One `runner/trigger` call, one resumed session, one combined prompt.
 
-That last step — two different correlation keys becoming one batch through alias resolution — is the entire point of the aliasing layer.
+That last step — two different correlation keys becoming one batch through anchor resolution — is the entire point of the aliasing layer.
+
+If the original OpenCode session goes stale between steps 3 and 5, step 6's runner creates a new session and appends `(opencode.session, abc456) → 019df…88` alongside the old binding. The Slack and git aliases never move; the disclaimer URL `/runner/v/019df…88/<triggerId>` keeps resolving correctly.

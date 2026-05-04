@@ -24,11 +24,19 @@ import {
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
   extractRepoFromCwd,
+  ANCHOR_LOCK_PREFIX,
+  SESSION_LOCK_PREFIX,
   appendSessionEvent,
   appendAlias,
-  appendCorrelationAlias,
+  appendCorrelationAliasForAnchor,
+  currentSessionForAnchor,
+  isUuidV7,
+  mintAnchor,
+  mintTriggerId,
+  reverseLookupAnchor,
+  resolveAlias,
+  resolveAnchorForCorrelationKey,
   resolveCorrelationLockKey,
-  resolveSessionForCorrelationKey,
   readTriggerSlice,
   sessionLogPath,
   getWorklogDir,
@@ -244,31 +252,17 @@ async function ensureOpencodeAvailable(): Promise<void> {
   );
 }
 
-type RawSessionLogResponse = {
-  status: number;
-  contentType: "text/plain";
-  body: string;
-};
-
-function readRawSessionLogResponse(sessionId: string, triggerId: string): RawSessionLogResponse {
-  try {
-    const path = sessionLogPath(sessionId);
-    const root = realpathSync(`${getWorklogDir()}/sessions`);
-    const real = realpathSync(path);
-    if (!real.startsWith(`${root}/`)) throw new Error("invalid path");
-    if (statSync(real).size > MAX_SESSION_FILE_BYTES) {
-      return { status: 503, contentType: "text/plain", body: "Session log is oversized" };
-    }
+function resolveOwnerSessionForTrigger(
+  anchorId: string,
+  triggerId: string,
+): { ok: true; sessionId: string } | { ok: false; reason: "not_found" | "oversized" } {
+  const reverse = reverseLookupAnchor(anchorId);
+  for (const sessionId of reverse.sessionIds) {
     const slice = readTriggerSlice(sessionId, triggerId);
-    if ("notFound" in slice) return { status: 404, contentType: "text/plain", body: "Not found" };
-    if ("oversized" in slice) {
-      return { status: 503, contentType: "text/plain", body: "Session log is oversized" };
-    }
-    const body = slice.records.map((record) => JSON.stringify(record)).join("\n") + "\n";
-    return { status: 200, contentType: "text/plain", body };
-  } catch {
-    return { status: 404, contentType: "text/plain", body: "Not found" };
+    if ("oversized" in slice) return { ok: false, reason: "oversized" };
+    if (!("notFound" in slice)) return { ok: true, sessionId };
   }
+  return { ok: false, reason: "not_found" };
 }
 
 const E2eTriggerContextSchema = z.object({
@@ -331,7 +325,15 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         }
 
         const sessionId = parsed.data.sessionId ?? `e2e-${randomUUID()}`;
-        const triggerId = randomUUID();
+        const triggerId = mintTriggerId();
+        const anchorId = mintAnchor();
+        unwrap(
+          appendAlias({
+            aliasType: "opencode.session",
+            aliasValue: sessionId,
+            anchorId,
+          }),
+        );
         unwrap(
           appendSessionEvent(sessionId, {
             type: "trigger_start",
@@ -340,7 +342,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             promptPreview: parsed.data.promptPreview ?? "e2e approval disclaimer context",
           }),
         );
-        res.json({ sessionId, triggerId });
+        res.json({ sessionId, triggerId, anchorId });
       },
     );
   }
@@ -350,7 +352,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   // codeql[js/missing-rate-limiting]
   // lgtm[js/missing-rate-limiting]
   app.get(
-    "/runner/v/:sessionId/:triggerId",
+    "/runner/v/:anchorId/:triggerId",
     // codeql[js/missing-rate-limiting]
     // lgtm[js/missing-rate-limiting]
     (req, res) => {
@@ -361,17 +363,50 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           .send(renderPage("Unauthorized", "Sign in with Vouch to view Thor trigger history."));
         return;
       }
-      const sessionId = routeParam(req.params.sessionId);
+      const anchorId = routeParam(req.params.anchorId);
       const triggerId = routeParam(req.params.triggerId);
+
+      if (!isUuidV7(anchorId) || !isUuidV7(triggerId)) {
+        res
+          .status(404)
+          .type("html")
+          .send(
+            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
+          );
+        return;
+      }
+
+      const owner = resolveOwnerSessionForTrigger(anchorId, triggerId);
+      if (!owner.ok) {
+        if (owner.reason === "oversized") {
+          res
+            .type("html")
+            .send(
+              renderPage(
+                "Slice truncated",
+                "<p>This session log is oversized for display. Engineers needing the bytes can read the JSONL directly from the worklog volume.</p>",
+              ),
+            );
+          return;
+        }
+        res
+          .status(404)
+          .type("html")
+          .send(
+            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
+          );
+        return;
+      }
+
       let slice;
       try {
-        slice = readTriggerSlice(sessionId, triggerId);
+        slice = readTriggerSlice(owner.sessionId, triggerId);
       } catch {
         res
           .status(404)
           .type("html")
           .send(
-            renderPage("Trigger not found", "No Thor trigger slice was found for this session."),
+            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
           );
         return;
       }
@@ -380,7 +415,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           .status(404)
           .type("html")
           .send(
-            renderPage("Trigger not found", "No Thor trigger slice was found for this session."),
+            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
           );
         return;
       }
@@ -390,33 +425,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           .send(
             renderPage(
               "Slice truncated",
-              `<p>This session log is oversized.</p><p><a href="${escapeHtml(req.originalUrl)}/raw">Open raw JSONL</a></p>`,
+              "<p>This session log is oversized for display. Engineers needing the bytes can read the JSONL directly from the worklog volume.</p>",
             ),
           );
         return;
       }
-      res.type("html").send(renderSlicePage(sessionId, triggerId, slice));
-    },
-  );
-
-  // Rate limiting for the Vouch-gated runner viewer is intentionally enforced
-  // at the infrastructure edge, not in the app process.
-  // codeql[js/missing-rate-limiting]
-  // lgtm[js/missing-rate-limiting]
-  app.get(
-    "/runner/v/:sessionId/:triggerId/raw",
-    // codeql[js/missing-rate-limiting]
-    // lgtm[js/missing-rate-limiting]
-    (req, res) => {
-      if (!req.get("X-Vouch-User")) {
-        res.status(401).type("text/plain").send("Unauthorized");
-        return;
-      }
-      const raw = readRawSessionLogResponse(
-        routeParam(req.params.sessionId),
-        routeParam(req.params.triggerId),
-      );
-      res.status(raw.status).type(raw.contentType).send(raw.body);
+      res.type("html").send(renderSlicePage(anchorId, triggerId, slice));
     },
   );
 
@@ -713,20 +727,36 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         directory: sessionDirectory,
       });
 
-      // --- Session resolution: resume existing or create new (locked per resolved session/key) ---
+      // --- Session resolution: resolve-or-mint anchor, then resume or create OpenCode session ---
       const lockKey = requestedSessionId
-        ? `session:${requestedSessionId}`
+        ? `${SESSION_LOCK_PREFIX}${requestedSessionId}`
         : correlationKey
           ? resolveCorrelationLockKey(correlationKey)
           : undefined;
       const resolution = await withCorrelationKeyLock(lockKey, async () => {
-        const candidateSessionId =
-          requestedSessionId ||
-          (correlationKey ? resolveSessionForCorrelationKey(correlationKey) : undefined);
+        let anchorId: string;
+        if (requestedSessionId) {
+          anchorId =
+            resolveAlias({
+              aliasType: "opencode.session",
+              aliasValue: requestedSessionId,
+            }) ?? mintAnchor();
+        } else if (correlationKey) {
+          const existing = resolveAnchorForCorrelationKey(correlationKey);
+          if (existing) {
+            anchorId = existing;
+          } else {
+            anchorId = mintAnchor();
+            unwrap(appendCorrelationAliasForAnchor(anchorId, correlationKey));
+          }
+        } else {
+          anchorId = mintAnchor();
+        }
+
+        const candidateSessionId = requestedSessionId || currentSessionForAnchor(anchorId);
 
         let id: string;
         let didResume = false;
-        let staleSessionId: string | undefined;
 
         if (candidateSessionId) {
           try {
@@ -734,46 +764,44 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             if (existing.data) {
               id = candidateSessionId;
               didResume = true;
-              logInfo(log, "session_resumed", { sessionId: id, correlationKey });
+              logInfo(log, "session_resumed", { sessionId: id, anchorId, correlationKey });
             } else {
               throw new Error("Session not found");
             }
           } catch {
-            logInfo(log, "session_stale", { sessionId: candidateSessionId, correlationKey });
+            logInfo(log, "session_stale", {
+              sessionId: candidateSessionId,
+              anchorId,
+              correlationKey,
+            });
             const session = await client.session.create({ body: {} });
             if (!session.data) throw new Error("Failed to create session");
             id = session.data.id;
-            staleSessionId = candidateSessionId;
-            logInfo(log, "session_created", { sessionId: id, correlationKey });
+            logInfo(log, "session_created", { sessionId: id, anchorId, correlationKey });
           }
         } else {
           const session = await client.session.create({ body: {} });
           if (!session.data) throw new Error("Failed to create session");
           id = session.data.id;
-          logInfo(log, "session_created", { sessionId: id, correlationKey });
+          logInfo(log, "session_created", { sessionId: id, anchorId, correlationKey });
         }
 
-        // Back-reference alias on session_stale recreate so old viewer links chain-walk
-        // to the new session via findActiveTrigger (`session.parent` traversal).
-        if (staleSessionId) {
-          unwrap(
-            appendAlias({
-              aliasType: "session.parent",
-              aliasValue: staleSessionId,
-              sessionId: id,
-            }),
-          );
+        // session_stale recreate appends a fresh opencode.session alongside
+        // the old; original Slack/git aliases keep pointing at the same anchor.
+        if (resolveAlias({ aliasType: "opencode.session", aliasValue: id }) !== anchorId) {
+          unwrap(appendAlias({ aliasType: "opencode.session", aliasValue: id, anchorId }));
         }
 
-        if (correlationKey) {
-          unwrap(appendCorrelationAlias(id, correlationKey));
+        if (correlationKey && resolveAnchorForCorrelationKey(correlationKey) !== anchorId) {
+          unwrap(appendCorrelationAliasForAnchor(anchorId, correlationKey));
         }
 
-        return { sessionId: id, resumed: didResume };
+        return { sessionId: id, resumed: didResume, anchorId };
       });
 
       const sessionId = resolution.sessionId;
       const resumed = resolution.resumed;
+      const anchorId = resolution.anchorId;
 
       // --- If resuming a busy session, abort or bail ---
       if (resumed) {
@@ -866,7 +894,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       // Subscribe to event bus BEFORE sending the prompt
       const subscription = await eventBuses.subscribe(sessionDirectory, [sessionId]);
 
-      const triggerId = randomUUID();
+      const triggerId = mintTriggerId();
       inflightTriggerId = triggerId;
       startTrigger(sessionId, triggerId, {
         correlationKey,
@@ -1004,7 +1032,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             const event = next.value;
             if (finished) break;
 
-            unwrap(appendSessionEvent(sessionId, { type: "opencode_event", event }));
+            // Child sub-session events land in the child's own log so the
+            // viewer's owner-only slice never surfaces them.
+            const originSessionId = eventSessionId(event) ?? sessionId;
+            unwrap(appendSessionEvent(originSessionId, { type: "opencode_event", event }));
 
             const isParent = isSessionEvent(event, sessionId);
 
@@ -1065,16 +1096,16 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                         childSessionIds.add(child.id);
                         subscription.addSessionId(child.id);
                         const aliasResult = appendAlias({
-                          aliasType: "session.parent",
+                          aliasType: "opencode.subsession",
                           aliasValue: child.id,
-                          sessionId,
+                          anchorId,
                         });
                         if (!aliasResult.ok) {
                           logError(
                             log,
-                            "session_parent_alias_write_failed",
+                            "opencode_subsession_alias_write_failed",
                             aliasResult.error.message,
-                            { sessionId, childId: child.id },
+                            { sessionId, anchorId, childId: child.id },
                           );
                         }
                       }
@@ -1084,7 +1115,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                         log,
                         "child_session_discovery_failed",
                         err instanceof Error ? err.message : String(err),
-                        { sessionId },
+                        { sessionId, anchorId },
                       );
                     });
                 }
@@ -1229,21 +1260,20 @@ async function withNdjsonHeartbeat<T>(
   }
 }
 
-/**
- * Check if an SSE event belongs to a specific session.
- */
-function isSessionEvent(event: Event, sessionId: string): boolean {
-  if (event.type === "message.part.updated") {
-    return event.properties.part.sessionID === sessionId;
-  }
+function eventSessionId(event: Event): string | undefined {
+  if (event.type === "message.part.updated") return event.properties.part.sessionID;
   if (
     event.type === "session.idle" ||
     event.type === "session.status" ||
     event.type === "session.error"
   ) {
-    return event.properties.sessionID === sessionId;
+    return event.properties.sessionID;
   }
-  return false;
+  return undefined;
+}
+
+function isSessionEvent(event: Event, sessionId: string): boolean {
+  return eventSessionId(event) === sessionId;
 }
 
 function parseApprovalResult(
@@ -1292,7 +1322,7 @@ function redactRecord(record: unknown): unknown {
 }
 
 function renderSlicePage(
-  sessionId: string,
+  anchorId: string,
   triggerId: string,
   slice: Exclude<ReturnType<typeof readTriggerSlice>, { notFound: true } | { oversized: true }>,
 ): string {
@@ -1304,7 +1334,7 @@ function renderSlicePage(
   const records = slice.records
     .map((record) => JSON.stringify(redactRecord(record), null, 2))
     .join("\n");
-  const body = `${refresh}<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}</span><p>Session <code>${escapeHtml(sessionId)}</code>, trigger <code>${escapeHtml(triggerId)}</code></p>${slice.status === "crashed" ? "<p>This trigger was abandoned without a close marker. The runner started a new trigger later; whatever was in-flight here was lost.</p>" : ""}${isStale ? "<p>No new events in more than 5 minutes — the runner may have crashed without a close marker.</p>" : ""}${slice.records.length === 1 ? "<p>No recorded events.</p>" : ""}</section><details><summary>Timeline</summary><pre>${escapeHtml(records)}</pre></details><p><a href="/runner/v/${escapeHtml(sessionId)}/${escapeHtml(triggerId)}/raw">Show raw JSONL</a></p>`;
+  const body = `${refresh}<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}</span><p>Anchor <code>${escapeHtml(anchorId)}</code>, trigger <code>${escapeHtml(triggerId)}</code></p>${slice.status === "crashed" ? "<p>This trigger was abandoned without a close marker. The runner started a new trigger later; whatever was in-flight here was lost.</p>" : ""}${isStale ? "<p>No new events in more than 5 minutes — the runner may have crashed without a close marker.</p>" : ""}${slice.records.length === 1 ? "<p>No recorded events.</p>" : ""}</section><details><summary>Timeline</summary><pre>${escapeHtml(records)}</pre></details>`;
   return renderPage("Thor trigger", body);
 }
 

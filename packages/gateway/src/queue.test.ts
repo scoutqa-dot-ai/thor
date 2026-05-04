@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { appendCorrelationAlias } from "@thor/common";
+import { appendAlias, appendCorrelationAliasForAnchor, mintAnchor } from "@thor/common";
 import { EventQueue, type EventHandler, type QueuedEvent } from "./queue.js";
 
 let queueDir: string;
@@ -139,11 +139,19 @@ describe("EventQueue", () => {
     expect(keys).toEqual(["key-a", "key-b"]);
   });
 
-  it("batches different raw keys that resolve to the same session", async () => {
-    expect(appendCorrelationAlias("session-1", "slack:thread:1710000000.001")).toEqual({
+  it("batches different raw keys that resolve to the same anchor", async () => {
+    const anchorId = mintAnchor();
+    expect(
+      appendAlias({
+        aliasType: "opencode.session",
+        aliasValue: "session-1",
+        anchorId,
+      }),
+    ).toEqual({ ok: true });
+    expect(appendCorrelationAliasForAnchor(anchorId, "slack:thread:1710000000.001")).toEqual({
       ok: true,
     });
-    expect(appendCorrelationAlias("session-1", "git:branch:thor:feature/shared")).toEqual({
+    expect(appendCorrelationAliasForAnchor(anchorId, "git:branch:thor:feature/shared")).toEqual({
       ok: true,
     });
 

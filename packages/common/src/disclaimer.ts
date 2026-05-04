@@ -9,29 +9,39 @@ export function formatThorDisclaimerFooter(triggerUrl: string): string {
 }
 
 export interface ThorDisclaimerContext {
+  anchorId: string;
   sessionId: string;
   triggerId: string;
   triggerUrl: string;
   footer: string;
 }
 
-export function buildThorTriggerUrl(activeTrigger: { sessionId: string; triggerId: string }, runnerBaseUrl = ""): string {
+export function buildThorTriggerUrl(
+  activeTrigger: { anchorId: string; triggerId: string },
+  runnerBaseUrl = "",
+): string {
   const base = runnerBaseUrl.replace(/\/$/, "");
-  return `${base}/runner/v/${activeTrigger.sessionId}/${activeTrigger.triggerId}`;
+  return `${base}/runner/v/${activeTrigger.anchorId}/${activeTrigger.triggerId}`;
 }
 
-export function buildThorDisclaimerForSession(sessionId: string | undefined, runnerBaseUrl = ""): ThorDisclaimerContext {
+export function buildThorDisclaimerForSession(
+  sessionId: string | undefined,
+  runnerBaseUrl = "",
+): ThorDisclaimerContext {
   if (!sessionId) {
     throw new Error("Disclaimer required: missing Thor session id");
   }
 
   const active = findActiveTrigger(sessionId);
   if (!active.ok) {
-    throw new Error(`Disclaimer required: no single active trigger for session ${sessionId} (${active.reason})`);
+    throw new Error(
+      `Disclaimer required: no single active trigger for session ${sessionId} (${active.reason})`,
+    );
   }
 
   const triggerUrl = buildThorTriggerUrl(active, runnerBaseUrl);
   return {
+    anchorId: active.anchorId,
     sessionId: active.sessionId,
     triggerId: active.triggerId,
     triggerUrl,

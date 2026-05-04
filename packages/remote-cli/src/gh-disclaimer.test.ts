@@ -26,8 +26,20 @@ import { createRemoteCliApp } from "./index.js";
 
 const worklogRoot = "/tmp/thor-remote-cli-gh-test";
 const cwd = "/workspace/worktrees/acme/feat/test";
-const triggerId = "00000000-0000-4000-8000-000000000201";
-const secondTriggerId = "00000000-0000-4000-8000-000000000202";
+const triggerId = "00000000-0000-7000-8000-000000000201";
+const secondTriggerId = "00000000-0000-7000-8000-000000000202";
+const anchorParent = "00000000-0000-7000-8000-0000000003a1";
+const anchorSuperseded = "00000000-0000-7000-8000-0000000003a2";
+const anchorChild = "00000000-0000-7000-8000-0000000003a3";
+
+function bindSessionToAnchor(sessionId: string, anchorId: string): void {
+  const result = appendAlias({
+    aliasType: "opencode.session",
+    aliasValue: sessionId,
+    anchorId,
+  });
+  if (!result.ok) throw result.error;
+}
 
 async function withServer<T>(fn: (url: string) => Promise<T>): Promise<T> {
   const remoteCli = createRemoteCliApp();
@@ -109,6 +121,7 @@ describe("gh disclaimer injection", () => {
   });
 
   it("uses the latest trigger when a previous orphaned trigger was superseded", async () => {
+    bindSessionToAnchor("superseded", anchorSuperseded);
     expect(appendSessionEvent("superseded", { type: "trigger_start", triggerId })).toEqual({
       ok: true,
     });
@@ -128,17 +141,22 @@ describe("gh disclaimer injection", () => {
         "comment",
         "123",
         "--body",
-        `note\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/superseded/${secondTriggerId}`)}`,
+        `note\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorSuperseded}/${secondTriggerId}`)}`,
       ]);
     });
   });
 
   it("uses the owning parent session in child-session viewer URLs", async () => {
+    bindSessionToAnchor("parent", anchorChild);
     expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
       ok: true,
     });
     expect(
-      appendAlias({ aliasType: "session.parent", aliasValue: "child", sessionId: "parent" }),
+      appendAlias({
+        aliasType: "opencode.subsession",
+        aliasValue: "child",
+        anchorId: anchorChild,
+      }),
     ).toEqual({ ok: true });
 
     await withServer(async (url) => {
@@ -155,12 +173,13 @@ describe("gh disclaimer injection", () => {
         "--title",
         "x",
         "--body",
-        `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/parent/${triggerId}`)}`,
+        `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorChild}/${triggerId}`)}`,
       ]);
     });
   });
 
   it("injects into PR review-comment reply bodies", async () => {
+    bindSessionToAnchor("parent", anchorParent);
     expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
       ok: true,
     });
@@ -180,12 +199,13 @@ describe("gh disclaimer injection", () => {
       );
       expect(response.status).toBe(200);
       expect(execCalls[0].args.at(-1)).toBe(
-        `body=Done\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/parent/${triggerId}`)}`,
+        `body=Done\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
       );
     });
   });
 
   it("denies gh body-file content creation shapes", async () => {
+    bindSessionToAnchor("parent", anchorParent);
     expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
       ok: true,
     });
@@ -207,6 +227,7 @@ describe("gh disclaimer injection", () => {
   });
 
   it("fails closed for duplicate mutable body fields", async () => {
+    bindSessionToAnchor("parent", anchorParent);
     expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
       ok: true,
     });

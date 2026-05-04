@@ -12,7 +12,6 @@ for (let i = 0; i < recordsPerProc; i++) {
   const record = {
     schemaVersion: 1,
     ts: new Date().toISOString(),
-    sessionId: "fuzz",
     type: "opencode_event",
     event: { worker: workerId, idx: i, id: randomUUID(), payload: "x".repeat(64) },
   };

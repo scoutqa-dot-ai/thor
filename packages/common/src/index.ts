@@ -58,8 +58,14 @@ export {
   readTriggerSlice,
   findActiveTrigger,
   resolveAlias,
+  reverseLookupAnchor,
+  currentSessionForAnchor,
   listSessionAliases,
+  mintAnchor,
+  mintTriggerId,
   sessionLogPath,
+  isUuidV7,
+  UUID_V7_RE,
   MAX_SESSION_FILE_BYTES,
 } from "./event-log.js";
 export type {
@@ -67,6 +73,7 @@ export type {
   AliasRecord,
   TriggerSlice,
   ActiveTriggerResult,
+  ReverseAnchorEntry,
 } from "./event-log.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
 export type { Logger } from "./logger.js";
@@ -87,9 +94,13 @@ export {
   resolveCorrelationLockKey,
   hasSessionForCorrelationKey,
   appendCorrelationAlias,
+  appendCorrelationAliasForAnchor,
   computeGitCorrelationKey,
   computeSlackCorrelationKey,
+  resolveAnchorForCorrelationKey,
   resolveSessionForCorrelationKey,
+  ANCHOR_LOCK_PREFIX,
+  SESSION_LOCK_PREFIX,
 } from "./correlation.js";
 export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
 export type { ExecResult, ExecStreamEvent } from "./exec-result.js";

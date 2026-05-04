@@ -1,9 +1,11 @@
 import { z } from "zod/v4";
-import { appendAlias, resolveAlias } from "./event-log.js";
+import { appendAlias, currentSessionForAnchor, resolveAlias } from "./event-log.js";
 import type { AliasRecord } from "./event-log.js";
 
 const SLACK_THREAD_PREFIX = "slack:thread:";
 const GIT_BRANCH_PREFIX = "git:branch:";
+export const ANCHOR_LOCK_PREFIX = "anchor:";
+export const SESSION_LOCK_PREFIX = "session:";
 
 const GIT_CORRELATION_SUBCOMMANDS = new Set(["push", "checkout", "switch", "worktree"]);
 
@@ -91,30 +93,55 @@ export function computeSlackCorrelationKey(
   }
 }
 
-export function appendCorrelationAlias(
-  sessionId: string,
+/** Bind a correlation-key alias directly to a known anchor id. */
+export function appendCorrelationAliasForAnchor(
+  anchorId: string,
   correlationKey: string,
 ): { ok: true } | { ok: false; error: Error } {
   const alias = aliasForCorrelationKey(correlationKey);
   if (!alias) return { ok: true };
-  return appendAlias({ ...alias, sessionId });
+  return appendAlias({ ...alias, anchorId });
+}
+
+/**
+ * Producer-side helper: bind a correlation-key alias to the executing
+ * session's anchor. Fails closed when the session has no anchor binding —
+ * surfaces producers that run before the runner registers opencode.session.
+ */
+export function appendCorrelationAlias(
+  sessionId: string,
+  correlationKey: string,
+): { ok: true } | { ok: false; error: Error } {
+  if (!aliasForCorrelationKey(correlationKey)) return { ok: true };
+  const anchorId = resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId });
+  if (!anchorId) {
+    return {
+      ok: false,
+      error: new Error(
+        `cannot bind correlation alias: session ${sessionId} has no anchor binding yet`,
+      ),
+    };
+  }
+  return appendCorrelationAliasForAnchor(anchorId, correlationKey);
 }
 
 export function resolveCorrelationKeys(rawKeys: string[]): string {
   if (rawKeys.length === 0) return "";
   for (const key of rawKeys) {
-    if (resolveSessionForCorrelationKey(key)) return key;
+    if (resolveAnchorForCorrelationKey(key)) return key;
   }
   return rawKeys[0];
 }
 
 export function hasSessionForCorrelationKey(key: string): boolean {
-  return resolveSessionForCorrelationKey(key) !== undefined;
+  const anchorId = resolveAnchorForCorrelationKey(key);
+  if (!anchorId) return false;
+  return currentSessionForAnchor(anchorId) !== undefined;
 }
 
 export function resolveCorrelationLockKey(key: string): string {
-  const sessionId = resolveSessionForCorrelationKey(key);
-  return sessionId ? `session:${sessionId}` : key;
+  const anchorId = resolveAnchorForCorrelationKey(key);
+  return anchorId ? `${ANCHOR_LOCK_PREFIX}${anchorId}` : key;
 }
 
 function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
@@ -133,7 +160,12 @@ function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
   return undefined;
 }
 
-export function resolveSessionForCorrelationKey(key: string): string | undefined {
+export function resolveAnchorForCorrelationKey(key: string): string | undefined {
   const alias = aliasForCorrelationKey(key);
   return alias ? resolveAlias(alias) : undefined;
+}
+
+export function resolveSessionForCorrelationKey(key: string): string | undefined {
+  const anchorId = resolveAnchorForCorrelationKey(key);
+  return anchorId ? currentSessionForAnchor(anchorId) : undefined;
 }

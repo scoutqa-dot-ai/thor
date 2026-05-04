@@ -6,8 +6,9 @@ import type { Event, TextPart } from "@opencode-ai/sdk";
 import { createRunnerApp, type RunnerAppOptions } from "./index.js";
 import {
   appendAlias,
-  appendCorrelationAlias,
+  appendCorrelationAliasForAnchor,
   appendSessionEvent,
+  mintAnchor,
   sessionLogPath,
 } from "@thor/common";
 
@@ -243,10 +244,30 @@ afterEach(() => {
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
 });
 
+function bindSessionToAnchor(sessionId: string, anchorId: string): void {
+  const result = appendAlias({ aliasType: "opencode.session", aliasValue: sessionId, anchorId });
+  if (!result.ok) throw result.error;
+}
+
+/** Mint a busy-session fixture: anchor + opencode.session + slack.thread alias. */
+function setupBusySession(slackThreadTs: string): string {
+  const anchorId = mintAnchor();
+  bindSessionToAnchor("busy-session", anchorId);
+  const aliasResult = appendAlias({
+    aliasType: "slack.thread_id",
+    aliasValue: slackThreadTs,
+    anchorId,
+  });
+  if (!aliasResult.ok) throw aliasResult.error;
+  return anchorId;
+}
+
 describe("runner /trigger orchestration", () => {
   it("serves the Vouch-gated trigger viewer with 401, 404, and rendered status", async () => {
     const h = createHarness();
-    const triggerId = "00000000-0000-4000-8000-000000000301";
+    const triggerId = "00000000-0000-7000-8000-000000000301";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("viewer-session", anchorId);
     expect(appendSessionEvent("viewer-session", { type: "trigger_start", triggerId })).toEqual({
       ok: true,
     });
@@ -255,12 +276,12 @@ describe("runner /trigger orchestration", () => {
     ).toEqual({ ok: true });
 
     await withServer(h.app, async (url) => {
-      const unauthorized = await fetch(`${url}/runner/v/viewer-session/${triggerId}`);
+      const unauthorized = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
       expect(unauthorized.status).toBe(401);
       expect(await unauthorized.text()).toContain("Unauthorized");
 
       const missing = await fetch(
-        `${url}/runner/v/viewer-session/00000000-0000-4000-8000-000000000399`,
+        `${url}/runner/v/${anchorId}/00000000-0000-7000-8000-000000000399`,
         {
           headers: { "X-Vouch-User": "u@example.com" },
         },
@@ -268,22 +289,21 @@ describe("runner /trigger orchestration", () => {
       expect(missing.status).toBe(404);
       expect(await missing.text()).toContain("Trigger not found");
 
-      const invalidSession = await fetch(
-        `${url}/runner/v/viewer-session%2F..%2Fescape/${triggerId}`,
-        {
-          headers: { "X-Vouch-User": "u@example.com" },
-        },
-      );
-      expect(invalidSession.status).toBe(404);
-      expect(await invalidSession.text()).toContain("Trigger not found");
+      // Malformed (non-UUIDv7) anchor id is rejected without disk I/O.
+      const invalidAnchor = await fetch(`${url}/runner/v/not-a-uuid/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      expect(invalidAnchor.status).toBe(404);
+      expect(await invalidAnchor.text()).toContain("Trigger not found");
 
-      const ok = await fetch(`${url}/runner/v/viewer-session/${triggerId}`, {
+      const ok = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
         headers: { "X-Vouch-User": "u@example.com" },
       });
       const html = await ok.text();
       expect(ok.status).toBe(200);
       expect(html).toContain("completed");
-      expect(html).toContain(`/runner/v/viewer-session/${triggerId}/raw`);
+      // No /raw escape hatch — the single-endpoint contract.
+      expect(html).not.toContain("/raw");
     });
   });
 
@@ -308,13 +328,15 @@ describe("runner /trigger orchestration", () => {
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line));
-      expect(aliases).toContainEqual(
-        expect.objectContaining({
-          aliasType: "slack.thread_id",
-          aliasValue: "1710000000.001",
-          sessionId: "session-1",
-        }),
+      const slackAlias = aliases.find(
+        (a) => a.aliasType === "slack.thread_id" && a.aliasValue === "1710000000.001",
       );
+      const sessionAlias = aliases.find(
+        (a) => a.aliasType === "opencode.session" && a.aliasValue === "session-1",
+      );
+      expect(slackAlias).toBeDefined();
+      expect(sessionAlias).toBeDefined();
+      expect(slackAlias.anchorId).toBe(sessionAlias.anchorId);
       expect(aliases).not.toContainEqual(expect.objectContaining({ aliasValue: correlationKey }));
 
       const second = await trigger(url, { prompt: "second", correlationKey });
@@ -332,8 +354,16 @@ describe("runner /trigger orchestration", () => {
   it("serializes session resolution for different aliases of the same session", async () => {
     const slackKey = "slack:thread:1710000000.010";
     const gitKey = "git:branch:runner-trigger-test:feature/shared";
-    expect(appendCorrelationAlias("shared-session", slackKey)).toEqual({ ok: true });
-    expect(appendCorrelationAlias("shared-session", gitKey)).toEqual({ ok: true });
+    const sharedAnchor = mintAnchor();
+    expect(
+      appendAlias({
+        aliasType: "opencode.session",
+        aliasValue: "shared-session",
+        anchorId: sharedAnchor,
+      }),
+    ).toEqual({ ok: true });
+    expect(appendCorrelationAliasForAnchor(sharedAnchor, slackKey)).toEqual({ ok: true });
+    expect(appendCorrelationAliasForAnchor(sharedAnchor, gitKey)).toEqual({ ok: true });
 
     let activeGets = 0;
     let maxActiveGets = 0;
@@ -399,13 +429,7 @@ describe("runner /trigger orchestration", () => {
       existingSessions: new Set(["busy-session"]),
       busySessions: new Set(["busy-session"]),
     });
-    expect(
-      appendAlias({
-        aliasType: "slack.thread_id",
-        aliasValue: "1710000000.003",
-        sessionId: "busy-session",
-      }),
-    ).toEqual({ ok: true });
+    setupBusySession("1710000000.003");
 
     await withServer(h.app, async (url) => {
       const response = await fetch(`${url}/trigger`, {
@@ -429,13 +453,7 @@ describe("runner /trigger orchestration", () => {
       existingSessions: new Set(["busy-session"]),
       busySessions: new Set(["busy-session"]),
     });
-    expect(
-      appendAlias({
-        aliasType: "slack.thread_id",
-        aliasValue: "1710000000.004",
-        sessionId: "busy-session",
-      }),
-    ).toEqual({ ok: true });
+    setupBusySession("1710000000.004");
 
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
@@ -459,13 +477,7 @@ describe("runner /trigger orchestration", () => {
       existingSessions: new Set(["busy-session"]),
       busySessions: new Set(["busy-session"]),
     });
-    expect(
-      appendAlias({
-        aliasType: "slack.thread_id",
-        aliasValue: "1710000000.011",
-        sessionId: "busy-session",
-      }),
-    ).toEqual({ ok: true });
+    setupBusySession("1710000000.011");
 
     await withServer(h.app, async (url) => {
       const response = await fetch(`${url}/trigger`, {
@@ -517,7 +529,7 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("emits session.parent aliases for discovered child sessions", async () => {
+  it("emits opencode.subsession aliases for discovered child sessions", async () => {
     const h = createHarness({
       children: [{ id: "child-session" }],
       promptEvents: (sessionId) => [taskRunningEvent(sessionId), idleEvent(sessionId)],
@@ -531,10 +543,20 @@ describe("runner /trigger orchestration", () => {
       expect(result.events.find((e) => e.type === "delegate")).toMatchObject({ agent: "general" });
     });
 
-    const aliases = readFileSync(`${worklogDir}/aliases.jsonl`, "utf8");
-    expect(aliases).toContain('"aliasType":"session.parent"');
-    expect(aliases).toContain('"aliasValue":"child-session"');
-    expect(aliases).toContain('"sessionId":"session-1"');
+    const aliases = readFileSync(`${worklogDir}/aliases.jsonl`, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const parentAlias = aliases.find(
+      (a) => a.aliasType === "opencode.session" && a.aliasValue === "session-1",
+    );
+    const childAlias = aliases.find(
+      (a) => a.aliasType === "opencode.subsession" && a.aliasValue === "child-session",
+    );
+    expect(parentAlias).toBeDefined();
+    expect(childAlias).toBeDefined();
+    // Both bind to the same anchor so findActiveTrigger walks from child → parent.
+    expect(childAlias.anchorId).toBe(parentAlias.anchorId);
   });
 
   it("emits session errors as tool progress and continues when later activity arrives", async () => {
@@ -602,50 +624,22 @@ describe("runner /trigger orchestration", () => {
   });
 
   it("renders a previously orphaned trigger as 'crashed' when a newer trigger_start lands in the same session", async () => {
-    const olderTriggerId = "00000000-0000-4000-8000-000000000602";
-    const newerTriggerId = "00000000-0000-4000-8000-000000000603";
+    const olderTriggerId = "00000000-0000-7000-8000-000000000602";
+    const newerTriggerId = "00000000-0000-7000-8000-000000000603";
+    const crashAnchor = mintAnchor();
+    bindSessionToAnchor("crash-session", crashAnchor);
     appendSessionEvent("crash-session", { type: "trigger_start", triggerId: olderTriggerId });
     appendSessionEvent("crash-session", { type: "trigger_start", triggerId: newerTriggerId });
 
     const h = createHarness();
     await withServer(h.app, async (url) => {
-      const response = await fetch(`${url}/runner/v/crash-session/${olderTriggerId}`, {
+      const response = await fetch(`${url}/runner/v/${crashAnchor}/${olderTriggerId}`, {
         headers: { "X-Vouch-User": "u@example.com" },
       });
       expect(response.status).toBe(200);
       const html = await response.text();
       expect(html).toContain("crashed");
       expect(html).toContain("abandoned without a close marker");
-    });
-  });
-
-  it("/raw returns only the requested trigger's slice and rejects path traversal in session id", async () => {
-    const triggerId = "00000000-0000-4000-8000-000000000601";
-    const otherTriggerId = "00000000-0000-4000-8000-000000000698";
-    appendSessionEvent("raw-session", { type: "trigger_start", triggerId });
-    appendSessionEvent("raw-session", { type: "trigger_end", triggerId, status: "completed" });
-    appendSessionEvent("raw-session", { type: "trigger_start", triggerId: otherTriggerId });
-    appendSessionEvent("raw-session", {
-      type: "trigger_end",
-      triggerId: otherTriggerId,
-      status: "completed",
-    });
-
-    const h = createHarness();
-    await withServer(h.app, async (url) => {
-      const ok = await fetch(`${url}/runner/v/raw-session/${triggerId}/raw`, {
-        headers: { "X-Vouch-User": "u@example.com" },
-      });
-      expect(ok.status).toBe(200);
-      const body = await ok.text();
-      expect(body).toContain(triggerId);
-      expect(body).not.toContain(otherTriggerId);
-
-      const traversal = await fetch(
-        `${url}/runner/v/${encodeURIComponent("../etc/passwd")}/${triggerId}/raw`,
-        { headers: { "X-Vouch-User": "u@example.com" } },
-      );
-      expect(traversal.status).toBe(404);
     });
   });
 
@@ -675,9 +669,18 @@ describe("runner /trigger orchestration", () => {
           body: JSON.stringify({ correlationKey: "slack:thread:1710000200.002" }),
         });
         expect(okResp.status).toBe(200);
-        const data = (await okResp.json()) as { sessionId: string; triggerId: string };
+        const data = (await okResp.json()) as {
+          sessionId: string;
+          triggerId: string;
+          anchorId: string;
+        };
         expect(data.sessionId).toMatch(/^e2e-/);
-        expect(data.triggerId).toMatch(/^[0-9a-f-]{36}$/);
+        expect(data.triggerId).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        );
+        expect(data.anchorId).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        );
         const text = readFileSync(sessionLogPath(data.sessionId), "utf8");
         expect(text).toContain(`"triggerId":"${data.triggerId}"`);
       });

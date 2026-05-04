@@ -5,7 +5,12 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import { appendSessionEvent, formatThorDisclaimerFooter, type WorkspaceConfig } from "@thor/common";
+import {
+  appendAlias,
+  appendSessionEvent,
+  formatThorDisclaimerFooter,
+  type WorkspaceConfig,
+} from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.js";
 import type { UpstreamConnection } from "./upstream.js";
@@ -34,7 +39,8 @@ const tools: Tool[] = [
 ];
 
 const worklogDir = "/tmp/thor-remote-cli-mcp-test/worklog";
-const activeTriggerId = "00000000-0000-4000-8000-000000000101";
+const activeTriggerId = "00000000-0000-7000-8000-000000000101";
+const activeAnchorId = "00000000-0000-7000-8000-0000000004a1";
 
 describe("remote-cli MCP endpoints", () => {
   let approvalsDir: string;
@@ -259,6 +265,13 @@ describe("remote-cli MCP endpoints", () => {
 
   it("creates approvals with Jira disclaimers, exposes them via approval commands, and returns 401 for resolve without the internal secret", async () => {
     expect(
+      appendAlias({
+        aliasType: "opencode.session",
+        aliasValue: "parent-session",
+        anchorId: activeAnchorId,
+      }),
+    ).toEqual({ ok: true });
+    expect(
       appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
     ).toEqual({ ok: true });
     const pending = await postJson(
@@ -349,7 +362,7 @@ describe("remote-cli MCP endpoints", () => {
         arguments: {
           projectKey: "THOR",
           summary: "Fix it",
-          description: `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/parent-session/${activeTriggerId}`)}`,
+          description: `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
         },
       },
     ]);
