@@ -49,8 +49,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1"
-          memory: 2G
+          memory: 512M
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3004/health').then(r=>{if(!r.ok)throw 1})"]
@@ -159,8 +158,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1"
-          memory: 2G
+          cpus: "1.5"
+          memory: 3G
     healthcheck:
       test:
         [
