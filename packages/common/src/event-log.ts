@@ -105,7 +105,7 @@ export interface TriggerSlice {
 
 export type ActiveTriggerResult =
   | { ok: true; anchorId: string; sessionId: string; triggerId: string }
-  | { ok: false; reason: "none" | "ambiguous" | "oversized" };
+  | { ok: false; reason: "none" | "oversized" };
 
 export interface ReverseAnchorEntry {
   sessionIds: string[];
@@ -562,11 +562,13 @@ export function listSessionAliases(sessionId: string): AliasRecord[] {
   );
 }
 
-function openTrigger(records: SessionEventLogRecord[]): string | undefined {
-  let open: string | undefined;
+function openTrigger(
+  records: SessionEventLogRecord[],
+): { triggerId: string; ts: string } | undefined {
+  let open: { triggerId: string; ts: string } | undefined;
   for (const record of records) {
-    if (record.type === "trigger_start") open = record.triggerId;
-    if (record.type === "trigger_end" && record.triggerId === open) open = undefined;
+    if (record.type === "trigger_start") open = { triggerId: record.triggerId, ts: record.ts };
+    if (record.type === "trigger_end" && record.triggerId === open?.triggerId) open = undefined;
   }
   return open;
 }
@@ -574,7 +576,11 @@ function openTrigger(records: SessionEventLogRecord[]): string | undefined {
 /**
  * Resolve the request session's anchor, then scan every opencode.session bound
  * to that anchor for an unclosed trigger_start. Sub-sessions don't carry their
- * own trigger_start so they're excluded from the scan.
+ * own trigger_start so they're excluded from the scan. When multiple bound
+ * sessions each have an open trigger (an orphan from a runner crash or stale
+ * recreate alongside a new live trigger), the newest-by-`trigger_start.ts`
+ * wins — the same supersede-by-newest semantics readTriggerSlice uses inside
+ * a single session.
  */
 export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult {
   const anchorId =
@@ -583,17 +589,16 @@ export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult
   if (!anchorId) return { ok: false, reason: "none" };
 
   const reverse = reverseLookupAnchor(anchorId);
-  let found: { sessionId: string; triggerId: string } | undefined;
+  let best: { sessionId: string; triggerId: string; ts: string } | undefined;
   for (const sessionId of reverse.sessionIds) {
     const read = readSessionRecords(sessionId);
     if (read.oversized) return { ok: false, reason: "oversized" };
     const open = openTrigger(read.records);
     if (!open) continue;
-    if (found) return { ok: false, reason: "ambiguous" };
-    found = { sessionId, triggerId: open };
+    if (!best || open.ts > best.ts) best = { sessionId, ...open };
   }
-  if (!found) return { ok: false, reason: "none" };
-  return { ok: true, anchorId, sessionId: found.sessionId, triggerId: found.triggerId };
+  if (!best) return { ok: false, reason: "none" };
+  return { ok: true, anchorId, sessionId: best.sessionId, triggerId: best.triggerId };
 }
 
 export function currentSessionForAnchor(anchorId: string): string | undefined {

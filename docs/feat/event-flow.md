@@ -370,7 +370,7 @@ Three call sites read aliases:
 2. **Gateway filters** — `hasSessionForCorrelationKey()` decides whether a non-mention Slack `message` should be forwarded (only if Thor is engaged for that thread) and whether a `check_suite` completed event has a session to wake. "Engaged" means the correlation key resolves to an anchor that has a current `opencode.session`.
 3. **Runner trigger** — picks the candidate session id by walking the correlation key → anchor → `currentSessionForAnchor` chain when the gateway didn't pin one explicitly.
 
-**`findActiveTrigger()`** (used by disclaimer routing and the viewer) is anchor-based: it resolves the request session id to its anchor (via `opencode.session` or `opencode.subsession`), reverse-looks-up every `opencode.session` bound to that anchor, and scans each session log for an unclosed `trigger_start`. No depth cap, no cycle detection — anchors flatten the parent relationship into a flat membership set. Failure modes collapse to `none` / `ambiguous` / `oversized`.
+**`findActiveTrigger()`** (used by disclaimer routing and the viewer) is anchor-based: it resolves the request session id to its anchor (via `opencode.session` or `opencode.subsession`), reverse-looks-up every `opencode.session` bound to that anchor, and scans each session log for an unclosed `trigger_start`. When more than one bound session has an open trigger (a stale orphan from a runner crash alongside a new live trigger), the **newest by `trigger_start.ts` wins** — the same supersede-by-newest semantics `readTriggerSlice` uses inside a single session, lifted across the anchor's membership set. No depth cap, no cycle detection. Failure modes are `none` / `oversized`.
 
 ### 6.5 Non-obvious properties
 

@@ -203,14 +203,28 @@ describe("session event log", () => {
     expect(findActiveTrigger("superseded")).toEqual({ ok: false, reason: "none" });
   });
 
-  it("returns ambiguous when two sessions on the same anchor have open triggers", () => {
+  it("supersedes orphan opens across sessions on the same anchor by newest trigger_start.ts", async () => {
+    // Old session crashes mid-trigger (trigger_start written, no trigger_end).
     appendAlias({ aliasType: "opencode.session", aliasValue: "head1", anchorId: anchorA });
-    appendAlias({ aliasType: "opencode.session", aliasValue: "head2", anchorId: anchorA });
     appendSessionEvent("head1", { type: "trigger_start", triggerId: triggerA });
+
+    // Brief delay so the new trigger_start.ts is strictly greater than the orphan's.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // session_stale recreate: new session on same anchor opens its own trigger.
+    appendAlias({ aliasType: "opencode.session", aliasValue: "head2", anchorId: anchorA });
     appendSessionEvent("head2", { type: "trigger_start", triggerId: triggerB });
 
-    expect(findActiveTrigger("head1")).toEqual({ ok: false, reason: "ambiguous" });
-    expect(findActiveTrigger("head2")).toEqual({ ok: false, reason: "ambiguous" });
+    // Disclaimer creation on either bound session should resolve to the newer
+    // trigger; the orphan in head1 is treated as crashed and ignored.
+    const expected = {
+      ok: true,
+      anchorId: anchorA,
+      sessionId: "head2",
+      triggerId: triggerB,
+    };
+    expect(findActiveTrigger("head1")).toEqual(expected);
+    expect(findActiveTrigger("head2")).toEqual(expected);
   });
 
   it("preserves the anchor across session_stale recreate", () => {
