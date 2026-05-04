@@ -174,7 +174,7 @@ Rules:
 
 ### Reacting to PR events
 
-After step 7 the run sits in `Lifecycle: open` waiting on the PR. Five GitHub event types can wake you, all pre-filtered by the gateway for mention, same-repo, and bot-authored gates. The runner resumes your session by correlation key, so the run dir from step 7 is already in active context.
+After step 7 the run sits in `Lifecycle: open` waiting on the PR. Six GitHub event types can wake you, pre-filtered by the gateway for their event-specific gates (mentions for human comments/reviews, same-repo PRs, bot-authored CI, and notes-backed branch sessions). The runner resumes your session by correlation key, so the run dir from step 7 is already in active context.
 
 Events on the same correlation key are debounced over 3s and arrive as a JSON array. A submitted PR review usually arrives as one `pull_request_review.submitted` plus its constituent `pull_request_review_comment.created` events together — they are one logical message from the human.
 
@@ -187,6 +187,8 @@ Events on the same correlation key are debounced over 3s and arrive as a JSON ar
 **`push`** — branch was pushed. Not an interrupt; arrives alongside whatever else is queued. Before waking you, the gateway runs `git fetch origin refs/heads/<branch>` then `git reset --hard FETCH_HEAD` on `/workspace/worktrees/<repo>/<branch>`, so the worktree is unconditionally aligned with the pushed tip — force-pushes included, uncommitted worktree edits discarded. `sender.login` distinguishes your own pushes (where the reset is a no-op) from someone else's; `git log <before>..<after>` shows what landed.
 
 **`check_suite.completed`** — CI finished on a commit you authored on this branch. `conclusion` is the key field (`success`, `failure`, `timed_out`, `action_required`, `cancelled`, `neutral`, `skipped`, `stale`); `gh run list --branch <branch> --limit 5` and `gh run view <id> --log-failed` surface the details. Wake-on-CI is silent — no human is waiting in chat at the moment CI finishes.
+
+**`pull_request.closed`** — the PR for this branch was closed. This is a non-interrupting continuation signal and is only delivered when the branch already has a notes-backed session. Read the raw JSON fields: `pull_request.merged` (`true` means merged, `false` means abandoned/closed without merge), `pull_request.merge_commit_sha`, `pull_request.html_url`, and `pull_request.closed_at`. If merged, record completion in the run notes and do not push further commits to the merged branch unless explicitly asked. If abandoned, record that state and ask the requester before discarding or repurposing the work.
 
 ### PR review protocol
 
