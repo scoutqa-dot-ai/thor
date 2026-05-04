@@ -2022,7 +2022,7 @@ describe("gateway", () => {
       const fetchImpl = vi.fn<typeof fetch>();
 
       await withWorklogDir(async (worklogDir) => {
-        notesKeys.add("git:branch:thor:feature/refactor");
+        sessionKeys.add("git:branch:thor:feature/refactor");
 
         await withServer(
           fetchImpl,
@@ -2765,7 +2765,7 @@ describe("gateway", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    mockHasSlackReply = true;
+    sessionKeys.add("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = slackEventBody("EvFileShare", {
@@ -2808,7 +2808,7 @@ describe("gateway", () => {
 
   it("ignores file_share messages in unengaged threads", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    mockHasSlackReply = false;
+    sessionKeys.delete("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = slackEventBody("EvFileShareUnengaged", {
@@ -2836,7 +2836,7 @@ describe("gateway", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    mockHasSlackReply = true;
+    sessionKeys.add("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = slackEventBody("EvThreadBroadcast", {
@@ -2867,7 +2867,7 @@ describe("gateway", () => {
 
   it("ignores thread_broadcast messages in unengaged threads", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    mockHasSlackReply = false;
+    sessionKeys.delete("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = slackEventBody("EvThreadBroadcastUnengaged", {
@@ -2892,7 +2892,7 @@ describe("gateway", () => {
 
   it("ignores supported subtype messages that duplicate an app_mention", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    mockHasSlackReply = true;
+    sessionKeys.add("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl) => {
       const body = slackEventBody("EvSubtypeDup", {
@@ -2915,7 +2915,7 @@ describe("gateway", () => {
 
   it("ignores unsupported message subtypes", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    mockHasSlackReply = true;
+    sessionKeys.add("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = slackEventBody("EvMessageChanged", {

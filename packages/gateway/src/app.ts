@@ -1503,7 +1503,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     if (isPullRequestClosedEvent(parsed.data)) {
       const rawKey = buildCorrelationKey(localRepo, parsed.data.pull_request.head.ref);
       const resolvedKey = resolveCorrelationKeys([rawKey]);
-      if (!findNotesFile(resolvedKey)) {
+      if (!hasSessionForCorrelationKey(rawKey)) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
         history.action = parsed.data.action;
