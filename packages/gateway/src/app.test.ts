@@ -134,6 +134,31 @@ function pushWebhookBody(overrides: Record<string, unknown> = {}): string {
   });
 }
 
+function pullRequestClosedWebhookBody(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    action: "closed",
+    installation: { id: 126669985 },
+    repository: { full_name: "scoutqa-dot-ai/thor" },
+    sender: { id: 1001, login: "alice", type: "User" },
+    pull_request: {
+      number: 42,
+      merged: true,
+      merged_at: "2026-04-24T14:00:00Z",
+      merge_commit_sha: "9999999999999999999999999999999999999999",
+      closed_at: "2026-04-24T14:00:01Z",
+      html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42",
+      user: { id: 1001, login: "alice" },
+      head: {
+        ref: "feature/refactor",
+        sha: "abc123def456",
+        repo: { full_name: "scoutqa-dot-ai/thor" },
+      },
+      base: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+      ...overrides,
+    },
+  });
+}
+
 function readQueuedEvents(queueDir: string, subdir?: string): Array<Record<string, unknown>> {
   const dir = subdir ? join(queueDir, subdir) : queueDir;
   return readdirSync(dir)
@@ -1957,6 +1982,244 @@ describe("gateway", () => {
       bin: "git",
       args: ["log", "-1", "--format=%ae", "abc123def456"],
       cwd: "/workspace/repos/thor",
+    });
+  });
+
+  it.each([
+    {
+      name: "merged",
+      deliveryId: "delivery-pr-closed-merged",
+      overrides: {},
+      expectedMerged: true,
+    },
+    {
+      name: "abandoned",
+      deliveryId: "delivery-pr-closed-abandoned",
+      overrides: { merged: false, merged_at: null, merge_commit_sha: null },
+      expectedMerged: false,
+    },
+  ])(
+    "enqueues $name pull_request closed events only when the branch has an existing notes-backed session",
+    async ({ deliveryId, overrides, expectedMerged }) => {
+      const fetchImpl = vi.fn<typeof fetch>();
+
+      await withWorklogDir(async (worklogDir) => {
+        notesKeys.add("git:branch:thor:feature/refactor");
+
+        await withServer(
+          fetchImpl,
+          async (baseUrl, _queue, queueDir) => {
+            const body = pullRequestClosedWebhookBody(overrides);
+            const response = await fetch(`${baseUrl}/github/webhook`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+                "X-GitHub-Delivery": deliveryId,
+                "X-GitHub-Event": "pull_request",
+              },
+              body,
+            });
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({ ok: true });
+
+            const queued = readQueuedEvents(queueDir);
+            expect(queued).toHaveLength(1);
+            expect(queued[0]).toMatchObject({
+              id: deliveryId,
+              source: "github",
+              correlationKey: "git:branch:thor:feature/refactor",
+              delayMs: 0,
+              interrupt: false,
+              payload: {
+                event_type: "pull_request",
+                action: "closed",
+                repository: { full_name: "scoutqa-dot-ai/thor" },
+                sender: { login: "alice" },
+                pull_request: {
+                  number: 42,
+                  merged: expectedMerged,
+                  closed_at: "2026-04-24T14:00:01Z",
+                  html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42",
+                  head: {
+                    ref: "feature/refactor",
+                    sha: "abc123def456",
+                    repo: { full_name: "scoutqa-dot-ai/thor" },
+                  },
+                  base: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+                  user: { login: "alice" },
+                },
+              },
+            });
+
+            const pr = (queued[0].payload as Record<string, unknown>).pull_request as Record<
+              string,
+              unknown
+            >;
+            if (expectedMerged) {
+              expect(pr.merged_at).toBe("2026-04-24T14:00:00Z");
+              expect(pr.merge_commit_sha).toBe("9999999999999999999999999999999999999999");
+            } else {
+              expect(pr.merged_at).toBeNull();
+              expect(pr.merge_commit_sha).toBeNull();
+            }
+
+            const ingested = readGitHubIngestedEntries(worklogDir);
+            expect(ingested).toHaveLength(1);
+            expect(ingested[0]).toMatchObject({
+              reason: "accepted",
+              eventType: "pull_request",
+              action: "closed",
+              metadata: { correlationKey: "git:branch:thor:feature/refactor" },
+            });
+          },
+          {
+            githubWebhookSecret: "github-secret",
+            githubMentionLogins: ["thor", "thor[bot]"],
+            githubAppBotId: 7777,
+          },
+        );
+      });
+    },
+  );
+
+  it("ignores pull_request closed events without an existing notes-backed session", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pullRequestClosedWebhookBody();
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-pr-closed-unresolved",
+              "X-GitHub-Event": "pull_request",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "correlation_key_unresolved",
+            eventType: "pull_request",
+            action: "closed",
+            metadata: {
+              rawKey: "git:branch:thor:feature/refactor",
+              resolvedKey: "git:branch:thor:feature/refactor",
+              headSha: "abc123def456",
+            },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("ignores fork pull_request closed events through the normal unresolved-session path", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pullRequestClosedWebhookBody({
+            head: {
+              ref: "feature/refactor",
+              sha: "abc123def456",
+              repo: { full_name: "alice/thor" },
+            },
+          });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-pr-closed-fork",
+              "X-GitHub-Event": "pull_request",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "correlation_key_unresolved",
+            eventType: "pull_request",
+            action: "closed",
+            metadata: {
+              rawKey: "git:branch:thor:feature/refactor",
+              resolvedKey: "git:branch:thor:feature/refactor",
+              headSha: "abc123def456",
+            },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("ignores non-closed pull_request actions as schema-invalid", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = JSON.stringify({
+            ...JSON.parse(pullRequestClosedWebhookBody()),
+            action: "opened",
+          });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-pr-opened",
+              "X-GitHub-Event": "pull_request",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "schema_validation_failed",
+            eventType: "pull_request",
+            parseStatus: "schema_invalid",
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
     });
   });
 

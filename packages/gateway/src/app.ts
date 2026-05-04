@@ -65,6 +65,7 @@ import {
   GitHubWebhookEnvelopeSchema,
   isPendingBranchResolveKey,
   isCheckSuiteCompletedEvent,
+  isPullRequestClosedEvent,
   isPushEvent,
   shouldIgnoreGitHubEvent,
   type GitHubWebhookEvent,
@@ -343,6 +344,7 @@ const GITHUB_SUPPORTED_EVENTS = new Set([
   "issue_comment",
   "pull_request_review_comment",
   "pull_request_review",
+  "pull_request",
   "check_suite",
   "push",
 ]);
@@ -354,7 +356,6 @@ type GitHubIgnoreReason =
   | "schema_validation_failed"
   | "repo_not_mapped"
   | "pure_issue_comment_unsupported"
-  | "fork_pr_unsupported"
   | "self_sender"
   | "empty_review_body"
   | "non_mention_comment"
@@ -1468,7 +1469,36 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     let delayMs = githubMentionDelay;
     let interrupt = true;
 
-    if (isCheckSuiteCompletedEvent(parsed.data)) {
+    if (isPullRequestClosedEvent(parsed.data)) {
+      const rawKey = buildCorrelationKey(localRepo, parsed.data.pull_request.head.ref);
+      const resolvedKey = resolveCorrelationKeys([rawKey]);
+      if (!findNotesFile(resolvedKey)) {
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "correlation_key_unresolved";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          rawKey,
+          resolvedKey,
+          headSha: parsed.data.pull_request.head.sha,
+        };
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "correlation_key_unresolved",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      correlationKey = resolvedKey;
+      delayMs = 0;
+      interrupt = false;
+    } else if (isCheckSuiteCompletedEvent(parsed.data)) {
       if (!branch) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
