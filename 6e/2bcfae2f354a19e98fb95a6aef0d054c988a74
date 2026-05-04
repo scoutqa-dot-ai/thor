@@ -1,0 +1,29 @@
+docs/plan/2026043001_session-event-log.md
+  356577b4ecc201dc 195,380,400,470
+packages/common/src/event-log.ts
+  356577b4ecc201dc 108,566-568,570-571,579-583,592,598,600-601
+packages/common/src/event-log.test.ts
+  356577b4ecc201dc 206-207,210-215,218-227
+docs/feat/event-flow.md
+  356577b4ecc201dc 373
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "6e2bcfae2f354a19e98fb95a6aef0d054c988a74",
+  "prompts": {
+    "356577b4ecc201dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21a5e140-a439-4111-b61a-9b49173d7e81",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 40,
+      "total_deletions": 21,
+      "accepted_lines": 38,
+      "overriden_lines": 0
+    }
+  }
+}
