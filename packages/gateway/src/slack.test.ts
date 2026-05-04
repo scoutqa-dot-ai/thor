@@ -92,6 +92,51 @@ describe("slack helpers", () => {
     });
   });
 
+  it("accepts nullable Slack file metadata fields", () => {
+    const parsed = SlackEventEnvelopeSchema.parse({
+      type: "event_callback",
+      event_id: "EvFileNullable",
+      team_id: "T123",
+      event: {
+        type: "message",
+        subtype: "file_share",
+        user: "U123",
+        text: "",
+        ts: "1710000000.003",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+        files: [
+          {
+            id: "F124",
+            name: null,
+            title: null,
+            mimetype: null,
+            filetype: null,
+            url_private: null,
+            permalink: null,
+            size: null,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.event).toMatchObject({
+      subtype: "file_share",
+      files: [
+        {
+          id: "F124",
+          name: null,
+          title: null,
+          mimetype: null,
+          filetype: null,
+          url_private: null,
+          permalink: null,
+          size: null,
+        },
+      ],
+    });
+  });
+
   it("classifies only normal messages and supported subtypes as forwardable", () => {
     expect(isForwardableSlackMessage({ type: "message", ts: "1", channel: "C123" })).toBe(true);
     expect(

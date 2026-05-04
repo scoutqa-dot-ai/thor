@@ -17,16 +17,19 @@ const SlackAppMentionEventSchema = z
 
 export const SUPPORTED_SLACK_MESSAGE_SUBTYPES = ["file_share", "thread_broadcast"] as const;
 
+const nullableStringField = z.string().nullable().optional();
+const nullableNumberField = z.number().nullable().optional();
+
 const SlackFileMetadataSchema = z
   .object({
-    id: z.string().optional(),
-    name: z.string().optional(),
-    title: z.string().optional(),
-    mimetype: z.string().optional(),
-    filetype: z.string().optional(),
-    url_private: z.string().optional(),
-    permalink: z.string().optional(),
-    size: z.number().optional(),
+    id: nullableStringField,
+    name: nullableStringField,
+    title: nullableStringField,
+    mimetype: nullableStringField,
+    filetype: nullableStringField,
+    url_private: nullableStringField,
+    permalink: nullableStringField,
+    size: nullableNumberField,
   })
   .passthrough();
 
