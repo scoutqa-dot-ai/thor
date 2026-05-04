@@ -1471,26 +1471,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     let interrupt = true;
 
     if (isPullRequestClosedEvent(parsed.data)) {
-      if (
-        parsed.data.pull_request.head.repo.full_name !==
-        parsed.data.pull_request.base.repo.full_name
-      ) {
-        history.githubStream = "ignored";
-        history.parseStatus = "schema_valid";
-        history.action = parsed.data.action;
-        history.reason = "fork_pr_unsupported";
-        history.metadata = { repoFullName, localRepo };
-        logGitHubIgnored({
-          deliveryId,
-          repoFullName,
-          eventType: eventTypeHeader,
-          action: parsed.data.action,
-          reason: "fork_pr_unsupported",
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
       const rawKey = buildCorrelationKey(localRepo, parsed.data.pull_request.head.ref);
       const resolvedKey = resolveCorrelationKeys([rawKey]);
       if (!findNotesFile(resolvedKey)) {

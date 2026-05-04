@@ -188,7 +188,7 @@ Events on the same correlation key are debounced over 3s and arrive as a JSON ar
 
 **`check_suite.completed`** — CI finished on a commit you authored on this branch. `conclusion` is the key field (`success`, `failure`, `timed_out`, `action_required`, `cancelled`, `neutral`, `skipped`, `stale`); `gh run list --branch <branch> --limit 5` and `gh run view <id> --log-failed` surface the details. Wake-on-CI is silent — no human is waiting in chat at the moment CI finishes.
 
-**`pull_request.closed`** — the PR for this branch was closed. This is a non-interrupting continuation signal and is only delivered when the branch already has a notes-backed session. Read the raw JSON fields: `pull_request.merged` (`true` means merged, `false` means abandoned/closed without merge), `pull_request.merge_commit_sha`, `pull_request.html_url`, and `pull_request.closed_at`. If merged, record completion in the run notes and do not push further commits to the merged branch unless explicitly asked. If abandoned, record that state and ask the requester before discarding or repurposing the work.
+**`pull_request.closed`** — the PR for this branch closed. Check `pull_request.merged` to tell merged vs abandoned, record the outcome, and do not keep pushing to a merged branch unless explicitly asked.
 
 ### PR review protocol
 

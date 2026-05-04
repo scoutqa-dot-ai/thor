@@ -26,7 +26,7 @@ continuation signal, not a user instruction.
 | Q4  | Authorship gate      | **Not added.** The existing-notes gate is sufficient: a PR `closed` event for a branch Thor never worked on cannot resolve a notes file, so it drops at Q3. Unlike `check_suite` there is no self-loop risk (Thor doesn't close its own PRs as part of normal work). |
 | Q5  | Interrupt semantics  | **`interrupt: false`.** PR close/merge is a continuation signal, mirroring `check_suite.completed` (D-11 of the CI-wake plan). User-initiated GitHub mention/review behaviour is unchanged. |
 | Q6  | Prompt rendering     | **JSON passthrough.** No service-layer changes. The agent reads `pull_request.merged`, `pull_request.merge_commit_sha`, `pull_request.html_url`, etc. directly from the forwarded event. |
-| Q7  | Fork PRs             | **Drop, consistent with existing PR-event handling.** The current `fork_pr_unsupported` reason already exists; reuse it for `pull_request.head.repo.full_name !== pull_request.base.repo.full_name`. |
+| Q7  | Fork PRs             | **Use the same branch-correlation flow.** Do not special-case them here; if no notes-backed session resolves from `pull_request.head.ref`, the event is ignored as `correlation_key_unresolved`. |
 | Q8  | Plan policy          | New plan file (this one), not an append to the CI-wake plan. The CI-wake plan is closed and shipped; PR-lifecycle is a distinct event surface with its own decisions, even though the gate machinery is reused. |
 
 ## Design
@@ -38,10 +38,9 @@ The flow mirrors `check_suite.completed` end-to-end:
 3. Schema validates `action: "closed"`. Other actions are allowed at the
    header level but fail schema validation and are logged as
    `schema_validation_failed`.
-4. Fork PRs drop with `fork_pr_unsupported`.
-5. Branch correlation key built from `pull_request.head.ref`. If no
+4. Branch correlation key built from `pull_request.head.ref`. If no
    notes-backed session resolves, drop with `correlation_key_unresolved`.
-6. Enqueue with `interrupt: false`. The runner coalesces with any
+5. Enqueue with `interrupt: false`. The runner coalesces with any
    in-flight session.
 
 No git gate (no `internalExec`) is needed: the existing-notes gate is
@@ -85,8 +84,6 @@ Files:
 - `packages/gateway/src/app.ts`
   - Add `"pull_request"` to `GITHUB_SUPPORTED_EVENTS`.
   - In the per-event branch, when `eventType === "pull_request"`:
-    - If `pull_request.head.repo.full_name !== pull_request.base.repo.full_name`
-      → ignore with `fork_pr_unsupported`.
     - Build `rawKey = buildCorrelationKey(localRepo, head.ref)`,
       resolve, and require an existing notes-backed match (same strict
       check used for `check_suite` — `findNotesFile(resolvedKey)` after
@@ -111,7 +108,7 @@ Tests:
     `interrupt: false` and the raw event.
   - Existing-session abandoned path (`merged: false`) → same enqueue.
   - No-session path → `correlation_key_unresolved`, no enqueue.
-  - Fork PR path → `fork_pr_unsupported`, no enqueue.
+  - Fork PR path → same unresolved-session flow, no enqueue.
   - Non-`closed` action (e.g. `opened`) → `schema_validation_failed`.
 
 Exit criteria:
@@ -182,8 +179,8 @@ Exit criteria:
 | D-2 | Existing-session gate is sufficient; no git-author check | A `pull_request.closed` for a branch Thor never worked on cannot resolve a notes file. There is no self-loop risk to defend against (unlike `check_suite`). |
 | D-3 | `interrupt: false` | Continuation signal, mirrors CI-wake D-11. Aborting in-flight work to deliver a "PR was merged" notification is a worse outcome than coalescing. |
 | D-4 | JSON passthrough; no per-action prompt rendering | Phase 0 of the CI-wake plan already standardised this. A new event type costs zero rendering code. |
-| D-5 | Drop fork PRs | Consistent with the rest of the GitHub gateway; `fork_pr_unsupported` reason already exists. |
-| D-6 | Reuse existing `GitHubIgnoreReason` values | `correlation_key_unresolved` and `fork_pr_unsupported` cover every drop path. No new reason strings needed; keeps the operator log surface tight. |
+| D-5 | No fork-specific PR-close gate | Keep PR-close handling on one correlation path; fork deliveries naturally ignore when no notes-backed session resolves. |
+| D-6 | Reuse existing `GitHubIgnoreReason` values | `correlation_key_unresolved` covers the PR-close drop path. No new reason strings needed; keeps the operator log surface tight. |
 
 ## Out of scope
 
@@ -193,7 +190,7 @@ Exit criteria:
 - Notes-file lifecycle state (`merged` / `abandoned` flag). Captured
   as an open item in `docs/plan/2026042701_agent-task-handoffs.md`;
   this plan keeps state in git/GitHub and lets the agent decide.
-- Fork-PR support.
+- Special fork-PR handling.
 - Coalescing rapid open/close/reopen storms. Not observed; revisit if
   it becomes noisy.
 - Auto-archival of run dirs after merge. Out of scope here; will be

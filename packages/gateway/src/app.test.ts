@@ -2129,12 +2129,10 @@ describe("gateway", () => {
     });
   });
 
-  it("ignores fork pull_request closed events", async () => {
+  it("ignores fork pull_request closed events through the normal unresolved-session path", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
     await withWorklogDir(async (worklogDir) => {
-      notesKeys.add("git:branch:thor:feature/refactor");
-
       await withServer(
         fetchImpl,
         async (baseUrl, _queue, queueDir) => {
@@ -2163,9 +2161,14 @@ describe("gateway", () => {
           const ignored = readGitHubIgnoredEntries(worklogDir);
           expect(ignored).toHaveLength(1);
           expect(ignored[0]).toMatchObject({
-            reason: "fork_pr_unsupported",
+            reason: "correlation_key_unresolved",
             eventType: "pull_request",
             action: "closed",
+            metadata: {
+              rawKey: "git:branch:thor:feature/refactor",
+              resolvedKey: "git:branch:thor:feature/refactor",
+              headSha: "abc123def456",
+            },
           });
         },
         {
