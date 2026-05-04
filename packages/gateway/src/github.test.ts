@@ -12,7 +12,9 @@ import {
   GitHubWebhookEnvelopeSchema,
   isCheckSuiteCompletedEvent,
   isIssueCommentEvent,
+  isPullRequestClosedEvent,
   isPushEvent,
+  PullRequestClosedEventSchema,
   isPullRequestReviewCommentEvent,
   isPullRequestReviewEvent,
   shouldIgnoreGitHubEvent,
@@ -100,6 +102,31 @@ function basePushEvent(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function basePullRequestClosedEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    action: "closed",
+    installation: { id: 123 },
+    repository: { full_name: "scoutqa-dot-ai/thor" },
+    sender: { id: 1001, login: "alice", type: "User" },
+    pull_request: {
+      number: 42,
+      merged: true,
+      merged_at: "2026-04-24T14:00:00Z",
+      merge_commit_sha: "9999999999999999999999999999999999999999",
+      closed_at: "2026-04-24T14:00:01Z",
+      html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42",
+      user: { id: 1001, login: "alice" },
+      head: {
+        ref: "feature/refactor",
+        sha: "abc123def456",
+        repo: { full_name: "scoutqa-dot-ai/thor" },
+      },
+      base: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+      ...overrides,
+    },
+  };
+}
+
 describe("verifyGitHubSignature", () => {
   it("accepts a valid signature", () => {
     const secret = "super-secret";
@@ -166,6 +193,63 @@ describe("GitHubWebhookEnvelopeSchema", () => {
     expect(getGitHubEventSourceTs(parsed.data)).toBe(Date.parse("2026-04-24T13:00:00Z"));
   });
 
+  it("accepts pull_request closed events and preserves close fields", () => {
+    const parsed = GitHubWebhookEnvelopeSchema.safeParse(basePullRequestClosedEvent());
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+
+    expect(isPullRequestClosedEvent(parsed.data)).toBe(true);
+    expect(getGitHubEventType(parsed.data)).toBe("pull_request");
+    expect(getGitHubEventBranch(parsed.data)).toBe("feature/refactor");
+    expect(getGitHubEventSourceTs(parsed.data)).toBe(Date.parse("2026-04-24T14:00:01Z"));
+    expect(parsed.data.pull_request).toMatchObject({
+      merged: true,
+      merged_at: "2026-04-24T14:00:00Z",
+      merge_commit_sha: "9999999999999999999999999999999999999999",
+      closed_at: "2026-04-24T14:00:01Z",
+      html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42",
+      head: { ref: "feature/refactor", sha: "abc123def456" },
+      base: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+      user: { login: "alice" },
+    });
+    expect(PullRequestClosedEventSchema.safeParse(parsed.data).success).toBe(true);
+  });
+
+  it("accepts abandoned pull_request closed events with null merge fields", () => {
+    const parsed = GitHubWebhookEnvelopeSchema.safeParse(
+      basePullRequestClosedEvent({
+        merged: false,
+        merged_at: null,
+        merge_commit_sha: null,
+      }),
+    );
+    expect(parsed.success).toBe(true);
+    if (!parsed.success || !isPullRequestClosedEvent(parsed.data)) return;
+
+    expect(parsed.data.pull_request.merged).toBe(false);
+    expect(parsed.data.pull_request.merged_at).toBeNull();
+    expect(parsed.data.pull_request.merge_commit_sha).toBeNull();
+  });
+
+  it("keeps review and review-comment event type precedence over standalone pull_request", () => {
+    const reviewComment = GitHubWebhookEnvelopeSchema.parse(baseReviewCommentEvent());
+    expect(getGitHubEventType(reviewComment)).toBe("pull_request_review_comment");
+
+    const review = GitHubWebhookEnvelopeSchema.parse({
+      action: "submitted",
+      installation: { id: 123 },
+      repository: { full_name: "scoutqa-dot-ai/thor" },
+      sender: { id: 1001, login: "alice", type: "User" },
+      pull_request: baseReviewCommentEvent().pull_request,
+      review: {
+        body: "@thor please inspect",
+        html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#pullrequestreview-1",
+        submitted_at: "2026-04-24T11:05:00Z",
+      },
+    });
+    expect(getGitHubEventType(review)).toBe("pull_request_review");
+  });
+
   it("accepts deleted push events with null head_commit", () => {
     const parsed = GitHubWebhookEnvelopeSchema.safeParse(
       basePushEvent({
@@ -229,7 +313,7 @@ describe("GitHub ignore helpers", () => {
     expect(shouldIgnoreIssueCommentEvent(event, options)).toBe("pure_issue_comment_unsupported");
   });
 
-  it("ignores fork PR comments", () => {
+  it("does not special-case fork PR comments", () => {
     const event = {
       ...baseReviewCommentEvent(),
       pull_request: {
@@ -238,7 +322,7 @@ describe("GitHub ignore helpers", () => {
       },
     };
     if (!isPullRequestReviewCommentEvent(event)) throw new Error("expected review comment event");
-    expect(shouldIgnorePullRequestReviewCommentEvent(event, options)).toBe("fork_pr_unsupported");
+    expect(shouldIgnorePullRequestReviewCommentEvent(event, options)).toBeNull();
   });
 
   it("ignores self senders", () => {

@@ -670,14 +670,18 @@ describe("triggerRunnerGitHub", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("drops pending branch issue comments when gh resolves a fork PR head", async () => {
-    mockFetch.mockResolvedValueOnce(
-      execResponse({
-        headRefName: "feature/refactor",
-        headRepositoryOwner: { login: "alice" },
-        headRepository: { name: "thor" },
-      }),
-    );
+  it("reroutes pending branch issue comments even when gh resolves a fork PR head", async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        execResponse({
+          headRefName: "feature/refactor",
+          headRepositoryOwner: { login: "alice" },
+          headRepository: { name: "thor" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
+      );
     const onRejected = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -692,9 +696,9 @@ describe("triggerRunnerGitHub", () => {
       onRejected,
     );
 
-    expect(result).toEqual({ busy: false, rejected: true, reason: "fork_pr_unsupported" });
-    expect(onRejected).toHaveBeenCalledWith("fork_pr_unsupported");
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ busy: false });
+    expect(onRejected).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it("maps gh not found failures to terminal branch_not_found rejection", async () => {

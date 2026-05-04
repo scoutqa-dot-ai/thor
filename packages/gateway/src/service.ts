@@ -154,8 +154,7 @@ export type InternalExecClient = (request: InternalExecRequest) => Promise<{
 type TerminalGitHubRejectReason =
   | "installation_gone"
   | "branch_not_found"
-  | "branch_lookup_failed"
-  | "fork_pr_unsupported";
+  | "branch_lookup_failed";
 
 class TerminalGitHubDispatchError extends Error {
   constructor(
@@ -473,10 +472,6 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     }
     try {
       const branchInfo = await resolveGitHubPrHead(latest, directory, internalExec);
-      if (branchInfo.headRepoFullName !== latest.repository.full_name) {
-        return { kind: "drop", logPrefix, reason: "fork_pr_unsupported" };
-      }
-
       return {
         kind: "reroute",
         logPrefix: "github",
