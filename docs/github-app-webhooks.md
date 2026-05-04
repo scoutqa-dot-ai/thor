@@ -132,7 +132,6 @@ npx smee-client --url https://smee.io/<channel-id> --path /github/webhook --port
 | `event_unsupported`              | Event is outside Thor allowlist                                                                | Ensure subscription list is correct                                               |
 | `repo_not_mapped`                | Repo basename has no matching local clone                                                      | Clone under `/workspace/repos/<basename>`; keep basename aligned                  |
 | `pure_issue_comment_unsupported` | `issue_comment` came from an issue, not a PR                                                   | Comment on a PR thread                                                            |
-| `fork_pr_unsupported`            | PR head repo differs from base repo                                                            | Use same-repo branch PRs                                                          |
 | `self_sender`                    | Sender's numeric user ID matches `GITHUB_APP_BOT_ID`                                           | Self-loop guard — expected when Thor comments/reviews                             |
 | `empty_review_body`              | Submitted review body was blank                                                                | Include text in the review body                                                   |
 | `non_mention_comment`            | Comment/review does not mention the app, and (for review events) the PR was not opened by Thor | Mention `@${GITHUB_APP_SLUG}` to act, or open the PR from Thor                    |
@@ -157,8 +156,6 @@ Queue-handler-side terminal rejections happen after the event passed intake. The
 | `installation_gone`    | `gh pr view` failed with an auth/permission error through `/internal/exec` | Reinstall the GitHub App on the affected owner; verify private key + app ID env |
 | `branch_not_found`     | `gh pr view` could not find the PR/branch                                  | Confirm the PR still exists; replay the delivery if it was a transient race     |
 | `branch_lookup_failed` | `/internal/exec` or `gh pr view` failed before returning usable PR head    | Check remote-cli health and connectivity; replay the delivery once recovered    |
-| `fork_pr_unsupported`  | PR head repo differs from base repo (caught after branch resolve)          | Use same-repo branch PRs                                                        |
-
 `branch_not_found` is permanent (the branch is gone, replay won't help). `branch_lookup_failed` is operationally transient — the failure was infra, the underlying PR may still be valid; redeliver after fixing the transport.
 
 ## 10) Trust boundary for `remote-cli`

@@ -356,7 +356,6 @@ type GitHubIgnoreReason =
   | "schema_validation_failed"
   | "repo_not_mapped"
   | "pure_issue_comment_unsupported"
-  | "fork_pr_unsupported"
   | "self_sender"
   | "empty_review_body"
   | "non_mention_comment"

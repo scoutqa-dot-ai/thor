@@ -229,7 +229,6 @@ export type PushEvent = z.infer<typeof PushEventSchema>;
 
 export type GitHubIgnoreReason =
   | "pure_issue_comment_unsupported"
-  | "fork_pr_unsupported"
   | "self_sender"
   | "empty_review_body"
   | "non_mention_comment"
@@ -364,9 +363,6 @@ export function shouldIgnorePullRequestReviewCommentEvent(
   raw: PullRequestReviewCommentEvent,
   options: { mentionLogins: string[]; botId: number },
 ): GitHubIgnoreReason | null {
-  if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
-    return "fork_pr_unsupported";
-  }
   if (raw.sender.id === options.botId) {
     return "self_sender";
   }
@@ -383,10 +379,6 @@ export function shouldIgnorePullRequestReviewEvent(
   raw: PullRequestReviewEvent,
   options: { mentionLogins: string[]; botId: number },
 ): GitHubIgnoreReason | null {
-  if (raw.pull_request.head.repo.full_name !== raw.pull_request.base.repo.full_name) {
-    return "fork_pr_unsupported";
-  }
-
   const body = raw.review.body?.trim() ?? "";
   if (!body) {
     return "empty_review_body";
@@ -439,5 +431,5 @@ export function isPullRequestReviewEvent(raw: GitHubWebhookEvent): raw is PullRe
 }
 
 export function isPullRequestClosedEvent(raw: GitHubWebhookEvent): raw is PullRequestClosedEvent {
-  return raw.event_type === "pull_request";
+  return raw.event_type === "pull_request" && raw.action === "closed";
 }

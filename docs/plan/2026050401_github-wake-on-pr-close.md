@@ -80,7 +80,7 @@ Files:
   - Add explicit standalone-PR handling to `shouldIgnoreGitHubEvent(...)`
     so the new variant does not fall through the review-event path.
   - No new `GitHubIgnoreReason` values needed; reuse
-    `correlation_key_unresolved` and `fork_pr_unsupported`.
+    `correlation_key_unresolved`.
 - `packages/gateway/src/app.ts`
   - Add `"pull_request"` to `GITHUB_SUPPORTED_EVENTS`.
   - In the per-event branch, when `eventType === "pull_request"`:
@@ -156,7 +156,7 @@ Files:
   - Document the `Pull request` event subscription (action `closed`)
     on the GitHub App.
   - Note the existing-session gate and the `correlation_key_unresolved`
-    / `fork_pr_unsupported` ignored reasons.
+    ignored reason.
 
 Verification:
 

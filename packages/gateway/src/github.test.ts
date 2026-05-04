@@ -313,7 +313,7 @@ describe("GitHub ignore helpers", () => {
     expect(shouldIgnoreIssueCommentEvent(event, options)).toBe("pure_issue_comment_unsupported");
   });
 
-  it("ignores fork PR comments", () => {
+  it("does not special-case fork PR comments", () => {
     const event = {
       ...baseReviewCommentEvent(),
       pull_request: {
@@ -322,7 +322,7 @@ describe("GitHub ignore helpers", () => {
       },
     };
     if (!isPullRequestReviewCommentEvent(event)) throw new Error("expected review comment event");
-    expect(shouldIgnorePullRequestReviewCommentEvent(event, options)).toBe("fork_pr_unsupported");
+    expect(shouldIgnorePullRequestReviewCommentEvent(event, options)).toBeNull();
   });
 
   it("ignores self senders", () => {
