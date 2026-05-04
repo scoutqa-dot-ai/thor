@@ -58,8 +58,6 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "pr review",
   "issue view",
   "issue list",
-  "issue comment",
-  "issue create",
   "label list",
   "release list",
   "release view",
@@ -103,21 +101,21 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
   "gh pr create": {
     reason:
-      "PR creation is limited to the current worktree branch and one non-interactive body source.",
+      "PR creation is limited to the current worktree branch and an explicit non-interactive body source.",
     instead:
-      "gh pr create --title <title> --body <body> or gh pr create --fill; omit --head unless it matches the current worktree branch",
+      "gh pr create --title <title> --body <body>; omit --head unless it matches the current worktree branch",
   },
   "gh issue create": {
-    reason: "issue creation must be non-interactive and include a title plus body.",
-    instead: "gh issue create --title <title> --body <body>",
+    reason: "GitHub issue creation is outside v1 disclaimer-injection scope.",
+    instead: "Use Jira for tracked work or wait for future issue disclaimer support.",
   },
   "gh pr comment": {
     reason: "PR comments must target a numeric PR and provide exactly one body source.",
-    instead: "gh pr comment <number> --body <text> or gh pr comment <number> -F <path>",
+    instead: "gh pr comment <number> --body <text>",
   },
   "gh issue comment": {
-    reason: "issue comments must target a numeric issue and provide an inline body.",
-    instead: "gh issue comment <number> --body <text>",
+    reason: "GitHub issue comments are outside v1 disclaimer-injection scope.",
+    instead: "Use Jira for tracked work or wait for future issue disclaimer support.",
   },
   "gh pr review": {
     reason: "reviews must be append-only comments or request-changes reviews with an inline body.",
@@ -178,15 +176,11 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
     case "pr create":
       return validateGhPrCreateArgs(args, cwd);
     case "pr comment":
-      return validateGhCommentArgs(args, "gh pr comment", true);
+      return validateGhPrCommentArgs(args);
     case "pr review":
       return validateGhPrReviewArgs(args);
     case "issue view":
       return validateRequiredNumericSelector(args, "gh issue view");
-    case "issue comment":
-      return validateGhCommentArgs(args, "gh issue comment", false);
-    case "issue create":
-      return validateGhIssueCreateArgs(args);
     case "run view":
       return validateRequiredNumericSelector(args, "gh run view");
     case "run watch":
@@ -267,7 +261,6 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
     { name: "fill", kind: "boolean", aliases: ["--fill"] },
     { name: "title", kind: "value", aliases: ["-t", "--title"] },
     { name: "body", kind: "value", aliases: ["-b", "--body"] },
-    { name: "body-file", kind: "value", aliases: ["-F", "--body-file"] },
     { name: "base", kind: "value", aliases: ["-B", "--base"] },
     { name: "head", kind: "value", aliases: ["-H", "--head"] },
     { name: "label", kind: "value", aliases: ["-l", "--label"] },
@@ -280,9 +273,15 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
 
   const titles = valueFlagValues(parsed, "title");
   const bodies = valueFlagValues(parsed, "body");
-  const bodyFiles = valueFlagValues(parsed, "body-file");
   const heads = valueFlagValues(parsed, "head");
   const fill = booleanFlagCount(parsed, "fill") > 0;
+
+  if (bodies.length > 1) {
+    return denyMessage("gh pr create", {
+      reason: "multiple --body values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body value",
+    });
+  }
 
   // --head must match the branch implied by cwd. The cwd is the agent's worktree
   // (/workspace/worktrees/<repo>/<branch>), so the branch it would PR from
@@ -333,65 +332,39 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
     }
   }
 
-  // --fill is mutually exclusive with explicit title/body/-F.
-  if (fill && (titles.length > 0 || bodies.length > 0 || bodyFiles.length > 0)) {
-    return denyMessage("gh pr create");
+  // --fill is denied: PR creation must include an explicit body so Thor can
+  // inject the trigger viewer link as a disclaimer footer.
+  if (fill) {
+    return denyMessage("gh pr create", {
+      reason:
+        "--fill is denied: PR creation must include an explicit --body so Thor can inject the trigger viewer link.",
+      instead: "gh pr create --title <title> --body <body>",
+    });
   }
-  // --body and -F are mutually exclusive.
-  if (bodies.length > 0 && bodyFiles.length > 0) {
-    return denyMessage("gh pr create");
-  }
-  if (bodyFiles.length > 1) return denyMessage("gh pr create");
-
-  if (fill) return null;
-
-  const hasBodySource = bodies.length > 0 || bodyFiles.length > 0;
-  return titles.length > 0 && hasBodySource ? null : denyMessage("gh pr create");
+  return titles.length > 0 && bodies.length === 1 ? null : denyMessage("gh pr create");
 }
 
-function validateGhIssueCreateArgs(args: string[]): string | null {
-  const parsed = scanPolicyArgs(args, 2, [
-    { name: "title", kind: "value", aliases: ["-t", "--title"] },
-    { name: "body", kind: "value", aliases: ["-b", "--body"] },
-    { name: "label", kind: "value", aliases: ["-l", "--label"] },
-  ]);
-  if (!parsed || parsed.positionals.length > 0) {
-    return denyMessage("gh issue create");
-  }
-  return valueFlagValues(parsed, "title").length > 0 && valueFlagValues(parsed, "body").length > 0
-    ? null
-    : denyMessage("gh issue create");
-}
-
-function validateGhCommentArgs(
-  args: string[],
-  command: "gh pr comment" | "gh issue comment",
-  supportBodyFile: boolean,
-): string | null {
+function validateGhPrCommentArgs(args: string[]): string | null {
   const selector = args[2];
   if (!selector || !DIGITS_ONLY.test(selector)) {
-    return denyMessage(command);
+    return denyMessage("gh pr comment");
   }
 
-  const flags: Parameters<typeof scanPolicyArgs>[2] = supportBodyFile
-    ? [
-        { name: "body", kind: "value", aliases: ["-b", "--body"] },
-        { name: "body-file", kind: "value", aliases: ["-F", "--body-file"] },
-      ]
-    : [{ name: "body", kind: "value", aliases: ["-b", "--body"] }];
-
-  const parsed = scanPolicyArgs(args, 3, flags);
+  const parsed = scanPolicyArgs(args, 3, [
+    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+  ]);
   if (!parsed || parsed.positionals.length > 0) {
-    return denyMessage(command);
+    return denyMessage("gh pr comment");
   }
 
   const bodies = valueFlagValues(parsed, "body");
-  const bodyFiles = supportBodyFile ? valueFlagValues(parsed, "body-file") : [];
-
-  if (bodies.length > 0 && bodyFiles.length > 0) return denyMessage(command);
-  if (bodyFiles.length > 1) return denyMessage(command);
-
-  return bodies.length > 0 || bodyFiles.length > 0 ? null : denyMessage(command);
+  if (bodies.length > 1) {
+    return denyMessage("gh pr comment", {
+      reason: "multiple --body values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body value",
+    });
+  }
+  return bodies.length === 1 ? null : denyMessage("gh pr comment");
 }
 
 function validateGhPrReviewArgs(args: string[]): string | null {
@@ -414,7 +387,15 @@ function validateGhPrReviewArgs(args: string[]): string | null {
 
   const hasComment = booleanFlagCount(parsed, "comment") > 0;
   const hasRequestChanges = booleanFlagCount(parsed, "request-changes") > 0;
-  const hasBody = valueFlagValues(parsed, "body").length > 0;
+  const bodies = valueFlagValues(parsed, "body");
+  const hasBody = bodies.length === 1;
+
+  if (bodies.length > 1) {
+    return denyMessage("gh pr review", {
+      reason: "multiple --body values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body value",
+    });
+  }
 
   if (hasComment === hasRequestChanges || !hasBody) {
     return denyMessage("gh pr review");

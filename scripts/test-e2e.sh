@@ -2,7 +2,8 @@
 #
 # End-to-end test for Thor.
 #
-# Deterministic direct service checks only; no OpenCode/LLM-backed /trigger calls.
+# Deterministic direct service checks only; no OpenCode/LLM-backed /trigger or
+# cron/hey-thor calls. Use scripts/test-opencode-e2e.sh for model-backed smoke.
 #
 # Prerequisites:
 #   - Both services running (either `pnpm dev` or `docker compose up`)
@@ -312,14 +313,28 @@ elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
+  trigger_context_raw=$(curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
+    -H 'Content-Type: application/json' \
+    -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+    -d '{"correlationKey":"e2e-approval-flow","promptPreview":"e2e approval disclaimer context"}' \
+    2>/dev/null || echo '{}')
+  E2E_THOR_SESSION_ID=$(json_field "$trigger_context_raw" "sessionId")
+  E2E_THOR_TRIGGER_ID=$(json_field "$trigger_context_raw" "triggerId")
+  assert '[[ -n "$E2E_THOR_SESSION_ID" && -n "$E2E_THOR_TRIGGER_ID" ]]' \
+    "runner: created e2e trigger context" \
+    "response: ${trigger_context_raw:0:300}; set THOR_E2E_TEST_HELPERS=1 for the runner service"
+
   # 4b. remote-cli-level: call the approval-required tool directly
   echo "  Calling tool via remote-cli (expecting approval interception)..."
+  approval_args_json='{"description":"e2e approval body"}'
+  escaped_approval_args=$(node -e "console.log(JSON.stringify(process.argv[1]))" "$approval_args_json")
   call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
-    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",\"{}\"],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
+    -H "x-thor-session-id: $E2E_THOR_SESSION_ID" \
+    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",$escaped_approval_args],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
     2>/dev/null || echo '{}')
 
-  # Parse action ID — check stdout, stderr (thor:meta), and content (legacy MCP format)
+  # Parse action ID from the remote-cli approval-required response.
   action_id=$(echo "$call_raw" | node -e "
     const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
     const parts = [d.stdout || '', d.stderr || ''];

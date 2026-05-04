@@ -64,6 +64,6 @@ That scenario would require file locking or moving to a database — but it is n
 
 ## Out of Scope
 
-- Updating stale session IDs in notes (tracked in session-mapping-refactor D6)
+- Updating stale session IDs in notes (since superseded by JSONL session aliases — see `2026043001_session-event-log.md`)
 - Archiving old date directories / TTL rotation
 - Multi-day notes chain traversal (reading back-references)

@@ -21,6 +21,8 @@ export {
   envInt,
   envCsv,
   stripTrailingSlashes,
+  getRunnerBaseUrl,
+  matchesInternalSecret,
 } from "./env.js";
 export type { EnvSource } from "./env.js";
 export {
@@ -46,8 +48,33 @@ export type {
   ValidationResult,
 } from "./workspace-config.js";
 export type { ProxyName } from "./proxies.js";
-export { writeToolCallLog, appendJsonlWorklog, writeSlackWebhookHistory } from "./worklog.js";
+export { writeToolCallLog, appendJsonlWorklog, getWorklogDir } from "./worklog.js";
 export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.js";
+export {
+  SessionEventLogRecordSchema,
+  AliasRecordSchema,
+  appendSessionEvent,
+  appendAlias,
+  readTriggerSlice,
+  findActiveTrigger,
+  resolveAlias,
+  reverseLookupAnchor,
+  currentSessionForAnchor,
+  listSessionAliases,
+  mintAnchor,
+  mintTriggerId,
+  sessionLogPath,
+  isUuidV7,
+  UUID_V7_RE,
+  MAX_SESSION_FILE_BYTES,
+} from "./event-log.js";
+export type {
+  SessionEventLogRecord,
+  AliasRecord,
+  TriggerSlice,
+  ActiveTriggerResult,
+  ReverseAnchorEntry,
+} from "./event-log.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
 export type { Logger } from "./logger.js";
 export { errorToMetadata } from "./errors.js";
@@ -63,42 +90,28 @@ export {
   resolveExistingDirectoryWithinRoot,
 } from "./paths.js";
 export {
-  readNotes,
-  createNotes,
-  continueNotes,
-  appendTrigger,
-  appendSummary,
-  findNotesFile,
-  getSessionIdFromNotes,
-  registerAlias,
   resolveCorrelationKeys,
-  isAliasableTool,
-  isAliasableGitCommand,
-  isAliasableMcpTool,
-  extractAliases,
-  getNotesLineCount,
-  hasSlackReply,
-  ThorMetaSchema,
-  ThorMetaAliasSchema,
-  ThorMetaApprovalSchema,
-  extractThorMeta,
-  formatThorMeta,
-  computeGitAlias,
-  computeSlackAlias,
-  inferRepoFromPath,
-  extractBranchFromGitArgs,
-} from "./notes.js";
-export type {
-  ToolArtifact,
-  ExtractedAlias,
-  ThorMeta,
-  ThorMetaAlias,
-  ThorMetaApproval,
-} from "./notes.js";
+  resolveCorrelationLockKey,
+  hasSessionForCorrelationKey,
+  appendCorrelationAlias,
+  appendCorrelationAliasForAnchor,
+  computeGitCorrelationKey,
+  computeSlackCorrelationKey,
+  resolveAnchorForCorrelationKey,
+  resolveSessionForCorrelationKey,
+  ANCHOR_LOCK_PREFIX,
+  SESSION_LOCK_PREFIX,
+} from "./correlation.js";
 export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
 export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
 export { deriveGitHubAppBotIdentity } from "./github-identity.js";
 export type { GitHubAppBotIdentity, GitHubAppBotIdentityInput } from "./github-identity.js";
+export {
+  buildThorDisclaimerForSession,
+  buildThorTriggerUrl,
+  formatThorDisclaimerFooter,
+} from "./disclaimer.js";
+export type { ThorDisclaimerContext } from "./disclaimer.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,

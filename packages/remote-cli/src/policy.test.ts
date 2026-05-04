@@ -717,9 +717,7 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["pr", "create", "--title=Add feature", "--body=Summary"])).toBeNull();
     });
 
-    it("allows pr create with --fill and creation-time metadata", () => {
-      expect(validateGhArgs(["pr", "create", "--fill"])).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--fill", "--draft"])).toBeNull();
+    it("allows pr create with explicit body and creation-time metadata", () => {
       expect(
         validateGhArgs([
           "pr",
@@ -740,11 +738,11 @@ describe("validateGhArgs", () => {
           "carol",
         ]),
       ).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "body.md"])).toBeNull();
-      expect(
-        validateGhArgs(["pr", "create", "--title", "x", "--body-file", "docs/pr-body.md"]),
-      ).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "/tmp/body.md"])).toBeNull();
+    });
+
+    it("denies pr create --fill (no body field for disclaimer injection)", () => {
+      expectGhDeniedWith(["pr", "create", "--fill"], ["--fill is denied"]);
+      expectGhDeniedWith(["pr", "create", "--fill", "--draft"], ["--fill is denied"]);
     });
 
     it("allows gh run rerun / run download / workflow run within policy", () => {
@@ -779,29 +777,18 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["workflow", "run", "ci.yml", "--field", "retries=null"])).toBeNull();
     });
 
-    it("allows append-only issue create with title/body and optional labels", () => {
-      expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toBeNull();
-      expect(
-        validateGhArgs([
-          "issue",
-          "create",
-          "--title",
-          "Bug",
-          "--body",
-          "Broken",
-          "--label",
-          "bug",
-          "--label",
-          "p1",
-        ]),
-      ).toBeNull();
+    it("denies issue create because v1 disclaimer injection does not cover issues", () => {
+      expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toContain(
+        "outside v1 disclaimer-injection scope",
+      );
     });
 
-    it("allows append-only pr/issue comments with explicit body", () => {
+    it("allows append-only pr comments and denies issue comments", () => {
       expect(validateGhArgs(["pr", "comment", "123", "--body", "noted"])).toBeNull();
       expect(validateGhArgs(["pr", "comment", "123", "-b", "noted"])).toBeNull();
-      expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toBeNull();
-      expect(validateGhArgs(["pr", "comment", "123", "-F", "comment.md"])).toBeNull();
+      expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toContain(
+        "outside v1 disclaimer-injection scope",
+      );
     });
 
     it("allows append-only pr reviews for comment/request-changes", () => {
@@ -995,9 +982,6 @@ describe("validateGhArgs", () => {
           HEAD_CWD,
         ),
       ).toBeNull();
-      expect(
-        validateGhArgs(["pr", "create", "--fill", "--head", "feat/test"], HEAD_CWD),
-      ).toBeNull();
     });
 
     it("blocks --head when it does not match cwd's branch", () => {
@@ -1072,22 +1056,30 @@ describe("validateGhArgs", () => {
     });
 
     it("blocks conflicting pr create body sources", () => {
-      // --fill is exclusive with --title/--body/-F
+      // --fill is denied unconditionally (covered by its own test); these
+      // assertions confirm the deny still fires when --fill is combined with
+      // the explicit body shapes it used to be exclusive with.
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--fill"]);
       expectGhDenied(["pr", "create", "--fill", "--title", "x"]);
       expectGhDenied(["pr", "create", "--fill", "-F", "body.md"]);
-      // --body and -F are mutually exclusive
+      // -F/--body-file are denied: direct writes require a mutable --body value
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "-F", "body.md"]);
-      // Title still required when -F supplies body
       expectGhDenied(["pr", "create", "-F", "body.md"]);
-      // Duplicate -F
       expectGhDenied(["pr", "create", "--title", "x", "-F", "a.md", "--body-file", "b.md"]);
     });
 
-    it("blocks pr comment double-source and issue comment -F entirely", () => {
-      // pr comment: -F and --body cannot be combined
+    it("blocks duplicate pr body flags that could bypass disclaimer injection", () => {
+      expectGhDenied(["pr", "create", "--title", "x", "--body", "traced", "--body", "untraced"]);
+      expectGhDenied(["pr", "create", "--title", "x", "--body=traced", "-b", "untraced"]);
+      expectGhDenied(["pr", "comment", "123", "--body", "traced", "--body", "untraced"]);
+      expectGhDenied(["pr", "comment", "123", "--body=traced", "-b", "untraced"]);
+      expectGhDenied(["pr", "review", "123", "--comment", "--body", "traced", "--body", "untraced"]);
+      expectGhDenied(["pr", "review", "123", "--request-changes", "--body=traced", "-b", "untraced"]);
+    });
+
+    it("blocks comment body-file forms", () => {
       expectGhDenied(["pr", "comment", "123", "--body", "x", "-F", "body.md"]);
-      // issue comment does not support -F
+      expectGhDenied(["pr", "comment", "123", "-F", "body.md"]);
       expectGhDenied(["issue", "comment", "42", "-F", "body.md"]);
     });
 
@@ -1323,6 +1315,16 @@ describe("validateGhArgs", () => {
         "body=Done.",
         "-f",
         "extra=value",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=Traced.",
+        "--raw-field",
+        "body=Untraced.",
       ]);
       expectGhDenied([
         "api",

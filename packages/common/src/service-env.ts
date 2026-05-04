@@ -1,6 +1,13 @@
 import { dirname, join } from "node:path";
 import { deriveGitHubAppBotIdentity } from "./github-identity.js";
-import { envCsv, envInt, envOptionalString, envString, stripTrailingSlashes, type EnvSource } from "./env.js";
+import {
+  envCsv,
+  envInt,
+  envOptionalString,
+  envString,
+  stripTrailingSlashes,
+  type EnvSource,
+} from "./env.js";
 import { WORKSPACE_CONFIG_PATH } from "./workspace-config.js";
 
 export function loadGatewayEnv(env: EnvSource = process.env) {
@@ -12,14 +19,19 @@ export function loadGatewayEnv(env: EnvSource = process.env) {
   } catch {
     throw new Error(`GITHUB_APP_BOT_ID must be a positive integer, got: ${rawBotId}`);
   }
-  const githubAppBotIdentity = deriveGitHubAppBotIdentity({ slug: githubAppSlug, botId: githubAppBotId });
+  const githubAppBotIdentity = deriveGitHubAppBotIdentity({
+    slug: githubAppSlug,
+    botId: githubAppBotId,
+  });
 
   return {
     port: envInt(env, "PORT", 3002),
     runnerUrl: stripTrailingSlashes(envString(env, "RUNNER_URL", "http://runner:3000")),
     slackSigningSecret: envOptionalString(env, "SLACK_SIGNING_SECRET") ?? "",
     slackBotToken: envOptionalString(env, "SLACK_BOT_TOKEN") ?? "",
-    slackApiBaseUrl: stripTrailingSlashes(envString(env, "SLACK_API_BASE_URL", "https://slack.com/api")),
+    slackApiBaseUrl: stripTrailingSlashes(
+      envString(env, "SLACK_API_BASE_URL", "https://slack.com/api"),
+    ),
     slackTimestampToleranceSeconds: envInt(env, "SLACK_TIMESTAMP_TOLERANCE_SECONDS", 300),
     queueDir: envString(env, "QUEUE_DIR", "data/queue"),
     slackBotUserId: envOptionalString(env, "SLACK_BOT_USER_ID") ?? "",

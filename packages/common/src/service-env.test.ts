@@ -58,15 +58,19 @@ describe("service env", () => {
       gitIdentityName: "thor-app[bot]",
       gitIdentityEmail: "12345+thor-app[bot]@users.noreply.github.com",
     });
-    expect(loadRemoteCliAppEnv({ THOR_INTERNAL_SECRET: "secret", NODE_ENV: "production" })).toEqual({
-      thorInternalSecret: "secret",
-      isProduction: true,
-    });
-    expect(loadGitHubAppAuthEnv({
-      GITHUB_APP_ID: "1",
-      GITHUB_APP_PRIVATE_KEY_FILE: "/tmp/key.pem",
-      GITHUB_API_URL: "https://github.test/api///",
-    })).toMatchObject({ apiUrl: "https://github.test/api" });
+    expect(loadRemoteCliAppEnv({ THOR_INTERNAL_SECRET: "secret", NODE_ENV: "production" })).toEqual(
+      {
+        thorInternalSecret: "secret",
+        isProduction: true,
+      },
+    );
+    expect(
+      loadGitHubAppAuthEnv({
+        GITHUB_APP_ID: "1",
+        GITHUB_APP_PRIVATE_KEY_FILE: "/tmp/key.pem",
+        GITHUB_API_URL: "https://github.test/api///",
+      }),
+    ).toMatchObject({ apiUrl: "https://github.test/api" });
     expect(loadDaytonaEnv({ DAYTONA_API_KEY: "daytona-key" })).toMatchObject({
       apiUrl: "https://app.daytona.io/api",
       snapshot: "daytona-medium",

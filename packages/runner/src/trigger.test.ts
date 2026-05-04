@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Event, TextPart } from "@opencode-ai/sdk";
 import { createRunnerApp, type RunnerAppOptions } from "./index.js";
+import {
+  appendAlias,
+  appendCorrelationAliasForAnchor,
+  appendSessionEvent,
+  mintAnchor,
+  sessionLogPath,
+} from "@thor/common";
 
 const worklogDir = "/tmp/thor-runner-trigger-test/worklog";
 const originalEnv = vi.hoisted(() => {
@@ -79,6 +86,22 @@ function idleEvent(sessionId: string): Event {
   return { type: "session.idle", properties: { sessionID: sessionId } } as Event;
 }
 
+function taskRunningEvent(sessionId: string): Event {
+  return {
+    type: "message.part.updated",
+    properties: {
+      part: {
+        type: "tool",
+        sessionID: sessionId,
+        messageID: `m-${sessionId}`,
+        callID: "call-task",
+        tool: "task",
+        state: { status: "running", input: { subagent_type: "general" } },
+      },
+    },
+  } as unknown as Event;
+}
+
 function statusEvent(sessionId: string): Event {
   return { type: "session.status", properties: { sessionID: sessionId, status: "busy" } } as Event;
 }
@@ -93,7 +116,16 @@ function sessionErrorEvent(sessionId: string, message: string): Event {
   } as Event;
 }
 
-function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Set<string>; promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void } = {}) {
+function createHarness(
+  opts: {
+    existingSessions?: Set<string>;
+    busySessions?: Set<string>;
+    children?: Array<{ id: string }>;
+    onGet?: (sessionId: string) => Promise<void>;
+    promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
+    throwInSubscribe?: boolean;
+  } = {},
+) {
   const buses = new FakeEventBuses();
   const existingSessions = opts.existingSessions ?? new Set<string>();
   const busySessions = opts.busySessions ?? new Set<string>();
@@ -110,13 +142,12 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
         return { data: { id } };
       },
       get: async ({ path }: { path: { id: string } }) => {
+        await opts.onGet?.(path.id);
         if (!existingSessions.has(path.id)) throw new Error("missing");
         return { data: { id: path.id } };
       },
       status: async () => ({
-        data: Object.fromEntries(
-          [...busySessions].map((id) => [id, { type: "busy" }]),
-        ),
+        data: Object.fromEntries([...busySessions].map((id) => [id, { type: "busy" }])),
       }),
       abort: async ({ path }: { path: { id: string } }) => {
         aborts.push(path.id);
@@ -124,10 +155,16 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
         abortedPending.add(path.id);
         return { data: {} };
       },
-      promptAsync: async ({ path, body }: { path: { id: string }; body: { parts: Array<{ text: string }> } }) => {
+      promptAsync: async ({
+        path,
+        body,
+      }: {
+        path: { id: string };
+        body: { parts: Array<{ text: string }> };
+      }) => {
         prompts.push(body.parts[0]?.text ?? "");
+        const sub = buses.latest();
         queueMicrotask(() => {
-          const sub = buses.latest();
           const events = opts.promptEvents
             ? opts.promptEvents(path.id, sub)
             : [textEvent(path.id, `ok ${path.id}`), idleEvent(path.id)];
@@ -136,23 +173,30 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
         });
         return { data: {} };
       },
-      children: async () => ({ data: [] }),
+      children: async () => ({ data: opts.children ?? [] }),
     },
   };
 
   const app = createRunnerApp({
-    eventBuses: {
-      subscribe: async () => {
-        const sub = await buses.subscribe();
-        for (const id of abortedPending) {
-          queueMicrotask(() => sub.push(idleEvent(id)));
-          abortedPending.delete(id);
-        }
-        return sub;
-      },
-    } as unknown as RunnerAppOptions["eventBuses"],
+    eventBuses: opts.throwInSubscribe
+      ? ({
+          subscribe: async () => {
+            throw new Error("subscribe failed");
+          },
+        } as unknown as RunnerAppOptions["eventBuses"])
+      : ({
+          subscribe: async () => {
+            const sub = await buses.subscribe();
+            for (const id of abortedPending) {
+              queueMicrotask(() => sub.push(idleEvent(id)));
+              abortedPending.delete(id);
+            }
+            return sub;
+          },
+        } as unknown as RunnerAppOptions["eventBuses"]),
     memoryDir,
-    createClient: () => client as unknown as ReturnType<NonNullable<RunnerAppOptions["createClient"]>>,
+    createClient: () =>
+      client as unknown as ReturnType<NonNullable<RunnerAppOptions["createClient"]>>,
     ensureOpencodeAvailable: async () => {},
     isOpencodeReachable: async () => true,
   });
@@ -160,7 +204,10 @@ function createHarness(opts: { existingSessions?: Set<string>; busySessions?: Se
   return { app, prompts, aborts, existingSessions, busySessions };
 }
 
-async function withServer<T>(app: ReturnType<typeof createRunnerApp>, fn: (url: string) => Promise<T>) {
+async function withServer<T>(
+  app: ReturnType<typeof createRunnerApp>,
+  fn: (url: string) => Promise<T>,
+) {
   const server: Server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
@@ -197,67 +244,223 @@ afterEach(() => {
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
 });
 
+function bindSessionToAnchor(sessionId: string, anchorId: string): void {
+  const result = appendAlias({ aliasType: "opencode.session", aliasValue: sessionId, anchorId });
+  if (!result.ok) throw result.error;
+}
+
+/** Mint a busy-session fixture: anchor + opencode.session + slack.thread alias. */
+function setupBusySession(slackThreadTs: string): string {
+  const anchorId = mintAnchor();
+  bindSessionToAnchor("busy-session", anchorId);
+  const aliasResult = appendAlias({
+    aliasType: "slack.thread_id",
+    aliasValue: slackThreadTs,
+    anchorId,
+  });
+  if (!aliasResult.ok) throw aliasResult.error;
+  return anchorId;
+}
+
 describe("runner /trigger orchestration", () => {
-  it("creates a correlation-key session, records notes, and resumes the same session", async () => {
+  it("serves the Vouch-gated trigger viewer with 401, 404, and rendered status", async () => {
     const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000301";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("viewer-session", anchorId);
+    expect(appendSessionEvent("viewer-session", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
+    expect(
+      appendSessionEvent("viewer-session", { type: "trigger_end", triggerId, status: "completed" }),
+    ).toEqual({ ok: true });
 
     await withServer(h.app, async (url) => {
-      const first = await trigger(url, { prompt: "first", correlationKey: "same-key" });
-      const firstStart = first.events.find((e) => e.type === "start");
-      const firstDone = first.events.find((e) => e.type === "done");
-      expect(firstStart).toMatchObject({ sessionId: "session-1", resumed: false });
-      expect(firstDone).toMatchObject({ sessionId: "session-1", resumed: false, status: "completed" });
+      const unauthorized = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
+      expect(unauthorized.status).toBe(401);
+      expect(await unauthorized.text()).toContain("Unauthorized");
 
-      const second = await trigger(url, { prompt: "second", correlationKey: "same-key" });
-      const secondStart = second.events.find((e) => e.type === "start");
-      const secondDone = second.events.find((e) => e.type === "done");
-      expect(secondStart).toMatchObject({ sessionId: "session-1", resumed: true });
-      expect(secondDone).toMatchObject({ sessionId: "session-1", resumed: true, status: "completed" });
+      const missing = await fetch(
+        `${url}/runner/v/${anchorId}/00000000-0000-7000-8000-000000000399`,
+        {
+          headers: { "X-Vouch-User": "u@example.com" },
+        },
+      );
+      expect(missing.status).toBe(404);
+      expect(await missing.text()).toContain("Trigger not found");
+
+      // Malformed (non-UUIDv7) anchor id is rejected without disk I/O.
+      const invalidAnchor = await fetch(`${url}/runner/v/not-a-uuid/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      expect(invalidAnchor.status).toBe(404);
+      expect(await invalidAnchor.text()).toContain("Trigger not found");
+
+      const ok = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await ok.text();
+      expect(ok.status).toBe(200);
+      expect(html).toContain("completed");
+      // No /raw escape hatch — the single-endpoint contract.
+      expect(html).not.toContain("/raw");
     });
   });
 
-  it("falls back from stale stored session and includes a previous-notes hint", async () => {
+  it("creates a correlation-key session, records JSONL events, and resumes the same session", async () => {
     const h = createHarness();
+    const correlationKey = "slack:thread:1710000000.001";
 
     await withServer(h.app, async (url) => {
-      await trigger(url, { prompt: "old", correlationKey: "stale-key" });
+      const first = await trigger(url, { prompt: "first", correlationKey });
+      const firstStart = first.events.find((e) => e.type === "start");
+      const firstDone = first.events.find((e) => e.type === "done");
+      expect(firstStart).toMatchObject({ sessionId: "session-1", resumed: false });
+      expect(firstDone).toMatchObject({
+        sessionId: "session-1",
+        resumed: false,
+        status: "completed",
+      });
+      const logText = readFileSync(`${worklogDir}/sessions/session-1.jsonl`, "utf8");
+      expect(logText).toContain('"type":"trigger_start"');
+      expect(logText).toContain('"type":"trigger_end"');
+      const aliases = readFileSync(`${worklogDir}/aliases.jsonl`, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const slackAlias = aliases.find(
+        (a) => a.aliasType === "slack.thread_id" && a.aliasValue === "1710000000.001",
+      );
+      const sessionAlias = aliases.find(
+        (a) => a.aliasType === "opencode.session" && a.aliasValue === "session-1",
+      );
+      expect(slackAlias).toBeDefined();
+      expect(sessionAlias).toBeDefined();
+      expect(slackAlias.anchorId).toBe(sessionAlias.anchorId);
+      expect(aliases).not.toContainEqual(expect.objectContaining({ aliasValue: correlationKey }));
+
+      const second = await trigger(url, { prompt: "second", correlationKey });
+      const secondStart = second.events.find((e) => e.type === "start");
+      const secondDone = second.events.find((e) => e.type === "done");
+      expect(secondStart).toMatchObject({ sessionId: "session-1", resumed: true });
+      expect(secondDone).toMatchObject({
+        sessionId: "session-1",
+        resumed: true,
+        status: "completed",
+      });
+    });
+  });
+
+  it("serializes session resolution for different aliases of the same session", async () => {
+    const slackKey = "slack:thread:1710000000.010";
+    const gitKey = "git:branch:runner-trigger-test:feature/shared";
+    const sharedAnchor = mintAnchor();
+    expect(
+      appendAlias({
+        aliasType: "opencode.session",
+        aliasValue: "shared-session",
+        anchorId: sharedAnchor,
+      }),
+    ).toEqual({ ok: true });
+    expect(appendCorrelationAliasForAnchor(sharedAnchor, slackKey)).toEqual({ ok: true });
+    expect(appendCorrelationAliasForAnchor(sharedAnchor, gitKey)).toEqual({ ok: true });
+
+    let activeGets = 0;
+    let maxActiveGets = 0;
+    let delayedFirstGet = false;
+    let resolveFirstGetStarted!: () => void;
+    let releaseFirstGet!: () => void;
+    const firstGetStarted = new Promise<void>((resolve) => {
+      resolveFirstGetStarted = resolve;
+    });
+    const releaseFirstGetPromise = new Promise<void>((resolve) => {
+      releaseFirstGet = resolve;
+    });
+    const h = createHarness({
+      existingSessions: new Set(["shared-session"]),
+      onGet: async () => {
+        activeGets++;
+        maxActiveGets = Math.max(maxActiveGets, activeGets);
+        try {
+          if (!delayedFirstGet) {
+            delayedFirstGet = true;
+            resolveFirstGetStarted();
+            await releaseFirstGetPromise;
+          }
+        } finally {
+          activeGets--;
+        }
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const first = trigger(url, { prompt: "from slack", correlationKey: slackKey });
+      await firstGetStarted;
+      const second = trigger(url, { prompt: "from github", correlationKey: gitKey });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(maxActiveGets).toBe(1);
+      releaseFirstGet();
+      await Promise.all([first, second]);
+    });
+
+    expect(maxActiveGets).toBe(1);
+  });
+
+  it("falls back from stale stored session without markdown-notes continuity", async () => {
+    const h = createHarness();
+    const correlationKey = "slack:thread:1710000000.002";
+
+    await withServer(h.app, async (url) => {
+      await trigger(url, { prompt: "old", correlationKey });
       h.existingSessions.delete("session-1");
 
-      const next = await trigger(url, { prompt: "new", correlationKey: "stale-key" });
+      const next = await trigger(url, { prompt: "new", correlationKey });
       expect(next.events.find((e) => e.type === "start")).toMatchObject({
         sessionId: "session-2",
         resumed: false,
       });
-      expect(h.prompts.at(-1)).toContain("Previous session was lost");
-      expect(h.prompts.at(-1)).toContain("Your notes from the prior session are at:");
+      expect(h.prompts.at(-1)).not.toContain("Previous session was lost");
+      expect(h.prompts.at(-1)).not.toContain("Your notes from the prior session are at:");
     });
   });
 
   it("returns busy without prompting when a resumed session is busy and interrupt is absent", async () => {
-    const h = createHarness({ existingSessions: new Set(["busy-session"]), busySessions: new Set(["busy-session"]) });
-
-    mkdirSync(`${worklogDir}/2026-04-28/notes`, { recursive: true });
-    writeFileSync(`${worklogDir}/2026-04-28/notes/busy-key.md`, "Session ID: busy-session\n");
+    const h = createHarness({
+      existingSessions: new Set(["busy-session"]),
+      busySessions: new Set(["busy-session"]),
+    });
+    setupBusySession("1710000000.003");
 
     await withServer(h.app, async (url) => {
       const response = await fetch(`${url}/trigger`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: "later", correlationKey: "busy-key", directory: sessionDir }),
+        body: JSON.stringify({
+          prompt: "later",
+          correlationKey: "slack:thread:1710000000.003",
+          directory: sessionDir,
+        }),
       });
       expect(await response.json()).toEqual({ busy: true });
     });
 
+    expect(h.aborts).toHaveLength(0);
     expect(h.prompts).toHaveLength(0);
   });
 
   it("aborts then prompts when a resumed session is busy and interrupt is true", async () => {
-    const h = createHarness({ existingSessions: new Set(["busy-session"]), busySessions: new Set(["busy-session"]) });
-    mkdirSync(`${worklogDir}/2026-04-28/notes`, { recursive: true });
-    writeFileSync(`${worklogDir}/2026-04-28/notes/busy-key.md`, "Session ID: busy-session\n");
+    const h = createHarness({
+      existingSessions: new Set(["busy-session"]),
+      busySessions: new Set(["busy-session"]),
+    });
+    setupBusySession("1710000000.004");
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, { prompt: "now", correlationKey: "busy-key", interrupt: true });
+      const result = await trigger(url, {
+        prompt: "now",
+        correlationKey: "slack:thread:1710000000.004",
+        interrupt: true,
+      });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         sessionId: "busy-session",
         resumed: true,
@@ -269,6 +472,30 @@ describe("runner /trigger orchestration", () => {
     expect(h.prompts).toHaveLength(1);
   });
 
+  it("returns busy without prompting when a resumed session is busy and interrupt is false", async () => {
+    const h = createHarness({
+      existingSessions: new Set(["busy-session"]),
+      busySessions: new Set(["busy-session"]),
+    });
+    setupBusySession("1710000000.011");
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/trigger`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt: "later",
+          correlationKey: "slack:thread:1710000000.011",
+          directory: sessionDir,
+          interrupt: false,
+        }),
+      });
+      expect(await response.json()).toEqual({ busy: true });
+    });
+
+    expect(h.prompts).toHaveLength(0);
+  });
+
   it("injects memory/tool bootstrap instructions only on new sessions", async () => {
     mkdirSync(`${memoryDir}/runner-trigger-test`, { recursive: true });
     writeFileSync(`${memoryDir}/README.md`, "root memory text");
@@ -276,15 +503,60 @@ describe("runner /trigger orchestration", () => {
     const h = createHarness();
 
     await withServer(h.app, async (url) => {
-      const first = await trigger(url, { prompt: "first", correlationKey: "memory-key" });
+      const first = await trigger(url, {
+        prompt: "first",
+        correlationKey: "slack:thread:1710000000.005",
+      });
       expect(first.events.filter((e) => e.type === "memory")).toHaveLength(2);
       expect(h.prompts[0]).toContain("root memory text");
       expect(h.prompts[0]).toContain("repo memory text");
+      const firstLogRecords = readFileSync(sessionLogPath("session-1"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const firstTriggerStart = firstLogRecords.find((record) => record.type === "trigger_start");
+      expect(firstTriggerStart).toMatchObject({ promptPreview: "first" });
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("root memory text");
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("repo memory text");
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("correlation-key");
 
-      await trigger(url, { prompt: "second", correlationKey: "memory-key" });
+      await trigger(url, {
+        prompt: "second",
+        correlationKey: "slack:thread:1710000000.005",
+      });
       expect(h.prompts[1]).not.toContain("root memory text");
       expect(h.prompts[1]).not.toContain("repo memory text");
     });
+  });
+
+  it("emits opencode.subsession aliases for discovered child sessions", async () => {
+    const h = createHarness({
+      children: [{ id: "child-session" }],
+      promptEvents: (sessionId) => [taskRunningEvent(sessionId), idleEvent(sessionId)],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "delegate",
+        correlationKey: "slack:thread:1710000000.006",
+      });
+      expect(result.events.find((e) => e.type === "delegate")).toMatchObject({ agent: "general" });
+    });
+
+    const aliases = readFileSync(`${worklogDir}/aliases.jsonl`, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const parentAlias = aliases.find(
+      (a) => a.aliasType === "opencode.session" && a.aliasValue === "session-1",
+    );
+    const childAlias = aliases.find(
+      (a) => a.aliasType === "opencode.subsession" && a.aliasValue === "child-session",
+    );
+    expect(parentAlias).toBeDefined();
+    expect(childAlias).toBeDefined();
+    // Both bind to the same anchor so findActiveTrigger walks from child → parent.
+    expect(childAlias.anchorId).toBe(parentAlias.anchorId);
   });
 
   it("emits session errors as tool progress and continues when later activity arrives", async () => {
@@ -297,7 +569,10 @@ describe("runner /trigger orchestration", () => {
     });
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, { prompt: "large search", correlationKey: "compact-key" });
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.007",
+      });
       expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "completed",
@@ -312,13 +587,107 @@ describe("runner /trigger orchestration", () => {
     });
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, { prompt: "fail", correlationKey: "error-key" });
+      const result = await trigger(url, {
+        prompt: "fail",
+        correlationKey: "slack:thread:1710000000.008",
+      });
       expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "error",
         error: "provider unavailable",
       });
     });
+  });
+
+  it("returns 500 and writes no orphan trigger_start when subscribe throws before startTrigger", async () => {
+    const h = createHarness({ throwInSubscribe: true });
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/trigger`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt: "go",
+          correlationKey: "slack:thread:1710000200.001",
+          directory: sessionDir,
+        }),
+      });
+      expect(response.status).toBe(500);
+    });
+    // No trigger_start should be on disk because subscribe threw before startTrigger ran.
+    let logged = "";
+    try {
+      logged = readFileSync(sessionLogPath("session-1"), "utf8");
+    } catch {
+      // File may not exist at all — that also satisfies the invariant.
+    }
+    expect(logged).not.toContain('"type":"trigger_start"');
+  });
+
+  it("renders a previously orphaned trigger as 'crashed' when a newer trigger_start lands in the same session", async () => {
+    const olderTriggerId = "00000000-0000-7000-8000-000000000602";
+    const newerTriggerId = "00000000-0000-7000-8000-000000000603";
+    const crashAnchor = mintAnchor();
+    bindSessionToAnchor("crash-session", crashAnchor);
+    appendSessionEvent("crash-session", { type: "trigger_start", triggerId: olderTriggerId });
+    appendSessionEvent("crash-session", { type: "trigger_start", triggerId: newerTriggerId });
+
+    const h = createHarness();
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${crashAnchor}/${olderTriggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("crashed");
+      expect(html).toContain("abandoned without a close marker");
+    });
+  });
+
+  it("/internal/e2e/trigger-context rejects wrong secret and writes trigger_start on success", async () => {
+    process.env.THOR_E2E_TEST_HELPERS = "1";
+    process.env.THOR_INTERNAL_SECRET = "fixed-test-secret-1234567890123456";
+
+    try {
+      const h = createHarness();
+      await withServer(h.app, async (url) => {
+        const wrong = await fetch(`${url}/internal/e2e/trigger-context`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-thor-internal-secret": "wrong-secret-with-correct-length123",
+          },
+          body: JSON.stringify({}),
+        });
+        expect(wrong.status).toBe(401);
+
+        const okResp = await fetch(`${url}/internal/e2e/trigger-context`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-thor-internal-secret": process.env.THOR_INTERNAL_SECRET!,
+          },
+          body: JSON.stringify({ correlationKey: "slack:thread:1710000200.002" }),
+        });
+        expect(okResp.status).toBe(200);
+        const data = (await okResp.json()) as {
+          sessionId: string;
+          triggerId: string;
+          anchorId: string;
+        };
+        expect(data.sessionId).toMatch(/^e2e-/);
+        expect(data.triggerId).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        );
+        expect(data.anchorId).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        );
+        const text = readFileSync(sessionLogPath(data.sessionId), "utf8");
+        expect(text).toContain(`"triggerId":"${data.triggerId}"`);
+      });
+    } finally {
+      delete process.env.THOR_E2E_TEST_HELPERS;
+      delete process.env.THOR_INTERNAL_SECRET;
+    }
   });
 
   it("does not let status events extend the session error grace period", async () => {
@@ -332,7 +701,10 @@ describe("runner /trigger orchestration", () => {
 
     await withServer(h.app, async (url) => {
       const startedAt = Date.now();
-      const result = await trigger(url, { prompt: "fail", correlationKey: "status-key" });
+      const result = await trigger(url, {
+        prompt: "fail",
+        correlationKey: "slack:thread:1710000000.009",
+      });
       expect(Date.now() - startedAt).toBeLessThan(100);
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "error",

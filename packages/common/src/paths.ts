@@ -13,7 +13,9 @@ export function getWorkspaceWorktreesRoot(env: EnvSource = process.env): string 
 
 export function isPathWithin(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
-  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+  return (
+    relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative))
+  );
 }
 
 export function isPathWithinPrefix(prefix: string, candidate: string): boolean {
