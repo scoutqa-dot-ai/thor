@@ -1,7 +1,7 @@
 import {
   appendCorrelationAlias,
+  currentSessionForAnchor,
   resolveAlias,
-  reverseLookupAnchor,
   type ExecResult,
 } from "@thor/common";
 
@@ -34,15 +34,8 @@ function result(stderr: string, exitCode = 1): ExecResult {
 
 function hasUsableThorSession(sessionId: string): boolean {
   const sessionAnchor = resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId });
-  if (sessionAnchor) {
-    const reverse = reverseLookupAnchor(sessionAnchor);
-    return reverse.currentSessionId === sessionId;
-  }
-
-  const subsessionAnchor = resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId });
-  if (!subsessionAnchor) return false;
-  const reverse = reverseLookupAnchor(subsessionAnchor);
-  return reverse.subsessionIds.includes(sessionId);
+  if (!sessionAnchor) return false;
+  return currentSessionForAnchor(sessionAnchor) === sessionId;
 }
 
 export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: string } {

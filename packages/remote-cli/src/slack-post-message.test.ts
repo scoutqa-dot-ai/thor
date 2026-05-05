@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -8,6 +8,8 @@ import { join } from "node:path";
 import { appendAlias, resolveSessionForCorrelationKey } from "@thor/common";
 import { createRemoteCliApp } from "./index.js";
 import type { SlackPostMessageDeps } from "./slack-post-message.js";
+
+const testCwd = "/workspace/worktrees/thor/test-slack-post-message";
 
 describe("remote-cli slack-post-message endpoint", () => {
   let server: Server;
@@ -22,6 +24,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     fetchMock = vi.fn();
     appendAliasMock = vi.fn(() => ({ ok: true }));
     aliasErrorMock = vi.fn();
+    mkdirSync(testCwd, { recursive: true });
     worklogRoot = mkdtempSync(join(tmpdir(), "remote-cli-slack-post-"));
     process.env.WORKLOG_DIR = worklogRoot;
     bindSession("session-1", "00000000-0000-7000-8000-000000000101");
@@ -32,6 +35,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     bindSession("session-validation", "00000000-0000-7000-8000-000000000106");
 
     const remoteCli = createRemoteCliApp({
+      getConfig: () => ({ repos: { thor: { channels: ["C123", "C404"] } } }),
       slackPostMessage: {
         env: { SLACK_BOT_TOKEN: "xoxb-test" } as NodeJS.ProcessEnv,
         fetch: fetchMock as unknown as typeof fetch,
@@ -52,6 +56,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     });
     await closeRemoteCli();
     rmSync(worklogRoot, { recursive: true, force: true });
+    rmSync("/workspace/worktrees/thor/test-slack-post-message", { recursive: true, force: true });
     delete process.env.WORKLOG_DIR;
   });
 
@@ -154,6 +159,38 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects opencode.subsession ids even if their alias exists", async () => {
+    expect(
+      appendAlias({
+        aliasType: "opencode.subsession",
+        aliasValue: "child-session-1",
+        anchorId: "00000000-0000-7000-8000-000000000101",
+      }),
+    ).toEqual({ ok: true });
+
+    const response = await postSlack(
+      { args: ["--channel", "C123"], stdin: "hello" },
+      { "x-thor-session-id": "child-session-1" },
+    );
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { stderr: string }).stderr).toContain(
+      "invalid x-thor-session-id",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects channels not configured for the repo", async () => {
+    const response = await postSlack(
+      { args: ["--channel", "C999"], stdin: "hello" },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { stderr: string }).stderr).toContain(
+      "channel C999 is not allowed for repo thor",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid args, empty stdin, missing token, and blocks before Slack", async () => {
     await expectFailure({ args: [], stdin: "hi" }, "--channel is required");
     await expectFailure({ args: ["--channel"], stdin: "hi" }, "--channel requires a value");
@@ -176,6 +213,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
 
     const remoteCli = createRemoteCliApp({
+      getConfig: () => ({ repos: { thor: { channels: ["C123", "C404"] } } }),
       slackPostMessage: { env: {} as NodeJS.ProcessEnv, fetch: fetchMock as unknown as typeof fetch },
     });
     const noTokenServer = createServer(remoteCli.app);
@@ -185,7 +223,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     const noTokenResponse = await fetch(`${noTokenUrl}/exec/slack-post-message`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-thor-session-id": "session-3" },
-      body: JSON.stringify({ args: ["--channel", "C123"], stdin: "hi" }),
+      body: JSON.stringify({ cwd: testCwd, args: ["--channel", "C123"], stdin: "hi" }),
     });
     expect(((await noTokenResponse.json()) as { stderr: string }).stderr).toContain(
       "SLACK_BOT_TOKEN is not set",
@@ -241,6 +279,7 @@ describe("remote-cli slack-post-message endpoint", () => {
       .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }))
       .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940310.111111" }));
     const remoteCli = createRemoteCliApp({
+      getConfig: () => ({ repos: { thor: { channels: ["C123", "C404"] } } }),
       slackPostMessage: {
         env: { SLACK_BOT_TOKEN: "xoxb-test" } as NodeJS.ProcessEnv,
         fetch: integrationFetch,
@@ -264,7 +303,11 @@ describe("remote-cli slack-post-message endpoint", () => {
       const topLevel = await fetch(`${integrationUrl}/exec/slack-post-message`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-thor-session-id": "non-slack-session" },
-        body: JSON.stringify({ args: ["--channel", "C123"], stdin: "new controlled thread" }),
+        body: JSON.stringify({
+          cwd: testCwd,
+          args: ["--channel", "C123"],
+          stdin: "new controlled thread",
+        }),
       });
       expect(topLevel.status).toBe(200);
       expect(resolveSessionForCorrelationKey("slack:thread:1777940309.867569")).toBe(
@@ -275,6 +318,7 @@ describe("remote-cli slack-post-message endpoint", () => {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-thor-session-id": "non-slack-session" },
         body: JSON.stringify({
+          cwd: testCwd,
           args: ["--channel", "C123", "--thread-ts", "1777940309.867569"],
           stdin: "controlled reply",
         }),
@@ -320,7 +364,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     return fetch(`${baseUrl}/exec/slack-post-message`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ cwd: testCwd, ...body }),
     });
   }
 

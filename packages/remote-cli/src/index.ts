@@ -8,6 +8,7 @@ import {
   computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
+  extractRepoFromCwd,
   getRunnerBaseUrl,
   logError,
   logInfo,
@@ -583,6 +584,30 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     const ids = thorIds(req);
     const parsedArgs = parseSlackPostMessageArgs(req.body?.args);
     try {
+      const { cwd } = req.body ?? {};
+      const cwdError = validateCwd(cwd);
+      if (cwdError) {
+        res.status(400).json({ stdout: "", stderr: cwdError, exitCode: 1 });
+        return;
+      }
+      const repo = extractRepoFromCwd(cwd) ?? cwd.match(/^\/workspace\/worktrees\/([^/]+)\//)?.[1];
+      if (!repo) {
+        res.status(400).json({ stdout: "", stderr: "unable to determine repo from cwd\n", exitCode: 1 });
+        return;
+      }
+      if (!("error" in parsedArgs)) {
+        const config = getConfig();
+        const allowedChannels = new Set(config.repos[repo]?.channels ?? []);
+        if (!allowedChannels.has(parsedArgs.channel)) {
+          res.status(400).json({
+            stdout: "",
+            stderr: `channel ${parsedArgs.channel} is not allowed for repo ${repo}\n`,
+            exitCode: 1,
+          });
+          return;
+        }
+      }
+
       const execResult = await handleSlackPostMessage(
         { args: req.body?.args, stdin: req.body?.stdin, sessionId: ids.sessionId },
         {
