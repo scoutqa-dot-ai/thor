@@ -2,11 +2,10 @@ import {
   appendCorrelationAlias,
   resolveAlias,
   reverseLookupAnchor,
-  stripTrailingSlashes,
   type ExecResult,
 } from "@thor/common";
 
-const DEFAULT_SLACK_API_BASE_URL = "https://slack.com/api";
+const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
 const SLACK_TS_RE = /^\d{10,}\.\d{6}$/;
 
@@ -128,8 +127,6 @@ export async function handleSlackPostMessage(
 
   const token = deps.env?.SLACK_BOT_TOKEN ?? process.env.SLACK_BOT_TOKEN;
   if (!token) return result("SLACK_BOT_TOKEN is not set\n");
-  const slackApiBaseUrl =
-    deps.env?.SLACK_API_BASE_URL ?? process.env.SLACK_API_BASE_URL ?? DEFAULT_SLACK_API_BASE_URL;
 
   const fetchImpl = deps.fetch ?? fetch;
   const payload: Record<string, unknown> = {
@@ -138,11 +135,10 @@ export async function handleSlackPostMessage(
     mrkdwn: true,
     ...(parsed.threadTs ? { thread_ts: parsed.threadTs } : {}),
   };
-  const slackPostMessageUrl = `${stripTrailingSlashes(slackApiBaseUrl)}/chat.postMessage`;
 
   let slackJson: unknown;
   try {
-    const response = await fetchImpl(slackPostMessageUrl, {
+    const response = await fetchImpl(SLACK_POST_MESSAGE_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,

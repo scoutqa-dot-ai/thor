@@ -297,42 +297,6 @@ describe("remote-cli slack-post-message endpoint", () => {
     }
   });
 
-  it("uses configurable Slack API base URL", async () => {
-    const remoteCli = createRemoteCliApp({
-      slackPostMessage: {
-        env: {
-          SLACK_BOT_TOKEN: "xoxb-test",
-          SLACK_API_BASE_URL: "https://slack.example.test/api/",
-        } as NodeJS.ProcessEnv,
-        fetch: fetchMock as unknown as typeof fetch,
-        appendAlias: appendAliasMock as unknown as SlackPostMessageDeps["appendAlias"],
-      },
-    });
-    const customServer = createServer(remoteCli.app);
-    customServer.listen(0, "127.0.0.1");
-    await once(customServer, "listening");
-    const customUrl = `http://127.0.0.1:${(customServer.address() as AddressInfo).port}`;
-    fetchMock.mockResolvedValue(jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }));
-
-    try {
-      const response = await fetch(`${customUrl}/exec/slack-post-message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-thor-session-id": "session-1" },
-        body: JSON.stringify({ args: ["--channel", "C123"], stdin: "hello" }),
-      });
-      expect(response.status).toBe(200);
-      expect(fetchMock).toHaveBeenCalledWith(
-        "https://slack.example.test/api/chat.postMessage",
-        expect.any(Object),
-      );
-    } finally {
-      await new Promise<void>((resolve, reject) =>
-        customServer.close((err) => (err ? reject(err) : resolve())),
-      );
-      await remoteCli.close();
-    }
-  });
-
   function bindSession(sessionId: string, anchorId: string): void {
     expect(
       appendAlias({
