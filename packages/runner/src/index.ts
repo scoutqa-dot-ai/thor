@@ -30,6 +30,7 @@ import {
   appendAlias,
   appendCorrelationAliasForAnchor,
   currentSessionForAnchor,
+  ensureAnchorForCorrelationKey,
   isUuidV7,
   mintAnchor,
   mintTriggerId,
@@ -726,6 +727,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         baseUrl: opencodeUrl,
         directory: sessionDirectory,
       });
+
+      if (!requestedSessionId && correlationKey) {
+        await ensureAnchorForCorrelationKey(correlationKey);
+      }
 
       // --- Session resolution: resolve-or-mint anchor, then resume or create OpenCode session ---
       const lockKey = requestedSessionId
