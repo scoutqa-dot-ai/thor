@@ -213,82 +213,87 @@ export function buildApprovalPresentationBlocks(
 }
 
 function buildCreateJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const project = field(args, "projectKey", "project", "projectId", "projectName");
-  const issueType = field(args, "issueTypeName", "issueType", "issuetype", "type");
-  const summary = field(args, "summary", "title") ?? "Untitled Jira issue";
-  const description = field(args, "description", "body");
+  const project = pickField(args, "projectKey", "project", "projectId", "projectName");
+  const issueType = pickField(args, "issueTypeName", "issueType", "issuetype", "type");
+  const summaryValue = pickField(args, "summary", "title");
+  const summary = renderValue(summaryValue) ?? "Untitled Jira issue";
+  const description = pickField(args, "description", "body");
   return {
     title: `Create Jira issue: ${summary}`,
     markdown: joinMarkdown([
       bullet("Project", project),
       bullet("Issue type", issueType),
-      bullet("Summary", summary),
+      bullet("Summary", summaryValue),
       section("Description", description),
     ]),
   };
 }
 
 function buildAddJiraCommentPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const issue = field(args, "issueKey", "issueId", "key", "id") ?? "unknown issue";
-  const comment = field(args, "commentBody", "comment", "body", "text");
+  const issueValue = pickField(args, "issueKey", "issueId", "key", "id");
+  const issue = renderValue(issueValue) ?? "unknown issue";
+  const comment = pickField(args, "commentBody", "comment", "body", "text");
   return {
     title: `Comment on Jira issue: ${issue}`,
-    markdown: joinMarkdown([bullet("Issue", issue), section("Comment", comment)]),
+    markdown: joinMarkdown([bullet("Issue", issueValue ?? issue), section("Comment", comment)]),
   };
 }
 
 function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const key = field(args, "key", "flagKey", "featureFlagKey");
-  const name = field(args, "name", "flagName");
-  const description = field(args, "description");
-  const titleTarget = name ?? key ?? "feature flag";
+  const key = pickField(args, "key", "flagKey", "featureFlagKey");
+  const name = pickField(args, "name", "flagName");
+  const description = pickField(args, "description");
+  const titleTarget = renderValue(name ?? key) ?? "feature flag";
   return {
     title: `Create feature flag: ${titleTarget}`,
     markdown: joinMarkdown([
       bullet("Key", key),
       bullet("Name", name),
       section("Description", description),
-      bullet("Active", field(args, "active", "enabled")),
-      bullet("Rollout", field(args, "rolloutPercentage", "rollout", "percentage")),
-      bullet("Filters", field(args, "filters")),
+      bullet("Active", pickField(args, "active", "enabled")),
+      bullet("Rollout", pickField(args, "rolloutPercentage", "rollout", "percentage")),
+      bullet("Filters", pickField(args, "filters")),
     ]),
   };
 }
 
 function buildUpdateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const key = field(args, "key", "flagKey", "featureFlagKey", "id") ?? "feature flag";
+  const keyValue = pickField(args, "key", "flagKey", "featureFlagKey", "id");
+  const key = renderValue(keyValue) ?? "feature flag";
   const changes = Object.entries(args)
     .filter(([name, value]) => !["key", "flagKey", "featureFlagKey", "id"].includes(name) && value !== undefined)
     .map(([name, value]) => bullet(name, value));
   return {
     title: `Update feature flag: ${key}`,
-    markdown: joinMarkdown([bullet("Flag", key), ...changes]),
+    markdown: joinMarkdown([bullet("Flag", keyValue ?? key), ...changes]),
   };
 }
 
-function field(args: Record<string, unknown>, ...names: string[]): string | undefined {
+function pickField(args: Record<string, unknown>, ...names: string[]): unknown {
   for (const name of names) {
     const value = args[name];
-    const rendered = renderValue(value);
-    if (rendered) return rendered;
+    if (value !== undefined && value !== null) return value;
   }
   return undefined;
 }
 
 function renderValue(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value === "string") return value.trim() || undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? escapeMrkdwnText(trimmed) : undefined;
+  }
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
     return String(value);
   }
   if (Array.isArray(value)) {
     if (value.length === 0) return undefined;
-    return value.map((item) => renderValue(item) ?? JSON.stringify(item)).join(", ");
+    return value.map((item) => renderValue(item) ?? escapeMrkdwnText(JSON.stringify(item))).join(", ");
   }
   try {
-    return trimString(JSON.stringify(value), 500);
+    return escapeMrkdwnText(trimString(JSON.stringify(value), 500));
   } catch {
-    return JSON.stringify(trimValue(value, MIN_TRIM_STEP, 0));
+    return escapeMrkdwnText(JSON.stringify(trimValue(value, MIN_TRIM_STEP, 0)));
   }
 }
 
@@ -309,7 +314,28 @@ function joinMarkdown(lines: Array<string | undefined>): string {
 
 function trimForSlack(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
-  return `${value.slice(0, Math.max(0, maxLength - 24))}…[+${value.length - maxLength} chars]`;
+  if (maxLength <= 0) return "";
+
+  let omittedCount = value.length - maxLength;
+  while (omittedCount < value.length) {
+    const suffix = `…[+${omittedCount} chars]`;
+    const prefixLength = maxLength - suffix.length;
+    if (prefixLength <= 0) {
+      return value.slice(0, maxLength);
+    }
+
+    const nextOmittedCount = value.length - prefixLength;
+    if (nextOmittedCount === omittedCount) {
+      return `${value.slice(0, prefixLength)}${suffix}`;
+    }
+    omittedCount = nextOmittedCount;
+  }
+
+  return value.slice(0, maxLength);
+}
+
+function escapeMrkdwnText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function trimValue(value: unknown, step: TrimStep, depth: number): unknown {

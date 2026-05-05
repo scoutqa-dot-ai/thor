@@ -89,6 +89,20 @@ describe("approval presentation", () => {
     expect(Object.keys(presentation ?? {})).toEqual(["title", "markdown"]);
   });
 
+  it("escapes mrkdwn-special user input in titles and markdown", () => {
+    const presentation = buildApprovalPresentation("createJiraIssue", {
+      projectKey: "ENG",
+      summary: "<!here> & <@U123>",
+      description: "See <#C123> & <!channel>",
+    });
+
+    expect(presentation).toEqual({
+      title: "Create Jira issue: &lt;!here&gt; &amp; &lt;@U123&gt;",
+      markdown:
+        "*Project:* ENG\n\n*Summary:* &lt;!here&gt; &amp; &lt;@U123&gt;\n\n*Description:*\nSee &lt;#C123&gt; &amp; &lt;!channel&gt;",
+    });
+  });
+
   it("builds sparse presentations without throwing", () => {
     expect(buildApprovalPresentation("addCommentToJiraIssue", {})).toEqual({
       title: "Comment on Jira issue: unknown issue",
@@ -139,6 +153,27 @@ describe("approval presentation", () => {
         expect.objectContaining({ action_id: "approval_approve", value: "v3:act-1:posthog:1710000000.001" }),
       ]),
     });
+  });
+
+  it("keeps presentation block text within Slack limits when truncating", () => {
+    const longValue = "x".repeat(4000);
+    const blocks = buildApprovalPresentationBlocks(
+      {
+        title: `Create feature flag: ${longValue}`,
+        markdown: longValue,
+      },
+      "v3:act-1:posthog:1710000000.001",
+    );
+
+    expect(blocks[0]).toMatchObject({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: expect.stringContaining("…[+"),
+      },
+    });
+    expect((blocks[0] as { text: { text: string } }).text.text.length).toBeLessThanOrEqual(280 + 11);
+    expect((blocks[1] as { text: { text: string } }).text.text.length).toBeLessThanOrEqual(3000);
   });
 });
 
