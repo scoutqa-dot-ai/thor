@@ -1,6 +1,11 @@
-import { appendCorrelationAlias, type ExecResult } from "@thor/common";
+import {
+  appendCorrelationAlias,
+  resolveAlias,
+  reverseLookupAnchor,
+  type ExecResult,
+} from "@thor/common";
 
-const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
+const DEFAULT_SLACK_API_BASE_URL = "https://slack.com/api";
 const MAX_MRKDWN_BYTES = 40 * 1024;
 const SLACK_TS_RE = /^\d{10,}\.\d{6}$/;
 
@@ -25,6 +30,19 @@ interface ParsedArgs {
 
 function result(stderr: string, exitCode = 1): ExecResult {
   return { stdout: "", stderr, exitCode };
+}
+
+function hasUsableThorSession(sessionId: string): boolean {
+  const sessionAnchor = resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId });
+  if (sessionAnchor) {
+    const reverse = reverseLookupAnchor(sessionAnchor);
+    return reverse.currentSessionId === sessionId;
+  }
+
+  const subsessionAnchor = resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId });
+  if (!subsessionAnchor) return false;
+  const reverse = reverseLookupAnchor(subsessionAnchor);
+  return reverse.subsessionIds.includes(sessionId);
 }
 
 export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: string } {
@@ -93,6 +111,9 @@ export async function handleSlackPostMessage(
   if (!sessionId) {
     return result("missing x-thor-session-id; slack-post-message requires a Thor session\n");
   }
+  if (!hasUsableThorSession(sessionId)) {
+    return result(`invalid x-thor-session-id; no live Thor session binding for ${sessionId}\n`);
+  }
 
   const parsed = parseSlackPostMessageArgs(request.args);
   if ("error" in parsed) return result(`${parsed.error}\n`);
@@ -106,6 +127,8 @@ export async function handleSlackPostMessage(
 
   const token = deps.env?.SLACK_BOT_TOKEN ?? process.env.SLACK_BOT_TOKEN;
   if (!token) return result("SLACK_BOT_TOKEN is not set\n");
+  const slackApiBaseUrl =
+    deps.env?.SLACK_API_BASE_URL ?? process.env.SLACK_API_BASE_URL ?? DEFAULT_SLACK_API_BASE_URL;
 
   const fetchImpl = deps.fetch ?? fetch;
   const payload: Record<string, unknown> = {
@@ -114,10 +137,11 @@ export async function handleSlackPostMessage(
     mrkdwn: true,
     ...(parsed.threadTs ? { thread_ts: parsed.threadTs } : {}),
   };
+  const slackPostMessageUrl = `${slackApiBaseUrl.replace(/\/+$/, "")}/chat.postMessage`;
 
   let slackJson: unknown;
   try {
-    const response = await fetchImpl(SLACK_POST_MESSAGE_URL, {
+    const response = await fetchImpl(slackPostMessageUrl, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
