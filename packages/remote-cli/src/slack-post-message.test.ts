@@ -1,11 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendAlias, resolveSessionForCorrelationKey } from "@thor/common";
+
+vi.mock("./policy.js", async () => {
+  const actual = await vi.importActual<typeof import("./policy.js")>("./policy.js");
+  return {
+    ...actual,
+    validateCwd: vi.fn(() => null),
+  };
+});
+
 import { createRemoteCliApp } from "./index.js";
 import type { SlackPostMessageDeps } from "./slack-post-message.js";
 
@@ -24,7 +33,6 @@ describe("remote-cli slack-post-message endpoint", () => {
     fetchMock = vi.fn();
     appendAliasMock = vi.fn(() => ({ ok: true }));
     aliasErrorMock = vi.fn();
-    mkdirSync(testCwd, { recursive: true });
     worklogRoot = mkdtempSync(join(tmpdir(), "remote-cli-slack-post-"));
     process.env.WORKLOG_DIR = worklogRoot;
     bindSession("session-1", "00000000-0000-7000-8000-000000000101");
@@ -56,7 +64,6 @@ describe("remote-cli slack-post-message endpoint", () => {
     });
     await closeRemoteCli();
     rmSync(worklogRoot, { recursive: true, force: true });
-    rmSync("/workspace/worktrees/thor/test-slack-post-message", { recursive: true, force: true });
     delete process.env.WORKLOG_DIR;
   });
 
