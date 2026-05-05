@@ -1,19 +1,21 @@
 import express, { type Express } from "express";
-import { timingSafeEqual } from "node:crypto";
 import { access } from "node:fs/promises";
 import { dirname, normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import {
-  computeGitAlias,
+  appendCorrelationAlias,
+  buildThorDisclaimerForSession,
+  computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
-  formatThorMeta,
+  getRunnerBaseUrl,
   logError,
   logInfo,
   loadRemoteCliAppEnv,
   loadRemoteCliEnv,
   loadRemoteCliGitHubEnv,
   loadRemoteCliInternalEnv,
+  matchesInternalSecret,
   type ConfigLoader,
   type ExecStreamEvent,
   WORKSPACE_CONFIG_PATH,
@@ -93,6 +95,88 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
   };
 }
 
+function registerGitCorrelationAlias(
+  sessionId: string | undefined,
+  cmd: "git" | "gh",
+  args: string[],
+  cwd: string,
+): void {
+  if (!sessionId) return;
+  const correlationKey = computeGitCorrelationKey(args, cwd);
+  if (!correlationKey) return;
+
+  const result = appendCorrelationAlias(sessionId, correlationKey);
+  if (!result.ok) {
+    logError(log, "alias_registration_error", result.error.message, { sessionId, correlationKey });
+    return;
+  }
+  logInfo(log, "alias_registered", { sessionId, correlationKey, source: cmd });
+}
+
+function rewriteSingleValueFlag(
+  args: string[],
+  names: string[],
+  append: string,
+  valuePrefix?: string,
+): string[] | { error: string } {
+  const out = [...args];
+  let match: { index: number; valueIndex?: number; inlinePrefix?: string } | undefined;
+  for (let i = 0; i < out.length; i++) {
+    for (const name of names) {
+      if (out[i] === name && i + 1 < out.length) {
+        if (valuePrefix && !out[i + 1].startsWith(valuePrefix)) continue;
+        if (match) return { error: "Disclaimer required: multiple mutable gh body fields" };
+        match = { index: i, valueIndex: i + 1 };
+        i += 1;
+        break;
+      }
+      if (out[i].startsWith(`${name}=`)) {
+        const value = out[i].slice(name.length + 1);
+        if (valuePrefix && !value.startsWith(valuePrefix)) continue;
+        if (match) return { error: "Disclaimer required: multiple mutable gh body fields" };
+        match = { index: i, inlinePrefix: `${name}=` };
+        break;
+      }
+    }
+  }
+  if (!match) return { error: "Disclaimer required: could not find a mutable gh body field" };
+  if (match.valueIndex !== undefined) {
+    out[match.valueIndex] = `${out[match.valueIndex]}${append}`;
+  } else if (match.inlinePrefix) {
+    out[match.index] =
+      `${match.inlinePrefix}${out[match.index].slice(match.inlinePrefix.length)}${append}`;
+  }
+  return out;
+}
+
+function isGhHelpRequest(args: string[]): boolean {
+  if (args[0] === "help") return true;
+  if (args.length === 1 && ["-h", "--help"].includes(args[0] ?? "")) return true;
+  if (args.length === 2 && ["-h", "--help"].includes(args[1] ?? "")) return true;
+  if (args.length === 3 && ["-h", "--help"].includes(args[2] ?? "")) return true;
+  return false;
+}
+
+function withGhDisclaimer(args: string[], sessionId?: string): string[] | { error: string } {
+  if (isGhHelpRequest(args)) return args;
+  const eligible =
+    (args[0] === "pr" && ["create", "comment", "review"].includes(args[1] ?? "")) ||
+    (args[0] === "api" && args.some((arg) => /pulls\/\d+\/comments\/\d+\/replies/.test(arg)));
+  if (!eligible) return args;
+  let footer: string;
+  try {
+    footer = `\n${buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer}`;
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer",
+    };
+  }
+  return args[0] === "api"
+    ? rewriteSingleValueFlag(args, ["-f", "--raw-field"], footer, "body=")
+    : rewriteSingleValueFlag(args, ["--body", "-b"], footer);
+}
+
 /**
  * Run `fn` while a heartbeat keeps the NDJSON response stream alive.
  * Sends a typed heartbeat chunk every 30s to prevent idle-connection
@@ -117,15 +201,6 @@ function parseArgs(body: unknown): string[] | undefined {
     return undefined;
   }
   return args;
-}
-
-function matchesInternalSecret(
-  expectedSecret: string,
-  providedSecret: string | undefined,
-): boolean {
-  if (!expectedSecret || !providedSecret) return false;
-  if (expectedSecret.length !== providedSecret.length) return false;
-  return timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret));
 }
 
 function getInternalSecretHeader(req: express.Request): string | undefined {
@@ -391,17 +466,17 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
       const effectiveArgs = gitResolution.args;
+      const ids = thorIds(req);
 
       logInfo(log, "exec_git", {
         args,
         ...(JSON.stringify(effectiveArgs) !== JSON.stringify(args) ? { effectiveArgs } : {}),
         cwd,
-        ...thorIds(req),
+        ...ids,
       });
       const result = await execCommand("git", effectiveArgs, cwd);
       if ((result.exitCode ?? 0) === 0) {
-        const alias = computeGitAlias("git", effectiveArgs, cwd);
-        if (alias) result.stdout = (result.stdout || "") + formatThorMeta(alias);
+        registerGitCorrelationAlias(ids.sessionId, "git", effectiveArgs, cwd);
       }
       res.json(result);
     } catch (err) {
@@ -431,11 +506,17 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      logInfo(log, "exec_gh", { args, cwd, ...thorIds(req) });
-      const result = await execCommand("gh", args, cwd);
+      const ids = thorIds(req);
+      const effectiveArgs = withGhDisclaimer(args, ids.sessionId);
+      if (!Array.isArray(effectiveArgs)) {
+        res.status(400).json({ stdout: "", stderr: effectiveArgs.error, exitCode: 1 });
+        return;
+      }
+
+      logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
+      const result = await execCommand("gh", effectiveArgs, cwd);
       if ((result.exitCode ?? 0) === 0) {
-        const alias = computeGitAlias("gh", args, cwd);
-        if (alias) result.stdout = (result.stdout || "") + formatThorMeta(alias);
+        registerGitCorrelationAlias(ids.sessionId, "gh", effectiveArgs, cwd);
       }
       res.json(result);
     } catch (err) {

@@ -28,6 +28,12 @@ export interface TokenResult {
   owner: string;
 }
 
+export interface OwnerRepo {
+  host: string;
+  owner: string;
+  repo: string;
+}
+
 interface CachedToken {
   token: string;
   expires_at: string; // ISO 8601
@@ -65,6 +71,10 @@ export function resolveOwnerFromArgs(args: string[]): string | undefined {
 }
 
 export function resolveOwnerFromRemote(cwd: string): string | undefined {
+  return resolveOwnerRepoFromRemote(cwd)?.owner;
+}
+
+export function resolveOwnerRepoFromRemote(cwd: string): OwnerRepo | undefined {
   let remoteUrl: string;
   try {
     remoteUrl = execFileSync("/usr/bin/git", ["remote", "get-url", "origin"], {
@@ -75,24 +85,41 @@ export function resolveOwnerFromRemote(cwd: string): string | undefined {
   } catch {
     return undefined;
   }
-  return parseOwnerFromRemoteUrl(remoteUrl);
+  return parseOwnerRepoFromRemoteUrl(remoteUrl);
 }
 
 export function parseOwnerFromRemoteUrl(url: string): string | undefined {
+  return parseOwnerRepoFromRemoteUrl(url)?.owner;
+}
+
+export function parseOwnerRepoFromRemoteUrl(url: string): OwnerRepo | undefined {
   // SSH: git@github.com:owner/repo.git
-  const sshMatch = url.match(/^git@[^:]+:([^/]+)\//);
-  if (sshMatch) return sshMatch[1];
+  const sshMatch = url.match(/^git@([^:]+):([^/]+)\/([^/]+)\/?$/);
+  if (sshMatch) return normalizeOwnerRepo(sshMatch[1], sshMatch[2], sshMatch[3]);
 
   // HTTPS: https://github.com/owner/repo or https://github.com/owner/repo.git
   try {
     const parsed = new URL(url);
     const parts = parsed.pathname.split("/").filter(Boolean);
-    if (parts.length >= 2) return parts[0];
+    if (parts.length === 2) return normalizeOwnerRepo(parsed.hostname, parts[0], parts[1]);
   } catch {
     // Not a valid URL
   }
 
   return undefined;
+}
+
+function normalizeOwnerRepo(
+  host: string | undefined,
+  owner: string | undefined,
+  repoWithSuffix: string | undefined,
+): OwnerRepo | undefined {
+  if (!host || !owner || !repoWithSuffix) return undefined;
+  const repo = repoWithSuffix.endsWith(".git") ? repoWithSuffix.slice(0, -".git".length) : repoWithSuffix;
+  const normalizedHost = host.toLowerCase();
+  const safeSegment = /^[A-Za-z0-9._-]+$/;
+  if (!safeSegment.test(normalizedHost) || !safeSegment.test(owner) || !safeSegment.test(repo)) return undefined;
+  return { host: normalizedHost, owner, repo };
 }
 
 // Priority: explicit -R flag > git remote origin.

@@ -63,10 +63,9 @@ function fakeConfigLoader(
   return loader;
 }
 
-let mockHasSlackReply = false;
 let mappedRepos = new Set<string>(["test-repo", "thor"]);
 let correlationKeyAliases = new Map<string, string>();
-let notesKeys = new Set<string>();
+let sessionKeys = new Set<string>();
 vi.mock("@thor/common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@thor/common")>();
   return {
@@ -75,9 +74,7 @@ vi.mock("@thor/common", async (importOriginal) => {
       mappedRepos.has(repoName) ? `/workspace/repos/${repoName}` : undefined,
     resolveCorrelationKeys: (rawKeys: string[]) =>
       correlationKeyAliases.get(rawKeys[0] ?? "") ?? rawKeys[0] ?? "",
-    hasSlackReply: () => mockHasSlackReply,
-    findNotesFile: (correlationKey: string) =>
-      notesKeys.has(correlationKey) ? `/workspace/worklog/test/${correlationKey}.md` : undefined,
+    hasSessionForCorrelationKey: (correlationKey: string) => sessionKeys.has(correlationKey),
   };
 });
 
@@ -131,6 +128,31 @@ function pushWebhookBody(overrides: Record<string, unknown> = {}): string {
     head_commit: { timestamp: "2026-04-24T12:00:00Z" },
     commits: [{ id: "2222222222222222222222222222222222222222" }],
     ...overrides,
+  });
+}
+
+function pullRequestClosedWebhookBody(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    action: "closed",
+    installation: { id: 126669985 },
+    repository: { full_name: "scoutqa-dot-ai/thor" },
+    sender: { id: 1001, login: "alice", type: "User" },
+    pull_request: {
+      number: 42,
+      merged: true,
+      merged_at: "2026-04-24T14:00:00Z",
+      merge_commit_sha: "9999999999999999999999999999999999999999",
+      closed_at: "2026-04-24T14:00:01Z",
+      html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42",
+      user: { id: 1001, login: "alice" },
+      head: {
+        ref: "feature/refactor",
+        sha: "abc123def456",
+        repo: { full_name: "scoutqa-dot-ai/thor" },
+      },
+      base: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+      ...overrides,
+    },
   });
 }
 
@@ -255,12 +277,33 @@ async function withServer<T>(
   }
 }
 
+function slackEventBody(eventId: string, event: Record<string, unknown>): string {
+  return JSON.stringify({
+    type: "event_callback",
+    event_id: eventId,
+    team_id: "T123",
+    event,
+  });
+}
+
+async function postSignedSlackEvent(baseUrl: string, body: string): Promise<Response> {
+  const timestamp = `${Math.floor(Date.now() / 1000)}`;
+  return fetch(`${baseUrl}/slack/events`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Slack-Request-Timestamp": timestamp,
+      "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+    },
+    body,
+  });
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
-  mockHasSlackReply = false;
   mappedRepos = new Set(["test-repo", "thor"]);
   correlationKeyAliases = new Map();
-  notesKeys = new Set();
+  sessionKeys = new Set();
 });
 
 describe("gateway", () => {
@@ -1400,9 +1443,17 @@ describe("gateway", () => {
     );
   });
 
-  it("syncs default branch pushes without waking when no notes exist", async () => {
+  it("fast-forwards default branch pushes without waking when no session alias exists", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+    const internalExec = vi.fn().mockImplementation((req: { args: string[] }) => {
+      if (req.args[0] === "rev-parse") {
+        return Promise.resolve({ stdout: "deadbeef\n", stderr: "", exitCode: 0 });
+      }
+      if (req.args[0] === "merge-base") {
+        return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+      }
+      return Promise.resolve({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
 
     await withWorklogDir(async (worklogDir) => {
       await withServer(
@@ -1423,11 +1474,11 @@ describe("gateway", () => {
           expect(response.status).toBe(200);
           expect(await response.json()).toEqual({
             ok: true,
-            status: "push_wake_skipped_no_session",
+            status: "push_sync_default_branch_fast_forwarded",
           });
           expect(readQueuedEvents(queueDir)).toHaveLength(0);
           expect(readGitHubIngestedEntries(worklogDir)).toMatchObject([
-            { reason: "push_wake_skipped_no_session", eventType: "push" },
+            { reason: "push_sync_default_branch_fast_forwarded", eventType: "push" },
           ]);
           expect(readGitHubIgnoredEntries(worklogDir)).toHaveLength(0);
         },
@@ -1437,13 +1488,76 @@ describe("gateway", () => {
 
     expect(internalExec).toHaveBeenNthCalledWith(1, {
       bin: "git",
-      args: ["fetch", "origin", "refs/heads/main"],
+      args: ["rev-parse", "HEAD"],
       cwd: "/workspace/repos/test-repo",
     });
     expect(internalExec).toHaveBeenNthCalledWith(2, {
       bin: "git",
+      args: ["fetch", "origin", "refs/heads/main"],
+      cwd: "/workspace/repos/test-repo",
+    });
+    expect(internalExec).toHaveBeenNthCalledWith(3, {
+      bin: "git",
+      args: ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"],
+      cwd: "/workspace/repos/test-repo",
+    });
+    expect(internalExec).toHaveBeenNthCalledWith(4, {
+      bin: "git",
       args: ["reset", "--hard", "FETCH_HEAD"],
       cwd: "/workspace/repos/test-repo",
+    });
+  });
+
+  it("skips work when local HEAD already matches the push commit", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockResolvedValue({
+      stdout: "2222222222222222222222222222222222222222\n",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeDir = join(worktreesRoot, "test-repo", "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
+      sessionKeys.add("git:branch:test-repo:feat/nested");
+
+      await withWorklogDir(async (worklogDir) => {
+        await withServer(
+          fetchImpl,
+          async (baseUrl, _queue, queueDir) => {
+            const body = pushWebhookBody();
+            const response = await fetch(`${baseUrl}/github/webhook`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+                "X-GitHub-Delivery": "delivery-push-already-synced",
+                "X-GitHub-Event": "push",
+              },
+              body,
+            });
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({
+              ok: true,
+              ignored: true,
+              status: "push_sync_already_up_to_date",
+            });
+            expect(readQueuedEvents(queueDir)).toHaveLength(0);
+            expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
+              { reason: "push_sync_already_up_to_date", eventType: "push" },
+            ]);
+          },
+          { githubWebhookSecret: "github-secret", internalExec },
+        );
+      });
+
+      expect(internalExec).toHaveBeenCalledTimes(1);
+      expect(internalExec).toHaveBeenNthCalledWith(1, {
+        bin: "git",
+        args: ["rev-parse", "HEAD"],
+        cwd: worktreeDir,
+      });
     });
   });
 
@@ -1573,15 +1687,23 @@ describe("gateway", () => {
     });
   });
 
-  it("syncs existing nested branch worktrees and wakes through the repo-scoped GitHub queue when notes exist", async () => {
+  it("fast-forwards existing nested branch worktrees and wakes through the repo-scoped GitHub queue when a session alias exists", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+    const internalExec = vi.fn().mockImplementation((req: { args: string[] }) => {
+      if (req.args[0] === "rev-parse") {
+        return Promise.resolve({ stdout: "deadbeef\n", stderr: "", exitCode: 0 });
+      }
+      if (req.args[0] === "merge-base") {
+        return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+      }
+      return Promise.resolve({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
 
     await withWorktreesRoot(async (worktreesRoot) => {
       const worktreeRoot = join(worktreesRoot, "test-repo");
       const worktreeDir = join(worktreeRoot, "feat/nested");
       mkdirSync(worktreeDir, { recursive: true });
-      notesKeys.add("git:branch:test-repo:feat/nested");
+      sessionKeys.add("git:branch:test-repo:feat/nested");
       await withServer(
         fetchImpl,
         async (baseUrl, _queue, queueDir) => {
@@ -1619,10 +1741,20 @@ describe("gateway", () => {
 
       expect(internalExec).toHaveBeenNthCalledWith(1, {
         bin: "git",
-        args: ["fetch", "origin", "refs/heads/feat/nested"],
+        args: ["rev-parse", "HEAD"],
         cwd: worktreeDir,
       });
       expect(internalExec).toHaveBeenNthCalledWith(2, {
+        bin: "git",
+        args: ["fetch", "origin", "refs/heads/feat/nested"],
+        cwd: worktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(3, {
+        bin: "git",
+        args: ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"],
+        cwd: worktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(4, {
         bin: "git",
         args: ["reset", "--hard", "FETCH_HEAD"],
         cwd: worktreeDir,
@@ -1630,9 +1762,65 @@ describe("gateway", () => {
     });
   });
 
+  it("triggers worktree wake with interrupt when a force-push diverges", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn().mockImplementation((req: { args: string[] }) => {
+      if (req.args[0] === "rev-parse") {
+        return Promise.resolve({ stdout: "deadbeef\n", stderr: "", exitCode: 0 });
+      }
+      if (req.args[0] === "merge-base") {
+        return Promise.resolve({ stdout: "", stderr: "", exitCode: 1 });
+      }
+      return Promise.resolve({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
+
+    await withWorktreesRoot(async (worktreesRoot) => {
+      const worktreeRoot = join(worktreesRoot, "test-repo");
+      const worktreeDir = join(worktreeRoot, "feat/nested");
+      mkdirSync(worktreeDir, { recursive: true });
+      sessionKeys.add("git:branch:test-repo:feat/nested");
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pushWebhookBody({ forced: true });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-push-force",
+              "X-GitHub-Event": "push",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, status: "push_wake_triggered" });
+          expect(readQueuedEvents(queueDir)).toMatchObject([
+            {
+              id: "delivery-push-force",
+              source: "github",
+              correlationKey: "git:branch:test-repo:feat/nested",
+              interrupt: true,
+            },
+          ]);
+        },
+        { githubWebhookSecret: "github-secret", internalExec },
+      );
+    });
+  });
+
   it("uses a full branch ref for push sync so dash-prefixed branch names are not parsed as options", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+    const internalExec = vi.fn().mockImplementation((req: { args: string[] }) => {
+      if (req.args[0] === "rev-parse") {
+        return Promise.resolve({ stdout: "deadbeef\n", stderr: "", exitCode: 0 });
+      }
+      if (req.args[0] === "merge-base") {
+        return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+      }
+      return Promise.resolve({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
 
     await withWorktreesRoot(async (worktreesRoot) => {
       const worktreeDir = join(worktreesRoot, "test-repo", "-c");
@@ -1664,10 +1852,20 @@ describe("gateway", () => {
 
       expect(internalExec).toHaveBeenNthCalledWith(1, {
         bin: "git",
-        args: ["fetch", "origin", "refs/heads/-c"],
+        args: ["rev-parse", "HEAD"],
         cwd: worktreeDir,
       });
       expect(internalExec).toHaveBeenNthCalledWith(2, {
+        bin: "git",
+        args: ["fetch", "origin", "refs/heads/-c"],
+        cwd: worktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(3, {
+        bin: "git",
+        args: ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"],
+        cwd: worktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(4, {
         bin: "git",
         args: ["reset", "--hard", "FETCH_HEAD"],
         cwd: worktreeDir,
@@ -1677,7 +1875,15 @@ describe("gateway", () => {
 
   it("resolves worktrees under a symlinked worktrees root", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
+    const internalExec = vi.fn().mockImplementation((req: { args: string[] }) => {
+      if (req.args[0] === "rev-parse") {
+        return Promise.resolve({ stdout: "deadbeef\n", stderr: "", exitCode: 0 });
+      }
+      if (req.args[0] === "merge-base") {
+        return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 });
+      }
+      return Promise.resolve({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
     const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), "gateway-worktrees-symlink-")));
     const realRoot = join(tempRoot, "real");
     const linkRoot = join(tempRoot, "link");
@@ -1716,10 +1922,20 @@ describe("gateway", () => {
 
       expect(internalExec).toHaveBeenNthCalledWith(1, {
         bin: "git",
-        args: ["fetch", "origin", "refs/heads/feat/nested"],
+        args: ["rev-parse", "HEAD"],
         cwd: realWorktreeDir,
       });
       expect(internalExec).toHaveBeenNthCalledWith(2, {
+        bin: "git",
+        args: ["fetch", "origin", "refs/heads/feat/nested"],
+        cwd: realWorktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(3, {
+        bin: "git",
+        args: ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"],
+        cwd: realWorktreeDir,
+      });
+      expect(internalExec).toHaveBeenNthCalledWith(4, {
         bin: "git",
         args: ["reset", "--hard", "FETCH_HEAD"],
         cwd: realWorktreeDir,
@@ -1745,7 +1961,7 @@ describe("gateway", () => {
       const worktreeRoot = join(worktreesRoot, "test-repo");
       const worktreeDir = join(worktreeRoot, "feat/nested");
       mkdirSync(worktreeDir, { recursive: true });
-      notesKeys.add("git:branch:test-repo:feat/nested");
+      sessionKeys.add("git:branch:test-repo:feat/nested");
       await withServer(
         fetchImpl,
         async (baseUrl, _queue, queueDir) => {
@@ -1798,7 +2014,7 @@ describe("gateway", () => {
       const worktreeRoot = join(worktreesRoot, "test-repo");
       const worktreeDir = join(worktreeRoot, "feat/nested");
       mkdirSync(worktreeDir, { recursive: true });
-      notesKeys.add("git:branch:test-repo:feat/nested");
+      sessionKeys.add("git:branch:test-repo:feat/nested");
       await withServer(
         fetchImpl,
         async (baseUrl, _queue, queueDir) => {
@@ -1879,7 +2095,7 @@ describe("gateway", () => {
     });
   });
 
-  it("enqueues check_suite events only when the branch has an existing notes-backed session", async () => {
+  it("enqueues check_suite events only when the branch has an existing session alias", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi
       .fn()
@@ -1891,7 +2107,7 @@ describe("gateway", () => {
       });
 
     await withWorklogDir(async (worklogDir) => {
-      notesKeys.add("git:branch:thor:feature/refactor");
+      sessionKeys.add("git:branch:thor:feature/refactor");
 
       await withServer(
         fetchImpl,
@@ -1962,6 +2178,244 @@ describe("gateway", () => {
 
   it.each([
     {
+      name: "merged",
+      deliveryId: "delivery-pr-closed-merged",
+      overrides: {},
+      expectedMerged: true,
+    },
+    {
+      name: "abandoned",
+      deliveryId: "delivery-pr-closed-abandoned",
+      overrides: { merged: false, merged_at: null, merge_commit_sha: null },
+      expectedMerged: false,
+    },
+  ])(
+    "enqueues $name pull_request closed events only when the branch has an existing notes-backed session",
+    async ({ deliveryId, overrides, expectedMerged }) => {
+      const fetchImpl = vi.fn<typeof fetch>();
+
+      await withWorklogDir(async (worklogDir) => {
+        sessionKeys.add("git:branch:thor:feature/refactor");
+
+        await withServer(
+          fetchImpl,
+          async (baseUrl, _queue, queueDir) => {
+            const body = pullRequestClosedWebhookBody(overrides);
+            const response = await fetch(`${baseUrl}/github/webhook`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+                "X-GitHub-Delivery": deliveryId,
+                "X-GitHub-Event": "pull_request",
+              },
+              body,
+            });
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({ ok: true });
+
+            const queued = readQueuedEvents(queueDir);
+            expect(queued).toHaveLength(1);
+            expect(queued[0]).toMatchObject({
+              id: deliveryId,
+              source: "github",
+              correlationKey: "git:branch:thor:feature/refactor",
+              delayMs: 0,
+              interrupt: false,
+              payload: {
+                event_type: "pull_request",
+                action: "closed",
+                repository: { full_name: "scoutqa-dot-ai/thor" },
+                sender: { login: "alice" },
+                pull_request: {
+                  number: 42,
+                  merged: expectedMerged,
+                  closed_at: "2026-04-24T14:00:01Z",
+                  html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42",
+                  head: {
+                    ref: "feature/refactor",
+                    sha: "abc123def456",
+                    repo: { full_name: "scoutqa-dot-ai/thor" },
+                  },
+                  base: { ref: "main", repo: { full_name: "scoutqa-dot-ai/thor" } },
+                  user: { login: "alice" },
+                },
+              },
+            });
+
+            const pr = (queued[0].payload as Record<string, unknown>).pull_request as Record<
+              string,
+              unknown
+            >;
+            if (expectedMerged) {
+              expect(pr.merged_at).toBe("2026-04-24T14:00:00Z");
+              expect(pr.merge_commit_sha).toBe("9999999999999999999999999999999999999999");
+            } else {
+              expect(pr.merged_at).toBeNull();
+              expect(pr.merge_commit_sha).toBeNull();
+            }
+
+            const ingested = readGitHubIngestedEntries(worklogDir);
+            expect(ingested).toHaveLength(1);
+            expect(ingested[0]).toMatchObject({
+              reason: "accepted",
+              eventType: "pull_request",
+              action: "closed",
+              metadata: { correlationKey: "git:branch:thor:feature/refactor" },
+            });
+          },
+          {
+            githubWebhookSecret: "github-secret",
+            githubMentionLogins: ["thor", "thor[bot]"],
+            githubAppBotId: 7777,
+          },
+        );
+      });
+    },
+  );
+
+  it("ignores pull_request closed events without an existing notes-backed session", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pullRequestClosedWebhookBody();
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-pr-closed-unresolved",
+              "X-GitHub-Event": "pull_request",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "correlation_key_unresolved",
+            eventType: "pull_request",
+            action: "closed",
+            metadata: {
+              rawKey: "git:branch:thor:feature/refactor",
+              resolvedKey: "git:branch:thor:feature/refactor",
+              headSha: "abc123def456",
+            },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("ignores fork pull_request closed events through the normal unresolved-session path", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = pullRequestClosedWebhookBody({
+            head: {
+              ref: "feature/refactor",
+              sha: "abc123def456",
+              repo: { full_name: "alice/thor" },
+            },
+          });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-pr-closed-fork",
+              "X-GitHub-Event": "pull_request",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "correlation_key_unresolved",
+            eventType: "pull_request",
+            action: "closed",
+            metadata: {
+              rawKey: "git:branch:thor:feature/refactor",
+              resolvedKey: "git:branch:thor:feature/refactor",
+              headSha: "abc123def456",
+            },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it("ignores non-closed pull_request actions as schema-invalid", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = JSON.stringify({
+            ...JSON.parse(pullRequestClosedWebhookBody()),
+            action: "opened",
+          });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-pr-opened",
+              "X-GitHub-Event": "pull_request",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+          const ignored = readGitHubIgnoredEntries(worklogDir);
+          expect(ignored).toHaveLength(1);
+          expect(ignored[0]).toMatchObject({
+            reason: "schema_validation_failed",
+            eventType: "pull_request",
+            parseStatus: "schema_invalid",
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+        },
+      );
+    });
+  });
+
+  it.each([
+    {
       gateReason: "sha_missing",
       execResults: [{ stdout: "", stderr: "missing", exitCode: 128 }],
     },
@@ -1990,7 +2444,7 @@ describe("gateway", () => {
       }
 
       await withWorklogDir(async (worklogDir) => {
-        notesKeys.add("git:branch:thor:feature/refactor");
+        sessionKeys.add("git:branch:thor:feature/refactor");
 
         await withServer(
           fetchImpl,
@@ -2034,7 +2488,7 @@ describe("gateway", () => {
     },
   );
 
-  it("ignores check_suite events without an existing notes-backed session", async () => {
+  it("ignores check_suite events without an existing session alias", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
     await withWorklogDir(async (worklogDir) => {
@@ -2395,7 +2849,7 @@ describe("gateway", () => {
 
   it("ignores thread replies in unengaged threads (Thor has not replied)", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    mockHasSlackReply = false;
+    sessionKeys.delete("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2438,7 +2892,7 @@ describe("gateway", () => {
       .fn<typeof fetch>()
       // POST /trigger → 200 (fire-and-forget)
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    mockHasSlackReply = true;
+    sessionKeys.add("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2480,9 +2934,186 @@ describe("gateway", () => {
     });
   });
 
+  it("enqueues file_share messages with file metadata in engaged threads", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    sessionKeys.add("slack:thread:1710000000.001");
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = slackEventBody("EvFileShare", {
+        type: "message",
+        subtype: "file_share",
+        user: "U123",
+        text: "",
+        ts: "1710000000.003",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+        files: [
+          {
+            id: "F123",
+            name: "debug.log",
+            mimetype: "text/plain",
+            url_private: "https://files.slack.com/files-pri/T123-F123/debug.log",
+            custom_slack_field: { keep: true },
+          },
+        ],
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+
+      await queue.flush();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+      expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
+      const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
+      expect(JSON.parse(promptJson)).toMatchObject({
+        subtype: "file_share",
+        text: "",
+        files: [{ id: "F123", custom_slack_field: { keep: true } }],
+      });
+    });
+  });
+
+  it("ignores file_share messages in unengaged threads", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.delete("slack:thread:1710000000.001");
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = slackEventBody("EvFileShareUnengaged", {
+        type: "message",
+        subtype: "file_share",
+        user: "U123",
+        text: "",
+        ts: "1710000000.004",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+        files: [{ id: "F123", name: "debug.log" }],
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+      await queue.flush();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("routes thread_broadcast messages to the original thread when engaged", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    sessionKeys.add("slack:thread:1710000000.001");
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = slackEventBody("EvThreadBroadcast", {
+        type: "message",
+        subtype: "thread_broadcast",
+        user: "U123",
+        text: "sharing this back to channel",
+        ts: "1710000000.900",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+        root: { ts: "1710000000.001", text: "original thread" },
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+
+      await queue.flush();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+      expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
+      expect(triggerBody.prompt).toContain("thread_broadcast");
+      expect(triggerBody.prompt).toContain("original thread");
+    });
+  });
+
+  it("ignores thread_broadcast messages in unengaged threads", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.delete("slack:thread:1710000000.001");
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = slackEventBody("EvThreadBroadcastUnengaged", {
+        type: "message",
+        subtype: "thread_broadcast",
+        user: "U123",
+        text: "sharing this back to channel",
+        ts: "1710000000.900",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+      await queue.flush();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("ignores supported subtype messages that duplicate an app_mention", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.add("slack:thread:1710000000.001");
+
+    await withServer(fetchImpl, async (baseUrl) => {
+      const body = slackEventBody("EvSubtypeDup", {
+        type: "message",
+        subtype: "thread_broadcast",
+        user: "U123",
+        text: "<@U0BOTEXAMPLE> please see this",
+        ts: "1710000000.005",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("ignores unsupported message subtypes", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.add("slack:thread:1710000000.001");
+
+    await withServer(fetchImpl, async (baseUrl, queue) => {
+      const body = slackEventBody("EvMessageChanged", {
+        type: "message",
+        subtype: "message_changed",
+        user: "U123",
+        text: "edited text",
+        ts: "1710000000.006",
+        thread_ts: "1710000000.001",
+        channel: "C123",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true, eventType: "message" });
+
+      await queue.flush();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
   it("ignores new channel messages (not in a thread) when not engaged", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    mockHasSlackReply = false;
+    sessionKeys.delete("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2592,7 +3223,7 @@ describe("gateway", () => {
       .fn<typeof fetch>()
       // POST /trigger → 200
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    mockHasSlackReply = true;
+    sessionKeys.add("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({

@@ -20,8 +20,8 @@ Pure-issue `issue_comment` events (where `issue.pull_request == null`) are ignor
 ## Current State
 
 - `packages/gateway` handles Slack events, Slack interactivity, and cron. No GitHub route.
-- `packages/runner` already supports `correlationKey`, `interrupt`, repo directory selection, and alias-based session continuity via `packages/common/src/notes.ts`.
-- `packages/common/src/notes.ts` emits `computeGitAlias() → git:branch:{localRepo}:{branch}`. This is the canonical continuity key the plan reuses.
+- `packages/runner` already supports `correlationKey`, `interrupt`, repo directory selection, and alias-based session continuity via `packages/common/src/correlation.ts`.
+- `packages/common/src/correlation.ts` emits `computeGitCorrelationKey() → git:branch:{localRepo}:{branch}`. This is the canonical continuity key the plan reuses.
 - GitHub App auth already exists in `remote-cli` for `git` / `gh` execution. Webhook intake reuses that auth via new `remote-cli` endpoints; no private-key duplication in the gateway.
 
 ## Architecture
@@ -63,7 +63,7 @@ interface NormalizedGitHubEvent {
 
 ### Correlation model
 
-Branch-based, single continuity key. Canonical: `git:branch:{localRepo}:{branch}`. This matches `computeGitAlias()` in `packages/common/src/notes.ts` — one format across Slack-triggered, cron-triggered, and GitHub-triggered sessions.
+Branch-based, single continuity key. Canonical: `git:branch:{localRepo}:{branch}`. This matches `computeGitCorrelationKey()` in `packages/common/src/correlation.ts` — one format across Slack-triggered, cron-triggered, and GitHub-triggered sessions.
 
 For PR-backed events that omit head ref in the payload (some `issue_comment` shapes), the queue handler asks remote-cli to resolve `head.ref` before dispatch. Never block the HTTP response on this lookup.
 
@@ -212,7 +212,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
    - `GitHubWebhookEnvelopeSchema` zod schemas for the 3 allowlist events.
    - `normalizeGitHubEvent(raw, { localRepo, mentionLogins })` → `NormalizedGitHubEvent | { ignored: true, reason }`.
    - `detectMention(body, mentionLogins)` — word-boundary substring match, case-insensitive.
-   - `buildCorrelationKey(localRepo, branch)` — returns `git:branch:{localRepo}:{branch}` (matches `computeGitAlias`).
+   - `buildCorrelationKey(localRepo, branch)` — returns `git:branch:{localRepo}:{branch}` (matches `computeGitCorrelationKey`).
 2. Edit `packages/common/src/workspace-config.ts`:
    - Remove the `github_app.installations: []` array and its schema (`GitHubAppInstallationSchema`, `GitHubAppConfigSchema`).
    - Add a new top-level `orgs: z.record(z.string(), OrgConfigSchema).optional()` block. `OrgConfigSchema` holds `github_app_installation_id: z.number().int().positive()`.
@@ -237,7 +237,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 - [ ] Allowlist zod schemas accept real payloads from GitHub fixture captures, reject off-allowlist.
 - [ ] `normalizeGitHubEvent` returns `{ ignored: true, reason }` for each of: pure-issue comment, fork PR, bot sender, empty review body, unsupported action.
 - [ ] Mention detection is case-insensitive and word-boundary-safe (`@thorbot` ≠ `@thor`).
-- [ ] Correlation key format matches `computeGitAlias()` byte-for-byte.
+- [ ] Correlation key format matches `computeGitCorrelationKey()` byte-for-byte.
 - [ ] Basename resolution returns the expected `localRepo` for a known clone and rejects unknown basenames with `repo_not_mapped`.
 - [ ] Gateway boot fails with a clear error naming the missing var when `GITHUB_APP_SLUG` or `GITHUB_WEBHOOK_SECRET` is missing or empty. Gateway does NOT check remote-cli-only vars (`GITHUB_APP_ID`, `GITHUB_APP_BOT_ID`, `GITHUB_APP_PRIVATE_KEY_FILE`).
 - [ ] Remote-cli boot fails with a clear error naming the missing var when `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_BOT_ID`, or `GITHUB_APP_PRIVATE_KEY_FILE` is missing or empty.
@@ -335,7 +335,7 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 | 5   | Single-App, env-sourced identity + per-org `github_app_installation_id` in config.orgs             | App-level identity (id, slug, bot_id, private key, webhook secret) is env; installation IDs are per-org in workspace-config. Installation IDs are stable and human-readable from GitHub's UI, so they belong in config; app-level secrets/identity belong in env. |
 | 6   | Gateway reads webhook secret + slug only; remote-cli owns App private key                          | Single owner for JWT signing + installation-token minting; gateway stays signature-verification + routing.                                                                                                                                                        |
 | 5b  | Bot git identity derived from slug + bot ID; config override disallowed                            | Prevents drift between App identity and commit attribution. GitHub displays bot-authored commits correctly only with the derived format.                                                                                                                          |
-| 7   | Canonical correlation key is `git:branch:{localRepo}:{branch}`                                     | Matches existing `computeGitAlias()` output — one continuity format across all intake sources.                                                                                                                                                                    |
+| 7   | Canonical correlation key is `git:branch:{localRepo}:{branch}`                                     | Matches existing `computeGitCorrelationKey()` output — one continuity format across all intake sources.                                                                                                                                                           |
 | 8   | Branch resolution happens in the queue handler, not the HTTP path                                  | GitHub's 10s webhook budget cannot absorb installation-token mint + API lookup under load.                                                                                                                                                                        |
 | 9   | Terminal drop on installation-gone or exhausted branch-lookup failures                             | App uninstalled, repo missing, or an exhausted lookup retry budget would otherwise loop forever.                                                                                                                                                                  |
 | 10  | Fork PRs dropped with explicit `reason: "fork_pr_unsupported"`                                     | Fork head branches don't exist in local checkouts; supporting them requires a separate plan.                                                                                                                                                                      |

@@ -3,11 +3,10 @@
 **Date**: 2026-03-12
 **Branch**: `feat/slack-ephemeral-message`
 **Status**: Updated — race condition fix committed
-**Supersedes**: `2026031103_slack-ephemeral-message.md`
 
 ## Problem
 
-The original progress message design (plan `2026031103`) had gateway owning Slack API calls via `@slack/web-api`. This created two problems:
+An earlier iteration of this design had gateway owning Slack API calls via `@slack/web-api`. That created two problems:
 
 1. **Duplicate Slack credentials** — both gateway and slack-mcp needed `SLACK_BOT_TOKEN`
 2. **Cleanup relied on Slack event webhooks** — when the bot posted a reply via slack-mcp's `post_message` MCP tool, gateway had to wait for the Slack event webhook to echo the message back, then delete the progress message. This introduced a race window and required a 60s timeout fallback.
@@ -70,10 +69,15 @@ Shared Zod schemas (`SlackProgressRequestSchema`, `SlackReactionRequestSchema`) 
 | 7   | No expiry timer on progress registry              | Simplicity over correctness for edge cases. Entries are tiny and process restarts clear them.                                                                                                                            |
 | 3   | REST endpoints (not MCP tools) for progress       | Gateway isn't an MCP client. Simple HTTP POST is the right interface.                                                                                                                                                    |
 | 4   | Shared Zod schemas in `@thor/common`              | Type safety at the boundary. Both producer (gateway) and consumer (slack-mcp) reference the same schema.                                                                                                                 |
+| 8   | Update progress message every ~10s                | Slack rate-limits `chat.update` to ~50/min per channel. 10s is well within limits and frequent enough to feel responsive.                                                                                                |
+| 9   | Threshold of 3+ tool calls before posting         | Avoid posting a progress message for quick tasks that complete in a few tool calls.                                                                                                                                      |
 
 ## Out of Scope
 
-- Same items as original plan (see `2026031103_slack-ephemeral-message.md`)
+- Final response posting to Slack (the agent already does this via its own `post_message` tool call)
+- Ephemeral messages (Slack's `chat.postEphemeral`) — these can't be updated after posting, defeating the purpose
+- Rich Block Kit formatting — plain text with emoji is sufficient for MVP
+- Progress for non-Slack triggers (cron, Jira) — can be added later with same pattern
 
 ## Bug Fix — Slack delegate visibility for task tool calls (2026-04-25)
 

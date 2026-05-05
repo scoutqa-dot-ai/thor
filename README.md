@@ -133,8 +133,8 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `OPENCODE_CPU_LIMIT`                | No       | `opencode`                | CPU limit for the OpenCode container                              |
 | `OPENCODE_MEMORY_LIMIT`             | No       | `opencode`                | Memory limit for the OpenCode container                           |
 | `POSTHOG_API_KEY`                   | Yes      | `remote-cli`              | PostHog MCP auth                                                  |
+| `RUNNER_BASE_URL`                   | Yes      | `remote-cli`              | Public base URL for Thor trigger viewer links in PR/Jira content  |
 | `THOR_INTERNAL_SECRET`              | Yes      | `remote-cli`, `gateway`   | Secret-gates gateway↔remote-cli internal APIs                     |
-| `SESSION_CWD`                       | No       | `runner`                  | Working directory for new sessions                                |
 | `SLACK_BOT_TOKEN`                   | Yes      | `gateway`, `mitmproxy`    | Slack bot token and mitmproxy default injection                   |
 | `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                 | Bot user ID used to ignore our own messages                       |
 | `SLACK_SIGNING_SECRET`              | Yes      | `gateway`                 | Slack webhook verification                                        |

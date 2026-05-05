@@ -30,21 +30,21 @@ For the same reason, `gh pr checkout <N>` is also denied — it would mutate the
 
 ### `gh pr create`
 
-One of: `--title`/`-t` plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`), OR `--fill` (no title/body needed; derived from commits). Optional: `--base`/`-B`, `--head`/`-H`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). Blocked: `--editor`, `--web`, `--repo`/`-R`, and combining `--fill` with `--title`/`--body`/`-F`.
+Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`-H`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). Blocked: `--editor`, `--web`, `--repo`/`-R`, `--fill`, `-F`/`--body-file` (no mutable body value for Thor to inject the trigger viewer link into — pass an explicit `--body`).
 
 `--head` must equal the branch implied by cwd (`/workspace/worktrees/<repo>/<branch>`) — the explicit form of the default that `gh pr create` would pick anyway. To PR from a different branch, `cd` into that worktree first. Cross-fork (`<owner>:<branch>`) and protected branches (`main`/`master`) fall out as side effects.
 
 ### `gh issue create`
 
-Required: `--title`/`-t`, `--body`/`-b`. Optional: `--label`/`-l` (repeatable). Blocked: `--repo`/`-R`, `--assignee`, `--project`, `--milestone`, `--editor`, `--web`, `--body-file`, `--template`, `--recover`.
+Blocked in v1: GitHub issue content is outside Thor's disclaimer-injection scope. Use Jira for tracked work.
 
 ### `gh pr comment`
 
-Required: numeric PR selector plus a body source (`--body`/`-b` or `-F`/`--body-file <path>`). Blocked: non-numeric selectors, edit/delete modes, `--editor`, and `--repo`/`-R`.
+Required: numeric PR selector plus `--body`/`-b`. Blocked: non-numeric selectors, edit/delete modes, `--editor`, `-F`/`--body-file`, and `--repo`/`-R`.
 
 ### `gh issue comment`
 
-Required: numeric issue selector plus `--body`/`-b`. Blocked: non-numeric selectors, interactive/file flags, and `--repo`/`-R`.
+Blocked in v1: GitHub issue content is outside Thor's disclaimer-injection scope. Use Jira for tracked work.
 
 ### `gh pr review`
 
@@ -66,13 +66,14 @@ Required: workflow selector (workflow file name or numeric ID, positional, no fl
 
 Read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages).
 
-Append-only review-comment reply path: only the current-repo placeholder endpoint is allowed:
+Append-only review-comment reply path: the current-repo placeholder endpoint is allowed, as is the explicit endpoint when `<owner>/<repo>` matches the GitHub.com repo resolved from the current cwd's `origin` remote:
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/<pull-number>/comments/<comment-id>/replies --method POST -f body=<text>
+gh api repos/<owner>/<repo>/pulls/<pull-number>/comments/<comment-id>/replies --method POST -f body=<text>
 ```
 
-`<pull-number>` and `<comment-id>` must be numeric, `body` must be non-empty, and `-f`/`--raw-field` is the only accepted body source. Explicit owner/repo write endpoints, `-F`/`--field`, `--input`, headers, previews, GraphQL, edit/delete endpoints, and arbitrary `--method` use remain blocked.
+`<pull-number>` and `<comment-id>` must be numeric, `body` must be non-empty, and `-f`/`--raw-field` is the only accepted body source. Explicit endpoints require an origin remote on `github.com` with the same owner/repo because `--hostname` is blocked. Cross-repo or wrong-host explicit write endpoints, `-F`/`--field`, `--input`, headers, previews, GraphQL, edit/delete endpoints, and arbitrary `--method` use remain blocked.
 
 ## Read-only (passthrough) commands
 

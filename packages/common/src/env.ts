@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+
 export type EnvSource = Record<string, string | undefined>;
 
 export function envOptionalString(env: EnvSource, name: string): string | undefined {
@@ -14,7 +16,8 @@ export function envString(env: EnvSource, name: string, defaultValue?: string): 
 }
 
 export function envInt(env: EnvSource, name: string, defaultValue?: number, min?: number): number {
-  const raw = envOptionalString(env, name) ?? (defaultValue === undefined ? undefined : String(defaultValue));
+  const raw =
+    envOptionalString(env, name) ?? (defaultValue === undefined ? undefined : String(defaultValue));
   if (raw === undefined) {
     throw new Error(`Missing required env var ${name}`);
   }
@@ -41,4 +44,17 @@ export function stripTrailingSlashes(value: string): string {
     end -= 1;
   }
   return end === value.length ? value : value.slice(0, end);
+}
+
+export function getRunnerBaseUrl(env: EnvSource = process.env): string {
+  return stripTrailingSlashes(envString(env, "RUNNER_BASE_URL"));
+}
+
+export function matchesInternalSecret(
+  expectedSecret: string,
+  providedSecret: string | undefined,
+): boolean {
+  if (!expectedSecret || !providedSecret) return false;
+  if (expectedSecret.length !== providedSecret.length) return false;
+  return timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret));
 }

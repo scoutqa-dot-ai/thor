@@ -32,6 +32,9 @@ jobs:
       GITHUB_APP_SLUG: thor-ci
       GITHUB_APP_BOT_ID: "1"
       GITHUB_WEBHOOK_SECRET: ci-fake
+      # Required by remote-cli for disclaimer URLs; sandbox e2e does not create
+      # GitHub/Jira content, so a local fake satisfies compose/startup checks.
+      RUNNER_BASE_URL: http://localhost:3000
       # Fakes: services not exercised by sandbox e2e, but referenced at compose startup.
       SLACK_BOT_TOKEN: ci-fake
       SLACK_BOT_USER_ID: U000000000

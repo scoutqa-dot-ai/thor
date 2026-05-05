@@ -174,7 +174,7 @@ Rules:
 
 ### Reacting to PR events
 
-After step 7 the run sits in `Lifecycle: open` waiting on the PR. Five GitHub event types can wake you, all pre-filtered by the gateway for mention, same-repo, and bot-authored gates. The runner resumes your session by correlation key, so the run dir from step 7 is already in active context.
+After step 7 the run sits in `Lifecycle: open` waiting on the PR. Six GitHub event types can wake you, pre-filtered by the gateway for their event-specific gates (mentions for human comments/reviews, same-repo PRs, bot-authored CI, and notes-backed branch sessions). The runner resumes your session by correlation key, so the run dir from step 7 is already in active context.
 
 Events on the same correlation key are debounced over 3s and arrive as a JSON array. A submitted PR review usually arrives as one `pull_request_review.submitted` plus its constituent `pull_request_review_comment.created` events together — they are one logical message from the human.
 
@@ -184,9 +184,11 @@ Events on the same correlation key are debounced over 3s and arrive as a JSON ar
 
 **`pull_request_review.submitted`** — full review with non-empty body. `review.state` (`approved` | `changes_requested` | `commented`) signals the overall stance for the batch; the inline comments are its specifics.
 
-**`push`** — branch was pushed. Not an interrupt; arrives alongside whatever else is queued. Before waking you, the gateway runs `git fetch origin refs/heads/<branch>` then `git reset --hard FETCH_HEAD` on `/workspace/worktrees/<repo>/<branch>`, so the worktree is unconditionally aligned with the pushed tip — force-pushes included, uncommitted worktree edits discarded. `sender.login` distinguishes your own pushes (where the reset is a no-op) from someone else's; `git log <before>..<after>` shows what landed.
+**`push`** — branch was pushed. Before waking you, the gateway short-circuits if local `HEAD` already equals `event.after` (your own push you just made, or a webhook redelivery — no wake at all). Otherwise it runs `git fetch origin refs/heads/<branch>`, classifies the update via `git merge-base --is-ancestor HEAD FETCH_HEAD`, then `git reset --hard FETCH_HEAD` on `/workspace/worktrees/<repo>/<branch>`, so the worktree is unconditionally aligned with the pushed tip — force-pushes included, uncommitted worktree edits discarded. The wake's interrupt flag depends on the classification: fast-forwards (someone else pushed new commits on top of your tip) are not interrupts and arrive alongside whatever else is queued; divergent resets (force-push, rebase, branch rewrite) are interrupts because the sha you were operating on no longer exists — re-read HEAD before continuing. `sender.login` distinguishes your own pushes from someone else's; `git log <before>..<after>` shows what landed on a fast-forward, but on a divergent reset `<before>` may not be reachable, so use `git log -10` against the new HEAD instead.
 
 **`check_suite.completed`** — CI finished on a commit you authored on this branch. `conclusion` is the key field (`success`, `failure`, `timed_out`, `action_required`, `cancelled`, `neutral`, `skipped`, `stale`); `gh run list --branch <branch> --limit 5` and `gh run view <id> --log-failed` surface the details. Wake-on-CI is silent — no human is waiting in chat at the moment CI finishes.
+
+**`pull_request.closed`** — the PR for this branch closed. Check `pull_request.merged` to tell merged vs abandoned, record the outcome, and do not keep pushing to a merged branch unless explicitly asked.
 
 ### PR review protocol
 

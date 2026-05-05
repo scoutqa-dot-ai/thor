@@ -2,6 +2,7 @@ import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { appendAlias, appendCorrelationAliasForAnchor, mintAnchor } from "@thor/common";
 import { EventQueue, type EventHandler, type QueuedEvent } from "./queue.js";
 
 let queueDir: string;
@@ -21,10 +22,12 @@ beforeEach(() => {
   queue = null;
   eventSeq = 0;
   now = BASE_TIME;
+  vi.stubEnv("WORKLOG_DIR", join(queueDir, "worklog"));
 });
 
 afterEach(() => {
   queue?.close();
+  vi.unstubAllEnvs();
   rmSync(queueDir, { recursive: true, force: true });
 });
 
@@ -134,6 +137,39 @@ describe("EventQueue", () => {
       .map((c: [QueuedEvent[], () => void]) => c[0][0].correlationKey)
       .sort();
     expect(keys).toEqual(["key-a", "key-b"]);
+  });
+
+  it("batches different raw keys that resolve to the same anchor", async () => {
+    const anchorId = mintAnchor();
+    expect(
+      appendAlias({
+        aliasType: "opencode.session",
+        aliasValue: "session-1",
+        anchorId,
+      }),
+    ).toEqual({ ok: true });
+    expect(appendCorrelationAliasForAnchor(anchorId, "slack:thread:1710000000.001")).toEqual({
+      ok: true,
+    });
+    expect(appendCorrelationAliasForAnchor(anchorId, "git:branch:thor:feature/shared")).toEqual({
+      ok: true,
+    });
+
+    const handler = ackHandler();
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
+
+    queue.enqueue(makeEvent("slack:thread:1710000000.001", "slack"));
+    queue.enqueue({
+      ...makeEvent("git:branch:thor:feature/shared", "github"),
+      source: "github",
+    });
+    await queue.flush();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].map((event) => event.correlationKey)).toEqual([
+      "slack:thread:1710000000.001",
+      "git:branch:thor:feature/shared",
+    ]);
   });
 
   it("batches events that arrive during in-flight processing separately", async () => {

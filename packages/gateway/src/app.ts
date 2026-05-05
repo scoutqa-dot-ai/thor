@@ -3,13 +3,12 @@ import {
   appendJsonlWorklog,
   createLogger,
   errorToMetadata,
-  findNotesFile,
   getWorkspaceWorktreesRoot,
+  hasSessionForCorrelationKey,
   logError,
   logInfo,
   resolveExistingDirectoryWithinRoot,
   resolveCorrelationKeys,
-  hasSlackReply,
   getAllowedChannelIds,
   getChannelRepoMap,
   truncate,
@@ -39,6 +38,8 @@ import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKey,
+  isForwardableSlackMessage,
+  isSupportedSlackMessageSubtype,
   parseSlackTs,
   SlackEventEnvelopeSchema,
   SlackInteractivityPayloadSchema,
@@ -65,6 +66,7 @@ import {
   GitHubWebhookEnvelopeSchema,
   isPendingBranchResolveKey,
   isCheckSuiteCompletedEvent,
+  isPullRequestClosedEvent,
   isPushEvent,
   shouldIgnoreGitHubEvent,
   type GitHubWebhookEvent,
@@ -150,6 +152,10 @@ interface RawBodyRequest extends Request {
 }
 
 type HeaderValue = string | string[] | undefined;
+
+function slackMessageHasFilesMetadata(event: { files?: unknown[] }): boolean {
+  return Array.isArray(event.files) && event.files.length > 0;
+}
 
 function getHeaderSnapshot(req: Request, names: string[]): Record<string, HeaderValue> {
   const headers: Record<string, HeaderValue> = {};
@@ -343,6 +349,7 @@ const GITHUB_SUPPORTED_EVENTS = new Set([
   "issue_comment",
   "pull_request_review_comment",
   "pull_request_review",
+  "pull_request",
   "check_suite",
   "push",
 ]);
@@ -354,7 +361,6 @@ type GitHubIgnoreReason =
   | "schema_validation_failed"
   | "repo_not_mapped"
   | "pure_issue_comment_unsupported"
-  | "fork_pr_unsupported"
   | "self_sender"
   | "empty_review_body"
   | "non_mention_comment"
@@ -373,8 +379,11 @@ async function resolveExistingWorktreePath(
 }
 
 type PushStatus =
-  | "push_sync_default_branch_pulled"
-  | "push_sync_worktree_pulled"
+  | "push_sync_already_up_to_date"
+  | "push_sync_default_branch_fast_forwarded"
+  | "push_sync_default_branch_reset"
+  | "push_sync_worktree_fast_forwarded"
+  | "push_sync_worktree_reset"
   | "push_sync_worktree_missing"
   | "push_sync_non_branch_ref_ignored"
   | "push_sync_failed"
@@ -388,6 +397,7 @@ type PushStatus =
   | "push_delete_cleanup_failed";
 
 const IGNORED_PUSH_STATUSES = new Set<PushStatus>([
+  "push_sync_already_up_to_date",
   "push_sync_worktree_missing",
   "push_sync_non_branch_ref_ignored",
   "push_sync_failed",
@@ -796,6 +806,28 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return { status: "push_sync_worktree_missing", ignored: true };
     }
 
+    let headBefore: string;
+    try {
+      const headResult = await execGit({
+        bin: "git",
+        args: ["rev-parse", "HEAD"],
+        cwd: targetDir,
+      });
+      if (headResult.exitCode !== 0) {
+        record("push_sync_failed", { targetDir, exitCode: headResult.exitCode });
+        return { status: "push_sync_failed", ignored: true };
+      }
+      headBefore = headResult.stdout.trim();
+    } catch (error) {
+      record("push_sync_failed", { targetDir, ...errorToMetadata(error) });
+      return { status: "push_sync_failed", ignored: true };
+    }
+
+    if (headBefore && headBefore === event.after) {
+      record("push_sync_already_up_to_date", { targetDir, head: headBefore });
+      return { status: "push_sync_already_up_to_date", ignored: true };
+    }
+
     let fetchResult: Awaited<ReturnType<InternalExecClient>>;
     try {
       fetchResult = await execGit({
@@ -809,6 +841,26 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
     if (fetchResult.exitCode !== 0) {
       record("push_sync_failed", { targetDir, exitCode: fetchResult.exitCode });
+      return { status: "push_sync_failed", ignored: true };
+    }
+
+    let canFastForward: boolean;
+    try {
+      const ancestorResult = await execGit({
+        bin: "git",
+        args: ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"],
+        cwd: targetDir,
+      });
+      if (ancestorResult.exitCode === 0) {
+        canFastForward = true;
+      } else if (ancestorResult.exitCode === 1) {
+        canFastForward = false;
+      } else {
+        record("push_sync_failed", { targetDir, exitCode: ancestorResult.exitCode });
+        return { status: "push_sync_failed", ignored: true };
+      }
+    } catch (error) {
+      record("push_sync_failed", { targetDir, ...errorToMetadata(error) });
       return { status: "push_sync_failed", ignored: true };
     }
 
@@ -829,13 +881,21 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     const syncStatus: PushStatus = isDefaultBranch
-      ? "push_sync_default_branch_pulled"
-      : "push_sync_worktree_pulled";
-    record(syncStatus, { targetDir });
+      ? canFastForward
+        ? "push_sync_default_branch_fast_forwarded"
+        : "push_sync_default_branch_reset"
+      : canFastForward
+        ? "push_sync_worktree_fast_forwarded"
+        : "push_sync_worktree_reset";
+    record(syncStatus, { targetDir, fastForward: canFastForward, headBefore });
+
+    if (isDefaultBranch) {
+      return { status: syncStatus };
+    }
 
     const rawKey = buildCorrelationKey(localRepo, branch);
     const correlationKey = resolveCorrelationKeys([rawKey]);
-    if (!findNotesFile(correlationKey)) {
+    if (!hasSessionForCorrelationKey(rawKey)) {
       record("push_wake_skipped_no_session", { targetDir, rawKey, correlationKey });
       return { status: "push_wake_skipped_no_session" };
     }
@@ -850,9 +910,14 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       sourceTs,
       readyAt: sourceTs,
       delayMs: 0,
-      interrupt: false,
+      interrupt: !canFastForward,
     });
-    record("push_wake_triggered", { targetDir, rawKey, correlationKey });
+    record("push_wake_triggered", {
+      targetDir,
+      rawKey,
+      correlationKey,
+      interrupt: !canFastForward,
+    });
     return { status: "push_wake_triggered" };
   };
 
@@ -1115,6 +1180,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     history.metadata = {
       eventId,
       teamId: envelope.data.team_id,
+      subtype: event.type === "message" ? event.subtype : undefined,
     };
 
     // Skip all Slack events when bot user ID is not configured
@@ -1124,9 +1190,21 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    // Ignore empty messages (e.g. bot messages with attachments only)
-    if ("text" in event && event.text === "") {
-      logInfo(log, "event_ignored_empty_text", { eventId });
+    // Ignore empty messages (e.g. bot messages with attachments only), except
+    // user file shares where file metadata is the meaningful payload.
+    if (
+      "text" in event &&
+      event.text === "" &&
+      !(
+        event.type === "message" &&
+        event.subtype === "file_share" &&
+        slackMessageHasFilesMetadata(event)
+      )
+    ) {
+      logInfo(log, "event_ignored_empty_text", {
+        eventId,
+        subtype: event.type === "message" ? event.subtype : undefined,
+      });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
@@ -1184,25 +1262,34 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     // Skip if it's a duplicate of an app_mention (Slack sends both events)
-    if (event.type === "message" && !event.subtype && event.text?.includes(`<@${selfUserId}>`)) {
-      logInfo(log, "event_ignored_mention_duplicate", { eventId });
+    if (
+      event.type === "message" &&
+      isForwardableSlackMessage(event) &&
+      event.text?.includes(`<@${selfUserId}>`)
+    ) {
+      logInfo(log, "event_ignored_mention_duplicate", { eventId, subtype: event.subtype });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }
 
-    // Message (no subtype — excludes system events like channel_join)
-    if (event.type === "message" && !event.subtype) {
+    // Message continuations. Supported subtypes are user-authored messages;
+    // unsupported/system subtypes remain ignored below.
+    if (event.type === "message" && isForwardableSlackMessage(event)) {
       const rawKey = getSlackCorrelationKey(event);
       const correlationKey = resolveCorrelationKeys([rawKey]);
       if (correlationKey !== rawKey) {
         logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
       }
 
-      // Only forward if Thor is engaged in this thread (has notes with a
-      // slack:thread canonical or alias). Users must @mention to start new conversations.
-      const engaged = hasSlackReply(correlationKey);
+      // Only forward if Thor is engaged in this thread via the JSONL alias index.
+      // Users must @mention to start new conversations.
+      const engaged = hasSessionForCorrelationKey(rawKey);
       if (!engaged) {
-        logInfo(log, "event_ignored_not_engaged", { eventId, correlationKey });
+        logInfo(log, "event_ignored_not_engaged", {
+          eventId,
+          correlationKey,
+          subtype: event.subtype,
+        });
         res.status(200).json({ ok: true, ignored: true });
         return;
       }
@@ -1211,6 +1298,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         eventId,
         teamId: envelope.data.team_id,
         eventType: event.type,
+        subtype: event.subtype,
         channel: event.channel,
         ts: event.ts,
         threadTs: event.thread_ts,
@@ -1234,6 +1322,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       eventId,
       teamId: envelope.data.team_id,
       eventType: event.type,
+      subtype: event.type === "message" ? event.subtype : undefined,
+      supportedSubtype:
+        event.type === "message" ? isSupportedSlackMessageSubtype(event.subtype) : undefined,
     });
     res.status(200).json({ ok: true, ignored: true, eventType: event.type });
   };
@@ -1468,7 +1559,36 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     let delayMs = githubMentionDelay;
     let interrupt = true;
 
-    if (isCheckSuiteCompletedEvent(parsed.data)) {
+    if (isPullRequestClosedEvent(parsed.data)) {
+      const rawKey = buildCorrelationKey(localRepo, parsed.data.pull_request.head.ref);
+      const resolvedKey = resolveCorrelationKeys([rawKey]);
+      if (!hasSessionForCorrelationKey(rawKey)) {
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "correlation_key_unresolved";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          rawKey,
+          resolvedKey,
+          headSha: parsed.data.pull_request.head.sha,
+        };
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "correlation_key_unresolved",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      correlationKey = resolvedKey;
+      delayMs = 0;
+      interrupt = false;
+    } else if (isCheckSuiteCompletedEvent(parsed.data)) {
       if (!branch) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
@@ -1488,7 +1608,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
       const rawKey = buildCorrelationKey(localRepo, branch);
       const resolvedKey = resolveCorrelationKeys([rawKey]);
-      if (!findNotesFile(resolvedKey)) {
+      if (!hasSessionForCorrelationKey(rawKey)) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
         history.action = parsed.data.action;

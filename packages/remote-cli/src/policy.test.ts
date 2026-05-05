@@ -1,4 +1,7 @@
-import { realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { normalize as normalizePosix } from "node:path/posix";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import {
@@ -604,6 +607,29 @@ describe("validateGhArgs", () => {
 
   const HEAD_CWD = "/workspace/worktrees/myrepo/feat/test";
 
+  function withOriginRemote(remoteUrl: string, fn: (cwd: string) => void): void {
+    const cwd = mkdtempSync(join(tmpdir(), "thor-policy-gh-"));
+    try {
+      execFileSync("/usr/bin/git", ["init"], { cwd, stdio: "ignore" });
+      execFileSync("/usr/bin/git", ["remote", "add", "origin", remoteUrl], {
+        cwd,
+        stdio: "ignore",
+      });
+      fn(cwd);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }
+
+  function withTempCwd(fn: (cwd: string) => void): void {
+    const cwd = mkdtempSync(join(tmpdir(), "thor-policy-gh-"));
+    try {
+      fn(cwd);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }
+
   describe("allowed commands", () => {
     it("allows common gh read-only workflows", () => {
       const allowedCommands: string[][] = [
@@ -691,9 +717,7 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["pr", "create", "--title=Add feature", "--body=Summary"])).toBeNull();
     });
 
-    it("allows pr create with --fill and creation-time metadata", () => {
-      expect(validateGhArgs(["pr", "create", "--fill"])).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--fill", "--draft"])).toBeNull();
+    it("allows pr create with explicit body and creation-time metadata", () => {
       expect(
         validateGhArgs([
           "pr",
@@ -714,11 +738,11 @@ describe("validateGhArgs", () => {
           "carol",
         ]),
       ).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "body.md"])).toBeNull();
-      expect(
-        validateGhArgs(["pr", "create", "--title", "x", "--body-file", "docs/pr-body.md"]),
-      ).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--title", "x", "-F", "/tmp/body.md"])).toBeNull();
+    });
+
+    it("denies pr create --fill (no body field for disclaimer injection)", () => {
+      expectGhDeniedWith(["pr", "create", "--fill"], ["--fill is denied"]);
+      expectGhDeniedWith(["pr", "create", "--fill", "--draft"], ["--fill is denied"]);
     });
 
     it("allows gh run rerun / run download / workflow run within policy", () => {
@@ -753,29 +777,18 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["workflow", "run", "ci.yml", "--field", "retries=null"])).toBeNull();
     });
 
-    it("allows append-only issue create with title/body and optional labels", () => {
-      expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toBeNull();
-      expect(
-        validateGhArgs([
-          "issue",
-          "create",
-          "--title",
-          "Bug",
-          "--body",
-          "Broken",
-          "--label",
-          "bug",
-          "--label",
-          "p1",
-        ]),
-      ).toBeNull();
+    it("denies issue create because v1 disclaimer injection does not cover issues", () => {
+      expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toContain(
+        "outside v1 disclaimer-injection scope",
+      );
     });
 
-    it("allows append-only pr/issue comments with explicit body", () => {
+    it("allows append-only pr comments and denies issue comments", () => {
       expect(validateGhArgs(["pr", "comment", "123", "--body", "noted"])).toBeNull();
       expect(validateGhArgs(["pr", "comment", "123", "-b", "noted"])).toBeNull();
-      expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toBeNull();
-      expect(validateGhArgs(["pr", "comment", "123", "-F", "comment.md"])).toBeNull();
+      expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toContain(
+        "outside v1 disclaimer-injection scope",
+      );
     });
 
     it("allows append-only pr reviews for comment/request-changes", () => {
@@ -829,6 +842,32 @@ describe("validateGhArgs", () => {
           "body=Done.",
         ]),
       ).toBeNull();
+      withOriginRemote("git@github.com:acme/web.git", (cwd) => {
+        expect(
+          validateGhArgs(
+            [
+              "api",
+              "repos/acme/web/pulls/53/comments/123/replies",
+              "--method",
+              "POST",
+              "-f",
+              "body=Thanks, I fixed this.",
+            ],
+            cwd,
+          ),
+        ).toBeNull();
+        expect(
+          validateGhArgs(
+            [
+              "api",
+              "/repos/ACME/WEB/pulls/53/comments/123/replies",
+              "--method=POST",
+              "--raw-field=body=Thanks, I fixed this.",
+            ],
+            cwd,
+          ),
+        ).toBeNull();
+      });
     });
 
     it("does not route body values that look like help flags into the help path", () => {
@@ -943,9 +982,6 @@ describe("validateGhArgs", () => {
           HEAD_CWD,
         ),
       ).toBeNull();
-      expect(
-        validateGhArgs(["pr", "create", "--fill", "--head", "feat/test"], HEAD_CWD),
-      ).toBeNull();
     });
 
     it("blocks --head when it does not match cwd's branch", () => {
@@ -1020,22 +1056,30 @@ describe("validateGhArgs", () => {
     });
 
     it("blocks conflicting pr create body sources", () => {
-      // --fill is exclusive with --title/--body/-F
+      // --fill is denied unconditionally (covered by its own test); these
+      // assertions confirm the deny still fires when --fill is combined with
+      // the explicit body shapes it used to be exclusive with.
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--fill"]);
       expectGhDenied(["pr", "create", "--fill", "--title", "x"]);
       expectGhDenied(["pr", "create", "--fill", "-F", "body.md"]);
-      // --body and -F are mutually exclusive
+      // -F/--body-file are denied: direct writes require a mutable --body value
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "-F", "body.md"]);
-      // Title still required when -F supplies body
       expectGhDenied(["pr", "create", "-F", "body.md"]);
-      // Duplicate -F
       expectGhDenied(["pr", "create", "--title", "x", "-F", "a.md", "--body-file", "b.md"]);
     });
 
-    it("blocks pr comment double-source and issue comment -F entirely", () => {
-      // pr comment: -F and --body cannot be combined
+    it("blocks duplicate pr body flags that could bypass disclaimer injection", () => {
+      expectGhDenied(["pr", "create", "--title", "x", "--body", "traced", "--body", "untraced"]);
+      expectGhDenied(["pr", "create", "--title", "x", "--body=traced", "-b", "untraced"]);
+      expectGhDenied(["pr", "comment", "123", "--body", "traced", "--body", "untraced"]);
+      expectGhDenied(["pr", "comment", "123", "--body=traced", "-b", "untraced"]);
+      expectGhDenied(["pr", "review", "123", "--comment", "--body", "traced", "--body", "untraced"]);
+      expectGhDenied(["pr", "review", "123", "--request-changes", "--body=traced", "-b", "untraced"]);
+    });
+
+    it("blocks comment body-file forms", () => {
       expectGhDenied(["pr", "comment", "123", "--body", "x", "-F", "body.md"]);
-      // issue comment does not support -F
+      expectGhDenied(["pr", "comment", "123", "-F", "body.md"]);
       expectGhDenied(["issue", "comment", "42", "-F", "body.md"]);
     });
 
@@ -1140,6 +1184,82 @@ describe("validateGhArgs", () => {
     });
 
     it("blocks unsafe gh api review-comment reply shapes", () => {
+      withOriginRemote("git@github.com:acme/web.git", (cwd) => {
+        expectGhDenied(
+          [
+            "api",
+            "repos/acme/other/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+        expectGhDenied(
+          [
+            "api",
+            "repos/other/web/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+      });
+      withOriginRemote("git@gitlab.com:acme/web.git", (cwd) => {
+        expectGhDenied(
+          [
+            "api",
+            "repos/acme/web/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+      });
+      withOriginRemote("https://example.com/acme/web.git", (cwd) => {
+        expectGhDenied(
+          [
+            "api",
+            "repos/acme/web/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+      });
+      withOriginRemote("not-a-url", (cwd) => {
+        expectGhDenied(
+          [
+            "api",
+            "repos/acme/web/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+      });
+      withTempCwd((cwd) => {
+        expectGhDenied(
+          [
+            "api",
+            "repos/acme/web/pulls/53/comments/123/replies",
+            "--method",
+            "POST",
+            "-f",
+            "body=Done.",
+          ],
+          cwd,
+        );
+      });
       expectGhDenied([
         "api",
         "repos/acme/web/pulls/53/comments/123/replies",
@@ -1195,6 +1315,16 @@ describe("validateGhArgs", () => {
         "body=Done.",
         "-f",
         "extra=value",
+      ]);
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=Traced.",
+        "--raw-field",
+        "body=Untraced.",
       ]);
       expectGhDenied([
         "api",

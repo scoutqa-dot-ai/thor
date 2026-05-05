@@ -111,7 +111,7 @@ Add `POST /exec/metabase` to the remote-cli service.
 
 **Files to modify**:
 
-- `packages/remote-cli/src/index.ts` -- new `/exec/metabase` route (no `validateCwd`, no `computeGitAlias`)
+- `packages/remote-cli/src/index.ts` -- new `/exec/metabase` route (no `validateCwd`, no git correlation alias registration)
 - `packages/remote-cli/src/policy.ts` -- new `validateMetabaseArgs()` validator
 - `packages/remote-cli/src/metabase.ts` -- **new file**: Metabase API client
 

@@ -37,7 +37,7 @@ function ensureDir(dir: string): void {
   mkdirSync(dir, { recursive: true });
 }
 
-function getWorklogDir(): string {
+export function getWorklogDir(): string {
   return envString(process.env, "WORKLOG_DIR", "/workspace/worklog");
 }
 
@@ -135,12 +135,4 @@ export function appendJsonlWorklog(stream: string, entry: object): void {
       `[worklog] Failed to append stream ${stream}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-}
-
-/**
- * Write Slack webhook history to the durable JSONL stream.
- * Never throws — logs to stderr on failure so it doesn't break the caller.
- */
-export function writeSlackWebhookHistory(entry: InboundWebhookHistoryEntry): void {
-  appendJsonlWorklog("slack-webhook", entry);
 }

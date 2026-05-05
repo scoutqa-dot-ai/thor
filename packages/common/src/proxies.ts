@@ -27,9 +27,6 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
     approve: [
       "createJiraIssue",
       "addCommentToJiraIssue",
-      "createConfluencePage",
-      "createConfluenceFooterComment",
-      "createConfluenceInlineComment",
     ],
   },
   grafana: {
