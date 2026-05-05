@@ -1,9 +1,8 @@
 # Pre-bind correlation anchors at gateway enqueue
 
 **Date**: 2026-05-05
-**Status**: Ready to implement
+**Status**: Implemented
 **Depends on**: `docs/plan/2026043001_session-event-log.md` (anchor + alias system)
-**Supersedes draft**: `.context/attachments/pasted_text_2026-05-05_10-05-19.txt`
 
 ## Problem
 
