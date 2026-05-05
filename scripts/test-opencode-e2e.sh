@@ -170,7 +170,7 @@ assert '[[ "$gh_response_ok" == "yes" ]]' "agent command: successfully listed PR
 
 echo ""
 echo "=== Session resume ==="
-RESUME_CORR_KEY="opencode-e2e-resume-$(date +%s)"
+RESUME_CORR_KEY="slack:thread:opencode-e2e-resume-$(date +%s)"
 PHRASE="THOR$(date +%s | tail -c 6)"
 trigger1_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
