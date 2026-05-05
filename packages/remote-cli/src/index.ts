@@ -22,7 +22,11 @@ import {
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.js";
-import { handleSlackPostMessage, type SlackPostMessageDeps } from "./slack-post-message.js";
+import {
+  handleSlackPostMessage,
+  parseSlackPostMessageArgs,
+  type SlackPostMessageDeps,
+} from "./slack-post-message.js";
 import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.js";
 import {
   createSandbox,
@@ -577,6 +581,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
   app.post("/exec/slack-post-message", async (req, res) => {
     const ids = thorIds(req);
+    const parsedArgs = parseSlackPostMessageArgs(req.body?.args);
     try {
       const execResult = await handleSlackPostMessage(
         { args: req.body?.args, stdin: req.body?.stdin, sessionId: ids.sessionId },
@@ -590,13 +595,8 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       );
 
       logInfo(log, "exec_slack_post_message", {
-        channel:
-          req.body && typeof req.body === "object" && typeof req.body.channel === "string"
-            ? req.body.channel
-            : undefined,
-        hasThread:
-          Array.isArray(req.body?.args) &&
-          req.body.args.some((arg: unknown) => typeof arg === "string" && arg.startsWith("--thread-ts")),
+        channel: "error" in parsedArgs ? undefined : parsedArgs.channel,
+        hasThread: "error" in parsedArgs ? false : Boolean(parsedArgs.threadTs),
         exitCode: execResult.exitCode,
         ...ids,
       });

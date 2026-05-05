@@ -53,11 +53,21 @@ describe("service env", () => {
   });
 
   it("loads remote-cli env and helper configs", () => {
-    expect(loadRemoteCliEnv({ ...githubEnv, THOR_INTERNAL_SECRET: "secret" })).toMatchObject({
+    expect(
+      loadRemoteCliEnv({
+        ...githubEnv,
+        THOR_INTERNAL_SECRET: "secret",
+        SLACK_BOT_TOKEN: "xoxb-test",
+      }),
+    ).toMatchObject({
       port: 3004,
+      slackBotToken: "xoxb-test",
       gitIdentityName: "thor-app[bot]",
       gitIdentityEmail: "12345+thor-app[bot]@users.noreply.github.com",
     });
+    expect(() => loadRemoteCliEnv({ ...githubEnv, THOR_INTERNAL_SECRET: "secret" })).toThrow(
+      "Missing required env var SLACK_BOT_TOKEN",
+    );
     expect(loadRemoteCliAppEnv({ THOR_INTERNAL_SECRET: "secret", NODE_ENV: "production" })).toEqual(
       {
         thorInternalSecret: "secret",

@@ -108,9 +108,18 @@ describe("remote-cli slack-post-message endpoint", () => {
 
   it("rejects invalid args, empty stdin, missing token, and blocks before Slack", async () => {
     await expectFailure({ args: [], stdin: "hi" }, "--channel is required");
+    await expectFailure({ args: ["--channel"], stdin: "hi" }, "--channel requires a value");
     await expectFailure(
       { args: ["--channel", "C123", "--thread-ts", "not-a-ts"], stdin: "hi" },
       "--thread-ts must be a Slack timestamp",
+    );
+    await expectFailure(
+      { args: ["--channel", "C123", "--thread-ts"], stdin: "hi" },
+      "--thread-ts requires a value",
+    );
+    await expectFailure(
+      { args: ["--channel", "C123", "--thread-ts="], stdin: "hi" },
+      "--thread-ts requires a value",
     );
     await expectFailure({ args: ["--channel", "C123"], stdin: "   \n" }, "must not be empty");
     await expectFailure(

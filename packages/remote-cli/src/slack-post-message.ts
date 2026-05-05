@@ -36,20 +36,37 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
   let threadTs: string | undefined;
   let format = "mrkdwn";
 
+  const requireValue = (flag: string, value: string | undefined): string | { error: string } => {
+    if (value === undefined || value.length === 0) return { error: `${flag} requires a value` };
+    return value;
+  };
+
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--channel") {
-      channel = args[++i];
+      const value = requireValue("--channel", args[++i]);
+      if (typeof value !== "string") return value;
+      channel = value;
     } else if (arg.startsWith("--channel=")) {
-      channel = arg.slice("--channel=".length);
+      const value = requireValue("--channel", arg.slice("--channel=".length));
+      if (typeof value !== "string") return value;
+      channel = value;
     } else if (arg === "--thread-ts") {
-      threadTs = args[++i];
+      const value = requireValue("--thread-ts", args[++i]);
+      if (typeof value !== "string") return value;
+      threadTs = value;
     } else if (arg.startsWith("--thread-ts=")) {
-      threadTs = arg.slice("--thread-ts=".length);
+      const value = requireValue("--thread-ts", arg.slice("--thread-ts=".length));
+      if (typeof value !== "string") return value;
+      threadTs = value;
     } else if (arg === "--format") {
-      format = args[++i] ?? "";
+      const value = requireValue("--format", args[++i]);
+      if (typeof value !== "string") return value;
+      format = value;
     } else if (arg.startsWith("--format=")) {
-      format = arg.slice("--format=".length);
+      const value = requireValue("--format", arg.slice("--format=".length));
+      if (typeof value !== "string") return value;
+      format = value;
     } else {
       return { error: `unsupported argument: ${arg}` };
     }

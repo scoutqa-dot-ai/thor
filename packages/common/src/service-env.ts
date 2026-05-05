@@ -86,6 +86,7 @@ export function loadRemoteCliEnv(env: EnvSource = process.env) {
   return {
     port: envInt(env, "PORT", 3004),
     nodeEnv: envOptionalString(env, "NODE_ENV") ?? "",
+    slackBotToken: envString(env, "SLACK_BOT_TOKEN"),
     ...loadRemoteCliInternalEnv(env),
     ...loadRemoteCliGitHubEnv(env),
   };
