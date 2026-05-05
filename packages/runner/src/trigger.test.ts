@@ -103,6 +103,27 @@ function taskRunningEvent(sessionId: string): Event {
   } as unknown as Event;
 }
 
+function toolEvent(
+  sessionId: string,
+  tool: string,
+  status: string,
+  input: Record<string, unknown>,
+): Event {
+  return {
+    type: "message.part.updated",
+    properties: {
+      part: {
+        type: "tool",
+        sessionID: sessionId,
+        messageID: `m-${sessionId}`,
+        callID: `call-${tool}`,
+        tool,
+        state: { status, input, time: { start: 1000, end: 2500 } },
+      },
+    },
+  } as unknown as Event;
+}
+
 function statusEvent(sessionId: string): Event {
   return { type: "session.status", properties: { sessionID: sessionId, status: "busy" } } as Event;
 }
@@ -317,6 +338,148 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("completed");
       // No /raw escape hatch — the single-endpoint contract.
       expect(html).not.toContain("/raw");
+    });
+  });
+
+  it("renders the trigger viewer as a safe operator event list", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000311";
+    const otherTriggerId = "00000000-0000-7000-8000-000000000312";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("viewer-session", anchorId);
+    bindSessionToAnchor("older-viewer-session", anchorId);
+    expect(
+      appendAlias({ aliasType: "opencode.subsession", aliasValue: "viewer-child", anchorId }),
+    ).toEqual({ ok: true });
+    expect(
+      appendSessionEvent("viewer-session", {
+        type: "trigger_start",
+        triggerId,
+        correlationKey: "slack:thread:1710000000.311",
+        promptPreview: "please inspect the repo",
+      }),
+    ).toEqual({ ok: true });
+    appendSessionEvent("viewer-session", {
+      type: "opencode_event",
+      event: toolEvent("viewer-session", "read", "completed", {
+        filePath: "/workspace/repos/thor/README.md",
+      }),
+    });
+    appendSessionEvent("viewer-session", {
+      type: "opencode_event",
+      event: toolEvent("viewer-session", "bash", "completed", {
+        command: "gh auth token --password=supersecret",
+      }),
+    });
+    appendSessionEvent("viewer-session", {
+      type: "opencode_event",
+      event: toolEvent("viewer-session", "mcp", "completed", {
+        token: "should-not-render",
+        query: "mutation { writeThing }",
+      }),
+    });
+    appendSessionEvent("viewer-session", {
+      type: "opencode_event",
+      event: textEvent("viewer-session", "Done with token=abc123"),
+    });
+    appendSessionEvent("viewer-session", { type: "opencode_event", event: { _truncated: true } });
+    appendSessionEvent("viewer-session", {
+      type: "trigger_end",
+      triggerId: otherTriggerId,
+      status: "completed",
+    });
+    appendSessionEvent("viewer-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+      durationMs: 1234,
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("slack trigger");
+      expect(html).toContain("Meaningful events");
+      expect(html).toContain("tool</b> <span>read</span>");
+      expect(html).toContain("filePath:");
+      expect(html).toContain("tool</b> <span>gh auth</span>");
+      expect(html).toContain("tool</b> <span>mcp</span>");
+      expect(html).toContain("arguments hidden");
+      expect(html).toContain("truncated payload");
+      expect(html).toContain("Subsessions exist");
+      expect(html).toContain("Multiple OpenCode sessions");
+      expect(html).toContain("records for another trigger");
+      expect(html).toContain("Done with token=[redacted]");
+      expect(html).not.toContain("supersecret");
+      expect(html).not.toContain("should-not-render");
+      expect(html).not.toContain("mutation { writeThing }");
+      expect(html).not.toContain("gh auth token --password");
+    });
+  });
+
+  it("redacts JSON-style secret fields in exposed viewer snippets", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000321";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("secret-viewer-session", anchorId);
+    expect(
+      appendAlias({
+        aliasType: "git.branch",
+        aliasValue: "git:branch:repo:feature/secret=branch-secret-321",
+        anchorId,
+      }),
+    ).toEqual({ ok: true });
+    appendSessionEvent("secret-viewer-session", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "slack:thread:1710000000.321",
+      promptPreview:
+        '{"token":"json-token-321","access_token":"json-access-321","api_key":"json-api-321","password":"json-pass-321","secret":"json-secret-321"}',
+    });
+    appendSessionEvent("secret-viewer-session", {
+      type: "opencode_event",
+      event: textEvent(
+        "secret-viewer-session",
+        'assistant saw {"token":"assistant-token-321", api_key: "assistant-api-321"} and Bearer bearer-token-321',
+      ),
+    });
+    for (let i = 0; i < 105; i++) {
+      appendSessionEvent("secret-viewer-session", {
+        type: "opencode_event",
+        event: textEvent("secret-viewer-session", `filler event ${i}`),
+      });
+    }
+    appendSessionEvent("secret-viewer-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("[redacted]");
+      expect(html).toContain("earlier meaningful event row(s) omitted");
+      expect(html).toContain("middle record(s) omitted from diagnostics");
+      for (const secret of [
+        "json-token-321",
+        "json-access-321",
+        "json-api-321",
+        "json-pass-321",
+        "json-secret-321",
+        "assistant-token-321",
+        "assistant-api-321",
+        "bearer-token-321",
+        "branch-secret-321",
+      ]) {
+        expect(html).not.toContain(secret);
+      }
     });
   });
 
@@ -719,7 +882,7 @@ describe("runner /trigger orchestration", () => {
       expect(response.status).toBe(200);
       const html = await response.text();
       expect(html).toContain("crashed");
-      expect(html).toContain("abandoned without a close marker");
+      expect(html).toContain("Superseded by newer trigger");
     });
   });
 
