@@ -122,7 +122,7 @@ curl -sS -o "$DOWNLOAD_FILE" \
 For a short single-line reply, pipe text into `slack-post-message`:
 
 ```bash
-printf '%s\n' 'Root cause looks like a missing env var in the worker deploy. I confirmed the crash started after the 14:10 rollout. Next step: redeploy with FOO_API_KEY restored.' | \
+echo 'Root cause looks like a missing env var in the worker deploy. I confirmed the crash started after the 14:10 rollout. Next step: redeploy with FOO_API_KEY restored.' | \
   slack-post-message --channel C123 --thread-ts 1710000000.001
 ```
 
@@ -196,8 +196,7 @@ Common failures to report as-is:
 - Tool inputs use Slack IDs such as `C...` and `F...`, not channel names.
 - `thread_ts` should be the parent message timestamp for the thread.
 - Use real Slack URLs for reads, reactions, and uploads. Use
-  `slack-post-message` for message posts. Do not route Slack work through
-  `mcp slack`.
+  `slack-post-message` for message posts.
 - `reactions.add` is the only reaction mutation supported through the proxy; do
   not call reaction update/remove methods.
 - Do not send multiline Slack text as an inline shell string. Default to a

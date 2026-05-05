@@ -37,7 +37,7 @@ Its remaining value is service-side orchestration:
 - emoji reactions
 - approval cards
 - approval message updates
-- the old `mcp slack ...` tool surface
+- the old Slack MCP tool surface
 
 ## Current dependency surface
 
@@ -47,8 +47,8 @@ From the current codebase:
   `/update-message` calls to `slack-mcp`
 - `packages/common/src/proxies.ts` still registers `slack` as an MCP upstream
   that points at `http://slack-mcp:3003/mcp`
-- `packages/runner/src/tool-instructions.ts` still tells agents to use
-  `mcp slack ...` when repo config enables the `slack` proxy
+- `packages/runner/src/tool-instructions.ts` still tells agents to use the
+  Slack MCP upstream when repo config enables the `slack` proxy
 - `packages/remote-cli/src/mcp-handler.ts` still adds Slack thread alias
   metadata only for the MCP `post_message` path
 - `docker-compose.yml` and `Dockerfile` still build and run the
@@ -123,7 +123,7 @@ follow-up, not part of the `slack-mcp` removal.
 
 ## Phases
 
-### Phase 1 — Agent path parity without `mcp slack`
+### Phase 1 — Agent path parity without the Slack MCP upstream
 
 **Goal**: make the agent Slack path independent from the `slack` MCP upstream
 before touching gateway behavior.
@@ -145,7 +145,7 @@ Files likely affected:
 
 **Exit criteria**:
 
-- agent can post to Slack without `mcp slack`
+- agent can post to Slack without the Slack MCP upstream
 - `chat.postMessage` preserves valid Slack JSON on `stdout`
 - existing file upload flow still works via `slack-upload`
 
@@ -273,7 +273,7 @@ Scope:
   `[Available MCP tools]`
 - add a Slack capability hint for repos that have configured Slack channels,
   pointing agents to the Slack skill and direct `curl` write path instead of
-  `mcp slack`
+  the Slack MCP upstream
 - remove `"slack"` from `repos.*.proxies` with no compatibility shim
 - update the tracked config example and tests to remove `slack` from repo
   `proxies`
@@ -395,7 +395,7 @@ Run these checks before considering the migration complete:
 12. Agent can upload a file with `slack-upload`.
 13. Agent can start a new Slack thread with direct `curl`. Notes alias
     registration for that direct-curl thread is a known out-of-scope gap.
-14. `mcp slack ...` is no longer required anywhere in the active prompt path.
+14. The Slack MCP upstream is no longer required anywhere in the active prompt path.
 
 ## Out of Scope
 

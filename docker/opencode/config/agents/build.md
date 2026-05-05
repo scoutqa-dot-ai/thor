@@ -45,7 +45,7 @@ Outbound HTTP(S) requests use real upstream URLs through `HTTP(S)_PROXY`. For a
 simple Slack reply, use `slack-post-message` and pass message text on stdin:
 
 ```bash
-printf '%s\n' 'Looking into this now. I will report back in-thread.' | \
+echo 'Looking into this now. I will report back in-thread.' | \
   slack-post-message --channel C123 --thread-ts 1710000000.001
 ```
 

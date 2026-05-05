@@ -323,7 +323,7 @@ Likely files to create or change:
   - include one simple Slack `chat.postMessage` example and defer deeper Slack
     workflow details to the Slack skill
 - Rewrite the Slack skill to use real Slack Web API URLs over `mitmproxy`
-  instead of `mcp slack` tool calls.
+  instead of Slack MCP tool calls.
 - Teach the Slack skill to use `slack-upload` for file uploads.
 - Remove all operator docs and examples for `http://data/...`.
 - Remove `DATA_ROUTES` / `DATA_ROUTE_*` documentation from `.env.example`.
@@ -334,7 +334,7 @@ Likely files to create or change:
 - docs mention `curl` and built-in Node `fetch()` support explicitly
 - docs make clear that Node support means built-in `fetch()`
 - the Slack skill uses real `slack.com` / `files.slack.com` URLs and contains
-  no `mcp slack` examples, with URL-encoded `curl` examples for simple writes
+  no Slack MCP examples, with URL-encoded `curl` examples for simple writes
   and `slack-upload` for file uploads
 - `build.md` contains one simple Slack post example and points to the Slack
   skill for the rest
