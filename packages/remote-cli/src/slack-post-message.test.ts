@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { once } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appendAlias, resolveSessionForCorrelationKey } from "@thor/common";
 import { createRemoteCliApp } from "./index.js";
 import type { SlackPostMessageDeps } from "./slack-post-message.js";
 
@@ -168,6 +172,72 @@ describe("remote-cli slack-post-message endpoint", () => {
       sessionId: "session-5",
       correlationKey: "slack:thread:1777940309.867569",
     });
+  });
+
+  it("registers aliases that Slack continuations resolve back to the originating session", async () => {
+    const worklogRoot = mkdtempSync(join(tmpdir(), "remote-cli-slack-alias-test-"));
+    const previousWorklogDir = process.env.WORKLOG_DIR;
+    process.env.WORKLOG_DIR = worklogRoot;
+
+    const integrationFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940310.111111" }));
+    const remoteCli = createRemoteCliApp({
+      slackPostMessage: {
+        env: { SLACK_BOT_TOKEN: "xoxb-test" } as NodeJS.ProcessEnv,
+        fetch: integrationFetch,
+      },
+    });
+    const integrationServer = createServer(remoteCli.app);
+
+    try {
+      expect(
+        appendAlias({
+          aliasType: "opencode.session",
+          aliasValue: "non-slack-session",
+          anchorId: "00000000-0000-7000-8000-000000000c01",
+        }),
+      ).toEqual({ ok: true });
+
+      integrationServer.listen(0, "127.0.0.1");
+      await once(integrationServer, "listening");
+      const integrationUrl = `http://127.0.0.1:${(integrationServer.address() as AddressInfo).port}`;
+
+      const topLevel = await fetch(`${integrationUrl}/exec/slack-post-message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-thor-session-id": "non-slack-session" },
+        body: JSON.stringify({ args: ["--channel", "C123"], stdin: "new controlled thread" }),
+      });
+      expect(topLevel.status).toBe(200);
+      expect(resolveSessionForCorrelationKey("slack:thread:1777940309.867569")).toBe(
+        "non-slack-session",
+      );
+
+      const reply = await fetch(`${integrationUrl}/exec/slack-post-message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-thor-session-id": "non-slack-session" },
+        body: JSON.stringify({
+          args: ["--channel", "C123", "--thread-ts", "1777940309.867569"],
+          stdin: "controlled reply",
+        }),
+      });
+      expect(reply.status).toBe(200);
+      expect(resolveSessionForCorrelationKey("slack:thread:1777940309.867569")).toBe(
+        "non-slack-session",
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        integrationServer.close((err) => (err ? reject(err) : resolve())),
+      );
+      await remoteCli.close();
+      if (previousWorklogDir === undefined) {
+        delete process.env.WORKLOG_DIR;
+      } else {
+        process.env.WORKLOG_DIR = previousWorklogDir;
+      }
+      rmSync(worklogRoot, { recursive: true, force: true });
+    }
   });
 
   async function expectFailure(body: Record<string, unknown>, message: string): Promise<void> {
