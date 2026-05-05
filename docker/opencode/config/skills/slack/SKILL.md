@@ -129,6 +129,8 @@ echo 'Root cause looks like a missing env var in the worker deploy. I confirmed 
 Always pass `--channel <id>` because Thor aliases store Slack thread timestamps,
 not channel IDs. Message text must come from stdin; positional message text,
 `--text`, temp-file expansion flags, and raw JSON passthrough are not supported.
+If you need blocks, pass `--blocks-file <path>` to a JSON file that contains a
+top-level blocks array while still supplying stdin text as the fallback body.
 
 For any multiline reply, use a heredoc or pipe. This is the default when the
 message has paragraph breaks, bullets, code spans, or uncertain shell quoting.

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -198,6 +198,38 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("accepts an optional --blocks-file alongside stdin text", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }));
+    const blocksDir = mkdtempSync(join(tmpdir(), "slack-blocks-"));
+    const blocksFile = join(blocksDir, "blocks.json");
+    writeFileSync(
+      blocksFile,
+      JSON.stringify([{ type: "section", text: { type: "mrkdwn", text: "hello" } }]),
+      "utf8",
+    );
+
+    try {
+      const response = await postSlack(
+        { args: ["--channel", "C123", "--blocks-file", blocksFile], stdin: "fallback text" },
+        { "x-thor-session-id": "session-1" },
+      );
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://slack.com/api/chat.postMessage",
+        expect.objectContaining({
+          body: JSON.stringify({
+            channel: "C123",
+            text: "fallback text",
+            mrkdwn: true,
+            blocks: [{ type: "section", text: { type: "mrkdwn", text: "hello" } }],
+          }),
+        }),
+      );
+    } finally {
+      rmSync(blocksDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects invalid args, empty stdin, missing token, and blocks before Slack", async () => {
     await expectFailure({ args: [], stdin: "hi" }, "--channel is required");
     await expectFailure({ args: ["--channel"], stdin: "hi" }, "--channel requires a value");
@@ -216,8 +248,27 @@ describe("remote-cli slack-post-message endpoint", () => {
     await expectFailure({ args: ["--channel", "C123"], stdin: "   \n" }, "must not be empty");
     await expectFailure(
       { args: ["--channel", "C123", "--format", "blocks"], stdin: "[]" },
-      "blocks is not yet supported",
+      "--format must be mrkdwn or blocks",
     );
+    await expectFailure(
+      { args: ["--channel", "C123", "--blocks-file"], stdin: "hi" },
+      "--blocks-file requires a value",
+    );
+
+    const blocksDir = mkdtempSync(join(tmpdir(), "slack-blocks-bad-"));
+    const badJson = join(blocksDir, "bad.json");
+    const notArray = join(blocksDir, "object.json");
+    writeFileSync(badJson, "{not json", "utf8");
+    writeFileSync(notArray, JSON.stringify({ type: "section" }), "utf8");
+    await expectFailure(
+      { args: ["--channel", "C123", "--blocks-file", badJson], stdin: "hi" },
+      "invalid JSON in --blocks-file",
+    );
+    await expectFailure(
+      { args: ["--channel", "C123", "--blocks-file", notArray], stdin: "hi" },
+      "top-level JSON array",
+    );
+    rmSync(blocksDir, { recursive: true, force: true });
 
     const remoteCli = createRemoteCliApp({
       getConfig: () => ({ repos: { thor: { channels: ["C123", "C404"] } } }),

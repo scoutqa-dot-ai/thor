@@ -4,7 +4,7 @@ set -eu
 usage() {
   cat <<'EOF'
 Usage:
-  slack-post-message --channel <id> [--thread-ts <ts>] [--format mrkdwn]
+  slack-post-message --channel <id> [--thread-ts <ts>] [--format mrkdwn] [--blocks-file <path>]
 
 Post a Slack message through Thor's controlled remote-cli path.
 Message input is stdin-only; positional text, --text, and --json are not supported.
@@ -14,10 +14,14 @@ Options:
   --channel <id>     Required Slack channel ID (C...)
   --thread-ts <ts>   Reply in an existing thread timestamp
   --format mrkdwn    Message format; mrkdwn is the default and only supported format
+  --blocks-file <p>  Optional JSON file with a top-level Slack blocks array
   -h, --help         Show this help
 
 Examples:
-  printf '%s\n' 'Looking into this now.' | slack-post-message --channel C123 --thread-ts 1710000000.001
+  echo 'Looking into this now.' | slack-post-message --channel C123 --thread-ts 1710000000.001
+
+  echo 'Deployment looks healthy.' | \
+    slack-post-message --channel C123 --blocks-file /tmp/blocks.json
 
   slack-post-message --channel C123 --thread-ts 1710000000.001 <<'MESSAGE'
   Root cause is a missing env var in the worker deploy.

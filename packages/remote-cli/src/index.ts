@@ -609,7 +609,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       const execResult = await handleSlackPostMessage(
-        { args: req.body?.args, stdin: req.body?.stdin, sessionId: ids.sessionId },
+        { args: req.body?.args, stdin: req.body?.stdin, sessionId: ids.sessionId, cwd },
         {
           ...config.slackPostMessage,
           logAliasError: (error, meta) => {

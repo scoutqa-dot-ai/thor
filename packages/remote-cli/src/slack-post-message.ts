@@ -4,9 +4,12 @@ import {
   resolveAlias,
   type ExecResult,
 } from "@thor/common";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
+const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
 const SLACK_TS_RE = /^\d{10,}\.\d{6}$/;
 
 export interface SlackPostMessageDeps {
@@ -20,12 +23,14 @@ export interface SlackPostMessageRequest {
   args: unknown;
   stdin: unknown;
   sessionId?: string;
+  cwd?: string;
 }
 
 interface ParsedArgs {
   channel: string;
   threadTs?: string;
   format: "mrkdwn";
+  blocksFile?: string;
 }
 
 function result(stderr: string, exitCode = 1): ExecResult {
@@ -46,6 +51,7 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
   let channel: string | undefined;
   let threadTs: string | undefined;
   let format = "mrkdwn";
+  let blocksFile: string | undefined;
 
   const requireValue = (flag: string, value: string | undefined): string | { error: string } => {
     if (value === undefined || value.length === 0) return { error: `${flag} requires a value` };
@@ -78,6 +84,14 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
       const value = requireValue("--format", arg.slice("--format=".length));
       if (typeof value !== "string") return value;
       format = value;
+    } else if (arg === "--blocks-file") {
+      const value = requireValue("--blocks-file", args[++i]);
+      if (typeof value !== "string") return value;
+      blocksFile = value;
+    } else if (arg.startsWith("--blocks-file=")) {
+      const value = requireValue("--blocks-file", arg.slice("--blocks-file=".length));
+      if (typeof value !== "string") return value;
+      blocksFile = value;
     } else {
       return { error: `unsupported argument: ${arg}` };
     }
@@ -87,12 +101,14 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
   if (threadTs && !SLACK_TS_RE.test(threadTs)) {
     return { error: "--thread-ts must be a Slack timestamp like 1234567890.123456" };
   }
-  if (format === "blocks") {
-    return { error: "--format blocks is not yet supported; use mrkdwn text on stdin" };
-  }
   if (format !== "mrkdwn") return { error: "--format must be mrkdwn or blocks" };
 
-  return { channel, ...(threadTs ? { threadTs } : {}), format: "mrkdwn" };
+  return {
+    channel,
+    ...(threadTs ? { threadTs } : {}),
+    ...(blocksFile ? { blocksFile } : {}),
+    format: "mrkdwn",
+  };
 }
 
 export async function handleSlackPostMessage(
@@ -128,6 +144,33 @@ export async function handleSlackPostMessage(
     mrkdwn: true,
     ...(parsed.threadTs ? { thread_ts: parsed.threadTs } : {}),
   };
+  if (parsed.blocksFile) {
+    if (!request.cwd) return result("cwd is required when using --blocks-file\n");
+    const blocksPath = resolve(request.cwd, parsed.blocksFile);
+    let blocksRaw: string;
+    try {
+      blocksRaw = readFileSync(blocksPath, "utf8");
+    } catch (err) {
+      return result(
+        `failed to read --blocks-file ${parsed.blocksFile}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+    if (Buffer.byteLength(blocksRaw, "utf8") > MAX_BLOCKS_FILE_BYTES) {
+      return result(`blocks file exceeds ${MAX_BLOCKS_FILE_BYTES} bytes\n`);
+    }
+    let blocks: unknown;
+    try {
+      blocks = JSON.parse(blocksRaw);
+    } catch (err) {
+      return result(
+        `invalid JSON in --blocks-file ${parsed.blocksFile}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+    if (!Array.isArray(blocks)) {
+      return result("--blocks-file must contain a top-level JSON array\n");
+    }
+    payload.blocks = blocks;
+  }
 
   let slackJson: unknown;
   try {
