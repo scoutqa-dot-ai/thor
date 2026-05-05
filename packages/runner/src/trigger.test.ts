@@ -108,6 +108,7 @@ function toolEvent(
   tool: string,
   status: string,
   input: Record<string, unknown>,
+  time: { start: number; end: number } = { start: 1000, end: 2500 },
 ): Event {
   return {
     type: "message.part.updated",
@@ -118,7 +119,7 @@ function toolEvent(
         messageID: `m-${sessionId}`,
         callID: `call-${tool}`,
         tool,
-        state: { status, input, time: { start: 1000, end: 2500 } },
+        state: { status, input, time },
       },
     },
   } as unknown as Event;
@@ -439,6 +440,12 @@ describe("runner /trigger orchestration", () => {
       promptPreview:
         '{"token":"json-token-321","access_token":"json-access-321","api_key":"json-api-321","password":"json-pass-321","secret":"json-secret-321"}',
     });
+    expect(
+      appendCorrelationAliasForAnchor(
+        anchorId,
+        "git:branch:repo:feature/secret=branch-secret-321",
+      ),
+    ).toEqual({ ok: true });
     appendSessionEvent("secret-viewer-session", {
       type: "opencode_event",
       event: textEvent(
@@ -452,6 +459,16 @@ describe("runner /trigger orchestration", () => {
         event: textEvent("secret-viewer-session", `filler event ${i}`),
       });
     }
+    appendSessionEvent("secret-viewer-session", {
+      type: "opencode_event",
+      event: toolEvent(
+        "secret-viewer-session",
+        "bash",
+        "completed",
+        { command: "jq .report result.json" },
+        { start: 0, end: 119900 },
+      ),
+    });
     appendSessionEvent("secret-viewer-session", {
       type: "trigger_end",
       triggerId,
@@ -467,6 +484,10 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("[redacted]");
       expect(html).toContain("earlier meaningful event row(s) omitted");
       expect(html).toContain("middle record(s) omitted from diagnostics");
+      expect(html).toContain("tool</b> <span>jq</span>");
+      expect(html).toContain("2m 0s");
+      expect(html).not.toContain("1m 60s");
+      expect(html).toContain("git.branch: git:branch:repo:feature/secret=[redacted]");
       for (const secret of [
         "json-token-321",
         "json-access-321",
@@ -477,6 +498,7 @@ describe("runner /trigger orchestration", () => {
         "assistant-api-321",
         "bearer-token-321",
         "branch-secret-321",
+        Buffer.from("git:branch:repo:feature/secret=branch-secret-321").toString("base64url"),
       ]) {
         expect(html).not.toContain(secret);
       }

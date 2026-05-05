@@ -482,68 +482,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   // | compaction      | No         | No                      | Infrastructure noise                   |
 
   /**
-   * Binaries available in the opencode image. If a bash command's first token is one
-   * of these, we show the binary (with the configured token depth, e.g. `git checkout`);
-   * otherwise we fall back to "bash" so noise like `TEXT_FILE="$(mktemp ...)"` or
-   * `cd x && ...` doesn't leak into the progress line.
-   *
-   * Three sources:
-   *   1. Thor wrappers COPY'd from docker/opencode/bin/ → /usr/local/bin
-   *   2. Explicitly installed in the `opencode` Dockerfile stage (apt, npm -g, pip, curl)
-   *   3. Common coreutils from the node:22-slim base image
-   */
-  const KNOWN_BINS: Record<string, number> = {
-    // Thor wrappers (docker/opencode/bin/)
-    approval: 2,
-    corepack: 2,
-    gh: 2,
-    git: 2,
-    langfuse: 4,
-    ldcli: 2,
-    mcp: 3,
-    metabase: 2,
-    npm: 2,
-    npx: 2,
-    pnpm: 2,
-    pnpx: 2,
-    sandbox: 2,
-    scoutqa: 2,
-    "slack-upload": 1,
-
-    // Explicitly installed in the opencode Dockerfile stage
-    curl: 1,
-    jq: 1,
-    node: 1,
-    perl: 1,
-    pip3: 2,
-    prettier: 1,
-    python3: 2,
-    rg: 1,
-    ruff: 2,
-    shfmt: 1,
-
-    // Coreutils from node:22-slim worth distinguishing from "bash"
-    awk: 1,
-    cat: 1,
-    cp: 1,
-    diff: 1,
-    find: 1,
-    grep: 1,
-    gunzip: 1,
-    gzip: 1,
-    head: 1,
-    ls: 1,
-    mkdir: 1,
-    mktemp: 1,
-    mv: 1,
-    rm: 1,
-    sed: 1,
-    tail: 1,
-    tar: 1,
-    wc: 1,
-  };
-
-  /**
    * Extract a short display name from a tool part.
    * For bash, show the wrapper binary (e.g. "git checkout") when the command starts
    * with one of our known wrappers; otherwise show "bash".
@@ -1325,8 +1263,9 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-const VIEWER_KNOWN_BINS: Record<string, number> = {
+const KNOWN_BINS: Record<string, number> = {
   approval: 2,
+  corepack: 2,
   gh: 2,
   git: 2,
   langfuse: 4,
@@ -1339,12 +1278,35 @@ const VIEWER_KNOWN_BINS: Record<string, number> = {
   pnpx: 2,
   sandbox: 2,
   scoutqa: 2,
+  "slack-upload": 1,
   curl: 1,
+  jq: 1,
   node: 1,
+  perl: 1,
+  pip3: 2,
+  prettier: 1,
   python3: 2,
   rg: 1,
+  ruff: 2,
+  shfmt: 1,
+  awk: 1,
+  cat: 1,
+  cp: 1,
+  diff: 1,
+  find: 1,
   grep: 1,
+  gunzip: 1,
+  gzip: 1,
+  head: 1,
   ls: 1,
+  mkdir: 1,
+  mktemp: 1,
+  mv: 1,
+  rm: 1,
+  sed: 1,
+  tail: 1,
+  tar: 1,
+  wc: 1,
 };
 const MAX_MEANINGFUL_ROWS = 100;
 const DIAGNOSTIC_EDGE_RECORDS = 20;
@@ -1400,9 +1362,12 @@ function safeSnippet(value: unknown, max = 300): string {
 function formatDuration(ms: unknown): string | undefined {
   if (typeof ms !== "number" || !Number.isFinite(ms)) return undefined;
   if (ms < 1000) return `${Math.round(ms)}ms`;
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+  const roundedSeconds = Math.round(ms / 100) / 10;
+  if (roundedSeconds < 60) return `${roundedSeconds.toFixed(1)}s`;
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
 }
 
 function formatAge(ts: string | undefined): string | undefined {
@@ -1420,8 +1385,18 @@ function viewerToolDisplayName(part: ViewerToolPart): string {
     input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
   if (typeof command !== "string") return "bash";
   const parts = command.trimStart().split(/\s+/);
-  const depth = VIEWER_KNOWN_BINS[parts[0] ?? ""];
+  const depth = KNOWN_BINS[parts[0] ?? ""];
   return depth === undefined ? "bash" : parts.slice(0, depth).join(" ");
+}
+
+function decodeAliasValue(aliasType: string, aliasValue: string): string {
+  if (aliasType !== "git.branch") return aliasValue;
+  try {
+    const decoded = Buffer.from(aliasValue, "base64url").toString("utf8");
+    return decoded.startsWith("git:branch:") ? decoded : aliasValue;
+  } catch {
+    return aliasValue;
+  }
 }
 
 function safeToolArgs(tool: string, input: unknown): string | undefined {
@@ -1649,9 +1624,9 @@ function renderSlicePage(
     .map((record) => JSON.stringify(redactRecord(record), null, 2))
     .join("\n");
   const aliases = anchor.externalKeys
-    .map((key) => `${key.aliasType}: ${safeSnippet(key.aliasValue, 300)}`)
+    .map((key) => `${key.aliasType}: ${safeSnippet(decodeAliasValue(key.aliasType, key.aliasValue), 300)}`)
     .join("; ");
-  const body = `${refresh}<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}</span><h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2><p>Status <b>${escapeHtml(slice.status)}</b>${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined) ? ` · Duration ${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined)}` : ""}${formatAge(slice.lastEventTs) ? ` · Last event ${formatAge(slice.lastEventTs)} ago` : ""}</p><p>Anchor <code>${escapeHtml(anchorId)}</code><br>Trigger <code>${escapeHtml(triggerId)}</code><br>Owner session <code>${escapeHtml(ownerSessionId)}</code>${anchor.currentSessionId ? `<br>Current session <code>${escapeHtml(anchor.currentSessionId)}</code>` : ""}</p>${warnings.length ? `<div class="warnings"><h3>Warnings</h3><ul>${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul></div>` : ""}</section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreview ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>` : ""}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section><h3>Meaningful events</h3><p>${toolParts} tool row(s), ${textParts} assistant text row(s), ${truncatedCount} truncated payload(s).</p>${latestAssistantText ? `<blockquote>${escapeHtml(latestAssistantText)}</blockquote>` : ""}${renderRows(rows)}</section><details><summary>Sanitized diagnostics</summary><p>Raw opencode payloads, tool outputs, bash commands, and unsafe tool arguments are hidden.${diagnostics.omitted > 0 ? ` ${diagnostics.omitted} middle record(s) omitted from diagnostics.` : ""}</p><pre>${escapeHtml(records)}</pre></details>`;
+  const body = `${refresh}<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}</span><h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2><p>Status <b>${escapeHtml(slice.status)}</b>${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined) ? ` · Duration ${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined)}` : ""}${formatAge(slice.lastEventTs) ? ` · Last event ${formatAge(slice.lastEventTs)} ago` : ""}</p><p>Anchor <code>${escapeHtml(anchorId)}</code><br>Trigger <code>${escapeHtml(triggerId)}</code><br>Owner session <code>${escapeHtml(safeSnippet(ownerSessionId, 120))}</code>${anchor.currentSessionId ? `<br>Current session <code>${escapeHtml(safeSnippet(anchor.currentSessionId, 120))}</code>` : ""}</p>${warnings.length ? `<div class="warnings"><h3>Warnings</h3><ul>${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul></div>` : ""}</section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreview ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>` : ""}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section><h3>Meaningful events</h3><p>${toolParts} tool row(s), ${textParts} assistant text row(s), ${truncatedCount} truncated payload(s).</p>${latestAssistantText ? `<blockquote>${escapeHtml(latestAssistantText)}</blockquote>` : ""}${renderRows(rows)}</section><details><summary>Sanitized diagnostics</summary><p>Raw opencode payloads, tool outputs, bash commands, and unsafe tool arguments are hidden.${diagnostics.omitted > 0 ? ` ${diagnostics.omitted} middle record(s) omitted from diagnostics.` : ""}</p><pre>${escapeHtml(records)}</pre></details>`;
   return renderPage("Thor trigger", body);
 }
 
