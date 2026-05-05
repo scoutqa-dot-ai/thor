@@ -647,7 +647,7 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
 
   // Enqueue before the Slack card update — re-entering the runner is the
   // load-bearing operation; a failed chat.update must not block it.
-  queue.enqueue({
+  await queue.enqueue({
     id: `approval-${route.actionId}-${decision}-${Date.now()}`,
     source: "approval",
     correlationKey: outcomeCorrelationKey,
@@ -901,7 +901,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     const sourceTs = getGitHubEventSourceTs(event);
-    queue.enqueue({
+    await queue.enqueue({
       id: deliveryId,
       source: "github",
       correlationKey,
@@ -1002,7 +1002,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           const now = Date.now();
           const resolvedKey = resolveCorrelationKeys([plan.toCorrelationKey]);
           for (const [index, event] of githubEvents.entries()) {
-            queue.enqueue({
+            await queue.enqueue({
               ...event,
               id: `${event.id}:resolved`,
               correlationKey: resolvedKey,
@@ -1118,7 +1118,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     });
   });
 
-  const handleSlackEventsWebhook = (req: Request, res: Response, history: WebhookHistoryState) => {
+  const handleSlackEventsWebhook = async (
+    req: Request,
+    res: Response,
+    history: WebhookHistoryState,
+  ): Promise<void> => {
     const rawBodyUtf8 = history.rawBodyBuffer.toString("utf8");
     const signature = req.header("x-slack-signature");
     const timestamp = req.header("x-slack-request-timestamp");
@@ -1246,7 +1250,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         threadTs: event.thread_ts,
         correlationKey,
       });
-      queue.enqueue({
+      await queue.enqueue({
         id: eventId,
         source: "slack",
         correlationKey,
@@ -1304,7 +1308,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         threadTs: event.thread_ts,
         correlationKey,
       });
-      queue.enqueue({
+      await queue.enqueue({
         id: eventId,
         source: "slack",
         correlationKey,
@@ -1675,7 +1679,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const sourceTs = getGitHubEventSourceTs(parsed.data);
 
-    queue.enqueue({
+    await queue.enqueue({
       id: deliveryId,
       source: "github",
       correlationKey,
@@ -1737,7 +1741,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   // --- Cron trigger ---
 
-  app.post("/cron", (req: Request, res: Response) => {
+  app.post("/cron", async (req: Request, res: Response) => {
     // Auth required — CRON_SECRET must be configured
     if (!config.cronSecret) {
       res.status(401).json({ error: "CRON_SECRET not configured" });
@@ -1765,7 +1769,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const payload: CronPayload = { prompt, directory };
 
-    queue.enqueue({
+    await queue.enqueue({
       id: `cron-${Date.now()}`,
       source: "cron",
       correlationKey,
