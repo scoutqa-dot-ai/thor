@@ -198,11 +198,123 @@ function renderHeadedSection(label: string, events: unknown[], body: string): st
   return `${heading}:\n\n${body}`;
 }
 
+type DistilledSlackFile = {
+  name?: string;
+  mimetype?: string;
+  filetype?: string;
+  size?: number;
+};
+
+type DistilledSlackEvent = {
+  event_type: string;
+  channel?: string;
+  ts?: string;
+  thread_ts?: string;
+  user?: string;
+  text?: string;
+  files?: DistilledSlackFile[];
+  block_tags?: string[];
+};
+
+const SLACK_BLOCK_TAG_LIMIT = 50;
+const SLACK_STRUCTURAL_BLOCK_TYPES = new Set([
+  "rich_text",
+  "rich_text_section",
+  "rich_text_list",
+  "rich_text_quote",
+  "rich_text_preformatted",
+  "section",
+  "context",
+]);
+
+function addSlackBlockTag(tags: string[], seen: Set<string>, tag: string): void {
+  if (tags.length >= SLACK_BLOCK_TAG_LIMIT || seen.has(tag)) return;
+  seen.add(tag);
+  tags.push(tag);
+}
+
+function extractSlackBlockTags(blocks: unknown): string[] {
+  const tags: string[] = [];
+  const seen = new Set<string>();
+
+  function walk(value: unknown): void {
+    if (tags.length >= SLACK_BLOCK_TAG_LIMIT || value === null || value === undefined) return;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    if (typeof value !== "object") return;
+
+    const node = value as Record<string, unknown>;
+    const type = typeof node.type === "string" ? node.type : undefined;
+    if (type !== undefined && SLACK_STRUCTURAL_BLOCK_TYPES.has(type)) {
+      addSlackBlockTag(tags, seen, type);
+    }
+
+    if (type === "user" && typeof node.user_id === "string") {
+      addSlackBlockTag(tags, seen, `user:${node.user_id}`);
+    } else if (type === "channel" && typeof node.channel_id === "string") {
+      addSlackBlockTag(tags, seen, `channel:${node.channel_id}`);
+    } else if (type === "usergroup" && typeof node.usergroup_id === "string") {
+      addSlackBlockTag(tags, seen, `usergroup:${node.usergroup_id}`);
+    } else if (type === "broadcast" && typeof node.range === "string") {
+      addSlackBlockTag(tags, seen, `broadcast:${node.range}`);
+    } else if (type === "emoji" && typeof node.name === "string") {
+      addSlackBlockTag(tags, seen, `emoji:${node.name}`);
+    } else if (type === "link") {
+      addSlackBlockTag(tags, seen, "link");
+    } else if (type === "date") {
+      addSlackBlockTag(tags, seen, "date");
+    } else if (type === "file") {
+      addSlackBlockTag(tags, seen, "file");
+    }
+
+    for (const child of Object.values(node)) walk(child);
+  }
+
+  walk(blocks);
+  return tags;
+}
+
+function distillSlackFiles(files: unknown): DistilledSlackFile[] | undefined {
+  if (!Array.isArray(files)) return undefined;
+  const distilled = files.flatMap((file): DistilledSlackFile[] => {
+    if (file === null || typeof file !== "object") return [];
+    const source = file as Record<string, unknown>;
+    const output: DistilledSlackFile = {};
+    if (typeof source.name === "string") output.name = source.name;
+    if (typeof source.mimetype === "string") output.mimetype = source.mimetype;
+    if (typeof source.filetype === "string") output.filetype = source.filetype;
+    if (typeof source.size === "number") output.size = source.size;
+    return Object.keys(output).length > 0 ? [output] : [];
+  });
+  return distilled.length > 0 ? distilled : undefined;
+}
+
+function distillSlackEvent(event: SlackThreadEvent): DistilledSlackEvent {
+  const source = event as SlackThreadEvent & Record<string, unknown>;
+  const distilled: DistilledSlackEvent = { event_type: event.type };
+  if (typeof source.channel === "string") distilled.channel = source.channel;
+  if (typeof source.ts === "string") distilled.ts = source.ts;
+  if (typeof source.thread_ts === "string") distilled.thread_ts = source.thread_ts;
+  if (typeof source.user === "string") distilled.user = source.user;
+  if (typeof source.text === "string") distilled.text = source.text;
+
+  const files = distillSlackFiles(source.files);
+  if (files !== undefined) distilled.files = files;
+
+  const blockTags = extractSlackBlockTags(source.blocks);
+  if (blockTags.length > 0) distilled.block_tags = blockTags;
+
+  return distilled;
+}
+
 function renderSlackPrompt(events: SlackThreadEvent[]): string {
+  const distilledEvents = events.map(distillSlackEvent);
   return renderHeadedSection(
     "Slack",
     events,
-    JSON.stringify(events.length === 1 ? events[0] : events),
+    JSON.stringify(events.length === 1 ? distilledEvents[0] : distilledEvents),
   );
 }
 

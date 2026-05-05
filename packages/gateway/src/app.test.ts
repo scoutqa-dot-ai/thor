@@ -2855,7 +2855,7 @@ describe("gateway", () => {
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
       const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
       const promptPayload = JSON.parse(promptJson);
-      expect(promptPayload.type).toBe("app_mention");
+      expect(promptPayload.event_type).toBe("app_mention");
       expect(promptPayload.channel).toBe("C123");
       expect(promptPayload.text).toContain("investigate checkout errors");
     });
@@ -2968,6 +2968,8 @@ describe("gateway", () => {
             id: "F123",
             name: "debug.log",
             mimetype: "text/plain",
+            filetype: "text",
+            size: 1234,
             url_private: "https://files.slack.com/files-pri/T123-F123/debug.log",
             custom_slack_field: { keep: true },
           },
@@ -2985,10 +2987,14 @@ describe("gateway", () => {
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
       const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
-      expect(JSON.parse(promptJson)).toMatchObject({
-        subtype: "file_share",
+      expect(JSON.parse(promptJson)).toEqual({
+        event_type: "message",
+        channel: "C123",
+        ts: "1710000000.003",
+        thread_ts: "1710000000.001",
+        user: "U123",
         text: "",
-        files: [{ id: "F123", custom_slack_field: { keep: true } }],
+        files: [{ name: "debug.log", mimetype: "text/plain", filetype: "text", size: 1234 }],
       });
     });
   });
@@ -3047,8 +3053,11 @@ describe("gateway", () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
-      expect(triggerBody.prompt).toContain("thread_broadcast");
-      expect(triggerBody.prompt).toContain("original thread");
+      const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
+      const promptPayload = JSON.parse(promptJson);
+      expect(promptPayload.event_type).toBe("message");
+      expect(promptPayload).not.toHaveProperty("subtype");
+      expect(promptPayload.text).toContain("sharing this back to channel");
     });
   });
 
@@ -3274,8 +3283,10 @@ describe("gateway", () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
-      expect(triggerBody.prompt).toContain("deploy completed");
-      expect(triggerBody.prompt).toContain("B123");
+      const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
+      const promptPayload = JSON.parse(promptJson);
+      expect(promptPayload.text).toBe("deploy completed");
+      expect(promptPayload).not.toHaveProperty("bot_id");
     });
   });
 
