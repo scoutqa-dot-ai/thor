@@ -1519,7 +1519,7 @@ describe("gateway", () => {
     await withWorktreesRoot(async (worktreesRoot) => {
       const worktreeDir = join(worktreesRoot, "test-repo", "feat/nested");
       mkdirSync(worktreeDir, { recursive: true });
-      notesKeys.add("git:branch:test-repo:feat/nested");
+      sessionKeys.add("git:branch:test-repo:feat/nested");
 
       await withWorklogDir(async (worklogDir) => {
         await withServer(
@@ -1778,7 +1778,7 @@ describe("gateway", () => {
       const worktreeRoot = join(worktreesRoot, "test-repo");
       const worktreeDir = join(worktreeRoot, "feat/nested");
       mkdirSync(worktreeDir, { recursive: true });
-      notesKeys.add("git:branch:test-repo:feat/nested");
+      sessionKeys.add("git:branch:test-repo:feat/nested");
       await withServer(
         fetchImpl,
         async (baseUrl, _queue, queueDir) => {
