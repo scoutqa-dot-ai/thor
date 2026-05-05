@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { appendAlias, currentSessionForAnchor, resolveAlias } from "./event-log.js";
+import { appendAlias, currentSessionForAnchor, mintAnchor, resolveAlias } from "./event-log.js";
 import type { AliasRecord } from "./event-log.js";
 
 const SLACK_THREAD_PREFIX = "slack:thread:";
@@ -24,6 +24,29 @@ const SlackPostMessageOutput = z.object({
 });
 
 type CorrelationAlias = Pick<AliasRecord, "aliasType" | "aliasValue">;
+export type EnsureAnchorResult =
+  | { anchorId: string; minted: boolean }
+  | { anchorId: undefined; minted: false; reason: "unsupported_prefix" };
+
+const anchorEnsureLocks = new Map<string, Promise<unknown>>();
+
+function withKeyLock<T>(
+  locks: Map<string, Promise<unknown>>,
+  key: string,
+  fn: () => Promise<T> | T,
+): Promise<T> {
+  const prev = locks.get(key) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  const settled = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  locks.set(key, settled);
+  settled.finally(() => {
+    if (locks.get(key) === settled) locks.delete(key);
+  });
+  return next;
+}
 
 function inferRepoFromPath(cwdPath: string): string | undefined {
   if (!cwdPath) return undefined;
@@ -101,6 +124,26 @@ export function appendCorrelationAliasForAnchor(
   const alias = aliasForCorrelationKey(correlationKey);
   if (!alias) return { ok: true };
   return appendAlias({ ...alias, anchorId });
+}
+
+export function ensureAnchorForCorrelationKey(key: string): Promise<EnsureAnchorResult> {
+  if (!aliasForCorrelationKey(key)) {
+    return Promise.resolve({
+      anchorId: undefined,
+      minted: false,
+      reason: "unsupported_prefix",
+    });
+  }
+
+  return withKeyLock(anchorEnsureLocks, key, () => {
+    const existing = resolveAnchorForCorrelationKey(key);
+    if (existing) return { anchorId: existing, minted: false };
+
+    const anchorId = mintAnchor();
+    const result = appendCorrelationAliasForAnchor(anchorId, key);
+    if (!result.ok) throw result.error;
+    return { anchorId, minted: true };
+  });
 }
 
 /**

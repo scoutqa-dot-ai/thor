@@ -13,7 +13,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebClient } from "@slack/web-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ConfigLoader, WorkspaceConfig } from "@thor/common";
+import {
+  resolveAnchorForCorrelationKey,
+  type ConfigLoader,
+  type WorkspaceConfig,
+} from "@thor/common";
 import { createGatewayApp, type GatewayAppConfig } from "./app.js";
 import type { EventQueue } from "./queue.js";
 
@@ -242,6 +246,10 @@ async function withServer<T>(
   extraConfig?: Partial<GatewayAppConfig>,
 ): Promise<T> {
   const queueDir = mkdtempSync(join(tmpdir(), "gateway-test-"));
+  const prevWorklogDir = process.env.WORKLOG_DIR;
+  if (prevWorklogDir === undefined) {
+    process.env.WORKLOG_DIR = join(queueDir, "worklog");
+  }
   const slack = createMockSlackClient();
   const { app, queue } = createGatewayApp({
     signingSecret: "signing-secret",
@@ -273,6 +281,11 @@ async function withServer<T>(
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
+    if (prevWorklogDir === undefined) {
+      delete process.env.WORKLOG_DIR;
+    } else {
+      process.env.WORKLOG_DIR = prevWorklogDir;
+    }
     rmSync(queueDir, { recursive: true, force: true });
   }
 }
@@ -518,7 +531,7 @@ describe("gateway", () => {
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const staleReceivedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
-      queue.enqueue({
+      await queue.enqueue({
         id: "stale-event",
         source: "cron",
         correlationKey: "cron:stale",
@@ -2824,6 +2837,7 @@ describe("gateway", () => {
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
+      expect(resolveAnchorForCorrelationKey("slack:thread:1710000000.001")).toBeDefined();
 
       await queue.flush();
 
