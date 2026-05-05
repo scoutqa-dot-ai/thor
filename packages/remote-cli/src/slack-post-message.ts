@@ -2,6 +2,7 @@ import {
   appendCorrelationAlias,
   resolveAlias,
   reverseLookupAnchor,
+  stripTrailingSlashes,
   type ExecResult,
 } from "@thor/common";
 
@@ -137,7 +138,7 @@ export async function handleSlackPostMessage(
     mrkdwn: true,
     ...(parsed.threadTs ? { thread_ts: parsed.threadTs } : {}),
   };
-  const slackPostMessageUrl = `${slackApiBaseUrl.replace(/\/+$/, "")}/chat.postMessage`;
+  const slackPostMessageUrl = `${stripTrailingSlashes(slackApiBaseUrl)}/chat.postMessage`;
 
   let slackJson: unknown;
   try {
