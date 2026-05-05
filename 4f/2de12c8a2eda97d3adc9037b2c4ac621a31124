@@ -1,0 +1,27 @@
+docker-compose.yml
+  77777cfa2e6d8e0b 73,75-76,78-80
+README.md
+  77777cfa2e6d8e0b 123
+.env.example
+  77777cfa2e6d8e0b 44-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4f2de12c8a2eda97d3adc9037b2c4ac621a31124",
+  "prompts": {
+    "77777cfa2e6d8e0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1db6ab97-cfc4-4f9f-a7fa-e452a97e9ebc",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 9,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}
