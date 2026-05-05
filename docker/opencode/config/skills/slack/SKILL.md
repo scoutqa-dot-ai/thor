@@ -1,6 +1,6 @@
 ---
 name: slack
-description: Read Slack threads or channel history and post concise bot replies through Slack's real Web API URLs over Thor's mitmproxy path when the user asks to answer in Slack or when a Slack event payload provides channel and thread context.
+description: Read Slack threads or channel history and post concise bot replies through slack-post-message when the user asks to answer in Slack or when a Slack event payload provides channel and thread context.
 ---
 
 ## When to use
@@ -13,8 +13,8 @@ Use this skill when:
 - you need recent channel context to understand a Slack discussion
 - you need to fetch a Slack file mentioned in a thread
 
-General reply policy lives in `build.md`. This skill only covers how to read
-and write Slack through the proxy.
+General reply policy lives in `build.md`. This skill covers how to read Slack
+through the proxy and how to post messages through Thor's controlled helper.
 
 ## Transport
 
@@ -25,13 +25,11 @@ Talk to Slack through real upstream URLs:
 
 Authentication is injected automatically, do not pass `Authorization` header.
 
-The default tool for this skill is `curl`. Prefer URL-encoded form for simple
-Slack writes. Switch to JSON only when the payload becomes structured, such as
-`blocks` or `attachments`.
-For any multiline Slack message, or whenever quoting feels fragile, write the
-message body to a unique temp file under `/tmp` and send it with
-`--data-urlencode "text@${TEXT_FILE}"`.
-For file uploads, prefer `slack-upload` over manually calling Slack's
+The default tool for Slack reads is `curl`. For message writes, use
+`slack-post-message`; it posts through Thor's remote-cli path so Slack thread
+aliases are registered. Message input is stdin-only. Do not use raw `curl` or
+`fetch` for `chat.postMessage`, and do not pass Slack tokens manually.
+For file uploads, keep using `slack-upload` over manually calling Slack's
 multi-step upload endpoints.
 
 ## Temporary files
@@ -58,11 +56,11 @@ Do not use fixed paths like `/tmp/report.txt` or relative paths like
 
 ## Allowed Slack endpoints
 
-The proxy injects Slack auth only for the narrow endpoint set used by this
-skill: `chat.postMessage`, `reactions.add`, `conversations.replies`,
+Thor supports a narrow Slack surface for this skill: message posts through
+`slack-post-message`; `reactions.add`, `conversations.replies`,
 `conversations.history`, `files.info`, Slack's external upload endpoints, and
-supported `files.slack.com` file URLs. Do not call Slack update/delete methods
-or reaction update/remove methods through this path.
+supported `files.slack.com` file URLs through the proxy. Do not call Slack
+update/delete methods or reaction update/remove methods through this path.
 
 ## Core workflow
 
@@ -121,33 +119,26 @@ curl -sS -o "$DOWNLOAD_FILE" \
 
 ### 4. Post a message
 
-For a short single-line reply, inline text is fine:
+For a short single-line reply, pipe text into `slack-post-message`:
 
 ```bash
-curl -sS -X POST https://slack.com/api/chat.postMessage \
-  -H 'content-type: application/x-www-form-urlencoded' \
-  --data-urlencode 'channel=C123' \
-  --data-urlencode 'thread_ts=1710000000.001' \
-  --data-urlencode 'text=Root cause looks like a missing env var in the worker deploy. I confirmed the crash started after the 14:10 rollout. Next step: redeploy with FOO_API_KEY restored.'
+printf '%s\n' 'Root cause looks like a missing env var in the worker deploy. I confirmed the crash started after the 14:10 rollout. Next step: redeploy with FOO_API_KEY restored.' | \
+  slack-post-message --channel C123 --thread-ts 1710000000.001
 ```
 
-For any multiline reply, use a unique temp file. This is the default when the
+Always pass `--channel <id>` because Thor aliases store Slack thread timestamps,
+not channel IDs. Message text must come from stdin; positional message text,
+`--text`, temp-file expansion flags, and raw JSON passthrough are not supported.
+
+For any multiline reply, use a heredoc or pipe. This is the default when the
 message has paragraph breaks, bullets, code spans, or uncertain shell quoting.
 
 ```bash
-TEXT_FILE="$(mktemp /tmp/slack-message.XXXXXX.txt)"
-
-cat <<'EOF' >"$TEXT_FILE"
+slack-post-message --channel C123 --thread-ts 1710000000.001 <<'EOF'
 Good news: the AI did not crash.
 
 The suite still has 0 test cases, so create_manual_ai_session had nothing to run.
 EOF
-
-curl -sS -X POST https://slack.com/api/chat.postMessage \
-  -H 'content-type: application/x-www-form-urlencoded' \
-  --data-urlencode 'channel=C123' \
-  --data-urlencode 'thread_ts=1710000000.001' \
-  --data-urlencode "text@${TEXT_FILE}"
 ```
 
 ### 5. Add a reaction when requested
@@ -204,11 +195,13 @@ Common failures to report as-is:
 
 - Tool inputs use Slack IDs such as `C...` and `F...`, not channel names.
 - `thread_ts` should be the parent message timestamp for the thread.
-- Use real Slack URLs. Do not route Slack work through `mcp slack`.
+- Use real Slack URLs for reads, reactions, and uploads. Use
+  `slack-post-message` for message posts. Do not route Slack work through
+  `mcp slack`.
 - `reactions.add` is the only reaction mutation supported through the proxy; do
   not call reaction update/remove methods.
 - Do not send multiline Slack text as an inline shell string. Default to a
-  unique temp file under `/tmp` plus `--data-urlencode "text@${TEXT_FILE}"`.
+  heredoc or pipe into `slack-post-message`.
 - Do not use literal `\n` inside single-quoted `text=...` arguments.
 - Do not use shared temp paths. Default to `mktemp` under `/tmp`; use
   `mktemp -d` when you need a stable filename inside a unique temp directory.
