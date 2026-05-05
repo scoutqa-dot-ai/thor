@@ -199,6 +199,8 @@ function renderHeadedSection(label: string, events: unknown[], body: string): st
 }
 
 type DistilledSlackFile = {
+  id?: string;
+  file_access?: string;
   name?: string;
   mimetype?: string;
   filetype?: string;
@@ -240,7 +242,10 @@ function extractSlackBlockTags(blocks: unknown): string[] {
   function walk(value: unknown): void {
     if (tags.length >= SLACK_BLOCK_TAG_LIMIT || value === null || value === undefined) return;
     if (Array.isArray(value)) {
-      for (const item of value) walk(item);
+      for (const item of value) {
+        if (tags.length >= SLACK_BLOCK_TAG_LIMIT) break;
+        walk(item);
+      }
       return;
     }
     if (typeof value !== "object") return;
@@ -269,7 +274,10 @@ function extractSlackBlockTags(blocks: unknown): string[] {
       addSlackBlockTag(tags, seen, "file");
     }
 
-    for (const child of Object.values(node)) walk(child);
+    for (const child of Object.values(node)) {
+      if (tags.length >= SLACK_BLOCK_TAG_LIMIT) break;
+      walk(child);
+    }
   }
 
   walk(blocks);
@@ -282,6 +290,8 @@ function distillSlackFiles(files: unknown): DistilledSlackFile[] | undefined {
     if (file === null || typeof file !== "object") return [];
     const source = file as Record<string, unknown>;
     const output: DistilledSlackFile = {};
+    if (typeof source.id === "string") output.id = source.id;
+    if (typeof source.file_access === "string") output.file_access = source.file_access;
     if (typeof source.name === "string") output.name = source.name;
     if (typeof source.mimetype === "string") output.mimetype = source.mimetype;
     if (typeof source.filetype === "string") output.filetype = source.filetype;

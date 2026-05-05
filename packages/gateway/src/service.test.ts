@@ -538,8 +538,46 @@ describe("triggerRunnerSlack prompt distillation", () => {
       thread_ts: "1710000000.001",
       user: "U123",
       text: "please inspect this",
-      files: [{ name: "debug.log", mimetype: "text/plain", filetype: "text", size: 42 }],
+      files: [{ id: "F123", name: "debug.log", mimetype: "text/plain", filetype: "text", size: 42 }],
       block_tags: ["section"],
+    });
+  });
+
+  it("preserves lean Slack file identity and access placeholders before metadata hydration", async () => {
+    const { triggerRunnerSlack } = await import("./service.js");
+    await triggerRunnerSlack(
+      [
+        {
+          type: "message",
+          channel: "C123",
+          ts: "1710000000.004",
+          user: "U123",
+          text: "shared a Slack Connect file",
+          files: [
+            {
+              id: "FCONNECT",
+              file_access: "check_file_info",
+              url_private: "https://files.slack.com/hidden",
+              user: "Alice Example",
+            },
+          ],
+        },
+      ],
+      "key1",
+      runnerDeps,
+      slackDeps,
+      false,
+      undefined,
+      channelRepos,
+    );
+
+    expect(parseRunnerSlackPrompt(mockRunnerFetch)).toEqual({
+      event_type: "message",
+      channel: "C123",
+      ts: "1710000000.004",
+      user: "U123",
+      text: "shared a Slack Connect file",
+      files: [{ id: "FCONNECT", file_access: "check_file_info" }],
     });
   });
 

@@ -2994,7 +2994,7 @@ describe("gateway", () => {
         thread_ts: "1710000000.001",
         user: "U123",
         text: "",
-        files: [{ name: "debug.log", mimetype: "text/plain", filetype: "text", size: 1234 }],
+        files: [{ id: "F123", name: "debug.log", mimetype: "text/plain", filetype: "text", size: 1234 }],
       });
     });
   });
