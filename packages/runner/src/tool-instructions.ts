@@ -60,7 +60,7 @@ export function buildToolInstructions(
         "[Slack capability]",
         "This repo is mapped to Slack channels.",
         "Use the Slack skill and real Slack Web API URLs over mitmproxy (do not use `mcp slack`).",
-        "Use direct `curl` for `https://slack.com/api/chat.postMessage` writes and preserve raw JSON stdout.",
+        "Use `slack-post-message` for Slack message writes; do not use raw `curl`/`fetch` for `chat.postMessage` or pass Slack tokens manually.",
         "Use direct `curl` for `https://slack.com/api/reactions.add` only when adding a requested emoji reaction; do not call Slack update/delete or reaction remove methods.",
         "Use direct `curl`/`fetch` to Slack read APIs (for example `conversations.replies` or `conversations.history`).",
       ].join("\n"),

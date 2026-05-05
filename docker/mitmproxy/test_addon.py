@@ -109,7 +109,7 @@ def test_builtin_missing_env_fails_closed_with_502(tmp_path, monkeypatch) -> Non
     config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
-    flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/chat.postMessage"))
+    flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/conversations.replies"))
     addon.request(flow)
 
     assert flow.response is not None
@@ -225,7 +225,7 @@ def test_disallowed_builtin_slack_reaction_remove_returns_403(tmp_path, monkeypa
     assert _response_text(flow.response) == "thor proxy denied host/path: slack.com/api/reactions.remove"
 
 
-def test_builtin_slack_rule_sets_headers(tmp_path, monkeypatch) -> None:
+def test_builtin_slack_post_message_is_denied_without_auth_injection(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
@@ -235,8 +235,10 @@ def test_builtin_slack_rule_sets_headers(tmp_path, monkeypatch) -> None:
     flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/chat.postMessage"))
     addon.request(flow)
 
-    assert flow.response is None
-    assert flow.request.headers["Authorization"] == "Bearer xoxb-test"
+    assert flow.response is not None
+    assert _status_code(flow.response) == 403
+    assert _response_text(flow.response) == "thor proxy denied host/path: slack.com/api/chat.postMessage"
+    assert "Authorization" not in flow.request.headers
 
 
 def test_builtin_slack_reaction_add_rule_sets_headers(tmp_path, monkeypatch) -> None:
