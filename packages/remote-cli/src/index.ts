@@ -22,6 +22,7 @@ import {
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.js";
+import { handleSlackPostMessage, type SlackPostMessageDeps } from "./slack-post-message.js";
 import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.js";
 import {
   createSandbox,
@@ -78,6 +79,7 @@ export interface RemoteCliAppConfig {
   getConfig?: ConfigLoader;
   appEnv?: ReturnType<typeof loadRemoteCliAppEnv>;
   mcp?: Omit<McpServiceDeps, "getConfig">;
+  slackPostMessage?: SlackPostMessageDeps;
 }
 
 export interface RemoteCliApp {
@@ -570,6 +572,43 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         res.write(JSON.stringify({ type: "exit", exitCode: 1 } satisfies ExecStreamEvent) + "\n");
         res.end();
       }
+    }
+  });
+
+  app.post("/exec/slack-post-message", async (req, res) => {
+    const ids = thorIds(req);
+    try {
+      const execResult = await handleSlackPostMessage(
+        { args: req.body?.args, stdin: req.body?.stdin, sessionId: ids.sessionId },
+        {
+          ...config.slackPostMessage,
+          logAliasError: (error, meta) => {
+            logError(log, "slack_post_message_alias_error", error.message, meta);
+            config.slackPostMessage?.logAliasError?.(error, meta);
+          },
+        },
+      );
+
+      logInfo(log, "exec_slack_post_message", {
+        channel:
+          req.body && typeof req.body === "object" && typeof req.body.channel === "string"
+            ? req.body.channel
+            : undefined,
+        hasThread:
+          Array.isArray(req.body?.args) &&
+          req.body.args.some((arg: unknown) => typeof arg === "string" && arg.startsWith("--thread-ts")),
+        exitCode: execResult.exitCode,
+        ...ids,
+      });
+      res.status((execResult.exitCode ?? 0) === 0 ? 200 : 400).json(execResult);
+    } catch (err) {
+      logError(
+        log,
+        "exec_slack_post_message_error",
+        err instanceof Error ? err.message : String(err),
+        ids,
+      );
+      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
     }
   });
 

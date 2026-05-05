@@ -29,6 +29,14 @@ const sessionId = process.env.THOR_OPENCODE_SESSION_ID || "";
 const callId = process.env.THOR_OPENCODE_CALL_ID || "";
 const body: Record<string, unknown> = { args, cwd, directory: sessionDirectory };
 
+if (endpoint === "slack-post-message") {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  body.stdin = Buffer.concat(chunks).toString("utf8");
+}
+
 try {
   const res = await fetch(url, {
     method: "POST",
