@@ -1,6 +1,7 @@
 import {
   appendCorrelationAlias,
   currentSessionForAnchor,
+  isPathWithin,
   resolveAlias,
   type ExecResult,
 } from "@thor/common";
@@ -146,7 +147,11 @@ export async function handleSlackPostMessage(
   };
   if (parsed.blocksFile) {
     if (!request.cwd) return result("cwd is required when using --blocks-file\n");
-    const blocksPath = resolve(request.cwd, parsed.blocksFile);
+    const cwdPath = resolve("/", request.cwd);
+    const blocksPath = resolve(cwdPath, parsed.blocksFile);
+    if (!isPathWithin(cwdPath, blocksPath)) {
+      return result("--blocks-file must stay within the current working directory\n");
+    }
     let blocksRaw: string;
     try {
       blocksRaw = readFileSync(blocksPath, "utf8");
