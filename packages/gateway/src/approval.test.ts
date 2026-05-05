@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildApprovalButtonValue,
+  buildApprovalPresentation,
+  buildApprovalPresentationBlocks,
   buildInlineApprovalBlocks,
   formatApprovalArgs,
   parseApprovalButtonValue,
@@ -67,6 +69,76 @@ describe("approval formatting", () => {
       argsJson.includes('"approval args too large for Slack"') ||
         argsJson.includes('"[+194 more keys]"'),
     ).toBe(true);
+  });
+});
+
+describe("approval presentation", () => {
+  it("returns only title and markdown for configured approval tools", () => {
+    const presentation = buildApprovalPresentation("createJiraIssue", {
+      projectKey: "ENG",
+      issueTypeName: "Task",
+      summary: "Ship approval cards",
+      description: "Use a concise markdown preview.",
+    });
+
+    expect(presentation).toEqual({
+      title: "Create Jira issue: Ship approval cards",
+      markdown:
+        "*Project:* ENG\n\n*Issue type:* Task\n\n*Summary:* Ship approval cards\n\n*Description:*\nUse a concise markdown preview.",
+    });
+    expect(Object.keys(presentation ?? {})).toEqual(["title", "markdown"]);
+  });
+
+  it("builds sparse presentations without throwing", () => {
+    expect(buildApprovalPresentation("addCommentToJiraIssue", {})).toEqual({
+      title: "Comment on Jira issue: unknown issue",
+      markdown: "*Issue:* unknown issue",
+    });
+    expect(
+      buildApprovalPresentation("addCommentToJiraIssue", {
+        issueKey: "ENG-42",
+        commentBody: "Looks good to me.",
+      }),
+    ).toEqual({
+      title: "Comment on Jira issue: ENG-42",
+      markdown: "*Issue:* ENG-42\n\n*Comment:*\nLooks good to me.",
+    });
+    expect(buildApprovalPresentation("create-feature-flag", { key: "beta", active: false })).toEqual({
+      title: "Create feature flag: beta",
+      markdown: "*Key:* beta\n\n*Active:* false",
+    });
+    expect(buildApprovalPresentation("update-feature-flag", { key: "beta", filters: { groups: [] } }))
+      .toEqual({
+        title: "Update feature flag: beta",
+        markdown: '*Flag:* beta\n\n*filters:* {"groups":[]}',
+      });
+  });
+
+  it("returns undefined for unconfigured tools", () => {
+    expect(buildApprovalPresentation("merge_pull_request", { pr: 42 })).toBeUndefined();
+  });
+
+  it("renders presentation markdown blocks with the shared approval actions", () => {
+    const blocks = buildApprovalPresentationBlocks(
+      { title: "Create feature flag: beta", markdown: "*Key:* beta" },
+      "v3:act-1:posthog:1710000000.001",
+    );
+
+    expect(blocks[0]).toMatchObject({
+      type: "section",
+      text: { type: "mrkdwn", text: ":lock: *Create feature flag: beta*" },
+    });
+    expect(blocks[1]).toMatchObject({
+      type: "section",
+      expand: true,
+      text: { type: "mrkdwn", text: "*Key:* beta" },
+    });
+    expect(blocks[3]).toMatchObject({
+      type: "actions",
+      elements: expect.arrayContaining([
+        expect.objectContaining({ action_id: "approval_approve", value: "v3:act-1:posthog:1710000000.001" }),
+      ]),
+    });
   });
 });
 

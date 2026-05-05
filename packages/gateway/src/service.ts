@@ -21,6 +21,8 @@ import {
 } from "./github.js";
 import {
   buildApprovalButtonValue,
+  buildApprovalPresentation,
+  buildApprovalPresentationBlocks,
   buildInlineApprovalBlocks,
   extractApprovalFailureCategory,
   formatApprovalArgs,
@@ -930,12 +932,25 @@ async function forwardApprovalNotification(
   deps: SlackDeps,
 ): Promise<void> {
   try {
-    const argsJson = formatApprovalArgs(event.args);
     const buttonValue = buildApprovalButtonValue({
       actionId: event.actionId,
       upstreamName: event.proxyName,
       threadTs,
     });
+    const presentation = buildApprovalPresentation(event.tool, event.args);
+
+    if (presentation) {
+      await postMessage(
+        channel,
+        presentation.title,
+        threadTs,
+        deps,
+        buildApprovalPresentationBlocks(presentation, buttonValue),
+      );
+      return;
+    }
+
+    const argsJson = formatApprovalArgs(event.args);
 
     await postMessage(
       channel,
