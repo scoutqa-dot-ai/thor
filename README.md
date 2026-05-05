@@ -120,6 +120,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `GITHUB_APP_PRIVATE_KEY_FILE`       | Yes      | `remote-cli`              | GitHub App private key path                                       |
 | `GITHUB_WEBHOOK_SECRET`             | Yes      | `gateway`                 | GitHub webhook signature secret                                   |
 | `GITHUB_PAT`                        | No       | `remote-cli`              | Optional fallback token for `git` / `gh` after GitHub App startup |
+| `GRAFANA_ORG_ID`                    | No       | `grafana-mcp`             | Grafana org ID (defaults to `1`)                                  |
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | `grafana-mcp`             | Grafana service account token                                     |
 | `GRAFANA_URL`                       | Yes      | `grafana-mcp`             | Grafana instance URL                                              |
 | `INGRESS_PORT`                      | No       | `ingress`                 | Host port for the reverse proxy                                   |

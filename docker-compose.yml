@@ -74,6 +74,7 @@ services:
     environment:
       - GRAFANA_URL=${GRAFANA_URL:?set GRAFANA_URL}
       - GRAFANA_SERVICE_ACCOUNT_TOKEN=${GRAFANA_SERVICE_ACCOUNT_TOKEN:?set GRAFANA_SERVICE_ACCOUNT_TOKEN}
+      - GRAFANA_ORG_ID=${GRAFANA_ORG_ID:-1}
       # GOMEMLIMIT matches the chart's example request; the Docker memory
       # limit matches the chart's example limit.
       # https://github.com/grafana-community/helm-charts/blob/5f0ac2b/charts/grafana-mcp/values.yaml#L191-L197
@@ -83,16 +84,12 @@ services:
         limits:
           memory: 512M
     healthcheck:
-      test:
-        [
-          "CMD",
-          "bash",
-          "-c",
-          "echo -e 'GET /mcp HTTP/1.1\r\nHost: localhost\r\n\r\n' > /dev/tcp/localhost/8000",
-        ]
-      interval: 5s
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8000"]
+      interval: 30s
       timeout: 3s
-      retries: 10
+      retries: 5
+      start_period: 10s
+      start_interval: 2s
 
   mitmproxy:
     build:

@@ -9,6 +9,7 @@ import {
   appendCorrelationAliasForAnchor,
   appendSessionEvent,
   mintAnchor,
+  resolveAnchorForCorrelationKey,
   sessionLogPath,
 } from "@thor/common";
 
@@ -249,6 +250,18 @@ function bindSessionToAnchor(sessionId: string, anchorId: string): void {
   if (!result.ok) throw result.error;
 }
 
+function readAliases(): Array<{ aliasType: string; aliasValue: string; anchorId: string }> {
+  try {
+    return readFileSync(`${worklogDir}/aliases.jsonl`, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch {
+    return [];
+  }
+}
+
 /** Mint a busy-session fixture: anchor + opencode.session + slack.thread alias. */
 function setupBusySession(slackThreadTs: string): string {
   const anchorId = mintAnchor();
@@ -349,6 +362,73 @@ describe("runner /trigger orchestration", () => {
         status: "completed",
       });
     });
+  });
+
+  it("serializes direct no-session triggers for the same fresh known correlation key", async () => {
+    const h = createHarness();
+    const correlationKey = "slack:thread:1710000000.050";
+
+    await withServer(h.app, async (url) => {
+      const [first, second] = await Promise.all([
+        trigger(url, { prompt: "first", correlationKey }),
+        trigger(url, { prompt: "second", correlationKey }),
+      ]);
+
+      const starts = [first, second].map((result) => result.events.find((e) => e.type === "start"));
+      expect(starts.map((event) => event?.sessionId)).toEqual(["session-1", "session-1"]);
+      expect(starts.map((event) => event?.resumed).sort()).toEqual([false, true]);
+    });
+
+    expect(h.existingSessions).toEqual(new Set(["session-1"]));
+    const aliases = readAliases();
+    const slackAliases = aliases.filter(
+      (alias) => alias.aliasType === "slack.thread_id" && alias.aliasValue === "1710000000.050",
+    );
+    const sessionAliases = aliases.filter(
+      (alias) => alias.aliasType === "opencode.session" && alias.aliasValue === "session-1",
+    );
+    expect(slackAliases).toHaveLength(1);
+    expect(sessionAliases).toHaveLength(1);
+    expect(slackAliases[0].anchorId).toBe(sessionAliases[0].anchorId);
+  });
+
+  it("keeps unsupported direct trigger correlation keys on the raw fallback path", async () => {
+    const h = createHarness();
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, { prompt: "raw", correlationKey: "cron:direct" });
+      expect(result.events.find((e) => e.type === "start")).toMatchObject({
+        sessionId: "session-1",
+        resumed: false,
+      });
+    });
+
+    const aliases = readAliases();
+    expect(aliases).toContainEqual(
+      expect.objectContaining({ aliasType: "opencode.session", aliasValue: "session-1" }),
+    );
+    expect(aliases).not.toContainEqual(expect.objectContaining({ aliasValue: "cron:direct" }));
+  });
+
+  it("binds explicit-session direct trigger correlation keys to the session anchor", async () => {
+    const h = createHarness({ existingSessions: new Set(["requested-session"]) });
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("requested-session", anchorId);
+    const correlationKey = "slack:thread:1710000000.060";
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "explicit",
+        sessionId: "requested-session",
+        correlationKey,
+      });
+      expect(result.events.find((e) => e.type === "start")).toMatchObject({
+        sessionId: "requested-session",
+        resumed: true,
+      });
+    });
+
+    expect(resolveAnchorForCorrelationKey(correlationKey)).toBe(anchorId);
   });
 
   it("serializes session resolution for different aliases of the same session", async () => {

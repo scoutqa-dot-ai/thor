@@ -14,7 +14,13 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod/v4";
-import { createLogger, logError, logInfo, resolveCorrelationLockKey } from "@thor/common";
+import {
+  createLogger,
+  ensureAnchorForCorrelationKey,
+  logError,
+  logInfo,
+  resolveCorrelationLockKey,
+} from "@thor/common";
 
 const log = createLogger("event-queue");
 
@@ -120,8 +126,9 @@ export class EventQueue {
     }
   }
 
-  /** Write an event to the queue directory (synchronous, atomic). */
-  enqueue(event: QueuedEvent): void {
+  /** Pre-bind a supported correlation anchor, then write an event atomically. */
+  async enqueue(event: QueuedEvent): Promise<void> {
+    const bound = await ensureAnchorForCorrelationKey(event.correlationKey);
     const ts = event.sourceTs.toString().padStart(15, "0");
     const filename = `${ts}_${event.id}.json`;
     const tmpPath = join(this.dir, `.${filename}.tmp`);
@@ -133,6 +140,7 @@ export class EventQueue {
     logInfo(log, "event_enqueued", {
       source: event.source,
       correlationKey: event.correlationKey,
+      ...(bound.anchorId ? { anchorId: bound.anchorId, anchorMinted: bound.minted } : {}),
     });
   }
 
