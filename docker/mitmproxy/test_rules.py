@@ -78,9 +78,7 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     assert atlassian.rule.readonly is True
 
     slack_post = ruleset.classify("slack.com", "/api/chat.postMessage")
-    assert slack_post.action == "inject"
-    assert slack_post.rule is not None
-    assert slack_post.rule.headers["Authorization"] == "Bearer ${SLACK_BOT_TOKEN}"
+    assert slack_post.action == "deny"
 
     slack_reaction = ruleset.classify("slack.com", "/api/reactions.add")
     assert slack_reaction.action == "inject"
@@ -92,6 +90,18 @@ def test_builtins_apply_when_user_rules_empty() -> None:
 
     slack_history = ruleset.classify("slack.com", "/api/conversations.history")
     assert slack_history.action == "inject"
+
+    slack_replies = ruleset.classify("slack.com", "/api/conversations.replies")
+    assert slack_replies.action == "inject"
+
+    slack_file_info = ruleset.classify("slack.com", "/api/files.info")
+    assert slack_file_info.action == "inject"
+
+    slack_upload_url = ruleset.classify("slack.com", "/api/files.getUploadURLExternal")
+    assert slack_upload_url.action == "inject"
+
+    slack_upload_complete = ruleset.classify("slack.com", "/api/files.completeUploadExternal")
+    assert slack_upload_complete.action == "inject"
 
     slack_update = ruleset.classify("slack.com", "/api/chat.update")
     assert slack_update.action == "deny"

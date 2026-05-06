@@ -37,26 +37,30 @@ Do not only answer in internal chat when a Slack reply is required.
 
 ## Environment
 
-You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `curl`, `jq`, `rg` (`ripgrep`), `slack-upload`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). No Python, Go, or other binaries locally.
+You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `curl`, `jq`, `rg` (`ripgrep`), `slack-post-message`, `slack-upload`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). No Python, Go, or other binaries locally.
 
 **Important:** `npm`, `npx`, `pnpm`, `pnpx`, and `corepack` are redirected to the cloud sandbox automatically. When you run `npm install` or `npx prettier`, it executes in the sandbox where the full toolchain is installed. Use `sandbox` explicitly for other runtimes (Java, Python, etc.). If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
 
 Outbound HTTP(S) requests use real upstream URLs through `HTTP(S)_PROXY`. For a
-simple Slack reply, use direct `curl` to Slack Web API:
+simple Slack reply, use `slack-post-message` and pass message text on stdin:
 
 ```bash
-curl -sS -X POST https://slack.com/api/chat.postMessage \
-  -H 'content-type: application/x-www-form-urlencoded' \
-  --data-urlencode 'channel=C123' \
-  --data-urlencode 'thread_ts=1710000000.001' \
-  --data-urlencode 'text=Looking into this now. I will report back in-thread.'
+echo 'Looking into this now. I will report back in-thread.' | \
+  slack-post-message --channel C123 --thread-ts 1710000000.001
 ```
 
-When posting to Slack, inline `text=...` is only for short single-line replies.
-If the message has paragraph breaks, bullets, code spans, or quoting feels
-fragile, write the body to a unique temp file under `/tmp` and send it with
-`--data-urlencode "text@$TEXT_FILE"`. Do not send multiline Slack text as an
-inline shell argument.
+When posting to Slack, `slack-post-message` accepts stdin only. Always include
+`--channel <id>`. If you need Slack blocks, pass `--blocks-file <path>`
+to a JSON file containing a top-level blocks array while keeping stdin text as the
+fallback mrkdwn body. For multiline replies, prefer a heredoc or pipe:
+
+```bash
+slack-post-message --channel C123 --thread-ts 1710000000.001 <<'EOF'
+Root cause looks like a missing env var in the worker deploy.
+
+Next step: redeploy with FOO_API_KEY restored.
+EOF
+```
 
 For any Slack task beyond a simple post, use the `slack` skill.
 

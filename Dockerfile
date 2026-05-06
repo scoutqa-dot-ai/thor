@@ -79,6 +79,7 @@ COPY docker/opencode/bin/corepack /usr/local/bin/corepack
 # mcp/approval wrapper scripts — forward to remote-cli service over HTTP
 COPY docker/opencode/bin/mcp /usr/local/bin/mcp
 COPY docker/opencode/bin/approval /usr/local/bin/approval
+COPY docker/opencode/bin/slack-post-message /usr/local/bin/slack-post-message
 COPY docker/opencode/bin/slack-upload /usr/local/bin/slack-upload
 USER thor
 RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state

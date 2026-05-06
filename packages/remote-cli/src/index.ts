@@ -22,6 +22,11 @@ import {
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.js";
+import {
+  handleSlackPostMessage,
+  parseSlackPostMessageArgs,
+  type SlackPostMessageDeps,
+} from "./slack-post-message.js";
 import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.js";
 import {
   createSandbox,
@@ -77,7 +82,9 @@ function deriveBotGitIdentity(env: NodeJS.ProcessEnv = process.env): {
 export interface RemoteCliAppConfig {
   getConfig?: ConfigLoader;
   appEnv?: ReturnType<typeof loadRemoteCliAppEnv>;
+  env?: ReturnType<typeof loadRemoteCliEnv>;
   mcp?: Omit<McpServiceDeps, "getConfig">;
+  slackPostMessage?: SlackPostMessageDeps;
 }
 
 export interface RemoteCliApp {
@@ -573,6 +580,43 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     }
   });
 
+  app.post("/exec/slack-post-message", async (req, res) => {
+    const ids = thorIds(req);
+    const parsedArgs = parseSlackPostMessageArgs(req.body?.args);
+    try {
+      const { cwd } = req.body ?? {};
+      const execResult = await handleSlackPostMessage(
+        { args: req.body?.args, stdin: req.body?.stdin, sessionId: ids.sessionId, cwd },
+        {
+          env:
+            config.slackPostMessage?.env ??
+            (config.env ? { SLACK_BOT_TOKEN: config.env.slackBotToken } : undefined),
+          ...config.slackPostMessage,
+          logAliasError: (error, meta) => {
+            logError(log, "slack_post_message_alias_error", error.message, meta);
+            config.slackPostMessage?.logAliasError?.(error, meta);
+          },
+        },
+      );
+
+      logInfo(log, "exec_slack_post_message", {
+        channel: "error" in parsedArgs ? undefined : parsedArgs.channel,
+        hasThread: "error" in parsedArgs ? false : Boolean(parsedArgs.threadTs),
+        exitCode: execResult.exitCode,
+        ...ids,
+      });
+      res.status((execResult.exitCode ?? 0) === 0 ? 200 : 400).json(execResult);
+    } catch (err) {
+      logError(
+        log,
+        "exec_slack_post_message_error",
+        err instanceof Error ? err.message : String(err),
+        ids,
+      );
+      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+    }
+  });
+
   app.post("/exec/sandbox", async (req, res) => {
     const writeNdjson = (chunk: ExecStreamEvent) => {
       res.write(JSON.stringify(chunk) + "\n");
@@ -969,7 +1013,7 @@ function hasLdcliOutputOverride(args: string[]): boolean {
 export async function startRemoteCliServer(): Promise<void> {
   const envConfig = loadRemoteCliEnv();
   const gitIdentity = deriveBotGitIdentity();
-  const remoteCli = createRemoteCliApp();
+  const remoteCli = createRemoteCliApp({ env: envConfig });
   logInfo(log, "remote_cli_starting", {
     port: envConfig.port,
     gitIdentityName: gitIdentity.name,
