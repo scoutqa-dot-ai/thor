@@ -83,6 +83,7 @@ function deriveBotGitIdentity(env: NodeJS.ProcessEnv = process.env): {
 export interface RemoteCliAppConfig {
   getConfig?: ConfigLoader;
   appEnv?: ReturnType<typeof loadRemoteCliAppEnv>;
+  env?: ReturnType<typeof loadRemoteCliEnv>;
   mcp?: Omit<McpServiceDeps, "getConfig">;
   slackPostMessage?: SlackPostMessageDeps;
 }
@@ -443,6 +444,7 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const getConfig = config.getConfig ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
+  const envConfig = config.env ?? loadRemoteCliEnv();
   const internalSecret = appEnv.thorInternalSecret;
   const mcpService = createMcpService({
     getConfig,
@@ -611,6 +613,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       const execResult = await handleSlackPostMessage(
         { args: req.body?.args, stdin: req.body?.stdin, sessionId: ids.sessionId, cwd },
         {
+          env: config.slackPostMessage?.env ?? { SLACK_BOT_TOKEN: envConfig.slackBotToken },
           ...config.slackPostMessage,
           logAliasError: (error, meta) => {
             logError(log, "slack_post_message_alias_error", error.message, meta);

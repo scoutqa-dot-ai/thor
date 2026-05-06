@@ -237,7 +237,10 @@ def test_builtin_slack_post_message_is_denied_without_auth_injection(tmp_path, m
 
     assert flow.response is not None
     assert _status_code(flow.response) == 403
-    assert _response_text(flow.response) == "thor proxy denied host/path: slack.com/api/chat.postMessage"
+    assert (
+        _response_text(flow.response)
+        == "thor proxy denied slack.com/api/chat.postMessage; use slack-post-message instead"
+    )
     assert "Authorization" not in flow.request.headers
 
 

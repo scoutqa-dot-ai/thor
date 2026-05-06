@@ -15,7 +15,7 @@ const SLACK_TS_RE = /^\d{10,}\.\d{6}$/;
 
 export interface SlackPostMessageDeps {
   fetch?: typeof fetch;
-  env?: NodeJS.ProcessEnv;
+  env?: { SLACK_BOT_TOKEN?: string };
   appendAlias?: typeof appendCorrelationAlias;
   logAliasError?: (error: Error, meta: { sessionId: string; correlationKey: string }) => void;
 }
@@ -30,7 +30,6 @@ export interface SlackPostMessageRequest {
 interface ParsedArgs {
   channel: string;
   threadTs?: string;
-  format: "mrkdwn";
   blocksFile?: string;
 }
 
@@ -51,7 +50,6 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
 
   let channel: string | undefined;
   let threadTs: string | undefined;
-  let format = "mrkdwn";
   let blocksFile: string | undefined;
 
   const requireValue = (flag: string, value: string | undefined): string | { error: string } => {
@@ -77,14 +75,6 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
       const value = requireValue("--thread-ts", arg.slice("--thread-ts=".length));
       if (typeof value !== "string") return value;
       threadTs = value;
-    } else if (arg === "--format") {
-      const value = requireValue("--format", args[++i]);
-      if (typeof value !== "string") return value;
-      format = value;
-    } else if (arg.startsWith("--format=")) {
-      const value = requireValue("--format", arg.slice("--format=".length));
-      if (typeof value !== "string") return value;
-      format = value;
     } else if (arg === "--blocks-file") {
       const value = requireValue("--blocks-file", args[++i]);
       if (typeof value !== "string") return value;
@@ -102,13 +92,11 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
   if (threadTs && !SLACK_TS_RE.test(threadTs)) {
     return { error: "--thread-ts must be a Slack timestamp like 1234567890.123456" };
   }
-  if (format !== "mrkdwn") return { error: "--format must be mrkdwn or blocks" };
 
   return {
     channel,
     ...(threadTs ? { threadTs } : {}),
     ...(blocksFile ? { blocksFile } : {}),
-    format: "mrkdwn",
   };
 }
 
@@ -135,8 +123,7 @@ export async function handleSlackPostMessage(
     return result(`mrkdwn stdin exceeds ${MAX_MRKDWN_BYTES} bytes\n`);
   }
 
-  const token = deps.env?.SLACK_BOT_TOKEN ?? process.env.SLACK_BOT_TOKEN;
-  if (!token) return result("SLACK_BOT_TOKEN is not set\n");
+  if (!deps.env?.SLACK_BOT_TOKEN) return result("SLACK_BOT_TOKEN is not set\n");
 
   const fetchImpl = deps.fetch ?? fetch;
   const payload: Record<string, unknown> = {
@@ -181,10 +168,10 @@ export async function handleSlackPostMessage(
   try {
     const response = await fetchImpl(SLACK_POST_MESSAGE_URL, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json; charset=utf-8",
-      },
+        headers: {
+          Authorization: `Bearer ${deps.env.SLACK_BOT_TOKEN}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
       body: JSON.stringify(payload),
     });
     slackJson = await response.json();

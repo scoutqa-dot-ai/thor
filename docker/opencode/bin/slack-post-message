@@ -4,7 +4,7 @@ set -eu
 usage() {
   cat <<'EOF'
 Usage:
-  slack-post-message --channel <id> [--thread-ts <ts>] [--format mrkdwn] [--blocks-file <path>]
+  slack-post-message --channel <id> [--thread-ts <ts>] [--blocks-file <path>]
 
 Post a Slack message through Thor's controlled remote-cli path.
 Message input is stdin-only; positional text, --text, and --json are not supported.
@@ -13,7 +13,6 @@ Always pass --channel because Thor aliases store Slack thread timestamps, not ch
 Options:
   --channel <id>     Required Slack channel ID (C...)
   --thread-ts <ts>   Reply in an existing thread timestamp
-  --format mrkdwn    Message format; mrkdwn is the default and only supported format
   --blocks-file <p>  Optional JSON file with a top-level Slack blocks array
   -h, --help         Show this help
 

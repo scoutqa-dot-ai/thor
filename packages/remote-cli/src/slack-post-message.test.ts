@@ -52,6 +52,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     bindSession("session-validation", "00000000-0000-7000-8000-000000000106");
 
     const remoteCli = createRemoteCliApp({
+      env: { slackBotToken: "xoxb-test" } as any,
       getConfig: () => ({ repos: { thor: { channels: ["C123", "C404"] } } }),
       slackPostMessage: {
         env: { SLACK_BOT_TOKEN: "xoxb-test" } as NodeJS.ProcessEnv,
@@ -256,7 +257,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     await expectFailure({ args: ["--channel", "C123"], stdin: "   \n" }, "must not be empty");
     await expectFailure(
       { args: ["--channel", "C123", "--format", "blocks"], stdin: "[]" },
-      "--format must be mrkdwn or blocks",
+      "unsupported argument: --format",
     );
     await expectFailure(
       { args: ["--channel", "C123", "--blocks-file"], stdin: "hi" },
@@ -281,6 +282,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
 
     const remoteCli = createRemoteCliApp({
+      env: { slackBotToken: "" } as any,
       getConfig: () => ({ repos: { thor: { channels: ["C123", "C404"] } } }),
       slackPostMessage: { env: {} as NodeJS.ProcessEnv, fetch: fetchMock as unknown as typeof fetch },
     });
@@ -347,6 +349,7 @@ describe("remote-cli slack-post-message endpoint", () => {
       .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }))
       .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940310.111111" }));
     const remoteCli = createRemoteCliApp({
+      env: { slackBotToken: "xoxb-test" } as any,
       getConfig: () => ({ repos: { thor: { channels: ["C123", "C404"] } } }),
       slackPostMessage: {
         env: { SLACK_BOT_TOKEN: "xoxb-test" } as NodeJS.ProcessEnv,
