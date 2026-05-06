@@ -43,6 +43,12 @@ function noopSlackDeps(): SlackDeps {
   return { client: {} } as unknown as SlackDeps;
 }
 
+function parseRunnerSlackPrompt(fetchMock: ReturnType<typeof vi.fn>): unknown {
+  const triggerBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+  const promptJson = String(triggerBody.prompt).split("\n\n").slice(1).join("\n\n");
+  return JSON.parse(promptJson);
+}
+
 const githubEventBase: GitHubWebhookEvent = {
   event_type: "issue_comment",
   action: "created",
@@ -273,6 +279,48 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     };
     const approveButton = arg.blocks[3].elements?.find((el) => el.action_id === "approval_approve");
     expect(approveButton?.value).toBe("v3:act-1:github:1710000000.001");
+    expect(JSON.stringify(arg.blocks)).toContain("```json");
+  });
+
+  it("renders configured approval tools with markdown presentation blocks", async () => {
+    const lines = [
+      JSON.stringify({
+        type: "approval_required",
+        actionId: "act-2",
+        tool: "create-feature-flag",
+        args: { key: "beta-card", name: "Beta card", description: "Enable the new card" },
+        proxyName: "posthog",
+      }),
+    ];
+    mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
+
+    const { triggerRunnerSlack } = await import("./service.js");
+    await triggerRunnerSlack(
+      [slackEvent],
+      "key1",
+      runnerDeps,
+      slackDeps,
+      false,
+      undefined,
+      channelRepos,
+    );
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(postMessage).toHaveBeenCalled();
+    const arg = postMessage.mock.calls[0][0] as {
+      text: string;
+      blocks: Array<{
+        text?: { text: string };
+        elements?: Array<{ action_id: string; value: string }>;
+      }>;
+    };
+    expect(arg.text).toBe("Create feature flag: Beta card");
+    expect(arg.blocks[0].text?.text).toBe(":lock: *Create feature flag: Beta card*");
+    expect(arg.blocks[1].text?.text).toContain("*Description:*\nEnable the new card");
+    expect(arg.blocks[1].text?.text).not.toContain("```json");
+    const approveButton = arg.blocks[3].elements?.find((el) => el.action_id === "approval_approve");
+    expect(approveButton?.value).toBe("v3:act-2:posthog:1710000000.001");
   });
 
   it("skips invalid NDJSON lines without crashing", async () => {
@@ -472,6 +520,193 @@ describe("triggerRunnerSlack edge cases", () => {
         new Map([["C123", "repo"]]),
       ),
     ).rejects.toThrow("Runner returned 500");
+  });
+});
+
+describe("triggerRunnerSlack prompt distillation", () => {
+  let mockRunnerFetch: ReturnType<typeof vi.fn>;
+  let runnerDeps: RunnerDeps;
+  let slackDeps: SlackDeps;
+  const channelRepos = new Map([["C123", "my-repo"]]);
+
+  beforeEach(() => {
+    mockRunnerFetch = vi.fn().mockResolvedValue(ndjsonResponse([JSON.stringify({ type: "done" })]));
+    runnerDeps = { runnerUrl: "http://runner:3000", fetchImpl: mockRunnerFetch };
+    slackDeps = noopSlackDeps();
+  });
+
+  it("renders an allowlisted Slack payload without raw noisy fields", async () => {
+    const { triggerRunnerSlack } = await import("./service.js");
+    await triggerRunnerSlack(
+      [
+        {
+          type: "message",
+          channel: "C123",
+          ts: "1710000000.001",
+          thread_ts: "1710000000.001",
+          user: "U123",
+          text: "please inspect this",
+          blocks: [{ type: "section", text: { type: "mrkdwn", text: "secret block text" } }],
+          bot_profile: { name: "Thor Bot" },
+          llm_notes: "do not expose",
+          has_blocks: true,
+          files: [
+            {
+              id: "F123",
+              name: "debug.log",
+              mimetype: "text/plain",
+              filetype: "text",
+              size: 42,
+              url_private: "https://files.slack.com/debug.log",
+              thumb_360: "https://files.slack.com/thumb.png",
+              permalink: "https://slack.com/file/F123",
+              user: "Alice Example",
+            },
+          ],
+        },
+      ],
+      "key1",
+      runnerDeps,
+      slackDeps,
+      false,
+      undefined,
+      channelRepos,
+    );
+
+    expect(parseRunnerSlackPrompt(mockRunnerFetch)).toEqual({
+      event_type: "message",
+      channel: "C123",
+      ts: "1710000000.001",
+      thread_ts: "1710000000.001",
+      user: "U123",
+      text: "please inspect this",
+      files: [{ id: "F123", name: "debug.log", mimetype: "text/plain", filetype: "text", size: 42 }],
+      block_tags: ["section"],
+    });
+  });
+
+  it("preserves lean Slack file identity and access placeholders before metadata hydration", async () => {
+    const { triggerRunnerSlack } = await import("./service.js");
+    await triggerRunnerSlack(
+      [
+        {
+          type: "message",
+          channel: "C123",
+          ts: "1710000000.004",
+          user: "U123",
+          text: "shared a Slack Connect file",
+          files: [
+            {
+              id: "FCONNECT",
+              file_access: "check_file_info",
+              url_private: "https://files.slack.com/hidden",
+              user: "Alice Example",
+            },
+          ],
+        },
+      ],
+      "key1",
+      runnerDeps,
+      slackDeps,
+      false,
+      undefined,
+      channelRepos,
+    );
+
+    expect(parseRunnerSlackPrompt(mockRunnerFetch)).toEqual({
+      event_type: "message",
+      channel: "C123",
+      ts: "1710000000.004",
+      user: "U123",
+      text: "shared a Slack Connect file",
+      files: [{ id: "FCONNECT", file_access: "check_file_info" }],
+    });
+  });
+
+  it("extracts stable deduplicated block_tags without text, names, or urls", async () => {
+    const { triggerRunnerSlack } = await import("./service.js");
+    await triggerRunnerSlack(
+      [
+        {
+          type: "app_mention",
+          channel: "C123",
+          ts: "1710000000.002",
+          user: "U999",
+          text: "<@UTHOR> inspect rich blocks",
+          blocks: [
+            {
+              type: "rich_text",
+              elements: [
+                {
+                  type: "rich_text_section",
+                  elements: [
+                    { type: "user", user_id: "U123", name: "Alice" },
+                    { type: "channel", channel_id: "C456", name: "general" },
+                    { type: "usergroup", usergroup_id: "S789", name: "admins" },
+                    { type: "broadcast", range: "here" },
+                    { type: "emoji", name: "wave" },
+                    { type: "link", url: "https://example.com/private" },
+                    { type: "date", timestamp: 1710000000 },
+                    { type: "user", user_id: "U123", name: "Alice" },
+                  ],
+                },
+                { type: "rich_text_list", elements: [] },
+                { type: "rich_text_quote", elements: [] },
+                { type: "rich_text_preformatted", elements: [{ type: "text", text: "secret" }] },
+                { type: "file", file_id: "FSECRET" },
+              ],
+            },
+          ],
+        },
+      ],
+      "key1",
+      runnerDeps,
+      slackDeps,
+      false,
+      undefined,
+      channelRepos,
+    );
+
+    const payload = parseRunnerSlackPrompt(mockRunnerFetch) as { block_tags: string[] };
+    expect(payload.block_tags).toEqual([
+      "rich_text",
+      "rich_text_section",
+      "user:U123",
+      "channel:C456",
+      "usergroup:S789",
+      "broadcast:here",
+      "emoji:wave",
+      "link",
+      "date",
+      "rich_text_list",
+      "rich_text_quote",
+      "rich_text_preformatted",
+      "file",
+    ]);
+    expect(JSON.stringify(payload)).not.toContain("Alice");
+    expect(JSON.stringify(payload)).not.toContain("https://example.com/private");
+    expect(JSON.stringify(payload)).not.toContain("FSECRET");
+  });
+
+  it("renders multiple Slack events as an array of distilled objects", async () => {
+    const { triggerRunnerSlack } = await import("./service.js");
+    await triggerRunnerSlack(
+      [
+        { type: "message", channel: "C123", ts: "1", user: "U1", text: "one" },
+        { type: "message", channel: "C123", ts: "2", user: "U2", text: "two" },
+      ],
+      "key1",
+      runnerDeps,
+      slackDeps,
+      false,
+      undefined,
+      channelRepos,
+    );
+
+    expect(parseRunnerSlackPrompt(mockRunnerFetch)).toEqual([
+      { event_type: "message", channel: "C123", ts: "1", user: "U1", text: "one" },
+      { event_type: "message", channel: "C123", ts: "2", user: "U2", text: "two" },
+    ]);
   });
 });
 

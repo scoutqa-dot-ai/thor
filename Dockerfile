@@ -53,7 +53,7 @@ CMD ["node", "/app/packages/runner/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
-RUN npm install -g opencode-ai@1.14.30
+RUN npm install -g opencode-ai@1.14.39
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
     && npm install -g prettier@3.8.3 \
@@ -79,6 +79,7 @@ COPY docker/opencode/bin/corepack /usr/local/bin/corepack
 # mcp/approval wrapper scripts — forward to remote-cli service over HTTP
 COPY docker/opencode/bin/mcp /usr/local/bin/mcp
 COPY docker/opencode/bin/approval /usr/local/bin/approval
+COPY docker/opencode/bin/slack-post-message /usr/local/bin/slack-post-message
 COPY docker/opencode/bin/slack-upload /usr/local/bin/slack-upload
 USER thor
 RUN mkdir -p /home/thor/.local/share/opencode /home/thor/.local/state

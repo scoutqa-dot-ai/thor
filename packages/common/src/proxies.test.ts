@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getProxyConfig, PROXY_NAMES } from "./proxies.js";
+import { getProxyConfig, PROXY_NAMES, PROXY_REGISTRY } from "./proxies.js";
 import { interpolateHeaders } from "./workspace-config.js";
 
 describe("proxy registry", () => {
@@ -32,5 +32,16 @@ describe("proxy registry", () => {
       const overlap = proxy!.allow.filter((tool) => proxy!.approve.includes(tool));
       expect(overlap).toEqual([]);
     }
+  });
+
+  it("requires approval only for the approved write-tool inventory", () => {
+    const approvedTools = Object.values(PROXY_REGISTRY).flatMap((proxy) => proxy.approve).sort();
+
+    expect(approvedTools).toEqual([
+      "addCommentToJiraIssue",
+      "create-feature-flag",
+      "createJiraIssue",
+      "update-feature-flag",
+    ]);
   });
 });

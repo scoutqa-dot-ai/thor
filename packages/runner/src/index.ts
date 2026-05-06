@@ -45,6 +45,7 @@ import {
   loadRunnerEnv,
   matchesInternalSecret,
 } from "@thor/common";
+import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import { buildToolInstructions } from "./tool-instructions.js";
 import { getMemoryProgressEvents } from "./memory-progress.js";
@@ -431,7 +432,17 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           );
         return;
       }
-      res.type("html").send(renderSlicePage(anchorId, triggerId, slice));
+      res
+        .type("html")
+        .send(
+          renderSlicePage(
+            anchorId,
+            triggerId,
+            owner.sessionId,
+            reverseLookupAnchor(anchorId),
+            slice,
+          ),
+        );
     },
   );
 
@@ -469,68 +480,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   // | reasoning       | No         | No                      | Internal CoT, fires many times         |
   // | snapshot/patch  | No         | No                      | Infrastructure noise                   |
   // | compaction      | No         | No                      | Infrastructure noise                   |
-
-  /**
-   * Binaries available in the opencode image. If a bash command's first token is one
-   * of these, we show the binary (with the configured token depth, e.g. `git checkout`);
-   * otherwise we fall back to "bash" so noise like `TEXT_FILE="$(mktemp ...)"` or
-   * `cd x && ...` doesn't leak into the progress line.
-   *
-   * Three sources:
-   *   1. Thor wrappers COPY'd from docker/opencode/bin/ → /usr/local/bin
-   *   2. Explicitly installed in the `opencode` Dockerfile stage (apt, npm -g, pip, curl)
-   *   3. Common coreutils from the node:22-slim base image
-   */
-  const KNOWN_BINS: Record<string, number> = {
-    // Thor wrappers (docker/opencode/bin/)
-    approval: 2,
-    corepack: 2,
-    gh: 2,
-    git: 2,
-    langfuse: 4,
-    ldcli: 2,
-    mcp: 3,
-    metabase: 2,
-    npm: 2,
-    npx: 2,
-    pnpm: 2,
-    pnpx: 2,
-    sandbox: 2,
-    scoutqa: 2,
-    "slack-upload": 1,
-
-    // Explicitly installed in the opencode Dockerfile stage
-    curl: 1,
-    jq: 1,
-    node: 1,
-    perl: 1,
-    pip3: 2,
-    prettier: 1,
-    python3: 2,
-    rg: 1,
-    ruff: 2,
-    shfmt: 1,
-
-    // Coreutils from node:22-slim worth distinguishing from "bash"
-    awk: 1,
-    cat: 1,
-    cp: 1,
-    diff: 1,
-    find: 1,
-    grep: 1,
-    gunzip: 1,
-    gzip: 1,
-    head: 1,
-    ls: 1,
-    mkdir: 1,
-    mktemp: 1,
-    mv: 1,
-    rm: 1,
-    sed: 1,
-    tail: 1,
-    tar: 1,
-    wc: 1,
-  };
 
   /**
    * Extract a short display name from a tool part.
@@ -1314,6 +1263,230 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+const KNOWN_BINS: Record<string, number> = {
+  approval: 2,
+  corepack: 2,
+  gh: 2,
+  git: 2,
+  langfuse: 4,
+  ldcli: 2,
+  mcp: 3,
+  metabase: 2,
+  npm: 2,
+  npx: 2,
+  pnpm: 2,
+  pnpx: 2,
+  sandbox: 2,
+  scoutqa: 2,
+  "slack-upload": 1,
+  curl: 1,
+  jq: 1,
+  node: 1,
+  perl: 1,
+  pip3: 2,
+  prettier: 1,
+  python3: 2,
+  rg: 1,
+  ruff: 2,
+  shfmt: 1,
+  awk: 1,
+  cat: 1,
+  cp: 1,
+  diff: 1,
+  find: 1,
+  grep: 1,
+  gunzip: 1,
+  gzip: 1,
+  head: 1,
+  ls: 1,
+  mkdir: 1,
+  mktemp: 1,
+  mv: 1,
+  rm: 1,
+  sed: 1,
+  tail: 1,
+  tar: 1,
+  wc: 1,
+};
+const MAX_MEANINGFUL_ROWS = 100;
+const DIAGNOSTIC_EDGE_RECORDS = 20;
+
+type ViewerEvent = { type?: unknown; properties?: Record<string, unknown>; _truncated?: unknown };
+type ViewerToolPart = {
+  type?: unknown;
+  tool?: unknown;
+  callID?: unknown;
+  cost?: unknown;
+  tokens?: unknown;
+  reason?: unknown;
+  state?: {
+    status?: unknown;
+    input?: unknown;
+    error?: unknown;
+    time?: { start?: unknown; end?: unknown };
+  };
+  text?: unknown;
+};
+
+function safeSnippet(value: unknown, max = 300): string {
+  const text =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : "";
+  return (
+    text
+      .replace(
+        /-----BEGIN [^-]+PRIVATE KEY-----[\s\S]*?-----END [^-]+PRIVATE KEY-----/gi,
+        "[redacted]",
+      )
+      .replace(/\b(?:xox[baprs]-|gh[pousr]_|github_pat_)[A-Za-z0-9_\-]+/g, "[redacted]")
+      .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
+      .replace(
+        /(["'])(token|access_token|api_key|password|secret)\1\s*:\s*(["'])(?:(?!\3).)*\3/gi,
+        "$1$2$1:$3[redacted]$3",
+      )
+      .replace(
+        /\b(token|access_token|api_key|password|secret)\b\s*:\s*(["'])(?:(?!\2).)*\2/gi,
+        "$1:$2[redacted]$2",
+      )
+      .replace(/\b(token|access_token|api_key|password|secret)=([^\s&]+)/gi, "$1=[redacted]")
+      .replace(
+        /\b(token|access_token|api_key|password|secret)\b\s*[:=]\s*["']?[^\s,"']+/gi,
+        "$1=[redacted]",
+      )
+      .replace(/[\r\n\t]+/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .slice(0, max) + (text.length > max ? "…" : "")
+  );
+}
+
+function formatDuration(ms: unknown): string | undefined {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return undefined;
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const roundedSeconds = Math.round(ms / 100) / 10;
+  if (roundedSeconds < 60) return `${roundedSeconds.toFixed(1)}s`;
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
+function formatAge(ts: string | undefined): string | undefined {
+  if (!ts) return undefined;
+  const ms = Date.now() - Date.parse(ts);
+  if (!Number.isFinite(ms) || ms < 0) return undefined;
+  return formatDuration(ms);
+}
+
+function viewerToolDisplayName(part: ViewerToolPart): string {
+  const tool = typeof part.tool === "string" ? part.tool : "tool";
+  if (tool !== "bash") return tool;
+  const input = part.state?.input;
+  const command =
+    input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
+  if (typeof command !== "string") return "bash";
+  const parts = command.trimStart().split(/\s+/);
+  const depth = KNOWN_BINS[parts[0] ?? ""];
+  return depth === undefined ? "bash" : parts.slice(0, depth).join(" ");
+}
+
+function decodeAliasValue(aliasType: string, aliasValue: string): string {
+  if (aliasType !== "git.branch") return aliasValue;
+  try {
+    const decoded = Buffer.from(aliasValue, "base64url").toString("utf8");
+    return decoded.startsWith("git:branch:") ? decoded : aliasValue;
+  } catch {
+    return aliasValue;
+  }
+}
+
+function safeToolArgs(tool: string, input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const args = input as Record<string, unknown>;
+  const allow: Record<string, string[]> = {
+    read: ["filePath", "offset", "limit"],
+    glob: ["pattern", "path"],
+    grep: ["pattern", "path", "include"],
+  };
+  const keys = allow[tool];
+  if (!keys) return undefined;
+  const shown = keys
+    .filter((key) => args[key] !== undefined)
+    .map((key) => `${key}: ${safeSnippet(args[key], 120)}`);
+  return shown.length ? shown.join(", ") : undefined;
+}
+
+function eventPart(record: SessionEventLogRecord): ViewerToolPart | undefined {
+  if (record.type !== "opencode_event" || !record.event || typeof record.event !== "object")
+    return undefined;
+  const event = record.event as ViewerEvent;
+  const props = event.properties;
+  const part = props?.part;
+  return part && typeof part === "object" ? (part as ViewerToolPart) : undefined;
+}
+
+function eventType(record: SessionEventLogRecord): string | undefined {
+  if (record.type !== "opencode_event" || !record.event || typeof record.event !== "object")
+    return undefined;
+  const type = (record.event as ViewerEvent).type;
+  return typeof type === "string" ? type : undefined;
+}
+
+function sourceFrom(correlationKey: string | undefined): string {
+  if (!correlationKey) return "direct";
+  if (correlationKey.startsWith("slack:thread:")) return "slack";
+  if (correlationKey.startsWith("git:branch:")) return "git";
+  if (correlationKey.startsWith("github:")) return "github";
+  if (correlationKey.startsWith("approval:")) return "approval";
+  if (correlationKey.startsWith("cron:")) return "cron";
+  return "direct";
+}
+
+function numericTokenTotal(tokens: unknown): number | undefined {
+  if (!tokens || typeof tokens !== "object") return undefined;
+  let total = 0;
+  let found = false;
+  const stack: unknown[] = [tokens];
+  while (stack.length > 0) {
+    const value = stack.pop();
+    if (!value || typeof value !== "object") continue;
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      if (typeof child === "number" && Number.isFinite(child)) {
+        total += child;
+        found = true;
+      } else if (child && typeof child === "object") {
+        stack.push(child);
+      }
+    }
+  }
+  return found ? total : undefined;
+}
+
+function renderRows(rows: string[]): string {
+  const omitted = Math.max(0, rows.length - MAX_MEANINGFUL_ROWS);
+  const visible = omitted > 0 ? rows.slice(-MAX_MEANINGFUL_ROWS) : rows;
+  return visible.length
+    ? `${omitted > 0 ? `<p>${omitted} earlier meaningful event row(s) omitted; showing latest ${MAX_MEANINGFUL_ROWS}.</p>` : ""}<ol class="events">${visible.join("")}</ol>`
+    : "<p>No meaningful events recorded.</p>";
+}
+
+function diagnosticRecords(records: SessionEventLogRecord[]): {
+  visible: SessionEventLogRecord[];
+  omitted: number;
+} {
+  const max = DIAGNOSTIC_EDGE_RECORDS * 2;
+  if (records.length <= max) return { visible: records, omitted: 0 };
+  return {
+    visible: [
+      ...records.slice(0, DIAGNOSTIC_EDGE_RECORDS),
+      ...records.slice(-DIAGNOSTIC_EDGE_RECORDS),
+    ],
+    omitted: records.length - max,
+  };
+}
+
 function renderPage(title: string, body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · Thor</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}details{margin:16px 0}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}<footer><p>Generated by Thor at <time datetime="${new Date().toISOString()}">${new Date().toUTCString()}</time></p></footer></main></body></html>`;
 }
@@ -1323,23 +1496,185 @@ function redactRecord(record: unknown): unknown {
   const value = record as Record<string, unknown>;
   if (value.type === "tool_call") return { ...value, payload: "[redacted: tool output]" };
   if (value.type === "opencode_event") return { ...value, event: "[redacted: opencode event]" };
-  return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      typeof entry === "string" ? safeSnippet(entry, key === "promptPreview" ? 800 : 500) : entry,
+    ]),
+  );
 }
 
 function renderSlicePage(
   anchorId: string,
   triggerId: string,
+  ownerSessionId: string,
+  anchor: ReverseAnchorEntry,
   slice: Exclude<ReturnType<typeof readTriggerSlice>, { notFound: true } | { oversized: true }>,
 ): string {
+  const start = slice.records.find(
+    (record) => record.type === "trigger_start" && record.triggerId === triggerId,
+  );
+  const end = slice.records.find(
+    (record) => record.type === "trigger_end" && record.triggerId === triggerId,
+  );
+  const correlationKey = start?.type === "trigger_start" ? start.correlationKey : undefined;
+  const promptPreview = start?.type === "trigger_start" ? start.promptPreview : undefined;
   const isStale =
     slice.status === "in_flight" &&
     slice.lastEventTs &&
     Date.now() - Date.parse(slice.lastEventTs) > SLICE_STALE_AFTER_MS;
   const refresh = slice.status === "in_flight" ? '<meta http-equiv="refresh" content="5">' : "";
-  const records = slice.records
+  const mismatched = slice.records.filter(
+    (record) =>
+      (record.type === "trigger_start" || record.type === "trigger_end") &&
+      record.triggerId !== triggerId,
+  );
+  const truncatedCount = slice.records.filter((record) => {
+    if (record.type === "opencode_event" && record.event && typeof record.event === "object") {
+      return (record.event as ViewerEvent)._truncated === true;
+    }
+    return false;
+  }).length;
+  const warnings = [
+    ...(isStale
+      ? [
+          "No new events in more than 5 minutes — the runner may have crashed without a close marker.",
+        ]
+      : []),
+    ...(slice.status === "crashed"
+      ? [`Superseded by newer trigger${slice.reason ? ` (${slice.reason})` : ""}.`]
+      : []),
+    ...(truncatedCount > 0
+      ? [`${truncatedCount} truncated payload(s); tool/text/status details may be incomplete.`]
+      : []),
+    ...(anchor.subsessionIds.length > 0
+      ? ["Subsessions exist; v1 lists child ids but does not merge child logs."]
+      : []),
+    ...(anchor.sessionIds.length > 1
+      ? [
+          "Multiple OpenCode sessions are bound to this anchor; duplicate-session or stale-session work may be hidden.",
+        ]
+      : []),
+    ...(mismatched.length > 0
+      ? [
+          "This slice contains records for another trigger; boundaries may be overlapping or late-written.",
+        ]
+      : []),
+    ...(slice.skippedMalformed > 0
+      ? [`${slice.skippedMalformed} malformed log record(s) were skipped.`]
+      : []),
+  ];
+
+  let toolParts = 0;
+  let textParts = 0;
+  let stepFinishes = 0;
+  let totalCost = 0;
+  let hasCost = false;
+  let totalTokens = 0;
+  let hasTokens = false;
+  let latestAssistantText: string | undefined;
+  const rows: string[] = [];
+  for (const record of slice.records) {
+    if (record.type === "trigger_start") {
+      rows.push(
+        `<li><b>trigger started</b>${record.correlationKey ? ` <span>${escapeHtml(safeSnippet(record.correlationKey))}</span>` : ""}</li>`,
+      );
+      continue;
+    }
+    if (record.type === "trigger_end") {
+      rows.push(
+        `<li><b>trigger ended</b> <span>${escapeHtml(record.status)}</span>${record.reason ? ` — ${escapeHtml(safeSnippet(record.reason))}` : record.error ? ` — ${escapeHtml(safeSnippet(record.error, 500))}` : ""}</li>`,
+      );
+      continue;
+    }
+    if (record.type === "tool_call") {
+      rows.push(
+        `<li class="warn"><b>tool call</b> <span>${escapeHtml(record.tool)}</span> <em>arguments hidden</em></li>`,
+      );
+      continue;
+    }
+    if (record.type !== "opencode_event") continue;
+    if (
+      record.event &&
+      typeof record.event === "object" &&
+      (record.event as ViewerEvent)._truncated === true
+    ) {
+      rows.push(`<li class="warn"><b>truncated payload</b> event details omitted by log cap</li>`);
+      continue;
+    }
+    const type = eventType(record);
+    const part = eventPart(record);
+    if (part?.type === "tool") {
+      toolParts++;
+      const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
+      const name = viewerToolDisplayName(part);
+      const args =
+        safeToolArgs(name, part.state?.input) ??
+        safeToolArgs(typeof part.tool === "string" ? part.tool : "", part.state?.input);
+      const hasHiddenArgs = !args && !!part.state?.input;
+      const duration =
+        typeof part.state?.time?.start === "number" && typeof part.state.time.end === "number"
+          ? formatDuration(part.state.time.end - part.state.time.start)
+          : undefined;
+      rows.push(
+        `<li><b>tool</b> <span>${escapeHtml(name)}</span> <span class="status">${escapeHtml(status)}</span>${duration ? ` <span>${duration}</span>` : ""}${args ? ` <code>${escapeHtml(args)}</code>` : ""}${hasHiddenArgs ? " <em>arguments hidden</em>" : ""}${status === "error" ? ` <span class="err">${escapeHtml(safeSnippet(part.state?.error, 300))}</span>` : ""}</li>`,
+      );
+      continue;
+    }
+    if (part?.type === "text") {
+      textParts++;
+      latestAssistantText = safeSnippet(part.text, 1000);
+      rows.push(`<li><b>assistant text</b> ${escapeHtml(safeSnippet(part.text, 300))}</li>`);
+      continue;
+    }
+    if (part?.type === "step-finish") {
+      stepFinishes++;
+      if (typeof part.cost === "number" && Number.isFinite(part.cost)) {
+        totalCost += part.cost;
+        hasCost = true;
+      }
+      const tokenTotal = numericTokenTotal(part.tokens);
+      if (tokenTotal !== undefined) {
+        totalTokens += tokenTotal;
+        hasTokens = true;
+      }
+      rows.push(
+        `<li><b>step finish</b>${typeof part.reason === "string" ? ` <span>${escapeHtml(safeSnippet(part.reason, 120))}</span>` : ""}${typeof part.cost === "number" && Number.isFinite(part.cost) ? ` <span>cost $${part.cost.toFixed(4)}</span>` : ""}${tokenTotal !== undefined ? ` <span>${tokenTotal} tokens</span>` : ""}</li>`,
+      );
+      continue;
+    }
+    if (type === "session.error") {
+      const event = record.event as ViewerEvent;
+      const error = event.properties?.error;
+      const msg =
+        error && typeof error === "object"
+          ? ((error as { data?: { message?: string }; message?: string; name?: string }).data
+              ?.message ??
+            (error as { message?: string; name?: string }).message ??
+            (error as { name?: string }).name)
+          : undefined;
+      rows.push(
+        `<li class="err"><b>session error</b> ${escapeHtml(safeSnippet(msg ?? "Unknown error", 500))}</li>`,
+      );
+      continue;
+    }
+    if (type === "session.status" || type === "session.idle") {
+      rows.push(`<li><b>${escapeHtml(type)}</b></li>`);
+    }
+  }
+
+  const diagnostics = diagnosticRecords(slice.records);
+  const records = diagnostics.visible
     .map((record) => JSON.stringify(redactRecord(record), null, 2))
     .join("\n");
-  const body = `${refresh}<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}</span><p>Anchor <code>${escapeHtml(anchorId)}</code>, trigger <code>${escapeHtml(triggerId)}</code></p>${slice.status === "crashed" ? "<p>This trigger was abandoned without a close marker. The runner started a new trigger later; whatever was in-flight here was lost.</p>" : ""}${isStale ? "<p>No new events in more than 5 minutes — the runner may have crashed without a close marker.</p>" : ""}${slice.records.length === 1 ? "<p>No recorded events.</p>" : ""}</section><details><summary>Timeline</summary><pre>${escapeHtml(records)}</pre></details>`;
+  const aliases = anchor.externalKeys
+    .map(
+      (key) =>
+        `${key.aliasType}: ${safeSnippet(decodeAliasValue(key.aliasType, key.aliasValue), 300)}`,
+    )
+    .join("; ");
+  const stepSummary = `${stepFinishes} step finish row(s)${hasCost ? `, $${totalCost.toFixed(4)} total cost` : ""}${hasTokens ? `, ${totalTokens} total tokens` : ""}`;
+  const body = `${refresh}<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}</span><h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2><p>Status <b>${escapeHtml(slice.status)}</b>${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined) ? ` · Duration ${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined)}` : ""}${formatAge(slice.lastEventTs) ? ` · Last event ${formatAge(slice.lastEventTs)} ago` : ""}</p><p>Anchor <code>${escapeHtml(anchorId)}</code><br>Trigger <code>${escapeHtml(triggerId)}</code><br>Owner session <code>${escapeHtml(safeSnippet(ownerSessionId, 120))}</code>${anchor.currentSessionId ? `<br>Current session <code>${escapeHtml(safeSnippet(anchor.currentSessionId, 120))}</code>` : ""}</p>${warnings.length ? `<div class="warnings"><h3>Warnings</h3><ul>${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul></div>` : ""}</section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreview ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>` : ""}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section><h3>Meaningful events</h3><p>${toolParts} tool row(s), ${textParts} assistant text row(s), ${stepSummary}, ${truncatedCount} truncated payload(s).</p>${latestAssistantText ? `<blockquote>${escapeHtml(latestAssistantText)}</blockquote>` : ""}${renderRows(rows)}</section><details><summary>Sanitized diagnostics</summary><p>Raw opencode payloads, tool outputs, bash commands, and unsafe tool arguments are hidden.${diagnostics.omitted > 0 ? ` ${diagnostics.omitted} middle record(s) omitted from diagnostics.` : ""}</p><pre>${escapeHtml(records)}</pre></details>`;
   return renderPage("Thor trigger", body);
 }
 
