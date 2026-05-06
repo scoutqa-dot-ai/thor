@@ -39,8 +39,13 @@ function result(stderr: string, exitCode = 1): ExecResult {
 
 function hasUsableThorSession(sessionId: string): boolean {
   const sessionAnchor = resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId });
-  if (!sessionAnchor) return false;
-  return currentSessionForAnchor(sessionAnchor) === sessionId;
+  if (sessionAnchor) return currentSessionForAnchor(sessionAnchor) === sessionId;
+
+  const subsessionAnchor = resolveAlias({
+    aliasType: "opencode.subsession",
+    aliasValue: sessionId,
+  });
+  return subsessionAnchor ? currentSessionForAnchor(subsessionAnchor) !== undefined : false;
 }
 
 export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: string } {
