@@ -299,12 +299,12 @@ function renderValue(value: unknown): string | undefined {
 
 function bullet(label: string, value: unknown): string | undefined {
   const rendered = renderValue(value);
-  return rendered ? `*${label}:* ${rendered}` : undefined;
+  return rendered ? `*${escapeMrkdwnText(label)}:* ${rendered}` : undefined;
 }
 
 function section(label: string, value: unknown): string | undefined {
   const rendered = renderValue(value);
-  return rendered ? `*${label}:*\n${rendered}` : undefined;
+  return rendered ? `*${escapeMrkdwnText(label)}:*\n${rendered}` : undefined;
 }
 
 function joinMarkdown(lines: Array<string | undefined>): string {

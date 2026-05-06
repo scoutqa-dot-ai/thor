@@ -126,6 +126,15 @@ describe("approval presentation", () => {
         title: "Update feature flag: beta",
         markdown: '*Flag:* beta\n\n*filters:* {"groups":[]}',
       });
+    expect(
+      buildApprovalPresentation("update-feature-flag", {
+        key: "beta",
+        "<!here>": true,
+      }),
+    ).toEqual({
+      title: "Update feature flag: beta",
+      markdown: "*Flag:* beta\n\n*&lt;!here&gt;:* true",
+    });
   });
 
   it("returns undefined for unconfigured tools", () => {
