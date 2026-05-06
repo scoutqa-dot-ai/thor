@@ -6,6 +6,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendAlias, resolveSessionForCorrelationKey } from "@thor/common";
+import type { ConfigLoader, WorkspaceConfig } from "@thor/common";
 
 vi.mock("@thor/common", async () => {
   const actual = await vi.importActual<typeof import("@thor/common")>("@thor/common");
@@ -26,6 +27,13 @@ vi.mock("./policy.js", async () => {
 
 import { createRemoteCliApp } from "./index.js";
 import type { SlackPostMessageDeps } from "./slack-post-message.js";
+
+const TEST_CONFIG = {
+  repos: {
+    thor: { channels: ["C123", "C404"] },
+    other: { channels: ["C999"] },
+  },
+} satisfies WorkspaceConfig;
 
 describe("remote-cli slack-post-message endpoint", () => {
   let server: Server;
@@ -53,7 +61,7 @@ describe("remote-cli slack-post-message endpoint", () => {
 
     const remoteCli = createRemoteCliApp({
       env: { slackBotToken: "xoxb-test" } as any,
-      getConfig: () => ({ repos: { thor: { channels: ["C123", "C404"] } } }),
+      getConfig: testConfigLoader(),
       slackPostMessage: {
         env: { SLACK_BOT_TOKEN: "xoxb-test" } as NodeJS.ProcessEnv,
         fetch: fetchMock as unknown as typeof fetch,
@@ -283,7 +291,7 @@ describe("remote-cli slack-post-message endpoint", () => {
 
     const remoteCli = createRemoteCliApp({
       env: { slackBotToken: "" } as any,
-      getConfig: () => ({ repos: { thor: { channels: ["C123", "C404"] } } }),
+      getConfig: testConfigLoader(),
       slackPostMessage: { env: {} as NodeJS.ProcessEnv, fetch: fetchMock as unknown as typeof fetch },
     });
     const noTokenServer = createServer(remoteCli.app);
@@ -350,7 +358,7 @@ describe("remote-cli slack-post-message endpoint", () => {
       .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940310.111111" }));
     const remoteCli = createRemoteCliApp({
       env: { slackBotToken: "xoxb-test" } as any,
-      getConfig: () => ({ repos: { thor: { channels: ["C123", "C404"] } } }),
+      getConfig: testConfigLoader(),
       slackPostMessage: {
         env: { SLACK_BOT_TOKEN: "xoxb-test" } as NodeJS.ProcessEnv,
         fetch: integrationFetch,
@@ -437,6 +445,12 @@ describe("remote-cli slack-post-message endpoint", () => {
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify({ cwd: testCwd, ...body }),
     });
+  }
+
+  function testConfigLoader(config: WorkspaceConfig = TEST_CONFIG): ConfigLoader {
+    const loader = (() => config) as ConfigLoader;
+    loader.invalidate = () => {};
+    return loader;
   }
 
   function jsonResponse(body: unknown): Response {
