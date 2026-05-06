@@ -585,12 +585,6 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     const parsedArgs = parseSlackPostMessageArgs(req.body?.args);
     try {
       const { cwd } = req.body ?? {};
-      const cwdError = validateCwd(cwd);
-      if (cwdError) {
-        res.status(400).json({ stdout: "", stderr: cwdError, exitCode: 1 });
-        return;
-      }
-
       const execResult = await handleSlackPostMessage(
         { args: req.body?.args, stdin: req.body?.stdin, sessionId: ids.sessionId, cwd },
         {

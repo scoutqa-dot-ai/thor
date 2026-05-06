@@ -7,14 +7,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendAlias, resolveSessionForCorrelationKey } from "@thor/common";
 
-vi.mock("./policy.js", async () => {
-  const actual = await vi.importActual<typeof import("./policy.js")>("./policy.js");
-  return {
-    ...actual,
-    validateCwd: vi.fn(() => null),
-  };
-});
-
 import { createRemoteCliApp } from "./index.js";
 import type { SlackPostMessageDeps } from "./slack-post-message.js";
 
@@ -74,7 +66,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
 
     const response = await postSlack(
-      { args: ["--channel", "C999"], stdin: "hello *world*\n" },
+      { cwd: undefined, args: ["--channel", "C999"], stdin: "hello *world*\n" },
       { "x-thor-session-id": "session-1" },
     );
     const body = (await response.json()) as { stdout: string; stderr: string; exitCode: number };
@@ -184,7 +176,7 @@ describe("remote-cli slack-post-message endpoint", () => {
 
     const response = await postSlack(
       {
-        args: ["--channel", "C123", "--blocks-file", blocksFile],
+        args: ["--channel", "C123", "--blocks-file", "blocks.json"],
         stdin: "fallback text",
       },
       { "x-thor-session-id": "session-1" },
