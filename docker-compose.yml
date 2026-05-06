@@ -45,6 +45,7 @@ services:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
+      - shared-tmp:/tmp
     depends_on:
       grafana-mcp:
         condition: service_healthy
@@ -137,6 +138,7 @@ services:
       - ./docker-volumes/workspace/runs:/workspace/runs
       - ./docker-volumes/workspace/worktrees:/workspace/worktrees
       - ./docker-volumes/mitmproxy/public:/etc/thor/mitmproxy-public:ro
+      - shared-tmp:/tmp
     depends_on:
       remote-cli:
         condition: service_healthy
@@ -281,3 +283,6 @@ services:
         condition: service_healthy
       vouch:
         condition: service_healthy
+
+volumes:
+  shared-tmp:
