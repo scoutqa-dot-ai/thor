@@ -12,8 +12,12 @@ vi.mock("@thor/common", async () => {
   const actual = await vi.importActual<typeof import("@thor/common")>("@thor/common");
   return {
     ...actual,
-    extractRepoFromCwd: (cwd: string) =>
-      cwd.includes("remote-cli-slack-cwd-") ? "thor" : actual.extractRepoFromCwd(cwd),
+    extractRepoFromCwd: (cwd: string) => {
+      if (cwd.includes("remote-cli-slack-dir-")) return "thor";
+      if (cwd.includes("remote-cli-other-cwd-")) return "other";
+      if (cwd.includes("remote-cli-slack-cwd-")) return "cwd-repo";
+      return actual.extractRepoFromCwd(cwd);
+    },
   };
 });
 
@@ -44,12 +48,14 @@ describe("remote-cli slack-post-message endpoint", () => {
   let aliasErrorMock: ReturnType<typeof vi.fn>;
   let worklogRoot: string;
   let testCwd: string;
+  let testDirectory: string;
 
   beforeEach(async () => {
     fetchMock = vi.fn();
     appendAliasMock = vi.fn(() => ({ ok: true }));
     aliasErrorMock = vi.fn();
     testCwd = mkdtempSync(join(tmpdir(), "remote-cli-slack-cwd-"));
+    testDirectory = mkdtempSync(join(tmpdir(), "remote-cli-slack-dir-"));
     worklogRoot = mkdtempSync(join(tmpdir(), "remote-cli-slack-post-"));
     process.env.WORKLOG_DIR = worklogRoot;
     bindSession("session-1", "00000000-0000-7000-8000-000000000101");
@@ -83,6 +89,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     await closeRemoteCli();
     rmSync(worklogRoot, { recursive: true, force: true });
     rmSync(testCwd, { recursive: true, force: true });
+    rmSync(testDirectory, { recursive: true, force: true });
     delete process.env.WORKLOG_DIR;
   });
 
@@ -217,6 +224,23 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("authorizes channels from the session directory rather than mutable cwd", async () => {
+    const otherCwd = mkdtempSync(join(tmpdir(), "remote-cli-other-cwd-"));
+    try {
+      const response = await postSlack(
+        { cwd: otherCwd, args: ["--channel", "C999"], stdin: "hello" },
+        { "x-thor-session-id": "session-1" },
+      );
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { stderr: string }).stderr).toContain(
+        "channel C999 is not allowed for repo thor",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      rmSync(otherCwd, { recursive: true, force: true });
+    }
+  });
+
   it("accepts an optional --blocks-file alongside stdin text", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }));
     const blocksFile = join(testCwd, "blocks.json");
@@ -301,7 +325,12 @@ describe("remote-cli slack-post-message endpoint", () => {
     const noTokenResponse = await fetch(`${noTokenUrl}/exec/slack-post-message`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-thor-session-id": "session-3" },
-      body: JSON.stringify({ cwd: testCwd, args: ["--channel", "C123"], stdin: "hi" }),
+      body: JSON.stringify({
+        cwd: testCwd,
+        directory: testDirectory,
+        args: ["--channel", "C123"],
+        stdin: "hi",
+      }),
     });
     expect(((await noTokenResponse.json()) as { stderr: string }).stderr).toContain(
       "SLACK_BOT_TOKEN is not set",
@@ -384,6 +413,7 @@ describe("remote-cli slack-post-message endpoint", () => {
         headers: { "Content-Type": "application/json", "x-thor-session-id": "non-slack-session" },
         body: JSON.stringify({
           cwd: testCwd,
+          directory: testDirectory,
           args: ["--channel", "C123"],
           stdin: "new controlled thread",
         }),
@@ -398,6 +428,7 @@ describe("remote-cli slack-post-message endpoint", () => {
         headers: { "Content-Type": "application/json", "x-thor-session-id": "non-slack-session" },
         body: JSON.stringify({
           cwd: testCwd,
+          directory: testDirectory,
           args: ["--channel", "C123", "--thread-ts", "1777940309.867569"],
           stdin: "controlled reply",
         }),
@@ -443,7 +474,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     return fetch(`${baseUrl}/exec/slack-post-message`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
-      body: JSON.stringify({ cwd: testCwd, ...body }),
+      body: JSON.stringify({ cwd: testCwd, directory: testDirectory, ...body }),
     });
   }
 

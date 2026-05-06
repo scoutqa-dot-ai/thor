@@ -121,6 +121,18 @@ function registerGitCorrelationAlias(
   logInfo(log, "alias_registered", { sessionId, correlationKey, source: cmd });
 }
 
+function extractRepoFromWorkspacePath(path: unknown): string | undefined {
+  if (typeof path !== "string" || !path.startsWith("/") || path.includes("\0")) return undefined;
+
+  const normalized = normalizePosix(path);
+  const repo = extractRepoFromCwd(normalized);
+  if (repo) return repo;
+
+  if (!normalized.startsWith(WORKTREE_PREFIX)) return undefined;
+  const worktreeRepo = normalized.slice(WORKTREE_PREFIX.length).split("/")[0];
+  return worktreeRepo || undefined;
+}
+
 function rewriteSingleValueFlag(
   args: string[],
   names: string[],
@@ -585,15 +597,19 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     const ids = thorIds(req);
     const parsedArgs = parseSlackPostMessageArgs(req.body?.args);
     try {
-      const { cwd } = req.body ?? {};
+      const { cwd, directory } = req.body ?? {};
       const cwdError = validateCwd(cwd);
       if (cwdError) {
         res.status(400).json({ stdout: "", stderr: cwdError, exitCode: 1 });
         return;
       }
-      const repo = extractRepoFromCwd(cwd) ?? cwd.match(/^\/workspace\/worktrees\/([^/]+)\//)?.[1];
+      const repo = extractRepoFromWorkspacePath(directory);
       if (!repo) {
-        res.status(400).json({ stdout: "", stderr: "unable to determine repo from cwd\n", exitCode: 1 });
+        res.status(400).json({
+          stdout: "",
+          stderr: "unable to determine repo from session directory\n",
+          exitCode: 1,
+        });
         return;
       }
       if (!("error" in parsedArgs)) {
@@ -612,7 +628,8 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       const execResult = await handleSlackPostMessage(
         { args: req.body?.args, stdin: req.body?.stdin, sessionId: ids.sessionId, cwd },
         {
-          env: config.slackPostMessage?.env ??
+          env:
+            config.slackPostMessage?.env ??
             (config.env ? { SLACK_BOT_TOKEN: config.env.slackBotToken } : undefined),
           ...config.slackPostMessage,
           logAliasError: (error, meta) => {
