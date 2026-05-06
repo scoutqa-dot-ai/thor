@@ -444,7 +444,6 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const getConfig = config.getConfig ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
-  const envConfig = config.env ?? loadRemoteCliEnv();
   const internalSecret = appEnv.thorInternalSecret;
   const mcpService = createMcpService({
     getConfig,
@@ -613,7 +612,8 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       const execResult = await handleSlackPostMessage(
         { args: req.body?.args, stdin: req.body?.stdin, sessionId: ids.sessionId, cwd },
         {
-          env: config.slackPostMessage?.env ?? { SLACK_BOT_TOKEN: envConfig.slackBotToken },
+          env: config.slackPostMessage?.env ??
+            (config.env ? { SLACK_BOT_TOKEN: config.env.slackBotToken } : undefined),
           ...config.slackPostMessage,
           logAliasError: (error, meta) => {
             logError(log, "slack_post_message_alias_error", error.message, meta);
@@ -1036,7 +1036,7 @@ function hasLdcliOutputOverride(args: string[]): boolean {
 export async function startRemoteCliServer(): Promise<void> {
   const envConfig = loadRemoteCliEnv();
   const gitIdentity = deriveBotGitIdentity();
-  const remoteCli = createRemoteCliApp();
+  const remoteCli = createRemoteCliApp({ env: envConfig });
   logInfo(log, "remote_cli_starting", {
     port: envConfig.port,
     gitIdentityName: gitIdentity.name,
