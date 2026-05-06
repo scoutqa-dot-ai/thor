@@ -4,7 +4,7 @@ export function formatThorDisclaimerFooter(triggerUrl: string): string {
   return [
     "",
     "---",
-    `Created by Thor, an AI assistant. This content may be wrong; review carefully and do not trust it blindly. [View Thor trigger](${triggerUrl})`,
+    `AI-generated — verify before acting. [View trigger](${triggerUrl})`,
   ].join("\n");
 }
 
