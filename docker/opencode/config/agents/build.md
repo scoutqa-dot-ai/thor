@@ -190,7 +190,16 @@ Events on the same correlation key are debounced over 3s and arrive as a JSON ar
 
 **`push`** — branch was pushed. Before waking you, the gateway short-circuits if local `HEAD` already equals `event.after` (your own push you just made, or a webhook redelivery — no wake at all). Otherwise it runs `git fetch origin refs/heads/<branch>`, classifies the update via `git merge-base --is-ancestor HEAD FETCH_HEAD`, then `git reset --hard FETCH_HEAD` on `/workspace/worktrees/<repo>/<branch>`, so the worktree is unconditionally aligned with the pushed tip — force-pushes included, uncommitted worktree edits discarded. The wake's interrupt flag depends on the classification: fast-forwards (someone else pushed new commits on top of your tip) are not interrupts and arrive alongside whatever else is queued; divergent resets (force-push, rebase, branch rewrite) are interrupts because the sha you were operating on no longer exists — re-read HEAD before continuing. `sender.login` distinguishes your own pushes from someone else's; `git log <before>..<after>` shows what landed on a fast-forward, but on a divergent reset `<before>` may not be reachable, so use `git log -10` against the new HEAD instead.
 
-**`check_suite.completed`** — CI finished on a commit you authored on this branch. `conclusion` is the key field (`success`, `failure`, `timed_out`, `action_required`, `cancelled`, `neutral`, `skipped`, `stale`); `gh run list --branch <branch> --limit 5` and `gh run view <id> --log-failed` surface the details. Wake-on-CI is silent — no human is waiting in chat at the moment CI finishes.
+**`check_suite.completed`** — CI finished on a commit you authored on this branch. `conclusion` is the key field (`success`, `failure`, `timed_out`, `action_required`, `cancelled`, `neutral`, `skipped`, `stale`); `gh run list --branch <branch> --limit 5` and `gh run view <id> --log-failed` surface the details. The wake is silent by default — no human is waiting at the moment CI finishes, so respond with action, not chatter. What you do depends on `conclusion`:
+
+- **`success`** — append a Log line in the run README and stop. Do not post to Slack.
+- **`failure` / `timed_out` / `action_required`** — pull the failed jobs with `gh run view <id> --log-failed`, classify the cause, then act:
+  - **Defect introduced by this branch** (test failure, type error, lint, build break) — dispatch the implement → review loop on the existing worktree, commit the fix, push, and let the next CI run verify. Append a Log line with cause and fix sha.
+  - **Clear flake or transient infra** (runner OOM, registry timeout, network) — `gh run rerun <id> --failed` once and record the rerun. Do not push a no-op commit to retrigger CI.
+  - **Cause not localized after one investigation hop** — stop and post a short status to the run's Slack thread: failed jobs, suspected cause (or "unknown"), last commit sha, and a link to the run. Silence flips off when a fix is out of reach.
+  - **Hard cap: 3 autonomous fix-and-push attempts per branch.** After that, escalate to the thread regardless of cause — further pushes risk a CI loop.
+- **`cancelled`** — usually superseded by a new push or a manual cancel. Record it and wait for the next event before acting.
+- **`stale` / `skipped` / `neutral`** — informational; Log line only.
 
 **`pull_request.closed`** — the PR for this branch closed. Check `pull_request.merged` to tell merged vs abandoned, record the outcome, and do not keep pushing to a merged branch unless explicitly asked.
 
