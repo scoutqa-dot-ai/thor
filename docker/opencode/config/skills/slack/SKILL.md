@@ -13,8 +13,8 @@ Use this skill when:
 - you need recent channel context to understand a Slack discussion
 - you need to fetch a Slack file mentioned in a thread
 
-General reply policy lives in `build.md`. This skill covers how to read Slack
-through the proxy and how to post messages through Thor's controlled helper.
+General reply policy lives in `build.md`. This skill only covers how to read
+and write Slack through the proxy.
 
 ## Transport
 
@@ -25,11 +25,8 @@ Talk to Slack through real upstream URLs:
 
 Authentication is injected automatically, do not pass `Authorization` header.
 
-The default tool for Slack reads is `curl`. For message writes, use
-`slack-post-message`; it posts through Thor's remote-cli path so Slack thread
-aliases are registered. Message input is stdin-only. Do not use raw `curl` or
-`fetch` for `chat.postMessage`, and do not pass Slack tokens manually.
-For file uploads, keep using `slack-upload` over manually calling Slack's
+The default tool for Slack reads is `curl`. For message writes, use `slack-post-message`.
+For file uploads, prefer `slack-upload` over manually calling Slack's
 multi-step upload endpoints.
 
 ## Temporary files
@@ -56,11 +53,11 @@ Do not use fixed paths like `/tmp/report.txt` or relative paths like
 
 ## Allowed Slack endpoints
 
-Thor supports a narrow Slack surface for this skill: message posts through
-`slack-post-message`; `reactions.add`, `conversations.replies`,
+The proxy injects Slack auth only for the narrow endpoint set used by this
+skill: `reactions.add`, `conversations.replies`,
 `conversations.history`, `files.info`, Slack's external upload endpoints, and
-supported `files.slack.com` file URLs through the proxy. Do not call Slack
-update/delete methods or reaction update/remove methods through this path.
+supported `files.slack.com` file URLs. Do not call Slack update/delete methods
+or reaction update/remove methods through this path.
 
 ## Core workflow
 
@@ -126,9 +123,7 @@ echo 'Root cause looks like a missing env var in the worker deploy. I confirmed 
   slack-post-message --channel C123 --thread-ts 1710000000.001
 ```
 
-Always pass `--channel <id>` because Thor aliases store Slack thread timestamps,
-not channel IDs. Message text must come from stdin; positional message text,
-`--text`, temp-file expansion flags, and raw JSON passthrough are not supported.
+Always pass `--channel <id>`. Message text must come from stdin.
 If you need blocks, pass `--blocks-file <path>` to a JSON file that contains a
 top-level blocks array while still supplying stdin text as the fallback body.
 
@@ -197,8 +192,6 @@ Common failures to report as-is:
 
 - Tool inputs use Slack IDs such as `C...` and `F...`, not channel names.
 - `thread_ts` should be the parent message timestamp for the thread.
-- Use real Slack URLs for reads, reactions, and uploads. Use
-  `slack-post-message` for message posts.
 - `reactions.add` is the only reaction mutation supported through the proxy; do
   not call reaction update/remove methods.
 - Do not send multiline Slack text as an inline shell string. Default to a
