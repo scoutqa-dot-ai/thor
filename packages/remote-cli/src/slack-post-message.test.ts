@@ -274,6 +274,43 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
   });
 
+  it("accepts --blocks-file from an absolute temp path", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, channel: "C123", ts: "1777940312.333333" }),
+    );
+    const blocksDir = mkdtempSync(join(tmpdir(), "remote-cli-slack-blocks-"));
+    const blocksFile = join(blocksDir, "blocks.json");
+    try {
+      writeFileSync(
+        blocksFile,
+        JSON.stringify([{ type: "section", text: { type: "mrkdwn", text: "from tmp" } }]),
+        "utf8",
+      );
+
+      const response = await postSlack(
+        {
+          args: ["--channel", "C123", "--blocks-file", blocksFile],
+          stdin: "fallback text",
+        },
+        { "x-thor-session-id": "session-1" },
+      );
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://slack.com/api/chat.postMessage",
+        expect.objectContaining({
+          body: JSON.stringify({
+            channel: "C123",
+            text: "fallback text",
+            mrkdwn: true,
+            blocks: [{ type: "section", text: { type: "mrkdwn", text: "from tmp" } }],
+          }),
+        }),
+      );
+    } finally {
+      rmSync(blocksDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects invalid args, empty stdin, missing token, and blocks before Slack", async () => {
     await expectFailure({ args: [], stdin: "hi" }, "--channel is required");
     await expectFailure({ args: ["--channel"], stdin: "hi" }, "--channel requires a value");
@@ -311,11 +348,6 @@ describe("remote-cli slack-post-message endpoint", () => {
       { args: ["--channel", "C123", "--blocks-file", "object.json"], stdin: "hi" },
       "top-level JSON array",
     );
-    await expectFailure(
-      { args: ["--channel", "C123", "--blocks-file", "../escape.json"], stdin: "hi" },
-      "must stay within the current working directory",
-    );
-
     const remoteCli = createRemoteCliApp({
       env: { slackBotToken: "" } as any,
       getConfig: testConfigLoader(),
