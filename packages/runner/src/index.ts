@@ -1316,6 +1316,9 @@ type ViewerToolPart = {
   type?: unknown;
   tool?: unknown;
   callID?: unknown;
+  cost?: unknown;
+  tokens?: unknown;
+  reason?: unknown;
   state?: {
     status?: unknown;
     input?: unknown;
@@ -1338,7 +1341,7 @@ function safeSnippet(value: unknown, max = 300): string {
         /-----BEGIN [^-]+PRIVATE KEY-----[\s\S]*?-----END [^-]+PRIVATE KEY-----/gi,
         "[redacted]",
       )
-      .replace(/\b(?:xox[baprs]-|ghp_|github_pat_)[A-Za-z0-9_\-]+/g, "[redacted]")
+      .replace(/\b(?:xox[baprs]-|gh[pousr]_|github_pat_)[A-Za-z0-9_\-]+/g, "[redacted]")
       .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
       .replace(
         /(["'])(token|access_token|api_key|password|secret)\1\s*:\s*(["'])(?:(?!\3).)*\3/gi,
@@ -1432,13 +1435,33 @@ function eventType(record: SessionEventLogRecord): string | undefined {
 }
 
 function sourceFrom(correlationKey: string | undefined): string {
-  if (!correlationKey) return "unknown";
+  if (!correlationKey) return "direct";
   if (correlationKey.startsWith("slack:thread:")) return "slack";
   if (correlationKey.startsWith("git:branch:")) return "git";
   if (correlationKey.startsWith("github:")) return "github";
   if (correlationKey.startsWith("approval:")) return "approval";
   if (correlationKey.startsWith("cron:")) return "cron";
   return "direct";
+}
+
+function numericTokenTotal(tokens: unknown): number | undefined {
+  if (!tokens || typeof tokens !== "object") return undefined;
+  let total = 0;
+  let found = false;
+  const stack: unknown[] = [tokens];
+  while (stack.length > 0) {
+    const value = stack.pop();
+    if (!value || typeof value !== "object") continue;
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      if (typeof child === "number" && Number.isFinite(child)) {
+        total += child;
+        found = true;
+      } else if (child && typeof child === "object") {
+        stack.push(child);
+      }
+    }
+  }
+  return found ? total : undefined;
 }
 
 function renderRows(rows: string[]): string {
@@ -1544,6 +1567,11 @@ function renderSlicePage(
 
   let toolParts = 0;
   let textParts = 0;
+  let stepFinishes = 0;
+  let totalCost = 0;
+  let hasCost = false;
+  let totalTokens = 0;
+  let hasTokens = false;
   let latestAssistantText: string | undefined;
   const rows: string[] = [];
   for (const record of slice.records) {
@@ -1599,6 +1627,22 @@ function renderSlicePage(
       rows.push(`<li><b>assistant text</b> ${escapeHtml(safeSnippet(part.text, 300))}</li>`);
       continue;
     }
+    if (part?.type === "step-finish") {
+      stepFinishes++;
+      if (typeof part.cost === "number" && Number.isFinite(part.cost)) {
+        totalCost += part.cost;
+        hasCost = true;
+      }
+      const tokenTotal = numericTokenTotal(part.tokens);
+      if (tokenTotal !== undefined) {
+        totalTokens += tokenTotal;
+        hasTokens = true;
+      }
+      rows.push(
+        `<li><b>step finish</b>${typeof part.reason === "string" ? ` <span>${escapeHtml(safeSnippet(part.reason, 120))}</span>` : ""}${typeof part.cost === "number" && Number.isFinite(part.cost) ? ` <span>cost $${part.cost.toFixed(4)}</span>` : ""}${tokenTotal !== undefined ? ` <span>${tokenTotal} tokens</span>` : ""}</li>`,
+      );
+      continue;
+    }
     if (type === "session.error") {
       const event = record.event as ViewerEvent;
       const error = event.properties?.error;
@@ -1624,9 +1668,13 @@ function renderSlicePage(
     .map((record) => JSON.stringify(redactRecord(record), null, 2))
     .join("\n");
   const aliases = anchor.externalKeys
-    .map((key) => `${key.aliasType}: ${safeSnippet(decodeAliasValue(key.aliasType, key.aliasValue), 300)}`)
+    .map(
+      (key) =>
+        `${key.aliasType}: ${safeSnippet(decodeAliasValue(key.aliasType, key.aliasValue), 300)}`,
+    )
     .join("; ");
-  const body = `${refresh}<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}</span><h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2><p>Status <b>${escapeHtml(slice.status)}</b>${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined) ? ` · Duration ${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined)}` : ""}${formatAge(slice.lastEventTs) ? ` · Last event ${formatAge(slice.lastEventTs)} ago` : ""}</p><p>Anchor <code>${escapeHtml(anchorId)}</code><br>Trigger <code>${escapeHtml(triggerId)}</code><br>Owner session <code>${escapeHtml(safeSnippet(ownerSessionId, 120))}</code>${anchor.currentSessionId ? `<br>Current session <code>${escapeHtml(safeSnippet(anchor.currentSessionId, 120))}</code>` : ""}</p>${warnings.length ? `<div class="warnings"><h3>Warnings</h3><ul>${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul></div>` : ""}</section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreview ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>` : ""}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section><h3>Meaningful events</h3><p>${toolParts} tool row(s), ${textParts} assistant text row(s), ${truncatedCount} truncated payload(s).</p>${latestAssistantText ? `<blockquote>${escapeHtml(latestAssistantText)}</blockquote>` : ""}${renderRows(rows)}</section><details><summary>Sanitized diagnostics</summary><p>Raw opencode payloads, tool outputs, bash commands, and unsafe tool arguments are hidden.${diagnostics.omitted > 0 ? ` ${diagnostics.omitted} middle record(s) omitted from diagnostics.` : ""}</p><pre>${escapeHtml(records)}</pre></details>`;
+  const stepSummary = `${stepFinishes} step finish row(s)${hasCost ? `, $${totalCost.toFixed(4)} total cost` : ""}${hasTokens ? `, ${totalTokens} total tokens` : ""}`;
+  const body = `${refresh}<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}</span><h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2><p>Status <b>${escapeHtml(slice.status)}</b>${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined) ? ` · Duration ${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined)}` : ""}${formatAge(slice.lastEventTs) ? ` · Last event ${formatAge(slice.lastEventTs)} ago` : ""}</p><p>Anchor <code>${escapeHtml(anchorId)}</code><br>Trigger <code>${escapeHtml(triggerId)}</code><br>Owner session <code>${escapeHtml(safeSnippet(ownerSessionId, 120))}</code>${anchor.currentSessionId ? `<br>Current session <code>${escapeHtml(safeSnippet(anchor.currentSessionId, 120))}</code>` : ""}</p>${warnings.length ? `<div class="warnings"><h3>Warnings</h3><ul>${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul></div>` : ""}</section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreview ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>` : ""}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section><h3>Meaningful events</h3><p>${toolParts} tool row(s), ${textParts} assistant text row(s), ${stepSummary}, ${truncatedCount} truncated payload(s).</p>${latestAssistantText ? `<blockquote>${escapeHtml(latestAssistantText)}</blockquote>` : ""}${renderRows(rows)}</section><details><summary>Sanitized diagnostics</summary><p>Raw opencode payloads, tool outputs, bash commands, and unsafe tool arguments are hidden.${diagnostics.omitted > 0 ? ` ${diagnostics.omitted} middle record(s) omitted from diagnostics.` : ""}</p><pre>${escapeHtml(records)}</pre></details>`;
   return renderPage("Thor trigger", body);
 }
 

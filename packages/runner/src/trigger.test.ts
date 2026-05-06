@@ -125,6 +125,22 @@ function toolEvent(
   } as unknown as Event;
 }
 
+function stepFinishEvent(sessionId: string): Event {
+  return {
+    type: "message.part.updated",
+    properties: {
+      part: {
+        type: "step-finish",
+        sessionID: sessionId,
+        messageID: `m-${sessionId}`,
+        reason: "stop",
+        cost: 0.0123,
+        tokens: { input: 10, output: 20, reasoning: 3, cache: { read: 4, write: 5 } },
+      },
+    },
+  } as unknown as Event;
+}
+
 function statusEvent(sessionId: string): Event {
   return { type: "session.status", properties: { sessionID: sessionId, status: "busy" } } as Event;
 }
@@ -337,6 +353,7 @@ describe("runner /trigger orchestration", () => {
       const html = await ok.text();
       expect(ok.status).toBe(200);
       expect(html).toContain("completed");
+      expect(html).toContain("direct trigger");
       // No /raw escape hatch — the single-endpoint contract.
       expect(html).not.toContain("/raw");
     });
@@ -383,6 +400,10 @@ describe("runner /trigger orchestration", () => {
       type: "opencode_event",
       event: textEvent("viewer-session", "Done with token=abc123"),
     });
+    appendSessionEvent("viewer-session", {
+      type: "opencode_event",
+      event: stepFinishEvent("viewer-session"),
+    });
     appendSessionEvent("viewer-session", { type: "opencode_event", event: { _truncated: true } });
     appendSessionEvent("viewer-session", {
       type: "trigger_end",
@@ -414,6 +435,10 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("Multiple OpenCode sessions");
       expect(html).toContain("records for another trigger");
       expect(html).toContain("Done with token=[redacted]");
+      expect(html).toContain("step finish");
+      expect(html).toContain("cost $0.0123");
+      expect(html).toContain("42 tokens");
+      expect(html).toContain("1 step finish row(s), $0.0123 total cost, 42 total tokens");
       expect(html).not.toContain("supersecret");
       expect(html).not.toContain("should-not-render");
       expect(html).not.toContain("mutation { writeThing }");
@@ -438,19 +463,16 @@ describe("runner /trigger orchestration", () => {
       triggerId,
       correlationKey: "slack:thread:1710000000.321",
       promptPreview:
-        '{"token":"json-token-321","access_token":"json-access-321","api_key":"json-api-321","password":"json-pass-321","secret":"json-secret-321"}',
+        '{"token":"json-token-321","access_token":"json-access-321","api_key":"json-api-321","password":"json-pass-321","secret":"json-secret-321","github":"ghs_json321"}',
     });
     expect(
-      appendCorrelationAliasForAnchor(
-        anchorId,
-        "git:branch:repo:feature/secret=branch-secret-321",
-      ),
+      appendCorrelationAliasForAnchor(anchorId, "git:branch:repo:feature/secret=branch-secret-321"),
     ).toEqual({ ok: true });
     appendSessionEvent("secret-viewer-session", {
       type: "opencode_event",
       event: textEvent(
         "secret-viewer-session",
-        'assistant saw {"token":"assistant-token-321", api_key: "assistant-api-321"} and Bearer bearer-token-321',
+        'assistant saw {"token":"assistant-token-321", api_key: "assistant-api-321"} and Bearer bearer-token-321 plus ghu_assistant321 gho_assistant321 ghr_assistant321',
       ),
     });
     for (let i = 0; i < 105; i++) {
@@ -494,9 +516,13 @@ describe("runner /trigger orchestration", () => {
         "json-api-321",
         "json-pass-321",
         "json-secret-321",
+        "ghs_json321",
         "assistant-token-321",
         "assistant-api-321",
         "bearer-token-321",
+        "ghu_assistant321",
+        "gho_assistant321",
+        "ghr_assistant321",
         "branch-secret-321",
         Buffer.from("git:branch:repo:feature/secret=branch-secret-321").toString("base64url"),
       ]) {
