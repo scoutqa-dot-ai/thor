@@ -189,7 +189,7 @@ After this change, `config.json` for a workspace shrinks to:
 
 - `pnpm -r build` is clean.
 - `pnpm -r test` is green. Existing mcp-handler tests pass after the dep-injection tweak.
-- Agent can still list upstreams (`mcp`), list tools (`mcp <upstream>`), and call a tool end-to-end through remote-cli in `docker compose up`.
+- Agent can still list upstreams (`mcp`), list tools (`mcp slack`, `mcp posthog`), and call a tool end-to-end through remote-cli in `docker compose up`.
 - `${ATLASSIAN_AUTH}` and `${POSTHOG_API_KEY}` interpolation works (verify via connect log showing redacted headers).
 - `POSTHOG_API_KEY` is wired through `docker-compose.yml` to the `remote-cli` service (add if missing).
 
