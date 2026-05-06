@@ -13,7 +13,6 @@ const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
 const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
 const BLOCKS_FILE_ALLOWED_ROOTS = ["/tmp", "/workspace"] as const;
-const SLACK_TS_RE = /^\d{10,}\.\d{6}$/;
 
 export interface SlackPostMessageDeps {
   fetch?: typeof fetch;
@@ -137,9 +136,6 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
   }
 
   if (!channel) return { error: "--channel is required" };
-  if (threadTs && !SLACK_TS_RE.test(threadTs)) {
-    return { error: "--thread-ts must be a Slack timestamp like 1234567890.123456" };
-  }
 
   return {
     channel,

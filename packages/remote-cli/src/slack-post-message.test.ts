@@ -88,14 +88,14 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(appendAliasMock).toHaveBeenCalledWith("session-1", "slack:thread:1777940309.867569");
   });
 
-  it("registers reply aliases against the requested thread timestamp", async () => {
+  it("registers reply aliases against the requested thread value", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ ok: true, channel: "C123", ts: "1777940310.111111" }),
     );
 
     const response = await postSlack(
       {
-        args: ["--channel", "C123", "--thread-ts", "1777940309.867569"],
+        args: ["--channel", "C123", "--thread-ts", "thread-parent-token"],
         stdin: "reply",
       },
       { "x-thor-session-id": "session-2" },
@@ -109,11 +109,11 @@ describe("remote-cli slack-post-message endpoint", () => {
           channel: "C123",
           text: "reply",
           mrkdwn: true,
-          thread_ts: "1777940309.867569",
+          thread_ts: "thread-parent-token",
         }),
       }),
     );
-    expect(appendAliasMock).toHaveBeenCalledWith("session-2", "slack:thread:1777940309.867569");
+    expect(appendAliasMock).toHaveBeenCalledWith("session-2", "slack:thread:thread-parent-token");
   });
 
   it("requires a live Thor session before calling Slack", async () => {
@@ -155,8 +155,8 @@ describe("remote-cli slack-post-message endpoint", () => {
   it("rejects invalid message inputs before calling Slack", async () => {
     await expectFailure({ args: [], stdin: "hi" }, "--channel is required");
     await expectFailure(
-      { args: ["--channel", "C123", "--thread-ts", "not-a-ts"], stdin: "hi" },
-      "--thread-ts must be a Slack timestamp",
+      { args: ["--channel", "C123", "--thread-ts"], stdin: "hi" },
+      "--thread-ts requires a value",
     );
     await expectFailure({ args: ["--channel", "C123"], stdin: "   \n" }, "must not be empty");
 

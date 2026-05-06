@@ -65,7 +65,7 @@ Output contract:
 Validation expectations:
 
 - Require `--channel` for all posts.
-- Validate `--thread-ts` shape enough to catch obvious non-timestamps.
+- Require `--thread-ts` to be non-empty when present, but do not validate its shape locally.
 - For `mrkdwn`, require non-empty stdin after preserving intended whitespace; enforce a documented max input size that is comfortably below Slack limits and remote-cli buffer limits.
 - For `blocks`, parse stdin as JSON, require a top-level array, validate reasonable block count/size limits, reject unknown broad passthrough fields, and include fallback `text` only if the CLI contract defines where it comes from. If fallback text cannot be done cleanly, defer `blocks` to a later phase and ship `mrkdwn` first.
 
@@ -211,3 +211,4 @@ Final verification follows `AGENTS.md`: one commit per phase, push after all pha
 | D13 | Allow `--blocks-file` to reference absolute temp paths                                            | Agents commonly create temporary Slack artifacts under `/tmp`; blocks files are parsed and validated as a top-level JSON array before posting, so they do not need to be constrained to the command cwd.                                                |
 | D14 | Share `/tmp` between `opencode` and `remote-cli` with a named Compose volume                      | `slack-post-message` runs in OpenCode but parses block files in remote-cli. A shared temp volume preserves the documented `/tmp` workflow without requiring host-side temp directory setup.                                                             |
 | D15 | Do not apply repo/worktree cwd validation to `slack-post-message`                                 | Slack posting is authorized by the Thor session binding and does not execute a repo-scoped command. The mutable shell cwd is only used to resolve relative `--blocks-file` paths, which are still constrained to `/tmp` or `/workspace` after realpath. |
+| D16 | Do not validate Slack thread timestamp shape locally                                              | Slack owns the accepted `thread_ts` format and may evolve it. Thor only requires a non-empty flag value, forwards it unchanged to Slack, and registers the same value for reply aliasing after Slack accepts the post.                                  |
