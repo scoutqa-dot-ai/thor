@@ -94,7 +94,9 @@ describe("remote-cli slack-post-message endpoint", () => {
   });
 
   it("posts mrkdwn stdin and registers a new-thread alias", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }));
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }),
+    );
 
     const response = await postSlack(
       { args: ["--channel", "C123"], stdin: "hello *world*\n" },
@@ -120,7 +122,9 @@ describe("remote-cli slack-post-message endpoint", () => {
   });
 
   it("registers reply aliases against the requested thread timestamp", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ ok: true, channel: "C123", ts: "1777940310.111111" }));
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, channel: "C123", ts: "1777940310.111111" }),
+    );
 
     const response = await postSlack(
       {
@@ -245,7 +249,9 @@ describe("remote-cli slack-post-message endpoint", () => {
   });
 
   it("accepts an optional --blocks-file alongside stdin text", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }));
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }),
+    );
     const blocksFile = join(testCwd, "blocks.json");
     writeFileSync(
       blocksFile,
@@ -351,7 +357,10 @@ describe("remote-cli slack-post-message endpoint", () => {
     const remoteCli = createRemoteCliApp({
       env: { slackBotToken: "" } as any,
       getConfig: testConfigLoader(),
-      slackPostMessage: { env: {} as NodeJS.ProcessEnv, fetch: fetchMock as unknown as typeof fetch },
+      slackPostMessage: {
+        env: {} as NodeJS.ProcessEnv,
+        fetch: fetchMock as unknown as typeof fetch,
+      },
     });
     const noTokenServer = createServer(remoteCli.app);
     noTokenServer.listen(0, "127.0.0.1");
@@ -393,7 +402,9 @@ describe("remote-cli slack-post-message endpoint", () => {
   });
 
   it("logs alias registration failure but preserves Slack success", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }));
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }),
+    );
     const error = new Error("alias store unavailable");
     appendAliasMock.mockReturnValue({ ok: false, error });
 

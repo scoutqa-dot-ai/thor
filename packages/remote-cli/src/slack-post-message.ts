@@ -172,10 +172,10 @@ export async function handleSlackPostMessage(
   try {
     const response = await fetchImpl(SLACK_POST_MESSAGE_URL, {
       method: "POST",
-        headers: {
-          Authorization: `Bearer ${deps.env.SLACK_BOT_TOKEN}`,
-          "Content-Type": "application/json; charset=utf-8",
-        },
+      headers: {
+        Authorization: `Bearer ${deps.env.SLACK_BOT_TOKEN}`,
+        "Content-Type": "application/json; charset=utf-8",
+      },
       body: JSON.stringify(payload),
     });
     slackJson = await response.json();
@@ -185,7 +185,9 @@ export async function handleSlackPostMessage(
 
   if (!slackJson || typeof slackJson !== "object" || (slackJson as { ok?: unknown }).ok !== true) {
     const error =
-      slackJson && typeof slackJson === "object" && typeof (slackJson as { error?: unknown }).error === "string"
+      slackJson &&
+      typeof slackJson === "object" &&
+      typeof (slackJson as { error?: unknown }).error === "string"
         ? (slackJson as { error: string }).error
         : "unknown_error";
     return result(`Slack API error: ${error}\n`);
