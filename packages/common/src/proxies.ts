@@ -87,14 +87,6 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
     approve: [
       "create-feature-flag",
       "update-feature-flag",
-      "experiment-create",
-      "experiment-update",
-      "dashboard-create",
-      "dashboard-update",
-      "add-insight-to-dashboard",
-      "insight-create-from-query",
-      "insight-update",
-      "event-definition-update",
     ],
   },
 };

@@ -30,6 +30,11 @@ export interface ApprovalButtonRoute {
   threadTs?: string;
 }
 
+export interface ApprovalPresentation {
+  title: string;
+  markdown: string;
+}
+
 export function buildApprovalButtonValue(input: {
   actionId: string;
   upstreamName?: string;
@@ -111,6 +116,28 @@ export function formatApprovalArgs(args: Record<string, unknown>): string {
   return JSON.stringify(buildOversizeSummary(args), null, 2);
 }
 
+export function buildApprovalPresentation(
+  tool: string,
+  args: Record<string, unknown>,
+): ApprovalPresentation | undefined {
+  try {
+    switch (tool) {
+      case "createJiraIssue":
+        return buildCreateJiraIssuePresentation(args);
+      case "addCommentToJiraIssue":
+        return buildAddJiraCommentPresentation(args);
+      case "create-feature-flag":
+        return buildCreateFeatureFlagPresentation(args);
+      case "update-feature-flag":
+        return buildUpdateFeatureFlagPresentation(args);
+      default:
+        return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+}
+
 function buildActionBlocks(buttonValue: string): SlackBlock[] {
   return [
     { type: "divider" },
@@ -159,6 +186,156 @@ export function buildInlineApprovalBlocks(
     },
     ...buildActionBlocks(buttonValue),
   ];
+}
+
+export function buildApprovalPresentationBlocks(
+  presentation: ApprovalPresentation,
+  buttonValue: string,
+): SlackBlock[] {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `:lock: *${trimForSlack(presentation.title, 280)}*`,
+      },
+    },
+    {
+      type: "section",
+      expand: true,
+      text: {
+        type: "mrkdwn",
+        text: trimForSlack(presentation.markdown, SLACK_SECTION_TEXT_LIMIT),
+      },
+    },
+    ...buildActionBlocks(buttonValue),
+  ];
+}
+
+function buildCreateJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const project = pickField(args, "projectKey", "project", "projectId", "projectName");
+  const issueType = pickField(args, "issueTypeName", "issueType", "issuetype", "type");
+  const summaryValue = pickField(args, "summary", "title");
+  const summary = renderValue(summaryValue) ?? "Untitled Jira issue";
+  const description = pickField(args, "description", "body");
+  return {
+    title: `Create Jira issue: ${summary}`,
+    markdown: joinMarkdown([
+      bullet("Project", project),
+      bullet("Issue type", issueType),
+      bullet("Summary", summaryValue),
+      section("Description", description),
+    ]),
+  };
+}
+
+function buildAddJiraCommentPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const issueValue = pickField(args, "issueKey", "issueId", "key", "id");
+  const issue = renderValue(issueValue) ?? "unknown issue";
+  const comment = pickField(args, "commentBody", "comment", "body", "text");
+  return {
+    title: `Comment on Jira issue: ${issue}`,
+    markdown: joinMarkdown([bullet("Issue", issueValue ?? issue), section("Comment", comment)]),
+  };
+}
+
+function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const key = pickField(args, "key", "flagKey", "featureFlagKey");
+  const name = pickField(args, "name", "flagName");
+  const description = pickField(args, "description");
+  const titleTarget = renderValue(name ?? key) ?? "feature flag";
+  return {
+    title: `Create feature flag: ${titleTarget}`,
+    markdown: joinMarkdown([
+      bullet("Key", key),
+      bullet("Name", name),
+      section("Description", description),
+      bullet("Active", pickField(args, "active", "enabled")),
+      bullet("Rollout", pickField(args, "rolloutPercentage", "rollout", "percentage")),
+      bullet("Filters", pickField(args, "filters")),
+    ]),
+  };
+}
+
+function buildUpdateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const keyValue = pickField(args, "key", "flagKey", "featureFlagKey", "id");
+  const key = renderValue(keyValue) ?? "feature flag";
+  const changes = Object.entries(args)
+    .filter(([name, value]) => !["key", "flagKey", "featureFlagKey", "id"].includes(name) && value !== undefined)
+    .map(([name, value]) => bullet(name, value));
+  return {
+    title: `Update feature flag: ${key}`,
+    markdown: joinMarkdown([bullet("Flag", keyValue ?? key), ...changes]),
+  };
+}
+
+function pickField(args: Record<string, unknown>, ...names: string[]): unknown {
+  for (const name of names) {
+    const value = args[name];
+    if (value !== undefined && value !== null) return value;
+  }
+  return undefined;
+}
+
+function renderValue(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? escapeMrkdwnText(trimmed) : undefined;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return undefined;
+    return value.map((item) => renderValue(item) ?? escapeMrkdwnText(JSON.stringify(item))).join(", ");
+  }
+  try {
+    return escapeMrkdwnText(trimString(JSON.stringify(value), 500));
+  } catch {
+    return escapeMrkdwnText(JSON.stringify(trimValue(value, MIN_TRIM_STEP, 0)));
+  }
+}
+
+function bullet(label: string, value: unknown): string | undefined {
+  const rendered = renderValue(value);
+  return rendered ? `*${escapeMrkdwnText(label)}:* ${rendered}` : undefined;
+}
+
+function section(label: string, value: unknown): string | undefined {
+  const rendered = renderValue(value);
+  return rendered ? `*${escapeMrkdwnText(label)}:*\n${rendered}` : undefined;
+}
+
+function joinMarkdown(lines: Array<string | undefined>): string {
+  const rendered = lines.filter((line): line is string => Boolean(line));
+  return rendered.length > 0 ? rendered.join("\n\n") : "No arguments provided.";
+}
+
+function trimForSlack(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  if (maxLength <= 0) return "";
+
+  let omittedCount = value.length - maxLength;
+  while (omittedCount < value.length) {
+    const suffix = `…[+${omittedCount} chars]`;
+    const prefixLength = maxLength - suffix.length;
+    if (prefixLength <= 0) {
+      return value.slice(0, maxLength);
+    }
+
+    const nextOmittedCount = value.length - prefixLength;
+    if (nextOmittedCount === omittedCount) {
+      return `${value.slice(0, prefixLength)}${suffix}`;
+    }
+    omittedCount = nextOmittedCount;
+  }
+
+  return value.slice(0, maxLength);
+}
+
+function escapeMrkdwnText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function trimValue(value: unknown, step: TrimStep, depth: number): unknown {

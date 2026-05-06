@@ -273,6 +273,48 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     };
     const approveButton = arg.blocks[3].elements?.find((el) => el.action_id === "approval_approve");
     expect(approveButton?.value).toBe("v3:act-1:github:1710000000.001");
+    expect(JSON.stringify(arg.blocks)).toContain("```json");
+  });
+
+  it("renders configured approval tools with markdown presentation blocks", async () => {
+    const lines = [
+      JSON.stringify({
+        type: "approval_required",
+        actionId: "act-2",
+        tool: "create-feature-flag",
+        args: { key: "beta-card", name: "Beta card", description: "Enable the new card" },
+        proxyName: "posthog",
+      }),
+    ];
+    mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
+
+    const { triggerRunnerSlack } = await import("./service.js");
+    await triggerRunnerSlack(
+      [slackEvent],
+      "key1",
+      runnerDeps,
+      slackDeps,
+      false,
+      undefined,
+      channelRepos,
+    );
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(postMessage).toHaveBeenCalled();
+    const arg = postMessage.mock.calls[0][0] as {
+      text: string;
+      blocks: Array<{
+        text?: { text: string };
+        elements?: Array<{ action_id: string; value: string }>;
+      }>;
+    };
+    expect(arg.text).toBe("Create feature flag: Beta card");
+    expect(arg.blocks[0].text?.text).toBe(":lock: *Create feature flag: Beta card*");
+    expect(arg.blocks[1].text?.text).toContain("*Description:*\nEnable the new card");
+    expect(arg.blocks[1].text?.text).not.toContain("```json");
+    const approveButton = arg.blocks[3].elements?.find((el) => el.action_id === "approval_approve");
+    expect(approveButton?.value).toBe("v3:act-2:posthog:1710000000.001");
   });
 
   it("skips invalid NDJSON lines without crashing", async () => {
