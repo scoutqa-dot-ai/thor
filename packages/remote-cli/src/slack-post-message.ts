@@ -1,15 +1,18 @@
 import {
   appendCorrelationAlias,
   currentSessionForAnchor,
+  isPathWithinPrefix,
+  realpathOrNull,
   resolveAlias,
   type ExecResult,
 } from "@thor/common";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
 const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
+const BLOCKS_FILE_ALLOWED_ROOTS = ["/tmp", "/workspace"] as const;
 const SLACK_TS_RE = /^\d{10,}\.\d{6}$/;
 
 export interface SlackPostMessageDeps {
@@ -34,6 +37,47 @@ interface ParsedArgs {
 
 function result(stderr: string, exitCode = 1): ExecResult {
   return { stdout: "", stderr, exitCode };
+}
+
+function allowedBlocksFileRoots(): string[] {
+  const roots = new Set<string>();
+  for (const root of BLOCKS_FILE_ALLOWED_ROOTS) {
+    roots.add(resolve(root));
+    const realRoot = realpathOrNull(root);
+    if (realRoot) roots.add(realRoot);
+  }
+  return [...roots];
+}
+
+function isAllowedBlocksFilePath(path: string): boolean {
+  const normalized = resolve(path);
+  return allowedBlocksFileRoots().some((root) => isPathWithinPrefix(root, normalized));
+}
+
+function resolveBlocksFilePath(blocksFile: string, cwd?: string): string | { error: string } {
+  if (!cwd && !blocksFile.startsWith("/")) {
+    return { error: "cwd is required when using relative --blocks-file paths" };
+  }
+
+  const candidatePath = blocksFile.startsWith("/")
+    ? resolve(blocksFile)
+    : resolve(resolve("/", cwd ?? "/"), blocksFile);
+  if (!isAllowedBlocksFilePath(candidatePath)) {
+    return { error: "--blocks-file must be under /tmp or /workspace" };
+  }
+
+  const realPath = realpathOrNull(candidatePath);
+  if (!realPath) {
+    return {
+      error: `failed to read --blocks-file ${blocksFile}: path does not exist`,
+    };
+  }
+
+  if (!isAllowedBlocksFilePath(realPath)) {
+    return { error: "--blocks-file must be under /tmp or /workspace" };
+  }
+
+  return realPath;
 }
 
 function hasUsableThorSession(sessionId: string): boolean {
@@ -137,12 +181,24 @@ export async function handleSlackPostMessage(
     ...(parsed.threadTs ? { thread_ts: parsed.threadTs } : {}),
   };
   if (parsed.blocksFile) {
-    if (!request.cwd && !parsed.blocksFile.startsWith("/")) {
-      return result("cwd is required when using relative --blocks-file paths\n");
+    const blocksPath = resolveBlocksFilePath(parsed.blocksFile, request.cwd);
+    if (typeof blocksPath !== "string") return result(`${blocksPath.error}\n`);
+
+    let blocksStat;
+    try {
+      blocksStat = statSync(blocksPath);
+    } catch (err) {
+      return result(
+        `failed to read --blocks-file ${parsed.blocksFile}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
     }
-    const blocksPath = parsed.blocksFile.startsWith("/")
-      ? resolve(parsed.blocksFile)
-      : resolve(resolve("/", request.cwd ?? "/"), parsed.blocksFile);
+    if (!blocksStat.isFile()) {
+      return result("--blocks-file must be a regular file\n");
+    }
+    if (blocksStat.size > MAX_BLOCKS_FILE_BYTES) {
+      return result(`blocks file exceeds ${MAX_BLOCKS_FILE_BYTES} bytes\n`);
+    }
+
     let blocksRaw: string;
     try {
       blocksRaw = readFileSync(blocksPath, "utf8");

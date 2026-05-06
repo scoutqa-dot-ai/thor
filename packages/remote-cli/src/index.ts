@@ -8,7 +8,6 @@ import {
   computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
-  extractRepoFromCwd,
   getRunnerBaseUrl,
   logError,
   logInfo,
@@ -119,18 +118,6 @@ function registerGitCorrelationAlias(
     return;
   }
   logInfo(log, "alias_registered", { sessionId, correlationKey, source: cmd });
-}
-
-function extractRepoFromWorkspacePath(path: unknown): string | undefined {
-  if (typeof path !== "string" || !path.startsWith("/") || path.includes("\0")) return undefined;
-
-  const normalized = normalizePosix(path);
-  const repo = extractRepoFromCwd(normalized);
-  if (repo) return repo;
-
-  if (!normalized.startsWith(WORKTREE_PREFIX)) return undefined;
-  const worktreeRepo = normalized.slice(WORKTREE_PREFIX.length).split("/")[0];
-  return worktreeRepo || undefined;
 }
 
 function rewriteSingleValueFlag(
@@ -597,32 +584,11 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     const ids = thorIds(req);
     const parsedArgs = parseSlackPostMessageArgs(req.body?.args);
     try {
-      const { cwd, directory } = req.body ?? {};
+      const { cwd } = req.body ?? {};
       const cwdError = validateCwd(cwd);
       if (cwdError) {
         res.status(400).json({ stdout: "", stderr: cwdError, exitCode: 1 });
         return;
-      }
-      const repo = extractRepoFromWorkspacePath(directory);
-      if (!repo) {
-        res.status(400).json({
-          stdout: "",
-          stderr: "unable to determine repo from session directory\n",
-          exitCode: 1,
-        });
-        return;
-      }
-      if (!("error" in parsedArgs)) {
-        const config = getConfig();
-        const allowedChannels = new Set(config.repos[repo]?.channels ?? []);
-        if (!allowedChannels.has(parsedArgs.channel)) {
-          res.status(400).json({
-            stdout: "",
-            stderr: `channel ${parsedArgs.channel} is not allowed for repo ${repo}\n`,
-            exitCode: 1,
-          });
-          return;
-        }
       }
 
       const execResult = await handleSlackPostMessage(

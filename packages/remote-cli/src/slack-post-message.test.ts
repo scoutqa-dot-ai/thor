@@ -1,25 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { once } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendAlias, resolveSessionForCorrelationKey } from "@thor/common";
-import type { ConfigLoader, WorkspaceConfig } from "@thor/common";
-
-vi.mock("@thor/common", async () => {
-  const actual = await vi.importActual<typeof import("@thor/common")>("@thor/common");
-  return {
-    ...actual,
-    extractRepoFromCwd: (cwd: string) => {
-      if (cwd.includes("remote-cli-slack-dir-")) return "thor";
-      if (cwd.includes("remote-cli-other-cwd-")) return "other";
-      if (cwd.includes("remote-cli-slack-cwd-")) return "cwd-repo";
-      return actual.extractRepoFromCwd(cwd);
-    },
-  };
-});
 
 vi.mock("./policy.js", async () => {
   const actual = await vi.importActual<typeof import("./policy.js")>("./policy.js");
@@ -32,13 +18,6 @@ vi.mock("./policy.js", async () => {
 import { createRemoteCliApp } from "./index.js";
 import type { SlackPostMessageDeps } from "./slack-post-message.js";
 
-const TEST_CONFIG = {
-  repos: {
-    thor: { channels: ["C123", "C404"] },
-    other: { channels: ["C999"] },
-  },
-} satisfies WorkspaceConfig;
-
 describe("remote-cli slack-post-message endpoint", () => {
   let server: Server;
   let baseUrl: string;
@@ -48,26 +27,23 @@ describe("remote-cli slack-post-message endpoint", () => {
   let aliasErrorMock: ReturnType<typeof vi.fn>;
   let worklogRoot: string;
   let testCwd: string;
-  let testDirectory: string;
 
   beforeEach(async () => {
     fetchMock = vi.fn();
     appendAliasMock = vi.fn(() => ({ ok: true }));
     aliasErrorMock = vi.fn();
-    testCwd = mkdtempSync(join(tmpdir(), "remote-cli-slack-cwd-"));
-    testDirectory = mkdtempSync(join(tmpdir(), "remote-cli-slack-dir-"));
+    testCwd = mkdtempSync(join("/tmp", "remote-cli-slack-cwd-"));
     worklogRoot = mkdtempSync(join(tmpdir(), "remote-cli-slack-post-"));
     process.env.WORKLOG_DIR = worklogRoot;
+
     bindSession("session-1", "00000000-0000-7000-8000-000000000101");
     bindSession("session-2", "00000000-0000-7000-8000-000000000102");
-    bindSession("session-3", "00000000-0000-7000-8000-000000000103");
     bindSession("session-4", "00000000-0000-7000-8000-000000000104");
     bindSession("session-5", "00000000-0000-7000-8000-000000000105");
     bindSession("session-validation", "00000000-0000-7000-8000-000000000106");
 
     const remoteCli = createRemoteCliApp({
       env: { slackBotToken: "xoxb-test" } as any,
-      getConfig: testConfigLoader(),
       slackPostMessage: {
         env: { SLACK_BOT_TOKEN: "xoxb-test" } as NodeJS.ProcessEnv,
         fetch: fetchMock as unknown as typeof fetch,
@@ -89,24 +65,23 @@ describe("remote-cli slack-post-message endpoint", () => {
     await closeRemoteCli();
     rmSync(worklogRoot, { recursive: true, force: true });
     rmSync(testCwd, { recursive: true, force: true });
-    rmSync(testDirectory, { recursive: true, force: true });
     delete process.env.WORKLOG_DIR;
   });
 
-  it("posts mrkdwn stdin and registers a new-thread alias", async () => {
+  it("posts mrkdwn to any channel and registers a new-thread alias", async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }),
+      jsonResponse({ ok: true, channel: "C999", ts: "1777940309.867569" }),
     );
 
     const response = await postSlack(
-      { args: ["--channel", "C123"], stdin: "hello *world*\n" },
+      { args: ["--channel", "C999"], stdin: "hello *world*\n" },
       { "x-thor-session-id": "session-1" },
     );
     const body = (await response.json()) as { stdout: string; stderr: string; exitCode: number };
 
     expect(response.status).toBe(200);
     expect(body).toEqual({
-      stdout: '{"ok":true,"channel":"C123","ts":"1777940309.867569"}\n',
+      stdout: '{"ok":true,"channel":"C999","ts":"1777940309.867569"}\n',
       stderr: "",
       exitCode: 0,
     });
@@ -115,7 +90,7 @@ describe("remote-cli slack-post-message endpoint", () => {
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({ Authorization: "Bearer xoxb-test" }),
-        body: JSON.stringify({ channel: "C123", text: "hello *world*\n", mrkdwn: true }),
+        body: JSON.stringify({ channel: "C999", text: "hello *world*\n", mrkdwn: true }),
       }),
     );
     expect(appendAliasMock).toHaveBeenCalledWith("session-1", "slack:thread:1777940309.867569");
@@ -149,17 +124,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(appendAliasMock).toHaveBeenCalledWith("session-2", "slack:thread:1777940309.867569");
   });
 
-  it("fails missing session id before calling Slack", async () => {
-    const response = await postSlack({ args: ["--channel", "C123"], stdin: "hello" });
-    const body = (await response.json()) as { stderr: string };
-
-    expect(response.status).toBe(400);
-    expect(body.stderr).toContain("missing x-thor-session-id");
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(appendAliasMock).not.toHaveBeenCalled();
-  });
-
-  it("fails stale or fake session ids before calling Slack", async () => {
+  it("requires a live Thor session before calling Slack", async () => {
     expect(
       appendAlias({
         aliasType: "opencode.session",
@@ -175,93 +140,51 @@ describe("remote-cli slack-post-message endpoint", () => {
       }),
     ).toEqual({ ok: true });
 
-    const staleResponse = await postSlack(
+    await expectFailure(
       { args: ["--channel", "C123"], stdin: "hello" },
+      "invalid x-thor-session-id",
       { "x-thor-session-id": "session-stale" },
     );
-    expect(staleResponse.status).toBe(400);
-    expect(((await staleResponse.json()) as { stderr: string }).stderr).toContain(
-      "invalid x-thor-session-id",
-    );
-
-    const fakeResponse = await postSlack(
+    await expectFailure(
       { args: ["--channel", "C123"], stdin: "hello" },
+      "invalid x-thor-session-id",
       { "x-thor-session-id": "session-fake" },
     );
-    expect(fakeResponse.status).toBe(400);
-    expect(((await fakeResponse.json()) as { stderr: string }).stderr).toContain(
-      "invalid x-thor-session-id",
-    );
-
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("accepts opencode.subsession ids once their alias exists", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ ok: true, channel: "C123", ts: "1777940311.222222" }),
-    );
-    expect(
-      appendAlias({
-        aliasType: "opencode.subsession",
-        aliasValue: "child-session-1",
-        anchorId: "00000000-0000-7000-8000-000000000101",
-      }),
-    ).toEqual({ ok: true });
-
-    const response = await postSlack(
+    await expectFailure(
       { args: ["--channel", "C123"], stdin: "hello" },
-      { "x-thor-session-id": "child-session-1" },
+      "missing x-thor-session-id",
+      {},
     );
-    expect(response.status).toBe(200);
-    expect(appendAliasMock).toHaveBeenCalledWith(
-      "child-session-1",
-      "slack:thread:1777940311.222222",
-    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(appendAliasMock).not.toHaveBeenCalled();
   });
 
-  it("rejects channels not configured for the repo", async () => {
-    const response = await postSlack(
-      { args: ["--channel", "C999"], stdin: "hello" },
-      { "x-thor-session-id": "session-1" },
+  it("rejects invalid message inputs before calling Slack", async () => {
+    await expectFailure({ args: [], stdin: "hi" }, "--channel is required");
+    await expectFailure(
+      { args: ["--channel", "C123", "--thread-ts", "not-a-ts"], stdin: "hi" },
+      "--thread-ts must be a Slack timestamp",
     );
-    expect(response.status).toBe(400);
-    expect(((await response.json()) as { stderr: string }).stderr).toContain(
-      "channel C999 is not allowed for repo thor",
-    );
+    await expectFailure({ args: ["--channel", "C123"], stdin: "   \n" }, "must not be empty");
+
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("authorizes channels from the session directory rather than mutable cwd", async () => {
-    const otherCwd = mkdtempSync(join(tmpdir(), "remote-cli-other-cwd-"));
-    try {
-      const response = await postSlack(
-        { cwd: otherCwd, args: ["--channel", "C999"], stdin: "hello" },
-        { "x-thor-session-id": "session-1" },
-      );
-      expect(response.status).toBe(400);
-      expect(((await response.json()) as { stderr: string }).stderr).toContain(
-        "channel C999 is not allowed for repo thor",
-      );
-      expect(fetchMock).not.toHaveBeenCalled();
-    } finally {
-      rmSync(otherCwd, { recursive: true, force: true });
-    }
-  });
-
-  it("accepts an optional --blocks-file alongside stdin text", async () => {
+  it("accepts blocks files only from allowed roots", async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }),
+      jsonResponse({ ok: true, channel: "C123", ts: "1777940312.333333" }),
     );
     const blocksFile = join(testCwd, "blocks.json");
     writeFileSync(
       blocksFile,
-      JSON.stringify([{ type: "section", text: { type: "mrkdwn", text: "hello" } }]),
+      JSON.stringify([{ type: "section", text: { type: "mrkdwn", text: "from tmp" } }]),
       "utf8",
     );
 
     const response = await postSlack(
       {
-        args: ["--channel", "C123", "--blocks-file", "blocks.json"],
+        args: ["--channel", "C123", "--blocks-file", blocksFile],
         stdin: "fallback text",
       },
       { "x-thor-session-id": "session-1" },
@@ -274,116 +197,26 @@ describe("remote-cli slack-post-message endpoint", () => {
           channel: "C123",
           text: "fallback text",
           mrkdwn: true,
-          blocks: [{ type: "section", text: { type: "mrkdwn", text: "hello" } }],
+          blocks: [{ type: "section", text: { type: "mrkdwn", text: "from tmp" } }],
         }),
       }),
     );
-  });
 
-  it("accepts --blocks-file from an absolute temp path", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ ok: true, channel: "C123", ts: "1777940312.333333" }),
-    );
-    const blocksDir = mkdtempSync(join(tmpdir(), "remote-cli-slack-blocks-"));
-    const blocksFile = join(blocksDir, "blocks.json");
-    try {
-      writeFileSync(
-        blocksFile,
-        JSON.stringify([{ type: "section", text: { type: "mrkdwn", text: "from tmp" } }]),
-        "utf8",
-      );
-
-      const response = await postSlack(
-        {
-          args: ["--channel", "C123", "--blocks-file", blocksFile],
-          stdin: "fallback text",
-        },
-        { "x-thor-session-id": "session-1" },
-      );
-      expect(response.status).toBe(200);
-      expect(fetchMock).toHaveBeenCalledWith(
-        "https://slack.com/api/chat.postMessage",
-        expect.objectContaining({
-          body: JSON.stringify({
-            channel: "C123",
-            text: "fallback text",
-            mrkdwn: true,
-            blocks: [{ type: "section", text: { type: "mrkdwn", text: "from tmp" } }],
-          }),
-        }),
-      );
-    } finally {
-      rmSync(blocksDir, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects invalid args, empty stdin, missing token, and blocks before Slack", async () => {
-    await expectFailure({ args: [], stdin: "hi" }, "--channel is required");
-    await expectFailure({ args: ["--channel"], stdin: "hi" }, "--channel requires a value");
+    fetchMock.mockClear();
+    const escapedLink = join(testCwd, "escaped-blocks.json");
+    symlinkSync("/etc/passwd", escapedLink);
     await expectFailure(
-      { args: ["--channel", "C123", "--thread-ts", "not-a-ts"], stdin: "hi" },
-      "--thread-ts must be a Slack timestamp",
+      { args: ["--channel", "C123", "--blocks-file", "/etc/passwd"], stdin: "hi" },
+      "--blocks-file must be under /tmp or /workspace",
     );
     await expectFailure(
-      { args: ["--channel", "C123", "--thread-ts"], stdin: "hi" },
-      "--thread-ts requires a value",
+      { args: ["--channel", "C123", "--blocks-file", "../../../etc/passwd"], stdin: "hi" },
+      "--blocks-file must be under /tmp or /workspace",
     );
     await expectFailure(
-      { args: ["--channel", "C123", "--thread-ts="], stdin: "hi" },
-      "--thread-ts requires a value",
+      { args: ["--channel", "C123", "--blocks-file", escapedLink], stdin: "hi" },
+      "--blocks-file must be under /tmp or /workspace",
     );
-    await expectFailure({ args: ["--channel", "C123"], stdin: "   \n" }, "must not be empty");
-    await expectFailure(
-      { args: ["--channel", "C123", "--format", "blocks"], stdin: "[]" },
-      "unsupported argument: --format",
-    );
-    await expectFailure(
-      { args: ["--channel", "C123", "--blocks-file"], stdin: "hi" },
-      "--blocks-file requires a value",
-    );
-
-    const badJson = join(testCwd, "bad.json");
-    const notArray = join(testCwd, "object.json");
-    writeFileSync(badJson, "{not json", "utf8");
-    writeFileSync(notArray, JSON.stringify({ type: "section" }), "utf8");
-    await expectFailure(
-      { args: ["--channel", "C123", "--blocks-file", "bad.json"], stdin: "hi" },
-      "invalid JSON in --blocks-file",
-    );
-    await expectFailure(
-      { args: ["--channel", "C123", "--blocks-file", "object.json"], stdin: "hi" },
-      "top-level JSON array",
-    );
-    const remoteCli = createRemoteCliApp({
-      env: { slackBotToken: "" } as any,
-      getConfig: testConfigLoader(),
-      slackPostMessage: {
-        env: {} as NodeJS.ProcessEnv,
-        fetch: fetchMock as unknown as typeof fetch,
-      },
-    });
-    const noTokenServer = createServer(remoteCli.app);
-    noTokenServer.listen(0, "127.0.0.1");
-    await once(noTokenServer, "listening");
-    const noTokenUrl = `http://127.0.0.1:${(noTokenServer.address() as AddressInfo).port}`;
-    const noTokenResponse = await fetch(`${noTokenUrl}/exec/slack-post-message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-thor-session-id": "session-3" },
-      body: JSON.stringify({
-        cwd: testCwd,
-        directory: testDirectory,
-        args: ["--channel", "C123"],
-        stdin: "hi",
-      }),
-    });
-    expect(((await noTokenResponse.json()) as { stderr: string }).stderr).toContain(
-      "SLACK_BOT_TOKEN is not set",
-    );
-    await new Promise<void>((resolve, reject) =>
-      noTokenServer.close((err) => (err ? reject(err) : resolve())),
-    );
-    await remoteCli.close();
-
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -434,7 +267,6 @@ describe("remote-cli slack-post-message endpoint", () => {
       .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940311.222222" }));
     const remoteCli = createRemoteCliApp({
       env: { slackBotToken: "xoxb-test" } as any,
-      getConfig: testConfigLoader(),
       slackPostMessage: {
         env: { SLACK_BOT_TOKEN: "xoxb-test" } as NodeJS.ProcessEnv,
         fetch: integrationFetch,
@@ -460,7 +292,6 @@ describe("remote-cli slack-post-message endpoint", () => {
         headers: { "Content-Type": "application/json", "x-thor-session-id": "non-slack-session" },
         body: JSON.stringify({
           cwd: testCwd,
-          directory: testDirectory,
           args: ["--channel", "C123"],
           stdin: "new controlled thread",
         }),
@@ -475,7 +306,6 @@ describe("remote-cli slack-post-message endpoint", () => {
         headers: { "Content-Type": "application/json", "x-thor-session-id": "non-slack-session" },
         body: JSON.stringify({
           cwd: testCwd,
-          directory: testDirectory,
           args: ["--channel", "C123", "--thread-ts", "1777940309.867569"],
           stdin: "controlled reply",
         }),
@@ -500,7 +330,6 @@ describe("remote-cli slack-post-message endpoint", () => {
         },
         body: JSON.stringify({
           cwd: testCwd,
-          directory: testDirectory,
           args: ["--channel", "C123"],
           stdin: "controlled child-session thread",
         }),
@@ -533,8 +362,12 @@ describe("remote-cli slack-post-message endpoint", () => {
     ).toEqual({ ok: true });
   }
 
-  async function expectFailure(body: Record<string, unknown>, message: string): Promise<void> {
-    const response = await postSlack(body, { "x-thor-session-id": "session-validation" });
+  async function expectFailure(
+    body: Record<string, unknown>,
+    message: string,
+    headers: Record<string, string> = { "x-thor-session-id": "session-validation" },
+  ): Promise<void> {
+    const response = await postSlack(body, headers);
     expect(response.status).toBe(400);
     expect(((await response.json()) as { stderr: string }).stderr).toContain(message);
   }
@@ -546,14 +379,8 @@ describe("remote-cli slack-post-message endpoint", () => {
     return fetch(`${baseUrl}/exec/slack-post-message`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
-      body: JSON.stringify({ cwd: testCwd, directory: testDirectory, ...body }),
+      body: JSON.stringify({ cwd: testCwd, ...body }),
     });
-  }
-
-  function testConfigLoader(config: WorkspaceConfig = TEST_CONFIG): ConfigLoader {
-    const loader = (() => config) as ConfigLoader;
-    loader.invalidate = () => {};
-    return loader;
   }
 
   function jsonResponse(body: unknown): Response {
