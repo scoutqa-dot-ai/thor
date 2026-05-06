@@ -49,10 +49,8 @@ echo 'Looking into this now. I will report back in-thread.' | \
   slack-post-message --channel C123 --thread-ts 1710000000.001
 ```
 
-When posting to Slack, `slack-post-message` accepts stdin only; do not pass
-message text as positional args, `--text`, or raw Slack JSON. Always include
-`--channel <id>` even for thread replies because Thor aliases store Slack thread
-timestamps, not channel IDs. If you need Slack blocks, pass `--blocks-file <path>`
+When posting to Slack, `slack-post-message` accepts stdin only. Always include
+`--channel <id>`. If you need Slack blocks, pass `--blocks-file <path>`
 to a JSON file containing a top-level blocks array while keeping stdin text as the
 fallback mrkdwn body. For multiline replies, prefer a heredoc or pipe:
 
