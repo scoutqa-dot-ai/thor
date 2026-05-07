@@ -449,6 +449,70 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls).toHaveLength(1);
   });
 
+  it("rejects concurrent same-decision approval resolves from different reviewers", async () => {
+    expect(
+      appendAlias({
+        aliasType: "opencode.session",
+        aliasValue: "parent-session",
+        anchorId: activeAnchorId,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
+    ).toEqual({ ok: true });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    let releaseCall!: () => void;
+    createJiraIssueDelay = new Promise((resolve) => {
+      releaseCall = resolve;
+    });
+
+    const firstResolve = postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    await vi.waitFor(() => expect(toolCalls).toHaveLength(1));
+
+    const secondResolve = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U999"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const secondBody = (await secondResolve.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+    expect(secondBody.exitCode).toBe(1);
+    expect(secondBody.stderr).toContain(
+      `Approval action ${actionId} is already resolving for reviewer U123; cannot also resolve as U999`,
+    );
+
+    releaseCall();
+    const firstBody = (await (await firstResolve).json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+    expect(firstBody).toEqual({ stdout: "created", stderr: "", exitCode: 0 });
+    expect(toolCalls).toHaveLength(1);
+  });
+
   it("keeps approvals pending when approved tool execution fails and returns a clear error for corrupt approved records", async () => {
     expect(
       appendAlias({

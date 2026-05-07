@@ -144,7 +144,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const approvalStores = new Map<string, ApprovalStore>();
   const resolvingApprovals = new Map<
     string,
-    { decision: "approved" | "rejected"; promise: Promise<McpExecResult> }
+    {
+      decision: "approved" | "rejected";
+      reviewer: string;
+      reason?: string;
+      promise: Promise<McpExecResult>;
+    }
   >();
 
   function getConfig(): WorkspaceConfig {
@@ -547,11 +552,16 @@ export function createMcpService(deps: McpServiceDeps): McpService {
           `Approval action ${actionId} is already resolving as ${inFlight.decision}; cannot also resolve as ${decision}`,
         );
       }
+      if (inFlight.reviewer !== reviewer || inFlight.reason !== reason) {
+        return fail(
+          `Approval action ${actionId} is already resolving for reviewer ${inFlight.reviewer}; cannot also resolve as ${reviewer}`,
+        );
+      }
       return inFlight.promise;
     }
 
     const promise = resolveApprovalActionOnce(actionId, decision, reviewer, reason);
-    resolvingApprovals.set(actionId, { decision, promise });
+    resolvingApprovals.set(actionId, { decision, reviewer, reason, promise });
     try {
       return await promise;
     } finally {
