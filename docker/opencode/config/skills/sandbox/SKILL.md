@@ -7,6 +7,8 @@ description: Run project commands (build, test, lint) in a cloud sandbox with co
 
 Use `sandbox` to run project commands: builds, tests, lints, and anything that needs runtimes not available locally (Java, Python, etc.). The sandbox auto-creates on first use, syncs your committed code, and stops automatically when idle.
 
+For technical browser orchestration guidance — choosing between `agent-browser`, headed browser capture, verification, and artifact patterns — use the dedicated `browser` skill. Keep app-specific browser flows in repo runbooks or task prompts.
+
 ---
 
 ## Usage
