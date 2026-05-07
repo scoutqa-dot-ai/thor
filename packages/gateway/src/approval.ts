@@ -1,3 +1,11 @@
+import {
+  AddCommentToJiraIssueApprovalArgsSchema,
+  CreateFeatureFlagApprovalArgsSchema,
+  CreateJiraIssueApprovalArgsSchema,
+  UpdateFeatureFlagApprovalArgsSchema,
+  type ApprovalArgs,
+  type ApprovalToolName,
+} from "@thor/common";
 import type { SlackBlock } from "./slack-api.js";
 
 const SLACK_SECTION_TEXT_LIMIT = 3000;
@@ -117,8 +125,8 @@ export function formatApprovalArgs(args: Record<string, unknown>): string {
 }
 
 export function buildApprovalPresentation(
-  tool: string,
-  args: Record<string, unknown>,
+  tool: ApprovalToolName,
+  args: ApprovalArgs,
 ): ApprovalPresentation | undefined {
   try {
     switch (tool) {
@@ -212,12 +220,13 @@ export function buildApprovalPresentationBlocks(
   ];
 }
 
-function buildCreateJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const project = pickField(args, "projectKey", "project", "projectId", "projectName");
-  const issueType = pickField(args, "issueTypeName", "issueType", "issuetype", "type");
-  const summaryValue = pickField(args, "summary", "title");
+function buildCreateJiraIssuePresentation(args: ApprovalArgs): ApprovalPresentation {
+  const parsed = CreateJiraIssueApprovalArgsSchema.parse(args);
+  const project = parsed.projectKey;
+  const issueType = parsed.issueTypeName;
+  const summaryValue = parsed.summary;
   const summary = renderValue(summaryValue) ?? "Untitled Jira issue";
-  const description = pickField(args, "description", "body");
+  const description = parsed.description;
   return {
     title: `Create Jira issue: ${summary}`,
     markdown: joinMarkdown([
@@ -229,20 +238,22 @@ function buildCreateJiraIssuePresentation(args: Record<string, unknown>): Approv
   };
 }
 
-function buildAddJiraCommentPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const issueValue = pickField(args, "issueKey", "issueId", "key", "id");
+function buildAddJiraCommentPresentation(args: ApprovalArgs): ApprovalPresentation {
+  const parsed = AddCommentToJiraIssueApprovalArgsSchema.parse(args);
+  const issueValue = parsed.issueKey;
   const issue = renderValue(issueValue) ?? "unknown issue";
-  const comment = pickField(args, "commentBody", "comment", "body", "text");
+  const comment = parsed.commentBody;
   return {
     title: `Comment on Jira issue: ${issue}`,
     markdown: joinMarkdown([bullet("Issue", issueValue ?? issue), section("Comment", comment)]),
   };
 }
 
-function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const key = pickField(args, "key", "flagKey", "featureFlagKey");
-  const name = pickField(args, "name", "flagName");
-  const description = pickField(args, "description");
+function buildCreateFeatureFlagPresentation(args: ApprovalArgs): ApprovalPresentation {
+  const parsed = CreateFeatureFlagApprovalArgsSchema.parse(args);
+  const key = parsed.key;
+  const name = parsed.name;
+  const description = parsed.description;
   const titleTarget = renderValue(name ?? key) ?? "feature flag";
   return {
     title: `Create feature flag: ${titleTarget}`,
@@ -250,31 +261,24 @@ function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): Appr
       bullet("Key", key),
       bullet("Name", name),
       section("Description", description),
-      bullet("Active", pickField(args, "active", "enabled")),
-      bullet("Rollout", pickField(args, "rolloutPercentage", "rollout", "percentage")),
-      bullet("Filters", pickField(args, "filters")),
+      bullet("Active", parsed.active),
+      bullet("Rollout", parsed.rolloutPercentage),
+      bullet("Filters", parsed.filters),
     ]),
   };
 }
 
-function buildUpdateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const keyValue = pickField(args, "key", "flagKey", "featureFlagKey", "id");
+function buildUpdateFeatureFlagPresentation(args: ApprovalArgs): ApprovalPresentation {
+  const parsed = UpdateFeatureFlagApprovalArgsSchema.parse(args);
+  const keyValue = parsed.key;
   const key = renderValue(keyValue) ?? "feature flag";
-  const changes = Object.entries(args)
-    .filter(([name, value]) => !["key", "flagKey", "featureFlagKey", "id"].includes(name) && value !== undefined)
+  const changes = Object.entries(parsed)
+    .filter(([name, value]) => name !== "key" && value !== undefined)
     .map(([name, value]) => bullet(name, value));
   return {
     title: `Update feature flag: ${key}`,
     markdown: joinMarkdown([bullet("Flag", keyValue ?? key), ...changes]),
   };
-}
-
-function pickField(args: Record<string, unknown>, ...names: string[]): unknown {
-  for (const name of names) {
-    const value = args[name];
-    if (value !== undefined && value !== null) return value;
-  }
-  return undefined;
 }
 
 function renderValue(value: unknown): string | undefined {

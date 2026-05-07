@@ -577,7 +577,7 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("emits approval_required events from output args and falls back to input args", async () => {
+  it("emits approval_required events only from typed output args", async () => {
     const outputArgs = {
       projectKey: "THOR",
       summary: "Persisted summary",
@@ -600,19 +600,7 @@ describe("runner /trigger orchestration", () => {
             args: outputArgs,
           }),
         ),
-        toolEvent(
-          sessionId,
-          "mcp",
-          "completed",
-          wrapperArgs,
-          { start: 1300, end: 1500 },
-          JSON.stringify({
-            type: "approval_required",
-            actionId: "legacy-approval-without-output-args",
-            proxyName: "atlassian",
-            tool: "createJiraIssue",
-          }),
-        ),
+        toolEvent(sessionId, "mcp", "completed", wrapperArgs, { start: 1300, end: 1500 }, "{}"),
         idleEvent(sessionId),
       ],
     });
@@ -624,16 +612,12 @@ describe("runner /trigger orchestration", () => {
       });
       const approvals = result.events.filter((e) => e.type === "approval_required");
 
-      expect(approvals).toHaveLength(2);
+      expect(approvals).toHaveLength(1);
       expect(approvals[0]).toMatchObject({
         actionId: "approval-with-output-args",
         tool: "createJiraIssue",
         proxyName: "atlassian",
         args: outputArgs,
-      });
-      expect(approvals[1]).toMatchObject({
-        actionId: "legacy-approval-without-output-args",
-        args: wrapperArgs,
       });
     });
   });

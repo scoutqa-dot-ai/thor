@@ -9,6 +9,7 @@ import {
   isProxyName,
   getRepoUpstreams,
   getRunnerBaseUrl,
+  ApprovalRequiredEventPayloadSchema,
   interpolateHeaders,
   logError,
   logInfo,
@@ -19,6 +20,7 @@ import {
   type WorkspaceConfig,
   writeToolCallLog,
 } from "@thor/common";
+import type { ApprovalRequiredEventPayload, ApprovalToolName } from "@thor/common";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import {
   classifyTool,
@@ -48,6 +50,15 @@ function addDisclaimerToApprovalArgs(
       `Cannot create approval: ${tool}.${field} must be a string for disclaimer injection`,
     );
   return { ...args, [field]: `${args[field]}\n${footer}` };
+}
+
+function isApprovalToolName(tool: string): tool is ApprovalToolName {
+  return (
+    tool === "createJiraIssue" ||
+    tool === "addCommentToJiraIssue" ||
+    tool === "create-feature-flag" ||
+    tool === "update-feature-flag"
+  );
 }
 
 interface ProxyInstance {
@@ -481,6 +492,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
 
     if (toolInfo.classification === "approve") {
+      if (!isApprovalToolName(toolInfo.name)) {
+        return fail(`Cannot create approval: unsupported approval tool ${toolInfo.name}`);
+      }
       let approvalArgs: Record<string, unknown>;
       try {
         approvalArgs = addDisclaimerToApprovalArgs(toolInfo.name, args, context.sessionId);
@@ -495,13 +509,16 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         ...getThorIds(context),
       });
       writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args: approvalArgs });
+      const approvalRequired: ApprovalRequiredEventPayload = ApprovalRequiredEventPayloadSchema.parse({
+        type: "approval_required",
+        actionId: action.id,
+        proxyName: instance.name,
+        tool: toolInfo.name,
+        args: action.args,
+      });
       return ok(
         stringify({
-          type: "approval_required",
-          actionId: action.id,
-          proxyName: instance.name,
-          tool: toolInfo.name,
-          args: action.args,
+          ...approvalRequired,
           command: `approval status ${action.id}`,
         }),
       );
