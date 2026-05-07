@@ -47,6 +47,7 @@ describe("remote-cli MCP endpoints", () => {
   let server: Server;
   let baseUrl: string;
   let toolCalls: Array<{ name: string; arguments?: Record<string, unknown> }>;
+  let createJiraIssueDelay: Promise<void> | undefined;
   let connectedUpstreams: string[];
   let closeRemoteCli: () => Promise<void>;
 
@@ -66,6 +67,7 @@ describe("remote-cli MCP endpoints", () => {
     rmSync("/tmp/thor-remote-cli-mcp-test", { recursive: true, force: true });
     approvalsDir = mkdtempSync(join(tmpdir(), "remote-cli-mcp-"));
     toolCalls = [];
+    createJiraIssueDelay = undefined;
     connectedUpstreams = [];
     const getConfig = Object.assign(() => config, {
       invalidate: () => {},
@@ -96,6 +98,7 @@ describe("remote-cli MCP endpoints", () => {
                   };
                 }
                 if (name === "createJiraIssue") {
+                  await createJiraIssueDelay;
                   return {
                     content: [{ type: "text", text: "created" }],
                   };
@@ -366,6 +369,77 @@ describe("remote-cli MCP endpoints", () => {
         },
       },
     ]);
+  });
+
+  it("deduplicates concurrent same-decision approval resolves in one process", async () => {
+    expect(
+      appendAlias({
+        aliasType: "opencode.session",
+        aliasValue: "parent-session",
+        anchorId: activeAnchorId,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
+    ).toEqual({ ok: true });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    let releaseCall!: () => void;
+    createJiraIssueDelay = new Promise((resolve) => {
+      releaseCall = resolve;
+    });
+
+    const firstResolve = postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const secondResolve = postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    await vi.waitFor(() => expect(toolCalls).toHaveLength(1));
+    releaseCall();
+
+    const [first, second] = await Promise.all([firstResolve, secondResolve]);
+    const firstBody = (await first.json()) as { stdout: string; stderr: string; exitCode: number };
+    const secondBody = (await second.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(firstBody).toEqual({ stdout: "created", stderr: "", exitCode: 0 });
+    expect(secondBody).toEqual(firstBody);
+    expect(toolCalls).toHaveLength(1);
+
+    const laterResolve = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const laterBody = (await laterResolve.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+    expect(laterBody).toEqual(firstBody);
+    expect(toolCalls).toHaveLength(1);
   });
 
   it("returns 401 for /internal/exec without the internal secret", async () => {

@@ -2,6 +2,7 @@ import {
   appendCorrelationAlias,
   computeSlackCorrelationKey,
   createLogger,
+  ExecResultSchema,
   extractRepoFromCwd,
   getProxyConfig,
   buildThorDisclaimerForSession,
@@ -141,6 +142,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const instances = new Map<string, ProxyInstance>();
   const connecting = new Map<string, Promise<ProxyInstance>>();
   const approvalStores = new Map<string, ApprovalStore>();
+  const resolvingApprovals = new Map<
+    string,
+    { decision: "approved" | "rejected"; promise: Promise<McpExecResult> }
+  >();
 
   function getConfig(): WorkspaceConfig {
     return deps.getConfig();
@@ -519,7 +524,42 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return undefined;
   }
 
+  function storedApprovedResult(action: ApprovalAction): McpExecResult {
+    const parsed = ExecResultSchema.safeParse(action.result);
+    if (!parsed.success) {
+      return fail(
+        `Stored approved result for approval action ${action.id} is invalid: ${parsed.error.message}`,
+      );
+    }
+    return parsed.data;
+  }
+
   async function resolveApprovalAction(
+    actionId: string,
+    decision: "approved" | "rejected",
+    reviewer: string,
+    reason: string | undefined,
+  ): Promise<McpExecResult> {
+    const inFlight = resolvingApprovals.get(actionId);
+    if (inFlight) {
+      if (inFlight.decision !== decision) {
+        return fail(
+          `Approval action ${actionId} is already resolving as ${inFlight.decision}; cannot also resolve as ${decision}`,
+        );
+      }
+      return inFlight.promise;
+    }
+
+    const promise = resolveApprovalActionOnce(actionId, decision, reviewer, reason);
+    resolvingApprovals.set(actionId, { decision, promise });
+    try {
+      return await promise;
+    } finally {
+      resolvingApprovals.delete(actionId);
+    }
+  }
+
+  async function resolveApprovalActionOnce(
     actionId: string,
     decision: "approved" | "rejected",
     reviewer: string,
@@ -531,7 +571,15 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
 
     if (lookup.action.status !== "pending") {
-      return fail("Not found or already resolved");
+      if (lookup.action.status !== decision) {
+        return fail(
+          `Approval action ${actionId} is already ${lookup.action.status}; cannot resolve as ${decision}`,
+        );
+      }
+      if (lookup.action.status === "approved") {
+        return storedApprovedResult(lookup.action);
+      }
+      return ok(stringify(lookup.action));
     }
 
     if (decision === "rejected") {
@@ -551,28 +599,17 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return fail(`Unknown upstream "${lookup.upstreamName}".`);
     }
 
-    // Status flip is deferred until the upstream call succeeds. If the call
-    // throws (network blip, upstream down, process crash mid-call), the action
-    // remains `pending` so the gateway's retry-up-to-3-attempts loop can replay
-    // it. The error is captured on the still-pending record for operator visibility.
     const pendingAction = lookup.action;
-    return executeUpstreamCall({
+    const result = await executeUpstreamCall({
       instance,
       toolName: pendingAction.tool,
       args: pendingAction.args,
       logEvent: "tool_call_approved",
       decision: "approved",
       extraLogFields: { actionId: pendingAction.id },
-      onSuccess: (rawResult) => {
-        const resolved = lookup.store.resolveLoaded(pendingAction, "approved", reviewer, reason);
-        resolved.result = rawResult;
-        lookup.store.update(resolved);
-      },
-      onError: (message) => {
-        pendingAction.error = message;
-        lookup.store.update(pendingAction);
-      },
     });
+    lookup.store.approveLoaded(pendingAction, result, reviewer, reason);
+    return result;
   }
 
   return {

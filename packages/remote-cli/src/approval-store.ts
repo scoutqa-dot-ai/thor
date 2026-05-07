@@ -1,22 +1,33 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ExecResultSchema, type ExecResult } from "@thor/common";
 import { z } from "zod/v4";
 
-const ApprovalActionSchema = z.object({
-  id: z.string(),
-  upstream: z.string(),
-  status: z.enum(["pending", "approved", "rejected"]),
-  tool: z.string(),
-  args: z.record(z.string(), z.unknown()),
-  createdAt: z.string(),
-  dateSegment: z.string(),
-  resolvedAt: z.string().optional(),
-  reviewer: z.string().optional(),
-  result: z.any().optional(),
-  error: z.string().optional(),
-  reason: z.string().optional(),
-});
+const ApprovalActionSchema = z
+  .object({
+    id: z.string(),
+    upstream: z.string(),
+    status: z.enum(["pending", "approved", "rejected"]),
+    tool: z.string(),
+    args: z.record(z.string(), z.unknown()),
+    createdAt: z.string(),
+    dateSegment: z.string(),
+    resolvedAt: z.string().optional(),
+    reviewer: z.string().optional(),
+    result: ExecResultSchema.optional(),
+    error: z.string().optional(),
+    reason: z.string().optional(),
+  })
+  .superRefine((action, ctx) => {
+    if (action.status === "approved" && !action.result) {
+      ctx.addIssue({
+        code: "custom",
+        message: "approved approval actions must include a valid ExecResult result",
+        path: ["result"],
+      });
+    }
+  });
 
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type ApprovalAction = z.infer<typeof ApprovalActionSchema>;
@@ -74,9 +85,28 @@ export class ApprovalStore {
     reviewer?: string,
     reason?: string,
   ): ApprovalAction {
+    if (decision === "approved") {
+      throw new Error("Use approveLoaded to store approved approval actions with an ExecResult");
+    }
     action.status = decision;
     action.resolvedAt = new Date().toISOString();
     action.reviewer = reviewer;
+    if (reason) action.reason = reason;
+
+    this.write(action);
+    return action;
+  }
+
+  approveLoaded(
+    action: ApprovalAction,
+    result: ExecResult,
+    reviewer?: string,
+    reason?: string,
+  ): ApprovalAction {
+    action.status = "approved";
+    action.resolvedAt = new Date().toISOString();
+    action.reviewer = reviewer;
+    action.result = ExecResultSchema.parse(result);
     if (reason) action.reason = reason;
 
     this.write(action);
