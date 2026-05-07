@@ -157,6 +157,26 @@ describe("resolveApproval", () => {
 
     expect(result).toEqual(failedResult);
   });
+
+  it("preserves stateless transport retry behavior for transient resolve failures", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockResolvedValue(jsonResponse({ stdout: "ok", stderr: "", exitCode: 0 }));
+
+    const { resolveApproval } = await import("./service.js");
+    const result = await resolveApproval(
+      "act-1",
+      "approved",
+      "U123",
+      "http://remote-cli:3004",
+      "internal-secret",
+      fetchImpl,
+    );
+
+    expect(result).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
@@ -580,7 +600,9 @@ describe("triggerRunnerSlack prompt distillation", () => {
       thread_ts: "1710000000.001",
       user: "U123",
       text: "please inspect this",
-      files: [{ id: "F123", name: "debug.log", mimetype: "text/plain", filetype: "text", size: 42 }],
+      files: [
+        { id: "F123", name: "debug.log", mimetype: "text/plain", filetype: "text", size: 42 },
+      ],
       block_tags: ["section"],
     });
   });
