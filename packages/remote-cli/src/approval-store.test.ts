@@ -36,6 +36,7 @@ describe("ApprovalStore", () => {
 
   it("stores approved actions with an explicit exec result", () => {
     const action = store.create("merge_pull_request", { pr: 42 });
+    action.error = "temporary failure";
 
     const resolved = store.approveLoaded(
       action,
@@ -48,6 +49,7 @@ describe("ApprovalStore", () => {
       status: "approved",
       result: { stdout: "merged", stderr: "", exitCode: 0 },
     });
+    expect(store.get(action.id)?.error).toBeUndefined();
   });
 
   it("fails fast on approved actions with invalid stored result shapes", () => {

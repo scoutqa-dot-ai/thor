@@ -70,7 +70,7 @@ export class ApprovalStore {
 
   resolve(
     id: string,
-    decision: "approved" | "rejected",
+    decision: "rejected",
     reviewer?: string,
     reason?: string,
   ): ApprovalAction | undefined {
@@ -81,13 +81,10 @@ export class ApprovalStore {
 
   resolveLoaded(
     action: ApprovalAction,
-    decision: "approved" | "rejected",
+    decision: "rejected",
     reviewer?: string,
     reason?: string,
   ): ApprovalAction {
-    if (decision === "approved") {
-      throw new Error("Use approveLoaded to store approved approval actions with an ExecResult");
-    }
     action.status = decision;
     action.resolvedAt = new Date().toISOString();
     action.reviewer = reviewer;
@@ -107,6 +104,7 @@ export class ApprovalStore {
     action.resolvedAt = new Date().toISOString();
     action.reviewer = reviewer;
     action.result = ExecResultSchema.parse(result);
+    delete action.error;
     if (reason) action.reason = reason;
 
     this.write(action);
