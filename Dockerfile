@@ -7,44 +7,73 @@
 #     target: gateway
 
 FROM node:24-slim AS base
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@10.33.1 --activate
 RUN groupadd --gid 1001 thor && useradd --uid 1001 --gid thor --create-home thor
 RUN mkdir -p /workspace && chown thor:thor /workspace
 
 # --- Install deps (cached until lockfile or package.json changes) ---
 FROM base AS deps
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json tsup.config.ts ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm fetch --frozen-lockfile --store-dir /pnpm/store
 COPY packages/common/package.json packages/common/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/runner/package.json packages/runner/
 COPY packages/remote-cli/package.json packages/remote-cli/
 COPY packages/opencode-cli/package.json packages/opencode-cli/
 COPY packages/admin/package.json packages/admin/
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --offline --store-dir /pnpm/store
 
-# --- Build all packages ---
+# --- Package-scoped build stages ---
+FROM deps AS common-source
+COPY tsconfig.base.json tsup.config.ts ./
+COPY packages/common/ packages/common/
+
+FROM common-source AS gateway-build
+COPY packages/gateway/ packages/gateway/
+RUN pnpm --filter @thor/gateway build
+
+FROM common-source AS admin-build
+COPY packages/admin/ packages/admin/
+RUN pnpm --filter @thor/admin build
+
+FROM common-source AS runner-build
+COPY packages/runner/ packages/runner/
+RUN pnpm --filter @thor/runner build
+
+FROM common-source AS remote-cli-build
+COPY packages/remote-cli/ packages/remote-cli/
+RUN pnpm --filter @thor/remote-cli build
+
+FROM common-source AS opencode-cli-build
+COPY packages/opencode-cli/ packages/opencode-cli/
+RUN pnpm --filter @thor/opencode-cli build
+
+# Backward-compatible full build target for manual verification/debugging.
 FROM deps AS build
+COPY tsconfig.base.json tsup.config.ts ./
 COPY packages/ packages/
 RUN pnpm -r build
 
 # === Per-service targets ===
 
-FROM build AS gateway
+FROM gateway-build AS gateway
 USER thor
 WORKDIR /workspace
 ENV PORT=3002
 EXPOSE 3002
 CMD ["node", "/app/packages/gateway/dist/index.js"]
 
-FROM build AS admin
+FROM admin-build AS admin
 USER thor
 WORKDIR /workspace
 ENV PORT=3005
 EXPOSE 3005
 CMD ["node", "/app/packages/admin/dist/index.js"]
 
-FROM build AS runner
+FROM runner-build AS runner
 USER thor
 WORKDIR /workspace
 ENV PORT=3000
@@ -62,7 +91,7 @@ RUN apt-get update \
     && chmod +x /usr/local/bin/shfmt \
     && rm -rf /var/lib/apt/lists/*
 # git/gh/scoutqa wrapper scripts — forward to remote-cli service over HTTP
-COPY --from=build /app/packages/opencode-cli/dist/remote-cli.mjs /usr/local/bin/remote-cli.mjs
+COPY --from=opencode-cli-build /app/packages/opencode-cli/dist/remote-cli.mjs /usr/local/bin/remote-cli.mjs
 COPY docker/opencode/bin/git /usr/local/bin/git
 COPY docker/opencode/bin/gh /usr/local/bin/gh
 COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
@@ -91,12 +120,15 @@ ENV OPENCODE_CLIENT=thor
 COPY --chown=thor:thor docker/opencode/config/ /home/thor/.config/opencode/
 ENTRYPOINT ["opencode"]
 
-FROM build AS remote-cli
+FROM base AS remote-cli-tools
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl openssh-client && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 RUN npm i -g @scoutqa/cli@latest langfuse-cli@0.0.8 @launchdarkly/ldcli@2.2.0
+
+FROM remote-cli-tools AS remote-cli
+COPY --from=remote-cli-build /app /app
 COPY packages/remote-cli/entrypoint.sh /entrypoint.sh
 # Thor git/gh wrappers for GitHub App auth
 COPY packages/remote-cli/bin/github-app-config.sh /usr/local/lib/thor/bin/github-app-config.sh
