@@ -76,6 +76,16 @@ The sandbox image is intentionally slim. Preinstalled by default:
 - **Java**: 21 (default), 17 (Temurin) via SDKMAN. Maven and Gradle included.
 - **Python**: 3.12 (default) via pyenv. `uv` available for fast installs.
 - **Docker**: Docker CE with docker compose. Start the daemon with `sudo dockerd &` before use.
+- **Browser automation/recording**: `agent-browser` with Chrome for Testing preinstalled, plus `ffmpeg`, `xvfb`, `xdotool`, `tree`, and ImageMagick (`identify`, `convert`, `compare`).
+
+Browser examples:
+
+```bash
+sandbox agent-browser --session qa open https://example.com
+sandbox agent-browser --session qa screenshot /tmp/example.png
+sandbox identify /tmp/example.png
+sandbox xvfb-run -a agent-browser --session qa open https://example.com --headed
+```
 
 Install less-common toolchains on demand per task by running the appropriate
 installer inside the sandbox (for example via `nvm`, `pyenv`, `rustup`, or by

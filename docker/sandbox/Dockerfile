@@ -23,6 +23,7 @@ ARG JAVA_17_VERSION=17.0.18-tem
 ARG PYENV_INSTALL_TAG=v2.6.27
 ARG PYTHON_3_12_VERSION=3.12.13
 ARG UV_VERSION=0.11.7
+ARG AGENT_BROWSER_VERSION=0.26.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -56,6 +57,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     redis-tools \
     ripgrep \
     fd-find \
+    tree \
+    ffmpeg \
+    xvfb \
+    xdotool \
+    imagemagick \
     # pyenv build dependencies
     libssl-dev \
     zlib1g-dev \
@@ -103,6 +109,15 @@ RUN bash -c '. "$NVM_DIR/nvm.sh" \
     && nvm current | grep -Fx "v$NODE_22_VERSION" >/dev/null \
     && node --version | grep -Fx "v$NODE_22_VERSION" >/dev/null \
     && pnpm --version'
+
+# Browser automation/recording helpers. agent-browser downloads Chrome for Testing
+# into thor's home so sandbox commands can launch it without first-run setup.
+RUN bash -c '. "$NVM_DIR/nvm.sh" \
+    && nvm use default \
+    && npm install -g "agent-browser@$AGENT_BROWSER_VERSION" \
+    && agent-browser --version | grep -F "$AGENT_BROWSER_VERSION" >/dev/null \
+    && agent-browser install --with-deps \
+    && agent-browser doctor --offline --quick'
 
 # ── SDKMAN + Java/Maven/Gradle ─────────────────────────────────────────────
 
