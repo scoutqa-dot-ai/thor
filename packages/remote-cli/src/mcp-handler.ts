@@ -565,7 +565,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     reviewer: string,
     reason: string | undefined,
   ): Promise<McpExecResult> {
-    const lookup = findApproval(actionId);
+    let lookup: ApprovalLookup | undefined;
+    try {
+      lookup = findApproval(actionId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return fail(`Failed to load approval action ${actionId}: ${message}`);
+    }
     if (!lookup) {
       return fail(`No approval action found with ID: ${actionId}`);
     }
@@ -607,7 +613,14 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       logEvent: "tool_call_approved",
       decision: "approved",
       extraLogFields: { actionId: pendingAction.id },
+      onError: (message) => {
+        pendingAction.error = message;
+        lookup.store.update(pendingAction);
+      },
     });
+    if (result.exitCode !== 0) {
+      return result;
+    }
     lookup.store.approveLoaded(pendingAction, result, reviewer, reason);
     return result;
   }
@@ -725,7 +738,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         if (!args[1]) {
           return fail("Usage: approval status <action-id>\n");
         }
-        const lookup = findApproval(args[1]);
+        let lookup: ApprovalLookup | undefined;
+        try {
+          lookup = findApproval(args[1]);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return fail(`Failed to load approval action ${args[1]}: ${message}`);
+        }
         if (!lookup) {
           return fail(`No approval action found with ID: ${args[1]}\n`);
         }
