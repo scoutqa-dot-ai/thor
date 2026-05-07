@@ -77,6 +77,7 @@ const ApprovalRequiredOutputSchema = z
     actionId: z.string().min(1),
     tool: z.string().min(1).optional(),
     proxyName: z.string().min(1).optional(),
+    args: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
@@ -1249,7 +1250,7 @@ function parseApprovalResult(
     type: "approval_required",
     actionId: parsed.data.actionId,
     tool: parsed.data.tool ?? tool,
-    args,
+    args: parsed.data.args ?? args,
     proxyName: parsed.data.proxyName,
   };
 }

@@ -109,7 +109,9 @@ function toolEvent(
   status: string,
   input: Record<string, unknown>,
   time: { start: number; end: number } = { start: 1000, end: 2500 },
+  output?: string,
 ): Event {
+  const state = { status, input, time, ...(output !== undefined ? { output } : {}) };
   return {
     type: "message.part.updated",
     properties: {
@@ -119,7 +121,7 @@ function toolEvent(
         messageID: `m-${sessionId}`,
         callID: `call-${tool}`,
         tool,
-        state: { status, input, time },
+        state,
       },
     },
   } as unknown as Event;
@@ -571,6 +573,67 @@ describe("runner /trigger orchestration", () => {
         sessionId: "session-1",
         resumed: true,
         status: "completed",
+      });
+    });
+  });
+
+  it("emits approval_required events from output args and falls back to input args", async () => {
+    const outputArgs = {
+      projectKey: "THOR",
+      summary: "Persisted summary",
+      description: "persisted body with disclaimer",
+    };
+    const wrapperArgs = { upstream: "atlassian", tool: "createJiraIssue", arguments: "{}" };
+    const h = createHarness({
+      promptEvents: (sessionId) => [
+        toolEvent(
+          sessionId,
+          "mcp",
+          "completed",
+          wrapperArgs,
+          { start: 1000, end: 1200 },
+          JSON.stringify({
+            type: "approval_required",
+            actionId: "approval-with-output-args",
+            proxyName: "atlassian",
+            tool: "createJiraIssue",
+            args: outputArgs,
+          }),
+        ),
+        toolEvent(
+          sessionId,
+          "mcp",
+          "completed",
+          wrapperArgs,
+          { start: 1300, end: 1500 },
+          JSON.stringify({
+            type: "approval_required",
+            actionId: "legacy-approval-without-output-args",
+            proxyName: "atlassian",
+            tool: "createJiraIssue",
+          }),
+        ),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "approval",
+        correlationKey: "slack:thread:1710000000.071",
+      });
+      const approvals = result.events.filter((e) => e.type === "approval_required");
+
+      expect(approvals).toHaveLength(2);
+      expect(approvals[0]).toMatchObject({
+        actionId: "approval-with-output-args",
+        tool: "createJiraIssue",
+        proxyName: "atlassian",
+        args: outputArgs,
+      });
+      expect(approvals[1]).toMatchObject({
+        actionId: "legacy-approval-without-output-args",
+        args: wrapperArgs,
       });
     });
   });

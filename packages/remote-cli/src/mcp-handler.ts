@@ -501,6 +501,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
           actionId: action.id,
           proxyName: instance.name,
           tool: toolInfo.name,
+          args: action.args,
           command: `approval status ${action.id}`,
         }),
       );
