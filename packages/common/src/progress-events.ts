@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { ApprovalRequiredEventPayloadSchema } from "./approval-events.js";
 
 // --- Individual event schemas ---
 
@@ -45,13 +46,7 @@ export const ProgressErrorSchema = z.object({
   error: z.string(),
 });
 
-export const ProgressApprovalRequiredSchema = z.object({
-  type: z.literal("approval_required"),
-  actionId: z.string(),
-  tool: z.string(),
-  args: z.record(z.string(), z.unknown()),
-  proxyName: z.string().optional(),
-});
+export const ProgressApprovalRequiredSchema = ApprovalRequiredEventPayloadSchema;
 
 export const ProgressHeartbeatSchema = z.object({
   type: z.literal("heartbeat"),
@@ -59,7 +54,7 @@ export const ProgressHeartbeatSchema = z.object({
 
 // --- Discriminated union ---
 
-export const ProgressEventSchema = z.discriminatedUnion("type", [
+export const ProgressEventSchema = z.union([
   ProgressStartSchema,
   ProgressToolSchema,
   ProgressMemorySchema,

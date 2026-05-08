@@ -307,12 +307,19 @@ describe("remote-cli MCP endpoints", () => {
       actionId: string;
       proxyName: string;
       tool: string;
+      args: Record<string, unknown>;
       command: string;
+    };
+    const expectedArgs = {
+      projectKey: "THOR",
+      summary: "Fix it",
+      description: `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
     };
     expect(approvalOutput).toMatchObject({
       type: "approval_required",
       proxyName: "atlassian",
       tool: "createJiraIssue",
+      args: expectedArgs,
     });
     expect(approvalOutput.command).toBe(`approval status ${approvalOutput.actionId}`);
     const actionId = approvalOutput.actionId;
@@ -327,6 +334,7 @@ describe("remote-cli MCP endpoints", () => {
       upstream: "atlassian",
       status: "pending",
       tool: "createJiraIssue",
+      args: expectedArgs,
     });
 
     const list = await postJson("/exec/approval", { args: ["list"] });
@@ -369,11 +377,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls).toEqual([
       {
         name: "createJiraIssue",
-        arguments: {
-          projectKey: "THOR",
-          summary: "Fix it",
-          description: `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
-        },
+        arguments: expectedArgs,
       },
     ]);
   });

@@ -8,7 +8,7 @@ import {
   ProgressEventSchema,
   resolveRepoDirectory,
 } from "@thor/common";
-import type { ExecResult, ProgressEvent } from "@thor/common";
+import type { ExecResult, ProgressApprovalRequired, ProgressEvent } from "@thor/common";
 import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
 import {
@@ -1050,7 +1050,7 @@ function renderGitHubPrompt(events: GitHubWebhookEvent[]): string {
 async function forwardApprovalNotification(
   channel: string,
   threadTs: string,
-  event: { actionId: string; tool: string; args: Record<string, unknown>; proxyName?: string },
+  event: ProgressApprovalRequired,
   deps: SlackDeps,
 ): Promise<void> {
   try {

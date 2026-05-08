@@ -9,6 +9,7 @@ import {
   isProxyName,
   getRepoUpstreams,
   getRunnerBaseUrl,
+  ApprovalRequiredEventPayloadSchema,
   interpolateHeaders,
   logError,
   logInfo,
@@ -19,6 +20,7 @@ import {
   type WorkspaceConfig,
   writeToolCallLog,
 } from "@thor/common";
+import type { ApprovalRequiredEventPayload } from "@thor/common";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import {
   classifyTool,
@@ -495,12 +497,16 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         ...getThorIds(context),
       });
       writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args: approvalArgs });
+      const approvalRequired: ApprovalRequiredEventPayload = ApprovalRequiredEventPayloadSchema.parse({
+        type: "approval_required",
+        actionId: action.id,
+        proxyName: instance.name,
+        tool: toolInfo.name,
+        args: action.args,
+      });
       return ok(
         stringify({
-          type: "approval_required",
-          actionId: action.id,
-          proxyName: instance.name,
-          tool: toolInfo.name,
+          ...approvalRequired,
           command: `approval status ${action.id}`,
         }),
       );

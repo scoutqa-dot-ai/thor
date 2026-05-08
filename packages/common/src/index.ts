@@ -16,6 +16,16 @@ export {
 } from "./workspace-config.js";
 export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.js";
 export {
+  APPROVAL_TOOL_NAMES,
+  ApprovalArgsSchema,
+  ApprovalRequiredEventPayloadSchema,
+  CreateJiraIssueApprovalArgsSchema,
+  AddCommentToJiraIssueApprovalArgsSchema,
+  CreateFeatureFlagApprovalArgsSchema,
+  UpdateFeatureFlagApprovalArgsSchema,
+} from "./approval-events.js";
+export type { ApprovalArgs, ApprovalRequiredEventPayload, ApprovalToolName } from "./approval-events.js";
+export {
   envOptionalString,
   envString,
   envInt,

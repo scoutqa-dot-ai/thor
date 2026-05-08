@@ -44,6 +44,7 @@ import {
   MAX_SESSION_FILE_BYTES,
   loadRunnerEnv,
   matchesInternalSecret,
+  ApprovalRequiredEventPayloadSchema,
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -70,15 +71,6 @@ const MEMORY_DIR = "/workspace/memory";
 const TaskDelegateInputSchema = z.object({
   subagent_type: z.string().trim().min(1),
 });
-
-const ApprovalRequiredOutputSchema = z
-  .object({
-    type: z.literal("approval_required"),
-    actionId: z.string().min(1),
-    tool: z.string().min(1).optional(),
-    proxyName: z.string().min(1).optional(),
-  })
-  .passthrough();
 
 const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
@@ -1087,11 +1079,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   // Detect approval-required tool results and emit approval event.
                   if (status === "completed") {
                     const completed = toolPart.state as ToolStateCompleted;
-                    const approval = parseApprovalResult(
-                      completed.output,
-                      toolPart.tool,
-                      (completed.input as Record<string, unknown>) ?? {},
-                    );
+                    const approval = parseApprovalResult(completed.output);
                     if (approval) {
                       emit(approval);
                     }
@@ -1230,11 +1218,7 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
   return eventSessionId(event) === sessionId;
 }
 
-function parseApprovalResult(
-  output: string,
-  tool: string,
-  args: Record<string, unknown>,
-): ProgressEvent | undefined {
+function parseApprovalResult(output: string): ProgressEvent | undefined {
   let parsedOutput: unknown;
   try {
     parsedOutput = JSON.parse(output);
@@ -1242,16 +1226,9 @@ function parseApprovalResult(
     return undefined;
   }
 
-  const parsed = ApprovalRequiredOutputSchema.safeParse(parsedOutput);
+  const parsed = ApprovalRequiredEventPayloadSchema.safeParse(parsedOutput);
   if (!parsed.success) return undefined;
-
-  return {
-    type: "approval_required",
-    actionId: parsed.data.actionId,
-    tool: parsed.data.tool ?? tool,
-    args,
-    proxyName: parsed.data.proxyName,
-  };
+  return parsed.data;
 }
 
 function escapeHtml(value: string): string {

@@ -273,9 +273,9 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       JSON.stringify({
         type: "approval_required",
         actionId: "act-1",
-        tool: "merge_pull_request",
-        args: { pr: 42 },
-        proxyName: "github",
+        tool: "createJiraIssue",
+        args: { projectKey: "ENG", summary: "Approval card", description: "Review me" },
+        proxyName: "atlassian",
       }),
     ];
     mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
@@ -298,8 +298,8 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       blocks: Array<{ elements?: Array<{ action_id: string; value: string }> }>;
     };
     const approveButton = arg.blocks[3].elements?.find((el) => el.action_id === "approval_approve");
-    expect(approveButton?.value).toBe("v3:act-1:github:1710000000.001");
-    expect(JSON.stringify(arg.blocks)).toContain("```json");
+    expect(approveButton?.value).toBe("v3:act-1:atlassian:1710000000.001");
+    expect(JSON.stringify(arg.blocks)).toContain("Create Jira issue: Approval card");
   });
 
   it("renders configured approval tools with markdown presentation blocks", async () => {
