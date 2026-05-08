@@ -579,7 +579,9 @@ describe("runner /trigger orchestration", () => {
 
   it("emits approval_required events only from typed output args", async () => {
     const outputArgs = {
+      cloudId: "cloud-1",
       projectKey: "THOR",
+      issueTypeName: "Task",
       summary: "Persisted summary",
       description: "persisted body with disclaimer",
     };

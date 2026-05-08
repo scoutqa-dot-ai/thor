@@ -9,15 +9,6 @@ export const APPROVAL_TOOL_NAMES = [
 
 export const CreateJiraIssueApprovalArgsSchema = z
   .object({
-    projectKey: z.unknown().optional(),
-    issueTypeName: z.unknown().optional(),
-    summary: z.unknown().optional(),
-    description: z.unknown().optional(),
-  })
-  .passthrough();
-
-export const CreateJiraIssuePresentationArgsSchema = z
-  .object({
     cloudId: z.string().min(1).optional(),
     projectKey: z.string().min(1),
     issueTypeName: z.string().min(1),
@@ -33,13 +24,6 @@ export const CreateJiraIssuePresentationArgsSchema = z
   .strict();
 
 export const AddCommentToJiraIssueApprovalArgsSchema = z
-  .object({
-    issueKey: z.unknown().optional(),
-    commentBody: z.unknown().optional(),
-  })
-  .passthrough();
-
-export const AddCommentToJiraIssuePresentationArgsSchema = z
   .object({
     cloudId: z.string().min(1).optional(),
     issueIdOrKey: z.string().min(1),
@@ -57,17 +41,6 @@ export const AddCommentToJiraIssuePresentationArgsSchema = z
 
 export const CreateFeatureFlagApprovalArgsSchema = z
   .object({
-    key: z.unknown().optional(),
-    name: z.unknown().optional(),
-    description: z.unknown().optional(),
-    active: z.unknown().optional(),
-    rolloutPercentage: z.unknown().optional(),
-    filters: z.unknown().optional(),
-  })
-  .passthrough();
-
-export const CreateFeatureFlagPresentationArgsSchema = z
-  .object({
     key: z.string().min(1),
     name: z.string().min(1).optional(),
     description: z.string().optional(),
@@ -78,17 +51,6 @@ export const CreateFeatureFlagPresentationArgsSchema = z
   .strict();
 
 export const UpdateFeatureFlagApprovalArgsSchema = z
-  .object({
-    key: z.unknown().optional(),
-    name: z.unknown().optional(),
-    description: z.unknown().optional(),
-    active: z.unknown().optional(),
-    rolloutPercentage: z.unknown().optional(),
-    filters: z.unknown().optional(),
-  })
-  .passthrough();
-
-export const UpdateFeatureFlagPresentationArgsSchema = z
   .object({
     key: z.string().min(1),
     name: z.string().min(1).optional(),

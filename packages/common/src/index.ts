@@ -23,10 +23,6 @@ export {
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   UpdateFeatureFlagApprovalArgsSchema,
-  CreateJiraIssuePresentationArgsSchema,
-  AddCommentToJiraIssuePresentationArgsSchema,
-  CreateFeatureFlagPresentationArgsSchema,
-  UpdateFeatureFlagPresentationArgsSchema,
 } from "./approval-events.js";
 export type {
   ApprovalArgs,

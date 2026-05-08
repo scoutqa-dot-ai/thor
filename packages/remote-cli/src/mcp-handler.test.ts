@@ -290,7 +290,7 @@ describe("remote-cli MCP endpoints", () => {
         args: [
           "atlassian",
           "createJiraIssue",
-          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
         cwd: "/workspace/repos/acme",
         directory: "/workspace/repos/acme",
@@ -311,7 +311,9 @@ describe("remote-cli MCP endpoints", () => {
       command: string;
     };
     const expectedArgs = {
+      cloudId: "cloud-1",
       projectKey: "THOR",
+      issueTypeName: "Task",
       summary: "Fix it",
       description: `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
     };
@@ -399,7 +401,7 @@ describe("remote-cli MCP endpoints", () => {
         args: [
           "atlassian",
           "createJiraIssue",
-          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
         cwd: "/workspace/repos/acme",
         directory: "/workspace/repos/acme",
@@ -470,7 +472,7 @@ describe("remote-cli MCP endpoints", () => {
         args: [
           "atlassian",
           "createJiraIssue",
-          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
         cwd: "/workspace/repos/acme",
         directory: "/workspace/repos/acme",
@@ -535,7 +537,7 @@ describe("remote-cli MCP endpoints", () => {
         args: [
           "atlassian",
           "createJiraIssue",
-          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
         cwd: "/workspace/repos/acme",
         directory: "/workspace/repos/acme",

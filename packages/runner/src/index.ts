@@ -44,7 +44,7 @@ import {
   MAX_SESSION_FILE_BYTES,
   loadRunnerEnv,
   matchesInternalSecret,
-  ApprovalRequiredEventPayloadSchema,
+  ProgressApprovalRequiredSchema,
   withKeyLock,
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
@@ -1213,7 +1213,7 @@ function parseApprovalResult(output: string): ProgressEvent | undefined {
     return undefined;
   }
 
-  const parsed = ApprovalRequiredEventPayloadSchema.safeParse(parsedOutput);
+  const parsed = ProgressApprovalRequiredSchema.safeParse(parsedOutput);
   if (!parsed.success) return undefined;
   return parsed.data;
 }

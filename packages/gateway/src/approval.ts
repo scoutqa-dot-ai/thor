@@ -1,13 +1,8 @@
 import {
   AddCommentToJiraIssueApprovalArgsSchema,
-  AddCommentToJiraIssuePresentationArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
-  CreateFeatureFlagPresentationArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
-  CreateJiraIssuePresentationArgsSchema,
   UpdateFeatureFlagApprovalArgsSchema,
-  UpdateFeatureFlagPresentationArgsSchema,
-  type ApprovalArgs,
   type ApprovalToolName,
 } from "@thor/common";
 import type { SlackBlock } from "./slack-api.js";
@@ -130,7 +125,7 @@ export function formatApprovalArgs(args: Record<string, unknown>): string {
 
 export function buildApprovalPresentation(
   tool: ApprovalToolName,
-  args: ApprovalArgs,
+  args: Record<string, unknown>,
 ): ApprovalPresentation | undefined {
   try {
     switch (tool) {
@@ -224,9 +219,8 @@ export function buildApprovalPresentationBlocks(
   ];
 }
 
-function buildCreateJiraIssuePresentation(args: ApprovalArgs): ApprovalPresentation {
-  CreateJiraIssueApprovalArgsSchema.parse(args);
-  const parsed = CreateJiraIssuePresentationArgsSchema.parse(args);
+function buildCreateJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = CreateJiraIssueApprovalArgsSchema.parse(args);
   return {
     title: `Create Jira issue: ${renderValue(parsed.summary) ?? "Untitled Jira issue"}`,
     markdown: joinMarkdown([
@@ -238,9 +232,8 @@ function buildCreateJiraIssuePresentation(args: ApprovalArgs): ApprovalPresentat
   };
 }
 
-function buildAddJiraCommentPresentation(args: ApprovalArgs): ApprovalPresentation {
-  AddCommentToJiraIssueApprovalArgsSchema.parse(args);
-  const parsed = AddCommentToJiraIssuePresentationArgsSchema.parse(args);
+function buildAddJiraCommentPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = AddCommentToJiraIssueApprovalArgsSchema.parse(args);
   return {
     title: `Comment on Jira issue: ${renderValue(parsed.issueIdOrKey) ?? "unknown issue"}`,
     markdown: joinMarkdown([
@@ -250,9 +243,8 @@ function buildAddJiraCommentPresentation(args: ApprovalArgs): ApprovalPresentati
   };
 }
 
-function buildCreateFeatureFlagPresentation(args: ApprovalArgs): ApprovalPresentation {
-  CreateFeatureFlagApprovalArgsSchema.parse(args);
-  const parsed = CreateFeatureFlagPresentationArgsSchema.parse(args);
+function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = CreateFeatureFlagApprovalArgsSchema.parse(args);
   const titleTarget = renderValue(parsed.name ?? parsed.key) ?? "feature flag";
   return {
     title: `Create feature flag: ${titleTarget}`,
@@ -267,9 +259,8 @@ function buildCreateFeatureFlagPresentation(args: ApprovalArgs): ApprovalPresent
   };
 }
 
-function buildUpdateFeatureFlagPresentation(args: ApprovalArgs): ApprovalPresentation {
-  UpdateFeatureFlagApprovalArgsSchema.parse(args);
-  const parsed = UpdateFeatureFlagPresentationArgsSchema.parse(args);
+function buildUpdateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = UpdateFeatureFlagApprovalArgsSchema.parse(args);
   const changes = [
     bullet("name", parsed.name),
     section("description", parsed.description),
