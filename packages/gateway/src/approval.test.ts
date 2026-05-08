@@ -75,6 +75,7 @@ describe("approval formatting", () => {
 describe("approval presentation", () => {
   it("returns only title and markdown for configured approval tools", () => {
     const presentation = buildApprovalPresentation("createJiraIssue", {
+      cloudId: "cloud-1",
       projectKey: "ENG",
       issueTypeName: "Task",
       summary: "Ship approval cards",
@@ -91,7 +92,9 @@ describe("approval presentation", () => {
 
   it("escapes mrkdwn-special user input in titles and markdown", () => {
     const presentation = buildApprovalPresentation("createJiraIssue", {
+      cloudId: "cloud-1",
       projectKey: "ENG",
+      issueTypeName: "Task",
       summary: "<!here> & <@U123>",
       description: "See <#C123> & <!channel>",
     });
@@ -99,18 +102,15 @@ describe("approval presentation", () => {
     expect(presentation).toEqual({
       title: "Create Jira issue: &lt;!here&gt; &amp; &lt;@U123&gt;",
       markdown:
-        "*Project:* ENG\n\n*Summary:* &lt;!here&gt; &amp; &lt;@U123&gt;\n\n*Description:*\nSee &lt;#C123&gt; &amp; &lt;!channel&gt;",
+        "*Project:* ENG\n\n*Issue type:* Task\n\n*Summary:* &lt;!here&gt; &amp; &lt;@U123&gt;\n\n*Description:*\nSee &lt;#C123&gt; &amp; &lt;!channel&gt;",
     });
   });
 
-  it("builds sparse presentations without throwing", () => {
-    expect(buildApprovalPresentation("addCommentToJiraIssue", {})).toEqual({
-      title: "Comment on Jira issue: unknown issue",
-      markdown: "*Issue:* unknown issue",
-    });
+  it("renders strict approval presentations for known tool schemas", () => {
     expect(
       buildApprovalPresentation("addCommentToJiraIssue", {
-        issueKey: "ENG-42",
+        cloudId: "cloud-1",
+        issueIdOrKey: "ENG-42",
         commentBody: "Looks good to me.",
       }),
     ).toEqual({
@@ -119,6 +119,7 @@ describe("approval presentation", () => {
     });
     expect(
       buildApprovalPresentation("addCommentToJiraIssue", {
+        cloudId: "cloud-1",
         issueIdOrKey: "KSR-11011",
         commentBody: "Approved.",
       }),
@@ -126,24 +127,34 @@ describe("approval presentation", () => {
       title: "Comment on Jira issue: KSR-11011",
       markdown: "*Issue:* KSR-11011\n\n*Comment:*\nApproved.",
     });
-    expect(buildApprovalPresentation("create-feature-flag", { key: "beta", active: false })).toEqual({
-      title: "Create feature flag: beta",
-      markdown: "*Key:* beta\n\n*Active:* false",
-    });
-    expect(buildApprovalPresentation("update-feature-flag", { key: "beta", filters: { groups: [] } }))
-      .toEqual({
-        title: "Update feature flag: beta",
-        markdown: '*Flag:* beta\n\n*filters:* {"groups":[]}',
-      });
     expect(
-      buildApprovalPresentation("update-feature-flag", {
-        key: "beta",
-        "<!here>": true,
-      }),
+      buildApprovalPresentation("create-feature-flag", { key: "beta", active: false }),
+    ).toEqual({ title: "Create feature flag: beta", markdown: "*Key:* beta\n\n*Active:* false" });
+    expect(
+      buildApprovalPresentation("update-feature-flag", { key: "beta", filters: { groups: [] } }),
     ).toEqual({
       title: "Update feature flag: beta",
-      markdown: "*Flag:* beta\n\n*&lt;!here&gt;:* true",
+      markdown: '*Flag:* beta\n\n*filters:* {"groups":[]}',
     });
+  });
+
+  it("falls back to raw JSON when approval payloads fail strict parsing", () => {
+    expect(
+      buildApprovalPresentation("createJiraIssue", {
+        projectKey: "ENG",
+        summary: "Missing required fields",
+      }),
+    ).toBeUndefined();
+    expect(
+      buildApprovalPresentation("addCommentToJiraIssue", {
+        issueKey: "ENG-42",
+        commentBody: "Legacy alias",
+      }),
+    ).toBeUndefined();
+    expect(buildApprovalPresentation("create-feature-flag", { flagKey: "beta" })).toBeUndefined();
+    expect(
+      buildApprovalPresentation("update-feature-flag", { key: "beta", "<!here>": true }),
+    ).toBeUndefined();
   });
 
   it("returns undefined for unconfigured tools", () => {
@@ -168,7 +179,10 @@ describe("approval presentation", () => {
     expect(blocks[3]).toMatchObject({
       type: "actions",
       elements: expect.arrayContaining([
-        expect.objectContaining({ action_id: "approval_approve", value: "v3:act-1:posthog:1710000000.001" }),
+        expect.objectContaining({
+          action_id: "approval_approve",
+          value: "v3:act-1:posthog:1710000000.001",
+        }),
       ]),
     });
   });
@@ -190,7 +204,9 @@ describe("approval presentation", () => {
         text: expect.stringContaining("…[+"),
       },
     });
-    expect((blocks[0] as { text: { text: string } }).text.text.length).toBeLessThanOrEqual(280 + 11);
+    expect((blocks[0] as { text: { text: string } }).text.text.length).toBeLessThanOrEqual(
+      280 + 11,
+    );
     expect((blocks[1] as { text: { text: string } }).text.text.length).toBeLessThanOrEqual(3000);
   });
 });

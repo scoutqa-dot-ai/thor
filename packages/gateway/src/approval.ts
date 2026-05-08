@@ -1,3 +1,4 @@
+import { z } from "zod/v4";
 import type { SlackBlock } from "./slack-api.js";
 
 const SLACK_SECTION_TEXT_LIMIT = 3000;
@@ -34,6 +35,60 @@ export interface ApprovalPresentation {
   title: string;
   markdown: string;
 }
+
+const CreateJiraIssuePresentationArgsSchema = z
+  .object({
+    cloudId: z.string().min(1).optional(),
+    projectKey: z.string().min(1),
+    issueTypeName: z.string().min(1),
+    summary: z.string().min(1),
+    description: z.string().optional(),
+    parent: z.string().min(1).optional(),
+    assignee_account_id: z.string().min(1).optional(),
+    additional_fields: z.record(z.string(), z.unknown()).optional(),
+    transition: z.object({ id: z.string().min(1) }).optional(),
+    contentFormat: z.enum(["markdown", "adf"]).optional(),
+    responseContentFormat: z.enum(["markdown", "adf"]).optional(),
+  })
+  .strict();
+
+const AddJiraCommentPresentationArgsSchema = z
+  .object({
+    cloudId: z.string().min(1).optional(),
+    issueIdOrKey: z.string().min(1),
+    commentBody: z.string().min(1),
+    commentVisibility: z
+      .object({
+        type: z.enum(["group", "role"]),
+        value: z.string().min(1),
+      })
+      .optional(),
+    contentFormat: z.enum(["markdown", "adf"]).optional(),
+    responseContentFormat: z.enum(["markdown", "adf"]).optional(),
+  })
+  .strict();
+
+const CreateFeatureFlagPresentationArgsSchema = z
+  .object({
+    key: z.string().min(1),
+    name: z.string().min(1).optional(),
+    description: z.string().optional(),
+    active: z.boolean().optional(),
+    rolloutPercentage: z.number().optional(),
+    filters: z.unknown().optional(),
+  })
+  .strict();
+
+const UpdateFeatureFlagPresentationArgsSchema = z
+  .object({
+    key: z.string().min(1),
+    name: z.string().min(1).optional(),
+    description: z.string().optional(),
+    active: z.boolean().optional(),
+    rolloutPercentage: z.number().optional(),
+    filters: z.unknown().optional(),
+  })
+  .strict();
 
 export function buildApprovalButtonValue(input: {
   actionId: string;
@@ -213,68 +268,58 @@ export function buildApprovalPresentationBlocks(
 }
 
 function buildCreateJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const project = pickField(args, "projectKey", "project", "projectId", "projectName");
-  const issueType = pickField(args, "issueTypeName", "issueType", "issuetype", "type");
-  const summaryValue = pickField(args, "summary", "title");
-  const summary = renderValue(summaryValue) ?? "Untitled Jira issue";
-  const description = pickField(args, "description", "body");
+  const parsed = CreateJiraIssuePresentationArgsSchema.parse(args);
   return {
-    title: `Create Jira issue: ${summary}`,
+    title: `Create Jira issue: ${renderValue(parsed.summary) ?? "Untitled Jira issue"}`,
     markdown: joinMarkdown([
-      bullet("Project", project),
-      bullet("Issue type", issueType),
-      bullet("Summary", summaryValue),
-      section("Description", description),
+      bullet("Project", parsed.projectKey),
+      bullet("Issue type", parsed.issueTypeName),
+      bullet("Summary", parsed.summary),
+      section("Description", parsed.description),
     ]),
   };
 }
 
 function buildAddJiraCommentPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const issueValue = pickField(args, "issueIdOrKey", "issueKey", "issueId", "key", "id");
-  const issue = renderValue(issueValue) ?? "unknown issue";
-  const comment = pickField(args, "commentBody", "comment", "body", "text");
+  const parsed = AddJiraCommentPresentationArgsSchema.parse(args);
   return {
-    title: `Comment on Jira issue: ${issue}`,
-    markdown: joinMarkdown([bullet("Issue", issueValue ?? issue), section("Comment", comment)]),
+    title: `Comment on Jira issue: ${renderValue(parsed.issueIdOrKey) ?? "unknown issue"}`,
+    markdown: joinMarkdown([
+      bullet("Issue", parsed.issueIdOrKey),
+      section("Comment", parsed.commentBody),
+    ]),
   };
 }
 
 function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const key = pickField(args, "key", "flagKey", "featureFlagKey");
-  const name = pickField(args, "name", "flagName");
-  const description = pickField(args, "description");
-  const titleTarget = renderValue(name ?? key) ?? "feature flag";
+  const parsed = CreateFeatureFlagPresentationArgsSchema.parse(args);
+  const titleTarget = renderValue(parsed.name ?? parsed.key) ?? "feature flag";
   return {
     title: `Create feature flag: ${titleTarget}`,
     markdown: joinMarkdown([
-      bullet("Key", key),
-      bullet("Name", name),
-      section("Description", description),
-      bullet("Active", pickField(args, "active", "enabled")),
-      bullet("Rollout", pickField(args, "rolloutPercentage", "rollout", "percentage")),
-      bullet("Filters", pickField(args, "filters")),
+      bullet("Key", parsed.key),
+      bullet("Name", parsed.name),
+      section("Description", parsed.description),
+      bullet("Active", parsed.active),
+      bullet("Rollout", parsed.rolloutPercentage),
+      bullet("Filters", parsed.filters),
     ]),
   };
 }
 
 function buildUpdateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const keyValue = pickField(args, "key", "flagKey", "featureFlagKey", "id");
-  const key = renderValue(keyValue) ?? "feature flag";
-  const changes = Object.entries(args)
-    .filter(([name, value]) => !["key", "flagKey", "featureFlagKey", "id"].includes(name) && value !== undefined)
-    .map(([name, value]) => bullet(name, value));
+  const parsed = UpdateFeatureFlagPresentationArgsSchema.parse(args);
+  const changes = [
+    bullet("name", parsed.name),
+    section("description", parsed.description),
+    bullet("active", parsed.active),
+    bullet("rolloutPercentage", parsed.rolloutPercentage),
+    bullet("filters", parsed.filters),
+  ];
   return {
-    title: `Update feature flag: ${key}`,
-    markdown: joinMarkdown([bullet("Flag", keyValue ?? key), ...changes]),
+    title: `Update feature flag: ${renderValue(parsed.key) ?? "feature flag"}`,
+    markdown: joinMarkdown([bullet("Flag", parsed.key), ...changes]),
   };
-}
-
-function pickField(args: Record<string, unknown>, ...names: string[]): unknown {
-  for (const name of names) {
-    const value = args[name];
-    if (value !== undefined && value !== null) return value;
-  }
-  return undefined;
 }
 
 function renderValue(value: unknown): string | undefined {
@@ -288,7 +333,9 @@ function renderValue(value: unknown): string | undefined {
   }
   if (Array.isArray(value)) {
     if (value.length === 0) return undefined;
-    return value.map((item) => renderValue(item) ?? escapeMrkdwnText(JSON.stringify(item))).join(", ");
+    return value
+      .map((item) => renderValue(item) ?? escapeMrkdwnText(JSON.stringify(item)))
+      .join(", ");
   }
   try {
     return escapeMrkdwnText(trimString(JSON.stringify(value), 500));

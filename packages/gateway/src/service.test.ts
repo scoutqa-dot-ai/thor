@@ -343,6 +343,47 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     expect(approveButton?.value).toBe("v3:act-2:posthog:1710000000.001");
   });
 
+  it("falls back to inline raw JSON when a configured approval payload fails strict parsing", async () => {
+    const lines = [
+      JSON.stringify({
+        type: "approval_required",
+        actionId: "act-3",
+        tool: "addCommentToJiraIssue",
+        args: { issueKey: "ENG-42", commentBody: "Legacy alias payload" },
+        proxyName: "atlassian",
+      }),
+    ];
+    mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
+
+    const { triggerRunnerSlack } = await import("./service.js");
+    await triggerRunnerSlack(
+      [slackEvent],
+      "key1",
+      runnerDeps,
+      slackDeps,
+      false,
+      undefined,
+      channelRepos,
+    );
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(postMessage).toHaveBeenCalled();
+    const arg = postMessage.mock.calls[0][0] as {
+      text: string;
+      blocks: Array<{
+        text?: { text: string };
+        elements?: Array<{ action_id: string; value: string }>;
+      }>;
+    };
+    expect(arg.text).toBe("Approval required for `addCommentToJiraIssue`");
+    expect(arg.blocks[0].text?.text).toBe(":lock: *Approval required* — `addCommentToJiraIssue`");
+    expect(arg.blocks[1].text?.text).toContain("```json");
+    expect(arg.blocks[1].text?.text).toContain('"issueKey": "ENG-42"');
+    const approveButton = arg.blocks[3].elements?.find((el) => el.action_id === "approval_approve");
+    expect(approveButton?.value).toBe("v3:act-3:atlassian:1710000000.001");
+  });
+
   it("skips invalid NDJSON lines without crashing", async () => {
     const lines = [
       "not valid json",
