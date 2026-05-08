@@ -333,6 +333,9 @@ else
     atlassian/addCommentToJiraIssue)
       approval_args_json='{"cloudId":"e2e-cloud","issueIdOrKey":"THOR-1","commentBody":"e2e approval body"}'
       ;;
+    posthog/create-feature-flag)
+      approval_args_json="{\"key\":\"thor-e2e-approval-${REMOTE_CLI_AUTH_TS}\",\"name\":\"Thor E2E approval ${REMOTE_CLI_AUTH_TS}\",\"description\":\"e2e approval body\",\"active\":false}"
+      ;;
     *)
       approval_args_json='{"description":"e2e approval body"}'
       ;;
