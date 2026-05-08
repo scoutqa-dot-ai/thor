@@ -84,7 +84,6 @@ export {
   THOR_WORKTREES_ROOT_ENV,
   getWorkspaceWorktreesRoot,
   isPathWithin,
-  isPathWithinPrefix,
   realpathOrNull,
   resolveExistingDirectoryWithinRoot,
 } from "./paths.js";

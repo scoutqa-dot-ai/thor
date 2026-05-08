@@ -7,7 +7,7 @@
  */
 
 import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
-import { WORKSPACE_WORKTREES_ROOT, isPathWithinPrefix, realpathOrNull } from "@thor/common";
+import { WORKSPACE_WORKTREES_ROOT, isPathWithin, realpathOrNull } from "@thor/common";
 import { isAbsolute, normalize as normalizePosix } from "node:path/posix";
 
 const DIGITS_ONLY = /^\d+$/;
@@ -455,7 +455,7 @@ function validateWorktreeRemove(args: string[]): string | null {
     return denyMessage("git worktree remove");
   }
   const realPath = realpathOrNull(args[2]);
-  if (!realPath || !isPathWithinPrefix(WORKTREE_ROOT, realPath) || realPath === WORKTREE_ROOT) {
+  if (!realPath || !isPathWithin(WORKTREE_ROOT, realPath) || realPath === WORKTREE_ROOT) {
     return denyMessage("git worktree remove");
   }
   return null;

@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { WORKSPACE_REPOS_ROOT, isPathWithinPrefix } from "./paths.js";
+import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.js";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
 import { createLogger, logWarn } from "./logger.js";
@@ -335,6 +335,6 @@ const ALLOWED_PREFIXES = [WORKSPACE_REPOS_ROOT];
 export function isAllowedDirectory(directory: string): boolean {
   const normalized = normalize(resolve("/", directory));
   return ALLOWED_PREFIXES.some(
-    (prefix) => isPathWithinPrefix(prefix, normalized) && normalized.length > prefix.length,
+    (prefix) => isPathWithin(prefix, normalized) && normalized.length > prefix.length,
   );
 }
