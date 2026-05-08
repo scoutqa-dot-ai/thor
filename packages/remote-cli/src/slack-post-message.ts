@@ -1,7 +1,7 @@
 import {
   appendCorrelationAlias,
   currentSessionForAnchor,
-  isPathWithinPrefix,
+  isPathWithin,
   realpathOrNull,
   resolveAlias,
   type ExecResult,
@@ -50,7 +50,7 @@ function allowedBlocksFileRoots(): string[] {
 
 function isAllowedBlocksFilePath(path: string): boolean {
   const normalized = resolve(path);
-  return allowedBlocksFileRoots().some((root) => isPathWithinPrefix(root, normalized));
+  return allowedBlocksFileRoots().some((root) => isPathWithin(root, normalized));
 }
 
 function resolveBlocksFilePath(blocksFile: string, cwd?: string): string | { error: string } {

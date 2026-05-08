@@ -68,24 +68,14 @@ export class ApprovalStore {
     this.write(action);
   }
 
-  resolve(
-    id: string,
-    decision: "rejected",
-    reviewer?: string,
-    reason?: string,
-  ): ApprovalAction | undefined {
+  reject(id: string, reviewer?: string, reason?: string): ApprovalAction | undefined {
     const action = this.get(id);
     if (!action || action.status !== "pending") return undefined;
-    return this.resolveLoaded(action, decision, reviewer, reason);
+    return this.rejectLoaded(action, reviewer, reason);
   }
 
-  resolveLoaded(
-    action: ApprovalAction,
-    decision: "rejected",
-    reviewer?: string,
-    reason?: string,
-  ): ApprovalAction {
-    action.status = decision;
+  rejectLoaded(action: ApprovalAction, reviewer?: string, reason?: string): ApprovalAction {
+    action.status = "rejected";
     action.resolvedAt = new Date().toISOString();
     action.reviewer = reviewer;
     if (reason) action.reason = reason;

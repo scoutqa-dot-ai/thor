@@ -62,9 +62,7 @@ function fakeConfigLoader(
     repos["test-repo"] = { channels: channelIds };
   }
   const config: WorkspaceConfig = { repos };
-  const loader = (() => config) as ConfigLoader;
-  loader.invalidate = () => {};
-  return loader;
+  return () => config;
 }
 
 let mappedRepos = new Set<string>(["test-repo", "thor"]);
@@ -2994,7 +2992,9 @@ describe("gateway", () => {
         thread_ts: "1710000000.001",
         user: "U123",
         text: "",
-        files: [{ id: "F123", name: "debug.log", mimetype: "text/plain", filetype: "text", size: 1234 }],
+        files: [
+          { id: "F123", name: "debug.log", mimetype: "text/plain", filetype: "text", size: 1234 },
+        ],
       });
     });
   });

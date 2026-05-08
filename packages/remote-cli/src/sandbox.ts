@@ -4,7 +4,7 @@ import { join, dirname, resolve, sep } from "node:path";
 import { rm, unlink, mkdir, stat } from "node:fs/promises";
 import { Daytona, type FileUpload, type Sandbox } from "@daytonaio/sdk";
 import { execCommand } from "./exec.js";
-import { loadDaytonaEnv } from "@thor/common";
+import { loadDaytonaEnv, withKeyLock } from "@thor/common";
 
 export interface ExecStreamCallbacks {
   onStdout: (chunk: string) => void;
@@ -20,20 +20,10 @@ export const THOR_SHA_LABEL = "thor-sha";
 
 let daytonaSingleton: Daytona | null = null;
 let daytonaEnv: ReturnType<typeof loadDaytonaEnv> | null = null;
-const cwdLocks = new Map<string, Promise<void>>();
+const cwdLocks = new Map<string, Promise<unknown>>();
 
 export function withCwdLock<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
-  const prev = cwdLocks.get(cwd) ?? Promise.resolve();
-  const next = prev.then(() => fn());
-  const guard = next.then(
-    () => {},
-    () => {},
-  );
-  cwdLocks.set(cwd, guard);
-  void guard.finally(() => {
-    if (cwdLocks.get(cwd) === guard) cwdLocks.delete(cwd);
-  });
-  return next;
+  return withKeyLock(cwdLocks, cwd, fn);
 }
 
 export class SandboxError extends Error {
