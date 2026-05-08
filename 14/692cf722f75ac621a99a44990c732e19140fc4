@@ -1,0 +1,31 @@
+packages/runner/src/index.ts
+  faf2b6bedd8b2598 47,674,738-741
+packages/common/src/key-lock.ts
+  faf2b6bedd8b2598 1-22
+packages/common/src/index.ts
+  faf2b6bedd8b2598 106
+packages/common/src/correlation.ts
+  faf2b6bedd8b2598 4
+packages/remote-cli/src/sandbox.ts
+  faf2b6bedd8b2598 7,23,26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "14692cf722f75ac621a99a44990c732e19140fc4",
+  "prompts": {
+    "faf2b6bedd8b2598": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1cdf99b0-191c-4abd-bccd-d73ba2c5e0c0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 34,
+      "total_deletions": 51,
+      "accepted_lines": 33,
+      "overriden_lines": 0
+    }
+  }
+}
