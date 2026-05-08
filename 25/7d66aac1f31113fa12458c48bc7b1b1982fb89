@@ -1,0 +1,23 @@
+docs/feat/event-flow.md
+  64fe011185803b68 257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "257d66aac1f31113fa12458c48bc7b1b1982fb89",
+  "prompts": {
+    "64fe011185803b68": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88aa465-1e8d-41cc-a4d0-eb5fffaa7146",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 5,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
