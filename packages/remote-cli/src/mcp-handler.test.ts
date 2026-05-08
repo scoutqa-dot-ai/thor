@@ -252,7 +252,7 @@ describe("remote-cli MCP endpoints", () => {
       args: [
         "atlassian",
         "createJiraIssue",
-        '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+        '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
       ],
       cwd: "/workspace/repos/acme",
       directory: "/workspace/repos/acme",
@@ -266,6 +266,48 @@ describe("remote-cli MCP endpoints", () => {
     expect(pending.status).toBe(200);
     expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
     expect(pendingBody.stderr).toContain("missing Thor session id");
+    expect(toolCalls).toEqual([]);
+
+    const list = await postJson("/exec/approval", { args: ["list"] });
+    const listBody = (await list.json()) as { stdout: string };
+    expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
+  });
+
+  it("rejects invalid approval args before persisting an action", async () => {
+    expect(
+      appendAlias({
+        aliasType: "opencode.session",
+        aliasValue: "parent-session",
+        anchorId: activeAnchorId,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
+    ).toEqual({ ok: true });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(pendingBody.stderr).toContain('Invalid approval arguments for "createJiraIssue"');
+    expect(pendingBody.stderr).toContain("issueTypeName");
     expect(toolCalls).toEqual([]);
 
     const list = await postJson("/exec/approval", { args: ["list"] });

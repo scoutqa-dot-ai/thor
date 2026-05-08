@@ -493,7 +493,20 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
 
     if (toolInfo.classification === "approve") {
-      const formatError = validateDisclaimerCompatibleArgs(toolInfo.name, args);
+      const approvalRequired = ApprovalRequiredEventPayloadSchema.safeParse({
+        type: "approval_required",
+        actionId: "_pending",
+        proxyName: instance.name,
+        tool: toolInfo.name,
+        args,
+      });
+      if (!approvalRequired.success) {
+        return fail(
+          `Invalid approval arguments for "${toolInfo.name}": ${approvalRequired.error.message}`,
+        );
+      }
+      const approvalArgs = approvalRequired.data.args;
+      const formatError = validateDisclaimerCompatibleArgs(toolInfo.name, approvalArgs);
       if (formatError) return fail(formatError);
       let trigger: { anchorId: string; triggerId: string } | undefined;
       try {
@@ -501,7 +514,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
-      const action = instance.approvalStore.create(toolInfo.name, args, {
+      const action = instance.approvalStore.create(toolInfo.name, approvalArgs, {
         sessionId: context.sessionId,
         trigger,
       });
@@ -511,18 +524,14 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         actionId: action.id,
         ...getThorIds(context),
       });
-      writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args });
-      const approvalRequired: ApprovalRequiredEventPayload =
-        ApprovalRequiredEventPayloadSchema.parse({
-          type: "approval_required",
-          actionId: action.id,
-          proxyName: instance.name,
-          tool: toolInfo.name,
-          args: action.args,
-        });
+      writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args: approvalArgs });
+      const approvalEvent: ApprovalRequiredEventPayload = {
+        ...approvalRequired.data,
+        actionId: action.id,
+      };
       return ok(
         stringify({
-          ...approvalRequired,
+          ...approvalEvent,
           command: `approval status ${action.id}`,
         }),
       );
