@@ -117,6 +117,15 @@ describe("approval presentation", () => {
       title: "Comment on Jira issue: ENG-42",
       markdown: "*Issue:* ENG-42\n\n*Comment:*\nLooks good to me.",
     });
+    expect(
+      buildApprovalPresentation("addCommentToJiraIssue", {
+        issueIdOrKey: "KSR-11011",
+        commentBody: "Approved.",
+      }),
+    ).toEqual({
+      title: "Comment on Jira issue: KSR-11011",
+      markdown: "*Issue:* KSR-11011\n\n*Comment:*\nApproved.",
+    });
     expect(buildApprovalPresentation("create-feature-flag", { key: "beta", active: false })).toEqual({
       title: "Create feature flag: beta",
       markdown: "*Key:* beta\n\n*Active:* false",

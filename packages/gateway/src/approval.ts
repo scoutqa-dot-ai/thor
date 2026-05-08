@@ -230,7 +230,7 @@ function buildCreateJiraIssuePresentation(args: Record<string, unknown>): Approv
 }
 
 function buildAddJiraCommentPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const issueValue = pickField(args, "issueKey", "issueId", "key", "id");
+  const issueValue = pickField(args, "issueIdOrKey", "issueKey", "issueId", "key", "id");
   const issue = renderValue(issueValue) ?? "unknown issue";
   const comment = pickField(args, "commentBody", "comment", "body", "text");
   return {
