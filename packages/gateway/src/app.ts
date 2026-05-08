@@ -1198,63 +1198,52 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // lgtm[js/missing-rate-limiting]
     // Rate limiting for this opt-in CI-only helper is intentionally enforced at
     // the infrastructure/test harness boundary, not in the app process.
-    app.get(
-      "/internal/e2e/slack-api/calls",
-      // codeql[js/missing-rate-limiting]
-      // lgtm[js/missing-rate-limiting]
-      (req, res) => {
-        if (!requireE2eAuth(req, res)) return;
-        res.status(200).json({ ok: true, calls: e2eSlackCapture.calls });
-      },
-    );
+    const getE2eSlackApiCalls = (req: Request, res: Response) => {
+      if (!requireE2eAuth(req, res)) return;
+      res.status(200).json({ ok: true, calls: e2eSlackCapture.calls });
+    };
 
     // codeql[js/missing-rate-limiting]
     // lgtm[js/missing-rate-limiting]
     // Rate limiting for this opt-in CI-only helper is intentionally enforced at
     // the infrastructure/test harness boundary, not in the app process.
-    app.post(
-      "/internal/e2e/slack-api/reset",
-      // codeql[js/missing-rate-limiting]
-      // lgtm[js/missing-rate-limiting]
-      (req, res) => {
-        if (!requireE2eAuth(req, res)) return;
-        e2eSlackCapture.reset();
-        res.status(200).json({ ok: true });
-      },
-    );
+    const resetE2eSlackApiCalls = (req: Request, res: Response) => {
+      if (!requireE2eAuth(req, res)) return;
+      e2eSlackCapture.reset();
+      res.status(200).json({ ok: true });
+    };
 
     // codeql[js/missing-rate-limiting]
     // lgtm[js/missing-rate-limiting]
     // Rate limiting for this opt-in CI-only helper is intentionally enforced at
     // the infrastructure/test harness boundary, not in the app process.
-    app.post(
-      "/internal/e2e/approval-card",
-      // codeql[js/missing-rate-limiting]
-      // lgtm[js/missing-rate-limiting]
-      async (req, res) => {
-        if (!requireE2eAuth(req, res)) return;
+    const postE2eApprovalCard = async (req: Request, res: Response) => {
+      if (!requireE2eAuth(req, res)) return;
 
-        const parsed = z
-          .object({
-            channel: z.string().min(1),
-            threadTs: z.string().min(1),
-            event: ProgressApprovalRequiredSchema,
-          })
-          .safeParse(req.body);
-        if (!parsed.success) {
-          res.status(400).json({ error: "Invalid approval card payload" });
-          return;
-        }
+      const parsed = z
+        .object({
+          channel: z.string().min(1),
+          threadTs: z.string().min(1),
+          event: ProgressApprovalRequiredSchema,
+        })
+        .safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "Invalid approval card payload" });
+        return;
+      }
 
-        await forwardApprovalNotification(
-          parsed.data.channel,
-          parsed.data.threadTs,
-          parsed.data.event,
-          slackDeps,
-        );
-        res.status(200).json({ ok: true });
-      },
-    );
+      await forwardApprovalNotification(
+        parsed.data.channel,
+        parsed.data.threadTs,
+        parsed.data.event,
+        slackDeps,
+      );
+      res.status(200).json({ ok: true });
+    };
+
+    app.get("/internal/e2e/slack-api/calls", getE2eSlackApiCalls);
+    app.post("/internal/e2e/slack-api/reset", resetE2eSlackApiCalls);
+    app.post("/internal/e2e/approval-card", postE2eApprovalCard);
   }
 
   const handleSlackEventsWebhook = async (
