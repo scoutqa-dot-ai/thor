@@ -326,7 +326,17 @@ else
 
   # 4b. remote-cli-level: call the approval-required tool directly
   echo "  Calling tool via remote-cli (expecting approval interception)..."
-  approval_args_json='{"description":"e2e approval body"}'
+  case "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" in
+    atlassian/createJiraIssue)
+      approval_args_json='{"cloudId":"e2e-cloud","projectKey":"THOR","issueTypeName":"Task","summary":"e2e approval summary","description":"e2e approval body"}'
+      ;;
+    atlassian/addCommentToJiraIssue)
+      approval_args_json='{"cloudId":"e2e-cloud","issueIdOrKey":"THOR-1","commentBody":"e2e approval body"}'
+      ;;
+    *)
+      approval_args_json='{"description":"e2e approval body"}'
+      ;;
+  esac
   escaped_approval_args=$(node -e "console.log(JSON.stringify(process.argv[1]))" "$approval_args_json")
   call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
