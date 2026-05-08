@@ -44,6 +44,7 @@ import {
   MAX_SESSION_FILE_BYTES,
   loadRunnerEnv,
   matchesInternalSecret,
+  withKeyLock,
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -207,23 +208,6 @@ export function flushInflightTriggersOnShutdown(): void {
  * sessions. Sequenced as a chained promise per key (single-process).
  */
 const correlationKeyLocks = new Map<string, Promise<unknown>>();
-
-function withCorrelationKeyLock<T>(key: string | undefined, fn: () => Promise<T>): Promise<T> {
-  if (!key) return fn();
-  const prev = correlationKeyLocks.get(key) ?? Promise.resolve();
-  const next = prev.then(fn, fn);
-  const settled = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  correlationKeyLocks.set(key, settled);
-  settled.finally(() => {
-    if (correlationKeyLocks.get(key) === settled) {
-      correlationKeyLocks.delete(key);
-    }
-  });
-  return next;
-}
 
 async function fetchOpencode(path: string): Promise<Response> {
   return fetch(`${OPENCODE_URL}${path}`);
@@ -687,7 +671,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         : correlationKey
           ? resolveCorrelationLockKey(correlationKey)
           : undefined;
-      const resolution = await withCorrelationKeyLock(lockKey, async () => {
+      const resolveSession = async () => {
         let anchorId: string;
         if (requestedSessionId) {
           anchorId =
@@ -751,7 +735,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         }
 
         return { sessionId: id, resumed: didResume, anchorId };
-      });
+      };
+      const resolution = await (lockKey
+        ? withKeyLock(correlationKeyLocks, lockKey, resolveSession)
+        : resolveSession());
 
       const sessionId = resolution.sessionId;
       const resumed = resolution.resumed;

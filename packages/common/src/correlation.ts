@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import { appendAlias, currentSessionForAnchor, mintAnchor, resolveAlias } from "./event-log.js";
 import type { AliasRecord } from "./event-log.js";
+import { withKeyLock } from "./key-lock.js";
 
 const SLACK_THREAD_PREFIX = "slack:thread:";
 const GIT_BRANCH_PREFIX = "git:branch:";
@@ -29,24 +30,6 @@ export type EnsureAnchorResult =
   | { anchorId: undefined; minted: false; reason: "unsupported_prefix" };
 
 const anchorEnsureLocks = new Map<string, Promise<unknown>>();
-
-function withKeyLock<T>(
-  locks: Map<string, Promise<unknown>>,
-  key: string,
-  fn: () => Promise<T> | T,
-): Promise<T> {
-  const prev = locks.get(key) ?? Promise.resolve();
-  const next = prev.then(fn, fn);
-  const settled = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  locks.set(key, settled);
-  settled.finally(() => {
-    if (locks.get(key) === settled) locks.delete(key);
-  });
-  return next;
-}
 
 function inferRepoFromPath(cwdPath: string): string | undefined {
   if (!cwdPath) return undefined;
