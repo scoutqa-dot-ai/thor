@@ -599,7 +599,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
 
     if (decision === "rejected") {
-      const rejected = lookup.store.resolveLoaded(lookup.action, decision, reviewer, reason);
+      const rejected = lookup.store.rejectLoaded(lookup.action, reviewer, reason);
       logInfo(log, "tool_call_rejected", {
         upstream: lookup.upstreamName,
         tool: rejected.tool,
