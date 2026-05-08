@@ -137,10 +137,6 @@ describe("approval presentation", () => {
     });
   });
 
-  it("returns undefined for unconfigured tools", () => {
-    expect(buildApprovalPresentation("merge_pull_request", { pr: 42 })).toBeUndefined();
-  });
-
   it("renders presentation markdown blocks with the shared approval actions", () => {
     const blocks = buildApprovalPresentationBlocks(
       { title: "Create feature flag: beta", markdown: "*Key:* beta" },

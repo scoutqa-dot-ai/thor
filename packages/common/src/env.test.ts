@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  envCsv,
-  envInt,
-  envOptionalString,
-  envString,
-  getRunnerBaseUrl,
-  stripTrailingSlashes,
-} from "./env.js";
+import { envCsv, envInt, envOptionalString, envString, getRunnerBaseUrl } from "./env.js";
 
 describe("env loader", () => {
   it("reads required and optional strings with trim/default semantics", () => {
@@ -34,10 +27,10 @@ describe("env loader", () => {
     expect(envCsv(env, "LIST")).toEqual(["a", "b", "c"]);
   });
 
-  it("normalizes trailing slashes without regex backtracking", () => {
-    expect(stripTrailingSlashes("https://example.test///")).toBe("https://example.test");
-    expect(getRunnerBaseUrl({ RUNNER_BASE_URL: "https://thor.example.com///" })).toBe(
+  it("reads RUNNER_BASE_URL", () => {
+    expect(getRunnerBaseUrl({ RUNNER_BASE_URL: "https://thor.example.com" })).toBe(
       "https://thor.example.com",
     );
+    expect(() => getRunnerBaseUrl({})).toThrow("Missing required env var RUNNER_BASE_URL");
   });
 });

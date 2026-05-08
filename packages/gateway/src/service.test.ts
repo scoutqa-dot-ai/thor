@@ -157,6 +157,26 @@ describe("resolveApproval", () => {
 
     expect(result).toEqual(failedResult);
   });
+
+  it("preserves stateless transport retry behavior for transient resolve failures", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockResolvedValue(jsonResponse({ stdout: "ok", stderr: "", exitCode: 0 }));
+
+    const { resolveApproval } = await import("./service.js");
+    const result = await resolveApproval(
+      "act-1",
+      "approved",
+      "U123",
+      "http://remote-cli:3004",
+      "internal-secret",
+      fetchImpl,
+    );
+
+    expect(result).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
@@ -253,9 +273,9 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       JSON.stringify({
         type: "approval_required",
         actionId: "act-1",
-        tool: "merge_pull_request",
-        args: { pr: 42 },
-        proxyName: "github",
+        tool: "createJiraIssue",
+        args: { projectKey: "ENG", summary: "Approval card", description: "Review me" },
+        proxyName: "atlassian",
       }),
     ];
     mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
@@ -278,8 +298,8 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       blocks: Array<{ elements?: Array<{ action_id: string; value: string }> }>;
     };
     const approveButton = arg.blocks[3].elements?.find((el) => el.action_id === "approval_approve");
-    expect(approveButton?.value).toBe("v3:act-1:github:1710000000.001");
-    expect(JSON.stringify(arg.blocks)).toContain("```json");
+    expect(approveButton?.value).toBe("v3:act-1:atlassian:1710000000.001");
+    expect(JSON.stringify(arg.blocks)).toContain("Create Jira issue: Approval card");
   });
 
   it("renders configured approval tools with markdown presentation blocks", async () => {
@@ -580,7 +600,9 @@ describe("triggerRunnerSlack prompt distillation", () => {
       thread_ts: "1710000000.001",
       user: "U123",
       text: "please inspect this",
-      files: [{ id: "F123", name: "debug.log", mimetype: "text/plain", filetype: "text", size: 42 }],
+      files: [
+        { id: "F123", name: "debug.log", mimetype: "text/plain", filetype: "text", size: 42 },
+      ],
       block_tags: ["section"],
     });
   });

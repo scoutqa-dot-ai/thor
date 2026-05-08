@@ -44,6 +44,8 @@ import {
   MAX_SESSION_FILE_BYTES,
   loadRunnerEnv,
   matchesInternalSecret,
+  ApprovalRequiredEventPayloadSchema,
+  withKeyLock,
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -70,15 +72,6 @@ const MEMORY_DIR = "/workspace/memory";
 const TaskDelegateInputSchema = z.object({
   subagent_type: z.string().trim().min(1),
 });
-
-const ApprovalRequiredOutputSchema = z
-  .object({
-    type: z.literal("approval_required"),
-    actionId: z.string().min(1),
-    tool: z.string().min(1).optional(),
-    proxyName: z.string().min(1).optional(),
-  })
-  .passthrough();
 
 const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
@@ -207,23 +200,6 @@ export function flushInflightTriggersOnShutdown(): void {
  * sessions. Sequenced as a chained promise per key (single-process).
  */
 const correlationKeyLocks = new Map<string, Promise<unknown>>();
-
-function withCorrelationKeyLock<T>(key: string | undefined, fn: () => Promise<T>): Promise<T> {
-  if (!key) return fn();
-  const prev = correlationKeyLocks.get(key) ?? Promise.resolve();
-  const next = prev.then(fn, fn);
-  const settled = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  correlationKeyLocks.set(key, settled);
-  settled.finally(() => {
-    if (correlationKeyLocks.get(key) === settled) {
-      correlationKeyLocks.delete(key);
-    }
-  });
-  return next;
-}
 
 async function fetchOpencode(path: string): Promise<Response> {
   return fetch(`${OPENCODE_URL}${path}`);
@@ -687,7 +663,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         : correlationKey
           ? resolveCorrelationLockKey(correlationKey)
           : undefined;
-      const resolution = await withCorrelationKeyLock(lockKey, async () => {
+      const resolveSession = async () => {
         let anchorId: string;
         if (requestedSessionId) {
           anchorId =
@@ -751,7 +727,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         }
 
         return { sessionId: id, resumed: didResume, anchorId };
-      });
+      };
+      const resolution = await (lockKey
+        ? withKeyLock(correlationKeyLocks, lockKey, resolveSession)
+        : resolveSession());
 
       const sessionId = resolution.sessionId;
       const resumed = resolution.resumed;
@@ -1087,11 +1066,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   // Detect approval-required tool results and emit approval event.
                   if (status === "completed") {
                     const completed = toolPart.state as ToolStateCompleted;
-                    const approval = parseApprovalResult(
-                      completed.output,
-                      toolPart.tool,
-                      (completed.input as Record<string, unknown>) ?? {},
-                    );
+                    const approval = parseApprovalResult(completed.output);
                     if (approval) {
                       emit(approval);
                     }
@@ -1230,11 +1205,7 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
   return eventSessionId(event) === sessionId;
 }
 
-function parseApprovalResult(
-  output: string,
-  tool: string,
-  args: Record<string, unknown>,
-): ProgressEvent | undefined {
+function parseApprovalResult(output: string): ProgressEvent | undefined {
   let parsedOutput: unknown;
   try {
     parsedOutput = JSON.parse(output);
@@ -1242,16 +1213,9 @@ function parseApprovalResult(
     return undefined;
   }
 
-  const parsed = ApprovalRequiredOutputSchema.safeParse(parsedOutput);
+  const parsed = ApprovalRequiredEventPayloadSchema.safeParse(parsedOutput);
   if (!parsed.success) return undefined;
-
-  return {
-    type: "approval_required",
-    actionId: parsed.data.actionId,
-    tool: parsed.data.tool ?? tool,
-    args,
-    proxyName: parsed.data.proxyName,
-  };
+  return parsed.data;
 }
 
 function escapeHtml(value: string): string {

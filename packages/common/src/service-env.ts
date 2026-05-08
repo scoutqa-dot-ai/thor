@@ -1,13 +1,6 @@
 import { dirname, join } from "node:path";
 import { deriveGitHubAppBotIdentity } from "./github-identity.js";
-import {
-  envCsv,
-  envInt,
-  envOptionalString,
-  envString,
-  stripTrailingSlashes,
-  type EnvSource,
-} from "./env.js";
+import { envCsv, envInt, envOptionalString, envString, type EnvSource } from "./env.js";
 import { WORKSPACE_CONFIG_PATH } from "./workspace-config.js";
 
 export function loadGatewayEnv(env: EnvSource = process.env) {
@@ -26,12 +19,10 @@ export function loadGatewayEnv(env: EnvSource = process.env) {
 
   return {
     port: envInt(env, "PORT", 3002),
-    runnerUrl: stripTrailingSlashes(envString(env, "RUNNER_URL", "http://runner:3000")),
+    runnerUrl: envString(env, "RUNNER_URL", "http://runner:3000"),
     slackSigningSecret: envOptionalString(env, "SLACK_SIGNING_SECRET") ?? "",
     slackBotToken: envOptionalString(env, "SLACK_BOT_TOKEN") ?? "",
-    slackApiBaseUrl: stripTrailingSlashes(
-      envString(env, "SLACK_API_BASE_URL", "https://slack.com/api"),
-    ),
+    slackApiBaseUrl: envString(env, "SLACK_API_BASE_URL", "https://slack.com/api"),
     slackTimestampToleranceSeconds: envInt(env, "SLACK_TIMESTAMP_TOLERANCE_SECONDS", 300),
     queueDir: envString(env, "QUEUE_DIR", "data/queue"),
     slackBotUserId: envOptionalString(env, "SLACK_BOT_USER_ID") ?? "",
@@ -50,7 +41,7 @@ export function loadGatewayEnv(env: EnvSource = process.env) {
 export function loadRunnerEnv(env: EnvSource = process.env) {
   return {
     port: envInt(env, "PORT", 3000),
-    opencodeUrl: stripTrailingSlashes(envString(env, "OPENCODE_URL", "http://127.0.0.1:4096")),
+    opencodeUrl: envString(env, "OPENCODE_URL", "http://127.0.0.1:4096"),
     opencodeConnectTimeout: envInt(env, "OPENCODE_CONNECT_TIMEOUT", 15000),
     abortTimeout: envInt(env, "ABORT_TIMEOUT", 10000),
     sessionErrorGraceMs: envInt(env, "SESSION_ERROR_GRACE_MS", 10000),
@@ -103,7 +94,7 @@ export function loadAdminEnv(env: EnvSource = process.env) {
 
 export function loadMetabaseEnv(env: EnvSource = process.env) {
   return {
-    url: stripTrailingSlashes(envString(env, "METABASE_URL")),
+    url: envString(env, "METABASE_URL"),
     apiKey: envString(env, "METABASE_API_KEY"),
     dbId: envInt(env, "METABASE_DATABASE_ID"),
     schemas: new Set(envCsv(env, "METABASE_ALLOWED_SCHEMAS")),
@@ -114,7 +105,7 @@ export function loadGitHubAppAuthEnv(env: EnvSource = process.env) {
   return {
     appId: envString(env, "GITHUB_APP_ID"),
     privateKeyPath: envString(env, "GITHUB_APP_PRIVATE_KEY_FILE"),
-    apiUrl: stripTrailingSlashes(envString(env, "GITHUB_API_URL", "https://api.github.com")),
+    apiUrl: envString(env, "GITHUB_API_URL", "https://api.github.com"),
     appDir: envString(env, "GITHUB_APP_DIR", "/var/lib/remote-cli/github-app"),
   };
 }
