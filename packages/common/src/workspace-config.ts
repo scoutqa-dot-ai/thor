@@ -189,12 +189,7 @@ export const WORKSPACE_CONFIG_PATH = "/workspace/config.json";
 
 // --- Dynamic loader ---
 
-export interface ConfigLoader {
-  /** Returns the current workspace config, re-reading from disk if the TTL has expired. */
-  (): WorkspaceConfig;
-  /** Force an immediate reload on next access. */
-  invalidate(): void;
-}
+export type ConfigLoader = () => WorkspaceConfig;
 
 const configLog = createLogger("config-loader");
 
@@ -206,7 +201,7 @@ const configLog = createLogger("config-loader");
 export function createConfigLoader(path: string): ConfigLoader {
   let lastGood: WorkspaceConfig | null = null;
 
-  const loader = (() => {
+  return () => {
     try {
       lastGood = loadWorkspaceConfig(path);
       return lastGood;
@@ -223,11 +218,7 @@ export function createConfigLoader(path: string): ConfigLoader {
         `Failed to load workspace config from ${path} and no previous config available`,
       );
     }
-  }) as ConfigLoader;
-
-  loader.invalidate = () => {};
-
-  return loader;
+  };
 }
 
 // --- Helpers ---
