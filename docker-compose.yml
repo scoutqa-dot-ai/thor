@@ -195,6 +195,7 @@ services:
       - REMOTE_CLI_HOST=remote-cli
       - REMOTE_CLI_PORT=3004
       - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
+      - THOR_E2E_TEST_HELPERS=${THOR_E2E_TEST_HELPERS:-}
     volumes:
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/opencode:/opencode:ro

@@ -153,10 +153,7 @@ export type InternalExecClient = (request: InternalExecRequest) => Promise<{
   exitCode: number;
 }>;
 
-type TerminalGitHubRejectReason =
-  | "installation_gone"
-  | "branch_not_found"
-  | "branch_lookup_failed";
+type TerminalGitHubRejectReason = "installation_gone" | "branch_not_found" | "branch_lookup_failed";
 
 class TerminalGitHubDispatchError extends Error {
   constructor(
@@ -1047,7 +1044,7 @@ function renderGitHubPrompt(events: GitHubWebhookEvent[]): string {
   return JSON.stringify(events.length === 1 ? events[0] : events);
 }
 
-async function forwardApprovalNotification(
+export async function forwardApprovalNotification(
   channel: string,
   threadTs: string,
   event: ProgressApprovalRequired,
