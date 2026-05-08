@@ -27,11 +27,11 @@ describe("ApprovalStore", () => {
   it("rejects a pending action once", () => {
     const action = store.create("merge_pull_request", { pr: 42 });
 
-    const resolved = store.resolve(action.id, "rejected", "U12345");
+    const rejected = store.reject(action.id, "U12345");
 
-    expect(resolved?.status).toBe("rejected");
-    expect(resolved?.reviewer).toBe("U12345");
-    expect(store.resolve(action.id, "rejected", "U999")).toBeUndefined();
+    expect(rejected?.status).toBe("rejected");
+    expect(rejected?.reviewer).toBe("U12345");
+    expect(store.reject(action.id, "U999")).toBeUndefined();
   });
 
   it("stores approved actions with an explicit exec result", () => {

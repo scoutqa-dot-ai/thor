@@ -9,6 +9,7 @@ import {
   isProxyName,
   getRepoUpstreams,
   getRunnerBaseUrl,
+  ApprovalRequiredEventPayloadSchema,
   interpolateHeaders,
   logError,
   logInfo,
@@ -19,6 +20,7 @@ import {
   type WorkspaceConfig,
   writeToolCallLog,
 } from "@thor/common";
+import type { ApprovalRequiredEventPayload } from "@thor/common";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import {
   classifyTool,
@@ -495,12 +497,17 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         ...getThorIds(context),
       });
       writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args: approvalArgs });
-      return ok(
-        stringify({
+      const approvalRequired: ApprovalRequiredEventPayload =
+        ApprovalRequiredEventPayloadSchema.parse({
           type: "approval_required",
           actionId: action.id,
           proxyName: instance.name,
           tool: toolInfo.name,
+          args: action.args,
+        });
+      return ok(
+        stringify({
+          ...approvalRequired,
           command: `approval status ${action.id}`,
         }),
       );
@@ -599,7 +606,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
 
     if (decision === "rejected") {
-      const rejected = lookup.store.resolveLoaded(lookup.action, decision, reviewer, reason);
+      const rejected = lookup.store.rejectLoaded(lookup.action, reviewer, reason);
       logInfo(log, "tool_call_rejected", {
         upstream: lookup.upstreamName,
         tool: rejected.tool,

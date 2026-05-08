@@ -15,7 +15,7 @@ export { validateGhArgs } from "./policy-gh.js";
 import {
   WORKSPACE_REPOS_ROOT,
   WORKSPACE_WORKTREES_ROOT,
-  isPathWithinPrefix,
+  isPathWithin,
   realpathOrNull,
 } from "@thor/common";
 
@@ -33,7 +33,7 @@ export function validateCwd(cwd: string): string | null {
     return `cwd must be under ${ALLOWED_CWD_PREFIXES.join(" or ")}`;
   }
 
-  const allowed = ALLOWED_CWD_PREFIXES.some((prefix) => isPathWithinPrefix(prefix, realCwd));
+  const allowed = ALLOWED_CWD_PREFIXES.some((prefix) => isPathWithin(prefix, realCwd));
 
   if (!allowed) {
     return `cwd must be under ${ALLOWED_CWD_PREFIXES.join(" or ")}`;

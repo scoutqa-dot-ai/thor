@@ -38,16 +38,8 @@ export function envCsv(env: EnvSource, name: string): string[] {
     .filter(Boolean);
 }
 
-export function stripTrailingSlashes(value: string): string {
-  let end = value.length;
-  while (end > 0 && value.charCodeAt(end - 1) === 47) {
-    end -= 1;
-  }
-  return end === value.length ? value : value.slice(0, end);
-}
-
 export function getRunnerBaseUrl(env: EnvSource = process.env): string {
-  return stripTrailingSlashes(envString(env, "RUNNER_BASE_URL"));
+  return envString(env, "RUNNER_BASE_URL");
 }
 
 export function matchesInternalSecret(

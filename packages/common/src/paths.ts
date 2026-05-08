@@ -18,10 +18,6 @@ export function isPathWithin(parent: string, child: string): boolean {
   );
 }
 
-export function isPathWithinPrefix(prefix: string, candidate: string): boolean {
-  return candidate === prefix || candidate.startsWith(`${prefix}/`);
-}
-
 export function realpathOrNull(candidate: string): string | null {
   try {
     return realpathSync.native(candidate);

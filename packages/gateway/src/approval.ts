@@ -1,4 +1,15 @@
-import { z } from "zod/v4";
+import {
+  AddCommentToJiraIssueApprovalArgsSchema,
+  AddCommentToJiraIssuePresentationArgsSchema,
+  CreateFeatureFlagApprovalArgsSchema,
+  CreateFeatureFlagPresentationArgsSchema,
+  CreateJiraIssueApprovalArgsSchema,
+  CreateJiraIssuePresentationArgsSchema,
+  UpdateFeatureFlagApprovalArgsSchema,
+  UpdateFeatureFlagPresentationArgsSchema,
+  type ApprovalArgs,
+  type ApprovalToolName,
+} from "@thor/common";
 import type { SlackBlock } from "./slack-api.js";
 
 const SLACK_SECTION_TEXT_LIMIT = 3000;
@@ -35,60 +46,6 @@ export interface ApprovalPresentation {
   title: string;
   markdown: string;
 }
-
-const CreateJiraIssuePresentationArgsSchema = z
-  .object({
-    cloudId: z.string().min(1).optional(),
-    projectKey: z.string().min(1),
-    issueTypeName: z.string().min(1),
-    summary: z.string().min(1),
-    description: z.string().optional(),
-    parent: z.string().min(1).optional(),
-    assignee_account_id: z.string().min(1).optional(),
-    additional_fields: z.record(z.string(), z.unknown()).optional(),
-    transition: z.object({ id: z.string().min(1) }).optional(),
-    contentFormat: z.enum(["markdown", "adf"]).optional(),
-    responseContentFormat: z.enum(["markdown", "adf"]).optional(),
-  })
-  .strict();
-
-const AddJiraCommentPresentationArgsSchema = z
-  .object({
-    cloudId: z.string().min(1).optional(),
-    issueIdOrKey: z.string().min(1),
-    commentBody: z.string().min(1),
-    commentVisibility: z
-      .object({
-        type: z.enum(["group", "role"]),
-        value: z.string().min(1),
-      })
-      .optional(),
-    contentFormat: z.enum(["markdown", "adf"]).optional(),
-    responseContentFormat: z.enum(["markdown", "adf"]).optional(),
-  })
-  .strict();
-
-const CreateFeatureFlagPresentationArgsSchema = z
-  .object({
-    key: z.string().min(1),
-    name: z.string().min(1).optional(),
-    description: z.string().optional(),
-    active: z.boolean().optional(),
-    rolloutPercentage: z.number().optional(),
-    filters: z.unknown().optional(),
-  })
-  .strict();
-
-const UpdateFeatureFlagPresentationArgsSchema = z
-  .object({
-    key: z.string().min(1),
-    name: z.string().min(1).optional(),
-    description: z.string().optional(),
-    active: z.boolean().optional(),
-    rolloutPercentage: z.number().optional(),
-    filters: z.unknown().optional(),
-  })
-  .strict();
 
 export function buildApprovalButtonValue(input: {
   actionId: string;
@@ -172,8 +129,8 @@ export function formatApprovalArgs(args: Record<string, unknown>): string {
 }
 
 export function buildApprovalPresentation(
-  tool: string,
-  args: Record<string, unknown>,
+  tool: ApprovalToolName,
+  args: ApprovalArgs,
 ): ApprovalPresentation | undefined {
   try {
     switch (tool) {
@@ -267,7 +224,8 @@ export function buildApprovalPresentationBlocks(
   ];
 }
 
-function buildCreateJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {
+function buildCreateJiraIssuePresentation(args: ApprovalArgs): ApprovalPresentation {
+  CreateJiraIssueApprovalArgsSchema.parse(args);
   const parsed = CreateJiraIssuePresentationArgsSchema.parse(args);
   return {
     title: `Create Jira issue: ${renderValue(parsed.summary) ?? "Untitled Jira issue"}`,
@@ -280,8 +238,9 @@ function buildCreateJiraIssuePresentation(args: Record<string, unknown>): Approv
   };
 }
 
-function buildAddJiraCommentPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const parsed = AddJiraCommentPresentationArgsSchema.parse(args);
+function buildAddJiraCommentPresentation(args: ApprovalArgs): ApprovalPresentation {
+  AddCommentToJiraIssueApprovalArgsSchema.parse(args);
+  const parsed = AddCommentToJiraIssuePresentationArgsSchema.parse(args);
   return {
     title: `Comment on Jira issue: ${renderValue(parsed.issueIdOrKey) ?? "unknown issue"}`,
     markdown: joinMarkdown([
@@ -291,7 +250,8 @@ function buildAddJiraCommentPresentation(args: Record<string, unknown>): Approva
   };
 }
 
-function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
+function buildCreateFeatureFlagPresentation(args: ApprovalArgs): ApprovalPresentation {
+  CreateFeatureFlagApprovalArgsSchema.parse(args);
   const parsed = CreateFeatureFlagPresentationArgsSchema.parse(args);
   const titleTarget = renderValue(parsed.name ?? parsed.key) ?? "feature flag";
   return {
@@ -307,7 +267,8 @@ function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): Appr
   };
 }
 
-function buildUpdateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
+function buildUpdateFeatureFlagPresentation(args: ApprovalArgs): ApprovalPresentation {
+  UpdateFeatureFlagApprovalArgsSchema.parse(args);
   const parsed = UpdateFeatureFlagPresentationArgsSchema.parse(args);
   const changes = [
     bullet("name", parsed.name),
