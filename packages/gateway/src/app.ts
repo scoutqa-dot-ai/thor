@@ -1194,29 +1194,29 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return true;
     };
 
-    // Rate limiting for this opt-in CI-only helper is intentionally enforced at
-    // the infrastructure/test harness boundary, not in the app process.
     // codeql[js/missing-rate-limiting]
     // lgtm[js/missing-rate-limiting]
+    // Rate limiting for this opt-in CI-only helper is intentionally enforced at
+    // the infrastructure/test harness boundary, not in the app process.
     app.get("/internal/e2e/slack-api/calls", (req, res) => {
       if (!requireE2eAuth(req, res)) return;
       res.status(200).json({ ok: true, calls: e2eSlackCapture.calls });
     });
 
-    // Rate limiting for this opt-in CI-only helper is intentionally enforced at
-    // the infrastructure/test harness boundary, not in the app process.
     // codeql[js/missing-rate-limiting]
     // lgtm[js/missing-rate-limiting]
+    // Rate limiting for this opt-in CI-only helper is intentionally enforced at
+    // the infrastructure/test harness boundary, not in the app process.
     app.post("/internal/e2e/slack-api/reset", (req, res) => {
       if (!requireE2eAuth(req, res)) return;
       e2eSlackCapture.reset();
       res.status(200).json({ ok: true });
     });
 
-    // Rate limiting for this opt-in CI-only helper is intentionally enforced at
-    // the infrastructure/test harness boundary, not in the app process.
     // codeql[js/missing-rate-limiting]
     // lgtm[js/missing-rate-limiting]
+    // Rate limiting for this opt-in CI-only helper is intentionally enforced at
+    // the infrastructure/test harness boundary, not in the app process.
     app.post("/internal/e2e/approval-card", async (req, res) => {
       if (!requireE2eAuth(req, res)) return;
 
