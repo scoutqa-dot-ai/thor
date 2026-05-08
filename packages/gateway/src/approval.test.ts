@@ -130,15 +130,9 @@ describe("approval presentation", () => {
     expect(
       buildApprovalPresentation("create-feature-flag", { key: "beta", active: false }),
     ).toEqual({ title: "Create feature flag: beta", markdown: "*Key:* beta\n\n*Active:* false" });
-    expect(
-      buildApprovalPresentation("update-feature-flag", { key: "beta", filters: { groups: [] } }),
-    ).toEqual({
-      title: "Update feature flag: beta",
-      markdown: '*Flag:* beta\n\n*filters:* {"groups":[]}',
-    });
   });
 
-  it("falls back to raw JSON when approval payloads fail strict parsing", () => {
+  it("falls back to raw JSON when approval payloads are missing required fields", () => {
     expect(
       buildApprovalPresentation("createJiraIssue", {
         projectKey: "ENG",
@@ -152,9 +146,15 @@ describe("approval presentation", () => {
       }),
     ).toBeUndefined();
     expect(buildApprovalPresentation("create-feature-flag", { flagKey: "beta" })).toBeUndefined();
+  });
+
+  it("renders presentations for known tool schemas with extra unknown fields", () => {
     expect(
-      buildApprovalPresentation("update-feature-flag", { key: "beta", "<!here>": true }),
-    ).toBeUndefined();
+      buildApprovalPresentation("create-feature-flag", { key: "beta", "<!here>": true }),
+    ).toEqual({
+      title: "Create feature flag: beta",
+      markdown: "*Key:* beta",
+    });
   });
 
   it("renders presentation markdown blocks with the shared approval actions", () => {

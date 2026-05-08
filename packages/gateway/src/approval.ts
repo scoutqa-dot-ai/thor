@@ -2,7 +2,6 @@ import {
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
-  UpdateFeatureFlagApprovalArgsSchema,
   type ApprovalToolName,
 } from "@thor/common";
 import type { SlackBlock } from "./slack-api.js";
@@ -135,8 +134,6 @@ export function buildApprovalPresentation(
         return buildAddJiraCommentPresentation(args);
       case "create-feature-flag":
         return buildCreateFeatureFlagPresentation(args);
-      case "update-feature-flag":
-        return buildUpdateFeatureFlagPresentation(args);
       default:
         return undefined;
     }
@@ -256,21 +253,6 @@ function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): Appr
       bullet("Rollout", parsed.rolloutPercentage),
       bullet("Filters", parsed.filters),
     ]),
-  };
-}
-
-function buildUpdateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const parsed = UpdateFeatureFlagApprovalArgsSchema.parse(args);
-  const changes = [
-    bullet("name", parsed.name),
-    section("description", parsed.description),
-    bullet("active", parsed.active),
-    bullet("rolloutPercentage", parsed.rolloutPercentage),
-    bullet("filters", parsed.filters),
-  ];
-  return {
-    title: `Update feature flag: ${renderValue(parsed.key) ?? "feature flag"}`,
-    markdown: joinMarkdown([bullet("Flag", parsed.key), ...changes]),
   };
 }
 

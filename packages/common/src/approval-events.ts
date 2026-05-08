@@ -4,40 +4,23 @@ export const APPROVAL_TOOL_NAMES = [
   "createJiraIssue",
   "addCommentToJiraIssue",
   "create-feature-flag",
-  "update-feature-flag",
 ] as const;
 
 export const CreateJiraIssueApprovalArgsSchema = z
   .object({
-    cloudId: z.string().min(1).optional(),
     projectKey: z.string().min(1),
     issueTypeName: z.string().min(1),
     summary: z.string().min(1),
     description: z.string().optional(),
-    parent: z.string().min(1).optional(),
-    assignee_account_id: z.string().min(1).optional(),
-    additional_fields: z.record(z.string(), z.unknown()).optional(),
-    transition: z.object({ id: z.string().min(1) }).optional(),
-    contentFormat: z.enum(["markdown", "adf"]).optional(),
-    responseContentFormat: z.enum(["markdown", "adf"]).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const AddCommentToJiraIssueApprovalArgsSchema = z
   .object({
-    cloudId: z.string().min(1).optional(),
     issueIdOrKey: z.string().min(1),
     commentBody: z.string().min(1),
-    commentVisibility: z
-      .object({
-        type: z.enum(["group", "role"]),
-        value: z.string().min(1),
-      })
-      .optional(),
-    contentFormat: z.enum(["markdown", "adf"]).optional(),
-    responseContentFormat: z.enum(["markdown", "adf"]).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const CreateFeatureFlagApprovalArgsSchema = z
   .object({
@@ -48,24 +31,12 @@ export const CreateFeatureFlagApprovalArgsSchema = z
     rolloutPercentage: z.number().optional(),
     filters: z.unknown().optional(),
   })
-  .strict();
-
-export const UpdateFeatureFlagApprovalArgsSchema = z
-  .object({
-    key: z.string().min(1),
-    name: z.string().min(1).optional(),
-    description: z.string().optional(),
-    active: z.boolean().optional(),
-    rolloutPercentage: z.number().optional(),
-    filters: z.unknown().optional(),
-  })
-  .strict();
+  .passthrough();
 
 export const ApprovalArgsSchema = z.union([
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
-  UpdateFeatureFlagApprovalArgsSchema,
 ]);
 
 const ApprovalRequiredEventBaseSchema = z.object({
@@ -87,12 +58,62 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
     tool: z.literal("create-feature-flag"),
     args: CreateFeatureFlagApprovalArgsSchema,
   }),
-  ApprovalRequiredEventBaseSchema.extend({
-    tool: z.literal("update-feature-flag"),
-    args: UpdateFeatureFlagApprovalArgsSchema,
-  }),
 ]);
 
 export type ApprovalToolName = (typeof APPROVAL_TOOL_NAMES)[number];
 export type ApprovalArgs = z.infer<typeof ApprovalArgsSchema>;
 export type ApprovalRequiredEventPayload = z.infer<typeof ApprovalRequiredEventPayloadSchema>;
+
+const APPROVAL_TOOLS_REQUIRING_DISCLAIMER = [
+  "createJiraIssue",
+  "addCommentToJiraIssue",
+  "create-feature-flag",
+] as const satisfies readonly ApprovalToolName[];
+
+export function approvalToolRequiresDisclaimer(tool: string): boolean {
+  return (APPROVAL_TOOLS_REQUIRING_DISCLAIMER as readonly string[]).includes(tool);
+}
+
+export function validateDisclaimerCompatibleArgs(
+  tool: string,
+  args: Record<string, unknown>,
+): string | undefined {
+  if (!approvalToolRequiresDisclaimer(tool)) return undefined;
+  const contentFormat = args.contentFormat;
+  if (contentFormat === undefined || contentFormat === "markdown") return undefined;
+  const formatted =
+    typeof contentFormat === "string" ? `"${contentFormat}"` : JSON.stringify(contentFormat);
+  return [
+    `"${tool}" is not allowed.`,
+    `Reason: contentFormat ${formatted} is not supported — only "markdown" is permitted.`,
+  ].join("\n");
+}
+
+export function injectApprovalDisclaimer(
+  tool: string,
+  args: Record<string, unknown>,
+  footer: string,
+): Record<string, unknown> {
+  const parsed = ApprovalRequiredEventPayloadSchema.safeParse({
+    type: "approval_required",
+    actionId: "_disclaimer",
+    tool,
+    args,
+  });
+  if (!parsed.success) return args;
+  switch (parsed.data.tool) {
+    case "createJiraIssue":
+    case "create-feature-flag":
+      return {
+        ...parsed.data.args,
+        description: parsed.data.args.description
+          ? `${parsed.data.args.description}\n${footer}`
+          : footer,
+      };
+    case "addCommentToJiraIssue":
+      return {
+        ...parsed.data.args,
+        commentBody: `${parsed.data.args.commentBody}\n${footer}`,
+      };
+  }
+}

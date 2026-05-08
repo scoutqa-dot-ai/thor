@@ -11,6 +11,17 @@ const ApprovalActionSchema = z
     status: z.enum(["pending", "approved", "rejected"]),
     tool: z.string(),
     args: z.record(z.string(), z.unknown()),
+    origin: z
+      .object({
+        sessionId: z.string().min(1).optional(),
+        trigger: z
+          .object({
+            anchorId: z.string().min(1),
+            triggerId: z.string().min(1),
+          })
+          .optional(),
+      })
+      .optional(),
     createdAt: z.string(),
     dateSegment: z.string(),
     resolvedAt: z.string().optional(),
@@ -38,7 +49,11 @@ export class ApprovalStore {
     private readonly upstream: string,
   ) {}
 
-  create(tool: string, args: Record<string, unknown>): ApprovalAction {
+  create(
+    tool: string,
+    args: Record<string, unknown>,
+    origin?: ApprovalAction["origin"],
+  ): ApprovalAction {
     const now = new Date();
     const action: ApprovalAction = {
       id: randomUUID(),
@@ -46,6 +61,7 @@ export class ApprovalStore {
       status: "pending",
       tool,
       args,
+      ...(origin && (origin.sessionId || origin.trigger) && { origin }),
       createdAt: now.toISOString(),
       dateSegment: now.toISOString().slice(0, 10),
     };
