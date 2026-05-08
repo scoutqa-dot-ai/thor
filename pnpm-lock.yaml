@@ -118,8 +118,8 @@ importers:
   packages/remote-cli:
     dependencies:
       '@daytonaio/sdk':
-        specifier: ^0.168.0
-        version: 0.168.0(ws@8.20.0)
+        specifier: ^0.169.0
+        version: 0.169.0(ws@8.20.0)
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.29.0(zod@4.3.6)
@@ -344,14 +344,14 @@ packages:
     resolution: {integrity: sha512-iY8yvjE0y651BixKNPgmv1WrQc+GZ142sb0z4gYnChDDY2YqI4P/jsSopBWrKfAt7LOJAkOXt7rC/hms+WclQQ==}
     engines: {node: '>=18.0.0'}
 
-  '@daytona/api-client@0.168.0':
-    resolution: {integrity: sha512-7nUh5/FrxO07CaOpmDs063pis/JJQz9krAOLxuR93HZYYsDrbvGwubnZmhvJkz88ZvRSOvyau3p7qagzJG2M4w==}
+  '@daytona/api-client@0.169.0':
+    resolution: {integrity: sha512-ZbDtm9Y+zHeNTz+7p259VwQKYfa/H8tQiM2Fd9A+j64VPN3EAZQPhMm+UQeYTjAySXpIYcxRP1cbbfgHh3VoBg==}
 
-  '@daytona/toolbox-api-client@0.168.0':
-    resolution: {integrity: sha512-LXzut5XkfkNnjxzHvcf8NvWprUf+uIIoCWtHSEueG8NAorn55FHFdObC2JtebgRh6wEqYSiJZXCXHYeM/V8e9A==}
+  '@daytona/toolbox-api-client@0.169.0':
+    resolution: {integrity: sha512-8ktk2lggLTR1SAU7u609aWPJZlBWDP320H4c2ohfBRHgKXdIv8eckVJVLfnZtxvdNn6edewxf0K4SixqWB8Mtg==}
 
-  '@daytonaio/sdk@0.168.0':
-    resolution: {integrity: sha512-N1nvRvodKMnUCJa2d2FWmOoq+bco8Ktc1q6rRn8AbToaQvdnokbKIWwALGHq0MHDleXbTw4a+2brBjNG04G9kg==}
+  '@daytonaio/sdk@0.169.0':
+    resolution: {integrity: sha512-Cbw1zomoc7Zr+a4UpSA/pBpg1P2++upwjqcHaxIwbxQw6roNwIHpViXh88FNCQU6g70Mn4lolViiOl2H8gr7wg==}
 
   '@esbuild/aix-ppc64@0.27.7':
     resolution: {integrity: sha512-EKX3Qwmhz1eMdEJokhALr0YiD0lhQNwDqkPYyPhiSwKrh7/4KRjQc04sZ8db+5DVVnZ1LmbNDI1uAMPEUBnQPg==}
@@ -2901,24 +2901,24 @@ snapshots:
 
   '@aws/lambda-invoke-store@0.2.4': {}
 
-  '@daytona/api-client@0.168.0':
+  '@daytona/api-client@0.169.0':
     dependencies:
       axios: 1.15.0
     transitivePeerDependencies:
       - debug
 
-  '@daytona/toolbox-api-client@0.168.0':
+  '@daytona/toolbox-api-client@0.169.0':
     dependencies:
       axios: 1.15.0
     transitivePeerDependencies:
       - debug
 
-  '@daytonaio/sdk@0.168.0(ws@8.20.0)':
+  '@daytonaio/sdk@0.169.0(ws@8.20.0)':
     dependencies:
       '@aws-sdk/client-s3': 3.1031.0
       '@aws-sdk/lib-storage': 3.1031.0(@aws-sdk/client-s3@3.1031.0)
-      '@daytona/api-client': 0.168.0
-      '@daytona/toolbox-api-client': 0.168.0
+      '@daytona/api-client': 0.169.0
+      '@daytona/toolbox-api-client': 0.169.0
       '@iarna/toml': 2.2.5
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/exporter-trace-otlp-http': 0.207.0(@opentelemetry/api@1.9.1)
