@@ -20,13 +20,13 @@ const githubEnv = {
 };
 
 describe("service env", () => {
-  it("loads gateway defaults, required vars, URL normalization, and derived GitHub values", () => {
+  it("loads gateway defaults, required vars, and derived GitHub values", () => {
     const config = loadGatewayEnv({
       THOR_INTERNAL_SECRET: "secret",
       GITHUB_APP_SLUG: "thor-app",
       GITHUB_APP_BOT_ID: "12345",
       GITHUB_WEBHOOK_SECRET: "webhook",
-      RUNNER_URL: "http://runner:3000///",
+      RUNNER_URL: "http://runner:3000",
     });
 
     expect(config.port).toBe(3002);
@@ -44,7 +44,7 @@ describe("service env", () => {
   });
 
   it("loads runner defaults and strictly validates integers", () => {
-    expect(loadRunnerEnv({ OPENCODE_URL: "http://127.0.0.1:4096///" })).toMatchObject({
+    expect(loadRunnerEnv({ OPENCODE_URL: "http://127.0.0.1:4096" })).toMatchObject({
       port: 3000,
       opencodeUrl: "http://127.0.0.1:4096",
       opencodeConnectTimeout: 15000,
@@ -78,7 +78,7 @@ describe("service env", () => {
       loadGitHubAppAuthEnv({
         GITHUB_APP_ID: "1",
         GITHUB_APP_PRIVATE_KEY_FILE: "/tmp/key.pem",
-        GITHUB_API_URL: "https://github.test/api///",
+        GITHUB_API_URL: "https://github.test/api",
       }),
     ).toMatchObject({ apiUrl: "https://github.test/api" });
     expect(loadDaytonaEnv({ DAYTONA_API_KEY: "daytona-key" })).toMatchObject({
@@ -89,7 +89,7 @@ describe("service env", () => {
 
   it("loads metabase env with csv schemas and strict database id", () => {
     const config = loadMetabaseEnv({
-      METABASE_URL: "https://metabase.test///",
+      METABASE_URL: "https://metabase.test",
       METABASE_API_KEY: "mb-key",
       METABASE_DATABASE_ID: "42",
       METABASE_ALLOWED_SCHEMAS: "dm_products, dm_growth,, dw_testops",

@@ -20,7 +20,6 @@ export {
   envString,
   envInt,
   envCsv,
-  stripTrailingSlashes,
   getRunnerBaseUrl,
   matchesInternalSecret,
 } from "./env.js";
