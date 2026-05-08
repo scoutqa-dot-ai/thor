@@ -1,0 +1,27 @@
+packages/remote-cli/src/approval-store.ts
+  9cb01e16269baa30 71,74,77-78
+packages/remote-cli/src/mcp-handler.ts
+  9cb01e16269baa30 602
+packages/remote-cli/src/approval-store.test.ts
+  9cb01e16269baa30 30,32-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "c79fbf574e2ac0b9b79f23a4de6889f844eccf0d",
+  "prompts": {
+    "9cb01e16269baa30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2dd72ea5-3c9c-48ea-806b-fa3c676d60b1",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 19,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}
