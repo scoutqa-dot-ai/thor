@@ -1,8 +1,3 @@
-/**
- * Serialize concurrent calls keyed by `key`. Subsequent calls for the same key
- * wait for the previous one to settle (resolve or reject) before running.
- * The map entry is cleaned up once the chain for that key drains.
- */
 export function withKeyLock<T>(
   locks: Map<string, Promise<unknown>>,
   key: string,
