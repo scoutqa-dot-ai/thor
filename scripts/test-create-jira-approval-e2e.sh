@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
 #
-# Deterministic e2e for the atlassian/createJiraIssue Slack approval card.
-# Requires THOR_E2E_TEST_HELPERS=1 on gateway so outbound Slack Web API calls
-# are captured locally instead of posted to Slack.
+# Live Slack/OpenCode e2e for the atlassian/createJiraIssue approval card.
+# Posts a real seeded Slack thread as the anchor, injects a signed Slack
+# app_mention through gateway with the exact Jira arguments the agent must use,
+# reads the resulting approval card via Slack Web API, then rejects it through
+# the real interactivity route to avoid Jira side effects.
 
 set -euo pipefail
 
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
-RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 REMOTE_CLI_URL="${REMOTE_CLI_URL:-http://localhost:3004}"
-THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
+SLACK_API_URL="${SLACK_API_URL:-https://slack.com/api}"
+SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
 SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET:-$(docker exec thor-gateway-1 printenv SLACK_SIGNING_SECRET 2>/dev/null)}"
 SLACK_BOT_USER_ID="${SLACK_BOT_USER_ID:-$(docker exec thor-gateway-1 printenv SLACK_BOT_USER_ID 2>/dev/null)}"
-SLACK_CHANNEL_ID="${SLACK_CHANNEL_ID:-C123456789}"
-SLACK_THREAD_TS="${SLACK_THREAD_TS:-1778250522.057779}"
+SLACK_CHANNEL_ID="${SLACK_E2E_CHANNEL_ID:-${SLACK_CHANNEL_ID:-}}"
 JIRA_PROJECT_KEY="${JIRA_PROJECT_KEY:-THOR}"
 JIRA_ISSUE_TYPE="${JIRA_ISSUE_TYPE:-Task}"
-JIRA_SUMMARY="${JIRA_SUMMARY:-Thor e2e approval card smoke}"
-JIRA_DESCRIPTION="${JIRA_DESCRIPTION:-Verify createJiraIssue renders a deterministic Slack approval card and can be rejected without creating Jira side effects.}"
-APPROVAL_DIR="${APPROVAL_DIR:-/workspace/repos/acme-multi-hyphen-repo}"
-export SLACK_CHANNEL_ID SLACK_THREAD_TS SLACK_BOT_USER_ID JIRA_PROJECT_KEY JIRA_ISSUE_TYPE JIRA_SUMMARY JIRA_DESCRIPTION
+RUN_ID="jira-approval-e2e-$(date +%s)"
+JIRA_SUMMARY="${JIRA_SUMMARY:-Thor createJiraIssue approval card e2e ${RUN_ID}}"
+JIRA_DESCRIPTION="${JIRA_DESCRIPTION:-CreateJiraIssue approval-card e2e. Request approval only; the test will reject this approval to avoid Jira side effects. Marker: ${RUN_ID}}"
+export SLACK_CHANNEL_ID SLACK_BOT_USER_ID JIRA_PROJECT_KEY JIRA_ISSUE_TYPE JIRA_SUMMARY JIRA_DESCRIPTION RUN_ID
 
 passed=0
 failed=0
@@ -53,8 +54,10 @@ json_field() {
   local field="$2"
   echo "$json" | FIELD="$field" node -e "
     const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-    const v = d[process.env.FIELD];
-    console.log(v === undefined ? '' : String(v));
+    const path = process.env.FIELD.split('.');
+    let v = d;
+    for (const part of path) v = v?.[part];
+    console.log(v === undefined || v === null ? '' : String(v));
   " 2>/dev/null || echo ""
 }
 
@@ -69,140 +72,138 @@ exec_stdout_field() {
   " 2>/dev/null || echo ""
 }
 
-fetch_calls() {
-  curl -sf "$GATEWAY_URL/internal/e2e/slack-api/calls" \
-    -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET"
+slack_post_json() {
+  local method="$1"
+  local json="$2"
+  curl -sS -X POST "$SLACK_API_URL/$method" \
+    -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+    -H 'Content-Type: application/json; charset=utf-8' \
+    --data-binary "$json"
+}
+
+slack_replies() {
+  curl -sS --get "$SLACK_API_URL/conversations.replies" \
+    -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+    --data-urlencode "channel=$SLACK_CHANNEL_ID" \
+    --data-urlencode "ts=$seed_ts" \
+    --data-urlencode 'limit=50'
 }
 
 extract_approval_card() {
   node -e "
     const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-    const call = [...(d.calls || [])].reverse().find((c) => {
-      if (c.method !== 'chat.postMessage') return false;
-      const text = JSON.stringify(c.payload?.blocks || []) + ' ' + (c.payload?.text || '');
+    const messages = d.messages || [];
+    const message = [...messages].reverse().find((m) => {
+      const text = JSON.stringify(m.blocks || []) + ' ' + (m.text || '');
       return text.includes('Create Jira issue:') && text.includes(process.env.JIRA_SUMMARY);
     });
-    if (!call) process.exit(1);
-    console.log(JSON.stringify(call));
+    if (!message) process.exit(1);
+    console.log(JSON.stringify(message));
   "
 }
 
 extract_action_value() {
   node -e "
-    const call = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-    const elements = (call.payload.blocks || []).flatMap((b) => b.elements || []);
+    const message = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+    const elements = (message.blocks || []).flatMap((b) => b.elements || []);
     const button = elements.find((e) => e.action_id === 'approval_reject');
     console.log(button?.value || '');
   "
 }
 
+extract_updated_message() {
+  node -e "
+    const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+    const message = (d.messages || []).find((m) => m.ts === process.env.MESSAGE_TS);
+    if (!message) process.exit(1);
+    console.log(JSON.stringify(message));
+  "
+}
+
 echo ""
-echo "=== createJiraIssue approval card e2e ==="
+echo "=== createJiraIssue approval card live e2e ==="
 
 gateway_health=$(curl -sf "$GATEWAY_URL/health" 2>/dev/null || echo '{}')
 remote_cli_health=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null || echo '{}')
 assert '[[ "$gateway_health" == *"ok"* ]]' "gateway is healthy" "$gateway_health"
 assert '[[ "$remote_cli_health" == *"ok"* ]]' "remote-cli is healthy" "$remote_cli_health"
-assert '[[ -n "$THOR_INTERNAL_SECRET" ]]' "THOR_INTERNAL_SECRET is available"
+assert '[[ -n "$SLACK_BOT_TOKEN" ]]' "SLACK_BOT_TOKEN is available"
 assert '[[ -n "$SLACK_SIGNING_SECRET" ]]' "SLACK_SIGNING_SECRET is available"
 assert '[[ -n "$SLACK_BOT_USER_ID" ]]' "SLACK_BOT_USER_ID is available"
+assert '[[ -n "$SLACK_CHANNEL_ID" ]]' "SLACK_E2E_CHANNEL_ID or SLACK_CHANNEL_ID is set"
 
-curl -sf -X POST "$GATEWAY_URL/internal/e2e/slack-api/reset" \
-  -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" >/dev/null
+seed_text=$(node -e "
+  console.log([
+    '*createJiraIssue approval-card e2e seed* ' + process.env.RUN_ID,
+    'Thor: use the Atlassian MCP tool createJiraIssue with these exact arguments:',
+    '- projectKey: ' + process.env.JIRA_PROJECT_KEY,
+    '- issueTypeName: ' + process.env.JIRA_ISSUE_TYPE,
+    '- summary: ' + process.env.JIRA_SUMMARY,
+    '- description: ' + process.env.JIRA_DESCRIPTION,
+    'The signed app_mention event repeats these exact arguments; the seed is only the real Slack thread anchor/context.'
+  ].join('\n'));
+")
+seed_json=$(SEED_TEXT="$seed_text" node -e "
+  console.log(JSON.stringify({ channel: process.env.SLACK_CHANNEL_ID, text: process.env.SEED_TEXT }));
+")
+seed_raw=$(slack_post_json "chat.postMessage" "$seed_json")
+seed_ok=$(json_field "$seed_raw" "ok")
+seed_ts=$(json_field "$seed_raw" "ts")
+assert '[[ "$seed_ok" == "true" && -n "$seed_ts" ]]' "seeded real Slack thread message" "response: ${seed_raw:0:500}"
+export seed_ts
 
-mention_body=$(node -e "
+event_body=$(node -e "
+  const instruction = [
+    '<@' + process.env.SLACK_BOT_USER_ID + '> createJiraIssue approval-card e2e ' + process.env.RUN_ID + '.',
+    'Use the Atlassian MCP tool createJiraIssue with exactly these arguments:',
+    'projectKey: ' + process.env.JIRA_PROJECT_KEY,
+    'issueTypeName: ' + process.env.JIRA_ISSUE_TYPE,
+    'summary: ' + process.env.JIRA_SUMMARY,
+    'description: ' + process.env.JIRA_DESCRIPTION,
+    'Request approval and stop. Do not approve or reject the request yourself. Do not ask clarifying questions.'
+  ].join('\n');
   const body = {
     type: 'event_callback',
     event_id: 'Ev2e-jira-' + Date.now(),
     team_id: 'T_E2E',
     event: {
-      type: 'message',
+      type: 'app_mention',
       user: 'U_E2E_REVIEWER',
       channel: process.env.SLACK_CHANNEL_ID,
-      thread_ts: process.env.SLACK_THREAD_TS,
-      ts: process.env.SLACK_THREAD_TS,
-      text: 'createJiraIssue approval-card e2e ingress anchor'
+      thread_ts: process.env.seed_ts,
+      ts: process.env.seed_ts,
+      text: instruction
     }
   };
   console.log(JSON.stringify(body));
 ")
 ts=$(date +%s)
-sig=$(sign_slack_body "$mention_body" "$ts")
+sig=$(sign_slack_body "$event_body" "$ts")
 event_status=$(curl -s -o /tmp/thor-jira-event-response.json -w '%{http_code}' -X POST "$GATEWAY_URL/slack/events" \
   -H 'Content-Type: application/json' \
   -H "X-Slack-Request-Timestamp: $ts" \
   -H "X-Slack-Signature: $sig" \
-  --data-binary "$mention_body")
-assert '[[ "$event_status" == "200" ]]' "fake Slack message webhook accepted" "status=$event_status response=$(tr -d '\n' </tmp/thor-jira-event-response.json 2>/dev/null || true)"
+  --data-binary "$event_body")
+assert '[[ "$event_status" == "200" ]]' "fake signed Slack app_mention accepted" "status=$event_status response=$(tr -d '\n' </tmp/thor-jira-event-response.json 2>/dev/null || true)"
 
-trigger_context_raw=$(curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
-  -H 'Content-Type: application/json' \
-  -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-  -d "{\"correlationKey\":\"slack:thread:$SLACK_THREAD_TS\",\"promptPreview\":\"createJiraIssue approval card e2e context\"}" \
-  2>/dev/null || echo '{}')
-E2E_THOR_SESSION_ID=$(json_field "$trigger_context_raw" "sessionId")
-assert '[[ -n "$E2E_THOR_SESSION_ID" ]]' "runner: created Slack-thread trigger context" "response: ${trigger_context_raw:0:300}"
-
-approval_args_json=$(node -e "
-  console.log(JSON.stringify({
-    projectKey: process.env.JIRA_PROJECT_KEY,
-    issueTypeName: process.env.JIRA_ISSUE_TYPE,
-    summary: process.env.JIRA_SUMMARY,
-    description: process.env.JIRA_DESCRIPTION,
-  }));
-")
-escaped_approval_args=$(node -e "console.log(JSON.stringify(process.argv[1]))" "$approval_args_json")
-call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
-  -H 'Content-Type: application/json' \
-  -H "x-thor-session-id: $E2E_THOR_SESSION_ID" \
-  -d "{\"args\":[\"atlassian\",\"createJiraIssue\",$escaped_approval_args],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
-  2>/dev/null || echo '{}')
-approval_event=$(echo "$call_raw" | node -e "
-  const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-  const candidates = [];
-  for (const value of [d.stdout, d.stderr]) {
-    if (typeof value !== 'string' || !value.trim()) continue;
-    try { candidates.push(JSON.parse(value)); } catch {}
-  }
-  if (Array.isArray(d.content)) {
-    for (const item of d.content) {
-      if (typeof item?.text !== 'string') continue;
-      try { candidates.push(JSON.parse(item.text)); } catch {}
-    }
-  }
-  const event = candidates.find((c) => c?.type === 'approval_required');
-  if (!event) process.exit(1);
-  console.log(JSON.stringify(event));
-" 2>/dev/null || echo "")
-action_id=$(echo "$approval_event" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log(d.actionId || '')" 2>/dev/null || echo "")
-assert '[[ -n "$approval_event" && -n "$action_id" ]]' "remote-cli: deterministic createJiraIssue returned approval_required" "response: ${call_raw:0:500}"
-
-card_status=""
-if [[ -n "$approval_event" ]]; then
-  card_status=$(APPROVAL_EVENT="$approval_event" node -e "
-    const body = { channel: process.env.SLACK_CHANNEL_ID, threadTs: process.env.SLACK_THREAD_TS, event: JSON.parse(process.env.APPROVAL_EVENT) };
-    console.log(JSON.stringify(body));
-  " | curl -s -o /tmp/thor-jira-card-response.json -w '%{http_code}' -X POST "$GATEWAY_URL/internal/e2e/approval-card" \
-    -H 'Content-Type: application/json' \
-    -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-    --data-binary @-)
-fi
-assert '[[ "$card_status" == "200" ]]' "gateway helper rendered approval card" "status=$card_status response=$(tr -d '\n' </tmp/thor-jira-card-response.json 2>/dev/null || true)"
-
-approval_call=""
-calls=$(fetch_calls 2>/dev/null || echo '{}')
-approval_call=$(echo "$calls" | JIRA_SUMMARY="$JIRA_SUMMARY" extract_approval_card 2>/dev/null || echo "")
-
-assert '[[ -n "$approval_call" ]]' "captured Jira approval card post" "calls: ${calls:0:1000}"
+approval_message=""
+replies=""
+for _ in $(seq 1 72); do
+  replies=$(slack_replies 2>/dev/null || echo '{}')
+  approval_message=$(echo "$replies" | JIRA_SUMMARY="$JIRA_SUMMARY" extract_approval_card 2>/dev/null || echo "")
+  [[ -n "$approval_message" ]] && break
+  sleep 5
+done
+assert '[[ -n "$approval_message" ]]' "found Jira approval card via Slack conversations.replies" "replies: ${replies:0:1000}"
 
 button_value=""
 action_id=""
 message_ts=""
-if [[ -n "$approval_call" ]]; then
-  card_assertions=$(echo "$approval_call" | JIRA_PROJECT_KEY="$JIRA_PROJECT_KEY" JIRA_ISSUE_TYPE="$JIRA_ISSUE_TYPE" JIRA_SUMMARY="$JIRA_SUMMARY" JIRA_DESCRIPTION="$JIRA_DESCRIPTION" SLACK_THREAD_TS="$SLACK_THREAD_TS" node -e "
-    const call = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-    const blocks = call.payload.blocks || [];
-    const text = JSON.stringify(blocks);
+if [[ -n "$approval_message" ]]; then
+  card_assertions=$(echo "$approval_message" | JIRA_PROJECT_KEY="$JIRA_PROJECT_KEY" JIRA_ISSUE_TYPE="$JIRA_ISSUE_TYPE" JIRA_SUMMARY="$JIRA_SUMMARY" JIRA_DESCRIPTION="$JIRA_DESCRIPTION" seed_ts="$seed_ts" node -e "
+    const message = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+    const blocks = message.blocks || [];
+    const text = JSON.stringify(blocks) + ' ' + (message.text || '');
     const elements = blocks.flatMap((b) => b.elements || []);
     const values = elements.map((e) => e.value).filter(Boolean);
     const checks = {
@@ -212,19 +213,20 @@ if [[ -n "$approval_call" ]]; then
       summary: text.includes('*Summary:*') && text.includes(process.env.JIRA_SUMMARY),
       description: text.includes('*Description*') && text.includes(process.env.JIRA_DESCRIPTION),
       noRawJson: !text.includes('\`\`\`json'),
-      v3: values.length >= 2 && values.every((v) => v.startsWith('v3:') && v.includes(':atlassian:') && v.endsWith(':' + process.env.SLACK_THREAD_TS)),
+      v3: values.length >= 2 && values.every((v) => v.startsWith('v3:') && v.includes(':atlassian:') && v.endsWith(':' + process.env.seed_ts)),
     };
     console.log(JSON.stringify(checks));
     process.exit(Object.values(checks).every(Boolean) ? 0 : 1);
   " 2>/dev/null || echo '{}')
   assert '[[ "$card_assertions" == *"\"v3\":true"* ]]' "Jira card renders typed fields and v3 button routing" "$card_assertions"
-  button_value=$(echo "$approval_call" | extract_action_value)
+  button_value=$(echo "$approval_message" | extract_action_value)
   action_id="${button_value#v3:}"
   action_id="${action_id%%:*}"
-  message_ts=$(echo "$approval_call" | node -e "const c=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log(c.response?.ts || c.payload?.ts || '')")
+  message_ts=$(echo "$approval_message" | node -e "const m=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log(m.ts || '')")
 fi
+export message_ts
 
-assert '[[ -n "$action_id" && "$button_value" == v3:* ]]' "extracted approval action from reject button" "button_value=$button_value"
+assert '[[ -n "$action_id" && "$button_value" == v3:* && -n "$message_ts" ]]' "extracted approval action from Slack reject button" "button_value=$button_value message_ts=$message_ts"
 
 if [[ -n "$action_id" ]]; then
   payload=$(BUTTON_VALUE="$button_value" MESSAGE_TS="$message_ts" node -e "
@@ -232,8 +234,8 @@ if [[ -n "$action_id" ]]; then
       type: 'block_actions',
       user: { id: 'U_E2E_REVIEWER' },
       channel: { id: process.env.SLACK_CHANNEL_ID },
-      message: { ts: process.env.MESSAGE_TS, thread_ts: process.env.SLACK_THREAD_TS },
-      container: { type: 'message', channel_id: process.env.SLACK_CHANNEL_ID, message_ts: process.env.MESSAGE_TS, thread_ts: process.env.SLACK_THREAD_TS },
+      message: { ts: process.env.MESSAGE_TS, thread_ts: process.env.seed_ts },
+      container: { type: 'message', channel_id: process.env.SLACK_CHANNEL_ID, message_ts: process.env.MESSAGE_TS, thread_ts: process.env.seed_ts },
       actions: [{ action_id: 'approval_reject', value: process.env.BUTTON_VALUE }]
     };
     console.log(JSON.stringify(payload));
@@ -246,20 +248,18 @@ if [[ -n "$action_id" ]]; then
     -H "X-Slack-Request-Timestamp: $ts" \
     -H "X-Slack-Signature: $sig" \
     --data-binary "$form_body")
-  assert '[[ "$reject_status" == "200" ]]' "fake Slack reject click accepted" "status=$reject_status response=$(tr -d '\n' </tmp/thor-jira-reject-response.json 2>/dev/null || true)"
+  assert '[[ "$reject_status" == "200" ]]' "fake signed Slack reject click accepted" "status=$reject_status response=$(tr -d '\n' </tmp/thor-jira-reject-response.json 2>/dev/null || true)"
 
-  rejected_update=""
+  updated_message=""
   for _ in $(seq 1 30); do
-    calls=$(fetch_calls 2>/dev/null || echo '{}')
-    rejected_update=$(echo "$calls" | ACTION_ID="$action_id" node -e "
-      const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-      const call = [...(d.calls || [])].reverse().find((c) => c.method === 'chat.update' && String(c.payload?.text || '').includes('Rejected') && String(c.payload?.text || '').includes(process.env.ACTION_ID));
-      console.log(call ? JSON.stringify(call) : '');
-    " 2>/dev/null || echo "")
-    [[ -n "$rejected_update" ]] && break
-    sleep 1
+    replies=$(slack_replies 2>/dev/null || echo '{}')
+    updated_message=$(echo "$replies" | MESSAGE_TS="$message_ts" extract_updated_message 2>/dev/null || echo "")
+    if [[ "$updated_message" == *"Rejected"* && "$updated_message" == *"$action_id"* ]]; then
+      break
+    fi
+    sleep 2
   done
-  assert '[[ -n "$rejected_update" ]]' "captured rejected Slack update" "calls: ${calls:0:1000}"
+  assert '[[ "$updated_message" == *"Rejected"* && "$updated_message" == *"$action_id"* ]]' "verified rejected Slack update via conversations.replies" "message: ${updated_message:0:1000}"
 
   final_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
     -H 'Content-Type: application/json' \

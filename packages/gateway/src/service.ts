@@ -1044,7 +1044,7 @@ function renderGitHubPrompt(events: GitHubWebhookEvent[]): string {
   return JSON.stringify(events.length === 1 ? events[0] : events);
 }
 
-export async function forwardApprovalNotification(
+async function forwardApprovalNotification(
   channel: string,
   threadTs: string,
   event: ProgressApprovalRequired,

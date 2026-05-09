@@ -35,7 +35,6 @@ export function loadGatewayEnv(env: EnvSource = process.env) {
     githubAppBotId,
     githubAppBotEmail: githubAppBotIdentity.email,
     githubWebhookSecret: envString(env, "GITHUB_WEBHOOK_SECRET"),
-    e2eTestHelpers: envOptionalString(env, "THOR_E2E_TEST_HELPERS") === "1",
   };
 }
 

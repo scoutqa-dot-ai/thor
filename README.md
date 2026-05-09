@@ -137,7 +137,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `POSTHOG_API_KEY`                   | Yes      | `remote-cli`                         | PostHog MCP auth                                                                                          |
 | `RUNNER_BASE_URL`                   | Yes      | `remote-cli`                         | Public base URL for Thor trigger viewer links in PR/Jira content                                          |
 | `THOR_INTERNAL_SECRET`              | Yes      | `remote-cli`, `gateway`              | Secret-gates gateway↔remote-cli internal APIs                                                             |
-| `THOR_E2E_TEST_HELPERS`             | No       | `runner`, `gateway`                  | Enables secret-gated deterministic e2e helpers, including fake Slack Web API capture                      |
+| `THOR_E2E_TEST_HELPERS`             | No       | `runner`                             | Enables secret-gated deterministic runner e2e helpers                                                     |
 | `SLACK_BOT_TOKEN`                   | Yes      | `remote-cli`, `gateway`, `mitmproxy` | Slack bot token for controlled `slack-post-message`, gateway Slack calls, and mitmproxy default injection |
 | `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                            | Bot user ID used to ignore our own messages                                                               |
 | `SLACK_SIGNING_SECRET`              | Yes      | `gateway`                            | Slack webhook verification                                                                                |
@@ -219,10 +219,12 @@ Rules match by exact host or suffix first, then by optional `path_prefix`.
 pnpm test
 pnpm test:mcp
 pnpm test:e2e          # deterministic direct checks only; never calls /trigger
-pnpm test:create-jira-approval-e2e # deterministic createJiraIssue Slack approval-card e2e
+pnpm test:create-jira-approval-e2e # live Slack/OpenCode createJiraIssue approval-card e2e
 pnpm test:opencode-e2e # separate explicit OpenCode/LLM smoke path
 pnpm typecheck
 ```
+
+`pnpm test:create-jira-approval-e2e` requires live Slack/OpenCode credentials and a writable Slack test channel via `SLACK_E2E_CHANNEL_ID` (or `SLACK_CHANNEL_ID`).
 
 ## Project Structure
 

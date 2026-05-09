@@ -39,7 +39,6 @@ const { app } = createGatewayApp({
   githubMentionLogins,
   githubAppBotId: config.githubAppBotId,
   githubAppBotEmail: config.githubAppBotEmail,
-  e2eTestHelpers: config.e2eTestHelpers,
 });
 
 app.listen(config.port, () => {

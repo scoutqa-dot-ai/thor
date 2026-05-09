@@ -11,8 +11,6 @@ import {
   resolveCorrelationKeys,
   getAllowedChannelIds,
   getChannelRepoMap,
-  matchesInternalSecret,
-  ProgressApprovalRequiredSchema,
   truncate,
   resolveRepoDirectory,
   type ConfigLoader,
@@ -24,7 +22,6 @@ import {
   addSlackReaction,
   buildDispatchLogContext,
   executeBatchDispatchPlan,
-  forwardApprovalNotification,
   getBatchLogPrefix,
   planBatchDispatch,
   resolveApproval,
@@ -37,7 +34,6 @@ import {
   type RunnerDeps,
 } from "./service.js";
 import { createSlackClient, type SlackDeps } from "./slack-api.js";
-import type { WebClient } from "@slack/web-api";
 import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
@@ -465,63 +461,6 @@ export interface GatewayAppConfig extends RunnerDeps {
   internalExec?: InternalExecClient;
   /** GitHub mention debounce delay in ms. Default: 3000. */
   githubMentionDelayMs?: number;
-  /** Enable secret-gated e2e helper endpoints and fake Slack Web API capture. */
-  e2eTestHelpers?: boolean;
-}
-
-interface CapturedSlackWebApiCall {
-  id: number;
-  method: "chat.postMessage" | "chat.update" | "reactions.add";
-  payload: unknown;
-  response: Record<string, unknown>;
-  capturedAt: string;
-}
-
-interface E2eSlackCapture {
-  calls: CapturedSlackWebApiCall[];
-  client: WebClient;
-  reset(): void;
-}
-
-function createE2eSlackCapture(): E2eSlackCapture {
-  const calls: CapturedSlackWebApiCall[] = [];
-  let nextId = 1;
-
-  const capture = (
-    method: CapturedSlackWebApiCall["method"],
-    payload: unknown,
-    response: Record<string, unknown>,
-  ) => {
-    calls.push({ id: nextId++, method, payload, response, capturedAt: new Date().toISOString() });
-    return response;
-  };
-
-  return {
-    calls,
-    client: {
-      chat: {
-        postMessage: async (payload: Record<string, unknown>) => {
-          const ts = `e2e.${String(nextId).padStart(6, "0")}`;
-          return capture("chat.postMessage", payload, {
-            ok: true,
-            ts,
-            channel: typeof payload.channel === "string" ? payload.channel : "C_E2E",
-          });
-        },
-        update: async (payload: Record<string, unknown>) =>
-          capture("chat.update", payload, { ok: true, ts: payload.ts, channel: payload.channel }),
-        delete: async () => ({ ok: true }),
-      },
-      reactions: {
-        add: async (payload: Record<string, unknown>) =>
-          capture("reactions.add", payload, { ok: true }),
-      },
-    } as unknown as WebClient,
-    reset: () => {
-      calls.length = 0;
-      nextId = 1;
-    },
-  };
 }
 
 const InteractivityBodySchema = z.object({
@@ -997,12 +936,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     runnerUrl: config.runnerUrl,
     fetchImpl: config.fetchImpl,
   };
-  const e2eSlackCapture = config.e2eTestHelpers ? createE2eSlackCapture() : undefined;
   const slackDeps: SlackDeps = {
-    client:
-      config.slackClient ??
-      e2eSlackCapture?.client ??
-      createSlackClient(config.slackBotToken, config.slackApiBaseUrl),
+    client: config.slackClient ?? createSlackClient(config.slackBotToken, config.slackApiBaseUrl),
   };
   const remoteCliHost = config.remoteCliHost ?? "remote-cli";
   const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;
@@ -1182,69 +1117,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       configured: Boolean(config.signingSecret && config.slackBotToken),
     });
   });
-
-  if (e2eSlackCapture) {
-    const requireE2eAuth = (req: Request, res: Response): boolean => {
-      if (
-        !matchesInternalSecret(config.internalSecret ?? "", req.header("x-thor-internal-secret"))
-      ) {
-        res.status(401).json({ error: "Unauthorized" });
-        return false;
-      }
-      return true;
-    };
-
-    // codeql[js/missing-rate-limiting]
-    // lgtm[js/missing-rate-limiting]
-    // Rate limiting for this opt-in CI-only helper is intentionally enforced at
-    // the infrastructure/test harness boundary, not in the app process.
-    const getE2eSlackApiCalls = (req: Request, res: Response) => {
-      if (!requireE2eAuth(req, res)) return;
-      res.status(200).json({ ok: true, calls: e2eSlackCapture.calls });
-    };
-
-    // codeql[js/missing-rate-limiting]
-    // lgtm[js/missing-rate-limiting]
-    // Rate limiting for this opt-in CI-only helper is intentionally enforced at
-    // the infrastructure/test harness boundary, not in the app process.
-    const resetE2eSlackApiCalls = (req: Request, res: Response) => {
-      if (!requireE2eAuth(req, res)) return;
-      e2eSlackCapture.reset();
-      res.status(200).json({ ok: true });
-    };
-
-    // codeql[js/missing-rate-limiting]
-    // lgtm[js/missing-rate-limiting]
-    // Rate limiting for this opt-in CI-only helper is intentionally enforced at
-    // the infrastructure/test harness boundary, not in the app process.
-    const postE2eApprovalCard = async (req: Request, res: Response) => {
-      if (!requireE2eAuth(req, res)) return;
-
-      const parsed = z
-        .object({
-          channel: z.string().min(1),
-          threadTs: z.string().min(1),
-          event: ProgressApprovalRequiredSchema,
-        })
-        .safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: "Invalid approval card payload" });
-        return;
-      }
-
-      await forwardApprovalNotification(
-        parsed.data.channel,
-        parsed.data.threadTs,
-        parsed.data.event,
-        slackDeps,
-      );
-      res.status(200).json({ ok: true });
-    };
-
-    app.get("/internal/e2e/slack-api/calls", getE2eSlackApiCalls);
-    app.post("/internal/e2e/slack-api/reset", resetE2eSlackApiCalls);
-    app.post("/internal/e2e/approval-card", postE2eApprovalCard);
-  }
 
   const handleSlackEventsWebhook = async (
     req: Request,
