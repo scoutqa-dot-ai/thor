@@ -45,7 +45,7 @@ jobs:
       # Fakes: services not exercised by e2e, but referenced at compose startup.
       GRAFANA_URL: http://grafana-mcp:8000
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
-      POSTHOG_API_KEY: ci-fake
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       LANGFUSE_PUBLIC_KEY: ci-fake
       LANGFUSE_SECRET_KEY: ci-fake
       LANGFUSE_HOST: https://us.cloud.langfuse.com
@@ -109,7 +109,7 @@ jobs:
             "repos": {
               "acme-multi-hyphen-repo": {
                 "channels": ["${SLACK_E2E_CHANNEL_ID:-C123456789}"],
-                "proxies": ["atlassian"]
+                "proxies": ["atlassian", "posthog"]
               }
             },
             "owners": {
@@ -139,7 +139,7 @@ jobs:
           CI: "true"
         run: pnpm test:e2e
 
-      - name: Run createJiraIssue approval card e2e
+      - name: Run approval card e2e
         if: github.ref == 'refs/heads/feat/create-jira-approval-e2e' || github.event_name == 'workflow_dispatch'
         env:
           CI: "true"

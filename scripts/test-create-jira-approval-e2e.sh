@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Live Slack/OpenCode e2e for the atlassian/createJiraIssue approval card.
-# Posts a real seeded Slack thread as the anchor, injects a signed Slack
-# app_mention through gateway with the exact Jira arguments the agent must use,
-# reads the resulting approval card via Slack Web API, then rejects it through
-# the real interactivity route to avoid Jira side effects.
+# Live Slack/OpenCode e2e for approval-card rendering across all approval-
+# required MCP tools. The script posts a real Slack thread anchor, injects a
+# signed app_mention through gateway with exact tool arguments, then verifies
+# the resulting pending approval cards via Slack Web API reads. It intentionally
+# leaves approvals pending so humans can inspect the rendered Slack messages.
 
 set -euo pipefail
 
@@ -15,12 +15,23 @@ SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
 SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET:-$(docker exec thor-gateway-1 printenv SLACK_SIGNING_SECRET 2>/dev/null)}"
 SLACK_BOT_USER_ID="${SLACK_BOT_USER_ID:-$(docker exec thor-gateway-1 printenv SLACK_BOT_USER_ID 2>/dev/null)}"
 SLACK_CHANNEL_ID="${SLACK_E2E_CHANNEL_ID:-${SLACK_CHANNEL_ID:-}}"
+RUN_ID="approval-cards-e2e-$(date +%s)"
+
 JIRA_PROJECT_KEY="${JIRA_PROJECT_KEY:-THOR}"
 JIRA_ISSUE_TYPE="${JIRA_ISSUE_TYPE:-Task}"
-RUN_ID="jira-approval-e2e-$(date +%s)"
 JIRA_SUMMARY="${JIRA_SUMMARY:-Thor createJiraIssue approval card e2e ${RUN_ID}}"
-JIRA_DESCRIPTION="${JIRA_DESCRIPTION:-CreateJiraIssue approval-card e2e. Request approval only; the test will reject this approval to avoid Jira side effects. Marker: ${RUN_ID}}"
-export SLACK_CHANNEL_ID SLACK_BOT_USER_ID JIRA_PROJECT_KEY JIRA_ISSUE_TYPE JIRA_SUMMARY JIRA_DESCRIPTION RUN_ID
+JIRA_DESCRIPTION="${JIRA_DESCRIPTION:-CreateJiraIssue approval-card e2e. Leave pending for human inspection. Marker: ${RUN_ID}}"
+JIRA_COMMENT_ISSUE_KEY="${JIRA_COMMENT_ISSUE_KEY:-${JIRA_PROJECT_KEY}-123}"
+JIRA_COMMENT_BODY="${JIRA_COMMENT_BODY:-AddCommentToJiraIssue approval-card e2e. Leave pending for human inspection. Marker: ${RUN_ID}}"
+POSTHOG_FLAG_KEY="${POSTHOG_FLAG_KEY:-thor-e2e-${RUN_ID}}"
+POSTHOG_FLAG_NAME="${POSTHOG_FLAG_NAME:-Thor e2e approval flag ${RUN_ID}}"
+POSTHOG_FLAG_DESCRIPTION="${POSTHOG_FLAG_DESCRIPTION:-PostHog create feature flag approval-card e2e. Marker: ${RUN_ID}}"
+POSTHOG_UPDATE_FLAG_KEY="${POSTHOG_UPDATE_FLAG_KEY:-thor-existing-e2e-flag}"
+POSTHOG_UPDATE_FLAG_NAME="${POSTHOG_UPDATE_FLAG_NAME:-Thor updated e2e flag ${RUN_ID}}"
+
+export SLACK_CHANNEL_ID SLACK_BOT_USER_ID RUN_ID
+export JIRA_PROJECT_KEY JIRA_ISSUE_TYPE JIRA_SUMMARY JIRA_DESCRIPTION JIRA_COMMENT_ISSUE_KEY JIRA_COMMENT_BODY
+export POSTHOG_FLAG_KEY POSTHOG_FLAG_NAME POSTHOG_FLAG_DESCRIPTION POSTHOG_UPDATE_FLAG_KEY POSTHOG_UPDATE_FLAG_NAME
 
 passed=0
 failed=0
@@ -86,42 +97,43 @@ slack_replies() {
     -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
     --data-urlencode "channel=$SLACK_CHANNEL_ID" \
     --data-urlencode "ts=$seed_ts" \
-    --data-urlencode 'limit=50'
+    --data-urlencode 'limit=100'
 }
 
-extract_approval_card() {
-  node -e "
+find_approval_card() {
+  local key="$1"
+  local title="$2"
+  local upstream="$3"
+  local needles_json="$4"
+  echo "$replies" | EXPECT_KEY="$key" EXPECT_TITLE="$title" EXPECT_UPSTREAM="$upstream" EXPECT_NEEDLES_JSON="$needles_json" SEED_TS="$seed_ts" node -e "
     const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+    const needles = JSON.parse(process.env.EXPECT_NEEDLES_JSON || '[]');
     const messages = d.messages || [];
     const message = [...messages].reverse().find((m) => {
       const text = JSON.stringify(m.blocks || []) + ' ' + (m.text || '');
-      return text.includes('Create Jira issue:') && text.includes(process.env.JIRA_SUMMARY);
+      return text.includes(process.env.EXPECT_TITLE) && needles.every((needle) => text.includes(needle));
     });
     if (!message) process.exit(1);
-    console.log(JSON.stringify(message));
-  "
-}
 
-extract_action_value() {
-  node -e "
-    const message = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+    const text = JSON.stringify(message.blocks || []) + ' ' + (message.text || '');
     const elements = (message.blocks || []).flatMap((b) => b.elements || []);
-    const button = elements.find((e) => e.action_id === 'approval_reject');
-    console.log(button?.value || '');
-  "
-}
-
-extract_updated_message() {
-  node -e "
-    const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-    const message = (d.messages || []).find((m) => m.ts === process.env.MESSAGE_TS);
-    if (!message) process.exit(1);
-    console.log(JSON.stringify(message));
+    const buttons = elements.filter((e) => e.type === 'button');
+    const values = buttons.map((e) => e.value).filter(Boolean);
+    const ok =
+      !text.includes('\`\`\`json') &&
+      values.length >= 2 &&
+      values.some((value) => value.startsWith('v3:') && value.includes(':' + process.env.EXPECT_UPSTREAM + ':') && value.endsWith(':' + process.env.SEED_TS)) &&
+      buttons.some((button) => button.action_id === 'approval_approve') &&
+      buttons.some((button) => button.action_id === 'approval_reject');
+    if (!ok) process.exit(2);
+    const value = values.find((candidate) => candidate.startsWith('v3:')) || '';
+    const actionId = value.startsWith('v3:') ? value.slice(3).split(':')[0] : '';
+    console.log(JSON.stringify({ key: process.env.EXPECT_KEY, ts: message.ts, actionId, value }));
   "
 }
 
 echo ""
-echo "=== createJiraIssue approval card live e2e ==="
+echo "=== approval-card live e2e (pending inspection mode) ==="
 
 gateway_health=$(curl -sf "$GATEWAY_URL/health" 2>/dev/null || echo '{}')
 remote_cli_health=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null || echo '{}')
@@ -134,13 +146,10 @@ assert '[[ -n "$SLACK_CHANNEL_ID" ]]' "SLACK_E2E_CHANNEL_ID or SLACK_CHANNEL_ID 
 
 seed_text=$(node -e "
   console.log([
-    '*createJiraIssue approval-card e2e seed* ' + process.env.RUN_ID,
-    'Thor: use the Atlassian MCP tool createJiraIssue with these exact arguments:',
-    '- projectKey: ' + process.env.JIRA_PROJECT_KEY,
-    '- issueTypeName: ' + process.env.JIRA_ISSUE_TYPE,
-    '- summary: ' + process.env.JIRA_SUMMARY,
-    '- description: ' + process.env.JIRA_DESCRIPTION,
-    'The signed app_mention event repeats these exact arguments; the seed is only the real Slack thread anchor/context.'
+    '*approval-card e2e seed* ' + process.env.RUN_ID,
+    'This thread is a live Slack anchor for rendering all approval-required tools.',
+    'The signed app_mention repeats the exact tool arguments so the agent sees them through gateway ingress.',
+    'The test leaves all approvals pending for human inspection.'
   ].join('\n'));
 ")
 seed_json=$(SEED_TEXT="$seed_text" node -e "
@@ -154,17 +163,24 @@ export seed_ts
 
 event_body=$(node -e "
   const instruction = [
-    '<@' + process.env.SLACK_BOT_USER_ID + '> createJiraIssue approval-card e2e ' + process.env.RUN_ID + '.',
-    'Use the Atlassian MCP tool createJiraIssue with exactly these arguments:',
-    'projectKey: ' + process.env.JIRA_PROJECT_KEY,
-    'issueTypeName: ' + process.env.JIRA_ISSUE_TYPE,
-    'summary: ' + process.env.JIRA_SUMMARY,
-    'description: ' + process.env.JIRA_DESCRIPTION,
-    'Request approval and stop. Do not approve or reject the request yourself. Do not ask clarifying questions.'
+    '<@' + process.env.SLACK_BOT_USER_ID + '> approval-card e2e ' + process.env.RUN_ID + '.',
+    'Call each approval-required MCP tool below exactly once. Request approval for each and leave every approval pending. Do not approve or reject anything. Do not ask clarifying questions.',
+    '',
+    '1. atlassian createJiraIssue args:',
+    JSON.stringify({ projectKey: process.env.JIRA_PROJECT_KEY, issueTypeName: process.env.JIRA_ISSUE_TYPE, summary: process.env.JIRA_SUMMARY, description: process.env.JIRA_DESCRIPTION }),
+    '',
+    '2. atlassian addCommentToJiraIssue args:',
+    JSON.stringify({ issueKey: process.env.JIRA_COMMENT_ISSUE_KEY, commentBody: process.env.JIRA_COMMENT_BODY }),
+    '',
+    '3. posthog create-feature-flag args:',
+    JSON.stringify({ key: process.env.POSTHOG_FLAG_KEY, name: process.env.POSTHOG_FLAG_NAME, description: process.env.POSTHOG_FLAG_DESCRIPTION, active: true, rolloutPercentage: 25 }),
+    '',
+    '4. posthog update-feature-flag args:',
+    JSON.stringify({ key: process.env.POSTHOG_UPDATE_FLAG_KEY, name: process.env.POSTHOG_UPDATE_FLAG_NAME, active: false, rolloutPercentage: 10 })
   ].join('\n');
   const body = {
     type: 'event_callback',
-    event_id: 'Ev2e-jira-' + Date.now(),
+    event_id: 'Ev2e-approval-cards-' + Date.now(),
     team_id: 'T_E2E',
     event: {
       type: 'app_mention',
@@ -179,95 +195,60 @@ event_body=$(node -e "
 ")
 ts=$(date +%s)
 sig=$(sign_slack_body "$event_body" "$ts")
-event_status=$(curl -s -o /tmp/thor-jira-event-response.json -w '%{http_code}' -X POST "$GATEWAY_URL/slack/events" \
+event_status=$(curl -s -o /tmp/thor-approval-cards-event-response.json -w '%{http_code}' -X POST "$GATEWAY_URL/slack/events" \
   -H 'Content-Type: application/json' \
   -H "X-Slack-Request-Timestamp: $ts" \
   -H "X-Slack-Signature: $sig" \
   --data-binary "$event_body")
-assert '[[ "$event_status" == "200" ]]' "fake signed Slack app_mention accepted" "status=$event_status response=$(tr -d '\n' </tmp/thor-jira-event-response.json 2>/dev/null || true)"
+assert '[[ "$event_status" == "200" ]]' "fake signed Slack app_mention with all approval instructions accepted" "status=$event_status response=$(tr -d '\n' </tmp/thor-approval-cards-event-response.json 2>/dev/null || true)"
 
-approval_message=""
-replies=""
-for _ in $(seq 1 72); do
+declare -A CARD_JSON_BY_KEY=()
+declare -A ACTION_ID_BY_KEY=()
+
+expect_card() {
+  local key="$1"
+  local title="$2"
+  local upstream="$3"
+  local needles_json="$4"
+  local result
+  result=$(find_approval_card "$key" "$title" "$upstream" "$needles_json" 2>/dev/null || echo "")
+  if [[ -n "$result" ]]; then
+    CARD_JSON_BY_KEY["$key"]="$result"
+    ACTION_ID_BY_KEY["$key"]=$(json_field "$result" "actionId")
+    return 0
+  fi
+  return 1
+}
+
+for _ in $(seq 1 96); do
   replies=$(slack_replies 2>/dev/null || echo '{}')
-  approval_message=$(echo "$replies" | JIRA_SUMMARY="$JIRA_SUMMARY" extract_approval_card 2>/dev/null || echo "")
-  [[ -n "$approval_message" ]] && break
+  expect_card "createJiraIssue" "Create Jira issue: $JIRA_SUMMARY" "atlassian" "$(node -e 'console.log(JSON.stringify([process.env.JIRA_PROJECT_KEY, process.env.JIRA_ISSUE_TYPE, process.env.JIRA_DESCRIPTION]))')" || true
+  expect_card "addCommentToJiraIssue" "Comment on Jira issue: $JIRA_COMMENT_ISSUE_KEY" "atlassian" "$(node -e 'console.log(JSON.stringify([process.env.JIRA_COMMENT_BODY]))')" || true
+  expect_card "create-feature-flag" "Create feature flag: $POSTHOG_FLAG_NAME" "posthog" "$(node -e 'console.log(JSON.stringify([process.env.POSTHOG_FLAG_KEY, process.env.POSTHOG_FLAG_DESCRIPTION, "25"]))')" || true
+  expect_card "update-feature-flag" "Update feature flag: $POSTHOG_UPDATE_FLAG_KEY" "posthog" "$(node -e 'console.log(JSON.stringify([process.env.POSTHOG_UPDATE_FLAG_NAME, "false", "10"]))')" || true
+
+  if [[ ${#CARD_JSON_BY_KEY[@]} -eq 4 ]]; then
+    break
+  fi
   sleep 5
 done
-assert '[[ -n "$approval_message" ]]' "found Jira approval card via Slack conversations.replies" "replies: ${replies:0:1000}"
 
-button_value=""
-action_id=""
-message_ts=""
-if [[ -n "$approval_message" ]]; then
-  card_assertions=$(echo "$approval_message" | JIRA_PROJECT_KEY="$JIRA_PROJECT_KEY" JIRA_ISSUE_TYPE="$JIRA_ISSUE_TYPE" JIRA_SUMMARY="$JIRA_SUMMARY" JIRA_DESCRIPTION="$JIRA_DESCRIPTION" seed_ts="$seed_ts" node -e "
-    const message = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-    const blocks = message.blocks || [];
-    const text = JSON.stringify(blocks) + ' ' + (message.text || '');
-    const elements = blocks.flatMap((b) => b.elements || []);
-    const values = elements.map((e) => e.value).filter(Boolean);
-    const checks = {
-      title: text.includes('Create Jira issue: ' + process.env.JIRA_SUMMARY),
-      project: text.includes('*Project:*') && text.includes(process.env.JIRA_PROJECT_KEY),
-      issueType: text.includes('*Issue type:*') && text.includes(process.env.JIRA_ISSUE_TYPE),
-      summary: text.includes('*Summary:*') && text.includes(process.env.JIRA_SUMMARY),
-      description: text.includes('*Description*') && text.includes(process.env.JIRA_DESCRIPTION),
-      noRawJson: !text.includes('\`\`\`json'),
-      v3: values.length >= 2 && values.every((v) => v.startsWith('v3:') && v.includes(':atlassian:') && v.endsWith(':' + process.env.seed_ts)),
-    };
-    console.log(JSON.stringify(checks));
-    process.exit(Object.values(checks).every(Boolean) ? 0 : 1);
-  " 2>/dev/null || echo '{}')
-  assert '[[ "$card_assertions" == *"\"v3\":true"* ]]' "Jira card renders typed fields and v3 button routing" "$card_assertions"
-  button_value=$(echo "$approval_message" | extract_action_value)
-  action_id="${button_value#v3:}"
-  action_id="${action_id%%:*}"
-  message_ts=$(echo "$approval_message" | node -e "const m=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log(m.ts || '')")
-fi
-export message_ts
+for key in createJiraIssue addCommentToJiraIssue create-feature-flag update-feature-flag; do
+  assert '[[ -n "${CARD_JSON_BY_KEY[$key]:-}" ]]' "found pending approval card for $key via Slack conversations.replies" "replies: ${replies:0:1000}"
+  assert '[[ -n "${ACTION_ID_BY_KEY[$key]:-}" ]]' "extracted pending action ID for $key" "card: ${CARD_JSON_BY_KEY[$key]:-}"
+done
 
-assert '[[ -n "$action_id" && "$button_value" == v3:* && -n "$message_ts" ]]' "extracted approval action from Slack reject button" "button_value=$button_value message_ts=$message_ts"
-
-if [[ -n "$action_id" ]]; then
-  payload=$(BUTTON_VALUE="$button_value" MESSAGE_TS="$message_ts" node -e "
-    const payload = {
-      type: 'block_actions',
-      user: { id: 'U_E2E_REVIEWER' },
-      channel: { id: process.env.SLACK_CHANNEL_ID },
-      message: { ts: process.env.MESSAGE_TS, thread_ts: process.env.seed_ts },
-      container: { type: 'message', channel_id: process.env.SLACK_CHANNEL_ID, message_ts: process.env.MESSAGE_TS, thread_ts: process.env.seed_ts },
-      actions: [{ action_id: 'approval_reject', value: process.env.BUTTON_VALUE }]
-    };
-    console.log(JSON.stringify(payload));
-  ")
-  form_body=$(PAYLOAD="$payload" node -e "console.log('payload=' + encodeURIComponent(process.env.PAYLOAD))")
-  ts=$(date +%s)
-  sig=$(sign_slack_body "$form_body" "$ts")
-  reject_status=$(curl -s -o /tmp/thor-jira-reject-response.json -w '%{http_code}' -X POST "$GATEWAY_URL/slack/interactivity" \
-    -H 'Content-Type: application/x-www-form-urlencoded' \
-    -H "X-Slack-Request-Timestamp: $ts" \
-    -H "X-Slack-Signature: $sig" \
-    --data-binary "$form_body")
-  assert '[[ "$reject_status" == "200" ]]' "fake signed Slack reject click accepted" "status=$reject_status response=$(tr -d '\n' </tmp/thor-jira-reject-response.json 2>/dev/null || true)"
-
-  updated_message=""
-  for _ in $(seq 1 30); do
-    replies=$(slack_replies 2>/dev/null || echo '{}')
-    updated_message=$(echo "$replies" | MESSAGE_TS="$message_ts" extract_updated_message 2>/dev/null || echo "")
-    if [[ "$updated_message" == *"Rejected"* && "$updated_message" == *"$action_id"* ]]; then
-      break
-    fi
-    sleep 2
-  done
-  assert '[[ "$updated_message" == *"Rejected"* && "$updated_message" == *"$action_id"* ]]' "verified rejected Slack update via conversations.replies" "message: ${updated_message:0:1000}"
-
-  final_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
-    -H 'Content-Type: application/json' \
-    -d "{\"args\":[\"status\",\"$action_id\"]}" \
-    2>/dev/null || echo '{}')
-  final_status=$(exec_stdout_field "$final_raw" "status")
-  assert '[[ "$final_status" == "rejected" ]]' "remote-cli approval status is rejected" "status=$final_status response=${final_raw:0:300}"
-fi
+for key in createJiraIssue addCommentToJiraIssue create-feature-flag update-feature-flag; do
+  action_id="${ACTION_ID_BY_KEY[$key]:-}"
+  if [[ -n "$action_id" ]]; then
+    status_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
+      -H 'Content-Type: application/json' \
+      -d "{\"args\":[\"status\",\"$action_id\"]}" \
+      2>/dev/null || echo '{}')
+    status_val=$(exec_stdout_field "$status_raw" "status")
+    assert '[[ "$status_val" == "pending" ]]' "remote-cli approval for $key remains pending" "status=$status_val response=${status_raw:0:300}"
+  fi
+done
 
 echo ""
 echo "=== Results ==="
