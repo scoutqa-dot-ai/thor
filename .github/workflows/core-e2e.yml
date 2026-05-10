@@ -45,7 +45,7 @@ jobs:
       # Fakes: services not exercised by e2e, but referenced at compose startup.
       GRAFANA_URL: http://grafana-mcp:8000
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
-      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      POSTHOG_API_KEY: ci-fake
       LANGFUSE_PUBLIC_KEY: ci-fake
       LANGFUSE_SECRET_KEY: ci-fake
       LANGFUSE_HOST: https://us.cloud.langfuse.com
