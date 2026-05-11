@@ -153,10 +153,7 @@ export type InternalExecClient = (request: InternalExecRequest) => Promise<{
   exitCode: number;
 }>;
 
-type TerminalGitHubRejectReason =
-  | "installation_gone"
-  | "branch_not_found"
-  | "branch_lookup_failed";
+type TerminalGitHubRejectReason = "installation_gone" | "branch_not_found" | "branch_lookup_failed";
 
 class TerminalGitHubDispatchError extends Error {
   constructor(
