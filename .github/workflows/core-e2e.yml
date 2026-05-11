@@ -140,7 +140,7 @@ jobs:
         run: pnpm test:e2e
 
       - name: Run approval card e2e
-        if: github.ref == 'refs/heads/feat/create-jira-approval-e2e' || github.event_name == 'workflow_dispatch'
+        if: github.ref == 'refs/heads/main'
         env:
           CI: "true"
         run: pnpm test:create-jira-approval-e2e
