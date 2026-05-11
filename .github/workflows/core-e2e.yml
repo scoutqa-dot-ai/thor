@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/core-e2e.yml"
       - "scripts/test-e2e.sh"
+      - "scripts/test-create-jira-approval-e2e.sh"
       - "scripts/test-opencode-e2e.sh"
       - "packages/**"
       - pnpm-lock.yaml
@@ -26,6 +27,7 @@ jobs:
       OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}
+      SLACK_E2E_CHANNEL_ID: ${{ vars.SLACK_E2E_CHANNEL_ID || vars.SLACK_CHANNEL_ID }}
       SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       GITHUB_APP_ID: ${{ vars.THOR_GITHUB_APP_ID }}
       GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/private-key.pem
@@ -106,7 +108,7 @@ jobs:
           {
             "repos": {
               "acme-multi-hyphen-repo": {
-                "channels": ["C123456789"],
+                "channels": ["${SLACK_E2E_CHANNEL_ID:-C123456789}"],
                 "proxies": ["atlassian"]
               }
             },
@@ -136,6 +138,12 @@ jobs:
         env:
           CI: "true"
         run: pnpm test:e2e
+
+      - name: Run approval card e2e
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/approval-issue-id-or-key'
+        env:
+          CI: "true"
+        run: pnpm test:create-jira-approval-e2e
 
       - name: Run OpenCode LLM smoke test
         if: github.ref == 'refs/heads/main'

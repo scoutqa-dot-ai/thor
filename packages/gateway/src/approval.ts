@@ -2,8 +2,6 @@ import {
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
-  UpdateFeatureFlagApprovalArgsSchema,
-  type ApprovalArgs,
   type ApprovalToolName,
 } from "@thor/common";
 import type { SlackBlock } from "./slack-api.js";
@@ -126,7 +124,7 @@ export function formatApprovalArgs(args: Record<string, unknown>): string {
 
 export function buildApprovalPresentation(
   tool: ApprovalToolName,
-  args: ApprovalArgs,
+  args: Record<string, unknown>,
 ): ApprovalPresentation | undefined {
   try {
     switch (tool) {
@@ -136,8 +134,6 @@ export function buildApprovalPresentation(
         return buildAddJiraCommentPresentation(args);
       case "create-feature-flag":
         return buildCreateFeatureFlagPresentation(args);
-      case "update-feature-flag":
-        return buildUpdateFeatureFlagPresentation(args);
       default:
         return undefined;
     }
@@ -220,64 +216,40 @@ export function buildApprovalPresentationBlocks(
   ];
 }
 
-function buildCreateJiraIssuePresentation(args: ApprovalArgs): ApprovalPresentation {
+function buildCreateJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {
   const parsed = CreateJiraIssueApprovalArgsSchema.parse(args);
-  const project = parsed.projectKey;
-  const issueType = parsed.issueTypeName;
-  const summaryValue = parsed.summary;
-  const summary = renderValue(summaryValue) ?? "Untitled Jira issue";
-  const description = parsed.description;
   return {
-    title: `Create Jira issue: ${summary}`,
+    title: `Create Jira issue: ${renderValue(parsed.summary) ?? "Untitled Jira issue"}`,
     markdown: joinMarkdown([
-      bullet("Project", project),
-      bullet("Issue type", issueType),
-      bullet("Summary", summaryValue),
-      section("Description", description),
+      bullet("Project", parsed.projectKey),
+      bullet("Issue type", parsed.issueTypeName),
+      bullet("Summary", parsed.summary),
+      section("Description", parsed.description),
     ]),
   };
 }
 
-function buildAddJiraCommentPresentation(args: ApprovalArgs): ApprovalPresentation {
+function buildAddJiraCommentPresentation(args: Record<string, unknown>): ApprovalPresentation {
   const parsed = AddCommentToJiraIssueApprovalArgsSchema.parse(args);
-  const issueValue = parsed.issueKey;
-  const issue = renderValue(issueValue) ?? "unknown issue";
-  const comment = parsed.commentBody;
   return {
-    title: `Comment on Jira issue: ${issue}`,
-    markdown: joinMarkdown([bullet("Issue", issueValue ?? issue), section("Comment", comment)]),
+    title: `Comment on Jira issue: ${renderValue(parsed.issueIdOrKey) ?? "unknown issue"}`,
+    markdown: joinMarkdown([renderValue(parsed.commentBody)]),
   };
 }
 
-function buildCreateFeatureFlagPresentation(args: ApprovalArgs): ApprovalPresentation {
+function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
   const parsed = CreateFeatureFlagApprovalArgsSchema.parse(args);
-  const key = parsed.key;
-  const name = parsed.name;
-  const description = parsed.description;
-  const titleTarget = renderValue(name ?? key) ?? "feature flag";
+  const titleTarget = renderValue(parsed.name ?? parsed.key) ?? "feature flag";
   return {
     title: `Create feature flag: ${titleTarget}`,
     markdown: joinMarkdown([
-      bullet("Key", key),
-      bullet("Name", name),
-      section("Description", description),
+      bullet("Key", parsed.key),
+      bullet("Name", parsed.name),
+      section("Description", parsed.description),
       bullet("Active", parsed.active),
       bullet("Rollout", parsed.rolloutPercentage),
       bullet("Filters", parsed.filters),
     ]),
-  };
-}
-
-function buildUpdateFeatureFlagPresentation(args: ApprovalArgs): ApprovalPresentation {
-  const parsed = UpdateFeatureFlagApprovalArgsSchema.parse(args);
-  const keyValue = parsed.key;
-  const key = renderValue(keyValue) ?? "feature flag";
-  const changes = Object.entries(parsed)
-    .filter(([name, value]) => name !== "key" && value !== undefined)
-    .map(([name, value]) => bullet(name, value));
-  return {
-    title: `Update feature flag: ${key}`,
-    markdown: joinMarkdown([bullet("Flag", keyValue ?? key), ...changes]),
   };
 }
 
@@ -292,7 +264,9 @@ function renderValue(value: unknown): string | undefined {
   }
   if (Array.isArray(value)) {
     if (value.length === 0) return undefined;
-    return value.map((item) => renderValue(item) ?? escapeMrkdwnText(JSON.stringify(item))).join(", ");
+    return value
+      .map((item) => renderValue(item) ?? escapeMrkdwnText(JSON.stringify(item)))
+      .join(", ");
   }
   try {
     return escapeMrkdwnText(trimString(JSON.stringify(value), 500));

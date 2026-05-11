@@ -252,7 +252,7 @@ describe("remote-cli MCP endpoints", () => {
       args: [
         "atlassian",
         "createJiraIssue",
-        '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+        '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
       ],
       cwd: "/workspace/repos/acme",
       directory: "/workspace/repos/acme",
@@ -266,6 +266,48 @@ describe("remote-cli MCP endpoints", () => {
     expect(pending.status).toBe(200);
     expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
     expect(pendingBody.stderr).toContain("missing Thor session id");
+    expect(toolCalls).toEqual([]);
+
+    const list = await postJson("/exec/approval", { args: ["list"] });
+    const listBody = (await list.json()) as { stdout: string };
+    expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
+  });
+
+  it("rejects invalid approval args before persisting an action", async () => {
+    expect(
+      appendAlias({
+        aliasType: "opencode.session",
+        aliasValue: "parent-session",
+        anchorId: activeAnchorId,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
+    ).toEqual({ ok: true });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(pendingBody.stderr).toContain('Invalid approval arguments for "createJiraIssue"');
+    expect(pendingBody.stderr).toContain("issueTypeName");
     expect(toolCalls).toEqual([]);
 
     const list = await postJson("/exec/approval", { args: ["list"] });
@@ -290,7 +332,7 @@ describe("remote-cli MCP endpoints", () => {
         args: [
           "atlassian",
           "createJiraIssue",
-          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
         cwd: "/workspace/repos/acme",
         directory: "/workspace/repos/acme",
@@ -310,16 +352,22 @@ describe("remote-cli MCP endpoints", () => {
       args: Record<string, unknown>;
       command: string;
     };
-    const expectedArgs = {
+    const cleanArgs = {
+      cloudId: "cloud-1",
       projectKey: "THOR",
+      issueTypeName: "Task",
       summary: "Fix it",
+      description: "body",
+    };
+    const upstreamArgs = {
+      ...cleanArgs,
       description: `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
     };
     expect(approvalOutput).toMatchObject({
       type: "approval_required",
       proxyName: "atlassian",
       tool: "createJiraIssue",
-      args: expectedArgs,
+      args: cleanArgs,
     });
     expect(approvalOutput.command).toBe(`approval status ${approvalOutput.actionId}`);
     const actionId = approvalOutput.actionId;
@@ -334,7 +382,11 @@ describe("remote-cli MCP endpoints", () => {
       upstream: "atlassian",
       status: "pending",
       tool: "createJiraIssue",
-      args: expectedArgs,
+      args: cleanArgs,
+      origin: {
+        sessionId: "parent-session",
+        trigger: { anchorId: activeAnchorId, triggerId: activeTriggerId },
+      },
     });
 
     const list = await postJson("/exec/approval", { args: ["list"] });
@@ -377,9 +429,50 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls).toEqual([
       {
         name: "createJiraIssue",
-        arguments: expectedArgs,
+        arguments: upstreamArgs,
       },
     ]);
+  });
+
+  it("blocks Jira approvals when contentFormat is not markdown", async () => {
+    expect(
+      appendAlias({
+        aliasType: "opencode.session",
+        aliasValue: "parent-session",
+        anchorId: activeAnchorId,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
+    ).toEqual({ ok: true });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","contentFormat":"adf"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(pendingBody.stderr).toContain('"createJiraIssue" is not allowed.');
+    expect(pendingBody.stderr).toContain('contentFormat "adf" is not supported');
+    expect(toolCalls).toEqual([]);
+
+    const list = await postJson("/exec/approval", { args: ["list"] });
+    const listBody = (await list.json()) as { stdout: string };
+    expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
   });
 
   it("deduplicates concurrent same-decision approval resolves in one process", async () => {
@@ -399,7 +492,7 @@ describe("remote-cli MCP endpoints", () => {
         args: [
           "atlassian",
           "createJiraIssue",
-          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
         cwd: "/workspace/repos/acme",
         directory: "/workspace/repos/acme",
@@ -470,7 +563,7 @@ describe("remote-cli MCP endpoints", () => {
         args: [
           "atlassian",
           "createJiraIssue",
-          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
         cwd: "/workspace/repos/acme",
         directory: "/workspace/repos/acme",
@@ -535,7 +628,7 @@ describe("remote-cli MCP endpoints", () => {
         args: [
           "atlassian",
           "createJiraIssue",
-          '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
         cwd: "/workspace/repos/acme",
         directory: "/workspace/repos/acme",

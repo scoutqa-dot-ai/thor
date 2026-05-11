@@ -249,6 +249,10 @@ The gateway remains stateless. It continues to forward Slack actions and may ret
 
 Approved terminal actions now store the buffered remote-cli `ExecResult` shape (`stdout`, `stderr`, `exitCode`) and status/status-check paths validate that shape explicitly. Invalid approved-result files are treated as corrupt state and fail fast; no backward-compatibility or replay logic is added.
 
+## 2026-05-08 Bug-fix Addendum: Approval Payload Validation Before Persistence
+
+Strict approval payload schemas are now validated before `approvalStore.create(...)` writes a pending action. Invalid approval arguments return a normal CLI failure and leave no approval file behind, avoiding orphaned pending approvals that were never returned to the agent or forwarded to Slack.
+
 ## Out of Scope
 
 - Per-user approval permissions (any button clicker can approve)

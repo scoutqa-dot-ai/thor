@@ -1,11 +1,15 @@
 import {
   appendCorrelationAlias,
+  approvalToolRequiresDisclaimer,
+  validateDisclaimerCompatibleArgs,
+  buildThorDisclaimer,
   computeSlackCorrelationKey,
   createLogger,
   ExecResultSchema,
   extractRepoFromCwd,
+  findActiveTriggerOrThrow,
   getProxyConfig,
-  buildThorDisclaimerForSession,
+  injectApprovalDisclaimer,
   isProxyName,
   getRepoUpstreams,
   getRunnerBaseUrl,
@@ -37,19 +41,25 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
 
-function addDisclaimerToApprovalArgs(
+function resolveDisclaimerTrigger(
   tool: string,
-  args: Record<string, unknown>,
-  sessionId?: string,
-): Record<string, unknown> {
-  if (tool !== "createJiraIssue" && tool !== "addCommentToJiraIssue") return args;
-  const footer = buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer;
-  const field = tool === "createJiraIssue" ? "description" : "commentBody";
-  if (typeof args[field] !== "string")
+  sessionId: string | undefined,
+): { anchorId: string; triggerId: string } | undefined {
+  if (!approvalToolRequiresDisclaimer(tool)) return undefined;
+  const { anchorId, triggerId } = findActiveTriggerOrThrow(sessionId);
+  return { anchorId, triggerId };
+}
+
+function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
+  if (!approvalToolRequiresDisclaimer(action.tool)) return action.args;
+  const trigger = action.origin?.trigger;
+  if (!trigger) {
     throw new Error(
-      `Cannot create approval: ${tool}.${field} must be a string for disclaimer injection`,
+      `Approval action ${action.id} is missing origin.trigger for disclaimer injection`,
     );
-  return { ...args, [field]: `${args[field]}\n${footer}` };
+  }
+  const { footer } = buildThorDisclaimer(trigger, getRunnerBaseUrl());
+  return injectApprovalDisclaimer(action.tool, action.args, footer);
 }
 
 interface ProxyInstance {
@@ -483,13 +493,31 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
 
     if (toolInfo.classification === "approve") {
-      let approvalArgs: Record<string, unknown>;
+      const approvalRequired = ApprovalRequiredEventPayloadSchema.safeParse({
+        type: "approval_required",
+        actionId: "_pending",
+        proxyName: instance.name,
+        tool: toolInfo.name,
+        args,
+      });
+      if (!approvalRequired.success) {
+        return fail(
+          `Invalid approval arguments for "${toolInfo.name}": ${approvalRequired.error.message}`,
+        );
+      }
+      const approvalArgs = approvalRequired.data.args;
+      const formatError = validateDisclaimerCompatibleArgs(toolInfo.name, approvalArgs);
+      if (formatError) return fail(formatError);
+      let trigger: { anchorId: string; triggerId: string } | undefined;
       try {
-        approvalArgs = addDisclaimerToApprovalArgs(toolInfo.name, args, context.sessionId);
+        trigger = resolveDisclaimerTrigger(toolInfo.name, context.sessionId);
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
-      const action = instance.approvalStore.create(toolInfo.name, approvalArgs);
+      const action = instance.approvalStore.create(toolInfo.name, approvalArgs, {
+        sessionId: context.sessionId,
+        trigger,
+      });
       logInfo(log, "tool_call_pending_approval", {
         upstream: instance.name,
         tool: toolInfo.name,
@@ -497,17 +525,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         ...getThorIds(context),
       });
       writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args: approvalArgs });
-      const approvalRequired: ApprovalRequiredEventPayload =
-        ApprovalRequiredEventPayloadSchema.parse({
-          type: "approval_required",
-          actionId: action.id,
-          proxyName: instance.name,
-          tool: toolInfo.name,
-          args: action.args,
-        });
+      const approvalEvent: ApprovalRequiredEventPayload = {
+        ...approvalRequired.data,
+        actionId: action.id,
+      };
       return ok(
         stringify({
-          ...approvalRequired,
+          ...approvalEvent,
           command: `approval status ${action.id}`,
         }),
       );
@@ -623,10 +647,16 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
 
     const pendingAction = lookup.action;
+    let upstreamArgs: Record<string, unknown>;
+    try {
+      upstreamArgs = buildUpstreamArgs(pendingAction);
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
     const result = await executeUpstreamCall({
       instance,
       toolName: pendingAction.tool,
-      args: pendingAction.args,
+      args: upstreamArgs,
       logEvent: "tool_call_approved",
       decision: "approved",
       extraLogFields: { actionId: pendingAction.id },
