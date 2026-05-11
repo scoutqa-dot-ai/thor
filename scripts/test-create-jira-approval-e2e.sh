@@ -163,7 +163,7 @@ event_body=$(node -e "
     JSON.stringify({ projectKey: process.env.JIRA_PROJECT_KEY, issueTypeName: process.env.JIRA_ISSUE_TYPE, summary: process.env.JIRA_SUMMARY, description: process.env.JIRA_DESCRIPTION }),
     '',
     '2. atlassian addCommentToJiraIssue args:',
-    JSON.stringify({ issueKey: process.env.JIRA_COMMENT_ISSUE_KEY, commentBody: process.env.JIRA_COMMENT_BODY }),
+    JSON.stringify({ issueIdOrKey: process.env.JIRA_COMMENT_ISSUE_KEY, commentBody: process.env.JIRA_COMMENT_BODY }),
     '',
     'Do not call any PostHog approval tools in this run.'
   ].join('\n');
