@@ -51,8 +51,9 @@ Slim runtime contract in the custom image:
 - Java via SDKMAN: **21 (default)** and **17**, plus Maven and Gradle
 - Python via pyenv: **3.12 (default)** and `uv`
 - Docker CE (with docker compose)
+- Browser automation/recording: `agent-browser` with Chrome for Testing preinstalled, plus `ffmpeg`, `xvfb`, `xdotool`, `tree`, and ImageMagick
 
-Everything else should be installed on demand inside the sandbox for the current task (for example Node 19, Python 3.11, Go, Rust, Terraform/Terragrunt/SOPS/AWS CLI).
+Everything else should be installed on demand inside the sandbox for the current task (for example Node 19, Python 3.11, Go, Rust, Terraform/Terragrunt/SOPS/AWS CLI, or repo-specific Playwright/Puppeteer versions).
 
 ### Build + publish the image
 
