@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Live Slack/OpenCode e2e for approval-card rendering across all approval-
+# Live Slack/OpenCode e2e for approval-card rendering of Atlassian approval-
 # required MCP tools. The script posts a real Slack thread anchor, injects a
 # signed app_mention through gateway with exact tool arguments, then verifies
 # the resulting pending approval cards via Slack Web API reads. It intentionally
@@ -23,15 +23,8 @@ JIRA_SUMMARY="${JIRA_SUMMARY:-Thor createJiraIssue approval card e2e ${RUN_ID}}"
 JIRA_DESCRIPTION="${JIRA_DESCRIPTION:-CreateJiraIssue approval-card e2e. Leave pending for human inspection. Marker: ${RUN_ID}}"
 JIRA_COMMENT_ISSUE_KEY="${JIRA_COMMENT_ISSUE_KEY:-${JIRA_PROJECT_KEY}-123}"
 JIRA_COMMENT_BODY="${JIRA_COMMENT_BODY:-AddCommentToJiraIssue approval-card e2e. Leave pending for human inspection. Marker: ${RUN_ID}}"
-POSTHOG_FLAG_KEY="${POSTHOG_FLAG_KEY:-thor-e2e-${RUN_ID}}"
-POSTHOG_FLAG_NAME="${POSTHOG_FLAG_NAME:-Thor e2e approval flag ${RUN_ID}}"
-POSTHOG_FLAG_DESCRIPTION="${POSTHOG_FLAG_DESCRIPTION:-PostHog create feature flag approval-card e2e. Marker: ${RUN_ID}}"
-POSTHOG_UPDATE_FLAG_KEY="${POSTHOG_UPDATE_FLAG_KEY:-thor-existing-e2e-flag}"
-POSTHOG_UPDATE_FLAG_NAME="${POSTHOG_UPDATE_FLAG_NAME:-Thor updated e2e flag ${RUN_ID}}"
-
 export SLACK_CHANNEL_ID SLACK_BOT_USER_ID RUN_ID
 export JIRA_PROJECT_KEY JIRA_ISSUE_TYPE JIRA_SUMMARY JIRA_DESCRIPTION JIRA_COMMENT_ISSUE_KEY JIRA_COMMENT_BODY
-export POSTHOG_FLAG_KEY POSTHOG_FLAG_NAME POSTHOG_FLAG_DESCRIPTION POSTHOG_UPDATE_FLAG_KEY POSTHOG_UPDATE_FLAG_NAME
 
 passed=0
 failed=0
@@ -147,7 +140,7 @@ assert '[[ -n "$SLACK_CHANNEL_ID" ]]' "SLACK_E2E_CHANNEL_ID or SLACK_CHANNEL_ID 
 seed_text=$(node -e "
   console.log([
     '*approval-card e2e seed* ' + process.env.RUN_ID,
-    'This thread is a live Slack anchor for rendering all approval-required tools.',
+    'This thread is a live Slack anchor for rendering Atlassian approval-required tools.',
     'The signed app_mention repeats the exact tool arguments so the agent sees them through gateway ingress.',
     'The test leaves all approvals pending for human inspection.'
   ].join('\n'));
@@ -164,7 +157,7 @@ export seed_ts
 event_body=$(node -e "
   const instruction = [
     '<@' + process.env.SLACK_BOT_USER_ID + '> approval-card e2e ' + process.env.RUN_ID + '.',
-    'Call each approval-required MCP tool below exactly once. Request approval for each and leave every approval pending. Do not approve or reject anything. Do not ask clarifying questions.',
+    'Call each Atlassian approval-required MCP tool below exactly once. Request approval for each and leave every approval pending. Do not approve or reject anything. Do not ask clarifying questions.',
     '',
     '1. atlassian createJiraIssue args:',
     JSON.stringify({ projectKey: process.env.JIRA_PROJECT_KEY, issueTypeName: process.env.JIRA_ISSUE_TYPE, summary: process.env.JIRA_SUMMARY, description: process.env.JIRA_DESCRIPTION }),
@@ -172,11 +165,7 @@ event_body=$(node -e "
     '2. atlassian addCommentToJiraIssue args:',
     JSON.stringify({ issueKey: process.env.JIRA_COMMENT_ISSUE_KEY, commentBody: process.env.JIRA_COMMENT_BODY }),
     '',
-    '3. posthog create-feature-flag args:',
-    JSON.stringify({ key: process.env.POSTHOG_FLAG_KEY, name: process.env.POSTHOG_FLAG_NAME, description: process.env.POSTHOG_FLAG_DESCRIPTION, active: true, rolloutPercentage: 25 }),
-    '',
-    '4. posthog update-feature-flag args:',
-    JSON.stringify({ key: process.env.POSTHOG_UPDATE_FLAG_KEY, name: process.env.POSTHOG_UPDATE_FLAG_NAME, active: false, rolloutPercentage: 10 })
+    'Do not call any PostHog approval tools in this run.'
   ].join('\n');
   const body = {
     type: 'event_callback',
@@ -224,21 +213,18 @@ for _ in $(seq 1 96); do
   replies=$(slack_replies 2>/dev/null || echo '{}')
   expect_card "createJiraIssue" "Create Jira issue: $JIRA_SUMMARY" "atlassian" "$(node -e 'console.log(JSON.stringify([process.env.JIRA_PROJECT_KEY, process.env.JIRA_ISSUE_TYPE, process.env.JIRA_DESCRIPTION]))')" || true
   expect_card "addCommentToJiraIssue" "Comment on Jira issue: $JIRA_COMMENT_ISSUE_KEY" "atlassian" "$(node -e 'console.log(JSON.stringify([process.env.JIRA_COMMENT_BODY]))')" || true
-  expect_card "create-feature-flag" "Create feature flag: $POSTHOG_FLAG_NAME" "posthog" "$(node -e 'console.log(JSON.stringify([process.env.POSTHOG_FLAG_KEY, process.env.POSTHOG_FLAG_DESCRIPTION, "25"]))')" || true
-  expect_card "update-feature-flag" "Update feature flag: $POSTHOG_UPDATE_FLAG_KEY" "posthog" "$(node -e 'console.log(JSON.stringify([process.env.POSTHOG_UPDATE_FLAG_NAME, "false", "10"]))')" || true
-
-  if [[ ${#CARD_JSON_BY_KEY[@]} -eq 4 ]]; then
+  if [[ ${#CARD_JSON_BY_KEY[@]} -eq 2 ]]; then
     break
   fi
   sleep 5
 done
 
-for key in createJiraIssue addCommentToJiraIssue create-feature-flag update-feature-flag; do
+for key in createJiraIssue addCommentToJiraIssue; do
   assert '[[ -n "${CARD_JSON_BY_KEY[$key]:-}" ]]' "found pending approval card for $key via Slack conversations.replies" "replies: ${replies:0:1000}"
   assert '[[ -n "${ACTION_ID_BY_KEY[$key]:-}" ]]' "extracted pending action ID for $key" "card: ${CARD_JSON_BY_KEY[$key]:-}"
 done
 
-for key in createJiraIssue addCommentToJiraIssue create-feature-flag update-feature-flag; do
+for key in createJiraIssue addCommentToJiraIssue; do
   action_id="${ACTION_ID_BY_KEY[$key]:-}"
   if [[ -n "$action_id" ]]; then
     status_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \

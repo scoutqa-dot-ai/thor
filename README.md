@@ -219,12 +219,12 @@ Rules match by exact host or suffix first, then by optional `path_prefix`.
 pnpm test
 pnpm test:mcp
 pnpm test:e2e          # deterministic direct checks only; never calls /trigger
-pnpm test:create-jira-approval-e2e # live Slack/OpenCode approval-card e2e for approval-required tools
+pnpm test:create-jira-approval-e2e # live Slack/OpenCode approval-card e2e for Atlassian approval-required tools
 pnpm test:opencode-e2e # separate explicit OpenCode/LLM smoke path
 pnpm typecheck
 ```
 
-`pnpm test:create-jira-approval-e2e` requires live Slack/OpenCode credentials, connected Atlassian/PostHog MCP upstreams, and a writable Slack test channel via `SLACK_E2E_CHANNEL_ID` (or `SLACK_CHANNEL_ID`). It intentionally leaves approvals pending for human inspection.
+`pnpm test:create-jira-approval-e2e` requires live Slack/OpenCode credentials, a connected Atlassian MCP upstream, and a writable Slack test channel via `SLACK_E2E_CHANNEL_ID` (or `SLACK_CHANNEL_ID`). It intentionally leaves approvals pending for human inspection.
 
 ## Project Structure
 
