@@ -233,10 +233,7 @@ function buildAddJiraCommentPresentation(args: Record<string, unknown>): Approva
   const parsed = AddCommentToJiraIssueApprovalArgsSchema.parse(args);
   return {
     title: `Comment on Jira issue: ${renderValue(parsed.issueIdOrKey) ?? "unknown issue"}`,
-    markdown: joinMarkdown([
-      bullet("Issue", parsed.issueIdOrKey),
-      section("Comment", parsed.commentBody),
-    ]),
+    markdown: joinMarkdown([renderValue(parsed.commentBody)]),
   };
 }
 

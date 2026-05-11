@@ -115,7 +115,7 @@ describe("approval presentation", () => {
       }),
     ).toEqual({
       title: "Comment on Jira issue: ENG-42",
-      markdown: "*Issue:* ENG-42\n\n*Comment:*\nLooks good to me.",
+      markdown: "Looks good to me.",
     });
     expect(
       buildApprovalPresentation("addCommentToJiraIssue", {
@@ -125,7 +125,7 @@ describe("approval presentation", () => {
       }),
     ).toEqual({
       title: "Comment on Jira issue: KSR-11011",
-      markdown: "*Issue:* KSR-11011\n\n*Comment:*\nApproved.",
+      markdown: "Approved.",
     });
     expect(
       buildApprovalPresentation("create-feature-flag", { key: "beta", active: false }),
