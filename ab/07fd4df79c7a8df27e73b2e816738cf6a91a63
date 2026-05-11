@@ -1,0 +1,23 @@
+scripts/test-create-jira-approval-e2e.sh
+  58e6280b749f18a8 166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ab07fd4df79c7a8df27e73b2e816738cf6a91a63",
+  "prompts": {
+    "58e6280b749f18a8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6e3bcdaf-0213-4a4c-b800-1351539ee83c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
