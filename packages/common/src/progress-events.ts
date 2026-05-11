@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { ApprovalRequiredEventPayloadSchema } from "./approval-events.js";
+import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
 
 // --- Individual event schemas ---
 
@@ -46,7 +46,13 @@ export const ProgressErrorSchema = z.object({
   error: z.string(),
 });
 
-export const ProgressApprovalRequiredSchema = ApprovalRequiredEventPayloadSchema;
+export const ProgressApprovalRequiredSchema = z.object({
+  type: z.literal("approval_required"),
+  actionId: z.string().min(1),
+  proxyName: z.string().min(1).optional(),
+  tool: z.enum(APPROVAL_TOOL_NAMES),
+  args: z.record(z.string(), z.unknown()),
+});
 
 export const ProgressHeartbeatSchema = z.object({
   type: z.literal("heartbeat"),

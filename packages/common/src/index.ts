@@ -22,7 +22,9 @@ export {
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
-  UpdateFeatureFlagApprovalArgsSchema,
+  approvalToolRequiresDisclaimer,
+  injectApprovalDisclaimer,
+  validateDisclaimerCompatibleArgs,
 } from "./approval-events.js";
 export type {
   ApprovalArgs,
@@ -122,11 +124,13 @@ export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
 export { deriveGitHubAppBotIdentity } from "./github-identity.js";
 export type { GitHubAppBotIdentity, GitHubAppBotIdentityInput } from "./github-identity.js";
 export {
+  buildThorDisclaimer,
   buildThorDisclaimerForSession,
   buildThorTriggerUrl,
+  findActiveTriggerOrThrow,
   formatThorDisclaimerFooter,
 } from "./disclaimer.js";
-export type { ThorDisclaimerContext } from "./disclaimer.js";
+export type { ActiveTriggerSnapshot, ThorDisclaimerContext } from "./disclaimer.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,
