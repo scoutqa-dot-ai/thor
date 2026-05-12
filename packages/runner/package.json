@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.14.48",
+    "@opencode-ai/sdk": "^1.14.39",
     "@thor/common": "workspace:*",
     "express": "^5.1.0",
     "zod": "^4.3.6"
