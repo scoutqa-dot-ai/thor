@@ -109,7 +109,7 @@ function toolEvent(
   status: string,
   input: Record<string, unknown>,
   time: { start: number; end: number } = { start: 1000, end: 2500 },
-  output?: string,
+  output?: unknown,
 ): Event {
   const state = { status, input, time, ...(output !== undefined ? { output } : {}) };
   return {
@@ -621,6 +621,115 @@ describe("runner /trigger orchestration", () => {
         proxyName: "atlassian",
         args: outputArgs,
       });
+    });
+  });
+
+  it("emits approval_required events when completed output is already an object", async () => {
+    const approvalOutput = {
+      type: "approval_required",
+      actionId: "approval-object-output",
+      proxyName: "atlassian",
+      tool: "createJiraIssue",
+      args: {
+        cloudId: "cloud-1",
+        projectKey: "THOR",
+        issueTypeName: "Task",
+        summary: "Object output summary",
+      },
+    };
+    const wrapperArgs = { upstream: "atlassian", tool: "createJiraIssue", arguments: "{}" };
+    const h = createHarness({
+      promptEvents: (sessionId) => [
+        toolEvent(sessionId, "mcp", "completed", wrapperArgs, { start: 1000, end: 1200 }, approvalOutput),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "approval object output",
+        correlationKey: "slack:thread:1710000000.072",
+      });
+      const approvals = result.events.filter((e) => e.type === "approval_required");
+
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0]).toMatchObject(approvalOutput);
+    });
+  });
+
+  it("emits approval_required events when completed output wraps stdout JSON", async () => {
+    const approvalOutput = {
+      type: "approval_required",
+      actionId: "approval-stdout-output",
+      proxyName: "atlassian",
+      tool: "addCommentToJiraIssue",
+      args: {
+        cloudId: "cloud-1",
+        issueIdOrKey: "THOR-123",
+        commentBody: "Wrapped stdout comment",
+      },
+    };
+    const wrapperArgs = { upstream: "atlassian", tool: "addCommentToJiraIssue", arguments: "{}" };
+    const h = createHarness({
+      promptEvents: (sessionId) => [
+        toolEvent(
+          sessionId,
+          "mcp",
+          "completed",
+          wrapperArgs,
+          { start: 1000, end: 1200 },
+          { stdout: JSON.stringify(approvalOutput), stderr: "", exitCode: 0 },
+        ),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "approval stdout output",
+        correlationKey: "slack:thread:1710000000.073",
+      });
+      const approvals = result.events.filter((e) => e.type === "approval_required");
+
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0]).toMatchObject(approvalOutput);
+    });
+  });
+
+  it("does not emit approval_required for non-MCP tools with matching output shape", async () => {
+    const misleadingOutput = {
+      type: "approval_required",
+      actionId: "not-really-an-approval",
+      proxyName: "atlassian",
+      tool: "createJiraIssue",
+      args: {
+        projectKey: "THOR",
+        issueTypeName: "Task",
+        summary: "Should be ignored",
+      },
+    };
+    const h = createHarness({
+      promptEvents: (sessionId) => [
+        toolEvent(
+          sessionId,
+          "bash",
+          "completed",
+          { command: "print fake approval" },
+          { start: 1000, end: 1200 },
+          { stdout: JSON.stringify(misleadingOutput), stderr: "", exitCode: 0 },
+        ),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "ignore fake approval output",
+        correlationKey: "slack:thread:1710000000.074",
+      });
+      const approvals = result.events.filter((e) => e.type === "approval_required");
+
+      expect(approvals).toHaveLength(0);
     });
   });
 

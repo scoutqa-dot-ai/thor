@@ -15,6 +15,7 @@ import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
+  APPROVAL_TOOL_NAMES,
   createLogger,
   logInfo,
   logWarn,
@@ -1066,7 +1067,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   // Detect approval-required tool results and emit approval event.
                   if (status === "completed") {
                     const completed = toolPart.state as ToolStateCompleted;
-                    const approval = parseApprovalResult(completed.output);
+                    const approval = parseApprovalResult(toolPart, completed.output);
                     if (approval) {
                       emit(approval);
                     }
@@ -1205,17 +1206,66 @@ function isSessionEvent(event: Event, sessionId: string): boolean {
   return eventSessionId(event) === sessionId;
 }
 
-function parseApprovalResult(output: string): ProgressEvent | undefined {
-  let parsedOutput: unknown;
-  try {
-    parsedOutput = JSON.parse(output);
-  } catch {
-    return undefined;
-  }
+const APPROVAL_CANDIDATE_LIMIT = 32;
 
-  const parsed = ProgressApprovalRequiredSchema.safeParse(parsedOutput);
-  if (!parsed.success) return undefined;
-  return parsed.data;
+function parseApprovalResult(toolPart: ToolPart, output: unknown): ProgressEvent | undefined {
+  if (!isApprovalMcpToolPart(toolPart)) return undefined;
+  for (const candidate of approvalResultCandidates(output)) {
+    const parsed = ProgressApprovalRequiredSchema.safeParse(candidate);
+    if (parsed.success) return parsed.data;
+  }
+  return undefined;
+}
+
+function approvalResultCandidates(output: unknown): unknown[] {
+  const candidates: unknown[] = [];
+  const seen = new Set<unknown>();
+
+  const visit = (value: unknown): void => {
+    if (
+      value === undefined ||
+      value === null ||
+      seen.has(value) ||
+      candidates.length >= APPROVAL_CANDIDATE_LIMIT
+    ) {
+      return;
+    }
+    seen.add(value);
+    candidates.push(value);
+
+    if (typeof value === "string") {
+      try {
+        visit(JSON.parse(value));
+      } catch {
+        // Ignore non-JSON strings.
+      }
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+
+    if (typeof value !== "object") return;
+
+    const record = value as Record<string, unknown>;
+    visit(record.stdout);
+    visit(record.output);
+    visit(record.text);
+    visit(record.content);
+  };
+
+  visit(output);
+  return candidates;
+}
+
+function isApprovalMcpToolPart(toolPart: ToolPart): boolean {
+  if (toolPart.tool !== "mcp") return false;
+  const input = toolPart.state.input;
+  if (!input || typeof input !== "object") return false;
+  const wrappedTool = (input as Record<string, unknown>).tool;
+  return typeof wrappedTool === "string" && (APPROVAL_TOOL_NAMES as readonly string[]).includes(wrappedTool);
 }
 
 function escapeHtml(value: string): string {
