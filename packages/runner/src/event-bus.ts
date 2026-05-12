@@ -6,8 +6,8 @@
  * dispatches events to per-session listeners.
  *
  * - Connects lazily on the first subscribe() call per directory.
- * - Does NOT auto-reconnect on failure — the next subscribe() call
- *   will re-establish the connection if needed.
+ * - Auto-reconnects while subscriptions are active so a transient SDK stream
+ *   end does not strand trigger loops waiting for OpenCode events.
  * - Listeners are cleaned up when the returned iterator is broken/returned.
  */
 
@@ -16,6 +16,8 @@ import { EventEmitter } from "node:events";
 import { createLogger, logInfo, logError } from "@thor/common";
 
 const log = createLogger("event-bus");
+const RECONNECT_INITIAL_DELAY_MS = 25;
+const RECONNECT_MAX_DELAY_MS = 1_000;
 
 /**
  * One SSE connection per directory. Dispatches events to per-session listeners.
@@ -31,6 +33,8 @@ class DirectoryEventBus {
   private currentIterator: AsyncIterator<Event> | null = null;
   private currentAbortController: AbortController | null = null;
   private closed = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectDelayMs = RECONNECT_INITIAL_DELAY_MS;
   private baseUrl: string;
   private directory: string;
   private onEmpty: () => void;
@@ -59,6 +63,7 @@ class DirectoryEventBus {
   }
 
   private async connect(): Promise<void> {
+    this.clearReconnectTimer();
     const generation = ++this.connectionGeneration;
     const abortController = new AbortController();
     const client = createOpencodeClient({
@@ -78,11 +83,11 @@ class DirectoryEventBus {
     this.currentStream = stream;
     this.currentAbortController = abortController;
     this.alive = true;
+    this.reconnectDelayMs = RECONNECT_INITIAL_DELAY_MS;
     logInfo(log, "connected", { baseUrl: this.baseUrl, directory: this.directory });
 
-    // Fire-and-forget reader loop. When the stream ends (server close,
-    // network error, etc.) we just mark ourselves as dead — the next
-    // subscribe() call will reconnect.
+    // Fire-and-forget reader loop. When the stream ends unexpectedly while
+    // callers are still subscribed, reconnect and keep existing listeners.
     void (async () => {
       const iterator = stream[Symbol.asyncIterator]();
       if (generation === this.connectionGeneration) {
@@ -110,9 +115,44 @@ class DirectoryEventBus {
           this.currentIterator = null;
           this.currentAbortController = null;
           logInfo(log, "disconnected", { directory: this.directory });
+          if (!this.closed && this.activeSubscriptions > 0) {
+            logInfo(log, "stream_ended_reconnecting", {
+              directory: this.directory,
+              activeSubscriptions: this.activeSubscriptions,
+            });
+            this.scheduleReconnect("stream_end");
+          }
         }
       }
     })();
+  }
+
+  private scheduleReconnect(reason: string): void {
+    if (this.closed || this.activeSubscriptions === 0 || this.alive || this.connectPromise) return;
+    if (this.reconnectTimer) return;
+    const delayMs = this.reconnectDelayMs;
+    this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, RECONNECT_MAX_DELAY_MS);
+    logInfo(log, "reconnect_scheduled", { directory: this.directory, reason, delayMs });
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.closed || this.activeSubscriptions === 0 || this.alive) return;
+      logInfo(log, "reconnect_attempt", { directory: this.directory, reason });
+      this.connectPromise = this.connect().finally(() => {
+        this.connectPromise = null;
+      });
+      this.connectPromise.catch((err) => {
+        logError(log, "reconnect_failed", err instanceof Error ? err.message : String(err), {
+          directory: this.directory,
+        });
+        this.scheduleReconnect("reconnect_failed");
+      });
+    }, delayMs);
+  }
+
+  private clearReconnectTimer(): void {
+    if (!this.reconnectTimer) return;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 
   subscribe(sessionIds: string[]): SessionSubscription {
@@ -126,6 +166,7 @@ class DirectoryEventBus {
       this.activeSubscriptions--;
     }
     if (this.activeSubscriptions === 0) {
+      this.clearReconnectTimer();
       this.onEmpty();
     }
   }
@@ -136,6 +177,7 @@ class DirectoryEventBus {
     this.activeSubscriptions = 0;
     this.alive = false;
     this.connectPromise = null;
+    this.clearReconnectTimer();
     this.connectionGeneration++;
     const abortController = this.currentAbortController;
     const iterator = this.currentIterator;

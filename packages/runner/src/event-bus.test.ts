@@ -431,28 +431,129 @@ describe("EventBusRegistry", () => {
     expect((r2[0] as any).properties.part.sessionID).toBe("s2");
   });
 
-  it("reconnects on next subscribe() after stream failure", async () => {
+  it("reconnects active subscriptions after the stream ends", async () => {
+    const replacementStream = createMockStream();
+    const streams = [mockStream, replacementStream];
+    vi.mocked(createOpencodeClient).mockImplementation(() => {
+      const s = streams.shift();
+      if (!s) throw new Error("unexpected reconnect");
+      return {
+        event: {
+          subscribe: vi.fn().mockResolvedValue({ stream: s.stream }),
+        },
+      } as never;
+    });
+
     const reg = new EventBusRegistry("http://localhost:4096");
 
     const sub1 = await reg.subscribe("/repo/a", ["s1"]);
     expect(createOpencodeClient).toHaveBeenCalledTimes(1);
 
-    // Simulate stream ending.
     mockStream.end();
-    await new Promise((r) => setTimeout(r, 20));
 
-    // Create a fresh mock stream for the reconnection.
-    const newMockStream = createMockStream();
-    vi.mocked(createOpencodeClient).mockReturnValue({
-      event: {
-        subscribe: vi.fn().mockResolvedValue({ stream: newMockStream.stream }),
+    await vi.waitFor(() => expect(createOpencodeClient).toHaveBeenCalledTimes(2));
+
+    replacementStream.push(makePartEvent("s1"));
+    replacementStream.push(makeIdleEvent("s1"));
+
+    const collected: Event[] = [];
+    for await (const event of sub1) {
+      collected.push(event);
+      if (event.type === "session.idle") break;
+    }
+
+    expect(collected.map((event) => event.type)).toEqual(["message.part.updated", "session.idle"]);
+
+    sub1.close();
+  });
+
+  it("delivers approval tool completions to active subscribers after reconnect", async () => {
+    const replacementStream = createMockStream();
+    const streams = [mockStream, replacementStream];
+    vi.mocked(createOpencodeClient).mockImplementation(() => {
+      const s = streams.shift();
+      if (!s) throw new Error("unexpected reconnect");
+      return {
+        event: {
+          subscribe: vi.fn().mockResolvedValue({ stream: s.stream }),
+        },
+      } as never;
+    });
+
+    const reg = new EventBusRegistry("http://localhost:4096");
+    const sub = await reg.subscribe("/repo/a", ["s1"]);
+
+    mockStream.end();
+    await vi.waitFor(() => expect(createOpencodeClient).toHaveBeenCalledTimes(2));
+
+    const approvalOutput = JSON.stringify({
+      type: "approval_required",
+      actionId: "action-after-reconnect",
+      proxyName: "atlassian",
+      tool: "createJiraIssue",
+      args: { summary: "Reconnect approval" },
+    });
+    replacementStream.push({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          type: "tool",
+          sessionID: "s1",
+          messageID: "m1",
+          callID: "call-mcp",
+          tool: "mcp",
+          state: { status: "completed", input: {}, output: approvalOutput },
+        },
       },
-    } as never);
+    } as unknown as Event);
+    replacementStream.push(makeIdleEvent("s1"));
+
+    const collected: Event[] = [];
+    for await (const event of sub) {
+      collected.push(event);
+      if (event.type === "session.idle") break;
+    }
+
+    expect(collected).toHaveLength(2);
+    expect(collected[0]).toMatchObject({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          type: "tool",
+          sessionID: "s1",
+          state: { status: "completed", output: approvalOutput },
+        },
+      },
+    });
+
+    sub.close();
+  });
+
+  it("reuses an automatically reconnected bus on later subscribe() calls", async () => {
+    const replacementStream = createMockStream();
+    const streams = [mockStream, replacementStream];
+    vi.mocked(createOpencodeClient).mockImplementation(() => {
+      const s = streams.shift();
+      if (!s) throw new Error("unexpected reconnect");
+      return {
+        event: {
+          subscribe: vi.fn().mockResolvedValue({ stream: s.stream }),
+        },
+      } as never;
+    });
+
+    const reg = new EventBusRegistry("http://localhost:4096");
+
+    const sub1 = await reg.subscribe("/repo/a", ["s1"]);
+    expect(createOpencodeClient).toHaveBeenCalledTimes(1);
+
+    mockStream.end();
+    await vi.waitFor(() => expect(createOpencodeClient).toHaveBeenCalledTimes(2));
 
     const sub2 = await reg.subscribe("/repo/a", ["s2"]);
     expect(createOpencodeClient).toHaveBeenCalledTimes(2);
 
-    newMockStream.push(makeIdleEvent("s2"));
+    replacementStream.push(makeIdleEvent("s2"));
 
     const collected: Event[] = [];
     for await (const event of sub2) {
@@ -462,6 +563,7 @@ describe("EventBusRegistry", () => {
     expect(collected).toHaveLength(1);
 
     sub1.close();
+    sub2.close();
   });
 
   it("coalesces concurrent subscribe() calls into one connection per directory", async () => {
