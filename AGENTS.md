@@ -35,6 +35,8 @@ Instructions for AI agents working on this repository.
 
 8. **Rate limiting** — App-level rate limiters / DDoS protection are deferred to infrastructure (ingress, proxy, WAF, or platform controls). CodeQL missing-rate-limit alerts are acknowledged, but do not add Express middleware limiters unless a future plan explicitly changes this policy.
 
+9. **OpenCode harness boundaries** — Thor-side wrappers and tools should not re-enforce timeouts, output caps/truncation, or output transformations already handled by the OpenCode harness. Add Thor-side enforcement only when Thor has its own explicit product/API contract or safety boundary (for example, endpoint-specific JSON formatting or a documented internal output limit).
+
 ## Repository Structure
 
 ```

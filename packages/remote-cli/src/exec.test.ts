@@ -1,5 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { EventEmitter } from "node:events";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { execCommand, execCommandStream } from "./exec.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.doUnmock("node:child_process");
+  vi.resetModules();
+  vi.restoreAllMocks();
+});
 
 describe("execCommand", () => {
   it("captures stdout", async () => {
@@ -21,6 +29,37 @@ describe("execCommand", () => {
   it("returns exit code 1 for missing binary", async () => {
     const result = await execCommand("nonexistent-binary-xyz", [], "/tmp");
     expect(result.exitCode).toBe(1);
+  });
+
+  it("does not enforce a Thor-side timeout", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const child = Object.assign(new EventEmitter(), { kill: vi.fn() });
+    let callback: ((err: null, stdout: string, stderr: string) => void) | undefined;
+
+    vi.doMock("node:child_process", () => ({
+      execFile: vi.fn(
+        (
+          _binary: string,
+          _args: string[],
+          _options: unknown,
+          cb: (err: null, stdout: string, stderr: string) => void,
+        ) => {
+          callback = cb;
+          return child;
+        },
+      ),
+      spawn: vi.fn(),
+    }));
+
+    const { execCommand: mockedExecCommand } = await import("./exec.js");
+    const resultPromise = mockedExecCommand("slow", [], "/tmp");
+
+    await vi.advanceTimersByTimeAsync(60_001);
+    expect(child.kill).not.toHaveBeenCalled();
+
+    callback?.(null, "done", "");
+    await expect(resultPromise).resolves.toEqual({ stdout: "done", stderr: "", exitCode: 0 });
   });
 });
 
@@ -94,5 +133,32 @@ describe("execCommandStream", () => {
       onStderr: () => {},
     });
     expect(exitCode).toBe(1);
+  });
+
+  it("does not enforce a Thor-side streaming timeout", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const child = Object.assign(new EventEmitter(), {
+      kill: vi.fn(),
+      stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+      stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+    });
+
+    vi.doMock("node:child_process", () => ({
+      execFile: vi.fn(),
+      spawn: vi.fn(() => child),
+    }));
+
+    const { execCommandStream: mockedExecCommandStream } = await import("./exec.js");
+    const resultPromise = mockedExecCommandStream("slow", [], "/tmp", {
+      onStdout: () => {},
+      onStderr: () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(300_001);
+    expect(child.kill).not.toHaveBeenCalled();
+
+    child.emit("close", 0);
+    await expect(resultPromise).resolves.toBe(0);
   });
 });
