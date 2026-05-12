@@ -3937,7 +3937,11 @@ describe("gateway", () => {
     expect(firstBody.interrupt).toBe(false);
     expect(firstBody.correlationKey).toBe("slack:thread:1710000000.001");
     expect(firstBody.prompt).toContain("human approved action `act-1`");
-    expect(firstBody.prompt).toContain("continue the workflow");
+    expect(firstBody.prompt).toContain("approval resolver already executed or attempted");
+    expect(firstBody.prompt).toContain("approved side effect");
+    expect(firstBody.prompt).toContain("do not replay or re-run the same write/tool call");
+    expect(firstBody.prompt).toContain("continue only with later distinct safe work");
+    expect(firstBody.prompt).not.toContain("continue the workflow");
   });
 
   it("updates Slack and re-enters the session when an approved action fails during execution", async () => {

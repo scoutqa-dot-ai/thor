@@ -345,9 +345,11 @@ export function buildApprovalOutcomePrompt(events: ApprovalOutcomeEventPayload[]
     const resolutionFailed =
       typeof event.resolutionExitCode === "number" && event.resolutionExitCode !== 0;
     const guidance = resolutionFailed
-      ? `human ${event.decision} action \`${event.actionId}\`, but approval resolution reported a failure; inspect approval status/output, explain the implication, and choose the next safe action`
+      ? event.decision === "approved"
+        ? `human approved action \`${event.actionId}\`, but approval resolution reported a failure after the approval resolver already attempted the approved side effect; do not replay or re-run the same write/tool call, inspect approval status/output, explain the implication, and choose only a distinct safe recovery action`
+        : `human rejected action \`${event.actionId}\`, but approval resolution reported a failure; inspect approval status/output, explain the implication, and choose the next safe action`
       : event.decision === "approved"
-        ? `human approved action \`${event.actionId}\`; continue the workflow, fetch approval status if needed, and finish the next safe step`
+        ? `human approved action \`${event.actionId}\`; the approval resolver already executed or attempted the approved side effect, so do not replay or re-run the same write/tool call; inspect approval status/output if needed, report the result in-thread, and continue only with later distinct safe work`
         : `human rejected action \`${event.actionId}\`; do not retry the same write blindly, explain the implication, and choose the next safe action`;
 
     const summary = event.resolutionSummary

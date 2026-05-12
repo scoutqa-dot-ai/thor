@@ -1158,7 +1158,13 @@ describe("approval outcome prompts", () => {
     ]);
 
     expect(prompt).toContain("human approved action `act-1`");
-    expect(prompt).toContain("continue the workflow");
+    expect(prompt).toContain("approval resolver already executed or attempted");
+    expect(prompt).toContain("approved side effect");
+    expect(prompt).toContain("do not replay or re-run the same write/tool call");
+    expect(prompt).toContain("inspect approval status/output if needed");
+    expect(prompt).toContain("report the result in-thread");
+    expect(prompt).toContain("continue only with later distinct safe work");
+    expect(prompt).not.toContain("continue the workflow");
     expect(prompt).toContain("human rejected action `act-2`");
     expect(prompt).toContain("do not retry the same write blindly");
     expect(prompt).toContain("Resolution summary: missing approval reason");
@@ -1180,9 +1186,12 @@ describe("approval outcome prompts", () => {
     ]);
 
     expect(prompt).toContain(
-      "human approved action `act-1`, but approval resolution reported a failure",
+      "human approved action `act-1`, but approval resolution reported a failure after the approval resolver already attempted the approved side effect",
     );
-    expect(prompt).toContain("choose the next safe action");
+    expect(prompt).toContain("do not replay or re-run the same write/tool call");
+    expect(prompt).toContain("inspect approval status/output");
+    expect(prompt).toContain("choose only a distinct safe recovery action");
+    expect(prompt).not.toContain("continue the workflow");
     expect(prompt).toContain(
       'Resolution summary: Error calling "merge_pull_request": upstream unavailable',
     );
@@ -1228,7 +1237,10 @@ describe("approval outcome prompts", () => {
     const body = JSON.parse(req.body);
     expect(body.prompt).toContain("Slack event:");
     expect(body.prompt).toContain("human approved action `act-1`");
-    expect(body.prompt).toContain("continue the workflow");
+    expect(body.prompt).toContain("approval resolver already executed or attempted");
+    expect(body.prompt).toContain("do not replay or re-run the same write/tool call");
+    expect(body.prompt).toContain("continue only with later distinct safe work");
+    expect(body.prompt).not.toContain("continue the workflow");
   });
 });
 
