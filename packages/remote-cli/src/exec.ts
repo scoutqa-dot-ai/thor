@@ -11,9 +11,6 @@
 import { execFile, spawn } from "node:child_process";
 import type { ExecResult } from "@thor/common";
 
-const TIMEOUT_MS = 60_000;
-const STREAM_TIMEOUT_MS = 300_000; // 5 minutes for streaming commands
-
 export interface ExecCommandOptions {
   env?: NodeJS.ProcessEnv;
   maxBuffer?: number;
@@ -51,10 +48,6 @@ export function execCommand(
         });
       },
     );
-
-    // Safety: kill after 60 seconds
-    const timeout = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);
-    child.on("exit", () => clearTimeout(timeout));
   });
 }
 
@@ -84,8 +77,5 @@ export function execCommandStream(
 
     child.on("close", (code) => resolve(code ?? 1));
     child.on("error", () => resolve(1));
-
-    const timeout = setTimeout(() => child.kill("SIGKILL"), STREAM_TIMEOUT_MS);
-    child.on("close", () => clearTimeout(timeout));
   });
 }
