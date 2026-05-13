@@ -60,11 +60,10 @@ export function buildToolInstructions(
     blocks.push(
       [
         "[Jira attachment uploads]",
-        "There is no MCP tool for attaching files to Jira issues. Upload directly via REST:",
-        "  curl -X POST -H 'X-Atlassian-Token: no-check' -F 'file=@<path>' \\",
-        "    https://<site>.atlassian.net/rest/api/3/issue/<KEY>/attachments",
-        "The proxy injects auth; do not send an Authorization header yourself.",
-        "Only the `/rest/api/3/issue/<KEY>/attachments` path is writable — other Jira writes still go through MCP.",
+        "No MCP tool exists for Jira attachments. POST the file to",
+        "`<site>.atlassian.net/rest/api/3/issue/<KEY>/attachments` via `curl`/`fetch`;",
+        "the proxy injects auth. Refer to Atlassian's attachment upload docs for required headers.",
+        "Only that exact path is writable — other Jira writes still go through MCP.",
       ].join("\n"),
     );
   }
