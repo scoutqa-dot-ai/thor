@@ -7,13 +7,22 @@
  */
 
 import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
-import { WORKSPACE_WORKTREES_ROOT, isPathWithin, realpathOrNull } from "@thor/common";
+import {
+  WORKSPACE_REPOS_ROOT,
+  WORKSPACE_WORKTREES_ROOT,
+  isPathWithin,
+  realpathOrNull,
+} from "@thor/common";
 import { isAbsolute, normalize as normalizePosix } from "node:path/posix";
 
 const DIGITS_ONLY = /^\d+$/;
 
 interface ResolvedGitArgsSuccess {
   args: string[];
+  // Optional rewritten cwd produced by stripping a leading `-C <path>`. When
+  // present, callers must use this in place of the request cwd for both
+  // execution and any further validation.
+  cwd?: string;
 }
 interface ResolvedGitArgsFailure {
   error: string;
@@ -46,6 +55,7 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "show-ref",
   "add",
   "commit",
+  "config",
   "worktree",
   "push",
   "merge",
@@ -95,7 +105,15 @@ const GIT_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
   "git fetch": {
     reason: "fetch must avoid config-dependent or arbitrary remote behavior.",
-    instead: "git fetch origin <branch> or git fetch --all",
+    instead: "git fetch, git fetch origin <branch>, or git fetch --all",
+  },
+  "git config": {
+    reason: "git config is read-only; mutation, --global, --system, and --file are blocked.",
+    instead: "git config --get <key>, git config --get-all <key>, or git config --list",
+  },
+  "git -C": {
+    reason: "git -C <path> is only allowed when <path> is inside an allowed workspace root.",
+    instead: "use a path under /workspace/repos/<repo> or /workspace/worktrees/<repo>/<branch>",
   },
   "git restore": {
     reason: "restore must name paths after a -- separator and use only supported flags.",
@@ -126,9 +144,10 @@ const GIT_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
     instead: "git worktree prune or git worktree prune --dry-run",
   },
   "git worktree add": {
-    reason: "worktree paths must live under /workspace/worktrees/ and end with the branch name.",
+    reason:
+      "worktree paths must live under /workspace/worktrees/<repo>/ and (for branch shapes) end with the branch name.",
     instead:
-      "git worktree add /workspace/worktrees/<repo>/<branch> <branch> or git worktree add -b <branch> /workspace/worktrees/<repo>/<branch> <start-point>",
+      "git worktree add /workspace/worktrees/<repo>/<branch> <branch>, git worktree add -b <branch> /workspace/worktrees/<repo>/<branch> <start-point>, or git worktree add --detach /workspace/worktrees/<repo>/<label> <commit-ish>",
   },
   "git push": {
     reason:
@@ -163,10 +182,27 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
     return { error: "args must be a non-empty array" };
   }
 
-  const first = args[0];
+  // Optional leading `-C <path>` (or `-C=<path>`) — rewrite to a cwd override
+  // when the path is inside an allowed workspace root. Anything else
+  // continues to fall through to the leading-flag deny below.
+  let rewrittenCwd: string | undefined;
+  let workingArgs: string[] = args;
+  if (args[0] === "-C" || args[0].startsWith("-C=")) {
+    const stripped = stripLeadingDashC(args);
+    if ("error" in stripped) return stripped;
+    workingArgs = stripped.args;
+    rewrittenCwd = stripped.cwd;
+    if (workingArgs.length === 0) {
+      return { error: "args must be a non-empty array" };
+    }
+  }
+
+  const first = workingArgs[0];
 
   if (first === "--version") {
-    return args.length === 1 ? { args: [...args] } : deny("git --version");
+    return workingArgs.length === 1
+      ? withCwd({ args: [...workingArgs] }, rewrittenCwd)
+      : deny("git --version");
   }
 
   if (first.startsWith("-")) {
@@ -181,6 +217,40 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
     return deny(`git ${first}`);
   }
 
+  const resolved = resolveSubcommand(first, workingArgs);
+  if ("error" in resolved) return resolved;
+  return withCwd(resolved, rewrittenCwd);
+}
+
+function withCwd(resolved: ResolvedGitArgsSuccess, cwd: string | undefined): ResolvedGitArgs {
+  return cwd !== undefined ? { args: resolved.args, cwd } : resolved;
+}
+
+function stripLeadingDashC(args: string[]): ResolvedGitArgs {
+  let pathArg: string;
+  let rest: string[];
+  if (args[0] === "-C") {
+    if (args.length < 2 || args[1].startsWith("-")) return deny("git -C");
+    pathArg = args[1];
+    rest = args.slice(2);
+  } else {
+    pathArg = args[0].slice("-C=".length);
+    rest = args.slice(1);
+  }
+
+  if (!pathArg || !isAbsolute(pathArg)) return deny("git -C");
+  const normalized = normalizePosix(pathArg);
+  if (normalized !== pathArg) return deny("git -C");
+  const real = realpathOrNull(pathArg);
+  if (!real) return deny("git -C");
+  if (!isPathWithin(WORKTREE_ROOT, real) && !isPathWithin(WORKSPACE_REPOS_ROOT, real)) {
+    return deny("git -C");
+  }
+
+  return { args: rest, cwd: pathArg };
+}
+
+function resolveSubcommand(first: string, args: string[]): ResolvedGitArgs {
   switch (first) {
     case "status":
     case "log":
@@ -218,6 +288,8 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
       return wrap(validateAdd(args), args);
     case "commit":
       return wrap(validateCommit(args), args);
+    case "config":
+      return wrap(validateConfig(args), args);
     case "worktree":
       return wrap(validateWorktree(args), args);
     case "push":
@@ -318,10 +390,6 @@ function validateRemote(args: string[]): string | null {
 }
 
 function validateFetch(args: string[]): string | null {
-  if (args.length < 2) {
-    return denyMessage("git fetch");
-  }
-
   const parsed = scanPolicyArgs(args, 1, [
     { name: "prune", kind: "boolean", aliases: ["--prune", "-p"] },
     { name: "tags", kind: "boolean", aliases: ["--tags", "-t"] },
@@ -346,8 +414,13 @@ function validateFetch(args: string[]): string | null {
     return parsed.positionals.length === 0 ? null : denyMessage("git fetch");
   }
 
+  // No positional → defaults to origin (e.g. `git fetch`, `git fetch --prune`).
+  if (parsed.positionals.length === 0) {
+    return null;
+  }
+
   // Otherwise: first positional must be `origin`; remaining positionals are refspecs.
-  if (parsed.positionals.length === 0 || parsed.positionals[0] !== "origin") {
+  if (parsed.positionals[0] !== "origin") {
     return denyMessage("git fetch");
   }
 
@@ -469,23 +542,42 @@ function validateWorktreePrune(args: string[]): string | null {
 }
 
 function validateWorktreeAdd(args: string[]): string | null {
-  // Two supported shapes:
+  // Three supported shapes:
   //   `git worktree add -b <new-branch> <path> [<start-point>]` — create branch
   //   `git worktree add <path> <existing-branch>`                — check out existing
-  // In both cases:
-  //   * the path lives under /workspace/worktrees/
-  //   * the path portion under /workspace/worktrees/<repo>/ equals the branch
-  //     string verbatim (including slash-separated branch segments).
+  //   `git worktree add --detach <path> <commit-ish>`            — detached HEAD
+  //
+  // In the first two cases, the path portion under /workspace/worktrees/<repo>/
+  // equals the branch string verbatim. In the detached case there is no
+  // branch, so only the structural prefix check applies (path must live
+  // under /workspace/worktrees/<repo>/<freeform>).
   if (args.length < 4 || args.length > 6) {
     return denyMessage("git worktree add");
   }
 
-  const parsed = scanPolicyArgs(args, 2, [{ name: "branch", kind: "value", aliases: ["-b"] }]);
+  const parsed = scanPolicyArgs(args, 2, [
+    { name: "branch", kind: "value", aliases: ["-b"] },
+    { name: "detach", kind: "boolean", aliases: ["--detach"] },
+  ]);
   if (!parsed) {
     return denyMessage("git worktree add");
   }
 
   const branchFlag = valueFlagValues(parsed, "branch");
+  const detachFlag = booleanFlagCount(parsed, "detach");
+
+  if (detachFlag > 0) {
+    // --detach form: positionals are [path, commit-ish]. -b is mutually exclusive.
+    if (detachFlag > 1 || branchFlag.length > 0 || parsed.positionals.length !== 2) {
+      return denyMessage("git worktree add");
+    }
+    const path = parsed.positionals[0];
+    if (!parseWorktreeAddBranchFromPath(path)) {
+      return denyMessage("git worktree add");
+    }
+    return null;
+  }
+
   let branch: string;
   let path: string;
 
@@ -586,6 +678,36 @@ function validatePushRefspec(refspec: string): string | null {
   return null;
 }
 
+function validateConfig(args: string[]): string | null {
+  // Read-only forms only:
+  //   git config --get <key>
+  //   git config --get-all <key>
+  //   git config --list / -l
+  // Optional inspection modifiers: --local, --show-origin, --show-scope.
+  // Mutation (--add, --unset, --replace-all, --rename-section, etc.),
+  // scope overrides (--global, --system, --file), and any positional after
+  // the mode flag's value are denied.
+  const parsed = scanPolicyArgs(args, 1, [
+    { name: "get", kind: "value", aliases: ["--get"] },
+    { name: "get-all", kind: "value", aliases: ["--get-all"] },
+    { name: "list", kind: "boolean", aliases: ["--list", "-l"] },
+    { name: "local", kind: "boolean", aliases: ["--local"] },
+    { name: "show-origin", kind: "boolean", aliases: ["--show-origin"] },
+    { name: "show-scope", kind: "boolean", aliases: ["--show-scope"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) return denyMessage("git config");
+
+  const gets = valueFlagValues(parsed, "get");
+  const getAlls = valueFlagValues(parsed, "get-all");
+  const list = booleanFlagCount(parsed, "list");
+
+  const modes = (gets.length > 0 ? 1 : 0) + (getAlls.length > 0 ? 1 : 0) + (list > 0 ? 1 : 0);
+  if (modes !== 1) return denyMessage("git config");
+  if (gets.length > 1 || getAlls.length > 1 || list > 1) return denyMessage("git config");
+
+  return null;
+}
+
 function validateMerge(args: string[]): string | null {
   // Passthrough: merge's own safety surface (push to protected branches, force,
   // commit hooks for non-merge commits) is already enforced elsewhere. Only
@@ -595,8 +717,9 @@ function validateMerge(args: string[]): string | null {
 }
 
 function validateLsRemote(args: string[]): string | null {
-  // `git ls-remote [<flags>] origin [<ref-pattern>...]`. Network call, so the
-  // remote must be `origin` — matches the `validateFetch` restriction.
+  // `git ls-remote [<flags>] [origin] [<ref-pattern>...]`. Network call, so
+  // the remote must be `origin` if named — matches the `validateFetch`
+  // restriction. Omitted remote defaults to origin.
   let sawRepo = false;
   for (let i = 1; i < args.length; i += 1) {
     const arg = args[i];
@@ -608,20 +731,37 @@ function validateLsRemote(args: string[]): string | null {
     }
     // Subsequent positionals are ref patterns; no further validation.
   }
-  return sawRepo ? null : denyMessage("git ls-remote");
+  return null;
 }
 
 function validateTag(args: string[]): string | null {
   // List-only. `-l`/`--list` is required before any positional pattern —
-  // without it, `git tag <name>` creates a tag at HEAD.
+  // without it, `git tag <name>` creates a tag at HEAD. List-mode also
+  // accepts read-only sort/format selectors.
   const listMode = args.includes("-l") || args.includes("--list");
-  for (let i = 1; i < args.length; i += 1) {
+  let i = 1;
+  while (i < args.length) {
     const arg = args[i];
     if (!arg.startsWith("-")) {
       if (!listMode) return denyMessage("git tag");
+      i += 1;
       continue;
     }
-    if (arg === "-l" || arg === "--list" || arg === "-n" || /^-n\d+$/.test(arg)) continue;
+    if (arg === "-l" || arg === "--list" || arg === "-n" || /^-n\d+$/.test(arg)) {
+      i += 1;
+      continue;
+    }
+    if (arg === "--sort" || arg === "--format") {
+      if (i + 1 >= args.length || args[i + 1].length === 0) return denyMessage("git tag");
+      i += 2;
+      continue;
+    }
+    if (arg.startsWith("--sort=") || arg.startsWith("--format=")) {
+      const value = arg.slice(arg.indexOf("=") + 1);
+      if (value.length === 0) return denyMessage("git tag");
+      i += 1;
+      continue;
+    }
     return denyMessage("git tag");
   }
   return null;

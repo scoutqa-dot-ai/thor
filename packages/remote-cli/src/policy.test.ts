@@ -266,6 +266,29 @@ describe("validateGitArgs", () => {
       expectGitDenied(["-C", "/tmp", "status"]);
       expectGitDenied(["-c", "credential.helper=!evil", "push", "origin"]);
       expectGitDenied(["--exec-path=/tmp/evil", "status"]);
+      // -C path must be inside an allowed workspace root.
+      expectGitDenied(["-C", "../escape", "status"]);
+      expectGitDenied(["-C", "/etc", "status"]);
+      // Empty value after -C= is not a real path.
+      expectGitDenied(["-C=", "status"]);
+    });
+
+    it("allows git -C <abspath> when path is inside an allowed workspace root", () => {
+      vi.mocked(realpathSync.native).mockImplementation((path) => normalizePosix(String(path)));
+      const result = resolveGitArgs(["-C", "/workspace/worktrees/repo/feat/x", "status"]);
+      expect("error" in result).toBe(false);
+      if (!("error" in result)) {
+        expect(result.args).toEqual(["status"]);
+        expect(result.cwd).toBe("/workspace/worktrees/repo/feat/x");
+      }
+      const inline = resolveGitArgs(["-C=/workspace/repos/myrepo", "fetch", "origin", "main"]);
+      expect("error" in inline).toBe(false);
+      if (!("error" in inline)) {
+        expect(inline.args).toEqual(["fetch", "origin", "main"]);
+        expect(inline.cwd).toBe("/workspace/repos/myrepo");
+      }
+      // Bare `git -C <path>` with no subcommand is rejected.
+      expect(validateGitArgs(["-C", "/workspace/repos/myrepo"])).not.toBeNull();
     });
 
     it("blocks checkout and switch", () => {
@@ -366,6 +389,50 @@ describe("validateGitArgs", () => {
       expectGitDenied(["worktree", "add", "/workspace/worktrees/repo/feat", "feat", "extra"]);
       // Two -b flags
       expectGitDenied(["worktree", "add", "-b", "a", "-b", "b", "/workspace/worktrees/repo/b"]);
+      // --detach cannot be combined with -b
+      expectGitDenied([
+        "worktree",
+        "add",
+        "--detach",
+        "-b",
+        "feat",
+        "/workspace/worktrees/repo/feat",
+        "origin/main",
+      ]);
+      // --detach requires path + commit-ish (two positionals)
+      expectGitDenied(["worktree", "add", "--detach", "/workspace/worktrees/repo/pr-123"]);
+      expectGitDenied([
+        "worktree",
+        "add",
+        "--detach",
+        "/workspace/worktrees/repo/pr-123",
+        "abc1234",
+        "extra",
+      ]);
+      // --detach path must still live under /workspace/worktrees/<repo>/
+      expectGitDenied(["worktree", "add", "--detach", "/tmp/evil", "abc1234"]);
+      expectGitDenied(["worktree", "add", "--detach", "/workspace/worktrees/repo", "abc1234"]);
+    });
+
+    it("allows git worktree add --detach for PR-review-by-SHA flows", () => {
+      expect(
+        validateGitArgs([
+          "worktree",
+          "add",
+          "--detach",
+          "/workspace/worktrees/repo/pr-123",
+          "abc1234",
+        ]),
+      ).toBeNull();
+      expect(
+        validateGitArgs([
+          "worktree",
+          "add",
+          "--detach",
+          "/workspace/worktrees/repo/review/pr-123",
+          "origin/main",
+        ]),
+      ).toBeNull();
     });
 
     it("blocks worktree remove outside /workspace/worktrees/ and unsupported forms", () => {
@@ -423,10 +490,14 @@ describe("validateGitArgs", () => {
     });
 
     it("blocks ls-remote to remotes other than origin", () => {
-      expectGitDenied(["ls-remote"]);
       expectGitDenied(["ls-remote", "upstream"]);
       expectGitDenied(["ls-remote", "https://evil.com/repo.git"]);
-      expectGitDenied(["ls-remote", "--heads"]);
+    });
+
+    it("allows bare git ls-remote and flag-only forms (default to origin)", () => {
+      expect(validateGitArgs(["ls-remote"])).toBeNull();
+      expect(validateGitArgs(["ls-remote", "--heads"])).toBeNull();
+      expect(validateGitArgs(["ls-remote", "--tags"])).toBeNull();
     });
 
     it("blocks tag creation, deletion, and other write forms", () => {
@@ -437,6 +508,21 @@ describe("validateGitArgs", () => {
       expectGitDenied(["tag", "-s", "v1.0.0"]);
       expectGitDenied(["tag", "--delete", "v1.0.0"]);
       expectGitDenied(["tag", "--contains", "HEAD"]);
+      // --sort/--format require a value and only work in list mode.
+      expectGitDenied(["tag", "--sort"]);
+      expectGitDenied(["tag", "--sort="]);
+      expectGitDenied(["tag", "--format=", "--list"]);
+    });
+
+    it("allows tag list with --sort and --format selectors", () => {
+      expect(validateGitArgs(["tag", "--list", "--sort=-creatordate"])).toBeNull();
+      expect(validateGitArgs(["tag", "-l", "--sort", "-creatordate"])).toBeNull();
+      expect(
+        validateGitArgs(["tag", "--list", "v*", "--format=%(refname:short) %(creatordate)"]),
+      ).toBeNull();
+      expect(
+        validateGitArgs(["tag", "--list", "--sort=-v:refname", "--format=%(refname:short)"]),
+      ).toBeNull();
     });
 
     it("blocks stash write subcommands", () => {
@@ -459,7 +545,6 @@ describe("validateGitArgs", () => {
     });
 
     it("blocks fetches outside the allowlist", () => {
-      expectGitDenied(["fetch"]);
       expectGitDenied(["fetch", "upstream"]);
       expectGitDenied(["fetch", "upstream", "--prune"]);
       expectGitDenied(["fetch", "--all", "origin"]);
@@ -470,6 +555,15 @@ describe("validateGitArgs", () => {
       expectGitDenied(["fetch", "--depth", "1", "--depth", "2", "origin"]);
       expectGitDenied(["fetch", "--unshallow", "origin"]);
       expectGitDenied(["fetch", "--receive-pack=evil", "origin"]);
+    });
+
+    it("allows bare git fetch (defaults to origin)", () => {
+      expect(validateGitArgs(["fetch"])).toBeNull();
+      expect(validateGitArgs(["fetch", "--prune"])).toBeNull();
+      expect(validateGitArgs(["fetch", "-p"])).toBeNull();
+      expect(validateGitArgs(["fetch", "--tags"])).toBeNull();
+      expect(validateGitArgs(["fetch", "--prune", "--tags"])).toBeNull();
+      expect(validateGitArgs(["fetch", "--depth", "1"])).toBeNull();
     });
 
     it("blocks push to non-origin remotes", () => {
@@ -560,12 +654,32 @@ describe("validateGitArgs", () => {
     });
 
     it("blocks commands removed from the allowlist", () => {
-      expectGitDenied(["config", "--global", "--get", "user.name"]);
-      expectGitDenied(["config", "user.name", "Thor"]);
       expectGitDenied(["--no-pager", "log", "--oneline", "-10"]);
       expectGitDenied(["check-ignore", "--stdin"]);
       expectGitDenied(["symbolic-ref", "HEAD", "refs/heads/main"]);
       expectGitDenied(["pull", "origin", "feat/x"]);
+    });
+
+    it("allows git config read-only forms and blocks write/scope flags", () => {
+      expect(validateGitArgs(["config", "--get", "user.email"])).toBeNull();
+      expect(validateGitArgs(["config", "--get-all", "remote.origin.url"])).toBeNull();
+      expect(validateGitArgs(["config", "--list"])).toBeNull();
+      expect(validateGitArgs(["config", "-l"])).toBeNull();
+      expect(validateGitArgs(["config", "--list", "--show-origin", "--show-scope"])).toBeNull();
+      expect(validateGitArgs(["config", "--local", "--get", "remote.origin.url"])).toBeNull();
+      // Write forms and scope overrides remain denied.
+      expectGitDenied(["config", "user.name", "Thor"]);
+      expectGitDenied(["config", "--global", "--get", "user.name"]);
+      expectGitDenied(["config", "--system", "--get", "user.name"]);
+      expectGitDenied(["config", "--file", "/tmp/cfg", "--get", "user.name"]);
+      expectGitDenied(["config", "--add", "core.autocrlf", "false"]);
+      expectGitDenied(["config", "--unset", "user.name"]);
+      expectGitDenied(["config", "--replace-all", "remote.origin.url", "x"]);
+      // Mode flags are mutually exclusive.
+      expectGitDenied(["config"]);
+      expectGitDenied(["config", "--get", "user.name", "--get-all", "user.email"]);
+      expectGitDenied(["config", "--get", "user.name", "--list"]);
+      expectGitDenied(["config", "--get"]);
     });
 
     it("blocks arbitrary commands", () => {

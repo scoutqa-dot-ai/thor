@@ -473,17 +473,22 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
       const effectiveArgs = gitResolution.args;
+      // A rewritten cwd comes from stripping a leading `-C <path>`. The
+      // resolver has already enforced that the rewritten path is inside an
+      // allowed workspace root, so no additional validateCwd call is needed.
+      const effectiveCwd = gitResolution.cwd ?? cwd;
       const ids = thorIds(req);
 
       logInfo(log, "exec_git", {
         args,
         ...(JSON.stringify(effectiveArgs) !== JSON.stringify(args) ? { effectiveArgs } : {}),
         cwd,
+        ...(effectiveCwd !== cwd ? { effectiveCwd } : {}),
         ...ids,
       });
-      const result = await execCommand("git", effectiveArgs, cwd);
+      const result = await execCommand("git", effectiveArgs, effectiveCwd);
       if ((result.exitCode ?? 0) === 0) {
-        registerGitCorrelationAlias(ids.sessionId, "git", effectiveArgs, cwd);
+        registerGitCorrelationAlias(ids.sessionId, "git", effectiveArgs, effectiveCwd);
       }
       res.json(result);
     } catch (err) {
