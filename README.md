@@ -92,12 +92,16 @@ Custom credential rules and passthrough hosts live in
 `/workspace/config.json` under `mitmproxy[]` and `mitmproxy_passthrough[]`.
 Keep secrets in `.env` only, then reference them in config via `${ENV_VAR}`.
 Rules can match either an exact `host` or a `host_suffix`, and can optionally
-add `path_prefix` when one domain needs different headers by URL prefix.
+add `path_prefix` and/or `path_suffix` when one domain needs different headers
+by URL prefix or suffix.
 
 Built-in defaults are intentionally narrow:
 
 - Atlassian: injected auth for `api.atlassian.com` and `*.atlassian.net`,
-  both read-only by default
+  read-only by default. Jira attachment uploads
+  (`POST .../rest/api/3/issue/{key}/attachments` on `*.atlassian.net`, and
+  `POST .../ex/jira/{cloudId}/rest/api/3/issue/{key}/attachments` on
+  `api.atlassian.com`) are allowed as a narrow write exception
 - Atlassian media redirects: `api.media.atlassian.com` passthrough
 - Slack API: injected auth only for thread/history reads, `reactions.add`,
   `files.info`, and the upload setup/complete endpoints on `slack.com/api/...`;
