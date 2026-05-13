@@ -2052,6 +2052,99 @@ describe("gateway", () => {
     );
   });
 
+  it("enqueues unmentioned pure issue comments when the issue already has a session", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.add("github:issue:thor:acme/thor#12");
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir) => {
+        const body = JSON.stringify({
+          action: "created",
+          installation: { id: 1 },
+          repository: { full_name: "acme/thor" },
+          sender: { id: 1001, login: "alice", type: "User" },
+          issue: { number: 12, pull_request: null },
+          comment: {
+            body: "more details without a mention",
+            html_url: "https://github.com/acme/thor/issues/12#issuecomment-2",
+            created_at: "2026-04-24T11:01:00Z",
+          },
+        });
+
+        const response = await fetch(`${baseUrl}/github/webhook`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+            "X-GitHub-Delivery": "delivery-pure-issue-engaged",
+            "X-GitHub-Event": "issue_comment",
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+        const queued = readQueuedEvents(queueDir);
+        expect(queued).toHaveLength(1);
+        expect(queued[0]).toMatchObject({
+          id: "delivery-pure-issue-engaged",
+          correlationKey: "github:issue:thor:acme/thor#12",
+          delayMs: 3000,
+          interrupt: true,
+        });
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
+      },
+    );
+  });
+
+  it("still ignores self-authored pure issue comments even when the issue is engaged", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.add("github:issue:thor:acme/thor#12");
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir) => {
+        const body = JSON.stringify({
+          action: "created",
+          installation: { id: 1 },
+          repository: { full_name: "acme/thor" },
+          sender: { id: 7777, login: "thor[bot]", type: "Bot" },
+          issue: { number: 12, pull_request: null },
+          comment: {
+            body: "thor follow-up",
+            html_url: "https://github.com/acme/thor/issues/12#issuecomment-3",
+            created_at: "2026-04-24T11:02:00Z",
+          },
+        });
+
+        const response = await fetch(`${baseUrl}/github/webhook`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+            "X-GitHub-Delivery": "delivery-pure-issue-self",
+            "X-GitHub-Event": "issue_comment",
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, ignored: true });
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
+      },
+    );
+  });
+
   it("enqueues mentioned pure issue comments with github issue correlation key", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 

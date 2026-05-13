@@ -1538,11 +1538,19 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
+    const pureIssueRawKey =
+      isIssueCommentEvent(parsed.data) && !parsed.data.issue.pull_request
+        ? buildIssueCorrelationKey(localRepo, repoFullName, parsed.data.issue.number)
+        : undefined;
     const ignoreReason = shouldIgnoreGitHubEvent(parsed.data, {
       mentionLogins: githubMentionLogins,
       botId: githubAppBotId,
     });
-    if (ignoreReason) {
+    const shouldAcceptEngagedIssueComment =
+      ignoreReason === "non_mention_comment" &&
+      pureIssueRawKey !== undefined &&
+      hasSessionForCorrelationKey(pureIssueRawKey);
+    if (ignoreReason && !shouldAcceptEngagedIssueComment) {
       history.githubStream = "ignored";
       history.parseStatus = "schema_valid";
       history.action = parsed.data.action;
@@ -1674,10 +1682,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       interrupt = false;
     } else if (branch) {
       correlationKey = resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)]);
-    } else if (isIssueCommentEvent(parsed.data) && !parsed.data.issue.pull_request) {
-      correlationKey = resolveCorrelationKeys([
-        buildIssueCorrelationKey(localRepo, repoFullName, parsed.data.issue.number),
-      ]);
+    } else if (pureIssueRawKey) {
+      correlationKey = resolveCorrelationKeys([pureIssueRawKey]);
     } else {
       correlationKey = buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
     }

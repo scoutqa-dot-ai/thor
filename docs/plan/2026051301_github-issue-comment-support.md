@@ -58,7 +58,7 @@ with alias value `base64url(<full correlation key>)`, matching `git.branch`'s sa
 Inbound filter changes:
 
 - Keep self-loop blocking by numeric `GITHUB_APP_BOT_ID`.
-- Keep mention-gating for issue comments. Pure issue comments are accepted only when the body mentions a configured app login (`@<slug>` or `@<slug>[bot]`). Non-mention pure issue comments continue to be ignored as `non_mention_comment`.
+- Keep mention-gating for first-contact issue comments. Pure issue comments are accepted when the body mentions a configured app login (`@<slug>` or `@<slug>[bot]`) or when the durable `github:issue:` key already resolves to a live session. Non-mention pure issue comments with no existing session continue to be ignored as `non_mention_comment`.
 - For PR-backed issue comments, preserve the existing pending branch-resolution path.
 - For pure issue comments, skip branch resolution and enqueue directly on `github:issue:<localRepo>:<repoFullName>#<number>` with `interrupt: true`, `delayMs: githubMentionDelay`.
 
@@ -104,7 +104,7 @@ Exit criteria:
 - A second mention on the same issue resolves to the same anchor/session through the new alias type.
 - Existing PR comment branch-resolution tests still pass.
 
-### Phase 2 — Outbound `gh issue comment` policy and disclaimer injection
+### Phase 2 — Outbound `gh issue comment` / `gh issue create` policy and disclaimer injection
 
 Touched files:
 
@@ -119,7 +119,7 @@ Tasks:
 1. Add `issue comment` to the allowlisted command set.
 2. Implement `validateGhIssueCommentArgs()` mirroring `validateGhPrCommentArgs()`.
 3. Update deny guidance so invalid issue-comment shapes point to `gh issue comment <number> --body <text>` instead of saying issues are out of scope.
-4. Include `args[0] === "issue" && args[1] === "comment"` in `withGhDisclaimer()` eligibility.
+4. Include `args[0] === "issue" && ["create", "comment"].includes(args[1])` in `withGhDisclaimer()` eligibility.
 5. Extend disclaimer tests to prove injected footer, duplicate-body fail-closed, no-session fail-closed, and help passthrough for `gh issue comment --help`.
 6. Update the `using-gh` skill structured command list and posture to include traced issue comments.
 
@@ -128,6 +128,7 @@ Exit criteria:
 - Valid issue comments execute with a single injected footer.
 - Invalid body sources and duplicate mutable body fields are denied before execution.
 - Existing PR write, review, and `gh api` disclaimer behavior is unchanged.
+- Valid issue creates execute with a traced body and bind `github:issue:<localRepo>:<owner>/<repo>#<number>` from the returned GitHub URL.
 
 ### Phase 3 — Docs and integration coverage
 
@@ -162,6 +163,8 @@ Exit criteria:
 | Mention-gate pure issue comments                                      | Prevents every issue discussion comment from waking Thor; the user must intentionally invoke the app.                               |
 | Keep PR-backed issue comments on `git:branch:`                        | Existing PR conversations should continue with branch/worktree sessions and CI/push aliases.                                        |
 | Reuse the existing disclaimer footer builder                          | Keeps issue comments traceable to the same trigger viewer and fail-closed behavior as PR comments/reviews.                          |
+| Allow non-mention comments only on already-engaged pure issues         | Lets ongoing GitHub issue sessions continue naturally without broadening first-contact intake for unrelated issue discussions.       |
+| Bind `gh issue create` from the returned issue URL                     | Thor-authored issues need the durable `github:issue:` alias immediately so later comments can wake the same session.                 |
 
 ## Risks and mitigations
 

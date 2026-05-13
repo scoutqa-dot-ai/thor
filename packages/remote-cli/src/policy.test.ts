@@ -777,10 +777,10 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["workflow", "run", "ci.yml", "--field", "retries=null"])).toBeNull();
     });
 
-    it("denies issue create because v1 disclaimer injection does not cover issues", () => {
-      expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toContain(
-        "outside v1 disclaimer-injection scope",
-      );
+    it("allows issue create with explicit title and body", () => {
+      expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toBeNull();
+      expect(validateGhArgs(["issue", "create", "-t", "Bug", "-b", "Broken"])).toBeNull();
+      expect(validateGhArgs(["issue", "create", "--title=Bug", "--body=Broken"])).toBeNull();
     });
 
     it("allows append-only pr and issue comments", () => {

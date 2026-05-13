@@ -54,6 +54,7 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "pr status",
   "pr checks",
   "pr create",
+  "issue create",
   "pr comment",
   "pr review",
   "issue comment",
@@ -107,8 +108,9 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
       "gh pr create --title <title> --body <body>; omit --head unless it matches the current worktree branch",
   },
   "gh issue create": {
-    reason: "GitHub issue creation is outside v1 disclaimer-injection scope.",
-    instead: "Use Jira for tracked work or wait for future issue disclaimer support.",
+    reason:
+      "issue creation requires an explicit non-interactive title and body so Thor can inject the trigger viewer link.",
+    instead: "gh issue create --title <title> --body <body>",
   },
   "gh pr comment": {
     reason: "PR comments must target a numeric PR and provide exactly one body source.",
@@ -176,6 +178,8 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
       return matchesExactArgs(args, ["auth", "status"]) ? null : denyMessage("gh auth status");
     case "pr create":
       return validateGhPrCreateArgs(args, cwd);
+    case "issue create":
+      return validateGhIssueCreateArgs(args);
     case "pr comment":
       return validateGhPrCommentArgs(args);
     case "issue comment":
@@ -368,6 +372,24 @@ function validateGhPrCommentArgs(args: string[]): string | null {
     });
   }
   return bodies.length === 1 ? null : denyMessage("gh pr comment");
+}
+
+function validateGhIssueCreateArgs(args: string[]): string | null {
+  const parsed = scanPolicyArgs(args, 2, [
+    { name: "title", kind: "value", aliases: ["-t", "--title"] },
+    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+    { name: "label", kind: "value", aliases: ["-l", "--label"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage("gh issue create");
+  }
+
+  const titles = valueFlagValues(parsed, "title");
+  const bodies = valueFlagValues(parsed, "body");
+  if (titles.length !== 1 || bodies.length !== 1) {
+    return denyMessage("gh issue create");
+  }
+  return null;
 }
 
 function validateGhIssueCommentArgs(args: string[]): string | null {

@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { rmSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { normalize as normalizePosix } from "node:path/posix";
-import { appendAlias, appendSessionEvent, formatThorDisclaimerFooter } from "@thor/common";
+import { appendAlias, appendSessionEvent, formatThorDisclaimerFooter, resolveAlias } from "@thor/common";
 
 vi.hoisted(() => {
   process.env.WORKLOG_DIR = "/tmp/thor-remote-cli-gh-test/worklog";
@@ -17,6 +17,9 @@ const execCalls = vi.hoisted(() => [] as Array<{ bin: string; args: string[]; cw
 vi.mock("./exec.js", () => ({
   execCommand: vi.fn(async (bin: string, args: string[], cwd: string) => {
     execCalls.push({ bin, args, cwd });
+    if (bin === "gh" && args[0] === "issue" && args[1] === "create") {
+      return { stdout: "https://github.com/acme/thor/issues/42\n", stderr: "", exitCode: 0 };
+    }
     return { stdout: "ok", stderr: "", exitCode: 0 };
   }),
   execCommandStream: vi.fn(),
@@ -136,6 +139,36 @@ describe("gh disclaimer injection", () => {
         `note
 ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
       ]);
+    });
+  });
+
+  it("injects into issue create bodies and binds the created issue alias", async () => {
+    bindSessionToAnchor("parent", anchorParent);
+    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
+
+    await withServer(async (url) => {
+      const { response } = await postGh(
+        url,
+        ["issue", "create", "--title", "Bug", "--body", "Broken"],
+        "parent",
+      );
+      expect(response.status).toBe(200);
+      expect(execCalls[0].args).toEqual([
+        "issue",
+        "create",
+        "--title",
+        "Bug",
+        "--body",
+        `Broken\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+      ]);
+      expect(
+        resolveAlias({
+          aliasType: "github.issue",
+          aliasValue: Buffer.from("github:issue:acme:acme/thor#42").toString("base64url"),
+        }),
+      ).toBe(anchorParent);
     });
   });
 
