@@ -1,0 +1,23 @@
+docs/plan/2026051301_policy-relaxations.md
+  cd716bbc0a5b415a 1-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b51ff8c455c690576481f48d47fda0ce9c002e16",
+  "prompts": {
+    "cd716bbc0a5b415a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dc191d40-6594-4d91-8d5d-d4bb89668763",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 63,
+      "total_deletions": 0,
+      "accepted_lines": 63,
+      "overriden_lines": 0
+    }
+  }
+}
