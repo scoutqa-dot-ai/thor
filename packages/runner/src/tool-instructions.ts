@@ -20,6 +20,8 @@ export function buildToolInstructions(
   const allowed = getRepoUpstreams(config, repo);
   if (!allowed) return undefined;
 
+  const hasAtlassian = allowed.includes("atlassian");
+
   const mcpSections: string[] = [];
 
   for (const upstreamName of allowed) {
@@ -50,6 +52,19 @@ export function buildToolInstructions(
         "Always pass a single JSON string argument.",
         "Run `mcp <upstream> <tool> --help` to see tool description and input schema.",
         "Run `approval status <id>` to check approval status.",
+      ].join("\n"),
+    );
+  }
+
+  if (hasAtlassian) {
+    blocks.push(
+      [
+        "[Jira attachment uploads]",
+        "There is no MCP tool for attaching files to Jira issues. Upload directly via REST:",
+        "  curl -X POST -H 'X-Atlassian-Token: no-check' -F 'file=@<path>' \\",
+        "    https://<site>.atlassian.net/rest/api/3/issue/<KEY>/attachments",
+        "The proxy injects auth; do not send an Authorization header yourself.",
+        "Only the `/rest/api/3/issue/<KEY>/attachments` path is writable — other Jira writes still go through MCP.",
       ].join("\n"),
     );
   }
