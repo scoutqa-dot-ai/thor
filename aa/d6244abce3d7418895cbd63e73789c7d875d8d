@@ -1,0 +1,23 @@
+slides-webapp/index.html
+  87f25881d625616a 5,249-261,356,359-398,531-548,553,591-601,605,607,609,613-616,618-625,631,635-647,652,656,658-668,671,675-678,680,682,686-688,692,694,696,698-700,703-713,719,724-734,736-738,746,750-754,759-760,768,774-775,777-779,786,790-794,797-801,805,807-809,811-813,816,820,822-835,838-841,848,853-861,863-864,866-869,872,876
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "aad6244abce3d7418895cbd63e73789c7d875d8d",
+  "prompts": {
+    "87f25881d625616a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c337f10-2034-406f-a720-796a0670e3d5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 381,
+      "total_deletions": 506,
+      "accepted_lines": 254,
+      "overriden_lines": 9
+    }
+  }
+}
