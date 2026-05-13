@@ -1,0 +1,25 @@
+README.md
+  b9951a194b0285d4 95-96,101-104
+docs/plan/2026042201_mitmproxy-http-proxy.md
+  b9951a194b0285d4 129-130,411-412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a1c10519fc09ffdeb5bfa17c9ce9f114131b6ff7",
+  "prompts": {
+    "b9951a194b0285d4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b95bd719-e2db-49cc-b477-2d750219b4b0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 10,
+      "total_deletions": 2,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}
