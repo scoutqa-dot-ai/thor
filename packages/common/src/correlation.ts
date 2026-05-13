@@ -5,6 +5,7 @@ import { withKeyLock } from "./key-lock.js";
 
 const SLACK_THREAD_PREFIX = "slack:thread:";
 const GIT_BRANCH_PREFIX = "git:branch:";
+const GITHUB_ISSUE_PREFIX = "github:issue:";
 export const ANCHOR_LOCK_PREFIX = "anchor:";
 export const SESSION_LOCK_PREFIX = "session:";
 
@@ -185,6 +186,12 @@ function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
   if (key.startsWith(GIT_BRANCH_PREFIX)) {
     return {
       aliasType: "git.branch",
+      aliasValue: Buffer.from(key).toString("base64url"),
+    };
+  }
+  if (key.startsWith(GITHUB_ISSUE_PREFIX)) {
+    return {
+      aliasType: "github.issue",
       aliasValue: Buffer.from(key).toString("base64url"),
     };
   }

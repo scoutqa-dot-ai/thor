@@ -168,6 +168,7 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
   if (isGhHelpRequest(args)) return args;
   const eligible =
     (args[0] === "pr" && ["create", "comment", "review"].includes(args[1] ?? "")) ||
+    (args[0] === "issue" && args[1] === "comment") ||
     (args[0] === "api" && args.some((arg) => /pulls\/\d+\/comments\/\d+\/replies/.test(arg)));
   if (!eligible) return args;
   let footer: string;

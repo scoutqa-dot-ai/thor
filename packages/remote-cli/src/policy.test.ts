@@ -783,12 +783,11 @@ describe("validateGhArgs", () => {
       );
     });
 
-    it("allows append-only pr comments and denies issue comments", () => {
+    it("allows append-only pr and issue comments", () => {
       expect(validateGhArgs(["pr", "comment", "123", "--body", "noted"])).toBeNull();
       expect(validateGhArgs(["pr", "comment", "123", "-b", "noted"])).toBeNull();
-      expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toContain(
-        "outside v1 disclaimer-injection scope",
-      );
+      expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toBeNull();
+      expect(validateGhArgs(["issue", "comment", "42", "-b", "noted"])).toBeNull();
     });
 
     it("allows append-only pr reviews for comment/request-changes", () => {
@@ -947,6 +946,10 @@ describe("validateGhArgs", () => {
         ["pr", "comment", "123"],
         ["numeric PR", "gh pr comment <number> --body <text>"],
       );
+      expectGhDeniedWith(
+        ["issue", "comment", "abc"],
+        ["numeric issue", "gh issue comment <number> --body <text>"],
+      );
     });
 
     it("blocks repo-targeting flags across the gh surface", () => {
@@ -1073,13 +1076,33 @@ describe("validateGhArgs", () => {
       expectGhDenied(["pr", "create", "--title", "x", "--body=traced", "-b", "untraced"]);
       expectGhDenied(["pr", "comment", "123", "--body", "traced", "--body", "untraced"]);
       expectGhDenied(["pr", "comment", "123", "--body=traced", "-b", "untraced"]);
-      expectGhDenied(["pr", "review", "123", "--comment", "--body", "traced", "--body", "untraced"]);
-      expectGhDenied(["pr", "review", "123", "--request-changes", "--body=traced", "-b", "untraced"]);
+      expectGhDenied(["issue", "comment", "42", "--body", "traced", "--body", "untraced"]);
+      expectGhDenied(["issue", "comment", "42", "--body=traced", "-b", "untraced"]);
+      expectGhDenied([
+        "pr",
+        "review",
+        "123",
+        "--comment",
+        "--body",
+        "traced",
+        "--body",
+        "untraced",
+      ]);
+      expectGhDenied([
+        "pr",
+        "review",
+        "123",
+        "--request-changes",
+        "--body=traced",
+        "-b",
+        "untraced",
+      ]);
     });
 
     it("blocks comment body-file forms", () => {
       expectGhDenied(["pr", "comment", "123", "--body", "x", "-F", "body.md"]);
       expectGhDenied(["pr", "comment", "123", "-F", "body.md"]);
+      expectGhDenied(["issue", "comment", "42", "--body", "x", "-F", "body.md"]);
       expectGhDenied(["issue", "comment", "42", "-F", "body.md"]);
     });
 

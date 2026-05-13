@@ -90,6 +90,7 @@ describe("gh disclaimer injection", () => {
       const commands = [
         ["pr", "create", "--help"],
         ["pr", "comment", "--help"],
+        ["issue", "comment", "--help"],
         ["pr", "review", "-h"],
       ];
 
@@ -107,7 +108,34 @@ describe("gh disclaimer injection", () => {
       const { response, body } = await postGh(url, ["pr", "comment", "123", "--body", "note"]);
       expect(response.status).toBe(400);
       expect(body.stderr).toContain("missing Thor session id");
+      const issue = await postGh(url, ["issue", "comment", "42", "--body", "note"]);
+      expect(issue.response.status).toBe(400);
+      expect(issue.body.stderr).toContain("missing Thor session id");
       expect(execCalls).toHaveLength(0);
+    });
+  });
+
+  it("injects into issue comment bodies", async () => {
+    bindSessionToAnchor("parent", anchorParent);
+    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
+
+    await withServer(async (url) => {
+      const { response } = await postGh(
+        url,
+        ["issue", "comment", "42", "--body", "note"],
+        "parent",
+      );
+      expect(response.status).toBe(200);
+      expect(execCalls[0].args).toEqual([
+        "issue",
+        "comment",
+        "42",
+        "--body",
+        `note
+${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+      ]);
     });
   });
 
@@ -222,6 +250,14 @@ describe("gh disclaimer injection", () => {
       );
       expect(comment.response.status).toBe(400);
       expect(comment.body.stderr).toContain("gh pr comment");
+
+      const issue = await postGh(
+        url,
+        ["issue", "comment", "42", "--body-file", "body.md"],
+        "parent",
+      );
+      expect(issue.response.status).toBe(400);
+      expect(issue.body.stderr).toContain("gh issue comment");
       expect(execCalls).toHaveLength(0);
     });
   });
@@ -240,6 +276,14 @@ describe("gh disclaimer injection", () => {
       );
       expect(comment.response.status).toBe(400);
       expect(comment.body.stderr).toContain("multiple --body values");
+
+      const issue = await postGh(
+        url,
+        ["issue", "comment", "42", "--body", "traced", "--body", "untraced"],
+        "parent",
+      );
+      expect(issue.response.status).toBe(400);
+      expect(issue.body.stderr).toContain("multiple --body values");
 
       const reply = await postGh(
         url,

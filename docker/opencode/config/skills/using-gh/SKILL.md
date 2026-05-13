@@ -7,7 +7,7 @@ description: "GitHub CLI surface allowed by Thor's remote-cli server policy. App
 
 All `gh` commands go through Thor's remote-cli which enforces:
 
-- **Append-only writes.** Create PRs, post comments, submit `--comment`/`--request-changes` reviews. Never approve, merge, edit, or delete.
+- **Append-only writes.** Create PRs, post PR/issue comments, submit `--comment`/`--request-changes` reviews. Never approve, merge, edit, or delete.
 - **Repo-targeting flags are blocked.** `--repo`/`-R` is not part of the supported surface.
 - **`gh api` is a tiny explicit subset.** REST implicit GET reads are allowed with output shaping. One append-only POST shape is allowed for PR review-comment replies.
 - **PR approval is a human gate.** `gh pr review --approve` is denied.
@@ -36,7 +36,7 @@ Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`
 
 ### `gh issue create`
 
-Blocked in v1: GitHub issue content is outside Thor's disclaimer-injection scope. Use Jira for tracked work.
+Blocked in v1: issue creation is outside Thor's disclaimer-injection scope. Use Jira for tracked work.
 
 ### `gh pr comment`
 
@@ -44,7 +44,7 @@ Required: numeric PR selector plus `--body`/`-b`. Blocked: non-numeric selectors
 
 ### `gh issue comment`
 
-Blocked in v1: GitHub issue content is outside Thor's disclaimer-injection scope. Use Jira for tracked work.
+Required: numeric issue selector plus `--body`/`-b`. Blocked: non-numeric selectors, edit/delete modes, `--editor`, `-F`/`--body-file`, and `--repo`/`-R`. For PR conversation comments, prefer `gh pr comment`; both comment paths receive Thor's traceability footer.
 
 ### `gh pr review`
 

@@ -56,6 +56,7 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "pr create",
   "pr comment",
   "pr review",
+  "issue comment",
   "issue view",
   "issue list",
   "label list",
@@ -114,8 +115,8 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
     instead: "gh pr comment <number> --body <text>",
   },
   "gh issue comment": {
-    reason: "GitHub issue comments are outside v1 disclaimer-injection scope.",
-    instead: "Use Jira for tracked work or wait for future issue disclaimer support.",
+    reason: "issue comments must target a numeric issue and provide exactly one body source.",
+    instead: "gh issue comment <number> --body <text>",
   },
   "gh pr review": {
     reason: "reviews must be append-only comments or request-changes reviews with an inline body.",
@@ -177,6 +178,8 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
       return validateGhPrCreateArgs(args, cwd);
     case "pr comment":
       return validateGhPrCommentArgs(args);
+    case "issue comment":
+      return validateGhIssueCommentArgs(args);
     case "pr review":
       return validateGhPrReviewArgs(args);
     case "issue view":
@@ -365,6 +368,29 @@ function validateGhPrCommentArgs(args: string[]): string | null {
     });
   }
   return bodies.length === 1 ? null : denyMessage("gh pr comment");
+}
+
+function validateGhIssueCommentArgs(args: string[]): string | null {
+  const selector = args[2];
+  if (!selector || !DIGITS_ONLY.test(selector)) {
+    return denyMessage("gh issue comment");
+  }
+
+  const parsed = scanPolicyArgs(args, 3, [
+    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage("gh issue comment");
+  }
+
+  const bodies = valueFlagValues(parsed, "body");
+  if (bodies.length > 1) {
+    return denyMessage("gh issue comment", {
+      reason: "multiple --body values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body value",
+    });
+  }
+  return bodies.length === 1 ? null : denyMessage("gh issue comment");
 }
 
 function validateGhPrReviewArgs(args: string[]): string | null {

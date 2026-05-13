@@ -3,6 +3,8 @@
 **Date**: 2026-04-23
 **Status**: Ready to implement
 
+> **Post-implementation note (2026-05-13):** pure issue comments are no longer unsupported. Mentioned pure-issue `issue_comment.created` events now route through `github:issue:<localRepo>:<repoFullName>#<issueNumber>`; PR-backed issue comments still use pending branch resolution.
+
 > **Post-implementation note (2026-04-26):** the workspace-config block was renamed `orgs` → `owners` in commit `3d050bc3` to match GitHub's `owner` terminology (an installation can belong to a user or an org). References to `orgs.<name>.github_app_installation_id` below now read `owners.<name>.github_app_installation_id` in shipped code.
 
 ## Goal

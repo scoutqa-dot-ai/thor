@@ -5,6 +5,8 @@
 **Date**: 2026-04-30
 **Status**: Draft (revised by /autoplan 2026-04-30)
 
+> **Post-implementation note (2026-05-13):** `gh issue comment <number> --body <text>` is now allowed with the same disclaimer injection as PR comments, and pure GitHub issues use durable `github.issue` aliases. Older v1 notes below that say `gh issue comment` is denied are superseded; `gh issue create` remains denied.
+
 ## Goal
 
 Deliver a session-scoped JSONL event log that powers:

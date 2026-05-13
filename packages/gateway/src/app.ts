@@ -57,6 +57,7 @@ import {
 } from "./approval.js";
 import {
   buildCorrelationKey,
+  buildIssueCorrelationKey,
   buildPendingBranchResolveKey,
   getGitHubEventBranch,
   getGitHubEventLocalRepo,
@@ -68,6 +69,7 @@ import {
   isCheckSuiteCompletedEvent,
   isPullRequestClosedEvent,
   isPushEvent,
+  isIssueCommentEvent,
   shouldIgnoreGitHubEvent,
   type GitHubWebhookEvent,
   type PushEvent,
@@ -360,7 +362,6 @@ type GitHubIgnoreReason =
   | "json_parse_error"
   | "schema_validation_failed"
   | "repo_not_mapped"
-  | "pure_issue_comment_unsupported"
   | "self_sender"
   | "empty_review_body"
   | "non_mention_comment"
@@ -1671,10 +1672,14 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       correlationKey = resolvedKey;
       delayMs = 0;
       interrupt = false;
+    } else if (branch) {
+      correlationKey = resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)]);
+    } else if (isIssueCommentEvent(parsed.data) && !parsed.data.issue.pull_request) {
+      correlationKey = resolveCorrelationKeys([
+        buildIssueCorrelationKey(localRepo, repoFullName, parsed.data.issue.number),
+      ]);
     } else {
-      correlationKey = branch
-        ? resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)])
-        : buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
+      correlationKey = buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
     }
 
     const sourceTs = getGitHubEventSourceTs(parsed.data);

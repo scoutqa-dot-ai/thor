@@ -43,7 +43,7 @@ How to find installation ID:
 
 ## 3) Required app permissions
 
-Thor's GitHub App is used for both webhook intake and agent-driven GitHub actions (`git push`, `gh pr create`, issue/PR comments). Configure permissions accordingly:
+Thor's GitHub App is used for both webhook intake and agent-driven GitHub actions (`git push`, `gh pr create`, issue/PR comments). Issues need read/write for inbound issue mentions and traced outbound `gh issue comment`. Configure permissions accordingly:
 
 | Permission    | Access       |
 | ------------- | ------------ |
@@ -69,6 +69,8 @@ Subscribe to:
 `pull_request.closed` wakes Thor when a PR for an existing notes-backed branch session is merged or closed without merge. The gateway correlates on `pull_request.head.ref`, requires an existing notes file for the resolved `git:branch:<repo>:<branch>` key, and queues accepted events with `interrupt:false`. Other `pull_request` actions are not supported and are archived as `schema_validation_failed`.
 
 `push` keeps local checkouts current. The handler first runs `git rev-parse HEAD` in the target directory; if it already equals `event.after`, the event short-circuits as `push_sync_already_up_to_date` with no fetch, no reset, and no wake. Otherwise gateway runs `git fetch origin refs/heads/<branch>` (full ref so branch names are never parsed as CLI options), then `git merge-base --is-ancestor HEAD FETCH_HEAD` to classify the update as a fast-forward (exit 0) or a divergent reset (exit 1), then `git reset --hard FETCH_HEAD` to land the new tip in either case. The target is `/workspace/repos/<repo>` for default-branch pushes and an existing `/workspace/worktrees/<repo>/<branch>` for non-default branches; Thor does not create missing worktrees. Default-branch pushes sync only and never wake OpenCode. Non-default branch pushes wake OpenCode through the GitHub queue when a notes-backed correlation key exists; the wake uses `interrupt:false` for fast-forwards (the agent absorbs the new commits at its next yield) and `interrupt:true` for divergent resets (force-push, rebase, branch rewrite — the agent must re-read HEAD before continuing). Deleted branch pushes remove the matching non-default worktree only after `git status --porcelain` reports clean; dirty worktrees are preserved and logged. Delete events never wake OpenCode.
+
+Pure issue `issue_comment.created` events wake Thor only when the comment mentions the configured app login (for example `@${GITHUB_APP_SLUG}` or `@${GITHUB_APP_SLUG}[bot]`). These route directly to the repo checkout with correlation key `github:issue:<localRepo>:<repoFullName>#<issueNumber>`. PR-backed issue comments keep the pending branch-resolution path and route to the PR branch session.
 
 ## 4a) Bot commit identity and CI wake gate
 
@@ -126,20 +128,19 @@ npx smee-client --url https://smee.io/<channel-id> --path /github/webhook --port
 
 ## 9) Troubleshooting (`github_event_ignored`)
 
-| Reason                           | What it means                                                                                  | How to fix                                                                                         |
-| -------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `signature_invalid`              | HMAC verification failed or signature header missing                                           | Verify `GITHUB_WEBHOOK_SECRET`; ensure JSON payload is unmodified in transit                       |
-| `event_unsupported`              | Event is outside Thor allowlist                                                                | Ensure subscription list is correct                                                                |
-| `repo_not_mapped`                | Repo basename has no matching local clone                                                      | Clone under `/workspace/repos/<basename>`; keep basename aligned                                   |
-| `pure_issue_comment_unsupported` | `issue_comment` came from an issue, not a PR                                                   | Comment on a PR thread                                                                             |
-| `self_sender`                    | Sender's numeric user ID matches `GITHUB_APP_BOT_ID`                                           | Self-loop guard — expected when Thor comments/reviews                                              |
-| `empty_review_body`              | Submitted review body was blank                                                                | Include text in the review body                                                                    |
-| `non_mention_comment`            | Comment/review does not mention the app, and (for review events) the PR was not opened by Thor | Mention `@${GITHUB_APP_SLUG}` to act, or open the PR from Thor                                     |
-| `check_suite_branch_missing`     | GitHub did not include `check_suite.head_branch`                                               | Expected for fork/detached/tag cases; no action unless same-repo PRs are affected                  |
-| `correlation_key_unresolved`     | CI/PR-close/push branch has no existing Thor notes-backed branch session                       | Confirm Thor previously worked that branch; otherwise the event is ignored                         |
-| `check_suite_gate_failed`        | The git SHA/authorship gate failed before queueing a CI wake                                   | See `metadata.gateReason` in `github-webhook-ignored` worklog                                      |
-| `push_sync_failed`               | Gateway could not complete the rev-parse, fetch, ancestry check, or reset for a push sync      | Inspect `metadata.exitCode` / `metadata.errorMessage`; resolve dirty checkout or remote-cli issues |
-| `push_delete_cleanup_failed`     | Gateway could not check status or remove a clean deleted-branch worktree                       | Inspect `metadata.exitCode`; clean up manually if safe                                             |
+| Reason                       | What it means                                                                                  | How to fix                                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `signature_invalid`          | HMAC verification failed or signature header missing                                           | Verify `GITHUB_WEBHOOK_SECRET`; ensure JSON payload is unmodified in transit                       |
+| `event_unsupported`          | Event is outside Thor allowlist                                                                | Ensure subscription list is correct                                                                |
+| `repo_not_mapped`            | Repo basename has no matching local clone                                                      | Clone under `/workspace/repos/<basename>`; keep basename aligned                                   |
+| `self_sender`                | Sender's numeric user ID matches `GITHUB_APP_BOT_ID`                                           | Self-loop guard — expected when Thor comments/reviews                                              |
+| `empty_review_body`          | Submitted review body was blank                                                                | Include text in the review body                                                                    |
+| `non_mention_comment`        | Comment/review does not mention the app, and (for review events) the PR was not opened by Thor | Mention `@${GITHUB_APP_SLUG}` to act, or open the PR from Thor                                     |
+| `check_suite_branch_missing` | GitHub did not include `check_suite.head_branch`                                               | Expected for fork/detached/tag cases; no action unless same-repo PRs are affected                  |
+| `correlation_key_unresolved` | CI/PR-close/push branch has no existing Thor notes-backed branch session                       | Confirm Thor previously worked that branch; otherwise the event is ignored                         |
+| `check_suite_gate_failed`    | The git SHA/authorship gate failed before queueing a CI wake                                   | See `metadata.gateReason` in `github-webhook-ignored` worklog                                      |
+| `push_sync_failed`           | Gateway could not complete the rev-parse, fetch, ancestry check, or reset for a push sync      | Inspect `metadata.exitCode` / `metadata.errorMessage`; resolve dirty checkout or remote-cli issues |
+| `push_delete_cleanup_failed` | Gateway could not check status or remove a clean deleted-branch worktree                       | Inspect `metadata.exitCode`; clean up manually if safe                                             |
 
 `check_suite_gate_failed` includes `metadata.gateReason`:
 
@@ -156,6 +157,7 @@ Queue-handler-side terminal rejections happen after the event passed intake. The
 | `installation_gone`    | `gh pr view` failed with an auth/permission error through `/internal/exec` | Reinstall the GitHub App on the affected owner; verify private key + app ID env |
 | `branch_not_found`     | `gh pr view` could not find the PR/branch                                  | Confirm the PR still exists; replay the delivery if it was a transient race     |
 | `branch_lookup_failed` | `/internal/exec` or `gh pr view` failed before returning usable PR head    | Check remote-cli health and connectivity; replay the delivery once recovered    |
+
 `branch_not_found` is permanent (the branch is gone, replay won't help). `branch_lookup_failed` is operationally transient — the failure was infra, the underlying PR may still be valid; redeliver after fixing the transport.
 
 ## 10) Trust boundary for `remote-cli`
