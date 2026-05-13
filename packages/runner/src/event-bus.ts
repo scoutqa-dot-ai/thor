@@ -1,26 +1,31 @@
 /**
- * Lazy shared SSE event bus for OpenCode, keyed by directory.
+ * Lazy shared SSE event bus for OpenCode.
  *
- * Instead of each trigger opening its own SSE connection and filtering
- * client-side, triggers sharing a directory share one connection that
- * dispatches events to per-session listeners.
+ * Instead of each trigger opening its own SSE connection, all triggers share
+ * one global OpenCode event stream. Subscriptions register interest by session
+ * id, and the global stream dispatches matching payloads to per-session listeners.
  *
- * - Connects lazily on the first subscribe() call per directory.
- * - Does NOT auto-reconnect on failure — the next subscribe() call
- *   will re-establish the connection if needed.
+ * - Connects lazily on the first subscribe() call.
+ * - If the stream ends while subscriptions are active, reconnects immediately.
  * - Listeners are cleaned up when the returned iterator is broken/returned.
  */
 
-import { createOpencodeClient, type Event } from "@opencode-ai/sdk";
+import { createOpencodeClient, type Event, type GlobalEvent } from "@opencode-ai/sdk";
 import { EventEmitter } from "node:events";
 import { createLogger, logInfo, logError } from "@thor/common";
 
 const log = createLogger("event-bus");
 
 /**
- * One SSE connection per directory. Dispatches events to per-session listeners.
+ * Minimum delay between reconnect attempts. Guards against a tight loop if
+ * opencode's SSE endpoint closes immediately (as `/event` did in 1.14.48).
  */
-class DirectoryEventBus {
+const RECONNECT_MIN_DELAY_MS = 1000;
+
+/**
+ * One global SSE connection. Dispatches events to session listeners.
+ */
+class GlobalEventBus {
   private emitter = new EventEmitter();
   private alive = false;
   private connectPromise: Promise<void> | null = null;
@@ -28,16 +33,16 @@ class DirectoryEventBus {
   private connectionGeneration = 0;
   private currentClient: unknown = null;
   private currentStream: unknown = null;
-  private currentIterator: AsyncIterator<Event> | null = null;
+  private currentIterator: AsyncIterator<GlobalEvent> | null = null;
   private currentAbortController: AbortController | null = null;
   private closed = false;
   private baseUrl: string;
-  private directory: string;
   private onEmpty: () => void;
+  private lastConnectAt = 0;
+  private pendingReconnect: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(baseUrl: string, directory: string, onEmpty: () => void) {
+  constructor(baseUrl: string, onEmpty: () => void) {
     this.baseUrl = baseUrl;
-    this.directory = directory;
     this.onEmpty = onEmpty;
     // Sessions can be numerous; raise the per-event limit.
     this.emitter.setMaxListeners(200);
@@ -48,7 +53,7 @@ class DirectoryEventBus {
    * until it resolves, so only one connection attempt happens at a time.
    */
   ensureConnected(): Promise<void> {
-    if (this.closed) return Promise.reject(new Error("DirectoryEventBus is closed"));
+    if (this.closed) return Promise.reject(new Error("GlobalEventBus is closed"));
     if (this.alive) return Promise.resolve();
     if (this.connectPromise) return this.connectPromise;
 
@@ -63,10 +68,9 @@ class DirectoryEventBus {
     const abortController = new AbortController();
     const client = createOpencodeClient({
       baseUrl: this.baseUrl,
-      directory: this.directory,
     });
 
-    const { stream } = await client.event.subscribe({ signal: abortController.signal });
+    const { stream } = await client.global.event({ signal: abortController.signal });
     if (this.closed || generation !== this.connectionGeneration) {
       abortController.abort();
       await closeSseResource(stream);
@@ -78,11 +82,11 @@ class DirectoryEventBus {
     this.currentStream = stream;
     this.currentAbortController = abortController;
     this.alive = true;
-    logInfo(log, "connected", { baseUrl: this.baseUrl, directory: this.directory });
+    this.lastConnectAt = Date.now();
+    logInfo(log, "connected", { baseUrl: this.baseUrl });
 
-    // Fire-and-forget reader loop. When the stream ends (server close,
-    // network error, etc.) we just mark ourselves as dead — the next
-    // subscribe() call will reconnect.
+    // Fire-and-forget reader loop. When the stream ends, active subscriptions
+    // trigger an immediate reconnect through ensureConnected().
     void (async () => {
       const iterator = stream[Symbol.asyncIterator]();
       if (generation === this.connectionGeneration) {
@@ -93,14 +97,14 @@ class DirectoryEventBus {
           const next = await iterator.next();
           if (next.done) break;
           const event = next.value;
-          const sid = extractSessionId(event);
+          const sid = extractSessionId(event.payload);
           if (sid) {
-            this.emitter.emit(sid, event);
+            this.emitter.emit(sid, event.payload);
           }
         }
       } catch (err) {
         logError(log, "stream_error", err instanceof Error ? err.message : String(err), {
-          directory: this.directory,
+          baseUrl: this.baseUrl,
         });
       } finally {
         if (generation === this.connectionGeneration) {
@@ -109,14 +113,15 @@ class DirectoryEventBus {
           this.currentStream = null;
           this.currentIterator = null;
           this.currentAbortController = null;
-          logInfo(log, "disconnected", { directory: this.directory });
+          logInfo(log, "disconnected", { baseUrl: this.baseUrl });
+          this.reconnectIfActive();
         }
       }
     })();
   }
 
   subscribe(sessionIds: string[]): SessionSubscription {
-    if (this.closed) throw new Error("DirectoryEventBus is closed");
+    if (this.closed) throw new Error("GlobalEventBus is closed");
     this.activeSubscriptions++;
     return new SessionSubscription(this.emitter, sessionIds, () => this.releaseSubscription());
   }
@@ -130,6 +135,27 @@ class DirectoryEventBus {
     }
   }
 
+  private reconnectIfActive(): void {
+    if (this.closed || this.activeSubscriptions === 0) return;
+    if (this.pendingReconnect || this.connectPromise) return;
+    const elapsed = Date.now() - this.lastConnectAt;
+    const delay = elapsed >= RECONNECT_MIN_DELAY_MS ? 0 : RECONNECT_MIN_DELAY_MS - elapsed;
+    const runReconnect = () => {
+      this.pendingReconnect = null;
+      if (this.closed || this.activeSubscriptions === 0 || this.alive) return;
+      void this.ensureConnected().catch((err) => {
+        logError(log, "reconnect_error", err instanceof Error ? err.message : String(err), {
+          baseUrl: this.baseUrl,
+        });
+      });
+    };
+    if (delay === 0) {
+      runReconnect();
+    } else {
+      this.pendingReconnect = setTimeout(runReconnect, delay);
+    }
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -137,6 +163,10 @@ class DirectoryEventBus {
     this.alive = false;
     this.connectPromise = null;
     this.connectionGeneration++;
+    if (this.pendingReconnect) {
+      clearTimeout(this.pendingReconnect);
+      this.pendingReconnect = null;
+    }
     const abortController = this.currentAbortController;
     const iterator = this.currentIterator;
     const stream = this.currentStream;
@@ -154,10 +184,10 @@ class DirectoryEventBus {
 }
 
 /**
- * Registry that hands out one DirectoryEventBus per (baseUrl, directory) pair.
+ * Registry that hands out one global event bus per OpenCode base URL.
  */
 export class EventBusRegistry {
-  private buses = new Map<string, DirectoryEventBus>();
+  private bus: GlobalEventBus | undefined;
   private baseUrl: string;
 
   constructor(baseUrl: string) {
@@ -165,21 +195,20 @@ export class EventBusRegistry {
   }
 
   /**
-   * Get a subscription for the given directory and session IDs.
-   * Creates the bus lazily on first use; reconnects if the previous
-   * connection died.
+   * Get a subscription for the given session IDs. Creates the bus lazily on
+   * first use; reconnects if the previous connection died.
    */
-  async subscribe(directory: string, sessionIds: string[]): Promise<SessionSubscription> {
-    let bus = this.buses.get(directory);
+  async subscribe(sessionIds: string[]): Promise<SessionSubscription> {
+    let bus = this.bus;
     if (!bus) {
-      const createdBus = new DirectoryEventBus(this.baseUrl, directory, () => {
-        if (this.buses.get(directory) === createdBus) {
-          this.buses.delete(directory);
+      const createdBus = new GlobalEventBus(this.baseUrl, () => {
+        if (this.bus === createdBus) {
+          this.bus = undefined;
           createdBus.close();
         }
       });
       bus = createdBus;
-      this.buses.set(directory, bus);
+      this.bus = bus;
     }
     const subscription = bus.subscribe(sessionIds);
     try {
@@ -213,7 +242,7 @@ export class SessionSubscription implements AsyncIterable<Event> {
     this.sessionIds = new Set(sessionIds);
     this.onClose = onClose;
     for (const sid of this.sessionIds) {
-      emitter.on(sid, this.handler);
+      this.emitter.on(sid, this.handler);
     }
   }
 

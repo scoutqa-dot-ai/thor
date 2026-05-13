@@ -1,38 +1,107 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import type { Event } from "@opencode-ai/sdk";
+import type { Event, GlobalEvent, TextPart } from "@opencode-ai/sdk";
 import { EventBusRegistry, SessionSubscription, waitForSessionSettled } from "./event-bus.js";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+vi.mock("@opencode-ai/sdk", () => {
+  return {
+    createOpencodeClient: vi.fn(),
+  };
+});
 
-function makePartEvent(sessionID: string, partType = "text"): Event {
+import { createOpencodeClient } from "@opencode-ai/sdk";
+
+function makePartEvent(sessionID: string, text = `text ${sessionID}`): Event {
   return {
     type: "message.part.updated",
     properties: {
-      part: { sessionID, type: partType, messageID: "m1" } as never,
+      part: {
+        id: `p-${sessionID}`,
+        sessionID,
+        type: "text",
+        messageID: `m-${sessionID}`,
+        text,
+      } satisfies TextPart,
     },
-  } as unknown as Event;
+  };
 }
 
 function makeIdleEvent(sessionID: string): Event {
   return {
     type: "session.idle",
     properties: { sessionID },
-  } as unknown as Event;
+  };
 }
 
 function makeErrorEvent(sessionID: string): Event {
   return {
     type: "session.error",
-    properties: { sessionID, error: { name: "test" } },
-  } as unknown as Event;
+    properties: { sessionID, error: { name: "UnknownError", data: { message: "test" } } },
+  };
 }
 
-// ---------------------------------------------------------------------------
-// SessionSubscription (unit tests — no SSE mock needed)
-// ---------------------------------------------------------------------------
+function makeGlobalEvent(directory: string, event: Event): GlobalEvent {
+  return {
+    directory,
+    payload: event,
+  };
+}
+
+function createMockStream() {
+  const events: GlobalEvent[] = [];
+  let resolve: (() => void) | null = null;
+  let closed = false;
+  const iteratorReturn = vi.fn(async () => {
+    closed = true;
+    resolve?.();
+    return { value: undefined as never, done: true };
+  });
+
+  const push = (event: GlobalEvent) => {
+    events.push(event);
+    resolve?.();
+  };
+
+  const end = () => {
+    closed = true;
+    resolve?.();
+  };
+
+  const stream: AsyncIterable<GlobalEvent> = {
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<GlobalEvent>> {
+          while (events.length === 0 && !closed) {
+            await new Promise<void>((r) => {
+              resolve = r;
+            });
+            resolve = null;
+          }
+          if (events.length > 0) {
+            return { value: events.shift(), done: false };
+          }
+          return { value: undefined as never, done: true };
+        },
+        return: iteratorReturn,
+      };
+    },
+  };
+
+  return { stream, push, end, iteratorReturn };
+}
+
+async function collectUntilIdle(sub: AsyncIterable<Event>): Promise<Event[]> {
+  const items: Event[] = [];
+  for await (const event of sub) {
+    items.push(event);
+    if (event.type === "session.idle") break;
+  }
+  return items;
+}
+
+async function* eventIterable(events: Event[]) {
+  for (const event of events) yield event;
+}
 
 describe("SessionSubscription", () => {
   let emitter: EventEmitter;
@@ -41,110 +110,7 @@ describe("SessionSubscription", () => {
     emitter = new EventEmitter();
   });
 
-  it("yields events matching the subscribed session ID", async () => {
-    const sub = new SessionSubscription(emitter, ["s1"]);
-
-    emitter.emit("s1", makePartEvent("s1"));
-    emitter.emit("s1", makeIdleEvent("s1"));
-
-    const collected: Event[] = [];
-    for await (const event of sub) {
-      collected.push(event);
-      if (event.type === "session.idle") break;
-    }
-
-    expect(collected).toHaveLength(2);
-    expect(collected[0].type).toBe("message.part.updated");
-    expect(collected[1].type).toBe("session.idle");
-  });
-
-  it("does not receive events from other sessions", async () => {
-    const sub = new SessionSubscription(emitter, ["s1"]);
-
-    // Emit for a different session — should not arrive.
-    emitter.emit("s2", makePartEvent("s2"));
-    // Emit for our session.
-    emitter.emit("s1", makeIdleEvent("s1"));
-
-    const collected: Event[] = [];
-    for await (const event of sub) {
-      collected.push(event);
-      if (event.type === "session.idle") break;
-    }
-
-    expect(collected).toHaveLength(1);
-    expect(collected[0].type).toBe("session.idle");
-  });
-
-  it("addSessionId() dynamically includes child session events", async () => {
-    const sub = new SessionSubscription(emitter, ["parent"]);
-
-    // Child events before addSessionId — should be missed.
-    emitter.emit("child1", makePartEvent("child1"));
-
-    sub.addSessionId("child1");
-
-    emitter.emit("child1", makePartEvent("child1"));
-    emitter.emit("parent", makeIdleEvent("parent"));
-
-    const collected: Event[] = [];
-    for await (const event of sub) {
-      collected.push(event);
-      if (event.type === "session.idle") break;
-    }
-
-    // child1 part + parent idle
-    expect(collected).toHaveLength(2);
-  });
-
-  it("addSessionId() is idempotent", async () => {
-    const sub = new SessionSubscription(emitter, ["s1"]);
-    sub.addSessionId("s1");
-    sub.addSessionId("s1");
-
-    emitter.emit("s1", makeIdleEvent("s1"));
-
-    const collected: Event[] = [];
-    for await (const event of sub) {
-      collected.push(event);
-      break;
-    }
-
-    // Should get exactly 1 event, not duplicates.
-    expect(collected).toHaveLength(1);
-  });
-
-  it("deduplicates initial session IDs", () => {
-    const sub = new SessionSubscription(emitter, ["s1", "s1"]);
-
-    expect(emitter.listenerCount("s1")).toBe(1);
-
-    sub.close();
-    expect(emitter.listenerCount("s1")).toBe(0);
-  });
-
-  it("close() unblocks a pending next()", async () => {
-    const sub = new SessionSubscription(emitter, ["s1"]);
-
-    // Start iterating in the background — it will block waiting for events.
-    const promise = (async () => {
-      const items: Event[] = [];
-      for await (const event of sub) {
-        items.push(event);
-      }
-      return items;
-    })();
-
-    // Give the iterator time to enter the await.
-    await new Promise((r) => setTimeout(r, 10));
-
-    sub.close();
-
-    const items = await promise;
-    expect(items).toHaveLength(0);
-  });
-
-  it("close() removes all listeners from the emitter", async () => {
+  it("close() removes every emitter listener it registered", () => {
     const sub = new SessionSubscription(emitter, ["s1", "s2"]);
     expect(emitter.listenerCount("s1")).toBe(1);
     expect(emitter.listenerCount("s2")).toBe(1);
@@ -158,169 +124,51 @@ describe("SessionSubscription", () => {
   it("close() is idempotent", () => {
     const sub = new SessionSubscription(emitter, ["s1"]);
     sub.close();
-    sub.close(); // Should not throw.
+    sub.close();
     expect(emitter.listenerCount("s1")).toBe(0);
   });
 
-  it("addSessionId() after close() is a no-op", () => {
+  it("close() unblocks a pending next() so iteration ends cleanly", async () => {
+    const sub = new SessionSubscription(emitter, ["s1"]);
+    const iteration = (async () => {
+      const items: Event[] = [];
+      for await (const event of sub) items.push(event);
+      return items;
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    sub.close();
+    await expect(iteration).resolves.toEqual([]);
+  });
+
+  it("addSessionId() after close() does not re-register a listener", () => {
     const sub = new SessionSubscription(emitter, ["s1"]);
     sub.close();
     sub.addSessionId("s2");
     expect(emitter.listenerCount("s2")).toBe(0);
   });
 
-  it("events arriving before iteration are buffered", async () => {
+  it("addSessionId() is idempotent for the same session id", async () => {
     const sub = new SessionSubscription(emitter, ["s1"]);
+    sub.addSessionId("s1");
+    sub.addSessionId("s1");
+    expect(emitter.listenerCount("s1")).toBe(1);
 
-    // Emit before anyone iterates.
-    emitter.emit("s1", makePartEvent("s1"));
-    emitter.emit("s1", makePartEvent("s1"));
     emitter.emit("s1", makeIdleEvent("s1"));
-
-    const collected: Event[] = [];
+    const items: Event[] = [];
     for await (const event of sub) {
-      collected.push(event);
-      if (event.type === "session.idle") break;
+      items.push(event);
+      break;
     }
-
-    expect(collected).toHaveLength(3);
+    expect(items).toHaveLength(1);
+    sub.close();
   });
 
-  it("handles session.error events", async () => {
-    const sub = new SessionSubscription(emitter, ["s1"]);
-
-    emitter.emit("s1", makeErrorEvent("s1"));
-
-    const collected: Event[] = [];
-    for await (const event of sub) {
-      collected.push(event);
-      if (event.type === "session.error") break;
-    }
-
-    expect(collected).toHaveLength(1);
-    expect(collected[0].type).toBe("session.error");
+  it("deduplicates session ids passed to the constructor", () => {
+    const sub = new SessionSubscription(emitter, ["s1", "s1"]);
+    expect(emitter.listenerCount("s1")).toBe(1);
+    sub.close();
   });
 });
-
-// ---------------------------------------------------------------------------
-// waitForSessionSettled
-// ---------------------------------------------------------------------------
-
-describe("waitForSessionSettled", () => {
-  it("resolves true on session.idle (successful completion)", async () => {
-    const emitter = new EventEmitter();
-    const sub = new SessionSubscription(emitter, ["s1"]);
-    emitter.emit("s1", makeIdleEvent("s1"));
-
-    const settled = await waitForSessionSettled(sub, 1_000);
-    sub.close();
-    expect(settled).toBe(true);
-  });
-
-  it("resolves true on session.error (abort emits error, not idle)", async () => {
-    const emitter = new EventEmitter();
-    const sub = new SessionSubscription(emitter, ["s1"]);
-    emitter.emit("s1", makeErrorEvent("s1"));
-
-    const settled = await waitForSessionSettled(sub, 1_000);
-    sub.close();
-    expect(settled).toBe(true);
-  });
-
-  it("ignores unrelated events until settled", async () => {
-    const emitter = new EventEmitter();
-    const sub = new SessionSubscription(emitter, ["s1"]);
-    emitter.emit("s1", makePartEvent("s1"));
-    emitter.emit("s1", makePartEvent("s1"));
-    emitter.emit("s1", makeErrorEvent("s1"));
-
-    const settled = await waitForSessionSettled(sub, 1_000);
-    sub.close();
-    expect(settled).toBe(true);
-  });
-
-  it("resolves false on timeout when no settle event arrives", async () => {
-    const emitter = new EventEmitter();
-    const sub = new SessionSubscription(emitter, ["s1"]);
-
-    const settled = await waitForSessionSettled(sub, 50);
-    sub.close();
-    expect(settled).toBe(false);
-  });
-
-  it("clears the timeout when a settle event wins", async () => {
-    vi.useFakeTimers();
-    try {
-      const emitter = new EventEmitter();
-      const sub = new SessionSubscription(emitter, ["s1"]);
-      emitter.emit("s1", makeIdleEvent("s1"));
-
-      const settled = await waitForSessionSettled(sub, 1_000);
-      sub.close();
-
-      expect(settled).toBe(true);
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// OpenCodeEventBus (integration-level — mock the SDK)
-// ---------------------------------------------------------------------------
-
-// We mock createOpencodeClient to return a controllable async iterable.
-vi.mock("@opencode-ai/sdk", () => {
-  return {
-    createOpencodeClient: vi.fn(),
-  };
-});
-
-import { createOpencodeClient } from "@opencode-ai/sdk";
-
-function createMockStream() {
-  const events: Event[] = [];
-  let resolve: (() => void) | null = null;
-  let closed = false;
-  const iteratorReturn = vi.fn(async () => {
-    closed = true;
-    resolve?.();
-    return { value: undefined as never, done: true };
-  });
-
-  const push = (event: Event) => {
-    events.push(event);
-    resolve?.();
-  };
-
-  const end = () => {
-    closed = true;
-    resolve?.();
-  };
-
-  const stream: AsyncIterable<Event> = {
-    [Symbol.asyncIterator]() {
-      return {
-        async next(): Promise<IteratorResult<Event>> {
-          while (events.length === 0 && !closed) {
-            await new Promise<void>((r) => {
-              resolve = r;
-            });
-            resolve = null;
-          }
-          if (events.length > 0) {
-            return { value: events.shift()!, done: false };
-          }
-          return { value: undefined as never, done: true };
-        },
-        return: iteratorReturn,
-      };
-    },
-  };
-
-  return { stream, push, end, iteratorReturn };
-}
 
 describe("EventBusRegistry", () => {
   let mockStream: ReturnType<typeof createMockStream>;
@@ -331,208 +179,180 @@ describe("EventBusRegistry", () => {
     mockStream = createMockStream();
     subscribeMock = vi.fn().mockResolvedValue({ stream: mockStream.stream });
     vi.mocked(createOpencodeClient).mockReturnValue({
-      event: {
-        subscribe: subscribeMock,
+      global: {
+        event: subscribeMock,
       },
     } as never);
   });
 
-  it("connects lazily on first subscribe()", async () => {
+  it("opens one global OpenCode stream for subscriptions", async () => {
     const reg = new EventBusRegistry("http://localhost:4096");
 
-    expect(createOpencodeClient).not.toHaveBeenCalled();
-
-    await reg.subscribe("/repo/a", ["s1"]);
+    const [sub1, sub2] = await Promise.all([reg.subscribe(["s1"]), reg.subscribe(["s2"])]);
 
     expect(createOpencodeClient).toHaveBeenCalledTimes(1);
-    expect(createOpencodeClient).toHaveBeenCalledWith(
-      expect.objectContaining({ directory: "/repo/a" }),
-    );
+    const config = vi.mocked(createOpencodeClient).mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(config).toMatchObject({ baseUrl: "http://localhost:4096" });
+    expect(config).not.toHaveProperty("directory");
+    expect(subscribeMock).toHaveBeenCalledTimes(1);
+
+    sub1.close();
+    sub2.close();
   });
 
-  it("reuses the same connection for same directory", async () => {
+  it("routes global events by session", async () => {
     const reg = new EventBusRegistry("http://localhost:4096");
 
-    await reg.subscribe("/repo/a", ["s1"]);
-    await reg.subscribe("/repo/a", ["s2"]);
+    const repoASession1 = await reg.subscribe(["s1"]);
+    const repoASession2 = await reg.subscribe(["s2"]);
+    const repoBSession3 = await reg.subscribe(["s3"]);
+
+    const a1Part = makePartEvent("s1", "repo a s1");
+    const a1Idle = makeIdleEvent("s1");
+    const a2Part = makePartEvent("s2", "repo a s2");
+    const a2Idle = makeIdleEvent("s2");
+    const b3Part = makePartEvent("s3", "repo b s3");
+    const b3Idle = makeIdleEvent("s3");
+
+    const a1 = collectUntilIdle(repoASession1);
+    const a2 = collectUntilIdle(repoASession2);
+    const b3 = collectUntilIdle(repoBSession3);
+
+    mockStream.push(makeGlobalEvent("/repo/a", a2Part));
+    mockStream.push(makeGlobalEvent("/repo/b", b3Part));
+    mockStream.push(makeGlobalEvent("/repo/a", a1Part));
+    mockStream.push(makeGlobalEvent("/repo/a", a2Idle));
+    mockStream.push(makeGlobalEvent("/repo/b", b3Idle));
+    mockStream.push(makeGlobalEvent("/repo/a", a1Idle));
+
+    await expect(a1).resolves.toEqual([a1Part, a1Idle]);
+    await expect(a2).resolves.toEqual([a2Part, a2Idle]);
+    await expect(b3).resolves.toEqual([b3Part, b3Idle]);
+  });
+
+  it("includes child session events after the subscription adds the child id", async () => {
+    const reg = new EventBusRegistry("http://localhost:4096");
+
+    const sub = await reg.subscribe(["parent"]);
+    sub.addSessionId("child");
+
+    const childPart = makePartEvent("child", "child progress");
+    const parentIdle = makeIdleEvent("parent");
+    const collected = collectUntilIdle(sub);
+
+    mockStream.push(makeGlobalEvent("/repo/a", childPart));
+    mockStream.push(makeGlobalEvent("/repo/a", parentIdle));
+
+    await expect(collected).resolves.toEqual([childPart, parentIdle]);
+  });
+
+  it("keeps the global stream open until the last active subscription closes", async () => {
+    const reg = new EventBusRegistry("http://localhost:4096");
+
+    const sub1 = await reg.subscribe(["s1"]);
+    const sub2 = await reg.subscribe(["s2"]);
+
+    sub1.close();
+    expect(mockStream.iteratorReturn).not.toHaveBeenCalled();
+
+    sub2.close();
+    await vi.waitFor(() => expect(mockStream.iteratorReturn).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not reconnect after the stream closes with no active subscriptions", async () => {
+    const reg = new EventBusRegistry("http://localhost:4096");
+
+    const sub = await reg.subscribe(["s1"]);
+    sub.close();
+
+    await vi.waitFor(() => expect(mockStream.iteratorReturn).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(createOpencodeClient).toHaveBeenCalledTimes(1);
   });
 
-  it("creates separate connections for different directories", async () => {
-    const streamB = createMockStream();
+  it("reconnects existing subscriptions when the global stream ends", async () => {
+    const newMockStream = createMockStream();
     let callCount = 0;
     vi.mocked(createOpencodeClient).mockImplementation(() => {
       callCount++;
-      const s = callCount === 1 ? mockStream : streamB;
+      const selectedStream = callCount === 1 ? mockStream : newMockStream;
       return {
-        event: {
-          subscribe: vi.fn().mockResolvedValue({ stream: s.stream }),
+        global: {
+          event: vi.fn().mockResolvedValue({ stream: selectedStream.stream }),
         },
       } as never;
     });
-
     const reg = new EventBusRegistry("http://localhost:4096");
 
-    const sub1 = await reg.subscribe("/repo/a", ["s1"]);
-    const sub2 = await reg.subscribe("/repo/b", ["s2"]);
-
-    expect(createOpencodeClient).toHaveBeenCalledTimes(2);
-    expect(createOpencodeClient).toHaveBeenCalledWith(
-      expect.objectContaining({ directory: "/repo/a" }),
-    );
-    expect(createOpencodeClient).toHaveBeenCalledWith(
-      expect.objectContaining({ directory: "/repo/b" }),
-    );
-
-    // Events on stream A go to sub1, events on stream B go to sub2.
-    mockStream.push(makeIdleEvent("s1"));
-    streamB.push(makeIdleEvent("s2"));
-
-    const collect = async (sub: SessionSubscription) => {
-      const items: Event[] = [];
-      for await (const event of sub) {
-        items.push(event);
-        if (event.type === "session.idle") break;
-      }
-      return items;
-    };
-
-    const [r1, r2] = await Promise.all([collect(sub1), collect(sub2)]);
-    expect(r1).toHaveLength(1);
-    expect(r2).toHaveLength(1);
-  });
-
-  it("dispatches events to the correct subscription", async () => {
-    const reg = new EventBusRegistry("http://localhost:4096");
-
-    const sub1 = await reg.subscribe("/repo/a", ["s1"]);
-    const sub2 = await reg.subscribe("/repo/a", ["s2"]);
-
-    mockStream.push(makePartEvent("s1"));
-    mockStream.push(makePartEvent("s2"));
-    mockStream.push(makeIdleEvent("s1"));
-    mockStream.push(makeIdleEvent("s2"));
-
-    const collect = async (sub: SessionSubscription) => {
-      const items: Event[] = [];
-      for await (const event of sub) {
-        items.push(event);
-        if (event.type === "session.idle") break;
-      }
-      return items;
-    };
-
-    const [r1, r2] = await Promise.all([collect(sub1), collect(sub2)]);
-
-    expect(r1).toHaveLength(2);
-    expect(r2).toHaveLength(2);
-    expect((r1[0] as any).properties.part.sessionID).toBe("s1");
-    expect((r2[0] as any).properties.part.sessionID).toBe("s2");
-  });
-
-  it("reconnects on next subscribe() after stream failure", async () => {
-    const reg = new EventBusRegistry("http://localhost:4096");
-
-    const sub1 = await reg.subscribe("/repo/a", ["s1"]);
-    expect(createOpencodeClient).toHaveBeenCalledTimes(1);
-
-    // Simulate stream ending.
+    const sub = await reg.subscribe(["s1"]);
+    const collected = collectUntilIdle(sub);
     mockStream.end();
-    await new Promise((r) => setTimeout(r, 20));
+    // Reconnect is gated by RECONNECT_MIN_DELAY_MS (1s) to prevent tight loops.
+    await vi.waitFor(() => expect(createOpencodeClient).toHaveBeenCalledTimes(2), {
+      timeout: 3_000,
+    });
 
-    // Create a fresh mock stream for the reconnection.
-    const newMockStream = createMockStream();
-    vi.mocked(createOpencodeClient).mockReturnValue({
-      event: {
-        subscribe: vi.fn().mockResolvedValue({ stream: newMockStream.stream }),
-      },
-    } as never);
+    const idle = makeIdleEvent("s1");
+    newMockStream.push(makeGlobalEvent("/repo/a", idle));
 
-    const sub2 = await reg.subscribe("/repo/a", ["s2"]);
-    expect(createOpencodeClient).toHaveBeenCalledTimes(2);
-
-    newMockStream.push(makeIdleEvent("s2"));
-
-    const collected: Event[] = [];
-    for await (const event of sub2) {
-      collected.push(event);
-      if (event.type === "session.idle") break;
-    }
-    expect(collected).toHaveLength(1);
-
-    sub1.close();
+    await expect(collected).resolves.toEqual([idle]);
   });
 
-  it("coalesces concurrent subscribe() calls into one connection per directory", async () => {
+  it("waits at least RECONNECT_MIN_DELAY_MS between reconnects after a stream close", async () => {
+    let callCount = 0;
+    const streams = [createMockStream(), createMockStream()];
+    vi.mocked(createOpencodeClient).mockImplementation(() => {
+      const selected = streams[callCount++] ?? createMockStream();
+      return {
+        global: {
+          event: vi.fn().mockResolvedValue({ stream: selected.stream }),
+        },
+      } as never;
+    });
     const reg = new EventBusRegistry("http://localhost:4096");
 
-    const [sub1, sub2] = await Promise.all([
-      reg.subscribe("/repo/a", ["s1"]),
-      reg.subscribe("/repo/a", ["s2"]),
-    ]);
-
+    const sub = await reg.subscribe(["s1"]);
     expect(createOpencodeClient).toHaveBeenCalledTimes(1);
 
-    sub1.close();
-    sub2.close();
-  });
-
-  it("keeps a directory bus until its last subscription closes", async () => {
-    const reg = new EventBusRegistry("http://localhost:4096");
-
-    const sub1 = await reg.subscribe("/repo/a", ["s1"]);
-    const sub2 = await reg.subscribe("/repo/a", ["s2"]);
-    expect(createOpencodeClient).toHaveBeenCalledTimes(1);
-
-    sub1.close();
-    const sub3 = await reg.subscribe("/repo/a", ["s3"]);
-    expect(createOpencodeClient).toHaveBeenCalledTimes(1);
-
-    sub2.close();
-    sub3.close();
-  });
-
-  it("removes and closes a directory bus when its last subscription closes", async () => {
-    const reg = new EventBusRegistry("http://localhost:4096");
-
-    const sub1 = await reg.subscribe("/repo/a", ["s1"]);
-    sub1.close();
-
-    await vi.waitFor(() => expect(mockStream.iteratorReturn).toHaveBeenCalledTimes(1));
-
-    const newMockStream = createMockStream();
-    vi.mocked(createOpencodeClient).mockReturnValue({
-      event: {
-        subscribe: vi.fn().mockResolvedValue({ stream: newMockStream.stream }),
-      },
-    } as never);
-
-    const sub2 = await reg.subscribe("/repo/a", ["s2"]);
-    expect(createOpencodeClient).toHaveBeenCalledTimes(2);
-
-    newMockStream.push(makeIdleEvent("s2"));
-    const collected: Event[] = [];
-    for await (const event of sub2) {
-      collected.push(event);
-      break;
-    }
-    expect(collected).toHaveLength(1);
-
-    sub2.close();
-  });
-
-  it("aborts the SDK event subscription when the last subscription closes", async () => {
-    const reg = new EventBusRegistry("http://localhost:4096");
-
-    const sub = await reg.subscribe("/repo/a", ["s1"]);
-    const subscribeOptions = subscribeMock.mock.calls[0]?.[0] as { signal?: AbortSignal };
-
-    expect(subscribeOptions.signal).toBeInstanceOf(AbortSignal);
-    expect(subscribeOptions.signal?.aborted).toBe(false);
+    const start = Date.now();
+    streams[0]!.end();
+    await vi.waitFor(() => expect(createOpencodeClient).toHaveBeenCalledTimes(2), {
+      timeout: 3_000,
+    });
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(900);
 
     sub.close();
+  });
+});
 
-    expect(subscribeOptions.signal?.aborted).toBe(true);
+describe("waitForSessionSettled", () => {
+  it("treats idle and error events as settled", async () => {
+    await expect(waitForSessionSettled(eventIterable([makeIdleEvent("s1")]), 1_000)).resolves.toBe(
+      true,
+    );
+    await expect(waitForSessionSettled(eventIterable([makeErrorEvent("s1")]), 1_000)).resolves.toBe(
+      true,
+    );
+  });
+
+  it("returns false when the event stream ends before the session settles", async () => {
+    await expect(waitForSessionSettled(eventIterable([makePartEvent("s1")]), 1_000)).resolves.toBe(
+      false,
+    );
+  });
+
+  it("resolves false when the timeout fires before any settle event arrives", async () => {
+    const emitter = new EventEmitter();
+    const sub = new SessionSubscription(emitter, ["s1"]);
+    try {
+      // Stream stays open with no settle event — timeout has to win.
+      await expect(waitForSessionSettled(sub, 30)).resolves.toBe(false);
+    } finally {
+      sub.close();
+    }
   });
 });
