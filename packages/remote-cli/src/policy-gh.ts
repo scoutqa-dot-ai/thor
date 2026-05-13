@@ -53,6 +53,7 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "pr list",
   "pr status",
   "pr checks",
+  "pr diff",
   "pr create",
   "pr comment",
   "pr review",
@@ -70,6 +71,35 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "workflow list",
   "workflow view",
   "workflow run",
+]);
+
+// Read-only commands where --repo / -R is harmless: it only retargets the
+// query, never the auth scope of a write. Writes (pr create, pr comment,
+// pr review, run rerun, run download, workflow run, api mutation shapes)
+// keep the ban so they stay scoped to the current worktree's repo.
+const REPO_OVERRIDE_ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
+  "auth status",
+  "cache list",
+  "search prs",
+  "search issues",
+  "search repos",
+  "search code",
+  "pr view",
+  "pr list",
+  "pr status",
+  "pr checks",
+  "pr diff",
+  "issue view",
+  "issue list",
+  "label list",
+  "release list",
+  "release view",
+  "repo view",
+  "run list",
+  "run view",
+  "run watch",
+  "workflow list",
+  "workflow view",
 ]);
 
 const HELP_FLAGS: ReadonlySet<string> = new Set(["-h", "--help"]);
@@ -90,12 +120,6 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
   "gh pr checkout": {
     reason: "pr checkout would switch the current worktree branch.",
-    instead:
-      "git fetch origin pull/<N>/head:pr-<N> && git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>",
-  },
-  "gh pr diff": {
-    reason:
-      "PR review should happen from a fetched worktree so tests and code search are available.",
     instead:
       "git fetch origin pull/<N>/head:pr-<N> && git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>",
   },
@@ -161,9 +185,13 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
   if (isHelpRequest(args)) return null;
 
   const command = ghCommandLabel(args);
-  if (hasRepoOverride(args)) return denyMessage(command, REPO_OVERRIDE_DENY_GUIDANCE);
-
   const key = ghCommandKey(args);
+  if (hasRepoOverride(args)) {
+    if (!key || !REPO_OVERRIDE_ALLOWED_GH_COMMANDS.has(key)) {
+      return denyMessage(command, REPO_OVERRIDE_DENY_GUIDANCE);
+    }
+  }
+
   if (!key || !ALLOWED_GH_COMMANDS.has(key)) {
     return denyMessage(command);
   }
@@ -460,8 +488,12 @@ function validateGhWorkflowRunArgs(args: string[]): string | null {
 
 function validateGhApiArgs(args: string[], cwd?: string): string | null {
   const endpoint = args[1];
-  if (!endpoint || endpoint.startsWith("-") || endpoint === "graphql") {
+  if (!endpoint || endpoint.startsWith("-")) {
     return denyMessage("gh api");
+  }
+
+  if (endpoint === "graphql") {
+    return validateGhApiGraphqlArgs(args);
   }
 
   const mutationShape = ALLOWED_GH_API_MUTATION_SHAPES.find((shape) =>
@@ -480,6 +512,42 @@ function validateGhApiArgs(args: string[], cwd?: string): string | null {
   ]);
   if (!parsed || parsed.positionals.length > 0) {
     return denyMessage("gh api");
+  }
+
+  return null;
+}
+
+function validateGhApiGraphqlArgs(args: string[]): string | null {
+  // GraphQL is allowed read-only: no --method, or --method GET, with a query
+  // body that does not contain a `mutation` block. `-F` (typed field) is
+  // denied because `-F key=@file` can load arbitrary file content as the
+  // query body, which would bypass the substring check.
+  const parsed = scanPolicyArgs(args, 2, [
+    { name: "include", kind: "boolean", aliases: ["--include", "-i"] },
+    { name: "silent", kind: "boolean", aliases: ["--silent"] },
+    { name: "paginate", kind: "boolean", aliases: ["--paginate"] },
+    { name: "jq", kind: "value", aliases: ["--jq", "-q"] },
+    { name: "template", kind: "value", aliases: ["--template", "-t"] },
+    { name: "method", kind: "value", aliases: ["--method", "-X"] },
+    { name: "raw-field", kind: "value", aliases: ["-f", "--raw-field"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage("gh api");
+  }
+
+  const methods = valueFlagValues(parsed, "method");
+  if (methods.length > 1) return denyMessage("gh api");
+  if (methods.length === 1 && methods[0].toUpperCase() !== "GET") {
+    return denyMessage("gh api");
+  }
+
+  const rawFields = valueFlagValues(parsed, "raw-field");
+  if (rawFields.length === 0) return denyMessage("gh api");
+
+  for (const value of rawFields) {
+    if (/\bmutation\b/i.test(value)) {
+      return denyMessage("gh api");
+    }
   }
 
   return null;

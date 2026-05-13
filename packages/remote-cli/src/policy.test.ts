@@ -874,6 +874,38 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["pr", "comment", "123", "--body", "-h"])).toBeNull();
       expect(validateGhArgs(["pr", "review", "123", "--comment", "--body", "--help"])).toBeNull();
     });
+
+    it("allows gh api graphql read queries", () => {
+      expect(
+        validateGhArgs(["api", "graphql", "-f", "query=query { viewer { login } }"]),
+      ).toBeNull();
+      expect(
+        validateGhArgs([
+          "api",
+          "graphql",
+          "--raw-field",
+          'query=query Foo { repository(owner: "acme", name: "web") { name } }',
+          "--jq",
+          ".data.repository.name",
+        ]),
+      ).toBeNull();
+      expect(
+        validateGhArgs([
+          "api",
+          "graphql",
+          "--method",
+          "GET",
+          "-f",
+          "query=query { viewer { login } }",
+        ]),
+      ).toBeNull();
+    });
+
+    it("allows gh run view --log and --log-failed for CI log inspection", () => {
+      expect(validateGhArgs(["run", "view", "123", "--log"])).toBeNull();
+      expect(validateGhArgs(["run", "view", "123", "--log-failed"])).toBeNull();
+      expect(validateGhArgs(["run", "view", "123", "--log-failed", "--job", "456"])).toBeNull();
+    });
   });
 
   describe("blocked commands", () => {
@@ -909,10 +941,14 @@ describe("validateGhArgs", () => {
       expectGhDenied(["secret", "set", "FOO"]);
     });
 
-    it("blocks gh pr diff and gh pr checkout to force worktree-based review", () => {
-      expectGhDenied(["pr", "diff", "2984"]);
-      expectGhDenied(["pr", "diff", "2984", "--patch"]);
+    it("blocks gh pr checkout to force worktree-based review", () => {
       expectGhDenied(["pr", "checkout", "2984"]);
+    });
+
+    it("allows gh pr diff as a read-only review aid", () => {
+      expect(validateGhArgs(["pr", "diff", "2984"])).toBeNull();
+      expect(validateGhArgs(["pr", "diff", "2984", "--patch"])).toBeNull();
+      expect(validateGhArgs(["pr", "diff", "2984", "--name-only"])).toBeNull();
     });
 
     it("returns actionable denial guidance for common blocked gh workflows", () => {
@@ -921,14 +957,7 @@ describe("validateGhArgs", () => {
         ["would switch the current worktree branch", "git fetch origin pull/<N>/head:pr-<N>"],
       );
       expectGhDeniedWith(
-        ["pr", "diff", "2984"],
-        [
-          "PR review should happen from a fetched worktree",
-          "git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>",
-        ],
-      );
-      expectGhDeniedWith(
-        ["pr", "view", "123", "--repo", "owner/repo"],
+        ["pr", "comment", "123", "--repo", "owner/repo", "--body", "x"],
         ["repo-targeting flags are blocked", "cd into the intended repo or worktree"],
       );
       expectGhDeniedWith(
@@ -949,13 +978,29 @@ describe("validateGhArgs", () => {
       );
     });
 
-    it("blocks repo-targeting flags across the gh surface", () => {
-      expectGhDenied(["pr", "view", "123", "--repo", "owner/repo"]);
-      expectGhDenied(["issue", "view", "42", "-R", "owner/repo"]);
-      expectGhDenied(["issue", "view", "42", "-Rowner/repo"]);
-      expectGhDenied(["pr", "view", "123", "-Rowner/repo"]);
-      expectGhDenied(["repo", "view", "--repo=owner/repo"]);
+    it("allows --repo on read-only gh commands", () => {
+      expect(validateGhArgs(["pr", "view", "123", "--repo", "owner/repo"])).toBeNull();
+      expect(validateGhArgs(["issue", "view", "42", "-R", "owner/repo"])).toBeNull();
+      expect(validateGhArgs(["issue", "view", "42", "-Rowner/repo"])).toBeNull();
+      expect(validateGhArgs(["pr", "view", "123", "-Rowner/repo"])).toBeNull();
+      expect(validateGhArgs(["repo", "view", "--repo=owner/repo"])).toBeNull();
+      expect(validateGhArgs(["pr", "list", "--repo", "owner/repo", "--limit", "5"])).toBeNull();
+      expect(validateGhArgs(["pr", "checks", "123", "--repo", "owner/repo"])).toBeNull();
+      expect(validateGhArgs(["pr", "diff", "123", "--repo", "owner/repo"])).toBeNull();
+      expect(validateGhArgs(["run", "view", "999", "--log", "--repo", "owner/repo"])).toBeNull();
+      expect(
+        validateGhArgs(["search", "prs", "is:open", "--repo", "owner/repo", "--limit", "5"]),
+      ).toBeNull();
+    });
+
+    it("blocks --repo on write-shape gh commands", () => {
       expectGhDenied(["pr", "create", "--repo", "org/repo", "--title", "x", "--body", "y"]);
+      expectGhDenied(["pr", "comment", "123", "--repo", "org/repo", "--body", "x"]);
+      expectGhDenied(["pr", "review", "123", "--repo", "org/repo", "--comment", "--body", "x"]);
+      expectGhDenied(["run", "rerun", "123", "--repo", "org/repo"]);
+      expectGhDenied(["run", "download", "123", "--repo", "org/repo"]);
+      expectGhDenied(["workflow", "run", "ci.yml", "--repo", "org/repo"]);
+      expectGhDenied(["api", "repos/{owner}/{repo}", "--repo", "org/repo"]);
     });
 
     it("blocks removed pr create forms", () => {
@@ -1073,8 +1118,25 @@ describe("validateGhArgs", () => {
       expectGhDenied(["pr", "create", "--title", "x", "--body=traced", "-b", "untraced"]);
       expectGhDenied(["pr", "comment", "123", "--body", "traced", "--body", "untraced"]);
       expectGhDenied(["pr", "comment", "123", "--body=traced", "-b", "untraced"]);
-      expectGhDenied(["pr", "review", "123", "--comment", "--body", "traced", "--body", "untraced"]);
-      expectGhDenied(["pr", "review", "123", "--request-changes", "--body=traced", "-b", "untraced"]);
+      expectGhDenied([
+        "pr",
+        "review",
+        "123",
+        "--comment",
+        "--body",
+        "traced",
+        "--body",
+        "untraced",
+      ]);
+      expectGhDenied([
+        "pr",
+        "review",
+        "123",
+        "--request-changes",
+        "--body=traced",
+        "-b",
+        "untraced",
+      ]);
     });
 
     it("blocks comment body-file forms", () => {
@@ -1170,6 +1232,7 @@ describe("validateGhArgs", () => {
 
   describe("gh api", () => {
     it("blocks unsafe gh api execution forms", () => {
+      // graphql without a query body is not a useful read.
       expectGhDenied(["api", "graphql"]);
       expectGhDenied(["api", "-X", "GET", "repos/org/repo"]);
       expectGhDenied(["api", "repos/org/repo", "--method", "GET"]);
@@ -1181,6 +1244,36 @@ describe("validateGhArgs", () => {
       expectGhDenied(["api", "repos/org/repo", "-f", "state=open"]);
       expectGhDenied(["api", "repos/org/repo", "-F", "q=@query.graphql"]);
       expectGhDenied(["api", "--silent", "repos/org/repo"]);
+    });
+
+    it("blocks gh api graphql mutation and write-method shapes", () => {
+      // mutation keyword in the query value is denied.
+      expectGhDenied([
+        "api",
+        "graphql",
+        "-f",
+        "query=mutation { addStar(input: {}) { __typename } }",
+      ]);
+      expectGhDenied([
+        "api",
+        "graphql",
+        "--raw-field",
+        "query=mutation Add($id: ID!) { addStar(input: {starrableId: $id}) { __typename } }",
+      ]);
+      // Non-GET methods are denied.
+      expectGhDenied([
+        "api",
+        "graphql",
+        "--method",
+        "POST",
+        "-f",
+        "query=query { viewer { login } }",
+      ]);
+      // -F is denied (can load file content as query body).
+      expectGhDenied(["api", "graphql", "-F", "query=@query.graphql"]);
+      // Help/header/hostname/preview flags are denied.
+      expectGhDenied(["api", "graphql", "-H", "Accept: application/json"]);
+      expectGhDenied(["api", "graphql", "--hostname", "ghe.example.com"]);
     });
 
     it("blocks unsafe gh api review-comment reply shapes", () => {

@@ -8,10 +8,11 @@ description: "GitHub CLI surface allowed by Thor's remote-cli server policy. App
 All `gh` commands go through Thor's remote-cli which enforces:
 
 - **Append-only writes.** Create PRs, post comments, submit `--comment`/`--request-changes` reviews. Never approve, merge, edit, or delete.
-- **Repo-targeting flags are blocked.** `--repo`/`-R` is not part of the supported surface.
-- **`gh api` is a tiny explicit subset.** REST implicit GET reads are allowed with output shaping. One append-only POST shape is allowed for PR review-comment replies.
+- **`--repo`/`-R` is allowed on read commands only.** Reads can target any repo. Writes (`pr create`, `pr comment`, `pr review`, `run rerun`, `run download`, `workflow run`, and `gh api` writes) stay scoped to the current worktree's origin — `cd` into the right worktree and drop the flag.
+- **`gh api` is a tiny explicit subset.** REST implicit GET reads are allowed with output shaping. GraphQL is allowed for read queries only (no `mutation` keyword, no non-GET method, no `-F` field loading). One append-only POST shape is allowed for PR review-comment replies.
 - **PR approval is a human gate.** `gh pr review --approve` is denied.
-- **PR review requires a worktree.** `gh pr diff` and `gh pr checkout` are denied — see "Reviewing a PR" below.
+- **`gh pr checkout` is denied** because it would mutate the current worktree branch — use the fetch + worktree-add pattern in "Reviewing a PR" below.
+- **`gh pr diff <N>` is allowed** as a read-only shortcut, but a fetched worktree gives a deeper review surface (run tests, grep, build). Prefer the worktree pattern when actually reviewing.
 
 ## Reviewing a PR
 
@@ -27,6 +28,10 @@ Then `cd` into the worktree for every subsequent action — diffs, code search, 
 For the same reason, `gh pr checkout <N>` is also denied — it would mutate the current worktree's branch state. Use the fetch + worktree-add pattern instead.
 
 ## Structured commands
+
+### `gh pr diff`
+
+Read-only PR file/patch view. `gh pr diff <N> [--patch] [--name-only]` is allowed. For a fuller review surface (tests, build, grep), prefer the fetch + worktree pattern above.
 
 ### `gh pr create`
 
@@ -64,7 +69,9 @@ Required: workflow selector (workflow file name or numeric ID, positional, no fl
 
 ### `gh api`
 
-Read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages).
+REST read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages).
+
+GraphQL read path: `gh api graphql -f query=<query> [--jq …] [--template …] [--silent] [--include] [--paginate]`. The `query=` value cannot contain the `mutation` keyword, `--method` must be unset or `GET`, and `-F`/`--field` is blocked (it can load file content as the query body). Pass `-f` (raw-field) only.
 
 Append-only review-comment reply path: the current-repo placeholder endpoint is allowed, as is the explicit endpoint when `<owner>/<repo>` matches the GitHub.com repo resolved from the current cwd's `origin` remote:
 
@@ -83,6 +90,7 @@ gh api repos/<owner>/<repo>/pulls/<pull-number>/comments/<comment-id>/replies --
 - `gh issue view`
 - `gh label list`
 - `gh pr checks`
+- `gh pr diff`
 - `gh pr list`
 - `gh pr status`
 - `gh pr view` (numeric selectors and PR URLs are both allowed on the read path)
