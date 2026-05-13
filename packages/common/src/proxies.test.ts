@@ -7,6 +7,9 @@ describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {
     expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "posthog"]);
     expect(getProxyConfig("atlassian")?.upstream.url).toBe("https://mcp.atlassian.com/v1/mcp");
+    expect(getProxyConfig("grafana")?.allow).toEqual(
+      expect.arrayContaining(["query_prometheus", "list_prometheus_metric_names"]),
+    );
     expect(getProxyConfig("posthog")?.allow).toContain("query-run");
     expect(getProxyConfig("unknown")).toBeUndefined();
   });
