@@ -51,8 +51,8 @@ All routes live in `packages/gateway/src/app.ts`. Each has its own validator, si
 
 ### 1.2 `POST /github/webhook` — GitHub webhooks
 
-- **Validator**: `GitHubWebhookEnvelopeSchema` (`packages/gateway/src/github.ts:179`), a discriminated union over `event_type`.
-- **Signature**: `verifyGitHubSignature()` (github.ts:211) — HMAC-SHA256 from `X-Hub-Signature-256`, no timestamp window (the digest covers the immutable payload).
+- **Validator**: `GitHubWebhookEnvelopeSchema` in `packages/gateway/src/github.ts`, a discriminated union over `event_type`.
+- **Signature**: `verifyGitHubSignature()` in `packages/gateway/src/github.ts` — HMAC-SHA256 from `X-Hub-Signature-256`, no timestamp window (the digest covers the immutable payload).
 - **Supported events**:
   - `issue_comment` (created)
   - `pull_request_review_comment` (created)
@@ -63,7 +63,7 @@ All routes live in `packages/gateway/src/app.ts`. Each has its own validator, si
 - **Repo gate**: every event must map to a workspace directory via the configured `localRepo` mapping. Unmapped repos are logged and dropped.
 - **Filter chain** (`shouldIgnoreGitHubEvent`): drops self-sender (the bot's own comments), empty review bodies, and non-mention comments. Pure issue comments are mention-gated; PR review/review-comment events are also accepted without a mention when the PR was opened by Thor.
 - **Three correlation-key shapes**:
-  - **Branch known** (`push`, review/comment events with `head.ref`, completed check suites with `head_branch`): `git:branch:<localRepo>:<branch>` via `buildCorrelationKey()` (github.ts:247). Alias value is `base64url(<full key>)`.
+  - **Branch known** (`push`, review/comment events with `head.ref`, completed check suites with `head_branch`): `git:branch:<localRepo>:<branch>` via `buildCorrelationKey()`. Alias value is `base64url(<full key>)`.
   - **PR issue-comment branch unknown** (PR-backed issue comments, where the payload only has the PR number): `pending:branch-resolve:<localRepo>:<number>` via `buildPendingBranchResolveKey()`. The key is parked on the queue with this synthetic prefix and is resolved later (see §3.1).
   - **Pure issue** (mention-gated issue comments without `issue.pull_request`): `github:issue:<localRepo>:<repoFullName>#<issueNumber>` via `buildIssueCorrelationKey()`. Alias type is `github.issue` with alias value `base64url(<full key>)`.
 - **Push events** are special — `handleGitHubPushEvent()` (app.ts:693–856) syncs the worktree (`git fetch`, hard reset, branch delete) and only enqueues a wake-trigger if a session already exists for the branch.
