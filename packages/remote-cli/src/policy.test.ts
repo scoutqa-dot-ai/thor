@@ -251,6 +251,24 @@ describe("validateGitArgs", () => {
         args: ["push", "--dry-run", "origin", "HEAD:refs/heads/feat/test"],
       });
     });
+
+    it("rewrites bare network reads to explicit origin", () => {
+      expect(resolveGitArgs(["fetch"])).toEqual({ args: ["fetch", "origin"] });
+      expect(resolveGitArgs(["fetch", "--prune", "--tags"])).toEqual({
+        args: ["fetch", "--prune", "--tags", "origin"],
+      });
+      expect(resolveGitArgs(["fetch", "--all"])).toEqual({ args: ["fetch", "--all"] });
+      expect(resolveGitArgs(["fetch", "origin", "main"])).toEqual({
+        args: ["fetch", "origin", "main"],
+      });
+      expect(resolveGitArgs(["ls-remote"])).toEqual({ args: ["ls-remote", "origin"] });
+      expect(resolveGitArgs(["ls-remote", "--heads"])).toEqual({
+        args: ["ls-remote", "--heads", "origin"],
+      });
+      expect(resolveGitArgs(["ls-remote", "--heads", "origin", "main"])).toEqual({
+        args: ["ls-remote", "--heads", "origin", "main"],
+      });
+    });
   });
 
   describe("blocked commands", () => {
@@ -494,7 +512,7 @@ describe("validateGitArgs", () => {
       expectGitDenied(["ls-remote", "https://evil.com/repo.git"]);
     });
 
-    it("allows bare git ls-remote and flag-only forms (default to origin)", () => {
+    it("allows bare git ls-remote and flag-only forms (rewritten to origin)", () => {
       expect(validateGitArgs(["ls-remote"])).toBeNull();
       expect(validateGitArgs(["ls-remote", "--heads"])).toBeNull();
       expect(validateGitArgs(["ls-remote", "--tags"])).toBeNull();
@@ -557,7 +575,7 @@ describe("validateGitArgs", () => {
       expectGitDenied(["fetch", "--receive-pack=evil", "origin"]);
     });
 
-    it("allows bare git fetch (defaults to origin)", () => {
+    it("allows bare git fetch (rewritten to origin)", () => {
       expect(validateGitArgs(["fetch"])).toBeNull();
       expect(validateGitArgs(["fetch", "--prune"])).toBeNull();
       expect(validateGitArgs(["fetch", "-p"])).toBeNull();

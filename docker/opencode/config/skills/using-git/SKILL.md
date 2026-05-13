@@ -38,7 +38,7 @@ Supported shapes: `git merge-base <left> <right>`, `git merge-base --is-ancestor
 
 ### `git ls-remote`
 
-Network-safe form only: `git ls-remote [<flags>] [origin] [<ref-pattern>...]`. Omitting the remote defaults to `origin`. Non-`origin` remotes (other names, URLs) are denied.
+Network-safe form only: `git ls-remote [<flags>] [origin] [<ref-pattern>...]`. Omitting the remote is accepted, and Thor rewrites the command to pass `origin` explicitly. Non-`origin` remotes (other names, URLs) are denied.
 
 ### `git tag`
 
@@ -60,7 +60,7 @@ Read-only only: `git remote`, `git remote -v`, `git remote --verbose`, `git remo
 
 Supported shapes:
 
-- `git fetch [<flags>]` — bare fetch (e.g. `git fetch`, `git fetch --prune`) defaults to `origin`.
+- `git fetch [<flags>]` — bare fetch (e.g. `git fetch`, `git fetch --prune`) is accepted, and Thor rewrites the command to pass `origin` explicitly.
 - `git fetch origin [<ref>...]` — fetch from origin, optionally scoped to refs.
 - `git fetch --all` — fetch every configured remote (standalone, no positional remote).
 - Approved flags on any shape: `--prune`/`-p`, `--tags`/`-t`, `--no-tags`, `--depth=<n>` (positive integer). `--tags` and `--no-tags` cannot be combined.

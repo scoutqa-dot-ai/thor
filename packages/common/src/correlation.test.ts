@@ -84,6 +84,18 @@ describe("correlation key resolution", () => {
       computeGitCorrelationKey(["push", "origin", "feature/refactor"], "/workspace/repos/thor"),
     ).toBe("git:branch:thor:feature/refactor");
     expect(
+      computeGitCorrelationKey(
+        ["worktree", "add", "/workspace/worktrees/thor/feature/refactor", "feature/refactor"],
+        "/workspace/repos/thor",
+      ),
+    ).toBe("git:branch:thor:feature/refactor");
+    expect(
+      computeGitCorrelationKey(
+        ["worktree", "add", "--detach", "/workspace/worktrees/thor/pr-123", "origin/main"],
+        "/workspace/repos/thor",
+      ),
+    ).toBeUndefined();
+    expect(
       computeSlackCorrelationKey({ channel: "C123" }, JSON.stringify({ ts: "1710000000.002" })),
     ).toBe("slack:thread:1710000000.002");
     expect(computeSlackCorrelationKey({ thread_ts: "1710000000.003" }, "{}")).toBe(

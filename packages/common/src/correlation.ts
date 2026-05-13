@@ -63,6 +63,7 @@ function extractBranchFromGitArgs(args: string[]): string | undefined {
 
   if (subcommand === "worktree" && args[1] === "add") {
     const wtArgs = args.slice(2);
+    if (wtArgs.includes("--detach")) return undefined;
     for (let i = 0; i < wtArgs.length; i++) {
       if (wtArgs[i] === "-b" || wtArgs[i] === "-B") return wtArgs[i + 1];
     }

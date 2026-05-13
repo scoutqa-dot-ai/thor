@@ -6,7 +6,12 @@
  * which is the user-facing documentation for the supported surface.
  */
 
-import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
+import {
+  booleanFlagCount,
+  scanPolicyArgs,
+  valueFlagValues,
+  type PolicyArgFlag,
+} from "./policy-args.js";
 import {
   WORKSPACE_REPOS_ROOT,
   WORKSPACE_WORKTREES_ROOT,
@@ -16,6 +21,13 @@ import {
 import { isAbsolute, normalize as normalizePosix } from "node:path/posix";
 
 const DIGITS_ONLY = /^\d+$/;
+const FETCH_FLAGS: readonly PolicyArgFlag[] = [
+  { name: "prune", kind: "boolean", aliases: ["--prune", "-p"] },
+  { name: "tags", kind: "boolean", aliases: ["--tags", "-t"] },
+  { name: "no-tags", kind: "boolean", aliases: ["--no-tags"] },
+  { name: "all", kind: "boolean", aliases: ["--all"] },
+  { name: "depth", kind: "value", aliases: ["--depth"] },
+];
 
 interface ResolvedGitArgsSuccess {
   args: string[];
@@ -275,9 +287,9 @@ function resolveSubcommand(first: string, args: string[]): ResolvedGitArgs {
     case "remote":
       return wrap(validateRemote(args), args);
     case "fetch":
-      return wrap(validateFetch(args), args);
+      return resolveFetch(args);
     case "ls-remote":
-      return wrap(validateLsRemote(args), args);
+      return resolveLsRemote(args);
     case "tag":
       return wrap(validateTag(args), args);
     case "stash":
@@ -390,13 +402,7 @@ function validateRemote(args: string[]): string | null {
 }
 
 function validateFetch(args: string[]): string | null {
-  const parsed = scanPolicyArgs(args, 1, [
-    { name: "prune", kind: "boolean", aliases: ["--prune", "-p"] },
-    { name: "tags", kind: "boolean", aliases: ["--tags", "-t"] },
-    { name: "no-tags", kind: "boolean", aliases: ["--no-tags"] },
-    { name: "all", kind: "boolean", aliases: ["--all"] },
-    { name: "depth", kind: "value", aliases: ["--depth"] },
-  ]);
+  const parsed = parseFetchArgs(args);
   if (!parsed) return denyMessage("git fetch");
 
   if (booleanFlagCount(parsed, "tags") > 0 && booleanFlagCount(parsed, "no-tags") > 0) {
@@ -414,7 +420,8 @@ function validateFetch(args: string[]): string | null {
     return parsed.positionals.length === 0 ? null : denyMessage("git fetch");
   }
 
-  // No positional → defaults to origin (e.g. `git fetch`, `git fetch --prune`).
+  // No positional is accepted, then rewritten by resolveFetch to target origin
+  // explicitly (e.g. `git fetch` -> `git fetch origin`).
   if (parsed.positionals.length === 0) {
     return null;
   }
@@ -425,6 +432,24 @@ function validateFetch(args: string[]): string | null {
   }
 
   return null;
+}
+
+function parseFetchArgs(args: string[]) {
+  return scanPolicyArgs(args, 1, FETCH_FLAGS);
+}
+
+function resolveFetch(args: string[]): ResolvedGitArgs {
+  const error = validateFetch(args);
+  if (error) return { error };
+
+  const parsed = parseFetchArgs(args);
+  if (!parsed) return { error: denyMessage("git fetch") };
+
+  if (parsed.positionals.length === 0 && booleanFlagCount(parsed, "all") === 0) {
+    return { args: [...args, "origin"] };
+  }
+
+  return { args: [...args] };
 }
 
 function validateRestore(args: string[]): string | null {
@@ -719,7 +744,7 @@ function validateMerge(args: string[]): string | null {
 function validateLsRemote(args: string[]): string | null {
   // `git ls-remote [<flags>] [origin] [<ref-pattern>...]`. Network call, so
   // the remote must be `origin` if named — matches the `validateFetch`
-  // restriction. Omitted remote defaults to origin.
+  // restriction. Omitted remote is rewritten to origin by resolveLsRemote.
   let sawRepo = false;
   for (let i = 1; i < args.length; i += 1) {
     const arg = args[i];
@@ -732,6 +757,17 @@ function validateLsRemote(args: string[]): string | null {
     // Subsequent positionals are ref patterns; no further validation.
   }
   return null;
+}
+
+function resolveLsRemote(args: string[]): ResolvedGitArgs {
+  const error = validateLsRemote(args);
+  if (error) return { error };
+
+  return hasLsRemoteRepo(args) ? { args: [...args] } : { args: [...args, "origin"] };
+}
+
+function hasLsRemoteRepo(args: string[]): boolean {
+  return args.slice(1).some((arg) => !arg.startsWith("-"));
 }
 
 function validateTag(args: string[]): string | null {

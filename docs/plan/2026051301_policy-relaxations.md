@@ -18,8 +18,8 @@ Ten relaxations across `packages/remote-cli/src/policy-gh.ts` and `policy-git.ts
 ### `git` relaxations
 
 5. **`git -C <abspath> <subcmd> …` allowed when `<abspath>` is inside `WORKSPACE_REPOS_ROOT` or `WORKSPACE_WORKTREES_ROOT`.** Strip the `-C <path>` prefix and override the effective cwd. Identical to a workdir change; no new capability.
-6. **Bare `git fetch` and `git fetch --prune` allowed.** Default to `origin` when no positional is supplied. Already-allowed `git fetch origin --prune` is just a longer way to type the same thing.
-7. **Bare `git ls-remote` allowed.** Defaults to `origin`, matching the fetch relaxation.
+6. **Bare `git fetch` and `git fetch --prune` allowed.** Rewrite to pass `origin` when no positional is supplied, avoiding Git's branch-upstream default. Already-allowed `git fetch origin --prune` is just a longer way to type the same thing.
+7. **Bare `git ls-remote` allowed.** Rewrite to pass `origin` when no repo positional is supplied, matching the fetch relaxation.
 8. **`git config --get <key>` / `--get-all <key>` / `--list` allowed.** Read-only, scoped to local repo config. Deny `--global`, `--system`, `--file`, and any write subflag (`--unset`, `--add`, `--replace-all`).
 9. **`git tag --sort=<key>` and `--format=<fmt>` allowed in list mode.** Read-only listing flags; today only `-l`/`--list`/`-n[N]` pass.
 10. **`git worktree add --detach <path> <commit-ish>` allowed.** Required for PR-review-by-SHA flows. Path must still live under `/workspace/worktrees/<repo>/`; the last segment is treated as a freeform label (commonly `pr-<N>`) rather than required to equal the ref.
@@ -55,9 +55,11 @@ Exit criteria: full `pnpm test` passes; `pnpm typecheck` clean.
 
 ## Decision log
 
-| Decision | Reason |
-| --- | --- |
-| Carry rewritten cwd through `ResolvedGitArgs` instead of mutating args in place. | Keeps `validateCwd` enforcement in `/exec/git` consistent with the rewritten path, and avoids leaking `-C` into the actual `git` invocation. |
-| Tag list-mode `--sort` / `--format` rather than dropping the list-mode requirement. | Tag creation needs a positional; relaxing to "anything in list mode" preserves the deny on creation. |
-| Worktree `--detach` keeps path-prefix and structural checks but drops the path-equals-branch rule. | The branch isn't known for a detached worktree — the only constraint left is "stays inside `/workspace/worktrees/<repo>/<freeform>`". |
-| GraphQL allowed only when no `mutation` keyword appears in `-f query=`. | Coarse but matches the spirit of the existing REST policy (implicit GET only). Anything fancier is overkill for v1. |
+| Decision                                                                                           | Reason                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Carry rewritten cwd through `ResolvedGitArgs` instead of mutating args in place.                   | Keeps `validateCwd` enforcement in `/exec/git` consistent with the rewritten path, and avoids leaking `-C` into the actual `git` invocation. |
+| Tag list-mode `--sort` / `--format` rather than dropping the list-mode requirement.                | Tag creation needs a positional; relaxing to "anything in list mode" preserves the deny on creation.                                         |
+| Worktree `--detach` keeps path-prefix and structural checks but drops the path-equals-branch rule. | The branch isn't known for a detached worktree — the only constraint left is "stays inside `/workspace/worktrees/<repo>/<freeform>`".        |
+| GraphQL allowed only when no `mutation` keyword appears in `-f query=`.                            | Coarse but matches the spirit of the existing REST policy (implicit GET only). Anything fancier is overkill for v1.                          |
+| Bare `git fetch` / `git ls-remote` are rewritten to include `origin`.                              | Git's no-remote behavior can follow the current branch's upstream remote; rewriting preserves the intended origin-only network boundary.     |
+| Detached worktree adds do not register git branch correlation aliases.                             | A detached worktree's commit-ish is not a branch, so aliasing it would misroute future branch events such as `origin/main` review worktrees. |
