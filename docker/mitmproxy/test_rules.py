@@ -127,6 +127,28 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     assert slack_file.rule is not None
     assert slack_file.rule.readonly is True
 
+    jira_attach_site = ruleset.classify(
+        "foo.atlassian.net", "/rest/api/3/issue/ABC-1/attachments"
+    )
+    assert jira_attach_site.action == "inject"
+    assert jira_attach_site.rule is not None
+    assert jira_attach_site.rule.readonly is False
+    assert jira_attach_site.rule.headers["Authorization"] == "${ATLASSIAN_AUTH}"
+
+    jira_attach_gateway = ruleset.classify(
+        "api.atlassian.com", "/ex/jira/cloud-id/rest/api/3/issue/ABC-1/attachments"
+    )
+    assert jira_attach_gateway.action == "inject"
+    assert jira_attach_gateway.rule is not None
+    assert jira_attach_gateway.rule.readonly is False
+
+    jira_comment_site = ruleset.classify(
+        "foo.atlassian.net", "/rest/api/3/issue/ABC-1/comment"
+    )
+    assert jira_comment_site.action == "inject"
+    assert jira_comment_site.rule is not None
+    assert jira_comment_site.rule.readonly is True
+
 
 def test_user_rule_override_wins_over_builtin() -> None:
     ruleset = parse_ruleset(
@@ -226,6 +248,22 @@ def test_invalid_host_suffix_and_readonly_type_are_rejected() -> None:
         raise AssertionError("expected invalid readonly type to raise")
     except ValueError as exc:
         assert "readonly must be a boolean" in str(exc)
+
+    try:
+        parse_ruleset(
+            {
+                "mitmproxy": [
+                    {
+                        "host": "api.example.com",
+                        "path_suffix": "attachments",
+                        "headers": {"Authorization": "Bearer ${TOKEN}"},
+                    }
+                ]
+            }
+        )
+        raise AssertionError("expected invalid path_suffix to raise")
+    except ValueError as exc:
+        assert "path_suffix must start with '/'" in str(exc)
 
 
 def test_rule_store_uses_last_good_on_invalid_reload(tmp_path) -> None:

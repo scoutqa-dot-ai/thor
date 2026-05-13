@@ -23,6 +23,7 @@ class InjectRule:
     host: str | None = None
     host_suffix: str | None = None
     path_prefix: str | None = None
+    path_suffix: str | None = None
 
     def matches_host(self, host: str) -> bool:
         host = normalize_host(host)
@@ -35,9 +36,12 @@ class InjectRule:
     def matches(self, host: str, path: str = "/") -> bool:
         if not self.matches_host(host):
             return False
-        if self.path_prefix is None:
-            return True
-        return normalize_path(path).startswith(self.path_prefix)
+        normalized = normalize_path(path)
+        if self.path_prefix is not None and not normalized.startswith(self.path_prefix):
+            return False
+        if self.path_suffix is not None and not normalized.endswith(self.path_suffix):
+            return False
+        return True
 
 
 @dataclass(frozen=True)
@@ -79,6 +83,18 @@ class RuleSet:
 
 
 BUILTIN_RULES = [
+    InjectRule(
+        host="api.atlassian.com",
+        headers={"Authorization": "${ATLASSIAN_AUTH}"},
+        path_prefix="/ex/jira/",
+        path_suffix="/attachments",
+    ),
+    InjectRule(
+        host_suffix=".atlassian.net",
+        headers={"Authorization": "${ATLASSIAN_AUTH}"},
+        path_prefix="/rest/api/3/issue/",
+        path_suffix="/attachments",
+    ),
     InjectRule(
         host="api.atlassian.com",
         headers={"Authorization": "${ATLASSIAN_AUTH}"},
@@ -238,6 +254,13 @@ def parse_ruleset(config: object) -> RuleSet:
                     f"mitmproxy[{idx}].path_prefix must start with '/'"
                 )
 
+        path_suffix = raw.get("path_suffix")
+        if path_suffix is not None:
+            if not isinstance(path_suffix, str) or not path_suffix.startswith("/"):
+                raise ValueError(
+                    f"mitmproxy[{idx}].path_suffix must start with '/'"
+                )
+
         headers = raw.get("headers")
         if not isinstance(headers, dict) or not headers:
             raise ValueError(f"mitmproxy[{idx}].headers must be a non-empty object")
@@ -256,6 +279,7 @@ def parse_ruleset(config: object) -> RuleSet:
             host=normalize_host(host) if has_host else None,
             host_suffix=host_suffix.lower() if has_suffix else None,
             path_prefix=normalize_path(path_prefix) if isinstance(path_prefix, str) else None,
+            path_suffix=path_suffix if isinstance(path_suffix, str) else None,
         )
         rules.append(rule)
 
