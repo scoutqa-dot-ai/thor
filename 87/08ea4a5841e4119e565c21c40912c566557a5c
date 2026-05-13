@@ -1,0 +1,23 @@
+packages/runner/src/tool-instructions.ts
+  b9951a194b0285d4 63-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8708ea4a5841e4119e565c21c40912c566557a5c",
+  "prompts": {
+    "b9951a194b0285d4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b95bd719-e2db-49cc-b477-2d750219b4b0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 5,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
