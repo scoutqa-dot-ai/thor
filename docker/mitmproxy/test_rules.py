@@ -134,6 +134,7 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     assert jira_attach_site.rule is not None
     assert jira_attach_site.rule.readonly is False
     assert jira_attach_site.rule.headers["Authorization"] == "${ATLASSIAN_AUTH}"
+    assert jira_attach_site.rule.headers["X-Atlassian-Token"] == "no-check"
 
     jira_attach_gateway = ruleset.classify(
         "api.atlassian.com", "/ex/jira/cloud-id/rest/api/3/issue/ABC-1/attachments"
@@ -141,6 +142,7 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     assert jira_attach_gateway.action == "inject"
     assert jira_attach_gateway.rule is not None
     assert jira_attach_gateway.rule.readonly is False
+    assert jira_attach_gateway.rule.headers["X-Atlassian-Token"] == "no-check"
 
     jira_comment_site = ruleset.classify(
         "foo.atlassian.net", "/rest/api/3/issue/ABC-1/comment"

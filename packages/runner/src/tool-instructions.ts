@@ -60,9 +60,9 @@ export function buildToolInstructions(
     blocks.push(
       [
         "[Jira attachment uploads]",
-        "No MCP tool exists for Jira attachments. POST the file to",
+        "No MCP tool exists for Jira attachments. POST a multipart `file` field to",
         "`<site>.atlassian.net/rest/api/3/issue/<KEY>/attachments` via `curl`/`fetch`;",
-        "the proxy injects auth. Refer to Atlassian's attachment upload docs for required headers.",
+        "the proxy injects auth and the required XSRF header.",
         "Only that exact path is writable — other Jira writes still go through MCP.",
       ].join("\n"),
     );

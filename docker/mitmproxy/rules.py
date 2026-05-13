@@ -85,13 +85,19 @@ class RuleSet:
 BUILTIN_RULES = [
     InjectRule(
         host="api.atlassian.com",
-        headers={"Authorization": "${ATLASSIAN_AUTH}"},
+        headers={
+            "Authorization": "${ATLASSIAN_AUTH}",
+            "X-Atlassian-Token": "no-check",
+        },
         path_prefix="/ex/jira/",
         path_suffix="/attachments",
     ),
     InjectRule(
         host_suffix=".atlassian.net",
-        headers={"Authorization": "${ATLASSIAN_AUTH}"},
+        headers={
+            "Authorization": "${ATLASSIAN_AUTH}",
+            "X-Atlassian-Token": "no-check",
+        },
         path_prefix="/rest/api/3/issue/",
         path_suffix="/attachments",
     ),

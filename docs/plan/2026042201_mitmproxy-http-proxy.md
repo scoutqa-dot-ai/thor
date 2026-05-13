@@ -126,8 +126,8 @@ Node-based proxy call.
 
 The proxy image ships with these default injection rules:
 
-- `api.atlassian.com/ex/jira/*/attachments` -> `Authorization: ${ATLASSIAN_AUTH}` (writable; Jira attachment uploads)
-- `.atlassian.net/rest/api/3/issue/*/attachments` -> `Authorization: ${ATLASSIAN_AUTH}` (writable; Jira attachment uploads)
+- `api.atlassian.com/ex/jira/*/attachments` -> `Authorization: ${ATLASSIAN_AUTH}` + `X-Atlassian-Token: no-check` (writable; Jira attachment uploads)
+- `.atlassian.net/rest/api/3/issue/*/attachments` -> `Authorization: ${ATLASSIAN_AUTH}` + `X-Atlassian-Token: no-check` (writable; Jira attachment uploads)
 - `api.atlassian.com` -> `Authorization: ${ATLASSIAN_AUTH}` (`readonly: true`)
 - `.atlassian.net` -> `Authorization: ${ATLASSIAN_AUTH}` (`readonly: true`)
 - `slack.com/api/chat.postMessage` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
@@ -410,6 +410,7 @@ Expected:
 | D32 | Use `mktemp`/`mktemp -d` under `/tmp` for temporary Slack artifacts                    | It is more reliable than fixed temp paths, avoids collisions when multiple agents run in parallel, and still preserves meaningful filenames when needed.        |
 | D33 | Add optional `path_suffix` to mitmproxy inject rules                                   | Lets a writable rule be scoped to a specific endpoint (e.g. `/attachments`) without widening to all subpaths of a prefix; cheaper than introducing regex.       |
 | D34 | Carve out Jira `…/attachments` POST as a writable built-in exception                   | Jira attachment upload has no MCP tool upstream; allowing the narrow REST path keeps the rest of the Jira issue surface readonly while unblocking uploads.      |
+| D35 | Inject `X-Atlassian-Token: no-check` on the attachment rules at the proxy              | Jira mandates this XSRF-opt-out header on attachment POSTs; injecting it at the proxy keeps the agent prompt free of per-endpoint header recipes.               |
 
 ## Open questions
 
