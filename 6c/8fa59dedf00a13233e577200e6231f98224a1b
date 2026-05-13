@@ -1,0 +1,25 @@
+slides-webapp/speaker_notes.md
+  6fe67be802053f95 3,11,15,17,19,23,31,41,49,55-61,63-66,69,71,113-115,117,119,123-125
+slides-webapp/index.html
+  6fe67be802053f95 553,574,594,619,623-624,644-665
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "6c8fa59dedf00a13233e577200e6231f98224a1b",
+  "prompts": {
+    "6fe67be802053f95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8cd758c4-7f1b-4bc0-aa1a-86bb18d14a3c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 71,
+      "total_deletions": 60,
+      "accepted_lines": 60,
+      "overriden_lines": 0
+    }
+  }
+}
