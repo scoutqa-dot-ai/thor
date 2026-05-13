@@ -67,7 +67,7 @@ services:
         "-address",
         "0.0.0.0:8000",
         "-enabled-tools",
-        "datasource,loki,proxied",
+        "datasource,prometheus,loki,proxied",
       ]
     environment:
       - GRAFANA_URL=${GRAFANA_URL:?set GRAFANA_URL}
