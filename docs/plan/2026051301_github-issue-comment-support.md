@@ -11,13 +11,15 @@ Enable Thor to participate on GitHub issues end-to-end:
 - Inbound pure-issue `issue_comment.created` events that mention Thor are accepted and can intentionally wake or resume a Thor session, rather than being ignored as `pure_issue_comment_unsupported`.
 - Policy, docs, and tests move together so the operator runbook and `using-gh` skill match runtime behavior.
 
-## Current behavior
+## Prior behavior (before this change)
 
-- `packages/remote-cli/src/policy-gh.ts` allowlists `gh issue view/list`, but denies `gh issue comment` because issue comments were outside v1 disclaimer scope.
-- `packages/remote-cli/src/index.ts` injects GitHub disclaimers only into `gh pr create`, `gh pr comment`, `gh pr review`, and the allowlisted review-comment reply `gh api` shape.
-- `packages/gateway/src/github.ts` classifies pure issue comments as `pure_issue_comment_unsupported` before mention handling.
+- `packages/remote-cli/src/policy-gh.ts` allowlisted `gh issue view/list`, but denied both `gh issue comment` and `gh issue create` because issue writes were outside v1 disclaimer scope.
+- `packages/remote-cli/src/index.ts` injected GitHub disclaimers only into `gh pr create`, `gh pr comment`, `gh pr review`, and the allowlisted review-comment reply `gh api` shape.
+- `packages/gateway/src/github.ts` classified pure issue comments as `pure_issue_comment_unsupported` before mention handling.
 - PR-backed `issue_comment` events have no branch in the webhook payload and use `pending:branch-resolve:<repo>:<number>` so `service.ts` can call `gh pr view`; pure issues have no branch to resolve.
 - Correlation aliases currently cover Slack threads and git branches only (`packages/common/src/correlation.ts`, `packages/common/src/event-log.ts`). A new GitHub issue correlation key will not be durable unless a first-class alias type is added.
+
+This section is historical context for the design below. The shipped branch behavior now supports traced `gh issue comment`, traced `gh issue create`, durable `github.issue` aliases, and engaged pure-issue follow-up comments without a repeated mention.
 
 ## Design
 
