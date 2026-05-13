@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import type { Event, GlobalEvent, TextPart } from "@opencode-ai/sdk";
-import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
+import { EventBusRegistry, SessionSubscription, waitForSessionSettled } from "./event-bus.js";
 
 vi.mock("@opencode-ai/sdk", () => {
   return {
@@ -101,6 +102,73 @@ async function collectUntilIdle(sub: AsyncIterable<Event>): Promise<Event[]> {
 async function* eventIterable(events: Event[]) {
   for (const event of events) yield event;
 }
+
+describe("SessionSubscription", () => {
+  let emitter: EventEmitter;
+
+  beforeEach(() => {
+    emitter = new EventEmitter();
+  });
+
+  it("close() removes every emitter listener it registered", () => {
+    const sub = new SessionSubscription(emitter, ["s1", "s2"]);
+    expect(emitter.listenerCount("s1")).toBe(1);
+    expect(emitter.listenerCount("s2")).toBe(1);
+
+    sub.close();
+
+    expect(emitter.listenerCount("s1")).toBe(0);
+    expect(emitter.listenerCount("s2")).toBe(0);
+  });
+
+  it("close() is idempotent", () => {
+    const sub = new SessionSubscription(emitter, ["s1"]);
+    sub.close();
+    sub.close();
+    expect(emitter.listenerCount("s1")).toBe(0);
+  });
+
+  it("close() unblocks a pending next() so iteration ends cleanly", async () => {
+    const sub = new SessionSubscription(emitter, ["s1"]);
+    const iteration = (async () => {
+      const items: Event[] = [];
+      for await (const event of sub) items.push(event);
+      return items;
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    sub.close();
+    await expect(iteration).resolves.toEqual([]);
+  });
+
+  it("addSessionId() after close() does not re-register a listener", () => {
+    const sub = new SessionSubscription(emitter, ["s1"]);
+    sub.close();
+    sub.addSessionId("s2");
+    expect(emitter.listenerCount("s2")).toBe(0);
+  });
+
+  it("addSessionId() is idempotent for the same session id", async () => {
+    const sub = new SessionSubscription(emitter, ["s1"]);
+    sub.addSessionId("s1");
+    sub.addSessionId("s1");
+    expect(emitter.listenerCount("s1")).toBe(1);
+
+    emitter.emit("s1", makeIdleEvent("s1"));
+    const items: Event[] = [];
+    for await (const event of sub) {
+      items.push(event);
+      break;
+    }
+    expect(items).toHaveLength(1);
+    sub.close();
+  });
+
+  it("deduplicates session ids passed to the constructor", () => {
+    const sub = new SessionSubscription(emitter, ["s1", "s1"]);
+    expect(emitter.listenerCount("s1")).toBe(1);
+    sub.close();
+  });
+});
 
 describe("EventBusRegistry", () => {
   let mockStream: ReturnType<typeof createMockStream>;
@@ -222,12 +290,42 @@ describe("EventBusRegistry", () => {
     const sub = await reg.subscribe(["s1"]);
     const collected = collectUntilIdle(sub);
     mockStream.end();
-    await vi.waitFor(() => expect(createOpencodeClient).toHaveBeenCalledTimes(2));
+    // Reconnect is gated by RECONNECT_MIN_DELAY_MS (1s) to prevent tight loops.
+    await vi.waitFor(() => expect(createOpencodeClient).toHaveBeenCalledTimes(2), {
+      timeout: 3_000,
+    });
 
     const idle = makeIdleEvent("s1");
     newMockStream.push(makeGlobalEvent("/repo/a", idle));
 
     await expect(collected).resolves.toEqual([idle]);
+  });
+
+  it("waits at least RECONNECT_MIN_DELAY_MS between reconnects after a stream close", async () => {
+    let callCount = 0;
+    const streams = [createMockStream(), createMockStream()];
+    vi.mocked(createOpencodeClient).mockImplementation(() => {
+      const selected = streams[callCount++] ?? createMockStream();
+      return {
+        global: {
+          event: vi.fn().mockResolvedValue({ stream: selected.stream }),
+        },
+      } as never;
+    });
+    const reg = new EventBusRegistry("http://localhost:4096");
+
+    const sub = await reg.subscribe(["s1"]);
+    expect(createOpencodeClient).toHaveBeenCalledTimes(1);
+
+    const start = Date.now();
+    streams[0]!.end();
+    await vi.waitFor(() => expect(createOpencodeClient).toHaveBeenCalledTimes(2), {
+      timeout: 3_000,
+    });
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(900);
+
+    sub.close();
   });
 });
 
@@ -245,5 +343,16 @@ describe("waitForSessionSettled", () => {
     await expect(waitForSessionSettled(eventIterable([makePartEvent("s1")]), 1_000)).resolves.toBe(
       false,
     );
+  });
+
+  it("resolves false when the timeout fires before any settle event arrives", async () => {
+    const emitter = new EventEmitter();
+    const sub = new SessionSubscription(emitter, ["s1"]);
+    try {
+      // Stream stays open with no settle event — timeout has to win.
+      await expect(waitForSessionSettled(sub, 30)).resolves.toBe(false);
+    } finally {
+      sub.close();
+    }
   });
 });

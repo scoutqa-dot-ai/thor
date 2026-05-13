@@ -17,6 +17,12 @@ import { createLogger, logInfo, logError } from "@thor/common";
 const log = createLogger("event-bus");
 
 /**
+ * Minimum delay between reconnect attempts. Guards against a tight loop if
+ * opencode's SSE endpoint closes immediately (as `/event` did in 1.14.48).
+ */
+const RECONNECT_MIN_DELAY_MS = 1000;
+
+/**
  * One global SSE connection. Dispatches events to session listeners.
  */
 class GlobalEventBus {
@@ -32,6 +38,8 @@ class GlobalEventBus {
   private closed = false;
   private baseUrl: string;
   private onEmpty: () => void;
+  private lastConnectAt = 0;
+  private pendingReconnect: ReturnType<typeof setTimeout> | null = null;
 
   constructor(baseUrl: string, onEmpty: () => void) {
     this.baseUrl = baseUrl;
@@ -74,6 +82,7 @@ class GlobalEventBus {
     this.currentStream = stream;
     this.currentAbortController = abortController;
     this.alive = true;
+    this.lastConnectAt = Date.now();
     logInfo(log, "connected", { baseUrl: this.baseUrl });
 
     // Fire-and-forget reader loop. When the stream ends, active subscriptions
@@ -128,11 +137,23 @@ class GlobalEventBus {
 
   private reconnectIfActive(): void {
     if (this.closed || this.activeSubscriptions === 0) return;
-    void this.ensureConnected().catch((err) => {
-      logError(log, "reconnect_error", err instanceof Error ? err.message : String(err), {
-        baseUrl: this.baseUrl,
+    if (this.pendingReconnect || this.connectPromise) return;
+    const elapsed = Date.now() - this.lastConnectAt;
+    const delay = elapsed >= RECONNECT_MIN_DELAY_MS ? 0 : RECONNECT_MIN_DELAY_MS - elapsed;
+    const runReconnect = () => {
+      this.pendingReconnect = null;
+      if (this.closed || this.activeSubscriptions === 0 || this.alive) return;
+      void this.ensureConnected().catch((err) => {
+        logError(log, "reconnect_error", err instanceof Error ? err.message : String(err), {
+          baseUrl: this.baseUrl,
+        });
       });
-    });
+    };
+    if (delay === 0) {
+      runReconnect();
+    } else {
+      this.pendingReconnect = setTimeout(runReconnect, delay);
+    }
   }
 
   close(): void {
@@ -142,6 +163,10 @@ class GlobalEventBus {
     this.alive = false;
     this.connectPromise = null;
     this.connectionGeneration++;
+    if (this.pendingReconnect) {
+      clearTimeout(this.pendingReconnect);
+      this.pendingReconnect = null;
+    }
     const abortController = this.currentAbortController;
     const iterator = this.currentIterator;
     const stream = this.currentStream;
