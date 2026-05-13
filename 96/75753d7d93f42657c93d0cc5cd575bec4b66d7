@@ -1,0 +1,25 @@
+slides-webapp/index.html
+  569fb70fb6f54d0f 1-673
+slides-webapp/README.md
+  569fb70fb6f54d0f 1-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "9675753d7d93f42657c93d0cc5cd575bec4b66d7",
+  "prompts": {
+    "569fb70fb6f54d0f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1e656b39-c5ef-41a8-a3fb-fea1aeabfa01",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 728,
+      "total_deletions": 0,
+      "accepted_lines": 728,
+      "overriden_lines": 0
+    }
+  }
+}
