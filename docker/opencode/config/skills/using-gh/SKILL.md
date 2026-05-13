@@ -71,7 +71,7 @@ Required: workflow selector (workflow file name or numeric ID, positional, no fl
 
 REST read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages).
 
-GraphQL read path: `gh api graphql -f query=<query> [--jq …] [--template …] [--silent] [--include] [--paginate]`. The `query=` value cannot contain the `mutation` keyword, `--method` must be unset or `GET`, and `-F`/`--field` is blocked (it can load file content as the query body). Pass `-f` (raw-field) only.
+GraphQL read path: `gh api graphql -f query=<query> [--jq …] [--template …] [--silent] [--include] [--paginate]`. Exactly one `query=` raw field is required, that query value cannot contain the `mutation` keyword, `--method` must be unset or `GET`, and `-F`/`--field` is blocked (it can load file content as the query body). Pass `-f` (raw-field) only.
 
 Append-only review-comment reply path: the current-repo placeholder endpoint is allowed, as is the explicit endpoint when `<owner>/<repo>` matches the GitHub.com repo resolved from the current cwd's `origin` remote:
 

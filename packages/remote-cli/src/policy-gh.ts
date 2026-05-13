@@ -544,10 +544,12 @@ function validateGhApiGraphqlArgs(args: string[]): string | null {
   const rawFields = valueFlagValues(parsed, "raw-field");
   if (rawFields.length === 0) return denyMessage("gh api");
 
-  for (const value of rawFields) {
-    if (/\bmutation\b/i.test(value)) {
-      return denyMessage("gh api");
-    }
+  const queryFields = rawFields.filter((value) => value.startsWith("query="));
+  if (queryFields.length !== 1) return denyMessage("gh api");
+
+  const query = queryFields[0].slice("query=".length);
+  if (query.trim().length === 0 || /\bmutation\b/i.test(query)) {
+    return denyMessage("gh api");
   }
 
   return null;

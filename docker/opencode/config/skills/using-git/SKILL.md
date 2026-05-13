@@ -38,7 +38,7 @@ Supported shapes: `git merge-base <left> <right>`, `git merge-base --is-ancestor
 
 ### `git ls-remote`
 
-Network-safe form only: `git ls-remote [<flags>] [origin] [<ref-pattern>...]`. Omitting the remote is accepted, and Thor rewrites the command to pass `origin` explicitly. Non-`origin` remotes (other names, URLs) are denied.
+Network-safe form only: `git ls-remote [<flags>] [origin] [<ref-pattern>...]`. Omitting the remote is accepted, and Thor rewrites the command to pass `origin` explicitly. Allowed flags: `--heads`/`-h`, `--tags`/`-t`, `--refs`, `--quiet`/`-q`, `--exit-code`, `--symref`, and `--sort=<key>` / `--sort <key>`. Non-`origin` remotes (other names, URLs) and unsupported execution flags such as `--upload-pack` are denied.
 
 ### `git tag`
 
@@ -144,7 +144,7 @@ Optional modifiers: `--local`, `--show-origin`, `--show-scope`. Mutation (`--add
 
 ### `git -C <path>`
 
-`git -C <abspath> <subcommand> …` is allowed when `<abspath>` is inside `/workspace/repos/<repo>` or `/workspace/worktrees/<repo>/<branch>`. Thor strips the `-C` and runs the subcommand with `<abspath>` as the effective working directory. Both `-C <abspath>` (two args) and `-C=<abspath>` (one combined arg) are supported. Relative paths, paths outside the workspace, and bare `git -C <path>` with no subcommand are denied.
+`git -C <abspath> <subcommand> …` is allowed when `<abspath>` is inside `/workspace/repos/<repo>` or `/workspace/worktrees/<repo>/<branch>`. Thor strips the `-C` and runs the subcommand with the path's realpath as the effective working directory. Both `-C <abspath>` (two args) and `-C=<abspath>` (one combined arg) are supported. Relative paths, traversal segments, paths outside the workspace, and bare `git -C <path>` with no subcommand are denied.
 
 ## Safe under `git --no-pager`
 

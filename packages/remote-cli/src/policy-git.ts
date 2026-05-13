@@ -28,6 +28,15 @@ const FETCH_FLAGS: readonly PolicyArgFlag[] = [
   { name: "all", kind: "boolean", aliases: ["--all"] },
   { name: "depth", kind: "value", aliases: ["--depth"] },
 ];
+const LS_REMOTE_FLAGS: readonly PolicyArgFlag[] = [
+  { name: "heads", kind: "boolean", aliases: ["--heads", "-h"] },
+  { name: "tags", kind: "boolean", aliases: ["--tags", "-t"] },
+  { name: "refs", kind: "boolean", aliases: ["--refs"] },
+  { name: "quiet", kind: "boolean", aliases: ["--quiet", "-q"] },
+  { name: "exit-code", kind: "boolean", aliases: ["--exit-code"] },
+  { name: "symref", kind: "boolean", aliases: ["--symref"] },
+  { name: "sort", kind: "value", aliases: ["--sort"] },
+];
 
 interface ResolvedGitArgsSuccess {
   args: string[];
@@ -205,7 +214,7 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
     workingArgs = stripped.args;
     rewrittenCwd = stripped.cwd;
     if (workingArgs.length === 0) {
-      return { error: "args must be a non-empty array" };
+      return deny("git -C");
     }
   }
 
@@ -250,16 +259,20 @@ function stripLeadingDashC(args: string[]): ResolvedGitArgs {
     rest = args.slice(1);
   }
 
-  if (!pathArg || !isAbsolute(pathArg)) return deny("git -C");
-  const normalized = normalizePosix(pathArg);
-  if (normalized !== pathArg) return deny("git -C");
+  if (!pathArg || pathArg.includes("\0") || !isAbsolute(pathArg) || hasTraversalSegment(pathArg)) {
+    return deny("git -C");
+  }
   const real = realpathOrNull(pathArg);
   if (!real) return deny("git -C");
   if (!isPathWithin(WORKTREE_ROOT, real) && !isPathWithin(WORKSPACE_REPOS_ROOT, real)) {
     return deny("git -C");
   }
 
-  return { args: rest, cwd: pathArg };
+  return { args: rest, cwd: real };
+}
+
+function hasTraversalSegment(pathArg: string): boolean {
+  return pathArg.split("/").includes("..");
 }
 
 function resolveSubcommand(first: string, args: string[]): ResolvedGitArgs {
@@ -745,16 +758,11 @@ function validateLsRemote(args: string[]): string | null {
   // `git ls-remote [<flags>] [origin] [<ref-pattern>...]`. Network call, so
   // the remote must be `origin` if named — matches the `validateFetch`
   // restriction. Omitted remote is rewritten to origin by resolveLsRemote.
-  let sawRepo = false;
-  for (let i = 1; i < args.length; i += 1) {
-    const arg = args[i];
-    if (arg.startsWith("-")) continue;
-    if (!sawRepo) {
-      if (arg !== "origin") return denyMessage("git ls-remote");
-      sawRepo = true;
-      continue;
-    }
-    // Subsequent positionals are ref patterns; no further validation.
+  const parsed = parseLsRemoteArgs(args);
+  if (!parsed) return denyMessage("git ls-remote");
+  if (parsed.positionals.length === 0) return null;
+  if (parsed.positionals[0] !== "origin") {
+    return denyMessage("git ls-remote");
   }
   return null;
 }
@@ -766,8 +774,13 @@ function resolveLsRemote(args: string[]): ResolvedGitArgs {
   return hasLsRemoteRepo(args) ? { args: [...args] } : { args: [...args, "origin"] };
 }
 
+function parseLsRemoteArgs(args: string[]) {
+  return scanPolicyArgs(args, 1, LS_REMOTE_FLAGS);
+}
+
 function hasLsRemoteRepo(args: string[]): boolean {
-  return args.slice(1).some((arg) => !arg.startsWith("-"));
+  const parsed = parseLsRemoteArgs(args);
+  return parsed ? parsed.positionals.length > 0 : false;
 }
 
 function validateTag(args: string[]): string | null {

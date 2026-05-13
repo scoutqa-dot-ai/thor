@@ -12,7 +12,7 @@ Ten relaxations across `packages/remote-cli/src/policy-gh.ts` and `policy-git.ts
 
 1. **`--repo` / `-R` allowed on read-only commands.** The ban exists to keep writes scoped; reads have no auth-scoping concern. Allow it on every command in `READ_ONLY_GH_COMMANDS`; keep banning it on `pr create`, `pr comment`, `pr review`, `run rerun`, `run download`, `workflow run`, and `api` mutation shapes.
 2. **`gh pr diff <N>` allowed.** Pure read; the "use a worktree instead" guidance is workflow opinion, not safety.
-3. **`gh api graphql` read-only allowed.** Accept when no `--method` is provided or `--method GET`, and when `-f query=…` does not contain a `mutation` block. Writes (`mutation`, `--method POST/PUT/PATCH/DELETE`) remain blocked.
+3. **`gh api graphql` read-only allowed.** Accept when exactly one `-f query=…` is provided, no `--method` is provided or `--method GET`, and the query does not contain a `mutation` block. Writes (`mutation`, `--method POST/PUT/PATCH/DELETE`) remain blocked.
 4. **`gh run view --log-failed` test lock.** Already accepted by the validator (it only gates `args[2]`), but add a regression test so we don't break it later.
 
 ### `git` relaxations
@@ -63,3 +63,6 @@ Exit criteria: full `pnpm test` passes; `pnpm typecheck` clean.
 | GraphQL allowed only when no `mutation` keyword appears in `-f query=`.                            | Coarse but matches the spirit of the existing REST policy (implicit GET only). Anything fancier is overkill for v1.                          |
 | Bare `git fetch` / `git ls-remote` are rewritten to include `origin`.                              | Git's no-remote behavior can follow the current branch's upstream remote; rewriting preserves the intended origin-only network boundary.     |
 | Detached worktree adds do not register git branch correlation aliases.                             | A detached worktree's commit-ish is not a branch, so aliasing it would misroute future branch events such as `origin/main` review worktrees. |
+| `git -C` rewrites to the target realpath after rejecting raw `..` traversal.                       | This accepts harmless normalized paths such as `./` while keeping traversal attempts out of the policy surface.                              |
+| `git ls-remote` uses an explicit read-only flag allowlist.                                         | Flags such as `--upload-pack` alter remote execution behavior, so only inspection flags are accepted.                                        |
+| GraphQL requires exactly one `query=` raw field.                                                   | Non-query raw fields are useful for variables, but the policy needs an actual query body to validate read-only intent.                       |

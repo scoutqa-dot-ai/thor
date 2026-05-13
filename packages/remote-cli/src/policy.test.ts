@@ -287,6 +287,7 @@ describe("validateGitArgs", () => {
       // -C path must be inside an allowed workspace root.
       expectGitDenied(["-C", "../escape", "status"]);
       expectGitDenied(["-C", "/etc", "status"]);
+      expectGitDenied(["-C", "/workspace/repos/myrepo/../other", "status"]);
       // Empty value after -C= is not a real path.
       expectGitDenied(["-C=", "status"]);
     });
@@ -305,8 +306,14 @@ describe("validateGitArgs", () => {
         expect(inline.args).toEqual(["fetch", "origin", "main"]);
         expect(inline.cwd).toBe("/workspace/repos/myrepo");
       }
+      const normalized = resolveGitArgs(["-C", "/workspace/repos/myrepo/.", "status"]);
+      expect("error" in normalized).toBe(false);
+      if (!("error" in normalized)) {
+        expect(normalized.args).toEqual(["status"]);
+        expect(normalized.cwd).toBe("/workspace/repos/myrepo");
+      }
       // Bare `git -C <path>` with no subcommand is rejected.
-      expect(validateGitArgs(["-C", "/workspace/repos/myrepo"])).not.toBeNull();
+      expect(validateGitArgs(["-C", "/workspace/repos/myrepo"])).toContain('"git -C"');
     });
 
     it("blocks checkout and switch", () => {
@@ -512,10 +519,18 @@ describe("validateGitArgs", () => {
       expectGitDenied(["ls-remote", "https://evil.com/repo.git"]);
     });
 
+    it("blocks unsupported ls-remote flags", () => {
+      expectGitDenied(["ls-remote", "--upload-pack=evil", "origin"]);
+      expectGitDenied(["ls-remote", "--exec=evil", "origin"]);
+      expectGitDenied(["ls-remote", "--server-option=evil", "origin"]);
+    });
+
     it("allows bare git ls-remote and flag-only forms (rewritten to origin)", () => {
       expect(validateGitArgs(["ls-remote"])).toBeNull();
       expect(validateGitArgs(["ls-remote", "--heads"])).toBeNull();
       expect(validateGitArgs(["ls-remote", "--tags"])).toBeNull();
+      expect(validateGitArgs(["ls-remote", "--refs", "--symref", "origin"])).toBeNull();
+      expect(validateGitArgs(["ls-remote", "--sort=-version:refname", "origin"])).toBeNull();
     });
 
     it("blocks tag creation, deletion, and other write forms", () => {
@@ -1031,6 +1046,16 @@ describe("validateGhArgs", () => {
           "query=query { viewer { login } }",
         ]),
       ).toBeNull();
+      expect(
+        validateGhArgs([
+          "api",
+          "graphql",
+          "-f",
+          "query=query($owner: String!) { repositoryOwner(login: $owner) { login } }",
+          "-f",
+          "owner=acme",
+        ]),
+      ).toBeNull();
     });
 
     it("allows gh run view --log and --log-failed for CI log inspection", () => {
@@ -1380,6 +1405,16 @@ describe("validateGhArgs", () => {
 
     it("blocks gh api graphql mutation and write-method shapes", () => {
       // mutation keyword in the query value is denied.
+      expectGhDenied(["api", "graphql", "-f", "foo=bar"]);
+      expectGhDenied(["api", "graphql", "-f", "query="]);
+      expectGhDenied([
+        "api",
+        "graphql",
+        "-f",
+        "query=query { viewer { login } }",
+        "-f",
+        "query=query { rateLimit { limit } }",
+      ]);
       expectGhDenied([
         "api",
         "graphql",
