@@ -194,8 +194,17 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
     // Allowed read-only commands hardcode positions like `args[2]` for the
     // numeric selector. Strip `--repo`/`-R` flags (and their values) so a
     // shape like `gh issue view --repo owner/repo 42` reaches per-command
-    // validation with the canonical layout.
-    effectiveArgs = stripRepoOverrideFlags(args);
+    // validation with the canonical layout. Malformed repo-override shapes
+    // (missing value, value that starts with `-`, empty inline value) deny
+    // explicitly so the stripper can't silently eat an unrelated flag.
+    const stripped = stripRepoOverrideFlags(args);
+    if ("error" in stripped) {
+      return denyMessage(command, {
+        reason: stripped.error,
+        instead: "supply a non-empty owner/repo value (e.g. --repo owner/repo)",
+      });
+    }
+    effectiveArgs = stripped.args;
   }
 
   if (!key || !ALLOWED_GH_COMMANDS.has(key)) {
@@ -250,22 +259,39 @@ function hasRepoOverride(args: string[]): boolean {
   );
 }
 
-function stripRepoOverrideFlags(args: string[]): string[] {
+function stripRepoOverrideFlags(args: string[]): { args: string[] } | { error: string } {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--repo" || arg === "-R") {
-      // Skip the flag and its value. If no value follows, drop just the flag —
-      // per-command validation will catch the resulting malformed invocation.
-      if (i + 1 < args.length) i++;
+      // Standalone flag: the next token is the value. Refuse if missing or if
+      // it looks like another flag — otherwise we'd silently eat a real flag
+      // and hide a caller mistake.
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith("-")) {
+        return { error: `${arg} requires an owner/repo value` };
+      }
+      i += 1;
       continue;
     }
-    if (arg.startsWith("--repo=") || (arg.startsWith("-R") && arg !== "-R")) {
+    if (arg.startsWith("--repo=")) {
+      if (arg.length === "--repo=".length) {
+        return { error: "--repo= requires an owner/repo value" };
+      }
+      continue;
+    }
+    if (arg.startsWith("-R") && arg !== "-R") {
+      // `-R<value>` combined form. The startsWith check guarantees length ≥ 3,
+      // so the slice is non-empty by construction; the explicit length check
+      // is defensive in case the prefix logic changes.
+      if (arg.length <= 2) {
+        return { error: "-R requires an owner/repo value" };
+      }
       continue;
     }
     out.push(arg);
   }
-  return out;
+  return { args: out };
 }
 
 function ghCommandKey(args: string[]): string | undefined {

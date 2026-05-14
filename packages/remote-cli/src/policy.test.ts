@@ -1175,6 +1175,32 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["release", "view", "-R", "owner/repo", "v1.2.3"])).toBeNull();
     });
 
+    it("blocks malformed --repo / -R shapes without swallowing adjacent flags", () => {
+      // Standalone flag with no following value.
+      expectGhDeniedWith(
+        ["pr", "view", "123", "--repo"],
+        ["--repo requires an owner/repo value", "owner/repo"],
+      );
+      expectGhDeniedWith(
+        ["issue", "view", "42", "-R"],
+        ["-R requires an owner/repo value", "owner/repo"],
+      );
+      // Standalone flag followed by another flag — must not eat the next flag.
+      expectGhDeniedWith(
+        ["issue", "view", "--repo", "--jq", ".title", "42"],
+        ["--repo requires an owner/repo value"],
+      );
+      expectGhDeniedWith(
+        ["pr", "view", "123", "-R", "--json", "title"],
+        ["-R requires an owner/repo value"],
+      );
+      // Inline forms with empty value.
+      expectGhDeniedWith(
+        ["pr", "view", "123", "--repo="],
+        ["--repo= requires an owner/repo value"],
+      );
+    });
+
     it("blocks --repo on write-shape gh commands", () => {
       expectGhDenied(["pr", "create", "--repo", "org/repo", "--title", "x", "--body", "y"]);
       expectGhDenied(["pr", "comment", "123", "--repo", "org/repo", "--body", "x"]);
