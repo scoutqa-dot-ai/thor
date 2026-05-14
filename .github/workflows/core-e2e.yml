@@ -58,7 +58,8 @@ jobs:
       VOUCH_GOOGLE_CLIENT_ID: ci-fake
       VOUCH_GOOGLE_CLIENT_SECRET: ci-fake
       VOUCH_JWT_SECRET: ci-fake
-      VOUCH_WHITELIST: ci@localhost
+      VOUCH_ALLOWED_EMAIL_DOMAINS: localhost
+      THOR_ADMIN_EMAILS: ci@localhost,owner@localhost
 
     steps:
       - name: Checkout

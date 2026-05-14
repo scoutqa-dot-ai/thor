@@ -1,3 +1,13 @@
+map $auth_user $opencode_admin_upstream {
+    ~^(${THOR_ADMIN_EMAILS_REGEX})$ "http://opencode:4096";
+    default "http://127.0.0.1:8080/__opencode_admin_forbidden";
+}
+
+map $auth_user $admin_admin_upstream {
+    ~^(${THOR_ADMIN_EMAILS_REGEX})$ "http://admin:3005";
+    default "http://127.0.0.1:8080/__opencode_admin_forbidden";
+}
+
 server {
     listen 8080;
 
@@ -17,6 +27,10 @@ server {
         proxy_pass $vouch;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
+    }
+
+    location = /__opencode_admin_forbidden {
+        return 403;
     }
 
     # On 401 → redirect to Vouch login
@@ -49,10 +63,14 @@ server {
         proxy_set_header Connection "";
     }
 
-    # Static assets — no auth required, bypass vouch for performance
+    # Static OpenCode assets — protected by Google SSO and OpenCode admin email.
     location /assets/ {
-        set $opencode http://opencode:4096;
-        proxy_pass $opencode;
+        auth_request /vouch/validate;
+
+        auth_request_set $auth_user $upstream_http_x_vouch_user;
+        proxy_set_header X-Vouch-User $auth_user;
+
+        proxy_pass $opencode_admin_upstream;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
     }
@@ -74,8 +92,12 @@ server {
     }
 
     location = /oc-theme-preload.js {
-        set $opencode http://opencode:4096;
-        proxy_pass $opencode;
+        auth_request /vouch/validate;
+
+        auth_request_set $auth_user $upstream_http_x_vouch_user;
+        proxy_set_header X-Vouch-User $auth_user;
+
+        proxy_pass $opencode_admin_upstream;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
     }
@@ -88,15 +110,14 @@ server {
         proxy_set_header Connection "";
     }
 
-    # Admin UI — protected by Google SSO, forwards X-Vouch-User
+    # Admin UI — protected by Google SSO and admin email, forwards X-Vouch-User
     location /admin/ {
         auth_request /vouch/validate;
 
         auth_request_set $auth_user $upstream_http_x_vouch_user;
         proxy_set_header X-Vouch-User $auth_user;
 
-        set $admin http://admin:3005;
-        proxy_pass $admin;
+        proxy_pass $admin_admin_upstream;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
     }
@@ -114,15 +135,14 @@ server {
         proxy_set_header Connection "";
     }
 
-    # All other routes — protected by Google SSO
+    # All other OpenCode routes — protected by Google SSO and OpenCode admin email.
     location / {
         auth_request /vouch/validate;
 
         auth_request_set $auth_user $upstream_http_x_vouch_user;
         proxy_set_header X-Vouch-User $auth_user;
 
-        set $opencode http://opencode:4096;
-        proxy_pass $opencode;
+        proxy_pass $opencode_admin_upstream;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
 

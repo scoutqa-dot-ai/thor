@@ -136,6 +136,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `METABASE_API_KEY`                  | No       | `remote-cli`                         | Metabase API key                                                                                          |
 | `METABASE_DATABASE_ID`              | No       | `remote-cli`                         | Metabase database ID                                                                                      |
 | `METABASE_URL`                      | No       | `remote-cli`                         | Metabase instance URL                                                                                     |
+| `THOR_ADMIN_EMAILS`                 | Yes      | `ingress`                            | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes      |
 | `OPENCODE_CPU_LIMIT`                | No       | `opencode`                           | CPU limit for the OpenCode container                                                                      |
 | `OPENCODE_MEMORY_LIMIT`             | No       | `opencode`                           | Memory limit for the OpenCode container                                                                   |
 | `POSTHOG_API_KEY`                   | Yes      | `remote-cli`                         | PostHog MCP auth                                                                                          |
@@ -148,11 +149,10 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | `gateway`                            | Signature timestamp tolerance                                                                             |
 | `VOUCH_CALLBACK_URL`                | No       | `vouch`                              | OAuth callback URL                                                                                        |
 | `VOUCH_COOKIE_DOMAIN`               | No       | `vouch`                              | Cookie domain                                                                                             |
-| `VOUCH_DOMAINS`                     | Yes      | `vouch`                              | Allowed domain for Vouch login                                                                            |
+| `VOUCH_ALLOWED_EMAIL_DOMAINS`       | No       | `vouch`                              | Comma-separated email domains Vouch allows; defaults to `scoutqa.cc`                                      |
 | `VOUCH_GOOGLE_CLIENT_ID`            | Yes      | `vouch`                              | Google OAuth client ID                                                                                    |
 | `VOUCH_GOOGLE_CLIENT_SECRET`        | Yes      | `vouch`                              | Google OAuth client secret                                                                                |
 | `VOUCH_JWT_SECRET`                  | Yes      | `vouch`                              | Session JWT signing secret                                                                                |
-| `VOUCH_WHITELIST`                   | Yes      | `vouch`                              | Comma-separated email allowlist                                                                           |
 
 Use [`docs/github-app-webhooks.md`](docs/github-app-webhooks.md) for GitHub App webhook setup, required permissions/subscriptions, and troubleshooting.
 
@@ -211,6 +211,10 @@ Rules match by exact host or suffix first, then by optional `path_prefix` and
 ## Security Model
 
 - OpenCode does not get direct API credentials for MCP upstreams.
+- Vouch allows Google-authenticated users whose email domain matches
+  `VOUCH_ALLOWED_EMAIL_DOMAINS`; OpenCode-backed and `/admin/` ingress routes
+  additionally require one of `THOR_ADMIN_EMAILS`, while `/runner/` viewer routes
+  remain available to any allowed-domain user.
 - `remote-cli` enforces MCP allow/approve policy server-side and stores approvals under `/workspace/data/approvals`.
 - Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution and `POST /internal/exec`.
 - `git` uses GitHub App installation tokens through `GIT_ASKPASS` when `owners.<owner>.github_app_installation_id` is configured and the target owner can be resolved; `GITHUB_PAT` is only a fallback during command execution.
