@@ -87,7 +87,7 @@ After a trigger completes, the runner inspects tool call results for cross-chann
 | D6  | **No transitive resolution**                                             | All aliases point directly to a canonical key's notes file. Cron→Slack→GitHub: both Slack and GitHub aliases go in the cron's notes file. No chain lookups.                      |
 | D7  | **Superseded: extract aliases from SSE stream tool call data**           | Current code registers aliases directly in producers that already have session context. The runner no longer collects completed tool artifacts for alias registration.           |
 | D8  | **Alias both new threads and replies**                                   | New thread: alias the returned `ts`. Reply (`thread_ts` present): alias the `thread_ts` so future thread events route to this session. Self-aliases (key === alias) are skipped. |
-| D9  | **Alias on checkout/switch, not just push**                              | Agent checking out a remote branch for review should receive future GitHub events for that branch. `pull`/`fetch` not needed — agent must already have checked out the branch.   |
+| D9  | **Superseded: alias on checkout/switch, not just push**                  | Superseded 2026-05-14. Branch ownership is now registered only after successful `git push`; checkout/switch/worktree setup do not prove ownership.                               |
 | D10 | **No `github:pr:` aliases**                                              | GitHub events all use `git:branch:{repo}:{branch}` keys. PR activity arrives as push/PR events keyed by branch. A `github:pr:` alias would never be looked up.                   |
 
 ## Phases
@@ -146,15 +146,15 @@ The runner already receives `ToolPart` events via SSE. Currently it only collect
 
 > **OUTDATED** — `post_message` became `slack_post_message`; git alias registration now happens in `remote-cli` with direct session context; repo inference changed. See [Amendment: Multi-key correlation resolution](#amendment-multi-key-correlation-resolution--2026-03-18).
 
-| Tool name      | Input to inspect                | Output to extract         | Alias format                 |
-| -------------- | ------------------------------- | ------------------------- | ---------------------------- |
-| `post_message` | `thread_ts` absent → new thread | parse JSON for `ts` field | `slack:thread:{ts}`          |
-| `post_message` | `thread_ts` present → reply     | (not needed)              | `slack:thread:{thread_ts}`   |
-| `git`          | `args: ["push", ...]`           | (not needed)              | `git:branch:{repo}:{branch}` |
-| `git`          | `args: ["checkout", ...]`       | (not needed)              | `git:branch:{repo}:{branch}` |
-| `git`          | `args: ["switch", ...]`         | (not needed)              | `git:branch:{repo}:{branch}` |
+| Tool name      | Input to inspect                | Output to extract         | Alias format                        |
+| -------------- | ------------------------------- | ------------------------- | ----------------------------------- |
+| `post_message` | `thread_ts` absent → new thread | parse JSON for `ts` field | `slack:thread:{ts}`                 |
+| `post_message` | `thread_ts` present → reply     | (not needed)              | `slack:thread:{thread_ts}`          |
+| `git`          | `args: ["push", ...]`           | (not needed)              | `git:branch:{repo}:{branch}`        |
+| `git`          | `args: ["checkout", ...]`       | (not needed)              | **Superseded 2026-05-14:** no alias |
+| `git`          | `args: ["switch", ...]`         | (not needed)              | **Superseded 2026-05-14:** no alias |
 
-**Not aliased**: `git pull`, `git fetch` (agent must already have checked out the branch), `create_pull_request` (GitHub events use `git:branch:` keys, not `github:pr:` keys — the branch alias already covers PR activity).
+**Not aliased**: `git checkout`, `git switch`, `git worktree add`, `git pull`, `git fetch`, `create_pull_request`/standard `gh` PR commands. GitHub events use `git:branch:` keys, not `github:pr:` keys; the branch alias is bound by successful `git push`.
 
 #### Implementation
 
@@ -165,7 +165,7 @@ The runner already receives `ToolPart` events via SSE. Currently it only collect
 3. Alias extraction in `@thor/common`:
    - **`post_message`** (new thread): parse output JSON for `ts` → `slack:thread:{ts}`
    - **`post_message`** (reply): `thread_ts` in input → `slack:thread:{thread_ts}` (session is engaging with that thread)
-   - **`git`** (`push`/`checkout`/`switch`): extract branch from args, infer repo from `cwd` path convention (`/workspace/repos/{owner}-{repo}`) → `git:branch:{repo}:{branch}`
+   - **`git`** (`push` only as of 2026-05-14): extract branch from args, infer repo from `cwd` path convention (`/workspace/repos/{owner}-{repo}`) → `git:branch:{repo}:{branch}`
 
 4. After `appendSummary`, call `registerAlias()` for each extracted alias. Best-effort: failures logged, don't break the trigger response. Self-aliases (key === alias) are skipped.
 
@@ -179,7 +179,7 @@ The runner already receives `ToolPart` events via SSE. Currently it only collect
 
 - After a trigger that calls `post_message` (new thread), the notes file contains a `### Session: slack:thread:{ts}` alias
 - After a trigger that replies in a thread, the notes file contains a `### Session: slack:thread:{thread_ts}` alias
-- After a trigger that pushes/checks out a branch, the notes file contains a `### Session: git:branch:{repo}:{branch}` alias
+- After a trigger that successfully pushes a branch, the notes file contains a `### Session: git:branch:{repo}:{branch}` alias
 - Subsequent events for any alias resolve to the original session
 - Failures in alias extraction don't break the trigger response
 
@@ -274,9 +274,8 @@ This ensures that when an old session matches the canonical key but a newer sess
 | ------------------------ | ------------------------------- | ------------------------- | -------------------------------- |
 | `slack_post_message`     | `thread_ts` absent → new thread | parse JSON for `ts` field | `slack:thread:{ts}`              |
 | `slack_post_message`     | `thread_ts` present → reply     | (not needed)              | `slack:thread:{thread_ts}`       |
-| `remote-cli` git wrapper | push args                       | (not needed)              | `git:branch:{repo-dir}:{branch}` |
-| `remote-cli` git wrapper | checkout args                   | (not needed)              | `git:branch:{repo-dir}:{branch}` |
-| `remote-cli` git wrapper | switch args                     | (not needed)              | `git:branch:{repo-dir}:{branch}` |
+| `remote-cli` git wrapper | successful push args            | (not needed)              | `git:branch:{repo-dir}:{branch}` |
+| `remote-cli` git wrapper | checkout/switch/worktree args   | (not needed)              | no alias (push-only policy)      |
 
 ### Decision log (continued)
 

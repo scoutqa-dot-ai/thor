@@ -228,7 +228,6 @@ export type CheckSuiteCompletedEvent = z.infer<typeof CheckSuiteCompletedEventSc
 export type PushEvent = z.infer<typeof PushEventSchema>;
 
 export type GitHubIgnoreReason =
-  | "pure_issue_comment_unsupported"
   | "self_sender"
   | "empty_review_body"
   | "non_mention_comment"
@@ -274,6 +273,14 @@ export function buildMentionLogins(appSlug: string): string[] {
 
 export function buildCorrelationKey(localRepo: string, branch: string): string {
   return `git:branch:${localRepo}:${branch}`;
+}
+
+export function buildIssueCorrelationKey(
+  localRepo: string,
+  repoFullName: string,
+  issueNumber: number,
+): string {
+  return `github:issue:${localRepo}:${repoFullName}#${issueNumber}`;
 }
 
 export function getGitHubEventLocalRepo(raw: GitHubWebhookEvent): string | null {
@@ -347,9 +354,6 @@ export function shouldIgnoreIssueCommentEvent(
   raw: IssueCommentEvent,
   options: { mentionLogins: string[]; botId: number },
 ): GitHubIgnoreReason | null {
-  if (!raw.issue.pull_request) {
-    return "pure_issue_comment_unsupported";
-  }
   if (raw.sender.id === options.botId) {
     return "self_sender";
   }

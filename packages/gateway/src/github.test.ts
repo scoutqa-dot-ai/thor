@@ -296,7 +296,7 @@ describe("GitHub ignore helpers", () => {
     expect(getGitHubEventBranch(event)).toBe("feature/refactor");
   });
 
-  it("ignores pure issue comments", () => {
+  it("mention-gates pure issue comments", () => {
     const event: GitHubWebhookEnvelope = {
       action: "created",
       installation: { id: 1 },
@@ -310,7 +310,13 @@ describe("GitHub ignore helpers", () => {
       },
     };
     if (!isIssueCommentEvent(event)) throw new Error("expected issue comment event");
-    expect(shouldIgnoreIssueCommentEvent(event, options)).toBe("pure_issue_comment_unsupported");
+    expect(shouldIgnoreIssueCommentEvent(event, options)).toBe("non_mention_comment");
+    expect(
+      shouldIgnoreIssueCommentEvent(
+        { ...event, comment: { ...event.comment, body: "@thor help" } },
+        options,
+      ),
+    ).toBeNull();
   });
 
   it("does not special-case fork PR comments", () => {
@@ -498,7 +504,7 @@ describe("mention and correlation helpers", () => {
   it("buildCorrelationKey matches computeGitCorrelationKey format", () => {
     const built = buildCorrelationKey("thor", "feature/refactor");
     const computed = computeGitCorrelationKey(
-      ["push", "origin", "feature/refactor"],
+      ["push", "origin", "HEAD:refs/heads/feature/refactor"],
       "/workspace/repos/thor",
     );
     expect(computed).toBe(built);

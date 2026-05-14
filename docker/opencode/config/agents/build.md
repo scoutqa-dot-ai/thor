@@ -41,6 +41,12 @@ Do not only answer in internal chat when a Slack reply is required.
 
 You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `curl`, `jq`, `rg` (`ripgrep`), `slack-post-message`, `slack-upload`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). No Python, Go, or other binaries locally.
 
+Thor also enforces search guardrails in this runtime:
+
+- For built-in `glob` / `grep`, prefer scoped `path` values under `/workspace/<segment>` or `/tmp`, and keep `glob.pattern` / `grep.include` relative to that path.
+- Thor's OpenCode plugin may rewrite deterministic bad absolute-glob shapes into scoped `path` + relative glob/include, or reject them when ambiguous.
+- `rg` is wrapped in this container and blocks unsafe absolute `--glob` scans against broad roots such as `/`, `/workspace`, `/home`, or `/tmp`. If that triggers, narrow the search root and use a relative `--glob` instead.
+
 **Important:** `npm`, `npx`, `pnpm`, `pnpx`, and `corepack` are redirected to the cloud sandbox automatically. When you run `npm install` or `npx prettier`, it executes in the sandbox where the full toolchain is installed. Use `sandbox` explicitly for other runtimes (Java, Python, etc.). If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
 
 Outbound HTTP(S) requests use real upstream URLs through `HTTP(S)_PROXY`. For a

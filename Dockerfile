@@ -82,7 +82,7 @@ CMD ["node", "/app/packages/runner/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
-RUN npm install -g opencode-ai@1.14.39
+RUN npm install -g opencode-ai@1.14.50
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
     && npm install -g prettier@3.8.3 \
@@ -99,6 +99,7 @@ COPY docker/opencode/bin/langfuse /usr/local/bin/langfuse
 COPY docker/opencode/bin/metabase /usr/local/bin/metabase
 COPY docker/opencode/bin/ldcli /usr/local/bin/ldcli
 COPY docker/opencode/bin/sandbox /usr/local/bin/sandbox
+COPY docker/opencode/bin/rg /usr/local/bin/rg
 # npm/npx/pnpm wrappers — redirect to sandbox so code runs in the cloud
 COPY docker/opencode/bin/npm /usr/local/bin/npm
 COPY docker/opencode/bin/npx /usr/local/bin/npx

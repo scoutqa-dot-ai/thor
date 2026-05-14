@@ -17,29 +17,10 @@ vi.mock("@thor/common", async (importOriginal) => {
 import {
   parseOwnerFromRemoteUrl,
   parseOwnerRepoFromRemoteUrl,
-  resolveOwnerFromArgs,
   generateAppJWT,
   getInstallationIdFromWorkspace,
   getInstallationToken,
 } from "./github-app-auth.js";
-
-describe("resolveOwnerFromArgs", () => {
-  it("extracts owner from -R owner/repo", () => {
-    expect(resolveOwnerFromArgs(["pr", "create", "-R", "acme/web"])).toBe("acme");
-  });
-
-  it("extracts owner from --repo=owner/repo", () => {
-    expect(resolveOwnerFromArgs(["pr", "view", "--repo=acme/web"])).toBe("acme");
-  });
-
-  it("extracts owner from --repo owner/repo", () => {
-    expect(resolveOwnerFromArgs(["pr", "view", "--repo", "acme/web"])).toBe("acme");
-  });
-
-  it("returns undefined when repo flag is absent", () => {
-    expect(resolveOwnerFromArgs(["pr", "list"])).toBeUndefined();
-  });
-});
 
 describe("parseOwnerFromRemoteUrl", () => {
   it("parses HTTPS remote", () => {

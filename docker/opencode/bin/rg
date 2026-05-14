@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REAL_RG=${THOR_REAL_RG:-/usr/bin/rg}
+CURRENT_CWD=${THOR_RG_CWD_OVERRIDE:-$(pwd -P)}
+
+is_broad_root() {
+	case "$1" in
+	. | / | /workspace | /home | /tmp) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+is_unsafe_absolute_glob() {
+	case "$1" in
+	/workspace/* | /home/* | /tmp/* | /usr/local/*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+absolute_glob=0
+positional_count=0
+has_positional_path=0
+unsafe_positional_path=0
+expect_glob=0
+
+for arg in "$@"; do
+	if [[ "$expect_glob" == 1 ]]; then
+		is_unsafe_absolute_glob "$arg" && absolute_glob=1
+		expect_glob=0
+		continue
+	fi
+
+	case "$arg" in
+	--glob | -g)
+		expect_glob=1
+		;;
+	--glob=*)
+		value=${arg#--glob=}
+		is_unsafe_absolute_glob "$value" && absolute_glob=1
+		;;
+	-g?*)
+		value=${arg#-g}
+		is_unsafe_absolute_glob "$value" && absolute_glob=1
+		;;
+	--)
+		;;
+	--*)
+		;;
+	-*)
+		;;
+	*)
+		positional_count=$((positional_count + 1))
+		if is_broad_root "$arg"; then
+			has_positional_path=1
+			unsafe_positional_path=1
+		elif [[ "$positional_count" -ge 2 ]]; then
+			has_positional_path=1
+		fi
+		;;
+	esac
+done
+
+if [[ "$absolute_glob" == 1 ]]; then
+	if [[ "$unsafe_positional_path" == 1 ]] || { [[ "$has_positional_path" == 0 ]] && is_broad_root "$CURRENT_CWD"; }; then
+		printf '%s\n' "Thor rg guardrail: absolute --glob with a broad search root is blocked. Search from /workspace/<segment> and use a relative --glob." >&2
+		exit 2
+	fi
+fi
+
+exec "$REAL_RG" "$@"

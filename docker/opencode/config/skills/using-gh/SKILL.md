@@ -7,11 +7,12 @@ description: "GitHub CLI surface allowed by Thor's remote-cli server policy. App
 
 All `gh` commands go through Thor's remote-cli which enforces:
 
-- **Append-only writes.** Create PRs, post comments, submit `--comment`/`--request-changes` reviews. Never approve, merge, edit, or delete.
-- **Repo-targeting flags are blocked.** `--repo`/`-R` is not part of the supported surface.
-- **`gh api` is a tiny explicit subset.** REST implicit GET reads are allowed with output shaping. One append-only POST shape is allowed for PR review-comment replies.
+- **Append-only writes.** Create PRs/issues, post PR/issue comments, submit `--comment`/`--request-changes` reviews. Never approve, merge, edit, or delete.
+- **Repo-targeting flags are blocked.** `--repo`/`-R` is not part of the supported surface — `cd` into the intended worktree or repo and rerun the command. For cross-repo API reads, use explicit REST endpoints such as `repos/<owner>/<repo>/...`.
+- **`gh api` is a tiny explicit subset.** REST implicit GET reads are allowed with output shaping. GraphQL (`gh api graphql`) is blocked. One append-only POST shape is allowed for PR review-comment replies.
 - **PR approval is a human gate.** `gh pr review --approve` is denied.
-- **PR review requires a worktree.** `gh pr diff` and `gh pr checkout` are denied — see "Reviewing a PR" below.
+- **`gh pr checkout` is denied** because it would mutate the current worktree branch — use the fetch + worktree-add pattern in "Reviewing a PR" below.
+- **`gh pr diff <N>` is allowed** as a read-only shortcut, but a fetched worktree gives a deeper review surface (run tests, grep, build). Prefer the worktree pattern when actually reviewing.
 
 ## Reviewing a PR
 
@@ -28,6 +29,10 @@ For the same reason, `gh pr checkout <N>` is also denied — it would mutate the
 
 ## Structured commands
 
+### `gh pr diff`
+
+Read-only PR file/patch view. `gh pr diff <N> [--patch] [--name-only]` is allowed. For a fuller review surface (tests, build, grep), prefer the fetch + worktree pattern above.
+
 ### `gh pr create`
 
 Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`-H`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). Blocked: `--editor`, `--web`, `--repo`/`-R`, `--fill`, `-F`/`--body-file` (no mutable body value for Thor to inject the trigger viewer link into — pass an explicit `--body`).
@@ -36,7 +41,7 @@ Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`
 
 ### `gh issue create`
 
-Blocked in v1: GitHub issue content is outside Thor's disclaimer-injection scope. Use Jira for tracked work.
+Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable). Blocked: `--editor`, `--web`, `--repo`/`-R`, `-F`/`--body-file`, assignee/project/milestone mutation, and any missing explicit body. Successful creates receive Thor's traceability footer and bind the created `github:issue:` session for later issue comments.
 
 ### `gh pr comment`
 
@@ -44,7 +49,7 @@ Required: numeric PR selector plus `--body`/`-b`. Blocked: non-numeric selectors
 
 ### `gh issue comment`
 
-Blocked in v1: GitHub issue content is outside Thor's disclaimer-injection scope. Use Jira for tracked work.
+Required: numeric issue selector plus `--body`/`-b`. Blocked: non-numeric selectors, edit/delete modes, `--editor`, `-F`/`--body-file`, and `--repo`/`-R`. For PR conversation comments, prefer `gh pr comment`; both comment paths receive Thor's traceability footer.
 
 ### `gh pr review`
 
@@ -64,7 +69,7 @@ Required: workflow selector (workflow file name or numeric ID, positional, no fl
 
 ### `gh api`
 
-Read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages).
+REST read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages). `gh api graphql` is blocked entirely.
 
 Append-only review-comment reply path: the current-repo placeholder endpoint is allowed, as is the explicit endpoint when `<owner>/<repo>` matches the GitHub.com repo resolved from the current cwd's `origin` remote:
 
@@ -83,6 +88,7 @@ gh api repos/<owner>/<repo>/pulls/<pull-number>/comments/<comment-id>/replies --
 - `gh issue view`
 - `gh label list`
 - `gh pr checks`
+- `gh pr diff`
 - `gh pr list`
 - `gh pr status`
 - `gh pr view` (numeric selectors and PR URLs are both allowed on the read path)

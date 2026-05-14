@@ -61,7 +61,7 @@ services:
       retries: 10
 
   grafana-mcp:
-    image: grafana/mcp-grafana:0.12.0
+    image: grafana/mcp-grafana:0.13.1
     restart: unless-stopped
     entrypoint:
       [
@@ -71,7 +71,7 @@ services:
         "-address",
         "0.0.0.0:8000",
         "-enabled-tools",
-        "datasource,loki,proxied",
+        "datasource,prometheus,loki,proxied",
       ]
     environment:
       - GRAFANA_URL=${GRAFANA_URL:?set GRAFANA_URL}
@@ -274,10 +274,9 @@ services:
       - VOUCH_COOKIE_MAXAGE=4320
       - VOUCH_COOKIE_SECURE=false
       - VOUCH_DOCUMENT_ROOT=/vouch
-      - VOUCH_DOMAINS=vouch
+      - VOUCH_DOMAINS=${VOUCH_ALLOWED_EMAIL_DOMAINS:-scoutqa.cc}
       - VOUCH_JWT_MAXAGE=4320
       - VOUCH_JWT_SECRET=${VOUCH_JWT_SECRET:?set VOUCH_JWT_SECRET}
-      - VOUCH_WHITELIST=${VOUCH_WHITELIST:?set VOUCH_WHITELIST}
       - VOUCH_LOGLEVEL=error
     healthcheck:
       test: ["CMD", "/vouch-proxy", "-healthcheck"]
@@ -291,6 +290,8 @@ services:
     restart: unless-stopped
     ports:
       - "${INGRESS_PORT:-8080}:8080"
+    environment:
+      - THOR_ADMIN_EMAILS=${THOR_ADMIN_EMAILS:?set THOR_ADMIN_EMAILS}
     depends_on:
       gateway:
         condition: service_healthy

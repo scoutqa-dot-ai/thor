@@ -8,6 +8,7 @@ import { truncate } from "./logger.js";
 export const ALIAS_TYPES = [
   "slack.thread_id",
   "git.branch",
+  "github.issue",
   "opencode.session",
   "opencode.subsession",
 ] as const;
@@ -112,6 +113,33 @@ export interface ReverseAnchorEntry {
   subsessionIds: string[];
   externalKeys: Array<{ aliasType: AliasRecord["aliasType"]; aliasValue: string }>;
   currentSessionId?: string;
+}
+
+export type AnchorSessionStatus = "stuck" | "in_progress" | "idle" | "unknown";
+
+export interface AnchorSessionState {
+  anchorId: string;
+  status: AnchorSessionStatus;
+  currentSessionId?: string;
+  ownerSessionId?: string;
+  triggerId?: string;
+  triggerStartedAt?: string;
+  lastEventTs?: string;
+  ageMs?: number;
+  idleMs?: number;
+  latestTerminalStatus?: Exclude<TriggerSliceStatus, "in_flight">;
+  externalKeys: Array<{ aliasType: AliasRecord["aliasType"]; aliasValue: string }>;
+  sessionIds: string[];
+  subsessionIds: string[];
+  skippedMalformed: number;
+  oversized: boolean;
+  reason?: string;
+}
+
+export interface ListAnchorSessionStatesOptions {
+  now?: Date;
+  stuckAfterMs?: number;
+  limit?: number;
 }
 
 interface InternalReverseEntry {
@@ -533,6 +561,10 @@ export function reverseLookupAnchor(anchorId: string): ReverseAnchorEntry {
   loadAliasCacheIfChanged();
   const entry = aliasCache.reverse.get(anchorId);
   if (!entry) return { sessionIds: [], subsessionIds: [], externalKeys: [] };
+  return reverseAnchorEntryFromCache(entry);
+}
+
+function reverseAnchorEntryFromCache(entry: InternalReverseEntry): ReverseAnchorEntry {
   return {
     sessionIds: [...entry.sessions.keys()],
     subsessionIds: [...entry.subsessions],
@@ -545,6 +577,14 @@ export function reverseLookupAnchor(anchorId: string): ReverseAnchorEntry {
     }),
     currentSessionId: pickNewestSession(entry),
   };
+}
+
+export function listAnchors(): Array<{ anchorId: string; entry: ReverseAnchorEntry }> {
+  loadAliasCacheIfChanged();
+  return [...aliasCache.reverse.keys()].map((anchorId) => ({
+    anchorId,
+    entry: reverseAnchorEntryFromCache(aliasCache.reverse.get(anchorId) ?? emptyReverseEntry()),
+  }));
 }
 
 export function listSessionAliases(sessionId: string): AliasRecord[] {
@@ -571,6 +611,227 @@ function openTrigger(
     if (record.type === "trigger_end" && record.triggerId === open?.triggerId) open = undefined;
   }
   return open;
+}
+
+interface SessionOpenSummary {
+  triggerId: string;
+  startedAt: string;
+  lastEventTs: string;
+}
+
+interface SessionTerminalSummary {
+  triggerId: string;
+  status: Exclude<TriggerSliceStatus, "in_flight">;
+  ts: string;
+  reason?: string;
+}
+
+function sessionSummary(sessionId: string):
+  | {
+      oversized?: false;
+      skippedMalformed: number;
+      open?: SessionOpenSummary;
+      latestTerminal?: SessionTerminalSummary;
+      lastEventTs?: string;
+    }
+  | { oversized: true; skippedMalformed: number } {
+  const read = readSessionRecords(sessionId);
+  if (read.oversized) return { oversized: true, skippedMalformed: read.skippedMalformed };
+
+  let open: SessionOpenSummary | undefined;
+  let latestTerminal: SessionTerminalSummary | undefined;
+  let lastEventTs: string | undefined;
+
+  for (const record of read.records) {
+    lastEventTs = record.ts;
+    if (record.type === "trigger_start") {
+      if (open) {
+        latestTerminal = {
+          triggerId: open.triggerId,
+          status: "crashed",
+          ts: open.lastEventTs,
+          reason: `superseded by ${record.triggerId}`,
+        };
+      }
+      open = { triggerId: record.triggerId, startedAt: record.ts, lastEventTs: record.ts };
+      continue;
+    }
+    if (open) open.lastEventTs = record.ts;
+    if (record.type === "trigger_end" && record.triggerId === open?.triggerId) {
+      latestTerminal = {
+        triggerId: record.triggerId,
+        status: record.status,
+        ts: record.ts,
+        reason: record.reason ?? record.error,
+      };
+      open = undefined;
+    }
+  }
+
+  return { skippedMalformed: read.skippedMalformed, open, latestTerminal, lastEventTs };
+}
+
+function parseRecordTs(ts: string | undefined): number | undefined {
+  if (!ts) return undefined;
+  const parsed = Date.parse(ts);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function listAnchorSessionStates(
+  options: ListAnchorSessionStatesOptions = {},
+): AnchorSessionState[] {
+  const now = options.now ?? new Date();
+  const nowMs = now.getTime();
+  const stuckAfterMs = options.stuckAfterMs ?? 5 * 60 * 1000;
+  const limit = options.limit ?? 100;
+
+  const rows = listAnchors().map(({ anchorId, entry }): AnchorSessionState => {
+    let skippedMalformed = 0;
+    let oversized = false;
+    let bestOpen: (SessionOpenSummary & { sessionId: string }) | undefined;
+    let latestTerminal: (SessionTerminalSummary & { sessionId: string }) | undefined;
+    let lastEventTs: string | undefined;
+    const readErrors: string[] = [];
+
+    for (const sessionId of entry.sessionIds) {
+      let summary: ReturnType<typeof sessionSummary>;
+      try {
+        summary = sessionSummary(sessionId);
+      } catch (err) {
+        readErrors.push(`${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+      skippedMalformed += summary.skippedMalformed;
+      if (summary.oversized) {
+        oversized = true;
+        continue;
+      }
+      if (summary.lastEventTs && (!lastEventTs || summary.lastEventTs > lastEventTs)) {
+        lastEventTs = summary.lastEventTs;
+      }
+      if (summary.open && (!bestOpen || summary.open.startedAt > bestOpen.startedAt)) {
+        bestOpen = { ...summary.open, sessionId };
+      }
+      if (
+        summary.latestTerminal &&
+        (!latestTerminal || summary.latestTerminal.ts > latestTerminal.ts)
+      ) {
+        latestTerminal = { ...summary.latestTerminal, sessionId };
+      }
+    }
+
+    if (oversized || readErrors.length > 0) {
+      return {
+        anchorId,
+        status: "unknown",
+        currentSessionId: entry.currentSessionId,
+        ownerSessionId: bestOpen?.sessionId ?? latestTerminal?.sessionId,
+        triggerId: bestOpen?.triggerId ?? latestTerminal?.triggerId,
+        triggerStartedAt: bestOpen?.startedAt,
+        externalKeys: entry.externalKeys,
+        sessionIds: entry.sessionIds,
+        subsessionIds: entry.subsessionIds,
+        skippedMalformed,
+        oversized,
+        reason: [
+          oversized ? "one or more session logs exceeded the configured size cap" : null,
+          ...readErrors,
+        ]
+          .filter(Boolean)
+          .join("; "),
+        lastEventTs: bestOpen?.lastEventTs ?? latestTerminal?.ts ?? lastEventTs,
+      };
+    }
+
+    if (bestOpen) {
+      const startedAtMs = parseRecordTs(bestOpen.startedAt);
+      const lastEventMs = parseRecordTs(bestOpen.lastEventTs);
+      if (startedAtMs === undefined || lastEventMs === undefined) {
+        return {
+          anchorId,
+          status: "unknown",
+          currentSessionId: entry.currentSessionId,
+          ownerSessionId: bestOpen.sessionId,
+          triggerId: bestOpen.triggerId,
+          triggerStartedAt: bestOpen.startedAt,
+          lastEventTs: bestOpen.lastEventTs,
+          externalKeys: entry.externalKeys,
+          sessionIds: entry.sessionIds,
+          subsessionIds: entry.subsessionIds,
+          skippedMalformed,
+          oversized: false,
+          reason: "invalid trigger timestamp in session log",
+        };
+      }
+      const idleMs = Math.max(0, nowMs - lastEventMs);
+      return {
+        anchorId,
+        status: idleMs > stuckAfterMs ? "stuck" : "in_progress",
+        currentSessionId: entry.currentSessionId,
+        ownerSessionId: bestOpen.sessionId,
+        triggerId: bestOpen.triggerId,
+        triggerStartedAt: bestOpen.startedAt,
+        lastEventTs: bestOpen.lastEventTs,
+        ageMs: Math.max(0, nowMs - startedAtMs),
+        idleMs,
+        externalKeys: entry.externalKeys,
+        sessionIds: entry.sessionIds,
+        subsessionIds: entry.subsessionIds,
+        skippedMalformed,
+        oversized: false,
+      };
+    }
+
+    const idleReferenceTs = latestTerminal?.ts ?? lastEventTs;
+    const idleReferenceMs = parseRecordTs(idleReferenceTs);
+    if (idleReferenceTs && idleReferenceMs === undefined) {
+      return {
+        anchorId,
+        status: "unknown",
+        currentSessionId: entry.currentSessionId,
+        ownerSessionId: latestTerminal?.sessionId,
+        triggerId: latestTerminal?.triggerId,
+        lastEventTs: idleReferenceTs,
+        latestTerminalStatus: latestTerminal?.status,
+        externalKeys: entry.externalKeys,
+        sessionIds: entry.sessionIds,
+        subsessionIds: entry.subsessionIds,
+        skippedMalformed,
+        oversized: false,
+        reason: "invalid terminal timestamp in session log",
+      };
+    }
+
+    return {
+      anchorId,
+      status: "idle",
+      currentSessionId: entry.currentSessionId,
+      ownerSessionId: latestTerminal?.sessionId,
+      triggerId: latestTerminal?.triggerId,
+      lastEventTs: idleReferenceTs,
+      idleMs: idleReferenceMs !== undefined ? Math.max(0, nowMs - idleReferenceMs) : undefined,
+      latestTerminalStatus: latestTerminal?.status,
+      externalKeys: entry.externalKeys,
+      sessionIds: entry.sessionIds,
+      subsessionIds: entry.subsessionIds,
+      skippedMalformed,
+      oversized: false,
+      reason: latestTerminal?.reason,
+    };
+  });
+
+  const rank: Record<AnchorSessionStatus, number> = {
+    stuck: 0,
+    in_progress: 1,
+    unknown: 2,
+    idle: 3,
+  };
+  return rows
+    .sort(
+      (a, b) =>
+        rank[a.status] - rank[b.status] || (b.lastEventTs ?? "").localeCompare(a.lastEventTs ?? ""),
+    )
+    .slice(0, limit);
 }
 
 /**

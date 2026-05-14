@@ -32,6 +32,12 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
     allow: [
       "list_datasources",
       "get_datasource",
+      "query_prometheus",
+      "list_prometheus_metric_metadata",
+      "list_prometheus_metric_names",
+      "list_prometheus_label_names",
+      "list_prometheus_label_values",
+      "query_prometheus_histogram",
       "query_loki_logs",
       "list_loki_label_names",
       "list_loki_label_values",

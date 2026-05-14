@@ -191,9 +191,6 @@ event_status=$(curl -s -o /tmp/thor-approval-cards-event-response.json -w '%{htt
   --data-binary "$event_body")
 assert '[[ "$event_status" == "200" ]]' "fake signed Slack app_mention with all approval instructions accepted" "status=$event_status response=$(tr -d '\n' </tmp/thor-approval-cards-event-response.json 2>/dev/null || true)"
 
-declare -A CARD_JSON_BY_KEY=()
-declare -A ACTION_ID_BY_KEY=()
-
 expect_card() {
   local key="$1"
   local title="$2"
@@ -202,30 +199,43 @@ expect_card() {
   local result
   result=$(find_approval_card "$key" "$title" "$upstream" "$needles_json" 2>/dev/null || echo "")
   if [[ -n "$result" ]]; then
-    CARD_JSON_BY_KEY["$key"]="$result"
-    ACTION_ID_BY_KEY["$key"]=$(json_field "$result" "actionId")
+    local action_id
+    action_id=$(json_field "$result" "actionId")
+    eval "CARD_JSON_${key}=\$result"
+    eval "ACTION_ID_${key}=\$action_id"
     return 0
   fi
   return 1
+}
+
+card_count() {
+  local n=0 v k
+  for k in createJiraIssue addCommentToJiraIssue; do
+    eval "v=\${CARD_JSON_${k}:-}"
+    [[ -n "$v" ]] && n=$((n + 1))
+  done
+  echo "$n"
 }
 
 for _ in $(seq 1 96); do
   replies=$(slack_replies 2>/dev/null || echo '{}')
   expect_card "createJiraIssue" "Create Jira issue: $JIRA_SUMMARY" "atlassian" "$(node -e 'console.log(JSON.stringify([process.env.JIRA_PROJECT_KEY, process.env.JIRA_ISSUE_TYPE, process.env.JIRA_DESCRIPTION]))')" || true
   expect_card "addCommentToJiraIssue" "Comment on Jira issue: $JIRA_COMMENT_ISSUE_KEY" "atlassian" "$(node -e 'console.log(JSON.stringify([process.env.JIRA_COMMENT_BODY]))')" || true
-  if [[ ${#CARD_JSON_BY_KEY[@]} -eq 2 ]]; then
+  if [[ $(card_count) -eq 2 ]]; then
     break
   fi
   sleep 5
 done
 
 for key in createJiraIssue addCommentToJiraIssue; do
-  assert '[[ -n "${CARD_JSON_BY_KEY[$key]:-}" ]]' "found pending approval card for $key via Slack conversations.replies" "replies: ${replies:0:1000}"
-  assert '[[ -n "${ACTION_ID_BY_KEY[$key]:-}" ]]' "extracted pending action ID for $key" "card: ${CARD_JSON_BY_KEY[$key]:-}"
+  eval "card_json=\${CARD_JSON_${key}:-}"
+  eval "action_id=\${ACTION_ID_${key}:-}"
+  assert '[[ -n "$card_json" ]]' "found pending approval card for $key via Slack conversations.replies" "replies: ${replies:0:1000}"
+  assert '[[ -n "$action_id" ]]' "extracted pending action ID for $key" "card: $card_json"
 done
 
 for key in createJiraIssue addCommentToJiraIssue; do
-  action_id="${ACTION_ID_BY_KEY[$key]:-}"
+  eval "action_id=\${ACTION_ID_${key}:-}"
   if [[ -n "$action_id" ]]; then
     status_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
       -H 'Content-Type: application/json' \

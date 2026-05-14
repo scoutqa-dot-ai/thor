@@ -79,9 +79,33 @@ describe("correlation key resolution", () => {
     expect(resolveSessionForCorrelationKey(rawKey)).toBe("session-git");
   });
 
+  it("normalizes github issue correlation keys to github issue alias values", () => {
+    bindSession("session-issue", anchor2);
+    const rawKey = "github:issue:thor:acme/thor#42";
+
+    expect(appendCorrelationAlias("session-issue", rawKey)).toEqual({ ok: true });
+    expect(resolveAnchorForCorrelationKey(rawKey)).toBe(anchor2);
+    expect(resolveSessionForCorrelationKey(rawKey)).toBe("session-issue");
+    expect(readAliases()).toContainEqual({
+      ts: expect.any(String),
+      aliasType: "github.issue",
+      aliasValue: Buffer.from(rawKey).toString("base64url"),
+      anchorId: anchor2,
+    });
+  });
+
   it("computes correlation keys without embedding tool output metadata", () => {
     expect(
-      computeGitCorrelationKey(["push", "origin", "feature/refactor"], "/workspace/repos/thor"),
+      computeGitCorrelationKey(
+        ["push", "origin", "HEAD:refs/heads/feature/refactor"],
+        "/workspace/repos/thor",
+      ),
+    ).toBe("git:branch:thor:feature/refactor");
+    expect(
+      computeGitCorrelationKey(
+        ["push", "-u", "origin", "HEAD:refs/heads/feature/refactor"],
+        "/workspace/repos/thor",
+      ),
     ).toBe("git:branch:thor:feature/refactor");
     expect(
       computeSlackCorrelationKey({ channel: "C123" }, JSON.stringify({ ts: "1710000000.002" })),
@@ -89,6 +113,34 @@ describe("correlation key resolution", () => {
     expect(computeSlackCorrelationKey({ thread_ts: "1710000000.003" }, "{}")).toBe(
       "slack:thread:1710000000.003",
     );
+  });
+
+  it("does not derive git branch correlation keys from dry-run or unsupported push shapes", () => {
+    const cwd = "/workspace/repos/thor";
+
+    expect(
+      computeGitCorrelationKey(
+        ["push", "--dry-run", "origin", "HEAD:refs/heads/feature/refactor"],
+        cwd,
+      ),
+    ).toBeUndefined();
+    expect(computeGitCorrelationKey(["push", "origin", "feature/refactor"], cwd)).toBeUndefined();
+    expect(
+      computeGitCorrelationKey(["push", "upstream", "HEAD:refs/heads/feature/refactor"], cwd),
+    ).toBeUndefined();
+  });
+
+  it("does not derive git branch correlation keys from checkout, switch, or worktree add", () => {
+    const cwd = "/workspace/worktrees/thor/feature/refactor";
+
+    expect(computeGitCorrelationKey(["checkout", "feature/refactor"], cwd)).toBeUndefined();
+    expect(computeGitCorrelationKey(["switch", "-c", "feature/refactor"], cwd)).toBeUndefined();
+    expect(
+      computeGitCorrelationKey(
+        ["worktree", "add", "/workspace/worktrees/thor/feature/refactor", "feature/refactor"],
+        cwd,
+      ),
+    ).toBeUndefined();
   });
 
   it("registers correlation aliases against the executing session's anchor", () => {
@@ -186,6 +238,25 @@ describe("correlation key resolution", () => {
     const gitAliases = readAliases().filter((alias) => alias.aliasType === "git.branch");
     expect(gitAliases).toHaveLength(1);
     expect(gitAliases[0].anchorId).toBe(results[0].anchorId);
+  });
+
+  it("ensures one anchor for concurrent github issue correlation key callers", async () => {
+    const key = "github:issue:thor:acme/thor#42";
+
+    const results = await Promise.all([
+      ensureAnchorForCorrelationKey(key),
+      ensureAnchorForCorrelationKey(key),
+    ]);
+
+    expect(results[0].anchorId).toBeDefined();
+    expect(results[1].anchorId).toBe(results[0].anchorId);
+    expect(results.map((result) => result.minted).sort()).toEqual([false, true]);
+    expect(resolveAnchorForCorrelationKey(key)).toBe(results[0].anchorId);
+
+    const issueAliases = readAliases().filter((alias) => alias.aliasType === "github.issue");
+    expect(issueAliases).toHaveLength(1);
+    expect(issueAliases[0].aliasValue).toBe(Buffer.from(key).toString("base64url"));
+    expect(issueAliases[0].anchorId).toBe(results[0].anchorId);
   });
 
   it("does not mint anchors for unsupported correlation key prefixes", async () => {

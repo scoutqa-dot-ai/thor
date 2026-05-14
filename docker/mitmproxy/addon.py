@@ -62,7 +62,7 @@ class ThorMitmAddon:
             flow.response = _response(200, "ok")
             return
 
-        decision = self._store.get().classify(host, path)
+        decision = self._store.get().classify(host, path, method=request.method)
 
         if decision.action == "deny":
             if host == "slack.com" and path == "/api/chat.postMessage":

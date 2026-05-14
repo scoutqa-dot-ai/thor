@@ -51,19 +51,21 @@ All routes live in `packages/gateway/src/app.ts`. Each has its own validator, si
 
 ### 1.2 `POST /github/webhook` — GitHub webhooks
 
-- **Validator**: `GitHubWebhookEnvelopeSchema` (`packages/gateway/src/github.ts:179`), a discriminated union over `event_type`.
-- **Signature**: `verifyGitHubSignature()` (github.ts:211) — HMAC-SHA256 from `X-Hub-Signature-256`, no timestamp window (the digest covers the immutable payload).
+- **Validator**: `GitHubWebhookEnvelopeSchema` in `packages/gateway/src/github.ts`, a discriminated union over `event_type`.
+- **Signature**: `verifyGitHubSignature()` in `packages/gateway/src/github.ts` — HMAC-SHA256 from `X-Hub-Signature-256`, no timestamp window (the digest covers the immutable payload).
 - **Supported events**:
   - `issue_comment` (created)
   - `pull_request_review_comment` (created)
   - `pull_request_review` (submitted)
   - `check_suite` (completed)
+  - `pull_request` (closed)
   - `push`
 - **Repo gate**: every event must map to a workspace directory via the configured `localRepo` mapping. Unmapped repos are logged and dropped.
-- **Filter chain** (`shouldIgnoreGitHubEvent`, github.ts:365): drops fork PRs, self-sender (the bot's own comments), pure issue comments not on a PR, empty review bodies, and non-mention comments.
-- **Two correlation-key shapes**:
-  - **Branch known** (`push`, review/comment events with `head.ref`, completed check suites with `head_branch`): `git:branch:<localRepo>:<branch>` via `buildCorrelationKey()` (github.ts:247). Alias value is `base64url(<full key>)`.
-  - **Branch unknown** (issue comments, where the payload only has the PR number): `pending:branch-resolve:<localRepo>:<number>` via `buildPendingBranchResolveKey()` (github.ts:258). The key is parked on the queue with this synthetic prefix and is resolved later (see §3.1).
+- **Filter chain** (`shouldIgnoreGitHubEvent`): drops self-sender (the bot's own comments), empty review bodies, and non-mention comments by default. Pure issue comments require a mention for first contact, but once the same `github:issue:` key already resolves to an active session, later follow-up comments on that issue may continue without another mention. PR review/review-comment events are also accepted without a mention when the PR was opened by Thor.
+- **Three correlation-key shapes**:
+  - **Branch known** (`push`, review/comment events with `head.ref`, completed check suites with `head_branch`): `git:branch:<localRepo>:<branch>` via `buildCorrelationKey()`. Alias value is `base64url(<full key>)`.
+  - **PR issue-comment branch unknown** (PR-backed issue comments, where the payload only has the PR number): `pending:branch-resolve:<localRepo>:<number>` via `buildPendingBranchResolveKey()`. The key is parked on the queue with this synthetic prefix and is resolved later (see §3.1).
+  - **Pure issue** (mention-gated for first contact; later engaged follow-ups can continue without a mention): `github:issue:<localRepo>:<repoFullName>#<issueNumber>` via `buildIssueCorrelationKey()`. Alias type is `github.issue` with alias value `base64url(<full key>)`.
 - **Push events** are special — `handleGitHubPushEvent()` (app.ts:693–856) syncs the worktree (`git fetch`, hard reset, branch delete) and only enqueues a wake-trigger if a session already exists for the branch.
 - **Check-suite completed** further requires `verifyThorAuthoredSha()` (`github-gate.ts:9`) — the head commit's author email must match the bot identity. This blocks "CI green for someone else's commit" from re-entering Thor's session.
 
@@ -119,6 +121,7 @@ Two consequences:
 
 1. **Cross-key coalescing.** If a conversation has both a Slack thread and a git branch alias bound to its anchor, a `git:branch:thor:feat-x` push and a `slack:thread:1701...` reply land in the **same batch** because both resolve to the same `anchor:<id>` lock key. The runner sees one combined prompt instead of two parallel triggers.
 2. **A pending resolve waits on its own bucket.** `pending:branch-resolve:<repo>:<num>` doesn't match any alias type, so it keeps its raw key as the lock key until §3.1 reroutes it.
+3. **Pure issues are durable.** `github:issue:` keys resolve through the `github.issue` alias type, so later mentions on the same issue resume the same session instead of minting a new anchor.
 
 ### 2.2 Interrupt-aware batching
 
@@ -138,7 +141,7 @@ The handler must call `ack()` (delete files), `reject(reason)` (move to `dead-le
 
 When the batch's correlation key starts with `pending:branch-resolve:`:
 
-1. The latest event must be an `issue_comment` (the only ingress that produces this key).
+1. The latest event must be a PR-backed `issue_comment` (pure issues use `github:issue:` and never enter this path).
 2. `resolveGitHubPrHead()` (service.ts:170) calls `gh pr view <num> --json headRefName,headRepository,baseRepository` to fetch the PR head branch.
 3. If the head and base repos differ → drop with `fork_pr_unsupported`.
 4. Otherwise the plan is `{kind: "reroute", fromCorrelationKey, toCorrelationKey: "git:branch:<repo>:<branch>", githubEvents}`. The handler **re-enqueues** every event with the resolved key. The next queue scan picks them up under the new lock key, where they may now coalesce with an existing branch session.
@@ -323,7 +326,7 @@ All aliases live in a single append-only file: `<worklog>/aliases.jsonl`. Each l
 | Alias type            | Alias value                               | Binding target                 | Created when                                                                                                                                            |
 | --------------------- | ----------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `slack.thread_id`     | `<thread_ts>` (raw, 1:1)                  | anchor for that thread         | (a) gateway accepts a Slack event for an engaged thread; (b) agent calls `slack post_message` and remote-cli sees a `thread_ts` in the args or response |
-| `git.branch`          | `base64url("git:branch:<repo>:<branch>")` | anchor for that branch         | (a) gateway accepts a GitHub event for a known branch; (b) remote-cli sees `git push`, `git checkout`, `git switch`, or `git worktree add`              |
+| `git.branch`          | `base64url("git:branch:<repo>:<branch>")` | anchor for that branch         | (a) gateway accepts a GitHub event for a known branch; (b) remote-cli sees a successful `git push`                                                      |
 | `opencode.session`    | `<sessionId>` (OpenCode format)           | anchor this session belongs to | runner trigger handler appends on every session create/resume; `session_stale` recreate adds a fresh binding alongside the old                          |
 | `opencode.subsession` | `<childSessionId>` (OpenCode format)      | anchor the parent belongs to   | runner discovers a child session on the OpenCode event bus during an active trigger and binds the child to the parent's anchor                          |
 
@@ -345,7 +348,7 @@ This is why `cron:` keys never resolve to an anchor unless the caller passes a d
 | Runner trigger, on first sight of a correlation key | `index.ts` `appendCorrelationAliasForAnchor(anchorId, correlationKey)`                                        | binds the inbound `slack:thread:` or `git:branch:` key to the anchor (idempotent under newest-wins)              |
 | Runner trigger, on `session_stale` recreate         | `index.ts` `appendAlias({aliasType: "opencode.session", aliasValue: newId, anchorId})`                        | same anchor, new session id — Slack/git aliases never move because they bind the anchor, not the session         |
 | Runner stream handler, on subagent discovery        | `index.ts` `appendAlias({aliasType: "opencode.subsession", aliasValue: childId, anchorId})`                   | binds the child session to the parent's anchor so disclaimer routing reaches the parent's open trigger           |
-| Remote-cli, after every `git`/`gh` exec             | `remote-cli/src/index.ts` `appendCorrelationAlias(sessionId, computeGitCorrelationKey(args, cwd))`            | resolves the executing session's anchor first (`opencode.session` lookup) then binds `git.branch` to that anchor |
+| Remote-cli, after successful `git push`             | `remote-cli/src/index.ts` `appendCorrelationAlias(sessionId, computeGitCorrelationKey(args, cwd))`            | resolves the executing session's anchor first (`opencode.session` lookup) then binds `git.branch` to that anchor |
 | Remote-cli, after Slack `post_message` MCP call     | `remote-cli/src/mcp-handler.ts` `appendCorrelationAlias(sessionId, computeSlackCorrelationKey(args, stdout))` | resolves the executing session's anchor first, then binds `slack.thread_id` to that anchor                       |
 
 The agent itself never touches the alias file — every write happens in code paths that already see both `sessionId` and the correlating identifier.
@@ -390,7 +393,7 @@ A user types `@thor look at this PR` in a Slack thread, then later pushes commit
 1. **Slack mention arrives** → `POST /slack/events` → validator + signature pass → `app_mention` filter pass → enqueue with `correlationKey="slack:thread:1701234567.123"`, `interrupt=true`, `delayMs=0`.
 2. **Queue scan** groups the file under the raw key `slack:thread:1701234567.123` (no anchor yet). Batch ready, `planBatchDispatch` resolves channel→repo, builds the prompt, posts to `runner/trigger`.
 3. **Runner** has no anchor for the key → mints anchor `019df…88`, appends `(slack.thread_id, 1701234567.123) → 019df…88`. Creates `session abc123`, appends `(opencode.session, abc123) → 019df…88`. Returns NDJSON stream; the agent does work.
-4. **Agent pushes a branch** via `gh pr create` / `git push`. Remote-cli's `/exec/git` and `/exec/gh` shims compute `git:branch:thor:feat-x`, resolve `abc123`'s anchor (`019df…88`), then append `(git.branch, base64url("git:branch:thor:feat-x")) → 019df…88`. Both correlation keys now bind to the same anchor.
+4. **Agent pushes a branch** via `git push`. Remote-cli's `/exec/git` shim computes `git:branch:thor:feat-x`, resolves `abc123`'s anchor (`019df…88`), then appends `(git.branch, base64url("git:branch:thor:feat-x")) → 019df…88`. `gh pr create`, checkout/switch, and worktree setup do not create branch aliases. Both correlation keys now bind to the same anchor after the push.
 5. **GitHub push webhook fires** → `POST /github/webhook` → `handleGitHubPushEvent` syncs the worktree → `hasSessionForCorrelationKey("git:branch:thor:feat-x")` returns true (the key resolves to anchor `019df…88` which has a current `opencode.session`) → enqueue with `interrupt=false`.
 6. **Queue scan** sees the new file. `resolveCorrelationLockKey("git:branch:thor:feat-x")` → `anchor:019df…88`. If a Slack reply also arrived in the same window, it has lock key `anchor:019df…88` too — they batch together. One `runner/trigger` call, one resumed session, one combined prompt.
 
