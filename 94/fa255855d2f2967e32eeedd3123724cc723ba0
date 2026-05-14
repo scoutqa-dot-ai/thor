@@ -1,0 +1,27 @@
+docs/plan/2026051301_policy-relaxations.md
+  bd180ff6eef80686 9,33
+docker/opencode/config/skills/using-gh/SKILL.md
+  bd180ff6eef80686 12,72
+packages/remote-cli/src/policy-gh.ts
+  bd180ff6eef80686 528
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "94fa255855d2f2967e32eeedd3123724cc723ba0",
+  "prompts": {
+    "bd180ff6eef80686": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "742ae03d-4a3b-4aa9-a927-a1e8b45c24bc",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 131,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
