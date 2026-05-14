@@ -14,10 +14,13 @@ server {
     # Re-resolve upstream DNS on every request (Docker embedded DNS).
     resolver 127.0.0.11 valid=5s;
 
-    # Vouch Proxy endpoints (unauthenticated)
+    # Vouch Proxy endpoints (unauthenticated). Host is forwarded so vouch
+    # sees the public hostname; it suffix-matches r.Host against the JWT
+    # `sites` claim (sourced from VOUCH_DOMAINS) on /validate.
     location /vouch/ {
         set $vouch http://vouch:9090;
         proxy_pass $vouch;
+        proxy_set_header Host $http_host;
     }
 
     # Internal auth subrequest — called by auth_request
@@ -27,6 +30,7 @@ server {
         proxy_pass $vouch;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
+        proxy_set_header Host $http_host;
     }
 
     location = /__opencode_admin_forbidden {
