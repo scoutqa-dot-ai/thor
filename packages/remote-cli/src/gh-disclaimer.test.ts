@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { normalize as normalizePosix } from "node:path/posix";
 import { appendAlias, appendSessionEvent, formatThorDisclaimerFooter } from "@thor/common";
@@ -72,6 +72,33 @@ async function postGh(url: string, args: string[], sessionId?: string) {
   };
 }
 
+async function postGit(url: string, args: string[], sessionId?: string) {
+  const response = await fetch(`${url}/exec/git`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(sessionId ? { "x-thor-session-id": sessionId } : {}),
+    },
+    body: JSON.stringify({ args, cwd }),
+  });
+  return {
+    response,
+    body: (await response.json()) as { stdout: string; stderr: string; exitCode: number },
+  };
+}
+
+function readAliases(): Array<{ aliasType: string; aliasValue: string; anchorId: string }> {
+  try {
+    return readFileSync(`${process.env.WORKLOG_DIR}/aliases.jsonl`, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch {
+    return [];
+  }
+}
+
 beforeEach(() => {
   execCalls.length = 0;
   process.env.WORKLOG_DIR = "/tmp/thor-remote-cli-gh-test/worklog";
@@ -85,6 +112,60 @@ afterEach(() => {
 });
 
 describe("gh disclaimer injection", () => {
+  it("registers git branch aliases only after successful git push", async () => {
+    bindSessionToAnchor("parent", anchorParent);
+
+    await withServer(async (url) => {
+      const { response } = await postGit(
+        url,
+        ["push", "origin", "HEAD:refs/heads/feat/test"],
+        "parent",
+      );
+
+      expect(response.status).toBe(200);
+      expect(execCalls[0]).toMatchObject({
+        bin: "git",
+        args: ["push", "origin", "HEAD:refs/heads/feat/test"],
+      });
+    });
+
+    const aliases = readAliases().filter((alias) => alias.aliasType === "git.branch");
+    expect(aliases).toHaveLength(1);
+    expect(aliases[0]).toMatchObject({
+      aliasType: "git.branch",
+      aliasValue: Buffer.from("git:branch:acme:feat/test").toString("base64url"),
+      anchorId: anchorParent,
+    });
+  });
+
+  it("does not register git branch aliases for dry-run push, worktree add, or gh pr create", async () => {
+    bindSessionToAnchor("parent", anchorParent);
+    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
+
+    await withServer(async (url) => {
+      const dryRun = await postGit(
+        url,
+        ["push", "--dry-run", "origin", "HEAD:refs/heads/feat/test"],
+        "parent",
+      );
+      expect(dryRun.response.status).toBe(200);
+
+      const worktree = await postGit(
+        url,
+        ["worktree", "add", "/workspace/worktrees/acme/feat/test", "feat/test"],
+        "parent",
+      );
+      expect(worktree.response.status).toBe(200);
+
+      const pr = await postGh(url, ["pr", "create", "--title", "x", "--body", "body"], "parent");
+      expect(pr.response.status).toBe(200);
+    });
+
+    expect(readAliases().filter((alias) => alias.aliasType === "git.branch")).toEqual([]);
+  });
+
   it("passes mutating command help requests without requiring a Thor session", async () => {
     await withServer(async (url) => {
       const commands = [
