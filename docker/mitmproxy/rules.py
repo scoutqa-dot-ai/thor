@@ -10,6 +10,11 @@ from urllib.parse import urlsplit
 
 ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
 READONLY_METHODS = {"GET", "HEAD", "OPTIONS"}
+JIRA_ATTACHMENT_UPLOAD_METHODS = frozenset({"POST"})
+JIRA_API_ATTACHMENT_PATH = re.compile(
+    r"^/ex/jira/[^/]+/rest/api/3/issue/[^/]+/attachments$"
+)
+JIRA_SITE_ATTACHMENT_PATH = re.compile(r"^/rest/api/3/issue/[^/]+/attachments$")
 
 
 class MissingEnvVarError(Exception):
@@ -24,6 +29,8 @@ class InjectRule:
     host_suffix: str | None = None
     path_prefix: str | None = None
     path_suffix: str | None = None
+    path_pattern: re.Pattern[str] | None = None
+    methods: frozenset[str] | None = None
 
     def matches_host(self, host: str) -> bool:
         host = normalize_host(host)
@@ -33,7 +40,7 @@ class InjectRule:
             return host.endswith(self.host_suffix.lower())
         return False
 
-    def matches(self, host: str, path: str = "/") -> bool:
+    def matches(self, host: str, path: str = "/", method: str | None = None) -> bool:
         if not self.matches_host(host):
             return False
         normalized = normalize_path(path)
@@ -41,6 +48,12 @@ class InjectRule:
             return False
         if self.path_suffix is not None and not normalized.endswith(self.path_suffix):
             return False
+        if self.path_pattern is not None and not self.path_pattern.fullmatch(
+            normalized
+        ):
+            return False
+        if self.methods is not None:
+            return method is not None and method.upper() in self.methods
         return True
 
 
@@ -55,10 +68,12 @@ class RuleSet:
     rules: list[InjectRule]
     passthrough: list[str]
 
-    def classify(self, host: str, path: str = "/") -> PolicyDecision:
+    def classify(
+        self, host: str, path: str = "/", method: str | None = None
+    ) -> PolicyDecision:
         host = normalize_host(host)
         for rule in self.rules:
-            if rule.matches(host, path):
+            if rule.matches(host, path, method=method):
                 return PolicyDecision(action="inject", rule=rule)
         for entry in self.passthrough:
             if entry.startswith("."):
@@ -91,6 +106,8 @@ BUILTIN_RULES = [
         },
         path_prefix="/ex/jira/",
         path_suffix="/attachments",
+        path_pattern=JIRA_API_ATTACHMENT_PATH,
+        methods=JIRA_ATTACHMENT_UPLOAD_METHODS,
     ),
     InjectRule(
         host_suffix=".atlassian.net",
@@ -100,6 +117,8 @@ BUILTIN_RULES = [
         },
         path_prefix="/rest/api/3/issue/",
         path_suffix="/attachments",
+        path_pattern=JIRA_SITE_ATTACHMENT_PATH,
+        methods=JIRA_ATTACHMENT_UPLOAD_METHODS,
     ),
     InjectRule(
         host="api.atlassian.com",
@@ -285,7 +304,7 @@ def parse_ruleset(config: object) -> RuleSet:
             host=normalize_host(host) if has_host else None,
             host_suffix=host_suffix.lower() if has_suffix else None,
             path_prefix=normalize_path(path_prefix) if isinstance(path_prefix, str) else None,
-            path_suffix=path_suffix if isinstance(path_suffix, str) else None,
+            path_suffix=normalize_path(path_suffix) if isinstance(path_suffix, str) else None,
         )
         rules.append(rule)
 

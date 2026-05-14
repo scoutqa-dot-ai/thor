@@ -101,7 +101,7 @@ Built-in defaults are intentionally narrow:
   read-only by default. Jira attachment uploads
   (`POST .../rest/api/3/issue/{key}/attachments` on `*.atlassian.net`, and
   `POST .../ex/jira/{cloudId}/rest/api/3/issue/{key}/attachments` on
-  `api.atlassian.com`) are allowed as a narrow write exception
+  `api.atlassian.com`) are allowed as a POST-only narrow write exception
 - Atlassian media redirects: `api.media.atlassian.com` passthrough
 - Slack API: injected auth only for thread/history reads, `reactions.add`,
   `files.info`, and the upload setup/complete endpoints on `slack.com/api/...`;
@@ -197,7 +197,8 @@ define rules in `/workspace/config.json` and keep only secret values in `.env`:
 
 mitmproxy evaluates user rules first, then built-in defaults. OpenAI and
 ChatGPT domains are already allowed as passthrough by default.
-Rules match by exact host or suffix first, then by optional `path_prefix`.
+Rules match by exact host or suffix first, then by optional `path_prefix` and
+`path_suffix`.
 
 ## Operations Notes
 
