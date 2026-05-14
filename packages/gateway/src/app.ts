@@ -57,6 +57,7 @@ import {
 } from "./approval.js";
 import {
   buildCorrelationKey,
+  buildIssueCorrelationKey,
   buildPendingBranchResolveKey,
   getGitHubEventBranch,
   getGitHubEventLocalRepo,
@@ -68,6 +69,7 @@ import {
   isCheckSuiteCompletedEvent,
   isPullRequestClosedEvent,
   isPushEvent,
+  isIssueCommentEvent,
   shouldIgnoreGitHubEvent,
   type GitHubWebhookEvent,
   type PushEvent,
@@ -360,7 +362,6 @@ type GitHubIgnoreReason =
   | "json_parse_error"
   | "schema_validation_failed"
   | "repo_not_mapped"
-  | "pure_issue_comment_unsupported"
   | "self_sender"
   | "empty_review_body"
   | "non_mention_comment"
@@ -1537,11 +1538,19 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
+    const pureIssueRawKey =
+      isIssueCommentEvent(parsed.data) && !parsed.data.issue.pull_request
+        ? buildIssueCorrelationKey(localRepo, repoFullName, parsed.data.issue.number)
+        : undefined;
     const ignoreReason = shouldIgnoreGitHubEvent(parsed.data, {
       mentionLogins: githubMentionLogins,
       botId: githubAppBotId,
     });
-    if (ignoreReason) {
+    const shouldAcceptEngagedIssueComment =
+      ignoreReason === "non_mention_comment" &&
+      pureIssueRawKey !== undefined &&
+      hasSessionForCorrelationKey(pureIssueRawKey);
+    if (ignoreReason && !shouldAcceptEngagedIssueComment) {
       history.githubStream = "ignored";
       history.parseStatus = "schema_valid";
       history.action = parsed.data.action;
@@ -1671,10 +1680,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       correlationKey = resolvedKey;
       delayMs = 0;
       interrupt = false;
+    } else if (branch) {
+      correlationKey = resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)]);
+    } else if (pureIssueRawKey) {
+      correlationKey = resolveCorrelationKeys([pureIssueRawKey]);
     } else {
-      correlationKey = branch
-        ? resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)])
-        : buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
+      correlationKey = buildPendingBranchResolveKey(localRepo, getGitHubEventNumber(parsed.data));
     }
 
     const sourceTs = getGitHubEventSourceTs(parsed.data);

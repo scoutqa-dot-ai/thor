@@ -5,7 +5,12 @@ import type { AddressInfo } from "node:net";
 import { readFileSync, rmSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { normalize as normalizePosix } from "node:path/posix";
-import { appendAlias, appendSessionEvent, formatThorDisclaimerFooter } from "@thor/common";
+import {
+  appendAlias,
+  appendSessionEvent,
+  formatThorDisclaimerFooter,
+  resolveAlias,
+} from "@thor/common";
 
 vi.hoisted(() => {
   process.env.WORKLOG_DIR = "/tmp/thor-remote-cli-gh-test/worklog";
@@ -17,6 +22,16 @@ const execCalls = vi.hoisted(() => [] as Array<{ bin: string; args: string[]; cw
 vi.mock("./exec.js", () => ({
   execCommand: vi.fn(async (bin: string, args: string[], cwd: string) => {
     execCalls.push({ bin, args, cwd });
+    if (bin === "gh" && args[0] === "issue" && args[1] === "create") {
+      return { stdout: "https://github.com/acme/thor/issues/42\n", stderr: "", exitCode: 0 };
+    }
+    if (bin === "gh" && args[0] === "issue" && args[1] === "comment") {
+      return {
+        stdout: "https://github.com/acme/thor/issues/42#issuecomment-1\n",
+        stderr: "",
+        exitCode: 0,
+      };
+    }
     return { stdout: "ok", stderr: "", exitCode: 0 };
   }),
   execCommandStream: vi.fn(),
@@ -171,6 +186,7 @@ describe("gh disclaimer injection", () => {
       const commands = [
         ["pr", "create", "--help"],
         ["pr", "comment", "--help"],
+        ["issue", "comment", "--help"],
         ["pr", "review", "-h"],
       ];
 
@@ -188,7 +204,70 @@ describe("gh disclaimer injection", () => {
       const { response, body } = await postGh(url, ["pr", "comment", "123", "--body", "note"]);
       expect(response.status).toBe(400);
       expect(body.stderr).toContain("missing Thor session id");
+      const issue = await postGh(url, ["issue", "comment", "42", "--body", "note"]);
+      expect(issue.response.status).toBe(400);
+      expect(issue.body.stderr).toContain("missing Thor session id");
       expect(execCalls).toHaveLength(0);
+    });
+  });
+
+  it("injects into issue comment bodies", async () => {
+    bindSessionToAnchor("parent", anchorParent);
+    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
+
+    await withServer(async (url) => {
+      const { response } = await postGh(
+        url,
+        ["issue", "comment", "42", "--body", "note"],
+        "parent",
+      );
+      expect(response.status).toBe(200);
+      expect(execCalls[0].args).toEqual([
+        "issue",
+        "comment",
+        "42",
+        "--body",
+        `note
+${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+      ]);
+      expect(
+        resolveAlias({
+          aliasType: "github.issue",
+          aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
+        }),
+      ).toBe(anchorParent);
+    });
+  });
+
+  it("injects into issue create bodies and binds the created issue alias with GitHub repo basename", async () => {
+    bindSessionToAnchor("parent", anchorParent);
+    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
+      ok: true,
+    });
+
+    await withServer(async (url) => {
+      const { response } = await postGh(
+        url,
+        ["issue", "create", "--title", "Bug", "--body", "Broken"],
+        "parent",
+      );
+      expect(response.status).toBe(200);
+      expect(execCalls[0].args).toEqual([
+        "issue",
+        "create",
+        "--title",
+        "Bug",
+        "--body",
+        `Broken\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+      ]);
+      expect(
+        resolveAlias({
+          aliasType: "github.issue",
+          aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
+        }),
+      ).toBe(anchorParent);
     });
   });
 
@@ -303,6 +382,14 @@ describe("gh disclaimer injection", () => {
       );
       expect(comment.response.status).toBe(400);
       expect(comment.body.stderr).toContain("gh pr comment");
+
+      const issue = await postGh(
+        url,
+        ["issue", "comment", "42", "--body-file", "body.md"],
+        "parent",
+      );
+      expect(issue.response.status).toBe(400);
+      expect(issue.body.stderr).toContain("gh issue comment");
       expect(execCalls).toHaveLength(0);
     });
   });
@@ -321,6 +408,14 @@ describe("gh disclaimer injection", () => {
       );
       expect(comment.response.status).toBe(400);
       expect(comment.body.stderr).toContain("multiple --body values");
+
+      const issue = await postGh(
+        url,
+        ["issue", "comment", "42", "--body", "traced", "--body", "untraced"],
+        "parent",
+      );
+      expect(issue.response.status).toBe(400);
+      expect(issue.body.stderr).toContain("multiple --body values");
 
       const reply = await postGh(
         url,

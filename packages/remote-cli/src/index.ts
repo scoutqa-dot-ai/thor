@@ -21,6 +21,7 @@ import {
   WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
+import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.js";
 import {
   handleSlackPostMessage,
@@ -62,6 +63,8 @@ const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
+const GITHUB_ISSUE_URL_RE =
+  /https:\/\/github\.com\/([^\s/]+)\/([^\s/]+)\/issues\/(\d+)(?:\b|[/?#])/;
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   loadRemoteCliGitHubEnv(env);
@@ -119,6 +122,83 @@ function registerGitCorrelationAlias(
   logInfo(log, "alias_registered", { sessionId, correlationKey, source: "git" });
 }
 
+function buildIssueCorrelationKey(owner: string, repo: string, number: string): string {
+  // Gateway issue correlation uses the GitHub repo basename as the local repo
+  // component. Keep producer-side aliases aligned even when the local worktree
+  // parent directory is not the same as owner/repo's basename.
+  return `github:issue:${repo}:${owner}/${repo}#${number}`;
+}
+
+function parseIssueUrl(
+  stdout: string,
+): { owner: string; repo: string; number: string } | undefined {
+  const match = stdout.match(GITHUB_ISSUE_URL_RE);
+  if (!match) return undefined;
+  const [, owner, repo, number] = match;
+  if (!owner || !repo || !number) return undefined;
+  return { owner, repo, number };
+}
+
+function ownerRepoMatches(
+  cwdRepo: ReturnType<typeof resolveOwnerRepoFromRemote> | undefined,
+  owner: string,
+  repo: string,
+): boolean {
+  return (
+    !cwdRepo ||
+    (cwdRepo.host === "github.com" &&
+      cwdRepo.owner.toLowerCase() === owner.toLowerCase() &&
+      cwdRepo.repo.toLowerCase() === repo.toLowerCase())
+  );
+}
+
+function parseCreatedIssueCorrelationKey(stdout: string, cwd: string): string | undefined {
+  const issue = parseIssueUrl(stdout);
+  if (!issue) return undefined;
+  const cwdRepo = resolveOwnerRepoFromRemote(cwd);
+  if (!ownerRepoMatches(cwdRepo, issue.owner, issue.repo)) return undefined;
+  return buildIssueCorrelationKey(issue.owner, issue.repo, issue.number);
+}
+
+function parseIssueCommentCorrelationKey(
+  args: string[],
+  cwd: string,
+  stdout: string,
+): string | undefined {
+  if (args[0] !== "issue" || args[1] !== "comment") return undefined;
+  const number = args[2];
+  if (!number) return undefined;
+
+  const cwdRepo = resolveOwnerRepoFromRemote(cwd);
+  if (cwdRepo?.host === "github.com") {
+    return buildIssueCorrelationKey(cwdRepo.owner, cwdRepo.repo, number);
+  }
+
+  const issue = parseIssueUrl(stdout);
+  if (!issue || issue.number !== number) return undefined;
+  return buildIssueCorrelationKey(issue.owner, issue.repo, issue.number);
+}
+
+function registerIssueCorrelationAlias(
+  sessionId: string | undefined,
+  args: string[],
+  cwd: string,
+  stdout: string,
+): void {
+  if (!sessionId || args[0] !== "issue") return;
+  const correlationKey =
+    args[1] === "create"
+      ? parseCreatedIssueCorrelationKey(stdout, cwd)
+      : parseIssueCommentCorrelationKey(args, cwd, stdout);
+  if (!correlationKey) return;
+  const result = appendCorrelationAlias(sessionId, correlationKey);
+  if (!result.ok) {
+    logError(log, "alias_registration_error", result.error.message, { sessionId, correlationKey });
+    return;
+  }
+  logInfo(log, "alias_registered", { sessionId, correlationKey, source: "gh" });
+}
+
 function rewriteSingleValueFlag(
   args: string[],
   names: string[],
@@ -167,6 +247,7 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
   if (isGhHelpRequest(args)) return args;
   const eligible =
     (args[0] === "pr" && ["create", "comment", "review"].includes(args[1] ?? "")) ||
+    (args[0] === "issue" && ["create", "comment"].includes(args[1] ?? "")) ||
     (args[0] === "api" && args.some((arg) => /pulls\/\d+\/comments\/\d+\/replies/.test(arg)));
   if (!eligible) return args;
   let footer: string;
@@ -528,6 +609,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
       const result = await execCommand("gh", effectiveArgs, cwd);
+      if ((result.exitCode ?? 0) === 0) {
+        registerIssueCorrelationAlias(ids.sessionId, effectiveArgs, cwd, result.stdout);
+      }
       res.json(result);
     } catch (err) {
       logError(

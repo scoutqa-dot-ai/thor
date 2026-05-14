@@ -55,8 +55,10 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "pr checks",
   "pr diff",
   "pr create",
+  "issue create",
   "pr comment",
   "pr review",
+  "issue comment",
   "issue view",
   "issue list",
   "label list",
@@ -130,16 +132,17 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
       "gh pr create --title <title> --body <body>; omit --head unless it matches the current worktree branch",
   },
   "gh issue create": {
-    reason: "GitHub issue creation is outside v1 disclaimer-injection scope.",
-    instead: "Use Jira for tracked work or wait for future issue disclaimer support.",
+    reason:
+      "issue creation requires an explicit non-interactive title and body so Thor can inject the trigger viewer link.",
+    instead: "gh issue create --title <title> --body <body>",
   },
   "gh pr comment": {
     reason: "PR comments must target a numeric PR and provide exactly one body source.",
     instead: "gh pr comment <number> --body <text>",
   },
   "gh issue comment": {
-    reason: "GitHub issue comments are outside v1 disclaimer-injection scope.",
-    instead: "Use Jira for tracked work or wait for future issue disclaimer support.",
+    reason: "issue comments must target a numeric issue and provide exactly one body source.",
+    instead: "gh issue comment <number> --body <text>",
   },
   "gh pr review": {
     reason: "reviews must be append-only comments or request-changes reviews with an inline body.",
@@ -220,8 +223,12 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
         : denyMessage("gh auth status");
     case "pr create":
       return validateGhPrCreateArgs(effectiveArgs, cwd);
+    case "issue create":
+      return validateGhIssueCreateArgs(effectiveArgs);
     case "pr comment":
       return validateGhPrCommentArgs(effectiveArgs);
+    case "issue comment":
+      return validateGhIssueCommentArgs(effectiveArgs);
     case "pr review":
       return validateGhPrReviewArgs(effectiveArgs);
     case "issue view":
@@ -445,6 +452,69 @@ function validateGhPrCommentArgs(args: string[]): string | null {
     });
   }
   return bodies.length === 1 ? null : denyMessage("gh pr comment");
+}
+
+function validateGhIssueCreateArgs(args: string[]): string | null {
+  const parsed = scanPolicyArgs(args, 2, [
+    { name: "title", kind: "value", aliases: ["-t", "--title"] },
+    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+    { name: "label", kind: "value", aliases: ["-l", "--label"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage("gh issue create");
+  }
+
+  const titles = valueFlagValues(parsed, "title");
+  const bodies = valueFlagValues(parsed, "body");
+  if (titles.length > 1) {
+    return denyMessage("gh issue create", {
+      reason: "multiple --title values are ambiguous.",
+      instead: "provide exactly one --title value",
+    });
+  }
+  if (bodies.length > 1) {
+    return denyMessage("gh issue create", {
+      reason: "multiple --body values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body value",
+    });
+  }
+  if (titles.length !== 1) {
+    return denyMessage("gh issue create", {
+      reason: "issue creation requires exactly one explicit --title value.",
+      instead: "provide exactly one --title value",
+    });
+  }
+  if (bodies.length !== 1) {
+    return denyMessage("gh issue create", {
+      reason:
+        "issue creation requires exactly one explicit --body value so Thor can inject the trigger viewer link.",
+      instead: "provide exactly one --body value",
+    });
+  }
+  return null;
+}
+
+function validateGhIssueCommentArgs(args: string[]): string | null {
+  const selector = args[2];
+  if (!selector || !DIGITS_ONLY.test(selector)) {
+    return denyMessage("gh issue comment");
+  }
+
+  const parsed = scanPolicyArgs(args, 3, [
+    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+  ]);
+  if (!parsed || parsed.positionals.length > 0) {
+    return denyMessage("gh issue comment");
+  }
+
+  const bodies = valueFlagValues(parsed, "body");
+  if (bodies.length > 1) {
+    return denyMessage("gh issue comment", {
+      reason: "multiple --body values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body value",
+    });
+  }
+  return bodies.length === 1 ? null : denyMessage("gh issue comment");
 }
 
 function validateGhPrReviewArgs(args: string[]): string | null {
