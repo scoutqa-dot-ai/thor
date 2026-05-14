@@ -35,6 +35,7 @@ import {
   mintAnchor,
   mintTriggerId,
   reverseLookupAnchor,
+  listAnchorSessionStates,
   resolveAlias,
   resolveAnchorForCorrelationKey,
   resolveCorrelationLockKey,
@@ -243,6 +244,10 @@ function resolveOwnerSessionForTrigger(
   return { ok: false, reason: "not_found" };
 }
 
+function anchorIsKnown(anchor: ReverseAnchorEntry): boolean {
+  return anchor.sessionIds.length + anchor.subsessionIds.length + anchor.externalKeys.length > 0;
+}
+
 const E2eTriggerContextSchema = z.object({
   sessionId: z.string().trim().min(1).optional(),
   correlationKey: z.string().trim().min(1).optional(),
@@ -329,18 +334,106 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   // at the infrastructure edge, not in the app process.
   // codeql[js/missing-rate-limiting]
   // lgtm[js/missing-rate-limiting]
+  function renderAnchorResponse(
+    res: express.Response,
+    anchorId: string,
+    requestedTriggerId?: string,
+  ): void {
+    const anchor = reverseLookupAnchor(anchorId);
+    if (!anchorIsKnown(anchor)) {
+      res
+        .status(404)
+        .type("html")
+        .send(renderPage("Anchor not found", "No Thor anchor context was found."));
+      return;
+    }
+    res
+      .type("html")
+      .send(renderAnchorPage(anchorId, anchor, requestedTriggerId));
+  }
+
+  function renderTriggerResponse(
+    res: express.Response,
+    anchorId: string,
+    triggerId: string,
+  ): void {
+    const owner = resolveOwnerSessionForTrigger(anchorId, triggerId);
+    if (!owner.ok) {
+      if (owner.reason === "oversized") {
+        res
+          .type("html")
+          .send(
+            renderPage(
+              "Slice truncated",
+              "<p>This session log is oversized for display. Engineers needing the bytes can read the JSONL directly from the worklog volume.</p>",
+            ),
+          );
+        return;
+      }
+      renderAnchorResponse(res, anchorId, triggerId);
+      return;
+    }
+
+    let slice;
+    try {
+      slice = readTriggerSlice(owner.sessionId, triggerId);
+    } catch {
+      renderAnchorResponse(res, anchorId, triggerId);
+      return;
+    }
+    if ("notFound" in slice) {
+      renderAnchorResponse(res, anchorId, triggerId);
+      return;
+    }
+    if ("oversized" in slice) {
+      res
+        .type("html")
+        .send(
+          renderPage(
+            "Slice truncated",
+            "<p>This session log is oversized for display. Engineers needing the bytes can read the JSONL directly from the worklog volume.</p>",
+          ),
+        );
+      return;
+    }
+    res
+      .type("html")
+      .send(renderSlicePage(anchorId, triggerId, owner.sessionId, reverseLookupAnchor(anchorId), slice));
+  }
+
+  function requireViewerAuth(req: express.Request, res: express.Response): boolean {
+    if (req.get("X-Vouch-User")) return true;
+    res
+      .status(401)
+      .type("html")
+      .send(renderPage("Unauthorized", "Sign in with Vouch to view Thor trigger history."));
+    return false;
+  }
+
   app.get(
-    "/runner/v/:anchorId/:triggerId",
+    "/runner/v/:anchorId",
     // codeql[js/missing-rate-limiting]
     // lgtm[js/missing-rate-limiting]
     (req, res) => {
-      if (!req.get("X-Vouch-User")) {
+      if (!requireViewerAuth(req, res)) return;
+      const anchorId = routeParam(req.params.anchorId);
+      if (!isUuidV7(anchorId)) {
         res
-          .status(401)
+          .status(404)
           .type("html")
-          .send(renderPage("Unauthorized", "Sign in with Vouch to view Thor trigger history."));
+          .send(renderPage("Anchor not found", "No Thor anchor context was found."));
         return;
       }
+      renderAnchorResponse(res, anchorId);
+    },
+  );
+
+  app.get(
+    ["/runner/v/:anchorId/t/:triggerId", "/runner/v/:anchorId/:triggerId"],
+    // codeql[js/missing-rate-limiting]
+    // lgtm[js/missing-rate-limiting]
+    (req, res) => {
+      if (!requireViewerAuth(req, res)) return;
       const anchorId = routeParam(req.params.anchorId);
       const triggerId = routeParam(req.params.triggerId);
 
@@ -353,72 +446,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           );
         return;
       }
-
-      const owner = resolveOwnerSessionForTrigger(anchorId, triggerId);
-      if (!owner.ok) {
-        if (owner.reason === "oversized") {
-          res
-            .type("html")
-            .send(
-              renderPage(
-                "Slice truncated",
-                "<p>This session log is oversized for display. Engineers needing the bytes can read the JSONL directly from the worklog volume.</p>",
-              ),
-            );
-          return;
-        }
-        res
-          .status(404)
-          .type("html")
-          .send(
-            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
-          );
-        return;
-      }
-
-      let slice;
-      try {
-        slice = readTriggerSlice(owner.sessionId, triggerId);
-      } catch {
-        res
-          .status(404)
-          .type("html")
-          .send(
-            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
-          );
-        return;
-      }
-      if ("notFound" in slice) {
-        res
-          .status(404)
-          .type("html")
-          .send(
-            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
-          );
-        return;
-      }
-      if ("oversized" in slice) {
-        res
-          .type("html")
-          .send(
-            renderPage(
-              "Slice truncated",
-              "<p>This session log is oversized for display. Engineers needing the bytes can read the JSONL directly from the worklog volume.</p>",
-            ),
-          );
-        return;
-      }
-      res
-        .type("html")
-        .send(
-          renderSlicePage(
-            anchorId,
-            triggerId,
-            owner.sessionId,
-            reverseLookupAnchor(anchorId),
-            slice,
-          ),
-        );
+      renderTriggerResponse(res, anchorId, triggerId);
     },
   );
 
@@ -1465,6 +1493,29 @@ function redactRecord(record: unknown): unknown {
       key,
       typeof entry === "string" ? safeSnippet(entry, key === "promptPreview" ? 800 : 500) : entry,
     ]),
+  );
+}
+
+function renderAnchorPage(
+  anchorId: string,
+  anchor: ReverseAnchorEntry,
+  requestedTriggerId?: string,
+): string {
+  const state = listAnchorSessionStates({ limit: Number.MAX_SAFE_INTEGER }).find(
+    (row) => row.anchorId === anchorId,
+  );
+  const triggerLink = state?.triggerId
+    ? `<p>Latest trigger: <a href="/runner/v/${encodeURIComponent(anchorId)}/t/${encodeURIComponent(state.triggerId)}"><code>${escapeHtml(state.triggerId)}</code></a>${state.latestTerminalStatus ? ` (${escapeHtml(state.latestTerminalStatus)})` : ""}</p>`
+    : "<p>No trigger slices have been recorded for this anchor yet.</p>";
+  const warning = requestedTriggerId
+    ? `<p class="warn">Requested trigger <code>${escapeHtml(requestedTriggerId)}</code> was not found under this anchor. Showing anchor context instead.</p>`
+    : "";
+  const keys = anchor.externalKeys.length
+    ? `<ul>${anchor.externalKeys.map((key) => `<li><code>${escapeHtml(key.aliasType)}=${escapeHtml(safeSnippet(key.aliasValue))}</code></li>`).join("")}</ul>`
+    : "<p>No external aliases recorded.</p>";
+  return renderPage(
+    "Thor context",
+    `${warning}<p>Anchor <code>${escapeHtml(anchorId)}</code></p>${triggerLink}<details open><summary>Bound sessions</summary><p>${anchor.sessionIds.length} session(s), ${anchor.subsessionIds.length} subsession(s)</p><pre>${escapeHtml([...anchor.sessionIds, ...anchor.subsessionIds].join("\n") || "—")}</pre></details><details><summary>External keys</summary>${keys}</details>`,
   );
 }
 

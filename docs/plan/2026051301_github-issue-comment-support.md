@@ -37,7 +37,7 @@ Rules:
 - Numeric selector required.
 - Exactly one explicit body value required.
 - `--body-file`, editor/web modes, edit/delete shapes, extra positionals, non-numeric selectors, and `--repo` / `-R` remain denied.
-- Disclaimer injection appends to that single mutable body field via the existing `buildThorDisclaimerForSession()` path and fails closed when no active trigger can be inferred.
+- Disclaimer injection appends to that single mutable body field via the existing `buildThorDisclaimerForSession()` path and uses the canonical anchor context URL (`/runner/v/:anchorId`); it fails closed when no Thor anchor context can be inferred.
 
 `gh issue comment` can technically target PR numbers because PRs are issues in GitHub's API. The supported guidance will still direct agents to use `gh pr comment` for PR conversation comments, but the policy-level safety property is the same for both: numeric target, current repo auth, one traced body, append-only.
 

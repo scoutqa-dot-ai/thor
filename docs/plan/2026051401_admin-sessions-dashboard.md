@@ -56,7 +56,7 @@ Add a common helper, tentatively `listAnchorSessionStates({ now, stuckAfterMs, l
    - `anchorId`, `currentSessionId` from existing newest-session binding semantics.
    - `ownerSessionId` for the open/latest trigger, because viewer links must use the session that owns the `trigger_start`.
    - `triggerId`, `triggerStartedAt`, `lastEventTs`, `ageMs`, `idleMs`, `externalKeys`, `sessionIds`, `subsessionIds`, `skippedMalformed`, and optional `reason`.
-   - Viewer URL: `/runner/v/<anchorId>/<triggerId>` for rows with a trigger id.
+   - Viewer URL: `/runner/v/<anchorId>` for each anchor row, with `/runner/v/<anchorId>/t/<triggerId>` as an optional exact-trigger deep link.
 6. Sort rows by severity and recency: `stuck` first, then `in_progress`, then `unknown`, then recent `idle`; within each group, newest `lastEventTs` first. Apply a conservative default limit (for example 100 anchors) to keep the page bounded.
 
 Use a local constant `STUCK_AFTER_MS = 5 * 60 * 1000` initially to match the trigger viewer's existing soft stale threshold. Do not add a new environment variable unless operators need runtime tuning during implementation.

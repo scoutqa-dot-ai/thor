@@ -7,7 +7,7 @@ import {
   createLogger,
   ExecResultSchema,
   extractRepoFromCwd,
-  findActiveTriggerOrThrow,
+  findAnchorContext,
   getProxyConfig,
   injectApprovalDisclaimer,
   isProxyName,
@@ -41,24 +41,28 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
 
-function resolveDisclaimerTrigger(
+function resolveDisclaimerOrigin(
   tool: string,
   sessionId: string | undefined,
-): { anchorId: string; triggerId: string } | undefined {
+): { anchorId: string; triggerId?: string } | undefined {
   if (!approvalToolRequiresDisclaimer(tool)) return undefined;
-  const { anchorId, triggerId } = findActiveTriggerOrThrow(sessionId);
-  return { anchorId, triggerId };
+  if (!sessionId) throw new Error("Disclaimer required: missing Thor session id");
+  const context = findAnchorContext(sessionId);
+  if (!context.ok) {
+    throw new Error(`Disclaimer required: no Thor anchor for session ${sessionId} (${context.reason})`);
+  }
+  return { anchorId: context.anchorId, triggerId: context.triggerId };
 }
 
 function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   if (!approvalToolRequiresDisclaimer(action.tool)) return action.args;
-  const trigger = action.origin?.trigger;
-  if (!trigger) {
+  const origin = action.origin?.anchor ?? action.origin?.trigger;
+  if (!origin) {
     throw new Error(
-      `Approval action ${action.id} is missing origin.trigger for disclaimer injection`,
+      `Approval action ${action.id} is missing origin anchor for disclaimer injection`,
     );
   }
-  const { footer } = buildThorDisclaimer(trigger, getRunnerBaseUrl());
+  const { footer } = buildThorDisclaimer(origin, getRunnerBaseUrl());
   return injectApprovalDisclaimer(action.tool, action.args, footer);
 }
 
@@ -508,15 +512,16 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       const approvalArgs = approvalRequired.data.args;
       const formatError = validateDisclaimerCompatibleArgs(toolInfo.name, approvalArgs);
       if (formatError) return fail(formatError);
-      let trigger: { anchorId: string; triggerId: string } | undefined;
+      let anchor: { anchorId: string; triggerId?: string } | undefined;
       try {
-        trigger = resolveDisclaimerTrigger(toolInfo.name, context.sessionId);
+        anchor = resolveDisclaimerOrigin(toolInfo.name, context.sessionId);
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
       const action = instance.approvalStore.create(toolInfo.name, approvalArgs, {
         sessionId: context.sessionId,
-        trigger,
+        anchor,
+        ...(anchor?.triggerId ? { trigger: { anchorId: anchor.anchorId, triggerId: anchor.triggerId } } : {}),
       });
       logInfo(log, "tool_call_pending_approval", {
         upstream: instance.name,

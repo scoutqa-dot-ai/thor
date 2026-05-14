@@ -339,8 +339,8 @@ describe("runner /trigger orchestration", () => {
           headers: { "X-Vouch-User": "u@example.com" },
         },
       );
-      expect(missing.status).toBe(404);
-      expect(await missing.text()).toContain("Trigger not found");
+      expect(missing.status).toBe(200);
+      expect(await missing.text()).toContain("Showing anchor context instead");
 
       // Malformed (non-UUIDv7) anchor id is rejected without disk I/O.
       const invalidAnchor = await fetch(`${url}/runner/v/not-a-uuid/${triggerId}`, {

@@ -361,7 +361,7 @@ describe("remote-cli MCP endpoints", () => {
     };
     const upstreamArgs = {
       ...cleanArgs,
-      description: `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
+      description: `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${activeAnchorId}`)}`,
     };
     expect(approvalOutput).toMatchObject({
       type: "approval_required",
@@ -385,6 +385,7 @@ describe("remote-cli MCP endpoints", () => {
       args: cleanArgs,
       origin: {
         sessionId: "parent-session",
+        anchor: { anchorId: activeAnchorId, triggerId: activeTriggerId },
         trigger: { anchorId: activeAnchorId, triggerId: activeTriggerId },
       },
     });

@@ -108,6 +108,16 @@ export type ActiveTriggerResult =
   | { ok: true; anchorId: string; sessionId: string; triggerId: string }
   | { ok: false; reason: "none" | "oversized" };
 
+export type AnchorContextResult =
+  | {
+      ok: true;
+      anchorId: string;
+      sessionId?: string;
+      triggerId?: string;
+      triggerSessionId?: string;
+    }
+  | { ok: false; reason: "none" | "oversized" };
+
 export interface ReverseAnchorEntry {
   sessionIds: string[];
   subsessionIds: string[];
@@ -856,6 +866,36 @@ export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult
   }
   if (!best) return { ok: false, reason: "none" };
   return { ok: true, anchorId, sessionId: best.sessionId, triggerId: best.triggerId };
+}
+
+export function findAnchorContext(requestSessionId: string): AnchorContextResult {
+  const anchorId =
+    resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
+    resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
+  if (!anchorId) return { ok: false, reason: "none" };
+
+  const active = findActiveTrigger(requestSessionId);
+  if (active.ok) {
+    return {
+      ok: true,
+      anchorId,
+      sessionId: active.sessionId,
+      triggerId: active.triggerId,
+      triggerSessionId: active.sessionId,
+    };
+  }
+  if (active.reason === "oversized") return active;
+
+  const state = listAnchorSessionStates({ limit: Number.MAX_SAFE_INTEGER }).find(
+    (row) => row.anchorId === anchorId,
+  );
+  return {
+    ok: true,
+    anchorId,
+    sessionId: state?.currentSessionId ?? currentSessionForAnchor(anchorId) ?? requestSessionId,
+    triggerId: state?.triggerId,
+    triggerSessionId: state?.ownerSessionId,
+  };
 }
 
 export function currentSessionForAnchor(anchorId: string): string | undefined {

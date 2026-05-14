@@ -72,6 +72,7 @@ export {
   appendAlias,
   readTriggerSlice,
   findActiveTrigger,
+  findAnchorContext,
   resolveAlias,
   reverseLookupAnchor,
   listAnchors,
@@ -90,6 +91,7 @@ export type {
   AliasRecord,
   TriggerSlice,
   ActiveTriggerResult,
+  AnchorContextResult,
   ReverseAnchorEntry,
   AnchorSessionState,
   AnchorSessionStatus,
@@ -131,6 +133,7 @@ export type { GitHubAppBotIdentity, GitHubAppBotIdentityInput } from "./github-i
 export {
   buildThorDisclaimer,
   buildThorDisclaimerForSession,
+  buildThorAnchorUrl,
   buildThorTriggerUrl,
   findActiveTriggerOrThrow,
   formatThorDisclaimerFooter,

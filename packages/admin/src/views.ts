@@ -192,7 +192,7 @@ export function renderSessionsFragment(props: SessionsProps): string {
             ? row.externalKeys.map((k) => `<span class="chip">${esc(k.aliasType)}=${esc(k.aliasValue)}</span>`).join(" ")
             : "—";
           const trigger = row.triggerId
-            ? `<a href="/runner/v/${encodeURIComponent(row.anchorId)}/${encodeURIComponent(row.triggerId)}">${esc(short(row.triggerId))}</a>`
+            ? `<a href="/runner/v/${encodeURIComponent(row.anchorId)}/t/${encodeURIComponent(row.triggerId)}">${esc(short(row.triggerId))}</a>`
             : row.latestTerminalStatus
               ? esc(row.latestTerminalStatus)
               : "—";
@@ -206,7 +206,7 @@ export function renderSessionsFragment(props: SessionsProps): string {
             .filter(Boolean)
             .map((v) => esc(String(v)))
             .join("; ");
-          return `<tr><td><span class="badge ${esc(row.status)}">${esc(statusLabel(row.status))}</span></td><td><code title="${esc(row.anchorId)}">${esc(short(row.anchorId))}</code></td><td>${esc(short(row.currentSessionId))}${owner}</td><td>${keys}</td><td>${trigger}</td><td>${fmtTime(row.triggerStartedAt)}</td><td>${fmtTime(row.lastEventTs)}</td><td>${fmtDuration(row.ageMs)} / ${fmtDuration(row.idleMs)}</td><td>${diag || "—"}</td></tr>`;
+          return `<tr><td><span class="badge ${esc(row.status)}">${esc(statusLabel(row.status))}</span></td><td><a href="/runner/v/${encodeURIComponent(row.anchorId)}"><code title="${esc(row.anchorId)}">${esc(short(row.anchorId))}</code></a></td><td>${esc(short(row.currentSessionId))}${owner}</td><td>${keys}</td><td>${trigger}</td><td>${fmtTime(row.triggerStartedAt)}</td><td>${fmtTime(row.lastEventTs)}</td><td>${fmtDuration(row.ageMs)} / ${fmtDuration(row.idleMs)}</td><td>${diag || "—"}</td></tr>`;
         })
         .join("")}</tbody></table>`
     : `<div class="empty">No anchors have been recorded yet. Session state is derived from <code>aliases.jsonl</code> and <code>sessions/*.jsonl</code>.</div>`;
