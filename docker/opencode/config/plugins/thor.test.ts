@@ -103,6 +103,20 @@ describe("Thor OpenCode search scope policy", () => {
     expect(executeOutput.args).toEqual({ path: "/workspace/repos/thor", pattern: "**/*.ts" });
     expect(warn).toHaveBeenCalledWith(expect.objectContaining({ event: "search_scope_rewrite" }));
 
+    const allowedOutput = {
+      args: { path: "/workspace/repos/thor", pattern: "TODO", include: "*.ts" },
+    };
+    await hooks["tool.execute.before"](
+      { tool: "grep", sessionID: "s2", callID: "c2" },
+      allowedOutput,
+    );
+    expect(allowedOutput.args).toEqual({
+      path: "/workspace/repos/thor",
+      pattern: "TODO",
+      include: "*.ts",
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+
     const definitionOutput = { description: "Search." };
     await hooks["tool.definition"]({ toolID: "grep" }, definitionOutput);
     expect(definitionOutput.description).toContain("relative");

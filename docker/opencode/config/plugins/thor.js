@@ -113,7 +113,7 @@ export const applySearchScopePolicy = (tool, args, options = {}) => {
       throw searchScopeError(`Refusing ${tool} with broad path ${explicitPath}.`);
     }
     if (allowedSearchRoot(explicitPath, tool)) {
-      return { args: next, changed: false, event: "search_scope_allowed", path: explicitPath };
+      return { args: next, changed: false, path: explicitPath };
     }
   }
 
