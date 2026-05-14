@@ -57,7 +57,7 @@ services:
       retries: 10
 
   grafana-mcp:
-    image: grafana/mcp-grafana:0.13.0
+    image: grafana/mcp-grafana:0.13.1
     restart: unless-stopped
     entrypoint:
       [
