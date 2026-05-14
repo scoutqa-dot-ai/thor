@@ -87,9 +87,15 @@ describe("ingress auth split", () => {
 
   it("runs the admin-email regex hook before nginx envsubst", () => {
     const dockerfile = readFileSync(resolve(repoRoot, "docker/ingress/Dockerfile"), "utf8");
+    const envHook = readFileSync(
+      resolve(repoRoot, "docker/ingress/10-thor-admin-emails.envsh"),
+      "utf8",
+    );
     expect(dockerfile).toContain(
       "COPY 10-thor-admin-emails.envsh /docker-entrypoint.d/10-thor-admin-emails.envsh",
     );
+    expect(envHook).not.toContain("set -u");
+    expect(envHook).not.toContain("set -- ${THOR_ADMIN_EMAILS}");
   });
 
   it("gates OpenCode-backed routes by admin email", () => {
