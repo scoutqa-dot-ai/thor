@@ -102,7 +102,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import socket, sys; s=socket.create_connection(('127.0.0.1', 8080), 2); s.close(); sys.exit(0)",
+          "import socket, sys;\ntry:\n    s = socket.create_connection(('127.0.0.1', 8080), 2)\nexcept OSError:\n    sys.exit(1)\nelse:\n    s.close()\n    sys.exit(0)",
         ]
       interval: 5s
       timeout: 3s

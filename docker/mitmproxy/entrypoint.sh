@@ -15,7 +15,13 @@ cleanup() {
   rm -rf "$CONF_DIR"
 }
 
-trap cleanup EXIT INT TERM
+handle_signal() {
+  cleanup
+  exit 0
+}
+
+trap cleanup EXIT
+trap handle_signal INT TERM
 
 CA_KEY="/etc/thor/mitmproxy/mitmproxy-ca-key.pem"
 CA_CERT="/etc/thor/mitmproxy/mitmproxy-ca-cert.pem"
@@ -37,14 +43,29 @@ mitmdump \
   -s "$SCRIPT_DIR/addon.py" &
 MITMPROXY_PID="$!"
 
-python -c "import sys, time, urllib.request; opener=urllib.request.build_opener(urllib.request.ProxyHandler({'http':'http://127.0.0.1:8080'})); deadline=time.time()+10; last_error=None
+python <<'PY'
+import sys
+import time
+import urllib.request
+
+opener = urllib.request.build_opener(
+    urllib.request.ProxyHandler({"http": "http://127.0.0.1:8080"})
+)
+deadline = time.time() + 10
+last_error = "unknown error"
+
 while time.time() < deadline:
     try:
-        response = opener.open('http://__health.thor/', timeout=2)
-        sys.exit(0 if response.status == 200 else 1)
+        response = opener.open("http://__health.thor/", timeout=2)
+        status = getattr(response, "status", None)
+        if status == 200:
+            sys.exit(0)
+        last_error = f"unexpected status: {status}"
     except Exception as exc:
-        last_error = exc
-        time.sleep(0.5)
-raise SystemExit(f'mitmproxy addon smoke test failed: {last_error}')"
+        last_error = str(exc)
+    time.sleep(0.5)
+
+raise SystemExit(f"mitmproxy addon smoke test failed: {last_error}")
+PY
 
 wait "$MITMPROXY_PID"
