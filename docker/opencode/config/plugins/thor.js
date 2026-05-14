@@ -80,6 +80,10 @@ export const applySearchScopePolicy = (tool, args, options = {}) => {
   const broadPath = explicitPath === undefined || BROAD_ROOTS.has(explicitPath);
   const scopedValue = next[scopedField];
 
+  if (typeof scopedValue === "string" && hasTraversal(scopedValue)) {
+    throw searchScopeError(`Refusing ${tool} with traversal in ${scopedField}.`);
+  }
+
   if (
     explicitPath !== undefined &&
     !BROAD_ROOTS.has(explicitPath) &&
@@ -89,9 +93,6 @@ export const applySearchScopePolicy = (tool, args, options = {}) => {
   }
 
   if (typeof scopedValue === "string" && path.posix.isAbsolute(scopedValue)) {
-    if (hasTraversal(scopedValue)) {
-      throw searchScopeError(`Refusing ${tool} with traversal in absolute ${scopedField}.`);
-    }
     if (!broadPath) {
       throw searchScopeError(
         `Refusing ${tool} with both explicit path ${explicitPath} and absolute ${scopedField}.`,

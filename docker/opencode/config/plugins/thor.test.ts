@@ -60,6 +60,19 @@ describe("Thor OpenCode search scope policy", () => {
     expect(() =>
       applySearchScopePolicy("glob", {
         path: "/workspace/repos/thor",
+        pattern: "../**/*",
+      }),
+    ).toThrow(/traversal in pattern/);
+    expect(() =>
+      applySearchScopePolicy("grep", {
+        path: "/workspace/repos/thor",
+        pattern: "TODO",
+        include: "../**/*",
+      }),
+    ).toThrow(/traversal in include/);
+    expect(() =>
+      applySearchScopePolicy("glob", {
+        path: "/workspace/repos/thor",
         pattern: "/workspace/repos/thor/**/*.ts",
       }),
     ).toThrow(/both explicit path/);
