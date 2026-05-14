@@ -1150,6 +1150,23 @@ describe("validateGhArgs", () => {
       ).toBeNull();
     });
 
+    it("allows --repo before the numeric selector on commands that hardcode args[2]", () => {
+      // The repo override appears between the subcommand and the selector;
+      // the stripper relocates the selector to args[2] for per-command
+      // validators that hardcode that position.
+      expect(validateGhArgs(["issue", "view", "--repo", "owner/repo", "42"])).toBeNull();
+      expect(validateGhArgs(["issue", "view", "-R", "owner/repo", "42"])).toBeNull();
+      expect(validateGhArgs(["issue", "view", "--repo=owner/repo", "42"])).toBeNull();
+      expect(validateGhArgs(["issue", "view", "-Rowner/repo", "42"])).toBeNull();
+      expect(validateGhArgs(["run", "view", "--repo", "owner/repo", "123"])).toBeNull();
+      expect(validateGhArgs(["run", "view", "--repo", "owner/repo", "123", "--log"])).toBeNull();
+      expect(validateGhArgs(["run", "view", "-R", "owner/repo", "123", "--log-failed"])).toBeNull();
+      expect(validateGhArgs(["run", "watch", "--repo", "owner/repo", "456"])).toBeNull();
+      expect(validateGhArgs(["workflow", "view", "--repo", "owner/repo", "ci.yml"])).toBeNull();
+      expect(validateGhArgs(["release", "view", "--repo", "owner/repo", "latest"])).toBeNull();
+      expect(validateGhArgs(["release", "view", "-R", "owner/repo", "v1.2.3"])).toBeNull();
+    });
+
     it("blocks --repo on write-shape gh commands", () => {
       expectGhDenied(["pr", "create", "--repo", "org/repo", "--title", "x", "--body", "y"]);
       expectGhDenied(["pr", "comment", "123", "--repo", "org/repo", "--body", "x"]);
