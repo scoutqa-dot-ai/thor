@@ -1,0 +1,25 @@
+docker/ingress/nginx-template.test.ts
+  b477054f3cb440cd 101,105-115
+README.md
+  b477054f3cb440cd 213,215-216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a2441fb4105caf008a62eca075bc168099d87a9c",
+  "prompts": {
+    "b477054f3cb440cd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7be43587-7d7d-4723-9e66-c1f25cbf2260",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 16,
+      "total_deletions": 8,
+      "accepted_lines": 15,
+      "overriden_lines": 0
+    }
+  }
+}
