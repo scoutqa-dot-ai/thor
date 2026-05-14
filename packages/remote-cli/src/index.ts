@@ -104,7 +104,6 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
 
 function registerGitCorrelationAlias(
   sessionId: string | undefined,
-  cmd: "git" | "gh",
   args: string[],
   cwd: string,
 ): void {
@@ -117,7 +116,7 @@ function registerGitCorrelationAlias(
     logError(log, "alias_registration_error", result.error.message, { sessionId, correlationKey });
     return;
   }
-  logInfo(log, "alias_registered", { sessionId, correlationKey, source: cmd });
+  logInfo(log, "alias_registered", { sessionId, correlationKey, source: "git" });
 }
 
 function rewriteSingleValueFlag(
@@ -490,7 +489,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       });
       const result = await execCommand("git", effectiveArgs, effectiveCwd);
       if ((result.exitCode ?? 0) === 0) {
-        registerGitCorrelationAlias(ids.sessionId, "git", effectiveArgs, effectiveCwd);
+        registerGitCorrelationAlias(ids.sessionId, effectiveArgs, effectiveCwd);
       }
       res.json(result);
     } catch (err) {
@@ -529,9 +528,6 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
       const result = await execCommand("gh", effectiveArgs, cwd);
-      if ((result.exitCode ?? 0) === 0) {
-        registerGitCorrelationAlias(ids.sessionId, "gh", effectiveArgs, cwd);
-      }
       res.json(result);
     } catch (err) {
       logError(

@@ -8,12 +8,6 @@ const GIT_BRANCH_PREFIX = "git:branch:";
 export const ANCHOR_LOCK_PREFIX = "anchor:";
 export const SESSION_LOCK_PREFIX = "session:";
 
-const GIT_CORRELATION_SUBCOMMANDS = new Set(["push", "checkout", "switch", "worktree"]);
-
-function isGitCorrelationCommand(args: string[]): boolean {
-  return args.length > 0 && GIT_CORRELATION_SUBCOMMANDS.has(args[0]);
-}
-
 const SlackPostMessageInput = z.object({
   channel: z.string().optional(),
   thread_ts: z.string().optional(),
@@ -41,42 +35,19 @@ function extractBranchFromGitArgs(args: string[]): string | undefined {
   const subcommand = args[0];
 
   if (subcommand === "push") {
+    if (args.includes("--dry-run")) return undefined;
     const positional = args.slice(1).filter((a) => !a.startsWith("-"));
-    const raw = positional.length >= 2 ? positional[positional.length - 1] : undefined;
-    if (!raw) return undefined;
-    const ref = raw.includes(":") ? raw.split(":").pop()! : raw;
-    return ref.replace(/^refs\/heads\//, "");
-  }
-
-  if (subcommand === "checkout" || subcommand === "switch") {
-    const positional: string[] = [];
-    for (let i = 1; i < args.length; i++) {
-      if (["-b", "-c", "-B", "-C"].includes(args[i])) {
-        i++;
-        if (i < args.length) positional.push(args[i]);
-      } else if (!args[i].startsWith("-")) {
-        positional.push(args[i]);
-      }
-    }
-    return positional[0]?.replace(/^origin\//, "");
-  }
-
-  if (subcommand === "worktree" && args[1] === "add") {
-    const wtArgs = args.slice(2);
-    if (wtArgs.includes("--detach")) return undefined;
-    for (let i = 0; i < wtArgs.length; i++) {
-      if (wtArgs[i] === "-b" || wtArgs[i] === "-B") return wtArgs[i + 1];
-    }
-    const positional = wtArgs.filter((a) => !a.startsWith("-"));
-    if (positional[1]) return positional[1].replace(/^origin\//, "");
-    return positional[0]?.split("/").pop();
+    if (positional.length !== 2 || positional[0] !== "origin") return undefined;
+    const prefix = "HEAD:refs/heads/";
+    const refspec = positional[1];
+    return refspec.startsWith(prefix) ? refspec.slice(prefix.length) : undefined;
   }
 
   return undefined;
 }
 
 export function computeGitCorrelationKey(args: string[], cwd: string): string | undefined {
-  if (!isGitCorrelationCommand(args)) return undefined;
+  if (args[0] !== "push") return undefined;
   const branch = extractBranchFromGitArgs(args);
   const repo = inferRepoFromPath(cwd);
   if (!branch || !repo) return undefined;

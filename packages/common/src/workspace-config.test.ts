@@ -128,6 +128,7 @@ describe("loadWorkspaceConfig", () => {
         {
           host: "api.example.com",
           path_prefix: "/v1/",
+          path_suffix: "/attachments",
           headers: { Authorization: "Bearer ${EXAMPLE_TOKEN}" },
         },
         {
@@ -142,6 +143,7 @@ describe("loadWorkspaceConfig", () => {
     const config = loadWorkspaceConfig(path);
     expect(config.mitmproxy?.[0].host).toBe("api.example.com");
     expect(config.mitmproxy?.[0].path_prefix).toBe("/v1/");
+    expect(config.mitmproxy?.[0].path_suffix).toBe("/attachments");
     expect(config.mitmproxy?.[1].host_suffix).toBe(".example.internal");
     expect(config.mitmproxy?.[1].readonly).toBe(true);
     expect(config.mitmproxy_passthrough).toEqual(["api.openai.com", ".openai.com"]);
@@ -193,6 +195,21 @@ describe("loadWorkspaceConfig", () => {
         {
           host: "api.example.com",
           path_prefix: "v1",
+          headers: { Authorization: "Bearer ${TOKEN}" },
+        },
+      ],
+    });
+
+    expect(() => loadWorkspaceConfig(path)).toThrow('Invalid string: must start with "/"');
+  });
+
+  it("rejects mitmproxy rules with invalid path_suffix", () => {
+    const path = writeConfig("config.json", {
+      repos: {},
+      mitmproxy: [
+        {
+          host: "api.example.com",
+          path_suffix: "attachments",
           headers: { Authorization: "Bearer ${TOKEN}" },
         },
       ],
