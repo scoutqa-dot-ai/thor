@@ -52,37 +52,16 @@ function routeDecision(config: string, requestPath: string, user: string): strin
   throw new Error(`unexpected route block for ${requestPath}`);
 }
 
-function vouchManagedDomainAllows(domains: string, email: string): boolean {
-  const [, emailDomain = ""] = email.split("@");
-  return domains
-    .split(",")
-    .map((entry) => entry.trim())
-    .some((entry) => emailDomain === entry || emailDomain.endsWith(`.${entry}`));
-}
-
-function thorAdminEmailsRegex(emails: string): string {
-  return emails
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => entry.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("|");
-}
-
 describe("ingress auth split", () => {
   const compose = readFileSync(resolve(repoRoot, "docker-compose.yml"), "utf8");
   const template = readFileSync(resolve(repoRoot, "docker/ingress/nginx.conf.template"), "utf8");
 
   it("configures Vouch with managed email domains and comma-separated Thor admin emails", () => {
-    expect(compose).toContain("VOUCH_DOMAINS=${VOUCH_ALLOWED_EMAIL_DOMAINS:-scoutqa.cc}");
-    expect(compose).not.toContain("VOUCH_WHITELIST=");
-    expect(vouchManagedDomainAllows("scoutqa.cc", "alice@scoutqa.cc")).toBe(true);
-    expect(vouchManagedDomainAllows("scoutqa.cc", "alice@sub.scoutqa.cc")).toBe(true);
-    expect(vouchManagedDomainAllows("scoutqa.cc", "alice@example.com")).toBe(false);
-    expect(compose).toContain("THOR_ADMIN_EMAILS=${THOR_ADMIN_EMAILS:?set THOR_ADMIN_EMAILS}");
-    expect(thorAdminEmailsRegex("admin@scoutqa.cc, owner@scoutqa.cc")).toBe(
-      "admin@scoutqa\\.cc|owner@scoutqa\\.cc",
+    expect(compose).toContain(
+      "VOUCH_DOMAINS=${VOUCH_ALLOWED_EMAIL_DOMAINS:-scoutqa.cc},${VOUCH_COOKIE_DOMAIN:-localhost}",
     );
+    expect(compose).not.toContain("VOUCH_WHITELIST=");
+    expect(compose).toContain("THOR_ADMIN_EMAILS=${THOR_ADMIN_EMAILS:?set THOR_ADMIN_EMAILS}");
   });
 
   it("runs the admin-email regex hook before nginx envsubst", () => {
@@ -99,7 +78,6 @@ describe("ingress auth split", () => {
   });
 
   it("gates the OpenCode SPA root by admin email", () => {
-    expect(template).toContain('~^(${THOR_ADMIN_EMAILS_REGEX})$ "http://opencode:4096";');
     expect(template).toContain('default "http://127.0.0.1:8080/__opencode_admin_forbidden";');
 
     expect(routeDecision(template, "/", adminEmails[0])).toBe("opencode");
@@ -117,11 +95,17 @@ describe("ingress auth split", () => {
   });
 
   it("gates admin UI routes by admin email", () => {
-    expect(template).toContain('~^(${THOR_ADMIN_EMAILS_REGEX})$ "http://admin:3005";');
-
     expect(routeDecision(template, "/admin/config", adminEmails[0])).toBe("admin");
     expect(routeDecision(template, "/admin/config", adminEmails[1])).toBe("admin");
     expect(routeDecision(template, "/admin/config", "user@scoutqa.cc")).toBe("403");
+  });
+
+  it("forwards the public Host to vouch so JWT site-claim checks see the ingress hostname", () => {
+    const validate = locationBlock(template, "= /vouch/validate");
+    expect(validate).toContain("proxy_set_header Host $http_host;");
+
+    const vouchPublic = locationBlock(template, "/vouch/");
+    expect(vouchPublic).toContain("proxy_set_header Host $http_host;");
   });
 
   it("leaves runner routes domain-authenticated without the OpenCode admin gate", () => {
