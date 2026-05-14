@@ -137,8 +137,6 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `METABASE_DATABASE_ID`              | No       | `remote-cli`                         | Metabase database ID                                                                                                 |
 | `METABASE_URL`                      | No       | `remote-cli`                         | Metabase instance URL                                                                                                |
 | `THOR_ADMIN_EMAILS`                 | Yes      | `ingress`                            | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes                 |
-| `OPENCODE_CPU_LIMIT`                | No       | `opencode`                           | CPU limit for the OpenCode container                                                                                 |
-| `OPENCODE_MEMORY_LIMIT`             | No       | `opencode`                           | Memory limit for the OpenCode container                                                                              |
 | `POSTHOG_API_KEY`                   | Yes      | `remote-cli`                         | PostHog MCP auth                                                                                                     |
 | `RUNNER_BASE_URL`                   | Yes      | `remote-cli`                         | Public base URL for Thor trigger viewer links in PR/Jira content                                                     |
 | `THOR_INTERNAL_SECRET`              | Yes      | `remote-cli`, `gateway`              | Secret-gates gateway↔remote-cli internal APIs                                                                        |
@@ -212,9 +210,10 @@ Rules match by exact host or suffix first, then by optional `path_prefix` and
 
 - OpenCode does not get direct API credentials for MCP upstreams.
 - Vouch allows Google-authenticated users whose email domain matches
-  `VOUCH_ALLOWED_EMAIL_DOMAINS`; OpenCode-backed and `/admin/` ingress routes
-  additionally require one of `THOR_ADMIN_EMAILS`, while `/runner/` viewer routes
-  remain available to any allowed-domain user.
+  `VOUCH_ALLOWED_EMAIL_DOMAINS`; the OpenCode SPA root and `/admin/` ingress
+  routes additionally require one of `THOR_ADMIN_EMAILS`, while `/runner/`
+  viewer routes remain available to any allowed-domain user. Static OpenCode
+  assets (`/assets/`, `/oc-theme-preload.js`) bypass Vouch for performance.
 - `remote-cli` enforces MCP allow/approve policy server-side and stores approvals under `/workspace/data/approvals`.
 - Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution and `POST /internal/exec`.
 - `git` uses GitHub App installation tokens through `GIT_ASKPASS` when `owners.<owner>.github_app_installation_id` is configured and the target owner can be resolved; `GITHUB_PAT` is only a fallback during command execution.

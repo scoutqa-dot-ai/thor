@@ -63,14 +63,10 @@ server {
         proxy_set_header Connection "";
     }
 
-    # Static OpenCode assets — protected by Google SSO and OpenCode admin email.
+    # Static assets — no auth required, bypass vouch for performance
     location /assets/ {
-        auth_request /vouch/validate;
-
-        auth_request_set $auth_user $upstream_http_x_vouch_user;
-        proxy_set_header X-Vouch-User $auth_user;
-
-        proxy_pass $opencode_admin_upstream;
+        set $opencode http://opencode:4096;
+        proxy_pass $opencode;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
     }
@@ -92,12 +88,8 @@ server {
     }
 
     location = /oc-theme-preload.js {
-        auth_request /vouch/validate;
-
-        auth_request_set $auth_user $upstream_http_x_vouch_user;
-        proxy_set_header X-Vouch-User $auth_user;
-
-        proxy_pass $opencode_admin_upstream;
+        set $opencode http://opencode:4096;
+        proxy_pass $opencode;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
     }

@@ -98,14 +98,21 @@ describe("ingress auth split", () => {
     expect(envHook).not.toContain("set -- ${THOR_ADMIN_EMAILS}");
   });
 
-  it("gates OpenCode-backed routes by admin email", () => {
+  it("gates the OpenCode SPA root by admin email", () => {
     expect(template).toContain('~^(${THOR_ADMIN_EMAILS_REGEX})$ "http://opencode:4096";');
     expect(template).toContain('default "http://127.0.0.1:8080/__opencode_admin_forbidden";');
 
-    for (const path of ["/", "/assets/app.js", "/oc-theme-preload.js"]) {
-      expect(routeDecision(template, path, adminEmails[0])).toBe("opencode");
-      expect(routeDecision(template, path, adminEmails[1])).toBe("opencode");
-      expect(routeDecision(template, path, "user@scoutqa.cc")).toBe("403");
+    expect(routeDecision(template, "/", adminEmails[0])).toBe("opencode");
+    expect(routeDecision(template, "/", adminEmails[1])).toBe("opencode");
+    expect(routeDecision(template, "/", "user@scoutqa.cc")).toBe("403");
+  });
+
+  it("bypasses Vouch for static OpenCode assets", () => {
+    for (const path of ["/assets/", "= /oc-theme-preload.js"]) {
+      const block = locationBlock(template, path);
+      expect(block).not.toContain("auth_request");
+      expect(block).not.toContain("THOR_ADMIN_EMAILS");
+      expect(block).toContain("proxy_pass $opencode;");
     }
   });
 
