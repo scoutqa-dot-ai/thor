@@ -6,13 +6,12 @@ Auto-health report (`findings_2.md`) attributed 119 deduped agent failures to "p
 
 ## Scope
 
-Nine relaxations across `packages/remote-cli/src/policy-gh.ts` and `policy-git.ts`, plus matching tests and `using-gh` / `using-git` skill docs.
+Eight relaxations across `packages/remote-cli/src/policy-gh.ts` and `policy-git.ts`, plus matching tests and `using-gh` / `using-git` skill docs.
 
 ### `gh` relaxations
 
 1. **`gh pr diff <N>` allowed.** Pure read; the "use a worktree instead" guidance is workflow opinion, not safety.
-2. **`gh api graphql` read-only allowed.** Accept when exactly one `-f query=…` is provided, no `--method` is provided or `--method GET`, the query does not contain a `mutation` block, and no `--repo` / `-R` override is present. Writes (`mutation`, `--method POST/PUT/PATCH/DELETE`) remain blocked.
-3. **`gh run view --log-failed` test lock.** Already accepted by the validator (it only gates `args[2]`), but add a regression test so we don't break it later.
+2. **`gh run view --log-failed` test lock.** Already accepted by the validator (it only gates `args[2]`), but add a regression test so we don't break it later.
 
 ### `git` relaxations
 
@@ -31,7 +30,7 @@ Land this plan document. Single commit.
 
 ### Phase 2 — `gh` policy relaxations
 
-- `policy-gh.ts`: allow `pr diff`; allow GraphQL read shape. `--repo`/`-R` remains denied across the whole gh surface.
+- `policy-gh.ts`: allow `pr diff`. `--repo`/`-R` remains denied across the whole gh surface, and `gh api graphql` remains denied.
 - `policy.test.ts`: extend the gh suite with positive cases for each relaxation and locked negative cases (still-blocked writes/mutations).
 - `using-gh/SKILL.md`: document the new surface.
 
@@ -59,9 +58,7 @@ Exit criteria: full `pnpm test` passes; `pnpm typecheck` clean.
 | Carry rewritten cwd through `ResolvedGitArgs` instead of mutating args in place.                   | Keeps `validateCwd` enforcement in `/exec/git` consistent with the rewritten path, and avoids leaking `-C` into the actual `git` invocation. |
 | Tag list-mode `--sort` / `--format` rather than dropping the list-mode requirement.                | Tag creation needs a positional; relaxing to "anything in list mode" preserves the deny on creation.                                         |
 | Worktree `--detach` keeps path-prefix and structural checks but drops the path-equals-branch rule. | The branch isn't known for a detached worktree — the only constraint left is "stays inside `/workspace/worktrees/<repo>/<freeform>`".        |
-| GraphQL allowed only when no `mutation` keyword appears in `-f query=`.                            | Coarse but matches the spirit of the existing REST policy (implicit GET only). Anything fancier is overkill for v1.                          |
 | Bare `git fetch` / `git ls-remote` are rewritten to include `origin`.                              | Git's no-remote behavior can follow the current branch's upstream remote; rewriting preserves the intended origin-only network boundary.     |
 | Detached worktree adds do not register git branch correlation aliases.                             | A detached worktree's commit-ish is not a branch, so aliasing it would misroute future branch events such as `origin/main` review worktrees. |
 | `git -C` rewrites to the target realpath after rejecting raw `..` traversal.                       | This accepts harmless normalized paths such as `./` while keeping traversal attempts out of the policy surface.                              |
 | `git ls-remote` uses an explicit read-only flag allowlist.                                         | Flags such as `--upload-pack` alter remote execution behavior, so only inspection flags are accepted.                                        |
-| GraphQL requires exactly one `query=` raw field.                                                   | Non-query raw fields are useful for variables, but the policy needs an actual query body to validate read-only intent.                       |

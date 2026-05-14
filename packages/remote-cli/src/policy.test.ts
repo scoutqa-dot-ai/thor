@@ -1029,42 +1029,6 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["pr", "review", "123", "--comment", "--body", "--help"])).toBeNull();
     });
 
-    it("allows gh api graphql read queries", () => {
-      expect(
-        validateGhArgs(["api", "graphql", "-f", "query=query { viewer { login } }"]),
-      ).toBeNull();
-      expect(
-        validateGhArgs([
-          "api",
-          "graphql",
-          "--raw-field",
-          'query=query Foo { repository(owner: "acme", name: "web") { name } }',
-          "--jq",
-          ".data.repository.name",
-        ]),
-      ).toBeNull();
-      expect(
-        validateGhArgs([
-          "api",
-          "graphql",
-          "--method",
-          "GET",
-          "-f",
-          "query=query { viewer { login } }",
-        ]),
-      ).toBeNull();
-      expect(
-        validateGhArgs([
-          "api",
-          "graphql",
-          "-f",
-          "query=query($owner: String!) { repositoryOwner(login: $owner) { login } }",
-          "-f",
-          "owner=acme",
-        ]),
-      ).toBeNull();
-    });
-
     it("allows gh run view --log and --log-failed for CI log inspection", () => {
       expect(validateGhArgs(["run", "view", "123", "--log"])).toBeNull();
       expect(validateGhArgs(["run", "view", "123", "--log-failed"])).toBeNull();
@@ -1413,7 +1377,6 @@ describe("validateGhArgs", () => {
 
   describe("gh api", () => {
     it("blocks unsafe gh api execution forms", () => {
-      // graphql without a query body is not a useful read.
       expectGhDenied(["api", "graphql"]);
       expectGhDenied(["api", "-X", "GET", "repos/org/repo"]);
       expectGhDenied(["api", "repos/org/repo", "--method", "GET"]);
@@ -1425,46 +1388,6 @@ describe("validateGhArgs", () => {
       expectGhDenied(["api", "repos/org/repo", "-f", "state=open"]);
       expectGhDenied(["api", "repos/org/repo", "-F", "q=@query.graphql"]);
       expectGhDenied(["api", "--silent", "repos/org/repo"]);
-    });
-
-    it("blocks gh api graphql mutation and write-method shapes", () => {
-      // mutation keyword in the query value is denied.
-      expectGhDenied(["api", "graphql", "-f", "foo=bar"]);
-      expectGhDenied(["api", "graphql", "-f", "query="]);
-      expectGhDenied([
-        "api",
-        "graphql",
-        "-f",
-        "query=query { viewer { login } }",
-        "-f",
-        "query=query { rateLimit { limit } }",
-      ]);
-      expectGhDenied([
-        "api",
-        "graphql",
-        "-f",
-        "query=mutation { addStar(input: {}) { __typename } }",
-      ]);
-      expectGhDenied([
-        "api",
-        "graphql",
-        "--raw-field",
-        "query=mutation Add($id: ID!) { addStar(input: {starrableId: $id}) { __typename } }",
-      ]);
-      // Non-GET methods are denied.
-      expectGhDenied([
-        "api",
-        "graphql",
-        "--method",
-        "POST",
-        "-f",
-        "query=query { viewer { login } }",
-      ]);
-      // -F is denied (can load file content as query body).
-      expectGhDenied(["api", "graphql", "-F", "query=@query.graphql"]);
-      // Help/header/hostname/preview flags are denied.
-      expectGhDenied(["api", "graphql", "-H", "Accept: application/json"]);
-      expectGhDenied(["api", "graphql", "--hostname", "ghe.example.com"]);
     });
 
     it("blocks unsafe gh api review-comment reply shapes", () => {

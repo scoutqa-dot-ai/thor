@@ -8,8 +8,8 @@ description: "GitHub CLI surface allowed by Thor's remote-cli server policy. App
 All `gh` commands go through Thor's remote-cli which enforces:
 
 - **Append-only writes.** Create PRs/issues, post PR/issue comments, submit `--comment`/`--request-changes` reviews. Never approve, merge, edit, or delete.
-- **Repo-targeting flags are blocked.** `--repo`/`-R` is not part of the supported surface — `cd` into the intended worktree or repo and rerun the command. For cross-repo API reads, use explicit REST endpoints such as `repos/<owner>/<repo>/...` or GraphQL query variables without `--repo`/`-R`.
-- **`gh api` is a tiny explicit subset.** REST implicit GET reads are allowed with output shaping. GraphQL is allowed for read queries only (no `mutation` keyword, no non-GET method, no `-F` field loading). One append-only POST shape is allowed for PR review-comment replies.
+- **Repo-targeting flags are blocked.** `--repo`/`-R` is not part of the supported surface — `cd` into the intended worktree or repo and rerun the command. For cross-repo API reads, use explicit REST endpoints such as `repos/<owner>/<repo>/...`.
+- **`gh api` is a tiny explicit subset.** REST implicit GET reads are allowed with output shaping. GraphQL (`gh api graphql`) is blocked. One append-only POST shape is allowed for PR review-comment replies.
 - **PR approval is a human gate.** `gh pr review --approve` is denied.
 - **`gh pr checkout` is denied** because it would mutate the current worktree branch — use the fetch + worktree-add pattern in "Reviewing a PR" below.
 - **`gh pr diff <N>` is allowed** as a read-only shortcut, but a fetched worktree gives a deeper review surface (run tests, grep, build). Prefer the worktree pattern when actually reviewing.
@@ -69,9 +69,7 @@ Required: workflow selector (workflow file name or numeric ID, positional, no fl
 
 ### `gh api`
 
-REST read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages).
-
-GraphQL read path: `gh api graphql -f query=<query> [--jq …] [--template …] [--silent] [--include] [--paginate]`. Exactly one `query=` raw field is required, that query value cannot contain the `mutation` keyword, `--method` must be unset or `GET`, and `-F`/`--field` is blocked (it can load file content as the query body). Pass `-f` (raw-field) only.
+REST read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages). `gh api graphql` is blocked entirely.
 
 Append-only review-comment reply path: the current-repo placeholder endpoint is allowed, as is the explicit endpoint when `<owner>/<repo>` matches the GitHub.com repo resolved from the current cwd's `origin` remote:
 

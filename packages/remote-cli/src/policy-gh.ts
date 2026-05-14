@@ -525,12 +525,8 @@ function validateGhWorkflowRunArgs(args: string[]): string | null {
 
 function validateGhApiArgs(args: string[], cwd?: string): string | null {
   const endpoint = args[1];
-  if (!endpoint || endpoint.startsWith("-")) {
+  if (!endpoint || endpoint.startsWith("-") || endpoint === "graphql") {
     return denyMessage("gh api");
-  }
-
-  if (endpoint === "graphql") {
-    return validateGhApiGraphqlArgs(args);
   }
 
   const mutationShape = ALLOWED_GH_API_MUTATION_SHAPES.find((shape) =>
@@ -548,44 +544,6 @@ function validateGhApiArgs(args: string[], cwd?: string): string | null {
     { name: "template", kind: "value", aliases: ["--template", "-t"] },
   ]);
   if (!parsed || parsed.positionals.length > 0) {
-    return denyMessage("gh api");
-  }
-
-  return null;
-}
-
-function validateGhApiGraphqlArgs(args: string[]): string | null {
-  // GraphQL is allowed read-only: no --method, or --method GET, with a query
-  // body that does not contain a `mutation` block. `-F` (typed field) is
-  // denied because `-F key=@file` can load arbitrary file content as the
-  // query body, which would bypass the substring check.
-  const parsed = scanPolicyArgs(args, 2, [
-    { name: "include", kind: "boolean", aliases: ["--include", "-i"] },
-    { name: "silent", kind: "boolean", aliases: ["--silent"] },
-    { name: "paginate", kind: "boolean", aliases: ["--paginate"] },
-    { name: "jq", kind: "value", aliases: ["--jq", "-q"] },
-    { name: "template", kind: "value", aliases: ["--template", "-t"] },
-    { name: "method", kind: "value", aliases: ["--method", "-X"] },
-    { name: "raw-field", kind: "value", aliases: ["-f", "--raw-field"] },
-  ]);
-  if (!parsed || parsed.positionals.length > 0) {
-    return denyMessage("gh api");
-  }
-
-  const methods = valueFlagValues(parsed, "method");
-  if (methods.length > 1) return denyMessage("gh api");
-  if (methods.length === 1 && methods[0].toUpperCase() !== "GET") {
-    return denyMessage("gh api");
-  }
-
-  const rawFields = valueFlagValues(parsed, "raw-field");
-  if (rawFields.length === 0) return denyMessage("gh api");
-
-  const queryFields = rawFields.filter((value) => value.startsWith("query="));
-  if (queryFields.length !== 1) return denyMessage("gh api");
-
-  const query = queryFields[0].slice("query=".length);
-  if (query.trim().length === 0 || /\bmutation\b/i.test(query)) {
     return denyMessage("gh api");
   }
 
