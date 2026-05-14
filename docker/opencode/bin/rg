@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REAL_RG=/usr/bin/rg
+REAL_RG=${THOR_REAL_RG:-/usr/bin/rg}
+CURRENT_CWD=${THOR_RG_CWD_OVERRIDE:-$(pwd -P)}
 
 is_broad_root() {
 	case "$1" in
@@ -61,7 +62,7 @@ for arg in "$@"; do
 done
 
 if [[ "$absolute_glob" == 1 ]]; then
-	if [[ "$unsafe_positional_path" == 1 ]] || { [[ "$has_positional_path" == 0 ]] && is_broad_root "$(pwd -P)"; }; then
+	if [[ "$unsafe_positional_path" == 1 ]] || { [[ "$has_positional_path" == 0 ]] && is_broad_root "$CURRENT_CWD"; }; then
 		printf '%s\n' "Thor rg guardrail: absolute --glob with a broad search root is blocked. Search from /workspace/<segment> and use a relative --glob." >&2
 		exit 2
 	fi
