@@ -63,6 +63,12 @@ describe("Thor OpenCode search scope policy", () => {
         pattern: "/workspace/repos/thor/**/*.ts",
       }),
     ).toThrow(/both explicit path/);
+    expect(() =>
+      applySearchScopePolicy("glob", {
+        path: "/workspace",
+        pattern: "/workspace/repos/thor",
+      }),
+    ).toThrow(/ambiguous or unsafe/);
   });
 
   it("adds tool-definition guidance for glob and grep only", () => {

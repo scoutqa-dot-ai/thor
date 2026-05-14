@@ -32,8 +32,7 @@ const fixedDirectoryPrefix = (absoluteGlob) => {
 
   if (firstMagicIndex === 0) return undefined;
   if (firstMagicIndex === -1) {
-    if (fixed.length === 0) return undefined;
-    return fixed.length === 1 ? "/" : `/${fixed.slice(0, -1).join("/")}`;
+    return undefined;
   }
   return fixed.length === 0 ? undefined : `/${fixed.join("/")}`;
 };
