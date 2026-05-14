@@ -415,6 +415,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     // codeql[js/missing-rate-limiting]
     // lgtm[js/missing-rate-limiting]
     (req, res) => {
+      // Rate limiting for the Vouch-gated runner viewer is intentionally
+      // enforced at the infrastructure edge, not in the app process.
+      // codeql[js/missing-rate-limiting]
+      // lgtm[js/missing-rate-limiting]
       if (!requireViewerAuth(req, res)) return;
       const anchorId = routeParam(req.params.anchorId);
       if (!isUuidV7(anchorId)) {
@@ -433,6 +437,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     // codeql[js/missing-rate-limiting]
     // lgtm[js/missing-rate-limiting]
     (req, res) => {
+      // Rate limiting for the Vouch-gated runner viewer is intentionally
+      // enforced at the infrastructure edge, not in the app process.
+      // codeql[js/missing-rate-limiting]
+      // lgtm[js/missing-rate-limiting]
       if (!requireViewerAuth(req, res)) return;
       const anchorId = routeParam(req.params.anchorId);
       const triggerId = routeParam(req.params.triggerId);
