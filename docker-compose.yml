@@ -102,7 +102,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import sys, urllib.request; opener=urllib.request.build_opener(urllib.request.ProxyHandler({'http':'http://localhost:8080'})); r=opener.open('http://__health.thor/', timeout=2); sys.exit(0 if r.status == 200 else 1)",
+          "import socket, sys; s=socket.create_connection(('127.0.0.1', 8080), 2); s.close(); sys.exit(0)",
         ]
       interval: 5s
       timeout: 3s
