@@ -20,6 +20,9 @@ vi.mock("./exec.js", () => ({
     if (bin === "gh" && args[0] === "issue" && args[1] === "create") {
       return { stdout: "https://github.com/acme/thor/issues/42\n", stderr: "", exitCode: 0 };
     }
+    if (bin === "gh" && args[0] === "issue" && args[1] === "comment") {
+      return { stdout: "https://github.com/acme/thor/issues/42#issuecomment-1\n", stderr: "", exitCode: 0 };
+    }
     return { stdout: "ok", stderr: "", exitCode: 0 };
   }),
   execCommandStream: vi.fn(),
@@ -139,10 +142,16 @@ describe("gh disclaimer injection", () => {
         `note
 ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
       ]);
+      expect(
+        resolveAlias({
+          aliasType: "github.issue",
+          aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
+        }),
+      ).toBe(anchorParent);
     });
   });
 
-  it("injects into issue create bodies and binds the created issue alias", async () => {
+  it("injects into issue create bodies and binds the created issue alias with GitHub repo basename", async () => {
     bindSessionToAnchor("parent", anchorParent);
     expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
       ok: true,
@@ -166,7 +175,7 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/
       expect(
         resolveAlias({
           aliasType: "github.issue",
-          aliasValue: Buffer.from("github:issue:acme:acme/thor#42").toString("base64url"),
+          aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
         }),
       ).toBe(anchorParent);
     });

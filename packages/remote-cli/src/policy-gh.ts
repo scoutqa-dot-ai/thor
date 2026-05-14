@@ -386,8 +386,30 @@ function validateGhIssueCreateArgs(args: string[]): string | null {
 
   const titles = valueFlagValues(parsed, "title");
   const bodies = valueFlagValues(parsed, "body");
-  if (titles.length !== 1 || bodies.length !== 1) {
-    return denyMessage("gh issue create");
+  if (titles.length > 1) {
+    return denyMessage("gh issue create", {
+      reason: "multiple --title values are ambiguous.",
+      instead: "provide exactly one --title value",
+    });
+  }
+  if (bodies.length > 1) {
+    return denyMessage("gh issue create", {
+      reason: "multiple --body values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body value",
+    });
+  }
+  if (titles.length !== 1) {
+    return denyMessage("gh issue create", {
+      reason: "issue creation requires exactly one explicit --title value.",
+      instead: "provide exactly one --title value",
+    });
+  }
+  if (bodies.length !== 1) {
+    return denyMessage("gh issue create", {
+      reason:
+        "issue creation requires exactly one explicit --body value so Thor can inject the trigger viewer link.",
+      instead: "provide exactly one --body value",
+    });
   }
   return null;
 }

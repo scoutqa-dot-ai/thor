@@ -1123,11 +1123,31 @@ describe("validateGhArgs", () => {
 
     it("blocks issue create without title or body and with unsupported flags", () => {
       expectGhDenied(["issue", "create"]);
-      expectGhDenied(["issue", "create", "--title", "x"]);
-      expectGhDenied(["issue", "create", "--body", "y"]);
+      expectGhDeniedWith(["issue", "create", "--title", "x"], [
+        "requires exactly one explicit --body value",
+        "provide exactly one --body value",
+      ]);
+      expectGhDeniedWith(["issue", "create", "--body", "y"], [
+        "requires exactly one explicit --title value",
+        "provide exactly one --title value",
+      ]);
       expectGhDenied(["issue", "create", "--title", "x", "--body", "y", "--assignee", "alice"]);
       expectGhDenied(["issue", "create", "--title", "x", "--body-file", "body.md"]);
       expectGhDenied(["issue", "create", "--title", "x", "--body", "y", "--repo", "org/repo"]);
+    });
+
+    it("explains duplicate issue create title and body values", () => {
+      expectGhDeniedWith(
+        ["issue", "create", "--title", "x", "--title", "y", "--body", "body"],
+        ["multiple --title values are ambiguous", "provide exactly one --title value"],
+      );
+      expectGhDeniedWith(
+        ["issue", "create", "--title", "x", "--body", "a", "--body", "b"],
+        [
+          "multiple --body values are ambiguous for disclaimer injection",
+          "provide exactly one --body value",
+        ],
+      );
     });
 
     it("requires pr create to include --title and --body", () => {

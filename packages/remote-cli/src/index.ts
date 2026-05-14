@@ -122,36 +122,72 @@ function registerGitCorrelationAlias(
   logInfo(log, "alias_registered", { sessionId, correlationKey, source: cmd });
 }
 
-function localRepoFromCwd(cwd: string): string | undefined {
-  return cwd.match(/\/workspace\/(?:repos|worktrees)\/([^/]+)/)?.[1];
+function buildIssueCorrelationKey(owner: string, repo: string, number: string): string {
+  // Gateway issue correlation uses the GitHub repo basename as the local repo
+  // component. Keep producer-side aliases aligned even when the local worktree
+  // parent directory is not the same as owner/repo's basename.
+  return `github:issue:${repo}:${owner}/${repo}#${number}`;
+}
+
+function parseIssueUrl(stdout: string): { owner: string; repo: string; number: string } | undefined {
+  const match = stdout.match(GITHUB_ISSUE_URL_RE);
+  if (!match) return undefined;
+  const [, owner, repo, number] = match;
+  if (!owner || !repo || !number) return undefined;
+  return { owner, repo, number };
+}
+
+function ownerRepoMatches(
+  cwdRepo: ReturnType<typeof resolveOwnerRepoFromRemote> | undefined,
+  owner: string,
+  repo: string,
+): boolean {
+  return (
+    !cwdRepo ||
+    (cwdRepo.host === "github.com" &&
+      cwdRepo.owner.toLowerCase() === owner.toLowerCase() &&
+      cwdRepo.repo.toLowerCase() === repo.toLowerCase())
+  );
 }
 
 function parseCreatedIssueCorrelationKey(stdout: string, cwd: string): string | undefined {
-  const match = stdout.match(GITHUB_ISSUE_URL_RE);
-  const localRepo = localRepoFromCwd(cwd);
-  if (!match || !localRepo) return undefined;
-  const [, owner, repo, number] = match;
-  if (!owner || !repo || !number) return undefined;
+  const issue = parseIssueUrl(stdout);
+  if (!issue) return undefined;
   const cwdRepo = resolveOwnerRepoFromRemote(cwd);
-  if (
-    cwdRepo &&
-    (cwdRepo.host !== "github.com" ||
-      cwdRepo.owner.toLowerCase() !== owner.toLowerCase() ||
-      cwdRepo.repo.toLowerCase() !== repo.toLowerCase())
-  ) {
-    return undefined;
-  }
-  return `github:issue:${localRepo}:${owner}/${repo}#${number}`;
+  if (!ownerRepoMatches(cwdRepo, issue.owner, issue.repo)) return undefined;
+  return buildIssueCorrelationKey(issue.owner, issue.repo, issue.number);
 }
 
-function registerCreatedIssueCorrelationAlias(
+function parseIssueCommentCorrelationKey(
+  args: string[],
+  cwd: string,
+  stdout: string,
+): string | undefined {
+  if (args[0] !== "issue" || args[1] !== "comment") return undefined;
+  const number = args[2];
+  if (!number) return undefined;
+
+  const cwdRepo = resolveOwnerRepoFromRemote(cwd);
+  if (cwdRepo?.host === "github.com") {
+    return buildIssueCorrelationKey(cwdRepo.owner, cwdRepo.repo, number);
+  }
+
+  const issue = parseIssueUrl(stdout);
+  if (!issue || issue.number !== number) return undefined;
+  return buildIssueCorrelationKey(issue.owner, issue.repo, issue.number);
+}
+
+function registerIssueCorrelationAlias(
   sessionId: string | undefined,
   args: string[],
   cwd: string,
   stdout: string,
 ): void {
-  if (!sessionId || args[0] !== "issue" || args[1] !== "create") return;
-  const correlationKey = parseCreatedIssueCorrelationKey(stdout, cwd);
+  if (!sessionId || args[0] !== "issue") return;
+  const correlationKey =
+    args[1] === "create"
+      ? parseCreatedIssueCorrelationKey(stdout, cwd)
+      : parseIssueCommentCorrelationKey(args, cwd, stdout);
   if (!correlationKey) return;
   const result = appendCorrelationAlias(sessionId, correlationKey);
   if (!result.ok) {
@@ -566,7 +602,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       const result = await execCommand("gh", effectiveArgs, cwd);
       if ((result.exitCode ?? 0) === 0) {
         registerGitCorrelationAlias(ids.sessionId, "gh", effectiveArgs, cwd);
-        registerCreatedIssueCorrelationAlias(ids.sessionId, effectiveArgs, cwd, result.stdout);
+        registerIssueCorrelationAlias(ids.sessionId, effectiveArgs, cwd, result.stdout);
       }
       res.json(result);
     } catch (err) {
