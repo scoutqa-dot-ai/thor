@@ -96,13 +96,10 @@ function normalizeOwnerRepo(
   repoWithSuffix: string | undefined,
 ): OwnerRepo | undefined {
   if (!host || !owner || !repoWithSuffix) return undefined;
-  const repo = repoWithSuffix.endsWith(".git")
-    ? repoWithSuffix.slice(0, -".git".length)
-    : repoWithSuffix;
+  const repo = repoWithSuffix.endsWith(".git") ? repoWithSuffix.slice(0, -".git".length) : repoWithSuffix;
   const normalizedHost = host.toLowerCase();
   const safeSegment = /^[A-Za-z0-9._-]+$/;
-  if (!safeSegment.test(normalizedHost) || !safeSegment.test(owner) || !safeSegment.test(repo))
-    return undefined;
+  if (!safeSegment.test(normalizedHost) || !safeSegment.test(owner) || !safeSegment.test(repo)) return undefined;
   return { host: normalizedHost, owner, repo };
 }
 

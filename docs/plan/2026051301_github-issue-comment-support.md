@@ -165,8 +165,8 @@ Exit criteria:
 | Mention-gate pure issue comments                                      | Prevents every issue discussion comment from waking Thor; the user must intentionally invoke the app.                               |
 | Keep PR-backed issue comments on `git:branch:`                        | Existing PR conversations should continue with branch/worktree sessions and CI/push aliases.                                        |
 | Reuse the existing disclaimer footer builder                          | Keeps issue comments traceable to the same trigger viewer and fail-closed behavior as PR comments/reviews.                          |
-| Allow non-mention comments only on already-engaged pure issues        | Lets ongoing GitHub issue sessions continue naturally without broadening first-contact intake for unrelated issue discussions.      |
-| Bind `gh issue create` from the returned issue URL                    | Thor-authored issues need the durable `github:issue:` alias immediately so later comments can wake the same session.                |
+| Allow non-mention comments only on already-engaged pure issues         | Lets ongoing GitHub issue sessions continue naturally without broadening first-contact intake for unrelated issue discussions.       |
+| Bind `gh issue create` from the returned issue URL                     | Thor-authored issues need the durable `github:issue:` alias immediately so later comments can wake the same session.                 |
 
 ## Risks and mitigations
 

@@ -5,12 +5,7 @@ import type { AddressInfo } from "node:net";
 import { readFileSync, rmSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { normalize as normalizePosix } from "node:path/posix";
-import {
-  appendAlias,
-  appendSessionEvent,
-  formatThorDisclaimerFooter,
-  resolveAlias,
-} from "@thor/common";
+import { appendAlias, appendSessionEvent, formatThorDisclaimerFooter, resolveAlias } from "@thor/common";
 
 vi.hoisted(() => {
   process.env.WORKLOG_DIR = "/tmp/thor-remote-cli-gh-test/worklog";
@@ -26,11 +21,7 @@ vi.mock("./exec.js", () => ({
       return { stdout: "https://github.com/acme/thor/issues/42\n", stderr: "", exitCode: 0 };
     }
     if (bin === "gh" && args[0] === "issue" && args[1] === "comment") {
-      return {
-        stdout: "https://github.com/acme/thor/issues/42#issuecomment-1\n",
-        stderr: "",
-        exitCode: 0,
-      };
+      return { stdout: "https://github.com/acme/thor/issues/42#issuecomment-1\n", stderr: "", exitCode: 0 };
     }
     return { stdout: "ok", stderr: "", exitCode: 0 };
   }),

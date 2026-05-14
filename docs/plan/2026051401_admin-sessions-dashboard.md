@@ -25,12 +25,12 @@ Out of scope:
 
 ## Route shape
 
-| Route                          | Purpose                                                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /admin/sessions`          | Full dashboard page with nav back to config, signed-in user metadata, summary cards, and initial table.                         |
-| `GET /admin/sessions/fragment` | HTML fragment polled by htmx every 10s; returns summary + table only.                                                           |
-| `GET /admin/config`            | Existing config editor; add a small nav link to sessions.                                                                       |
-| Admin catch-all                | Keep redirect behavior, but redirect to `/admin/config` as today unless a later navigation plan changes the admin landing page. |
+| Route | Purpose |
+| --- | --- |
+| `GET /admin/sessions` | Full dashboard page with nav back to config, signed-in user metadata, summary cards, and initial table. |
+| `GET /admin/sessions/fragment` | HTML fragment polled by htmx every 10s; returns summary + table only. |
+| `GET /admin/config` | Existing config editor; add a small nav link to sessions. |
+| Admin catch-all | Keep redirect behavior, but redirect to `/admin/config` as today unless a later navigation plan changes the admin landing page. |
 
 The admin app remains behind nginx/vouch. The sessions page is read-only and does not require additional auth or CSRF handling because it performs no writes.
 
@@ -138,12 +138,12 @@ Exit criteria:
 
 ## Decision Log
 
-| #   | Decision                                                     | Rationale                                                                                                                              | Rejected                                                               |
-| --- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| 1   | Reuse session event logs and aliases; no DB or sidecar index | Matches the existing source of truth and keeps v1 operationally simple.                                                                | SQLite/status JSON cache                                               |
-| 2   | “Stuck” means open trigger with stale last event             | Event logs cannot prove process death, but silence past the existing 5-minute viewer warning is the operator signal needed for triage. | Mark all unclosed triggers as stuck; require OpenCode process liveness |
-| 3   | Put derivation in `@thor/common`                             | The state algorithm is domain logic over anchors/logs and should be testable without Express.                                          | Parse logs directly in admin views                                     |
-| 4   | htmx polling fragment                                        | Consistent with existing admin UI and avoids a frontend build.                                                                         | SPA, websocket/SSE for v1                                              |
+| # | Decision | Rationale | Rejected |
+| --- | --- | --- | --- |
+| 1 | Reuse session event logs and aliases; no DB or sidecar index | Matches the existing source of truth and keeps v1 operationally simple. | SQLite/status JSON cache |
+| 2 | “Stuck” means open trigger with stale last event | Event logs cannot prove process death, but silence past the existing 5-minute viewer warning is the operator signal needed for triage. | Mark all unclosed triggers as stuck; require OpenCode process liveness |
+| 3 | Put derivation in `@thor/common` | The state algorithm is domain logic over anchors/logs and should be testable without Express. | Parse logs directly in admin views |
+| 4 | htmx polling fragment | Consistent with existing admin UI and avoids a frontend build. | SPA, websocket/SSE for v1 |
 
 ## Verification checklist
 

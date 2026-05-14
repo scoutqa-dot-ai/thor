@@ -187,14 +187,9 @@ export function renderSessionsFragment(props: SessionsProps): string {
   const body = props.rows.length
     ? `<table><thead><tr><th>Status</th><th>Anchor</th><th>Session</th><th>External keys</th><th>Trigger</th><th>Started</th><th>Last event</th><th>Age / idle</th><th>Diagnostics</th></tr></thead><tbody>${props.rows
         .map((row) => {
-          const owner =
-            row.ownerSessionId && row.ownerSessionId !== row.currentSessionId
-              ? `<br><small>owner ${esc(row.ownerSessionId)}</small>`
-              : "";
+          const owner = row.ownerSessionId && row.ownerSessionId !== row.currentSessionId ? `<br><small>owner ${esc(row.ownerSessionId)}</small>` : "";
           const keys = row.externalKeys.length
-            ? row.externalKeys
-                .map((k) => `<span class="chip">${esc(k.aliasType)}=${esc(k.aliasValue)}</span>`)
-                .join(" ")
+            ? row.externalKeys.map((k) => `<span class="chip">${esc(k.aliasType)}=${esc(k.aliasValue)}</span>`).join(" ")
             : "—";
           const trigger = row.triggerId
             ? `<a href="/runner/v/${encodeURIComponent(row.anchorId)}/${encodeURIComponent(row.triggerId)}">${esc(short(row.triggerId))}</a>`
