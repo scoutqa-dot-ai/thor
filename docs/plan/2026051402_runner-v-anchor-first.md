@@ -60,7 +60,7 @@ Work:
 
 Exit criteria:
 
-- Tests cover known anchor with no trigger, known anchor with recent trigger(s), stale/missing requested trigger fallback, old trigger-shaped link compatibility, unauthenticated 401, malformed IDs/unknown anchors, and safe escaping.
+- Tests cover known anchor with no trigger, known anchor with recent trigger(s), stale/missing requested trigger fallback, old trigger-shaped link compatibility, malformed IDs/unknown anchors, and safe escaping.
 - `pnpm --filter @thor/common test` and `pnpm --filter @thor/runner test` targeted suites pass.
 
 ### Phase 2 — Anchor-first footers and direct GitHub writes

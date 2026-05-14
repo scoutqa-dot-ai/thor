@@ -401,21 +401,11 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       .send(renderSlicePage(anchorId, triggerId, owner.sessionId, reverseLookupAnchor(anchorId), slice));
   }
 
-  function requireViewerAuth(req: express.Request, res: express.Response): boolean {
-    if (req.get("X-Vouch-User")) return true;
-    res
-      .status(401)
-      .type("html")
-      .send(renderPage("Unauthorized", "Sign in with Vouch to view Thor trigger history."));
-    return false;
-  }
-
   // Rate limiting for the Vouch-gated runner viewer is intentionally enforced
   // at the infrastructure edge, not in the app process.
   // codeql[js/missing-rate-limiting]
   // lgtm[js/missing-rate-limiting]
   function handleAnchorViewer(req: express.Request, res: express.Response): void {
-    if (!requireViewerAuth(req, res)) return;
     const anchorId = routeParam(req.params.anchorId);
     if (!isUuidV7(anchorId)) {
       res
@@ -432,7 +422,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   // codeql[js/missing-rate-limiting]
   // lgtm[js/missing-rate-limiting]
   function handleTriggerViewer(req: express.Request, res: express.Response): void {
-    if (!requireViewerAuth(req, res)) return;
     const anchorId = routeParam(req.params.anchorId);
     const triggerId = routeParam(req.params.triggerId);
 

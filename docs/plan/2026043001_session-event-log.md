@@ -284,7 +284,7 @@ No HMAC. No TTL query params. UUIDv7 ids on `anchorId` and `triggerId` (~148 bit
 
 Ingress mapping (in `docker/ingress/nginx.conf`): `location /runner/ { ... }` proxies to the runner service. This single mount lets future runner-owned routes (admin tools, debug endpoints, etc.) ship without per-route ingress changes.
 
-The runner reads `X-Vouch-User` from incoming requests on `/runner/*` (matches the existing `packages/admin/src/app.ts` pattern) and treats absence as 401.
+Ingress/Vouch is the auth boundary for `/runner/*`. The runner viewer consumes `X-Vouch-User` when present for context/debugging, but does not enforce an additional app-layer 401 check.
 
 ### States
 
@@ -300,7 +300,7 @@ The runner reads `X-Vouch-User` from incoming requests on `/runner/*` (matches t
 | Oversized slice                                                    | 200             | "Slice truncated for display" marker; metadata-only render (status pill, hero, outcome card). No raw escape hatch.                                              |
 | Redacted fields present                                            | 200             | Inline `[redacted: tool output, NN bytes]` markers                                                                                                              |
 | Unknown anchor/trigger                                             | 404             | Branded 404                                                                                                                                                     |
-| Missing `X-Vouch-User`                                             | 401             | Vouch redirects to OAuth                                                                                                                                        |
+| Missing Vouch session at ingress                                   | 401/redirect    | Vouch redirects to OAuth before the request reaches the runner                                                                                                  |
 | Backend failure (parse, FS error)                                  | 503             | Branded retry copy                                                                                                                                              |
 
 ### Information hierarchy
@@ -535,7 +535,7 @@ Exit criteria:
 
 Scope:
 
-1. Add `GET /runner/v/:sessionId/:triggerId` route to the runner service. Single endpoint — no `/raw` variant; every byte rendered goes through the redaction allowlist. Routes read `X-Vouch-User`; absence → 401.
+1. Add `GET /runner/v/:sessionId/:triggerId` route to the runner service. Single endpoint — no `/raw` variant; every byte rendered goes through the redaction allowlist. Ingress/Vouch remains the auth boundary for `/runner/*`.
 2. Update `docker/ingress/nginx.conf` with a `location /runner/ { ... }` block proxying to the runner service, behind the existing Vouch flow used for `/admin/`.
 3. Server-side render HTML using the hierarchy in this plan (hero / outcome / collapsed timeline).
 4. Implement the state matrix from "Trigger Viewer" above: `completed` / `error` / `aborted` (terminal); `crashed` (superseded); `in_flight` with `<meta refresh>` and a soft staleness banner if the last record is > 5 min old; empty / oversized / redacted variants; branded 401/404/503.
@@ -549,7 +549,7 @@ Exit criteria:
 - Authenticated request renders the requested trigger slice with the correct status from `readTriggerSlice` (one of `completed` / `error` / `aborted` / `crashed` / `in_flight`).
 - A trigger that was superseded by a later `trigger_start` for the same session renders with the red "Crashed" pill and abandonment copy — without any time threshold required.
 - A trigger with no terminal record and no superseder renders as "Running" with `<meta refresh>`; the soft staleness banner appears only when the last record is older than 5 min.
-- Missing `X-Vouch-User` returns 401 (Vouch handles the OAuth redirect upstream of the runner).
+- Missing Vouch auth is handled upstream at ingress; unauthenticated browser requests are redirected before they reach the runner.
 - Unknown session/trigger returns branded 404.
 - Redaction default-deny is enforced (snapshot tests assert no raw tool output appears in HTML for non-allowlisted fields).
 - Mobile snapshot at 375px viewport renders single-column with 16px base font.
