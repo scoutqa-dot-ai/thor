@@ -53,6 +53,7 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "pr list",
   "pr status",
   "pr checks",
+  "pr diff",
   "pr create",
   "issue create",
   "pr comment",
@@ -92,12 +93,6 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
   "gh pr checkout": {
     reason: "pr checkout would switch the current worktree branch.",
-    instead:
-      "git fetch origin pull/<N>/head:pr-<N> && git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>",
-  },
-  "gh pr diff": {
-    reason:
-      "PR review should happen from a fetched worktree so tests and code search are available.",
     instead:
       "git fetch origin pull/<N>/head:pr-<N> && git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>",
   },

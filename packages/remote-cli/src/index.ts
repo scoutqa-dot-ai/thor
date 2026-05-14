@@ -63,7 +63,8 @@ const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
-const GITHUB_ISSUE_URL_RE = /https:\/\/github\.com\/([^\s/]+)\/([^\s/]+)\/issues\/(\d+)(?:\b|[/?#])/;
+const GITHUB_ISSUE_URL_RE =
+  /https:\/\/github\.com\/([^\s/]+)\/([^\s/]+)\/issues\/(\d+)(?:\b|[/?#])/;
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   loadRemoteCliGitHubEnv(env);
@@ -128,7 +129,9 @@ function buildIssueCorrelationKey(owner: string, repo: string, number: string): 
   return `github:issue:${repo}:${owner}/${repo}#${number}`;
 }
 
-function parseIssueUrl(stdout: string): { owner: string; repo: string; number: string } | undefined {
+function parseIssueUrl(
+  stdout: string,
+): { owner: string; repo: string; number: string } | undefined {
   const match = stdout.match(GITHUB_ISSUE_URL_RE);
   if (!match) return undefined;
   const [, owner, repo, number] = match;
@@ -550,17 +553,24 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
       const effectiveArgs = gitResolution.args;
+      const effectiveCwd = gitResolution.cwd ?? cwd;
+      const effectiveCwdError = validateCwd(effectiveCwd);
+      if (effectiveCwdError) {
+        res.status(400).json({ stdout: "", stderr: effectiveCwdError, exitCode: 1 });
+        return;
+      }
       const ids = thorIds(req);
 
       logInfo(log, "exec_git", {
         args,
         ...(JSON.stringify(effectiveArgs) !== JSON.stringify(args) ? { effectiveArgs } : {}),
         cwd,
+        ...(effectiveCwd !== cwd ? { effectiveCwd } : {}),
         ...ids,
       });
-      const result = await execCommand("git", effectiveArgs, cwd);
+      const result = await execCommand("git", effectiveArgs, effectiveCwd);
       if ((result.exitCode ?? 0) === 0) {
-        registerGitCorrelationAlias(ids.sessionId, effectiveArgs, cwd);
+        registerGitCorrelationAlias(ids.sessionId, effectiveArgs, effectiveCwd);
       }
       res.json(result);
     } catch (err) {
