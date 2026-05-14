@@ -85,6 +85,13 @@ describe("ingress auth split", () => {
     );
   });
 
+  it("runs the admin-email regex hook before nginx envsubst", () => {
+    const dockerfile = readFileSync(resolve(repoRoot, "docker/ingress/Dockerfile"), "utf8");
+    expect(dockerfile).toContain(
+      "COPY 10-thor-admin-emails.envsh /docker-entrypoint.d/10-thor-admin-emails.envsh",
+    );
+  });
+
   it("gates OpenCode-backed routes by admin email", () => {
     expect(template).toContain('~^(${THOR_ADMIN_EMAILS_REGEX})$ "http://opencode:4096";');
     expect(template).toContain('default "http://127.0.0.1:8080/__opencode_admin_forbidden";');
