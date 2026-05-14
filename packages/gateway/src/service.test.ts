@@ -480,6 +480,48 @@ describe("triggerRunnerGitHub", () => {
     expect(onAccepted).toHaveBeenCalled();
   });
 
+  it("dispatches pure issue comments without pending PR branch lookup", async () => {
+    mockFetch.mockResolvedValueOnce(
+      ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
+    );
+    const pureIssue = {
+      ...githubEventBase,
+      issue: { number: 42, pull_request: null },
+      comment: {
+        ...githubEventBase.comment,
+        body: "@thor please help with this issue",
+        html_url: "https://github.com/scoutqa-dot-ai/thor/issues/42#issuecomment-1",
+      },
+    } satisfies GitHubWebhookEvent;
+
+    const { triggerRunnerGitHub } = await import("./service.js");
+    const result = await triggerRunnerGitHub(
+      [pureIssue],
+      "github:issue:thor:scoutqa-dot-ai/thor#42",
+      deps,
+      "http://remote-cli:3004",
+      "internal-secret",
+      true,
+      vi.fn(),
+      vi.fn(),
+    );
+
+    expect(result.busy).toBe(false);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toBe("http://runner:3000/trigger");
+    const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
+    expect(triggerBody).toMatchObject({
+      correlationKey: "github:issue:thor:scoutqa-dot-ai/thor#42",
+      directory: "/workspace/repos/my-repo",
+      interrupt: true,
+    });
+    expect(JSON.parse(triggerBody.prompt)).toMatchObject({
+      event_type: "issue_comment",
+      issue: { number: 42, pull_request: null },
+      comment: { html_url: "https://github.com/scoutqa-dot-ai/thor/issues/42#issuecomment-1" },
+    });
+  });
+
   it("maps gh auth failures to terminal installation_gone rejection", async () => {
     mockFetch.mockResolvedValueOnce(execResponse("", "HTTP 403: forbidden", 1));
     const onRejected = vi.fn();

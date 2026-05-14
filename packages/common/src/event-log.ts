@@ -8,6 +8,7 @@ import { truncate } from "./logger.js";
 export const ALIAS_TYPES = [
   "slack.thread_id",
   "git.branch",
+  "github.issue",
   "opencode.session",
   "opencode.subsession",
 ] as const;

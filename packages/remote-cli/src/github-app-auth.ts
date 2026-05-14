@@ -51,25 +51,6 @@ class GitHubApiError extends Error {
 
 // ── Owner resolution ─────────────────────────────────────────────────────────
 
-// Positional args are not scanned because flag values like `--body` content
-// can resemble owner/repo and would be mis-identified.
-export function resolveOwnerFromArgs(args: string[]): string | undefined {
-  for (let i = 0; i < args.length; i++) {
-    if ((args[i] === "-R" || args[i] === "--repo") && i + 1 < args.length) {
-      const ownerRepo = args[i + 1];
-      const slash = ownerRepo.indexOf("/");
-      if (slash > 0) return ownerRepo.slice(0, slash);
-    }
-    if (args[i]?.startsWith("--repo=")) {
-      const ownerRepo = args[i].slice("--repo=".length);
-      const slash = ownerRepo.indexOf("/");
-      if (slash > 0) return ownerRepo.slice(0, slash);
-    }
-  }
-
-  return undefined;
-}
-
 export function resolveOwnerFromRemote(cwd: string): string | undefined {
   return resolveOwnerRepoFromRemote(cwd)?.owner;
 }
@@ -122,10 +103,9 @@ function normalizeOwnerRepo(
   return { host: normalizedHost, owner, repo };
 }
 
-// Priority: explicit -R flag > git remote origin.
-export function resolveOwner(args: string[], cwd?: string): string | undefined {
-  const fromArgs = resolveOwnerFromArgs(args);
-  if (fromArgs) return fromArgs;
+// GH repo-targeting flags are denied at policy level, so auth always resolves
+// from the current repo/worktree context.
+export function resolveOwner(_args: string[], cwd?: string): string | undefined {
   if (cwd) return resolveOwnerFromRemote(cwd);
   return undefined;
 }

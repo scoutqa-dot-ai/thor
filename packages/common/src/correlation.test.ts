@@ -79,6 +79,21 @@ describe("correlation key resolution", () => {
     expect(resolveSessionForCorrelationKey(rawKey)).toBe("session-git");
   });
 
+  it("normalizes github issue correlation keys to github issue alias values", () => {
+    bindSession("session-issue", anchor2);
+    const rawKey = "github:issue:thor:acme/thor#42";
+
+    expect(appendCorrelationAlias("session-issue", rawKey)).toEqual({ ok: true });
+    expect(resolveAnchorForCorrelationKey(rawKey)).toBe(anchor2);
+    expect(resolveSessionForCorrelationKey(rawKey)).toBe("session-issue");
+    expect(readAliases()).toContainEqual({
+      ts: expect.any(String),
+      aliasType: "github.issue",
+      aliasValue: Buffer.from(rawKey).toString("base64url"),
+      anchorId: anchor2,
+    });
+  });
+
   it("computes correlation keys without embedding tool output metadata", () => {
     expect(
       computeGitCorrelationKey(
@@ -223,6 +238,25 @@ describe("correlation key resolution", () => {
     const gitAliases = readAliases().filter((alias) => alias.aliasType === "git.branch");
     expect(gitAliases).toHaveLength(1);
     expect(gitAliases[0].anchorId).toBe(results[0].anchorId);
+  });
+
+  it("ensures one anchor for concurrent github issue correlation key callers", async () => {
+    const key = "github:issue:thor:acme/thor#42";
+
+    const results = await Promise.all([
+      ensureAnchorForCorrelationKey(key),
+      ensureAnchorForCorrelationKey(key),
+    ]);
+
+    expect(results[0].anchorId).toBeDefined();
+    expect(results[1].anchorId).toBe(results[0].anchorId);
+    expect(results.map((result) => result.minted).sort()).toEqual([false, true]);
+    expect(resolveAnchorForCorrelationKey(key)).toBe(results[0].anchorId);
+
+    const issueAliases = readAliases().filter((alias) => alias.aliasType === "github.issue");
+    expect(issueAliases).toHaveLength(1);
+    expect(issueAliases[0].aliasValue).toBe(Buffer.from(key).toString("base64url"));
+    expect(issueAliases[0].anchorId).toBe(results[0].anchorId);
   });
 
   it("does not mint anchors for unsupported correlation key prefixes", async () => {
