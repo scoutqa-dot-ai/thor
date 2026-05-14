@@ -414,57 +414,41 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   // at the infrastructure edge, not in the app process.
   // codeql[js/missing-rate-limiting]
   // lgtm[js/missing-rate-limiting]
-  app.get(
-    "/runner/v/:anchorId",
-    // codeql[js/missing-rate-limiting]
-    // lgtm[js/missing-rate-limiting]
-    (req, res) => {
-      // Rate limiting for the Vouch-gated runner viewer is intentionally
-      // enforced at the infrastructure edge, not in the app process.
-      // codeql[js/missing-rate-limiting]
-      // lgtm[js/missing-rate-limiting]
-      if (!requireViewerAuth(req, res)) return;
-      const anchorId = routeParam(req.params.anchorId);
-      if (!isUuidV7(anchorId)) {
-        res
-          .status(404)
-          .type("html")
-          .send(renderPage("Anchor not found", "No Thor anchor context was found."));
-        return;
-      }
-      renderAnchorResponse(res, anchorId);
-    },
-  );
+  function handleAnchorViewer(req: express.Request, res: express.Response): void {
+    if (!requireViewerAuth(req, res)) return;
+    const anchorId = routeParam(req.params.anchorId);
+    if (!isUuidV7(anchorId)) {
+      res
+        .status(404)
+        .type("html")
+        .send(renderPage("Anchor not found", "No Thor anchor context was found."));
+      return;
+    }
+    renderAnchorResponse(res, anchorId);
+  }
 
   // Rate limiting for the Vouch-gated runner viewer is intentionally enforced
   // at the infrastructure edge, not in the app process.
   // codeql[js/missing-rate-limiting]
   // lgtm[js/missing-rate-limiting]
-  app.get(
-    ["/runner/v/:anchorId/t/:triggerId", "/runner/v/:anchorId/:triggerId"],
-    // codeql[js/missing-rate-limiting]
-    // lgtm[js/missing-rate-limiting]
-    (req, res) => {
-      // Rate limiting for the Vouch-gated runner viewer is intentionally
-      // enforced at the infrastructure edge, not in the app process.
-      // codeql[js/missing-rate-limiting]
-      // lgtm[js/missing-rate-limiting]
-      if (!requireViewerAuth(req, res)) return;
-      const anchorId = routeParam(req.params.anchorId);
-      const triggerId = routeParam(req.params.triggerId);
+  function handleTriggerViewer(req: express.Request, res: express.Response): void {
+    if (!requireViewerAuth(req, res)) return;
+    const anchorId = routeParam(req.params.anchorId);
+    const triggerId = routeParam(req.params.triggerId);
 
-      if (!isUuidV7(anchorId) || !isUuidV7(triggerId)) {
-        res
-          .status(404)
-          .type("html")
-          .send(
-            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
-          );
-        return;
-      }
-      renderTriggerResponse(res, anchorId, triggerId);
-    },
-  );
+    if (!isUuidV7(anchorId) || !isUuidV7(triggerId)) {
+      res
+        .status(404)
+        .type("html")
+        .send(renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."));
+      return;
+    }
+    renderTriggerResponse(res, anchorId, triggerId);
+  }
+
+  app.get("/runner/v/:anchorId", handleAnchorViewer);
+
+  app.get(["/runner/v/:anchorId/t/:triggerId", "/runner/v/:anchorId/:triggerId"], handleTriggerViewer);
 
   // --- Trigger endpoint ---
 
