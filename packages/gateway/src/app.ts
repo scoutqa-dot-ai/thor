@@ -1,4 +1,5 @@
 import express, { type Express, type Request, type Response } from "express";
+import { join } from "node:path";
 import {
   appendJsonlWorklog,
   createLogger,
@@ -50,6 +51,7 @@ import {
   type SlackThreadEvent,
 } from "./slack.js";
 import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.js";
+import { PendingGitHubWakeQueue } from "./pending-github-wake.js";
 import {
   extractApprovalFailureCategory,
   parseApprovalButtonValue,
@@ -483,6 +485,7 @@ function parseInteractivityPayload(body: unknown) {
 export interface GatewayApp {
   app: Express;
   queue: EventQueue;
+  pendingGitHubWakes: PendingGitHubWakeQueue;
 }
 
 type ApprovalDecision = "approved" | "rejected";
@@ -949,9 +952,49 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       internalSecret: config.internalSecret,
       fetchImpl: config.fetchImpl,
     });
+  const queueDir = config.queueDir ?? "data/queue";
+
+  const dispatchPendingGitHubWake = async (githubEvents: QueuedEvent<GitHubWebhookEvent>[]) => {
+    const correlationKey = githubEvents[githubEvents.length - 1]?.correlationKey ?? "";
+    const plan = await planBatchDispatch({
+      slackEvents: [],
+      cronEvents: [],
+      githubEvents: githubEvents.map((event) => event.payload),
+      approvalOutcomes: [],
+      correlationKey,
+      deps: runnerDeps,
+      slackDeps,
+      remoteCliUrl,
+      internalSecret: config.internalSecret,
+      internalExec,
+      interrupt: false,
+      channelRepos: getChannelRepos(),
+    });
+
+    if (plan.kind === "drop") return "rejected" as const;
+    if (plan.kind === "reroute") return "rejected" as const;
+
+    const result = await executeBatchDispatchPlan(plan);
+    if (result.busy) {
+      logInfo(log, "github_pending_wake_busy", { correlationKey, batchSize: githubEvents.length });
+      return "busy" as const;
+    }
+    logInfo(log, result.rejected ? "github_pending_wake_dropped" : "github_pending_wake_fired", {
+      correlationKey,
+      batchSize: githubEvents.length,
+      ...(result.reason ? { reason: result.reason } : {}),
+    });
+    return result.rejected ? ("rejected" as const) : ("accepted" as const);
+  };
+
+  const pendingGitHubWakes = new PendingGitHubWakeQueue({
+    dir: join(queueDir, "pending-github-wakes"),
+    disableInterval: config.disableQueueInterval === true,
+    handler: dispatchPendingGitHubWake,
+  });
 
   const queue = new EventQueue({
-    dir: config.queueDir ?? "data/queue",
+    dir: queueDir,
     disableInterval: config.disableQueueInterval === true,
     handler: async (events: QueuedEvent[], ack: () => void, reject: (reason: string) => void) => {
       const slackEvents = events.filter(isSlackEvent);
@@ -962,6 +1005,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       const logPrefix = getBatchLogPrefix(sources);
       const correlationKey = events[events.length - 1]?.correlationKey;
       const hasInterrupt = events.some((event) => event.interrupt);
+      const isNonInterruptGitHubBatch =
+        githubEvents.length > 0 && githubEvents.length === events.length && !hasInterrupt;
       const logTrigger = (
         prefix: BatchLogPrefix,
         outcome: "busy" | "dropped" | "fired",
@@ -982,6 +1027,16 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       };
 
       try {
+        if (isNonInterruptGitHubBatch && correlationKey && pendingGitHubWakes.has(correlationKey)) {
+          pendingGitHubWakes.park(githubEvents);
+          ack();
+          logInfo(log, "github_pending_wake_merged", {
+            correlationKey,
+            batchSize: githubEvents.length,
+          });
+          return;
+        }
+
         const plan = await planBatchDispatch({
           slackEvents: slackEvents.map((event) => event.payload),
           cronEvents: cronEvents.map((event) => event.payload),
@@ -1029,6 +1084,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
         const result = await executeBatchDispatchPlan(plan);
         if (result.busy) {
+          if (isNonInterruptGitHubBatch) {
+            pendingGitHubWakes.park(githubEvents);
+            ack();
+          }
           logTrigger(plan.logPrefix, "busy");
         } else if (result.rejected) {
           logTrigger(plan.logPrefix, "dropped", result.reason);
@@ -1806,5 +1865,5 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     });
   });
 
-  return { app, queue };
+  return { app, queue, pendingGitHubWakes };
 }

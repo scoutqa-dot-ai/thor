@@ -20,6 +20,7 @@ import {
 } from "@thor/common";
 import { createGatewayApp, type GatewayAppConfig } from "./app.js";
 import type { EventQueue } from "./queue.js";
+import type { PendingGitHubWakeQueue } from "./pending-github-wake.js";
 
 interface MockSlackClient {
   client: WebClient;
@@ -133,6 +134,19 @@ function pushWebhookBody(overrides: Record<string, unknown> = {}): string {
   });
 }
 
+function queuedGitHubPush(after = "2222222222222222222222222222222222222222") {
+  return {
+    event_type: "push",
+    ref: "refs/heads/feature/refactor",
+    before: "1111111111111111111111111111111111111111",
+    after,
+    installation: { id: 126669985 },
+    repository: { full_name: "scoutqa-dot-ai/thor", default_branch: "main" },
+    sender: { id: 1001, login: "alice", type: "User" },
+    head_commit: { timestamp: "2026-04-24T11:00:00Z" },
+  };
+}
+
 function pullRequestClosedWebhookBody(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     action: "closed",
@@ -240,7 +254,13 @@ async function withWorktreesRoot<T>(run: (worktreesRoot: string) => Promise<T>):
 
 async function withServer<T>(
   fetchImpl: typeof fetch,
-  run: (baseUrl: string, queue: EventQueue, queueDir: string, slack: MockSlackClient) => Promise<T>,
+  run: (
+    baseUrl: string,
+    queue: EventQueue,
+    queueDir: string,
+    slack: MockSlackClient,
+    pendingGitHubWakes: PendingGitHubWakeQueue,
+  ) => Promise<T>,
   extraConfig?: Partial<GatewayAppConfig>,
 ): Promise<T> {
   const queueDir = mkdtempSync(join(tmpdir(), "gateway-test-"));
@@ -249,7 +269,7 @@ async function withServer<T>(
     process.env.WORKLOG_DIR = join(queueDir, "worklog");
   }
   const slack = createMockSlackClient();
-  const { app, queue } = createGatewayApp({
+  const { app, queue, pendingGitHubWakes } = createGatewayApp({
     signingSecret: "signing-secret",
     slackBotToken: "xoxb-test",
     slackBotUserId: "U0BOTEXAMPLE",
@@ -273,9 +293,16 @@ async function withServer<T>(
   }
 
   try {
-    return await run(`http://127.0.0.1:${address.port}`, queue, queueDir, slack);
+    return await run(
+      `http://127.0.0.1:${address.port}`,
+      queue,
+      queueDir,
+      slack,
+      pendingGitHubWakes,
+    );
   } finally {
     queue.close();
+    pendingGitHubWakes.close();
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
@@ -1019,6 +1046,137 @@ describe("gateway", () => {
           },
         });
         expect(fetchImpl).not.toHaveBeenCalled();
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
+      },
+    );
+  });
+
+  it("parks non-interrupt busy GitHub batches outside the main queue", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === "http://runner.test/trigger" && init?.method === "POST") {
+        return new Response(JSON.stringify({ busy: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue, queueDir) => {
+        await queue.enqueue({
+          id: "delivery-pending-1",
+          source: "github",
+          correlationKey: "git:branch:thor:feature/refactor",
+          payload: queuedGitHubPush(),
+          receivedAt: new Date().toISOString(),
+          sourceTs: Date.parse("2026-04-24T11:00:00Z"),
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: false,
+        });
+        await queue.flush();
+
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+        expect(readQueuedEvents(join(queueDir, "pending-github-wakes"))).toHaveLength(1);
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
+      },
+    );
+  });
+
+  it("merges later GitHub events into an existing pending wake", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === "http://runner.test/trigger" && init?.method === "POST") {
+        return new Response(JSON.stringify({ busy: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue, queueDir) => {
+        for (const [index, delivery] of [
+          "delivery-pending-merge-1",
+          "delivery-pending-merge-2",
+        ].entries()) {
+          await queue.enqueue({
+            id: delivery,
+            source: "github",
+            correlationKey: "git:branch:thor:feature/refactor",
+            payload: queuedGitHubPush(`${index + 2}`.repeat(40)),
+            receivedAt: new Date().toISOString(),
+            sourceTs: Date.parse("2026-04-24T11:00:00Z") + index,
+            readyAt: Date.now(),
+            delayMs: 0,
+            interrupt: false,
+          });
+          await queue.flush();
+        }
+
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+        const pending = readQueuedEvents(join(queueDir, "pending-github-wakes"));
+        expect(pending).toHaveLength(1);
+        expect(pending[0].events).toMatchObject([
+          { id: "delivery-pending-merge-1" },
+          { id: "delivery-pending-merge-2" },
+        ]);
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+      },
+      {
+        githubWebhookSecret: "github-secret",
+        githubMentionLogins: ["thor", "thor[bot]"],
+        githubAppBotId: 7777,
+      },
+    );
+  });
+
+  it("replays a pending GitHub wake until the runner accepts it", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === "http://runner.test/trigger" && init?.method === "POST") {
+        const busy = fetchImpl.mock.calls.length === 1;
+        return new Response(JSON.stringify({ busy }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+
+    await withServer(
+      fetchImpl,
+      async (_baseUrl, queue, queueDir, _slack, pendingGitHubWakes) => {
+        await queue.enqueue({
+          id: "delivery-pending-replay",
+          source: "github",
+          correlationKey: "git:branch:thor:feature/refactor",
+          payload: queuedGitHubPush(),
+          receivedAt: new Date().toISOString(),
+          sourceTs: Date.parse("2026-04-24T11:00:00Z"),
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: false,
+        });
+        await queue.flush();
+        expect(readQueuedEvents(join(queueDir, "pending-github-wakes"))).toHaveLength(1);
+
+        await pendingGitHubWakes.flush();
+
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+        expect(readQueuedEvents(join(queueDir, "pending-github-wakes"))).toHaveLength(0);
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
       },
       {
         githubWebhookSecret: "github-secret",
