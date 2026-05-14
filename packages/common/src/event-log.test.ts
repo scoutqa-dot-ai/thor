@@ -351,6 +351,33 @@ describe("session event log", () => {
     expect(rows.find((r) => r.anchorId === anchorDashF)?.reason).toContain("Invalid session id");
   });
 
+  it("marks anchors with invalid trigger timestamps unknown instead of returning NaN durations", () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "bad-ts-open", anchorId: anchorDashE });
+    appendAlias({ aliasType: "opencode.session", aliasValue: "bad-ts-idle", anchorId: anchorDashF });
+
+    writeSession("bad-ts-open", [
+      { ts: "not-a-date", type: "trigger_start", triggerId: triggerA },
+      { ts: "still-not-a-date", type: "opencode_event", event: { ok: true } },
+    ]);
+    writeSession("bad-ts-idle", [
+      { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerB },
+      { ts: "not-a-date", type: "trigger_end", triggerId: triggerB, status: "completed" },
+    ]);
+
+    const rows = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") });
+    expect(rows.find((r) => r.anchorId === anchorDashE)).toMatchObject({
+      status: "unknown",
+      reason: "invalid trigger timestamp in session log",
+    });
+    expect(rows.find((r) => r.anchorId === anchorDashE)?.ageMs).toBeUndefined();
+    expect(rows.find((r) => r.anchorId === anchorDashE)?.idleMs).toBeUndefined();
+    expect(rows.find((r) => r.anchorId === anchorDashF)).toMatchObject({
+      status: "unknown",
+      reason: "invalid terminal timestamp in session log",
+    });
+    expect(rows.find((r) => r.anchorId === anchorDashF)?.idleMs).toBeUndefined();
+  });
+
   it("mints UUIDv7 anchors and trigger ids that sort lexicographically by mint time", async () => {
     const a = mintAnchor();
     await new Promise((resolve) => setTimeout(resolve, 5));

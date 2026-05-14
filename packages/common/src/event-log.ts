@@ -560,6 +560,10 @@ export function reverseLookupAnchor(anchorId: string): ReverseAnchorEntry {
   loadAliasCacheIfChanged();
   const entry = aliasCache.reverse.get(anchorId);
   if (!entry) return { sessionIds: [], subsessionIds: [], externalKeys: [] };
+  return reverseAnchorEntryFromCache(entry);
+}
+
+function reverseAnchorEntryFromCache(entry: InternalReverseEntry): ReverseAnchorEntry {
   return {
     sessionIds: [...entry.sessions.keys()],
     subsessionIds: [...entry.subsessions],
@@ -578,7 +582,7 @@ export function listAnchors(): Array<{ anchorId: string; entry: ReverseAnchorEnt
   loadAliasCacheIfChanged();
   return [...aliasCache.reverse.keys()].map((anchorId) => ({
     anchorId,
-    entry: reverseLookupAnchor(anchorId),
+    entry: reverseAnchorEntryFromCache(aliasCache.reverse.get(anchorId) ?? emptyReverseEntry()),
   }));
 }
 
@@ -666,6 +670,12 @@ function sessionSummary(sessionId: string):
   return { skippedMalformed: read.skippedMalformed, open, latestTerminal, lastEventTs };
 }
 
+function parseRecordTs(ts: string | undefined): number | undefined {
+  if (!ts) return undefined;
+  const parsed = Date.parse(ts);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export function listAnchorSessionStates(
   options: ListAnchorSessionStatesOptions = {},
 ): AnchorSessionState[] {
@@ -732,7 +742,26 @@ export function listAnchorSessionStates(
     }
 
     if (bestOpen) {
-      const idleMs = Math.max(0, nowMs - Date.parse(bestOpen.lastEventTs));
+      const startedAtMs = parseRecordTs(bestOpen.startedAt);
+      const lastEventMs = parseRecordTs(bestOpen.lastEventTs);
+      if (startedAtMs === undefined || lastEventMs === undefined) {
+        return {
+          anchorId,
+          status: "unknown",
+          currentSessionId: entry.currentSessionId,
+          ownerSessionId: bestOpen.sessionId,
+          triggerId: bestOpen.triggerId,
+          triggerStartedAt: bestOpen.startedAt,
+          lastEventTs: bestOpen.lastEventTs,
+          externalKeys: entry.externalKeys,
+          sessionIds: entry.sessionIds,
+          subsessionIds: entry.subsessionIds,
+          skippedMalformed,
+          oversized: false,
+          reason: "invalid trigger timestamp in session log",
+        };
+      }
+      const idleMs = Math.max(0, nowMs - lastEventMs);
       return {
         anchorId,
         status: idleMs > stuckAfterMs ? "stuck" : "in_progress",
@@ -741,7 +770,7 @@ export function listAnchorSessionStates(
         triggerId: bestOpen.triggerId,
         triggerStartedAt: bestOpen.startedAt,
         lastEventTs: bestOpen.lastEventTs,
-        ageMs: Math.max(0, nowMs - Date.parse(bestOpen.startedAt)),
+        ageMs: Math.max(0, nowMs - startedAtMs),
         idleMs,
         externalKeys: entry.externalKeys,
         sessionIds: entry.sessionIds,
@@ -751,16 +780,34 @@ export function listAnchorSessionStates(
       };
     }
 
+    const idleReferenceTs = latestTerminal?.ts ?? lastEventTs;
+    const idleReferenceMs = parseRecordTs(idleReferenceTs);
+    if (idleReferenceTs && idleReferenceMs === undefined) {
+      return {
+        anchorId,
+        status: "unknown",
+        currentSessionId: entry.currentSessionId,
+        ownerSessionId: latestTerminal?.sessionId,
+        triggerId: latestTerminal?.triggerId,
+        lastEventTs: idleReferenceTs,
+        latestTerminalStatus: latestTerminal?.status,
+        externalKeys: entry.externalKeys,
+        sessionIds: entry.sessionIds,
+        subsessionIds: entry.subsessionIds,
+        skippedMalformed,
+        oversized: false,
+        reason: "invalid terminal timestamp in session log",
+      };
+    }
+
     return {
       anchorId,
       status: "idle",
       currentSessionId: entry.currentSessionId,
       ownerSessionId: latestTerminal?.sessionId,
       triggerId: latestTerminal?.triggerId,
-      lastEventTs: latestTerminal?.ts ?? lastEventTs,
-      idleMs: (latestTerminal?.ts ?? lastEventTs)
-        ? Math.max(0, nowMs - Date.parse(latestTerminal?.ts ?? lastEventTs ?? now.toISOString()))
-        : undefined,
+      lastEventTs: idleReferenceTs,
+      idleMs: idleReferenceMs !== undefined ? Math.max(0, nowMs - idleReferenceMs) : undefined,
       latestTerminalStatus: latestTerminal?.status,
       externalKeys: entry.externalKeys,
       sessionIds: entry.sessionIds,
