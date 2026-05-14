@@ -99,6 +99,7 @@ COPY docker/opencode/bin/langfuse /usr/local/bin/langfuse
 COPY docker/opencode/bin/metabase /usr/local/bin/metabase
 COPY docker/opencode/bin/ldcli /usr/local/bin/ldcli
 COPY docker/opencode/bin/sandbox /usr/local/bin/sandbox
+COPY docker/opencode/bin/rg /usr/local/bin/rg
 # npm/npx/pnpm wrappers — redirect to sandbox so code runs in the cloud
 COPY docker/opencode/bin/npm /usr/local/bin/npm
 COPY docker/opencode/bin/npx /usr/local/bin/npx
