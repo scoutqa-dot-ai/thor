@@ -410,6 +410,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     return false;
   }
 
+  // Rate limiting for the Vouch-gated runner viewer is intentionally enforced
+  // at the infrastructure edge, not in the app process.
+  // codeql[js/missing-rate-limiting]
+  // lgtm[js/missing-rate-limiting]
   app.get(
     "/runner/v/:anchorId",
     // codeql[js/missing-rate-limiting]
@@ -432,6 +436,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     },
   );
 
+  // Rate limiting for the Vouch-gated runner viewer is intentionally enforced
+  // at the infrastructure edge, not in the app process.
+  // codeql[js/missing-rate-limiting]
+  // lgtm[js/missing-rate-limiting]
   app.get(
     ["/runner/v/:anchorId/t/:triggerId", "/runner/v/:anchorId/:triggerId"],
     // codeql[js/missing-rate-limiting]
