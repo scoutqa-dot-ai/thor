@@ -263,7 +263,7 @@ Trigger flow:
 1. Runner resolves the inbound correlation key via `aliasForCorrelationKey` + `resolveAlias`. If an anchor is found, use it; otherwise mint a new anchor (UUIDv7).
 2. Advisory lock on `anchor:<anchorId>` during resolve+create to prevent same-anchor race.
 3. Runner appends `opencode.session → anchor` for the session id used (resumed or freshly created), plus the correlation-key alias if it is the first time the conversation has seen that key.
-4. Slack-triggered sessions write the incoming `slack.thread_id` alias before any tool call. Git branch aliases are added later from tool output by remote-cli, which resolves the executing session's anchor (`resolveAlias("opencode.session", sessionId)`) and binds the new key to it.
+4. Slack-triggered sessions write the incoming `slack.thread_id` alias before any tool call. Git branch aliases are added later only after successful `git push` in remote-cli, which resolves the executing session's anchor (`resolveAlias("opencode.session", sessionId)`) and binds the new key to it.
 5. `opencode.subsession` aliases are written from the runner's OpenCode event subscription as child sessions are discovered. Child discovery is asynchronous, so child-session disclaimer support remains fail-closed: a write that reaches remote-cli before the child binding is recorded fails with retry/delegate-to-parent guidance.
 
 If a trigger experiences `session_stale` recreate (`packages/runner/src/index.ts:440`), the anchor stays put and the runner appends `opencode.session → anchor` for the new session id. The Slack/git aliases never move — they were never bound to the old session id in the first place.
@@ -648,7 +648,7 @@ Scope:
    - **OpenCode events route by source session.** Events emitted by the parent session append to `sessions/<parentSessionId>.jsonl`. Events emitted by a discovered child session append to `sessions/<childSessionId>.jsonl` — never to the parent. The owner session log contains only `trigger_start`/`trigger_end` (owner-only) plus parent-session events. Child-session activity is intentionally not surfaced inside the parent slice; sub-sessions remain trackable via `opencode.subsession → anchor` for routing and disclaimer URL correctness, but the viewer reads only the owner session log.
 7. **Producer rewrite (`packages/remote-cli/src`)**:
    - Slack `post_message` MCP hook: resolve the executing session's anchor first, then `appendAlias({ aliasType: "slack.thread_id", aliasValue: threadTs, anchorId })`.
-   - Git push/checkout/switch/worktree-add hook: same shape with `git.branch`.
+   - Successful `git push` hook: same shape with `git.branch`; checkout/switch/worktree-add and `gh` commands do not write branch aliases.
 8. **Viewer route change** (`packages/runner/src/index.ts`):
    - Single route becomes `GET /runner/v/:anchorId/:triggerId`. (Pre-Phase-6 the route was session-keyed; the `/raw` companion was already dropped in Phase 3.)
    - Reject `:anchorId` not matching canonical UUIDv7 36-char hyphenated form before any disk I/O.

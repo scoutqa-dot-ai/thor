@@ -75,7 +75,7 @@ const TaskDelegateInputSchema = z.object({
 
 const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
-/** Shared event buses — one SSE connection per directory, dispatches to per-session listeners. */
+/** Shared event bus — one global SSE connection, dispatches to per-session listeners. */
 const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
@@ -760,7 +760,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           logInfo(log, "session_busy_aborting", { sessionId, correlationKey });
           await client.session.abort({ path: { id: sessionId } });
 
-          const abortSub = await eventBuses.subscribe(sessionDirectory, [sessionId]);
+          const abortSub = await eventBuses.subscribe([sessionId]);
           const aborted = await waitForSessionSettled(abortSub, ABORT_TIMEOUT);
           abortSub.close();
 
@@ -825,7 +825,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         : undefined;
 
       // Subscribe to event bus BEFORE sending the prompt
-      const subscription = await eventBuses.subscribe(sessionDirectory, [sessionId]);
+      const subscription = await eventBuses.subscribe([sessionId]);
 
       const triggerId = mintTriggerId();
       inflightTriggerId = triggerId;

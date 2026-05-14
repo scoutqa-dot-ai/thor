@@ -96,7 +96,16 @@ describe("correlation key resolution", () => {
 
   it("computes correlation keys without embedding tool output metadata", () => {
     expect(
-      computeGitCorrelationKey(["push", "origin", "feature/refactor"], "/workspace/repos/thor"),
+      computeGitCorrelationKey(
+        ["push", "origin", "HEAD:refs/heads/feature/refactor"],
+        "/workspace/repos/thor",
+      ),
+    ).toBe("git:branch:thor:feature/refactor");
+    expect(
+      computeGitCorrelationKey(
+        ["push", "-u", "origin", "HEAD:refs/heads/feature/refactor"],
+        "/workspace/repos/thor",
+      ),
     ).toBe("git:branch:thor:feature/refactor");
     expect(
       computeSlackCorrelationKey({ channel: "C123" }, JSON.stringify({ ts: "1710000000.002" })),
@@ -104,6 +113,34 @@ describe("correlation key resolution", () => {
     expect(computeSlackCorrelationKey({ thread_ts: "1710000000.003" }, "{}")).toBe(
       "slack:thread:1710000000.003",
     );
+  });
+
+  it("does not derive git branch correlation keys from dry-run or unsupported push shapes", () => {
+    const cwd = "/workspace/repos/thor";
+
+    expect(
+      computeGitCorrelationKey(
+        ["push", "--dry-run", "origin", "HEAD:refs/heads/feature/refactor"],
+        cwd,
+      ),
+    ).toBeUndefined();
+    expect(computeGitCorrelationKey(["push", "origin", "feature/refactor"], cwd)).toBeUndefined();
+    expect(
+      computeGitCorrelationKey(["push", "upstream", "HEAD:refs/heads/feature/refactor"], cwd),
+    ).toBeUndefined();
+  });
+
+  it("does not derive git branch correlation keys from checkout, switch, or worktree add", () => {
+    const cwd = "/workspace/worktrees/thor/feature/refactor";
+
+    expect(computeGitCorrelationKey(["checkout", "feature/refactor"], cwd)).toBeUndefined();
+    expect(computeGitCorrelationKey(["switch", "-c", "feature/refactor"], cwd)).toBeUndefined();
+    expect(
+      computeGitCorrelationKey(
+        ["worktree", "add", "/workspace/worktrees/thor/feature/refactor", "feature/refactor"],
+        cwd,
+      ),
+    ).toBeUndefined();
   });
 
   it("registers correlation aliases against the executing session's anchor", () => {
