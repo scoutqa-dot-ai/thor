@@ -6,12 +6,21 @@ import {
   logError,
   logInfo,
   logWarn,
+  listAnchorSessionStates,
   validateWorkspaceConfig,
   type WorkspaceConfig,
 } from "@thor/common";
-import { renderConfigPage, renderStatusFragment, type Issue } from "./views.js";
+import {
+  renderConfigPage,
+  renderSessionsFragment,
+  renderSessionsPage,
+  renderStatusFragment,
+  type Issue,
+  type SessionsProps,
+} from "./views.js";
 
 const log = createLogger("admin");
+const STUCK_AFTER_MS = 5 * 60 * 1000;
 
 export interface AdminAppConfig {
   configPath: string;
@@ -41,6 +50,14 @@ export function createAdminApp(cfg: AdminAppConfig): Express {
         savedBy: null,
       }),
     );
+  });
+
+  app.get("/admin/sessions", (req: Request, res: Response) => {
+    res.type("html").send(renderSessionsPage(loadSessionsProps(req)));
+  });
+
+  app.get("/admin/sessions/fragment", (req: Request, res: Response) => {
+    res.type("html").send(renderSessionsFragment(loadSessionsProps(req)));
   });
 
   app.post("/admin/config", (req: Request, res: Response) => {
@@ -98,6 +115,27 @@ export function createAdminApp(cfg: AdminAppConfig): Express {
   });
 
   return app;
+}
+
+function loadSessionsProps(req: Request): SessionsProps {
+  const refreshedAt = new Date().toISOString();
+  try {
+    return {
+      user: req.header("X-Vouch-User") ?? null,
+      rows: listAnchorSessionStates({ now: new Date(refreshedAt), stuckAfterMs: STUCK_AFTER_MS }),
+      refreshedAt,
+      error: null,
+    };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logWarn(log, "sessions_dashboard_read_failed", { error });
+    return {
+      user: req.header("X-Vouch-User") ?? null,
+      rows: [],
+      refreshedAt,
+      error,
+    };
+  }
 }
 
 function readConfigText(path: string): {

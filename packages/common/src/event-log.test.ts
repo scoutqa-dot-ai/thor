@@ -16,6 +16,7 @@ import {
   appendAlias,
   appendSessionEvent,
   findActiveTrigger,
+  listAnchorSessionStates,
   listSessionAliases,
   mintAnchor,
   mintTriggerId,
@@ -41,6 +42,12 @@ const anchorA = "00000000-0000-7000-8000-0000000000a1";
 const anchorB = "00000000-0000-7000-8000-0000000000a2";
 const anchorParent = "00000000-0000-7000-8000-0000000000a3";
 const anchorSuperseded = "00000000-0000-7000-8000-0000000000a4";
+const anchorDashA = "00000000-0000-7000-8000-0000000000b1";
+const anchorDashB = "00000000-0000-7000-8000-0000000000b2";
+const anchorDashC = "00000000-0000-7000-8000-0000000000b3";
+const anchorDashD = "00000000-0000-7000-8000-0000000000b4";
+const anchorDashE = "00000000-0000-7000-8000-0000000000b5";
+const anchorDashF = "00000000-0000-7000-8000-0000000000b6";
 
 describe("session event log", () => {
   const originalWorklogDir = process.env.WORKLOG_DIR;
@@ -265,6 +272,85 @@ describe("session event log", () => {
     expect(findActiveTrigger("orphan")).toEqual({ ok: false, reason: "none" });
   });
 
+  it("lists anchor session states for idle, in-progress, stuck, and superseded sessions", () => {
+    const now = new Date("2026-05-14T12:10:00.000Z");
+    appendAlias({ aliasType: "opencode.session", aliasValue: "idle", anchorId: anchorDashA });
+    appendAlias({ aliasType: "slack.thread_id", aliasValue: "111.222", anchorId: anchorDashA });
+    appendAlias({ aliasType: "opencode.session", aliasValue: "live", anchorId: anchorDashB });
+    appendAlias({ aliasType: "opencode.session", aliasValue: "stale", anchorId: anchorDashC });
+    appendAlias({ aliasType: "opencode.session", aliasValue: "sup-old", anchorId: anchorDashD, ts: "2026-05-14T12:00:00.000Z" });
+    appendAlias({ aliasType: "opencode.session", aliasValue: "sup-new", anchorId: anchorDashD, ts: "2026-05-14T12:00:01.000Z" });
+
+    writeSession("idle", [
+      { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA },
+      { ts: "2026-05-14T12:01:00.000Z", type: "trigger_end", triggerId: triggerA, status: "completed" },
+    ]);
+    writeSession("live", [
+      { ts: "2026-05-14T12:08:00.000Z", type: "trigger_start", triggerId: triggerB },
+      { ts: "2026-05-14T12:09:30.000Z", type: "opencode_event", event: { ok: true } },
+    ]);
+    writeSession("stale", [
+      { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerC },
+    ]);
+    writeSession("sup-old", [
+      { ts: "2026-05-14T12:02:00.000Z", type: "trigger_start", triggerId: triggerD },
+    ]);
+    writeSession("sup-new", [
+      { ts: "2026-05-14T12:03:00.000Z", type: "trigger_start", triggerId: triggerE },
+      { ts: "2026-05-14T12:03:10.000Z", type: "trigger_end", triggerId: triggerE, status: "aborted" },
+    ]);
+
+    const rows = listAnchorSessionStates({ now, stuckAfterMs: 5 * 60 * 1000, limit: 10 });
+    expect(rows.map((r) => [r.anchorId, r.status])).toEqual([
+      [anchorDashD, "stuck"],
+      [anchorDashC, "stuck"],
+      [anchorDashB, "in_progress"],
+      [anchorDashA, "idle"],
+    ]);
+    expect(rows.find((r) => r.anchorId === anchorDashA)).toMatchObject({
+      latestTerminalStatus: "completed",
+      externalKeys: [{ aliasType: "slack.thread_id", aliasValue: "111.222" }],
+    });
+    expect(rows.find((r) => r.anchorId === anchorDashD)).toMatchObject({
+      ownerSessionId: "sup-old",
+      triggerId: triggerD,
+      currentSessionId: "sup-new",
+    });
+  });
+
+  it("surfaces malformed and oversized session diagnostics in anchor session states", () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "bad-lines", anchorId: anchorDashE });
+    writeSession("bad-lines", [
+      { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA },
+    ], "not-json\n");
+    let row = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") })[0];
+    expect(row).toMatchObject({ anchorId: anchorDashE, status: "in_progress", skippedMalformed: 1 });
+
+    writeFileSync(sessionLogPath("bad-lines"), "x".repeat(53 * 1024 * 1024));
+    row = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") })[0];
+    expect(row).toMatchObject({ anchorId: anchorDashE, status: "unknown", oversized: true });
+  });
+
+  it("marks only anchors with unsafe session aliases unknown and preserves other rows", () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "good-session", anchorId: anchorDashE });
+    appendAlias({ aliasType: "opencode.session", aliasValue: "unsafe/session", anchorId: anchorDashF });
+    writeSession("good-session", [
+      { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA },
+      { ts: "2026-05-14T12:00:10.000Z", type: "opencode_event", event: { ok: true } },
+    ]);
+
+    const rows = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") });
+    expect(rows.find((r) => r.anchorId === anchorDashE)).toMatchObject({
+      status: "in_progress",
+      triggerId: triggerA,
+    });
+    expect(rows.find((r) => r.anchorId === anchorDashF)).toMatchObject({
+      status: "unknown",
+      oversized: false,
+    });
+    expect(rows.find((r) => r.anchorId === anchorDashF)?.reason).toContain("Invalid session id");
+  });
+
   it("mints UUIDv7 anchors and trigger ids that sort lexicographically by mint time", async () => {
     const a = mintAnchor();
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -312,3 +398,15 @@ describe("session event log", () => {
     }
   });
 });
+
+function writeSession(
+  sessionId: string,
+  records: Array<Record<string, unknown>>,
+  extra = "",
+): void {
+  mkdirSync(join(process.env.WORKLOG_DIR ?? "", "sessions"), { recursive: true });
+  writeFileSync(
+    sessionLogPath(sessionId),
+    records.map((record) => JSON.stringify({ schemaVersion: 1, ...record })).join("\n") + "\n" + extra,
+  );
+}
