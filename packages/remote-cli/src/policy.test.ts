@@ -517,6 +517,14 @@ describe("validateGitArgs", () => {
     it("blocks ls-remote to remotes other than origin", () => {
       expectGitDenied(["ls-remote", "upstream"]);
       expectGitDenied(["ls-remote", "https://evil.com/repo.git"]);
+      // A bare ref pattern is ambiguous (could be a remote name); explicit
+      // origin is required whenever any positional is present.
+      expectGitDenied(["ls-remote", "refs/heads/main"]);
+      expectGitDenied(["ls-remote", "--heads", "main"]);
+      expectGitDeniedWith(
+        ["ls-remote", "refs/heads/main"],
+        ["bare/flag-only (rewritten to origin) or name origin explicitly", "git ls-remote origin"],
+      );
     });
 
     it("blocks unsupported ls-remote flags", () => {

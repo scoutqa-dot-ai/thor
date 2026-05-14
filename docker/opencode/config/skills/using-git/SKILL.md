@@ -38,7 +38,12 @@ Supported shapes: `git merge-base <left> <right>`, `git merge-base --is-ancestor
 
 ### `git ls-remote`
 
-Network-safe form only: `git ls-remote [<flags>] [origin] [<ref-pattern>...]`. Omitting the remote is accepted, and Thor rewrites the command to pass `origin` explicitly. Allowed flags: `--heads`/`-h`, `--tags`/`-t`, `--refs`, `--quiet`/`-q`, `--exit-code`, `--symref`, and `--sort=<key>` / `--sort <key>`. Non-`origin` remotes (other names, URLs) and unsupported execution flags such as `--upload-pack` are denied.
+Two supported shapes:
+
+- `git ls-remote [<flags>]` — bare/flag-only. Thor rewrites the command to pass `origin` explicitly.
+- `git ls-remote [<flags>] origin [<ref-pattern>...]` — explicit `origin` is required whenever any positional is present, including ref patterns. A bare ref pattern without `origin` is ambiguous (it could be a remote name) and is denied; pass `origin` explicitly when you want ref-pattern filtering.
+
+Allowed flags: `--heads`/`-h`, `--tags`/`-t`, `--refs`, `--quiet`/`-q`, `--exit-code`, `--symref`, and `--sort=<key>` / `--sort <key>`. Non-`origin` remotes (other names, URLs) and unsupported execution flags such as `--upload-pack` are denied.
 
 ### `git tag`
 

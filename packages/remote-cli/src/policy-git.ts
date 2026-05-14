@@ -180,8 +180,9 @@ const GIT_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
     instead: "git merge origin/<branch>",
   },
   "git ls-remote": {
-    reason: "ls-remote must read from origin, not arbitrary remotes or URLs.",
-    instead: "git ls-remote origin [<ref-pattern>...]",
+    reason:
+      "ls-remote must either be bare/flag-only (rewritten to origin) or name origin explicitly before any ref pattern.",
+    instead: "git ls-remote [<flags>] or git ls-remote origin [<ref-pattern>...]",
   },
   "git tag": {
     reason: "tag creation, deletion, signing, and moving are blocked; listing is allowed.",
