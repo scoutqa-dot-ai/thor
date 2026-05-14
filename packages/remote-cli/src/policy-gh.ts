@@ -73,10 +73,10 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "workflow run",
 ]);
 
-// Read-only commands where --repo / -R is harmless: it only retargets the
-// query, never the auth scope of a write. Writes (pr create, pr comment,
-// pr review, run rerun, run download, workflow run, api mutation shapes)
-// keep the ban so they stay scoped to the current worktree's repo.
+// Read-only non-API commands where --repo / -R is harmless: it only retargets
+// the query, never the auth scope of a write. Writes keep the ban so they stay
+// scoped to the current worktree's repo. All `gh api` shapes also keep the ban;
+// cross-repo API reads should use explicit endpoints or query parameters.
 const REPO_OVERRIDE_ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "auth status",
   "cache list",

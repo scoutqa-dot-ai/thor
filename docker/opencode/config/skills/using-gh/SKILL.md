@@ -8,8 +8,8 @@ description: "GitHub CLI surface allowed by Thor's remote-cli server policy. App
 All `gh` commands go through Thor's remote-cli which enforces:
 
 - **Append-only writes.** Create PRs, post comments, submit `--comment`/`--request-changes` reviews. Never approve, merge, edit, or delete.
-- **`--repo`/`-R` is allowed on read commands only.** Reads can target any repo. Writes (`pr create`, `pr comment`, `pr review`, `run rerun`, `run download`, `workflow run`, and `gh api` writes) stay scoped to the current worktree's origin — `cd` into the right worktree and drop the flag.
-- **`gh api` is a tiny explicit subset.** REST implicit GET reads are allowed with output shaping. GraphQL is allowed for read queries only (no `mutation` keyword, no non-GET method, no `-F` field loading). One append-only POST shape is allowed for PR review-comment replies.
+- **`--repo`/`-R` is allowed on supported non-API read commands only.** Reads such as `pr view`, `issue view`, `run view`, and searches can target any repo. Writes (`pr create`, `pr comment`, `pr review`, `run rerun`, `run download`, `workflow run`) and all `gh api` calls stay scoped without repo override flags. For cross-repo API reads, use explicit REST endpoints such as `repos/<owner>/<repo>/...` or GraphQL query variables without `--repo`/`-R`.
+- **`gh api` is a tiny explicit subset.** REST implicit GET reads are allowed with output shaping. GraphQL is allowed for read queries only (no `mutation` keyword, no non-GET method, no `-F` field loading). One append-only POST shape is allowed for PR review-comment replies. `--repo`/`-R` is blocked on every `gh api` shape.
 - **PR approval is a human gate.** `gh pr review --approve` is denied.
 - **`gh pr checkout` is denied** because it would mutate the current worktree branch — use the fetch + worktree-add pattern in "Reviewing a PR" below.
 - **`gh pr diff <N>` is allowed** as a read-only shortcut, but a fetched worktree gives a deeper review surface (run tests, grep, build). Prefer the worktree pattern when actually reviewing.

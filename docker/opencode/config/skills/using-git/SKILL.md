@@ -12,7 +12,7 @@ All `git` commands go through Thor's remote-cli which enforces:
 - **Pushes only to `origin`**, never to protected branches `main` or `master`.
 - **No `git pull`.** It depends on local upstream/config and can silently rebase. Run `git fetch origin <branch>` then `git merge origin/<branch>` instead.
 - **`git config` is read-only.** Only `--get`, `--get-all`, and `--list` (with optional `--local`/`--show-origin`/`--show-scope`) are allowed. Scope overrides (`--global`, `--system`, `--file`) and mutation (`--add`, `--unset`, `--replace-all`, …) are denied.
-- **`git -C <abspath>` is allowed when `<abspath>` is inside `/workspace/repos/<repo>` or `/workspace/worktrees/<repo>/<branch>`.** The flag is stripped and the path becomes the effective working directory for the rest of the command. Paths outside the workspace, relative paths, and bare `git -C <path>` (with no subcommand) are denied.
+- **`git -C <abspath>` is allowed when `<abspath>` resolves inside `/workspace/repos` or `/workspace/worktrees`.** The flag is stripped and the path becomes the effective working directory for the rest of the command. Paths outside the workspace, relative paths, and bare `git -C <path>` (with no subcommand) are denied.
 - **Use `git restore` for file restore.** `git checkout -- <path>` is not part of the supported surface.
 
 ## Common redirects
@@ -144,7 +144,7 @@ Optional modifiers: `--local`, `--show-origin`, `--show-scope`. Mutation (`--add
 
 ### `git -C <path>`
 
-`git -C <abspath> <subcommand> …` is allowed when `<abspath>` is inside `/workspace/repos/<repo>` or `/workspace/worktrees/<repo>/<branch>`. Thor strips the `-C` and runs the subcommand with the path's realpath as the effective working directory. Both `-C <abspath>` (two args) and `-C=<abspath>` (one combined arg) are supported. Relative paths, traversal segments, paths outside the workspace, and bare `git -C <path>` with no subcommand are denied.
+`git -C <abspath> <subcommand> …` is allowed when `<abspath>` resolves inside `/workspace/repos` or `/workspace/worktrees`. Thor strips the `-C` and runs the subcommand with the path's realpath as the effective working directory. Both `-C <abspath>` (two args) and `-C=<abspath>` (one combined arg) are supported. Relative paths, traversal segments, paths outside the workspace, and bare `git -C <path>` with no subcommand are denied.
 
 ## Safe under `git --no-pager`
 

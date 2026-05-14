@@ -10,9 +10,9 @@ Ten relaxations across `packages/remote-cli/src/policy-gh.ts` and `policy-git.ts
 
 ### `gh` relaxations
 
-1. **`--repo` / `-R` allowed on read-only commands.** The ban exists to keep writes scoped; reads have no auth-scoping concern. Allow it on every command in `READ_ONLY_GH_COMMANDS`; keep banning it on `pr create`, `pr comment`, `pr review`, `run rerun`, `run download`, `workflow run`, and `api` mutation shapes.
+1. **`--repo` / `-R` allowed on supported non-API read-only commands.** The ban exists to keep writes scoped; reads have no auth-scoping concern. Allow it on command keys in `REPO_OVERRIDE_ALLOWED_GH_COMMANDS`; keep banning it on `pr create`, `pr comment`, `pr review`, `run rerun`, `run download`, `workflow run`, and every `gh api` shape. Cross-repo API reads should use explicit REST endpoints or GraphQL query variables instead of repo override flags.
 2. **`gh pr diff <N>` allowed.** Pure read; the "use a worktree instead" guidance is workflow opinion, not safety.
-3. **`gh api graphql` read-only allowed.** Accept when exactly one `-f query=…` is provided, no `--method` is provided or `--method GET`, and the query does not contain a `mutation` block. Writes (`mutation`, `--method POST/PUT/PATCH/DELETE`) remain blocked.
+3. **`gh api graphql` read-only allowed.** Accept when exactly one `-f query=…` is provided, no `--method` is provided or `--method GET`, the query does not contain a `mutation` block, and no `--repo` / `-R` override is present. Writes (`mutation`, `--method POST/PUT/PATCH/DELETE`) remain blocked.
 4. **`gh run view --log-failed` test lock.** Already accepted by the validator (it only gates `args[2]`), but add a regression test so we don't break it later.
 
 ### `git` relaxations
