@@ -180,6 +180,78 @@ def test_builtin_atlassian_rule_blocks_non_read_method(tmp_path, monkeypatch) ->
     assert "readonly rule blocked" in _response_text(flow.response)
 
 
+def test_builtin_jira_attachment_upload_rules_inject_headers(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ATLASSIAN_AUTH", "Basic test")
+
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    addon = ThorMitmAddon(str(config))
+
+    flows = [
+        FakeFlow(
+            request=FakeRequest(
+                host="foo.atlassian.net",
+                method="POST",
+                path="/rest/api/3/issue/ABC-1/attachments",
+            )
+        ),
+        FakeFlow(
+            request=FakeRequest(
+                host="api.atlassian.com",
+                method="POST",
+                path="/ex/jira/cloud-id/rest/api/3/issue/ABC-1/attachments",
+            )
+        ),
+    ]
+
+    for flow in flows:
+        addon.request(flow)
+        assert flow.response is None
+        assert flow.request.headers["Authorization"] == "Basic test"
+        assert flow.request.headers["X-Atlassian-Token"] == "no-check"
+
+
+def test_builtin_jira_attachment_upload_rules_stay_path_and_method_scoped(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("ATLASSIAN_AUTH", "Basic test")
+
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    addon = ThorMitmAddon(str(config))
+
+    flows = [
+        FakeFlow(
+            request=FakeRequest(
+                host="foo.atlassian.net",
+                method="POST",
+                path="/rest/api/3/issue/ABC-1/foo/attachments",
+            )
+        ),
+        FakeFlow(
+            request=FakeRequest(
+                host="api.atlassian.com",
+                method="POST",
+                path="/ex/jira/cloud-id/rest/api/3/project/foo/attachments",
+            )
+        ),
+        FakeFlow(
+            request=FakeRequest(
+                host="foo.atlassian.net",
+                method="DELETE",
+                path="/rest/api/3/issue/ABC-1/attachments",
+            )
+        ),
+    ]
+
+    for flow in flows:
+        addon.request(flow)
+        assert flow.response is not None
+        assert _status_code(flow.response) == 403
+        assert "readonly rule blocked" in _response_text(flow.response)
+        assert flow.request.headers == {}
+
+
 def test_disallowed_builtin_slack_update_returns_403(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 

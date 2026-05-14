@@ -16,6 +16,7 @@ def test_exact_and_suffix_matching() -> None:
                 {
                     "host": "api.example.com",
                     "path_prefix": "/v1/",
+                    "path_suffix": "/users?ignored=true",
                     "headers": {"Authorization": "Bearer ${TOKEN}"},
                 },
                 {
@@ -29,8 +30,10 @@ def test_exact_and_suffix_matching() -> None:
         }
     )
 
-    assert ruleset.classify("api.example.com", "/v1/users").action == "inject"
+    assert ruleset.rules[0].path_suffix == "/users"
+    assert ruleset.classify("api.example.com", "/v1/users?active=true").action == "inject"
     assert ruleset.classify("service.example.internal", "/readonly/health").action == "inject"
+    assert ruleset.classify("api.example.com", "/v1/projects").action == "deny"
     assert ruleset.classify("api.example.com", "/v2/users").action == "deny"
     assert ruleset.classify("service.example.internal", "/write").action == "deny"
     assert ruleset.classify("api.openai.com").action == "passthrough"
@@ -126,6 +129,64 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     assert slack_file.action == "inject"
     assert slack_file.rule is not None
     assert slack_file.rule.readonly is True
+
+    jira_attach_site = ruleset.classify(
+        "foo.atlassian.net", "/rest/api/3/issue/ABC-1/attachments", method="POST"
+    )
+    assert jira_attach_site.action == "inject"
+    assert jira_attach_site.rule is not None
+    assert jira_attach_site.rule.readonly is False
+    assert jira_attach_site.rule.headers["Authorization"] == "${ATLASSIAN_AUTH}"
+    assert jira_attach_site.rule.headers["X-Atlassian-Token"] == "no-check"
+
+    jira_attach_gateway = ruleset.classify(
+        "api.atlassian.com",
+        "/ex/jira/cloud-id/rest/api/3/issue/ABC-1/attachments",
+        method="POST",
+    )
+    assert jira_attach_gateway.action == "inject"
+    assert jira_attach_gateway.rule is not None
+    assert jira_attach_gateway.rule.readonly is False
+    assert jira_attach_gateway.rule.headers["X-Atlassian-Token"] == "no-check"
+
+    jira_nested_site = ruleset.classify(
+        "foo.atlassian.net",
+        "/rest/api/3/issue/ABC-1/foo/attachments",
+        method="POST",
+    )
+    assert jira_nested_site.action == "inject"
+    assert jira_nested_site.rule is not None
+    assert jira_nested_site.rule.readonly is True
+
+    jira_nested_gateway = ruleset.classify(
+        "api.atlassian.com",
+        "/ex/jira/cloud-id/rest/api/3/project/foo/attachments",
+        method="POST",
+    )
+    assert jira_nested_gateway.action == "inject"
+    assert jira_nested_gateway.rule is not None
+    assert jira_nested_gateway.rule.readonly is True
+
+    jira_delete_site = ruleset.classify(
+        "foo.atlassian.net", "/rest/api/3/issue/ABC-1/attachments", method="DELETE"
+    )
+    assert jira_delete_site.action == "inject"
+    assert jira_delete_site.rule is not None
+    assert jira_delete_site.rule.readonly is True
+
+    jira_unspecified_method_site = ruleset.classify(
+        "foo.atlassian.net", "/rest/api/3/issue/ABC-1/attachments"
+    )
+    assert jira_unspecified_method_site.action == "inject"
+    assert jira_unspecified_method_site.rule is not None
+    assert jira_unspecified_method_site.rule.readonly is True
+
+    jira_comment_site = ruleset.classify(
+        "foo.atlassian.net", "/rest/api/3/issue/ABC-1/comment"
+    )
+    assert jira_comment_site.action == "inject"
+    assert jira_comment_site.rule is not None
+    assert jira_comment_site.rule.readonly is True
 
 
 def test_user_rule_override_wins_over_builtin() -> None:
@@ -226,6 +287,22 @@ def test_invalid_host_suffix_and_readonly_type_are_rejected() -> None:
         raise AssertionError("expected invalid readonly type to raise")
     except ValueError as exc:
         assert "readonly must be a boolean" in str(exc)
+
+    try:
+        parse_ruleset(
+            {
+                "mitmproxy": [
+                    {
+                        "host": "api.example.com",
+                        "path_suffix": "attachments",
+                        "headers": {"Authorization": "Bearer ${TOKEN}"},
+                    }
+                ]
+            }
+        )
+        raise AssertionError("expected invalid path_suffix to raise")
+    except ValueError as exc:
+        assert "path_suffix must start with '/'" in str(exc)
 
 
 def test_rule_store_uses_last_good_on_invalid_reload(tmp_path) -> None:
