@@ -37,8 +37,8 @@ describe("Thor OpenCode search scope policy", () => {
 
   it("allows scoped explicit roots and grep-only tool output exceptions", () => {
     expect(allowedSearchRoot("/workspace/repos", "glob")).toBe(true);
-    expect(allowedSearchRoot("/tmp/opencode/session", "glob")).toBe(true);
-    expect(allowedSearchRoot("/tmp/slack-download.abc/file", "grep")).toBe(true);
+    expect(allowedSearchRoot("/tmp", "glob")).toBe(true);
+    expect(allowedSearchRoot("/tmp/any/arbitrary/path", "grep")).toBe(true);
     expect(allowedSearchRoot("/home/thor/.local/share/opencode/tool-output/1.txt", "grep")).toBe(
       true,
     );
@@ -88,6 +88,8 @@ describe("Thor OpenCode search scope policy", () => {
     const guided = applySearchDefinitionGuidance("glob", { description: "Find files." });
     expect(guided.description).toContain("Thor search scope guardrail");
     expect(guided.description).toContain("/workspace/<segment>");
+    expect(guided.description).toContain("/tmp");
+    expect(guided.description).toContain("absolute --glob");
     expect(applySearchDefinitionGuidance("bash", { description: "Run shell." })).toEqual({
       description: "Run shell.",
     });

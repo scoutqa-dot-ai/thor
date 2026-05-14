@@ -43,15 +43,14 @@ export const allowedSearchRoot = (candidate, tool) => {
   if (normalized.startsWith("/workspace/")) {
     return normalized.split("/").filter(Boolean).length >= 2;
   }
-  if (isDescendantOrSelf(normalized, "/tmp/opencode")) return true;
-  if (/^\/tmp\/slack-download\.[^/]+(?:\/|$)/.test(normalized)) return true;
+  if (isDescendantOrSelf(normalized, "/tmp")) return true;
   if (tool === "grep" && isDescendantOrSelf(normalized, GREP_TOOL_OUTPUT_ROOT)) return true;
   return false;
 };
 
 const searchScopeError = (message) =>
   new Error(
-    `${message} Search from a scoped allowed path such as /workspace/<repo-or-run>, /tmp/opencode, or /tmp/slack-download.<id> and use a relative glob/include.`,
+    `${message} Search from a scoped allowed path such as /workspace/<repo-or-run> or /tmp and use a relative glob/include.`,
   );
 
 const logPolicyEvent = (event, tool, hook, extra = {}) => {
@@ -122,7 +121,7 @@ export const applySearchScopePolicy = (tool, args, options = {}) => {
 };
 
 const SEARCH_GUIDANCE =
-  "Thor search scope guardrail: for glob/grep, set path to an allowed scoped root (/workspace/<segment> descendants, /tmp/opencode, or /tmp/slack-download.<id>) and keep glob.pattern/grep.include relative. Grep may also read /home/thor/.local/share/opencode/tool-output. Do not search / or /workspace with absolute globs/includes.";
+  "Thor search scope guardrail: for glob/grep, set path to an allowed scoped root (/workspace/<segment> descendants or /tmp) and keep glob.pattern/grep.include relative. Grep may also read /home/thor/.local/share/opencode/tool-output. In this runtime, rg is wrapped to block unsafe absolute --glob scans against broad roots such as /, /workspace, /home, or /tmp; use a scoped path plus relative glob/include instead.";
 
 export const applySearchDefinitionGuidance = (tool, definition) => {
   if (tool !== "glob" && tool !== "grep") return definition;
