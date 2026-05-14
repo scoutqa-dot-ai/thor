@@ -75,35 +75,6 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
   "workflow run",
 ]);
 
-// Read-only non-API commands where --repo / -R is harmless: it only retargets
-// the query, never the auth scope of a write. Writes keep the ban so they stay
-// scoped to the current worktree's repo. All `gh api` shapes also keep the ban;
-// cross-repo API reads should use explicit endpoints or query parameters.
-const REPO_OVERRIDE_ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
-  "auth status",
-  "cache list",
-  "search prs",
-  "search issues",
-  "search repos",
-  "search code",
-  "pr view",
-  "pr list",
-  "pr status",
-  "pr checks",
-  "pr diff",
-  "issue view",
-  "issue list",
-  "label list",
-  "release list",
-  "release view",
-  "repo view",
-  "run list",
-  "run view",
-  "run watch",
-  "workflow list",
-  "workflow view",
-]);
-
 const HELP_FLAGS: ReadonlySet<string> = new Set(["-h", "--help"]);
 
 const DEFAULT_GH_DENY_GUIDANCE: DenyGuidance = {
@@ -188,65 +159,44 @@ export function validateGhArgs(args: string[], cwd?: string): string | null {
   if (isHelpRequest(args)) return null;
 
   const command = ghCommandLabel(args);
-  const key = ghCommandKey(args);
-  let effectiveArgs = args;
-  if (hasRepoOverride(args)) {
-    if (!key || !REPO_OVERRIDE_ALLOWED_GH_COMMANDS.has(key)) {
-      return denyMessage(command, REPO_OVERRIDE_DENY_GUIDANCE);
-    }
-    // Allowed read-only commands hardcode positions like `args[2]` for the
-    // numeric selector. Strip `--repo`/`-R` flags (and their values) so a
-    // shape like `gh issue view --repo owner/repo 42` reaches per-command
-    // validation with the canonical layout. Malformed repo-override shapes
-    // (missing value, value that starts with `-`, empty inline value) deny
-    // explicitly so the stripper can't silently eat an unrelated flag.
-    const stripped = stripRepoOverrideFlags(args);
-    if ("error" in stripped) {
-      return denyMessage(command, {
-        reason: stripped.error,
-        instead: "supply a non-empty owner/repo value (e.g. --repo owner/repo)",
-      });
-    }
-    effectiveArgs = stripped.args;
-  }
+  if (hasRepoOverride(args)) return denyMessage(command, REPO_OVERRIDE_DENY_GUIDANCE);
 
+  const key = ghCommandKey(args);
   if (!key || !ALLOWED_GH_COMMANDS.has(key)) {
     return denyMessage(command);
   }
 
   switch (key) {
     case "api":
-      return validateGhApiArgs(effectiveArgs, cwd);
+      return validateGhApiArgs(args, cwd);
     case "auth status":
-      return matchesExactArgs(effectiveArgs, ["auth", "status"])
-        ? null
-        : denyMessage("gh auth status");
+      return matchesExactArgs(args, ["auth", "status"]) ? null : denyMessage("gh auth status");
     case "pr create":
-      return validateGhPrCreateArgs(effectiveArgs, cwd);
+      return validateGhPrCreateArgs(args, cwd);
     case "issue create":
-      return validateGhIssueCreateArgs(effectiveArgs);
+      return validateGhIssueCreateArgs(args);
     case "pr comment":
-      return validateGhPrCommentArgs(effectiveArgs);
+      return validateGhPrCommentArgs(args);
     case "issue comment":
-      return validateGhIssueCommentArgs(effectiveArgs);
+      return validateGhIssueCommentArgs(args);
     case "pr review":
-      return validateGhPrReviewArgs(effectiveArgs);
+      return validateGhPrReviewArgs(args);
     case "issue view":
-      return validateRequiredNumericSelector(effectiveArgs, "gh issue view");
+      return validateRequiredNumericSelector(args, "gh issue view");
     case "run view":
-      return validateRequiredNumericSelector(effectiveArgs, "gh run view");
+      return validateRequiredNumericSelector(args, "gh run view");
     case "run watch":
-      return validateRequiredNumericSelector(effectiveArgs, "gh run watch");
+      return validateRequiredNumericSelector(args, "gh run watch");
     case "run rerun":
-      return validateGhRunRerunArgs(effectiveArgs);
+      return validateGhRunRerunArgs(args);
     case "run download":
-      return validateGhRunDownloadArgs(effectiveArgs);
+      return validateGhRunDownloadArgs(args);
     case "workflow view":
-      return validateWorkflowViewArgs(effectiveArgs);
+      return validateWorkflowViewArgs(args);
     case "workflow run":
-      return validateGhWorkflowRunArgs(effectiveArgs);
+      return validateGhWorkflowRunArgs(args);
     case "release view":
-      return validateReleaseViewArgs(effectiveArgs);
+      return validateReleaseViewArgs(args);
     default:
       return null;
   }
@@ -264,41 +214,6 @@ function hasRepoOverride(args: string[]): boolean {
   return args.some(
     (arg) => arg === "-R" || arg.startsWith("-R") || arg === "--repo" || arg.startsWith("--repo="),
   );
-}
-
-function stripRepoOverrideFlags(args: string[]): { args: string[] } | { error: string } {
-  const out: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === "--repo" || arg === "-R") {
-      // Standalone flag: the next token is the value. Refuse if missing or if
-      // it looks like another flag — otherwise we'd silently eat a real flag
-      // and hide a caller mistake.
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith("-")) {
-        return { error: `${arg} requires an owner/repo value` };
-      }
-      i += 1;
-      continue;
-    }
-    if (arg.startsWith("--repo=")) {
-      if (arg.length === "--repo=".length) {
-        return { error: "--repo= requires an owner/repo value" };
-      }
-      continue;
-    }
-    if (arg.startsWith("-R") && arg !== "-R") {
-      // `-R<value>` combined form. The startsWith check guarantees length ≥ 3,
-      // so the slice is non-empty by construction; the explicit length check
-      // is defensive in case the prefix logic changes.
-      if (arg.length <= 2) {
-        return { error: "-R requires an owner/repo value" };
-      }
-      continue;
-    }
-    out.push(arg);
-  }
-  return { args: out };
 }
 
 function ghCommandKey(args: string[]): string | undefined {

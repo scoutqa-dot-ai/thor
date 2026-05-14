@@ -6,23 +6,22 @@ Auto-health report (`findings_2.md`) attributed 119 deduped agent failures to "p
 
 ## Scope
 
-Ten relaxations across `packages/remote-cli/src/policy-gh.ts` and `policy-git.ts`, plus matching tests and `using-gh` / `using-git` skill docs.
+Nine relaxations across `packages/remote-cli/src/policy-gh.ts` and `policy-git.ts`, plus matching tests and `using-gh` / `using-git` skill docs.
 
 ### `gh` relaxations
 
-1. **`--repo` / `-R` allowed on supported non-API read-only commands.** The ban exists to keep writes scoped; reads have no auth-scoping concern. Allow it on command keys in `REPO_OVERRIDE_ALLOWED_GH_COMMANDS`; keep banning it on `pr create`, `pr comment`, `pr review`, `run rerun`, `run download`, `workflow run`, and every `gh api` shape. Cross-repo API reads should use explicit REST endpoints or GraphQL query variables instead of repo override flags.
-2. **`gh pr diff <N>` allowed.** Pure read; the "use a worktree instead" guidance is workflow opinion, not safety.
-3. **`gh api graphql` read-only allowed.** Accept when exactly one `-f query=…` is provided, no `--method` is provided or `--method GET`, the query does not contain a `mutation` block, and no `--repo` / `-R` override is present. Writes (`mutation`, `--method POST/PUT/PATCH/DELETE`) remain blocked.
-4. **`gh run view --log-failed` test lock.** Already accepted by the validator (it only gates `args[2]`), but add a regression test so we don't break it later.
+1. **`gh pr diff <N>` allowed.** Pure read; the "use a worktree instead" guidance is workflow opinion, not safety.
+2. **`gh api graphql` read-only allowed.** Accept when exactly one `-f query=…` is provided, no `--method` is provided or `--method GET`, the query does not contain a `mutation` block, and no `--repo` / `-R` override is present. Writes (`mutation`, `--method POST/PUT/PATCH/DELETE`) remain blocked.
+3. **`gh run view --log-failed` test lock.** Already accepted by the validator (it only gates `args[2]`), but add a regression test so we don't break it later.
 
 ### `git` relaxations
 
-5. **`git -C <abspath> <subcmd> …` allowed when `<abspath>` is inside `WORKSPACE_REPOS_ROOT` or `WORKSPACE_WORKTREES_ROOT`.** Strip the `-C <path>` prefix and override the effective cwd. Identical to a workdir change; no new capability.
-6. **Bare `git fetch` and `git fetch --prune` allowed.** Rewrite to pass `origin` when no positional is supplied, avoiding Git's branch-upstream default. Already-allowed `git fetch origin --prune` is just a longer way to type the same thing.
-7. **Bare `git ls-remote` allowed.** Rewrite to pass `origin` when no repo positional is supplied, matching the fetch relaxation.
-8. **`git config --get <key>` / `--get-all <key>` / `--list` allowed.** Read-only, scoped to local repo config. Deny `--global`, `--system`, `--file`, and any write subflag (`--unset`, `--add`, `--replace-all`).
-9. **`git tag --sort=<key>` and `--format=<fmt>` allowed in list mode.** Read-only listing flags; today only `-l`/`--list`/`-n[N]` pass.
-10. **`git worktree add --detach <path> <commit-ish>` allowed.** Required for PR-review-by-SHA flows. Path must still live under `/workspace/worktrees/<repo>/`; the last segment is treated as a freeform label (commonly `pr-<N>`) rather than required to equal the ref.
+4. **`git -C <abspath> <subcmd> …` allowed when `<abspath>` is inside `WORKSPACE_REPOS_ROOT` or `WORKSPACE_WORKTREES_ROOT`.** Strip the `-C <path>` prefix and override the effective cwd. Identical to a workdir change; no new capability.
+5. **Bare `git fetch` and `git fetch --prune` allowed.** Rewrite to pass `origin` when no positional is supplied, avoiding Git's branch-upstream default. Already-allowed `git fetch origin --prune` is just a longer way to type the same thing.
+6. **Bare `git ls-remote` allowed.** Rewrite to pass `origin` when no repo positional is supplied, matching the fetch relaxation.
+7. **`git config --get <key>` / `--get-all <key>` / `--list` allowed.** Read-only, scoped to local repo config. Deny `--global`, `--system`, `--file`, and any write subflag (`--unset`, `--add`, `--replace-all`).
+8. **`git tag --sort=<key>` and `--format=<fmt>` allowed in list mode.** Read-only listing flags; today only `-l`/`--list`/`-n[N]` pass.
+9. **`git worktree add --detach <path> <commit-ish>` allowed.** Required for PR-review-by-SHA flows. Path must still live under `/workspace/worktrees/<repo>/`; the last segment is treated as a freeform label (commonly `pr-<N>`) rather than required to equal the ref.
 
 ## Phases
 
@@ -32,7 +31,7 @@ Land this plan document. Single commit.
 
 ### Phase 2 — `gh` policy relaxations
 
-- `policy-gh.ts`: split the repo-override deny into write-only; allow `pr diff`; allow GraphQL read shape.
+- `policy-gh.ts`: allow `pr diff`; allow GraphQL read shape. `--repo`/`-R` remains denied across the whole gh surface.
 - `policy.test.ts`: extend the gh suite with positive cases for each relaxation and locked negative cases (still-blocked writes/mutations).
 - `using-gh/SKILL.md`: document the new surface.
 

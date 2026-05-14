@@ -1121,7 +1121,7 @@ describe("validateGhArgs", () => {
         ["would switch the current worktree branch", "git fetch origin pull/<N>/head:pr-<N>"],
       );
       expectGhDeniedWith(
-        ["pr", "comment", "123", "--repo", "owner/repo", "--body", "x"],
+        ["pr", "view", "123", "--repo", "owner/repo"],
         ["repo-targeting flags are blocked", "cd into the intended repo or worktree"],
       );
       expectGhDeniedWith(
@@ -1146,65 +1146,12 @@ describe("validateGhArgs", () => {
       );
     });
 
-    it("allows --repo on read-only gh commands", () => {
-      expect(validateGhArgs(["pr", "view", "123", "--repo", "owner/repo"])).toBeNull();
-      expect(validateGhArgs(["issue", "view", "42", "-R", "owner/repo"])).toBeNull();
-      expect(validateGhArgs(["issue", "view", "42", "-Rowner/repo"])).toBeNull();
-      expect(validateGhArgs(["pr", "view", "123", "-Rowner/repo"])).toBeNull();
-      expect(validateGhArgs(["repo", "view", "--repo=owner/repo"])).toBeNull();
-      expect(validateGhArgs(["pr", "list", "--repo", "owner/repo", "--limit", "5"])).toBeNull();
-      expect(validateGhArgs(["pr", "checks", "123", "--repo", "owner/repo"])).toBeNull();
-      expect(validateGhArgs(["pr", "diff", "123", "--repo", "owner/repo"])).toBeNull();
-      expect(validateGhArgs(["run", "view", "999", "--log", "--repo", "owner/repo"])).toBeNull();
-      expect(
-        validateGhArgs(["search", "prs", "is:open", "--repo", "owner/repo", "--limit", "5"]),
-      ).toBeNull();
-    });
-
-    it("allows --repo before the numeric selector on commands that hardcode args[2]", () => {
-      // The repo override appears between the subcommand and the selector;
-      // the stripper relocates the selector to args[2] for per-command
-      // validators that hardcode that position.
-      expect(validateGhArgs(["issue", "view", "--repo", "owner/repo", "42"])).toBeNull();
-      expect(validateGhArgs(["issue", "view", "-R", "owner/repo", "42"])).toBeNull();
-      expect(validateGhArgs(["issue", "view", "--repo=owner/repo", "42"])).toBeNull();
-      expect(validateGhArgs(["issue", "view", "-Rowner/repo", "42"])).toBeNull();
-      expect(validateGhArgs(["run", "view", "--repo", "owner/repo", "123"])).toBeNull();
-      expect(validateGhArgs(["run", "view", "--repo", "owner/repo", "123", "--log"])).toBeNull();
-      expect(validateGhArgs(["run", "view", "-R", "owner/repo", "123", "--log-failed"])).toBeNull();
-      expect(validateGhArgs(["run", "watch", "--repo", "owner/repo", "456"])).toBeNull();
-      expect(validateGhArgs(["workflow", "view", "--repo", "owner/repo", "ci.yml"])).toBeNull();
-      expect(validateGhArgs(["release", "view", "--repo", "owner/repo", "latest"])).toBeNull();
-      expect(validateGhArgs(["release", "view", "-R", "owner/repo", "v1.2.3"])).toBeNull();
-    });
-
-    it("blocks malformed --repo / -R shapes without swallowing adjacent flags", () => {
-      // Standalone flag with no following value.
-      expectGhDeniedWith(
-        ["pr", "view", "123", "--repo"],
-        ["--repo requires an owner/repo value", "owner/repo"],
-      );
-      expectGhDeniedWith(
-        ["issue", "view", "42", "-R"],
-        ["-R requires an owner/repo value", "owner/repo"],
-      );
-      // Standalone flag followed by another flag — must not eat the next flag.
-      expectGhDeniedWith(
-        ["issue", "view", "--repo", "--jq", ".title", "42"],
-        ["--repo requires an owner/repo value"],
-      );
-      expectGhDeniedWith(
-        ["pr", "view", "123", "-R", "--json", "title"],
-        ["-R requires an owner/repo value"],
-      );
-      // Inline forms with empty value.
-      expectGhDeniedWith(
-        ["pr", "view", "123", "--repo="],
-        ["--repo= requires an owner/repo value"],
-      );
-    });
-
-    it("blocks --repo on write-shape gh commands", () => {
+    it("blocks repo-targeting flags across the gh surface", () => {
+      expectGhDenied(["pr", "view", "123", "--repo", "owner/repo"]);
+      expectGhDenied(["issue", "view", "42", "-R", "owner/repo"]);
+      expectGhDenied(["issue", "view", "42", "-Rowner/repo"]);
+      expectGhDenied(["pr", "view", "123", "-Rowner/repo"]);
+      expectGhDenied(["repo", "view", "--repo=owner/repo"]);
       expectGhDenied(["pr", "create", "--repo", "org/repo", "--title", "x", "--body", "y"]);
       expectGhDenied(["pr", "comment", "123", "--repo", "org/repo", "--body", "x"]);
       expectGhDenied(["pr", "review", "123", "--repo", "org/repo", "--comment", "--body", "x"]);
