@@ -61,8 +61,8 @@ export function buildToolInstructions(
       [
         "[Jira attachment uploads]",
         "No MCP tool exists for Jira attachments. POST a multipart `file` field via `curl`/`fetch` to:",
-        "- `<site>.atlassian.net/rest/api/3/issue/<KEY>/attachments`",
-        "- `api.atlassian.com/ex/jira/<cloudId>/rest/api/3/issue/<KEY>/attachments`",
+        "- `https://<site>.atlassian.net/rest/api/3/issue/<KEY>/attachments`",
+        "- `https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/issue/<KEY>/attachments`",
         "The proxy injects auth and the required XSRF header only for those POST endpoint shapes.",
         "Other Jira writes still go through MCP.",
       ].join("\n"),
