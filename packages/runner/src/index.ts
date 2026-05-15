@@ -1274,6 +1274,7 @@ const MAX_MEANINGFUL_ROWS = 100;
 
 type ViewerEvent = { type?: unknown; properties?: Record<string, unknown>; _truncated?: unknown };
 type ViewerToolPart = {
+  id?: unknown;
   type?: unknown;
   tool?: unknown;
   callID?: unknown;
@@ -1282,7 +1283,9 @@ type ViewerToolPart = {
   reason?: unknown;
   state?: {
     status?: unknown;
+    title?: unknown;
     input?: unknown;
+    output?: unknown;
     error?: unknown;
     time?: { start?: unknown; end?: unknown };
   };
@@ -1549,6 +1552,93 @@ function decodeSourceLine(
   return undefined;
 }
 
+function partId(part: ViewerToolPart | undefined): string | undefined {
+  if (!part) return undefined;
+  return typeof part.id === "string" ? part.id : undefined;
+}
+
+function getStateTitle(part: ViewerToolPart): string | undefined {
+  const title = part.state?.title;
+  return typeof title === "string" && title ? title : undefined;
+}
+
+function detectSlackPost(
+  command: unknown,
+): { channel?: string; threadTs?: string; message?: string } | null {
+  if (typeof command !== "string") return null;
+  const trimmed = command.trimStart();
+  if (!/^slack-post-message\b/.test(trimmed)) return null;
+  const channelMatch =
+    trimmed.match(/--channel(?:=|\s+)['"]?([^\s'"]+)/) ?? trimmed.match(/-c\s+['"]?([^\s'"]+)/);
+  const threadMatch = trimmed.match(/--thread-ts(?:=|\s+)['"]?([^\s'"]+)/);
+  const heredocMatch = trimmed.match(/<<-?\s*'?(\w+)'?\s*\n([\s\S]*?)\n\1\b/);
+  return {
+    channel: channelMatch?.[1],
+    threadTs: threadMatch?.[1],
+    message: heredocMatch?.[2],
+  };
+}
+
+function renderSlackBubble(
+  info: { channel?: string; threadTs?: string; message?: string },
+  durationStr: string | undefined,
+  status: string,
+): string {
+  const target = info.channel ? `#${info.channel}` : "Slack";
+  const hdr = `💬 → ${escapeHtml(target)}${info.threadTs ? ` · ts ${escapeHtml(info.threadTs)}` : ""}${durationStr ? ` · ${escapeHtml(durationStr)}` : ""}${status !== "completed" ? ` · ${escapeHtml(status)}` : ""}`;
+  const body = info.message
+    ? `<pre>${escapeHtml(safeSnippet(info.message, 1200))}</pre>`
+    : "<em>message body not captured</em>";
+  return `<li class="slack-bubble"><div class="slack-hdr">${hdr}</div>${body}</li>`;
+}
+
+function renderDiffLines(patchText: string): string {
+  const MAX_LINES = 200;
+  const all = patchText.split("\n");
+  const lines = all.slice(0, MAX_LINES);
+  const truncatedLines = all.length - lines.length;
+  const out = lines
+    .map((line) => {
+      const safe = escapeHtml(safeSnippet(line, 300));
+      if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
+        return `<span class="diff-meta">${safe}</span>`;
+      }
+      if (line.startsWith("+")) return `<span class="diff-add">${safe}</span>`;
+      if (line.startsWith("-")) return `<span class="diff-del">${safe}</span>`;
+      return `<span>${safe}</span>`;
+    })
+    .join("");
+  const tail =
+    truncatedLines > 0
+      ? `<span class="diff-meta">… ${truncatedLines} more line(s) hidden</span>`
+      : "";
+  return `<pre class="diff">${out}${tail}</pre>`;
+}
+
+function renderApplyPatch(part: ViewerToolPart, durationStr: string | undefined): string {
+  const title = getStateTitle(part);
+  const input = isRecord(part.state?.input) ? part.state.input : undefined;
+  const patchText = input ? safeStr(input.patchText) : undefined;
+  const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
+  const hdr = `<b>apply_patch</b> <span class="status">${escapeHtml(status)}</span>${durationStr ? ` <span>${escapeHtml(durationStr)}</span>` : ""}${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title, 200))}</span>` : ""}`;
+  if (!patchText) return `<li>${hdr}</li>`;
+  return `<li><details open><summary>${hdr}</summary>${renderDiffLines(patchText)}</details></li>`;
+}
+
+function renderTaskCard(part: ViewerToolPart, durationStr: string | undefined): string {
+  const input = isRecord(part.state?.input) ? part.state.input : undefined;
+  const subagent = input ? safeStr(input.subagent_type) : undefined;
+  const description = input ? safeStr(input.description) : undefined;
+  const prompt = input ? safeStr(input.prompt) : undefined;
+  const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
+  const hdr = `🤖 <b>task</b>${subagent ? ` · ${escapeHtml(subagent)}` : ""} <span class="status">${escapeHtml(status)}</span>${durationStr ? ` · ${escapeHtml(durationStr)}` : ""}`;
+  const desc = description ? `<div>${escapeHtml(safeSnippet(description, 240))}</div>` : "";
+  const promptBlock = prompt
+    ? `<details><summary>prompt</summary><pre>${escapeHtml(safeSnippet(prompt, 1500))}</pre></details>`
+    : "";
+  return `<li class="task-card"><div class="task-hdr">${hdr}</div>${desc}${promptBlock}</li>`;
+}
+
 function renderSourceLine(source: DecodedSource): string {
   const inner = `${source.icon} ${escapeHtml(source.label)}`;
   if (source.href) {
@@ -1594,7 +1684,7 @@ function shortId(value: string, head = 8, tail = 4): string {
 }
 
 function renderPage(title: string, body: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · Thor</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.truncated-footer{color:#64748b;font-size:0.9em;font-style:italic;margin-top:12px}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}details{margin:16px 0}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}<footer><p>Generated by Thor at <time datetime="${new Date().toISOString()}">${new Date().toUTCString()}</time></p></footer></main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · Thor</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.truncated-footer{color:#64748b;font-size:0.9em;font-style:italic;margin-top:12px}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events>li{margin:6px 0}.tool-title{color:#475569;font-style:italic;margin-left:6px}.slack-bubble{background:#eff6ff;border-left:3px solid #3b82f6;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.slack-bubble .slack-hdr{color:#1e3a8a;font-size:0.9em;font-weight:600;margin-bottom:4px}.slack-bubble pre{background:transparent;color:#0f172a;padding:0;margin:0}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}details{margin:16px 0}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}<footer><p>Generated by Thor at <time datetime="${new Date().toISOString()}">${new Date().toUTCString()}</time></p></footer></main></body></html>`;
 }
 
 function renderSlicePage(
@@ -1614,6 +1704,19 @@ function renderSlicePage(
   const correlationKey = start?.type === "trigger_start" ? start.correlationKey : undefined;
   const promptPreview = start?.type === "trigger_start" ? start.promptPreview : undefined;
 
+  // Dedup pre-pass: for parts that stream multiple updates under the same id,
+  // we want one row per id with the latest state.
+  const latestPartById = new Map<string, ViewerToolPart>();
+  const firstIndexById = new Map<string, number>();
+  slice.records.forEach((record, idx) => {
+    if (record.type !== "opencode_event") return;
+    const part = eventPart(record);
+    const id = partId(part);
+    if (!id) return;
+    latestPartById.set(id, part!);
+    if (!firstIndexById.has(id)) firstIndexById.set(id, idx);
+  });
+
   let toolParts = 0;
   let textParts = 0;
   let stepFinishes = 0;
@@ -1623,7 +1726,8 @@ function renderSlicePage(
   let truncatedCount = 0;
   let latestAssistantText: string | undefined;
   const rows: string[] = [];
-  for (const record of slice.records) {
+  for (let idx = 0; idx < slice.records.length; idx++) {
+    const record = slice.records[idx]!;
     if (record.type === "trigger_start") {
       rows.push(
         `<li><b>trigger started</b>${record.correlationKey ? ` <span>${escapeHtml(safeSnippet(record.correlationKey))}</span>` : ""}</li>`,
@@ -1643,26 +1747,45 @@ function renderSlicePage(
       (record.event as ViewerEvent)._truncated === true
     ) {
       truncatedCount++;
-      rows.push(`<li class="warn"><b>truncated payload</b> event details omitted by log cap</li>`);
       continue;
     }
     const type = eventType(record);
-    const part = eventPart(record);
+    const rawPart = eventPart(record);
+    const id = partId(rawPart);
+    if (id && firstIndexById.get(id) !== idx) continue;
+    const part = id ? (latestPartById.get(id) ?? rawPart) : rawPart;
     if (part?.type === "tool") {
       toolParts++;
       const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
       if (status === "error") errorRows++;
-      const name = viewerToolDisplayName(part);
-      const args =
-        safeToolArgs(name, part.state?.input) ??
-        safeToolArgs(typeof part.tool === "string" ? part.tool : "", part.state?.input);
-      const hasHiddenArgs = !args && !!part.state?.input;
       const duration =
         typeof part.state?.time?.start === "number" && typeof part.state.time.end === "number"
           ? formatDuration(part.state.time.end - part.state.time.start)
           : undefined;
+      const toolName = typeof part.tool === "string" ? part.tool : "";
+
+      if (toolName === "apply_patch") {
+        rows.push(renderApplyPatch(part, duration));
+        continue;
+      }
+      if (toolName === "task") {
+        rows.push(renderTaskCard(part, duration));
+        continue;
+      }
+      const bashCommand = isRecord(part.state?.input) ? part.state.input.command : undefined;
+      const slackPost = toolName === "bash" ? detectSlackPost(bashCommand) : null;
+      if (slackPost) {
+        rows.push(renderSlackBubble(slackPost, duration, status));
+        continue;
+      }
+
+      const name = viewerToolDisplayName(part);
+      const title = getStateTitle(part);
+      const args =
+        safeToolArgs(name, part.state?.input) ?? safeToolArgs(toolName, part.state?.input);
+      const hasHiddenArgs = !args && !!part.state?.input;
       rows.push(
-        `<li><b>tool</b> <span>${escapeHtml(name)}</span> <span class="status">${escapeHtml(status)}</span>${duration ? ` <span>${duration}</span>` : ""}${args ? ` <code>${escapeHtml(args)}</code>` : ""}${hasHiddenArgs ? " <em>arguments hidden</em>" : ""}${status === "error" ? ` <span class="err">${escapeHtml(safeSnippet(part.state?.error, 300))}</span>` : ""}</li>`,
+        `<li><b>tool</b> <span>${escapeHtml(name)}</span> <span class="status">${escapeHtml(status)}</span>${duration ? ` <span>${duration}</span>` : ""}${args ? ` <code>${escapeHtml(args)}</code>` : ""}${hasHiddenArgs ? " <em>arguments hidden</em>" : ""}${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title, 200))}</span>` : ""}${status === "error" ? ` <span class="err">${escapeHtml(safeSnippet(part.state?.error, 300))}</span>` : ""}</li>`,
       );
       continue;
     }
@@ -1670,6 +1793,12 @@ function renderSlicePage(
       textParts++;
       latestAssistantText = safeSnippet(part.text, 1000);
       rows.push(`<li><b>assistant text</b> ${escapeHtml(safeSnippet(part.text, 300))}</li>`);
+      continue;
+    }
+    if (part?.type === "reasoning") {
+      const text = typeof part.text === "string" ? part.text : "";
+      if (!text.trim()) continue;
+      rows.push(`<li><b>reasoning</b> ${escapeHtml(safeSnippet(text, 240))}</li>`);
       continue;
     }
     if (part?.type === "step-finish") {
@@ -1700,9 +1829,8 @@ function renderSlicePage(
       );
       continue;
     }
-    if (type === "session.status" || type === "session.idle") {
-      rows.push(`<li><b>${escapeHtml(type)}</b></li>`);
-    }
+    // session.status (busy heartbeat) and session.idle are intentionally
+    // dropped — the pill conveys liveness; row-by-row heartbeats are noise.
   }
 
   const aliases = anchor.externalKeys

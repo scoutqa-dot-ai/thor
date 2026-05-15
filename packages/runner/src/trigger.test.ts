@@ -432,8 +432,8 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("tool</b> <span>gh auth</span>");
       expect(html).toContain("tool</b> <span>mcp</span>");
       expect(html).toContain("arguments hidden");
-      expect(html).toContain("truncated payload");
       expect(html).toContain("1 opencode event was truncated at write time and is not shown.");
+      expect(html).not.toContain("truncated payload");
       expect(html).toContain("Done with token=[redacted]");
       expect(html).toContain("step finish");
       expect(html).toContain("42 tokens");
@@ -706,6 +706,147 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("⏰");
       expect(html).toContain("Run the Katalon knowledge crawl");
       expect(html).not.toContain("<a href");
+    });
+  });
+
+  it("renders apply_patch as a unified diff, slack-post-message as a chat bubble, and task as a card", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000501";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("activity-session", anchorId);
+    appendSessionEvent("activity-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("activity-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "apply_patch",
+            state: {
+              status: "completed",
+              title: "Success. Updated the following files:\nM packages/runner/src/index.ts",
+              input: {
+                patchText:
+                  "--- a/packages/runner/src/index.ts\n+++ b/packages/runner/src/index.ts\n@@ -1,1 +1,1 @@\n-old line\n+new line\n",
+              },
+              time: { start: 0, end: 1000 },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("activity-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "bash",
+            state: {
+              status: "completed",
+              input: {
+                command:
+                  "slack-post-message --channel C0APZ92A45U --thread-ts 1710000000.501 <<'EOF'\nHello team\nEOF",
+              },
+              time: { start: 0, end: 200 },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("activity-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: {
+                subagent_type: "thinker",
+                description: "Plan Bitbucket DC work",
+                prompt: "Investigate the migration steps required for Bitbucket DC.",
+              },
+              time: { start: 0, end: 5000 },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("activity-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain("apply_patch");
+      expect(html).toContain('class="diff-add"');
+      expect(html).toContain('class="diff-del"');
+      expect(html).toContain("+new line");
+      expect(html).toContain("-old line");
+      expect(html).toContain('class="slack-bubble"');
+      expect(html).toContain("→ #C0APZ92A45U");
+      expect(html).toContain("Hello team");
+      expect(html).toContain('class="task-card"');
+      expect(html).toContain("thinker");
+      expect(html).toContain("Plan Bitbucket DC work");
+    });
+  });
+
+  it("dedups streamed part updates by id and drops busy heartbeats and empty reasoning", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000502";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("dedup-session", anchorId);
+    appendSessionEvent("dedup-session", { type: "trigger_start", triggerId });
+    for (const text of ["he", "hel", "hello world"]) {
+      appendSessionEvent("dedup-session", {
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: { part: { id: "prt_stream1", type: "text", text } },
+        },
+      });
+    }
+    appendSessionEvent("dedup-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: { part: { id: "prt_reason1", type: "reasoning", text: "" } },
+      },
+    });
+    appendSessionEvent("dedup-session", {
+      type: "opencode_event",
+      event: {
+        type: "session.status",
+        properties: { sessionID: "dedup-session", status: { type: "busy" } },
+      },
+    });
+    appendSessionEvent("dedup-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain("hello world");
+      const occurrences = html.match(/assistant text<\/b>/g);
+      expect(occurrences?.length ?? 0).toBe(1);
+      expect(html).not.toContain("<b>reasoning</b>");
+      expect(html).not.toContain("<b>session.status</b>");
     });
   });
 
