@@ -1795,14 +1795,12 @@ function renderSlicePage(
 
   type Step = { rows: string[] };
   let toolParts = 0;
-  let textParts = 0;
   let stepFinishes = 0;
   let totalTokens = 0;
   let hasTokens = false;
   const tokenTotals: TokenCounts = { input: 0, output: 0, reasoning: 0, cacheRead: 0 };
   let errorRows = 0;
   let truncatedCount = 0;
-  let latestAssistantText: string | undefined;
   let latestModelId: string | undefined;
   const steps: Step[] = [];
   let current: Step = { rows: [] };
@@ -1877,8 +1875,6 @@ function renderSlicePage(
       // those keeps the activity stream to assistant output only.
       const text = typeof part.text === "string" ? part.text : "";
       if (text.startsWith("[correlation-key:")) continue;
-      textParts++;
-      latestAssistantText = safeSnippet(text, 1000);
       // Preserve newlines (and bullet lists) instead of collapsing whitespace.
       // No markdown renderer — `**bold**` etc. still show as literal text.
       current.rows.push(
@@ -1961,7 +1957,6 @@ function renderSlicePage(
     anchor.currentSessionId && anchor.currentSessionId !== ownerSessionId
       ? ` · current <code title="${escapeHtml(anchor.currentSessionId)}">${escapeHtml(shortId(safeSnippet(anchor.currentSessionId, 120), 13))}</code>`
       : "";
-  const stepSummary = `${toolParts} tool row(s), ${textParts} assistant text row(s)`;
   const totalsBits: string[] = [];
   if (hasTokens) totalsBits.push(`Total tokens: ${formatTokens(totalTokens)}`);
   if (latestModelId) totalsBits.push(`Model: ${escapeHtml(latestModelId)}`);
@@ -2002,7 +1997,7 @@ function renderSlicePage(
       ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>`
       : "";
 
-  const body = `<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}${pillReason}</span>${livePill}<h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2>${sourceLine}${summaryLine ? `<p class="summary">${escapeHtml(summaryLine)}</p>` : ""}<p class="chips">anchor <code title="${escapeHtml(anchorId)}">${escapeHtml(shortId(anchorId))}</code> · trigger <code title="${escapeHtml(triggerId)}">${escapeHtml(shortId(triggerId))}</code> · session ${ownerChip}${currentChip}</p></section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreviewBlock}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section><h3>Activity</h3><p>${stepSummary}.</p>${latestAssistantText ? `<blockquote>${escapeHtml(latestAssistantText)}</blockquote>` : ""}${activityHtml}${totalsFooter}${truncatedFooter}</section>`;
+  const body = `<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}${pillReason}</span>${livePill}<h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2>${sourceLine}${summaryLine ? `<p class="summary">${escapeHtml(summaryLine)}</p>` : ""}<p class="chips">anchor <code title="${escapeHtml(anchorId)}">${escapeHtml(shortId(anchorId))}</code> · trigger <code title="${escapeHtml(triggerId)}">${escapeHtml(shortId(triggerId))}</code> · session ${ownerChip}${currentChip}</p></section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreviewBlock}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section>${activityHtml}${totalsFooter}${truncatedFooter}</section>`;
   return renderPage(pageTitle, body);
 }
 

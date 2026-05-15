@@ -426,7 +426,7 @@ describe("runner /trigger orchestration", () => {
       expect(response.status).toBe(200);
       const html = await response.text();
       expect(html).toContain("slack trigger");
-      expect(html).toContain("<h3>Activity</h3>");
+      expect(html).not.toContain("<h3>Activity</h3>");
       expect(html).toContain("tool</b> <span>read</span>");
       expect(html).toContain("filePath:");
       expect(html).toContain("tool</b> <span>gh auth</span>");
@@ -437,7 +437,9 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("1 opencode event was truncated at write time and is not shown.");
       expect(html).not.toContain("truncated payload");
       expect(html).toContain("Done with token=[redacted]");
-      expect(html).toContain("3 tool row(s), 1 assistant text row(s)");
+      // Per-section row-count preamble removed — step list speaks for itself.
+      expect(html).not.toContain("tool row(s)");
+      expect(html).not.toContain("assistant text row(s)");
       expect(html).toContain('class="totals"');
       expect(html).toContain("Total tokens: 42");
       expect(html).toContain('class="chips"');
