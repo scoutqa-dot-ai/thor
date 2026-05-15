@@ -1762,11 +1762,6 @@ function formatCostUsd(value: number): string {
   return `$${value.toFixed(4)}`;
 }
 
-function shortId(value: string, head = 8, tail = 4): string {
-  if (value.length <= head + tail + 1) return value;
-  return `${value.slice(0, head)}…${value.slice(-tail)}`;
-}
-
 /** UUIDs render as their last 7 characters everywhere on the viewer. */
 function shortUuid(value: string): string {
   return value.length > 7 ? value.slice(-7) : value;
@@ -1963,10 +1958,10 @@ function renderSlicePage(
     truncatedCount > 0
       ? `<p class="truncated-footer">${truncatedCount === 1 ? "1 opencode event was truncated at write time and is not shown." : `${truncatedCount} opencode events were truncated at write time and are not shown.`}</p>`
       : "";
-  const ownerChip = `<code title="${escapeHtml(ownerSessionId)}">${escapeHtml(shortId(safeSnippet(ownerSessionId, 120), 13))}</code>`;
+  const ownerChip = `<code>${escapeHtml(safeSnippet(ownerSessionId, 120))}</code>`;
   const currentChip =
     anchor.currentSessionId && anchor.currentSessionId !== ownerSessionId
-      ? ` · current <code title="${escapeHtml(anchor.currentSessionId)}">${escapeHtml(shortId(safeSnippet(anchor.currentSessionId, 120), 13))}</code>`
+      ? ` · current <code>${escapeHtml(safeSnippet(anchor.currentSessionId, 120))}</code>`
       : "";
   const totalsBits: string[] = [];
   if (hasTokens) {
