@@ -538,6 +538,177 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
+  it("decodes Slack source with a clickable permalink when SLACK_TEAM_ID is set", async () => {
+    process.env.SLACK_TEAM_ID = "T0TESTTEAM";
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000401";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("slack-source-session", anchorId);
+    appendSessionEvent("slack-source-session", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "slack:thread:C0APZ92A45U/1710000000.401",
+      promptPreview:
+        'Slack event:\n\n{"event":{"channel":"C0APZ92A45U","user":"UN4P4F5MY","text":"deploy the new admin sessions UI"}}',
+    });
+    appendSessionEvent("slack-source-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    try {
+      await withServer(h.app, async (url) => {
+        const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+          headers: { "X-Vouch-User": "u@example.com" },
+        });
+        expect(response.status).toBe(200);
+        const html = await response.text();
+        expect(html).toContain(
+          'href="https://app.slack.com/client/T0TESTTEAM/C0APZ92A45U/thread/C0APZ92A45U-1710000000.401"',
+        );
+        expect(html).toContain("#C0APZ92A45U");
+        expect(html).toContain("@UN4P4F5MY");
+        expect(html).toContain("deploy the new admin sessions UI");
+        expect(html).toContain('class="source"');
+      });
+    } finally {
+      delete process.env.SLACK_TEAM_ID;
+    }
+  });
+
+  it("decodes Slack source as plain text when SLACK_TEAM_ID is unset", async () => {
+    delete process.env.SLACK_TEAM_ID;
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000402";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("slack-noteam-session", anchorId);
+    appendSessionEvent("slack-noteam-session", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "slack:thread:C0APZ92A45U/1710000000.402",
+      promptPreview:
+        'Slack event:\n\n{"event":{"channel":"C0APZ92A45U","user":"UN4P4F5MY","text":"hi"}}',
+    });
+    appendSessionEvent("slack-noteam-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain("#C0APZ92A45U");
+      expect(html).not.toContain("app.slack.com/client");
+    });
+  });
+
+  it("decodes a GitHub PR source from the prompt preview", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000403";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("github-pr-session", anchorId);
+    appendSessionEvent("github-pr-session", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "github:issue:demo:owner/repo#42",
+      promptPreview: JSON.stringify({
+        repository: { full_name: "owner/repo" },
+        sender: { login: "octocat" },
+        pull_request: {
+          number: 42,
+          html_url: "https://github.com/owner/repo/pull/42",
+          title: "Refactor the renderer",
+        },
+      }),
+    });
+    appendSessionEvent("github-pr-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain('href="https://github.com/owner/repo/pull/42"');
+      expect(html).toContain("PR #42");
+      expect(html).toContain("owner/repo");
+      expect(html).toContain("@octocat");
+      expect(html).toContain("Refactor the renderer");
+    });
+  });
+
+  it("decodes a GitHub Issue source from the prompt preview", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000404";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("github-issue-session", anchorId);
+    appendSessionEvent("github-issue-session", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "github:issue:demo:owner/repo#87",
+      promptPreview: JSON.stringify({
+        repository: { full_name: "owner/repo" },
+        sender: { login: "octocat" },
+        issue: {
+          number: 87,
+          html_url: "https://github.com/owner/repo/issues/87",
+          title: "Renderer is hard to read",
+        },
+      }),
+    });
+    appendSessionEvent("github-issue-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain('href="https://github.com/owner/repo/issues/87"');
+      expect(html).toContain("Issue #87");
+      expect(html).toContain("Renderer is hard to read");
+    });
+  });
+
+  it("decodes a cron source from the prompt preview", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000405";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("cron-source-session", anchorId);
+    appendSessionEvent("cron-source-session", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "cron:abcd:1700000000",
+      promptPreview:
+        "Run the Katalon knowledge crawl using /workspace/memory/runbooks/katalon-knowledge-crawl.md.",
+    });
+    appendSessionEvent("cron-source-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain("⏰");
+      expect(html).toContain("Run the Katalon knowledge crawl");
+      expect(html).not.toContain("<a href");
+    });
+  });
+
   it("creates a correlation-key session, records JSONL events, and resumes the same session", async () => {
     const h = createHarness();
     const correlationKey = "slack:thread:1710000000.001";

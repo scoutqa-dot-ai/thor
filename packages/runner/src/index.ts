@@ -414,6 +414,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             owner.sessionId,
             reverseLookupAnchor(anchorId),
             slice,
+            { slackTeamId: process.env.SLACK_TEAM_ID?.trim() || null },
           ),
         );
     },
@@ -1404,6 +1405,161 @@ function sourceFrom(correlationKey: string | undefined): string {
   return "direct";
 }
 
+type DecodedSource = { icon: string; label: string; href?: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function safeStr(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function tryParseJsonObject(value: string | undefined): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  const idx = value.indexOf("{");
+  if (idx === -1) return undefined;
+  try {
+    const parsed = JSON.parse(value.slice(idx));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function decodeSlackSource(
+  correlationKey: string,
+  promptPreview: string | undefined,
+  slackTeamId: string | null,
+): DecodedSource {
+  const tail = correlationKey.slice("slack:thread:".length);
+  const slash = tail.indexOf("/");
+  let channel: string | undefined = slash > 0 ? tail.slice(0, slash) : undefined;
+  const ts = slash > 0 ? tail.slice(slash + 1) : tail;
+
+  const payload = tryParseJsonObject(promptPreview);
+  let user: string | undefined;
+  let text: string | undefined;
+  if (payload) {
+    const event = isRecord(payload.event) ? payload.event : payload;
+    channel = channel ?? safeStr(event.channel);
+    user = safeStr(event.user);
+    text = safeStr(event.text);
+  }
+
+  const head: string[] = [];
+  if (channel) head.push(`#${channel}`);
+  if (user) head.push(`@${user}`);
+  let label = head.join(" · ");
+  if (text) {
+    const firstLine = text.split("\n", 1)[0] ?? "";
+    const quoted = `“${safeSnippet(firstLine, 120)}”`;
+    label = label ? `${label} — ${quoted}` : quoted;
+  } else if (!label) {
+    label = `Slack thread ${ts}`;
+  }
+
+  const href =
+    channel && ts && slackTeamId
+      ? `https://app.slack.com/client/${slackTeamId}/${channel}/thread/${channel}-${ts}`
+      : undefined;
+  return { icon: "💬", label, href };
+}
+
+function decodeGithubSource(promptPreview: string | undefined): DecodedSource | undefined {
+  const payload = tryParseJsonObject(promptPreview);
+  if (!payload) return undefined;
+  const repo = isRecord(payload.repository) ? safeStr(payload.repository.full_name) : undefined;
+  const sender = isRecord(payload.sender) ? safeStr(payload.sender.login) : undefined;
+
+  if (isRecord(payload.pull_request)) {
+    const pr = payload.pull_request;
+    const num = typeof pr.number === "number" ? pr.number : undefined;
+    const htmlUrl = safeStr(pr.html_url);
+    const title = safeStr(pr.title);
+    const href =
+      htmlUrl ?? (repo && num !== undefined ? `https://github.com/${repo}/pull/${num}` : undefined);
+    const parts = [
+      num !== undefined ? `PR #${num}` : "PR",
+      repo,
+      sender ? `@${sender}` : "",
+    ].filter((s): s is string => !!s);
+    const label = title ? `${parts.join(" · ")} — “${safeSnippet(title, 120)}”` : parts.join(" · ");
+    return { icon: "🔀", label, href };
+  }
+
+  if (isRecord(payload.issue)) {
+    const issue = payload.issue;
+    const num = typeof issue.number === "number" ? issue.number : undefined;
+    const htmlUrl = safeStr(issue.html_url);
+    const title = safeStr(issue.title);
+    const href =
+      htmlUrl ??
+      (repo && num !== undefined ? `https://github.com/${repo}/issues/${num}` : undefined);
+    const parts = [
+      num !== undefined ? `Issue #${num}` : "Issue",
+      repo,
+      sender ? `@${sender}` : "",
+    ].filter((s): s is string => !!s);
+    const label = title ? `${parts.join(" · ")} — “${safeSnippet(title, 120)}”` : parts.join(" · ");
+    return { icon: "🐞", label, href };
+  }
+
+  if (
+    typeof payload.ref === "string" &&
+    (safeStr(payload.after) || isRecord(payload.head_commit))
+  ) {
+    const branch = payload.ref.replace(/^refs\/heads\//, "");
+    const sha = safeStr(payload.after)?.slice(0, 7);
+    const href = repo && sha ? `https://github.com/${repo}/commit/${sha}` : undefined;
+    const left = repo && sha ? `${repo}@${sha}` : repo;
+    const parts = [left, `on ${branch}`, sender ? `@${sender}` : ""].filter(
+      (s): s is string => !!s,
+    );
+    return { icon: "📦", label: parts.join(" · "), href };
+  }
+
+  if (repo) {
+    return { icon: "📦", label: repo, href: `https://github.com/${repo}` };
+  }
+  return undefined;
+}
+
+function decodeCronSource(promptPreview: string | undefined): DecodedSource {
+  if (!promptPreview) return { icon: "⏰", label: "Cron" };
+  const sentence = promptPreview.split(/[.\n]/, 1)[0]?.trim();
+  return { icon: "⏰", label: sentence ? safeSnippet(sentence, 160) : "Cron" };
+}
+
+function decodeSourceLine(
+  correlationKey: string | undefined,
+  promptPreview: string | undefined,
+  slackTeamId: string | null,
+): DecodedSource | undefined {
+  if (!correlationKey) return undefined;
+  if (correlationKey.startsWith("slack:thread:")) {
+    return decodeSlackSource(correlationKey, promptPreview, slackTeamId);
+  }
+  if (correlationKey.startsWith("github:") || correlationKey.startsWith("git:branch:")) {
+    return decodeGithubSource(promptPreview);
+  }
+  if (correlationKey.startsWith("cron:")) {
+    return decodeCronSource(promptPreview);
+  }
+  return undefined;
+}
+
+function renderSourceLine(source: DecodedSource): string {
+  const inner = `${source.icon} ${escapeHtml(source.label)}`;
+  if (source.href) {
+    const safeHref = source.href.startsWith("https://") ? source.href : undefined;
+    if (safeHref) {
+      return `<p class="source"><a href="${escapeHtml(safeHref)}" rel="noopener noreferrer">${inner} ↗</a></p>`;
+    }
+  }
+  return `<p class="source">${inner}</p>`;
+}
+
 function numericTokenTotal(tokens: unknown): number | undefined {
   if (!tokens || typeof tokens !== "object") return undefined;
   let total = 0;
@@ -1438,7 +1594,7 @@ function shortId(value: string, head = 8, tail = 4): string {
 }
 
 function renderPage(title: string, body: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · Thor</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.truncated-footer{color:#64748b;font-size:0.9em;font-style:italic;margin-top:12px}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}details{margin:16px 0}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}<footer><p>Generated by Thor at <time datetime="${new Date().toISOString()}">${new Date().toUTCString()}</time></p></footer></main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · Thor</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.truncated-footer{color:#64748b;font-size:0.9em;font-style:italic;margin-top:12px}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}details{margin:16px 0}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}<footer><p>Generated by Thor at <time datetime="${new Date().toISOString()}">${new Date().toUTCString()}</time></p></footer></main></body></html>`;
 }
 
 function renderSlicePage(
@@ -1447,6 +1603,7 @@ function renderSlicePage(
   ownerSessionId: string,
   anchor: ReverseAnchorEntry,
   slice: Exclude<ReturnType<typeof readTriggerSlice>, { notFound: true } | { oversized: true }>,
+  opts: { slackTeamId: string | null },
 ): string {
   const start = slice.records.find(
     (record) => record.type === "trigger_start" && record.triggerId === triggerId,
@@ -1581,9 +1738,14 @@ function renderSlicePage(
       ? ` · current <code title="${escapeHtml(anchor.currentSessionId)}">${escapeHtml(shortId(safeSnippet(anchor.currentSessionId, 120), 13))}</code>`
       : "";
   const stepSummary = `${toolParts} tool row(s), ${textParts} assistant text row(s), ${stepFinishes} step finish row(s)${hasTokens ? `, ${totalTokens} total tokens` : ""}`;
+  const decodedSource = decodeSourceLine(correlationKey, promptPreview, opts.slackTeamId);
+  const sourceLine = decodedSource ? renderSourceLine(decodedSource) : "";
+  const pageTitle = decodedSource
+    ? `${decodedSource.label.slice(0, 80)} · Thor trigger`
+    : "Thor trigger";
 
-  const body = `<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}${pillReason}</span>${livePill}<h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2>${summaryLine ? `<p class="summary">${escapeHtml(summaryLine)}</p>` : ""}<p class="chips">anchor <code title="${escapeHtml(anchorId)}">${escapeHtml(shortId(anchorId))}</code> · trigger <code title="${escapeHtml(triggerId)}">${escapeHtml(shortId(triggerId))}</code> · session ${ownerChip}${currentChip}</p></section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreview ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>` : ""}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section><h3>Activity</h3><p>${stepSummary}.</p>${latestAssistantText ? `<blockquote>${escapeHtml(latestAssistantText)}</blockquote>` : ""}${renderRows(rows)}${truncatedFooter}</section>`;
-  return renderPage("Thor trigger", body);
+  const body = `<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}${pillReason}</span>${livePill}<h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2>${sourceLine}${summaryLine ? `<p class="summary">${escapeHtml(summaryLine)}</p>` : ""}<p class="chips">anchor <code title="${escapeHtml(anchorId)}">${escapeHtml(shortId(anchorId))}</code> · trigger <code title="${escapeHtml(triggerId)}">${escapeHtml(shortId(triggerId))}</code> · session ${ownerChip}${currentChip}</p></section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreview ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>` : ""}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section><h3>Activity</h3><p>${stepSummary}.</p>${latestAssistantText ? `<blockquote>${escapeHtml(latestAssistantText)}</blockquote>` : ""}${renderRows(rows)}${truncatedFooter}</section>`;
+  return renderPage(pageTitle, body);
 }
 
 // --- Startup ---
