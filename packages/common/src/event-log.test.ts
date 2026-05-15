@@ -16,6 +16,7 @@ import {
   appendAlias,
   appendSessionEvent,
   findActiveTrigger,
+  getAnchorSessionState,
   listAnchorSessionStates,
   listSessionAliases,
   mintAnchor,
@@ -329,6 +330,21 @@ describe("session event log", () => {
     writeFileSync(sessionLogPath("bad-lines"), "x".repeat(53 * 1024 * 1024));
     row = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") })[0];
     expect(row).toMatchObject({ anchorId: anchorDashE, status: "unknown", oversized: true });
+  });
+
+  it("can resolve a single anchor session state without scanning the full list", () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "target", anchorId: anchorDashE });
+    writeSession("target", [
+      { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA },
+      { ts: "2026-05-14T12:00:10.000Z", type: "opencode_event", event: { ok: true } },
+    ]);
+
+    expect(getAnchorSessionState(anchorDashE, { now: new Date("2026-05-14T12:01:00.000Z") })).toMatchObject({
+      anchorId: anchorDashE,
+      status: "in_progress",
+      triggerId: triggerA,
+    });
+    expect(getAnchorSessionState("00000000-0000-7000-8000-0000000000ff")).toBeUndefined();
   });
 
   it("marks only anchors with unsafe session aliases unknown and preserves other rows", () => {

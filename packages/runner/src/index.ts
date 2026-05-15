@@ -35,7 +35,7 @@ import {
   mintAnchor,
   mintTriggerId,
   reverseLookupAnchor,
-  listAnchorSessionStates,
+  getAnchorSessionState,
   resolveAlias,
   resolveAnchorForCorrelationKey,
   resolveCorrelationLockKey,
@@ -1490,9 +1490,7 @@ function renderAnchorPage(
   anchor: ReverseAnchorEntry,
   requestedTriggerId?: string,
 ): string {
-  const state = listAnchorSessionStates({ limit: Number.MAX_SAFE_INTEGER }).find(
-    (row) => row.anchorId === anchorId,
-  );
+  const state = getAnchorSessionState(anchorId);
   const triggerLink = state?.triggerId
     ? `<p>Latest trigger: <a href="/runner/v/${encodeURIComponent(anchorId)}/t/${encodeURIComponent(state.triggerId)}"><code>${escapeHtml(state.triggerId)}</code></a>${state.latestTerminalStatus ? ` (${escapeHtml(state.latestTerminalStatus)})` : ""}</p>`
     : "<p>No trigger slices have been recorded for this anchor yet.</p>";

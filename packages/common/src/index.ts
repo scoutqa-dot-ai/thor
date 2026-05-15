@@ -73,6 +73,7 @@ export {
   readTriggerSlice,
   findActiveTrigger,
   findAnchorContext,
+  getAnchorSessionState,
   resolveAlias,
   reverseLookupAnchor,
   listAnchors,
@@ -95,6 +96,7 @@ export type {
   ReverseAnchorEntry,
   AnchorSessionState,
   AnchorSessionStatus,
+  GetAnchorSessionStateOptions,
   ListAnchorSessionStatesOptions,
 } from "./event-log.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";

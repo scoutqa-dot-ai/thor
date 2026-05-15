@@ -152,6 +152,11 @@ export interface ListAnchorSessionStatesOptions {
   limit?: number;
 }
 
+export interface GetAnchorSessionStateOptions {
+  now?: Date;
+  stuckAfterMs?: number;
+}
+
 interface InternalReverseEntry {
   /** sessionId → newest record ts seen for that binding. */
   sessions: Map<string, string>;
@@ -696,6 +701,26 @@ export function listAnchorSessionStates(
   const limit = options.limit ?? 100;
 
   const rows = listAnchors().map(({ anchorId, entry }): AnchorSessionState => {
+    return buildAnchorSessionState(anchorId, entry, { nowMs, stuckAfterMs });
+  });
+
+  const rank: Record<AnchorSessionStatus, number> = {
+    stuck: 0,
+    in_progress: 1,
+    unknown: 2,
+    idle: 3,
+  };
+  return rows
+    .sort((a, b) => rank[a.status] - rank[b.status] || (b.lastEventTs ?? "").localeCompare(a.lastEventTs ?? ""))
+    .slice(0, limit);
+}
+
+function buildAnchorSessionState(
+  anchorId: string,
+  entry: ReverseAnchorEntry,
+  options: { nowMs: number; stuckAfterMs: number },
+): AnchorSessionState {
+  const { nowMs, stuckAfterMs } = options;
     let skippedMalformed = 0;
     let oversized = false;
     let bestOpen: (SessionOpenSummary & { sessionId: string }) | undefined;
@@ -827,17 +852,19 @@ export function listAnchorSessionStates(
       oversized: false,
       reason: latestTerminal?.reason,
     };
-  });
+}
 
-  const rank: Record<AnchorSessionStatus, number> = {
-    stuck: 0,
-    in_progress: 1,
-    unknown: 2,
-    idle: 3,
-  };
-  return rows
-    .sort((a, b) => rank[a.status] - rank[b.status] || (b.lastEventTs ?? "").localeCompare(a.lastEventTs ?? ""))
-    .slice(0, limit);
+export function getAnchorSessionState(
+  anchorId: string,
+  options: GetAnchorSessionStateOptions = {},
+): AnchorSessionState | undefined {
+  const now = options.now ?? new Date();
+  const stuckAfterMs = options.stuckAfterMs ?? 5 * 60 * 1000;
+  const entry = reverseLookupAnchor(anchorId);
+  if (entry.sessionIds.length === 0 && entry.subsessionIds.length === 0 && entry.externalKeys.length === 0) {
+    return undefined;
+  }
+  return buildAnchorSessionState(anchorId, entry, { nowMs: now.getTime(), stuckAfterMs });
 }
 
 /**
@@ -886,9 +913,7 @@ export function findAnchorContext(requestSessionId: string): AnchorContextResult
   }
   if (active.reason === "oversized") return active;
 
-  const state = listAnchorSessionStates({ limit: Number.MAX_SAFE_INTEGER }).find(
-    (row) => row.anchorId === anchorId,
-  );
+  const state = getAnchorSessionState(anchorId);
   return {
     ok: true,
     anchorId,

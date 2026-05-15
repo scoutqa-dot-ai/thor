@@ -535,7 +535,7 @@ Exit criteria:
 
 Scope:
 
-1. Add `GET /runner/v/:sessionId/:triggerId` route to the runner service. Single endpoint — no `/raw` variant; every byte rendered goes through the redaction allowlist. Ingress/Vouch remains the auth boundary for `/runner/*`.
+1. Add `GET /runner/v/:anchorId/:triggerId` route to the runner service. Single endpoint — no `/raw` variant; every byte rendered goes through the redaction allowlist. Ingress/Vouch remains the auth boundary for `/runner/*`.
 2. Update `docker/ingress/nginx.conf` with a `location /runner/ { ... }` block proxying to the runner service, behind the existing Vouch flow used for `/admin/`.
 3. Server-side render HTML using the hierarchy in this plan (hero / outcome / collapsed timeline).
 4. Implement the state matrix from "Trigger Viewer" above: `completed` / `error` / `aborted` (terminal); `crashed` (superseded); `in_flight` with `<meta refresh>` and a soft staleness banner if the last record is > 5 min old; empty / oversized / redacted variants; branded 401/404/503.

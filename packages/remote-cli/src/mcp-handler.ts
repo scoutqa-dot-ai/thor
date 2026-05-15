@@ -58,9 +58,7 @@ function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   if (!approvalToolRequiresDisclaimer(action.tool)) return action.args;
   const origin = action.origin?.anchor ?? action.origin?.trigger;
   if (!origin) {
-    throw new Error(
-      `Approval action ${action.id} is missing origin anchor for disclaimer injection`,
-    );
+    throw new Error(`Approval action ${action.id} is missing origin provenance for disclaimer injection`);
   }
   const { footer } = buildThorDisclaimer(origin, getRunnerBaseUrl());
   return injectApprovalDisclaimer(action.tool, action.args, footer);
