@@ -1,0 +1,33 @@
+packages/admin/src/app.ts
+  794009cd90bb0071 122,129,139
+docker-compose.yml
+  794009cd90bb0071 236
+README.md
+  794009cd90bb0071 148
+.env.example
+  794009cd90bb0071 119-122
+packages/admin/src/views.ts
+  794009cd90bb0071 1,13-102,286-299,355-356
+packages/admin/src/app.test.ts
+  794009cd90bb0071 80-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4f03cc0ddb2fcbb3f599fdb9a56825ec24d050f9",
+  "prompts": {
+    "794009cd90bb0071": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7a7b5a38-862d-4ba4-89b1-2d41caabda50",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 199,
+      "total_deletions": 6,
+      "accepted_lines": 199,
+      "overriden_lines": 0
+    }
+  }
+}
