@@ -929,7 +929,7 @@ describe("runner /trigger orchestration", () => {
         });
         const html = await response.text();
         expect(html).toContain(
-          "Tokens: 50,000 input · 20,044 cached · 30,000 output · 5,000 reasoning",
+          "Tokens: 50.0K input · 20.0K cached · 30.0K output · 5.0K reasoning",
         );
         expect(html).toContain("Model: gpt-5.5");
         // gpt-5.5 pricing: $5 input, $30 output, $0.5 cacheRead per 1M tokens.
