@@ -56,6 +56,8 @@ export function matchesInternalSecret(
   providedSecret: string | undefined,
 ): boolean {
   if (!expectedSecret || !providedSecret) return false;
-  if (expectedSecret.length !== providedSecret.length) return false;
-  return timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret));
+  const expected = Buffer.from(expectedSecret, "utf8");
+  const provided = Buffer.from(providedSecret, "utf8");
+  if (expected.length !== provided.length) return false;
+  return timingSafeEqual(expected, provided);
 }

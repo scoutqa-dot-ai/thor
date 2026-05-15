@@ -6,6 +6,7 @@ import {
   envOptionalString,
   envString,
   getRunnerBaseUrl,
+  matchesInternalSecret,
 } from "./env.js";
 
 describe("env loader", () => {
@@ -54,5 +55,12 @@ describe("env loader", () => {
     expect(getRunnerBaseUrl({ RUNNER_BASE_URL: "https://thor.example.com/" })).toBe(
       "https://thor.example.com",
     );
+  });
+
+  it("compares internal secrets by byte length before timing-safe equality", () => {
+    expect(matchesInternalSecret("secret", "secret")).toBe(true);
+    expect(matchesInternalSecret("secret", "wrong")).toBe(false);
+    expect(matchesInternalSecret("é", "x")).toBe(false);
+    expect(matchesInternalSecret("secret", undefined)).toBe(false);
   });
 });
