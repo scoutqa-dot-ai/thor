@@ -1,0 +1,23 @@
+.env.example
+  a32ced2dc65282c0 3-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a6c5d314375399d94f37f20e934a36689268cb89",
+  "prompts": {
+    "a32ced2dc65282c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ba187118-022d-435a-8373-128f143dc355",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 2,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
