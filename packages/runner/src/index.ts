@@ -1716,60 +1716,27 @@ function extractTokenCounts(tokens: unknown): TokenCounts | undefined {
 }
 
 /**
- * OpenAI per-million-token USD prices.
+ * Per-million-token USD prices for the model ids Thor currently runs against.
  *
- * Source: https://models.dev/ (snapshot 2026-05-15). To refresh:
- *   curl -s https://models.dev/api.json | jq '.openai.models[] | {id, cost}'
- * or visit the site and copy the OpenAI table.
+ * Source: https://models.dev/api.json (snapshot 2026-05-15). To refresh:
+ *   curl -s https://models.dev/api.json | jq '.openai.models["gpt-5.4","gpt-5.5"]'
  *
- * Unknown model ids fall back via `resolveModelPricing` — a `.<minor>` suffix
- * is stripped (e.g. `gpt-5.5` → `gpt-5`) so internal/preview tiers inherit
- * their family's published price.
+ * Only the exact ids Thor uses are listed; any other model id renders without
+ * a cost estimate so we never surface guessed numbers. The 200k+ context tier
+ * (which roughly doubles the published prices) is intentionally ignored — we
+ * render the base-tier estimate and prefix it with `~`.
  */
 const MODEL_PRICING_USD_PER_M: Record<
   string,
   { input: number; output: number; cacheRead?: number }
 > = {
-  "gpt-5": { input: 1.25, output: 10, cacheRead: 0.125 },
-  "gpt-5.1": { input: 1.25, output: 10, cacheRead: 0.125 },
-  "gpt-5-chat-latest": { input: 1.25, output: 10, cacheRead: 0.125 },
-  "gpt-5-codex": { input: 1.25, output: 10, cacheRead: 0.125 },
-  "gpt-5.1-chat-latest": { input: 1.25, output: 10, cacheRead: 0.125 },
-  "gpt-5.1-codex": { input: 1.25, output: 10, cacheRead: 0.125 },
-  "gpt-5.1-codex-mini": { input: 0.25, output: 2, cacheRead: 0.025 },
-  "gpt-5-mini": { input: 0.25, output: 2, cacheRead: 0.025 },
-  "gpt-5-nano": { input: 0.05, output: 0.4, cacheRead: 0.005 },
-  "gpt-5-pro": { input: 15, output: 120 },
-  "gpt-4.1": { input: 2, output: 8, cacheRead: 0.5 },
-  "gpt-4.1-mini": { input: 0.4, output: 1.6, cacheRead: 0.1 },
-  "gpt-4.1-mini-2025-04-14": { input: 0.4, output: 1.6, cacheRead: 0.1 },
-  "gpt-4.1-nano": { input: 0.1, output: 0.4, cacheRead: 0.025 },
-  "gpt-4o": { input: 2.5, output: 10, cacheRead: 1.25 },
-  "gpt-4o-mini": { input: 0.15, output: 0.6, cacheRead: 0.075 },
-  "chatgpt-4o-latest": { input: 5, output: 20, cacheRead: 2.5 },
-  o1: { input: 15, output: 60, cacheRead: 7.5 },
-  "o1-mini": { input: 1.1, output: 4.4, cacheRead: 0.55 },
-  o3: { input: 2, output: 8, cacheRead: 0.5 },
-  "o3-mini": { input: 1.1, output: 4.4, cacheRead: 0.55 },
-  "o3-pro": { input: 20, output: 80 },
-  "o4-mini": { input: 1.1, output: 4.4, cacheRead: 0.275 },
+  "gpt-5.4": { input: 2.5, output: 15, cacheRead: 0.25 },
+  "gpt-5.5": { input: 5, output: 30, cacheRead: 0.5 },
 };
-
-function resolveModelPricing(
-  modelId: string,
-): { input: number; output: number; cacheRead?: number } | undefined {
-  if (MODEL_PRICING_USD_PER_M[modelId]) return MODEL_PRICING_USD_PER_M[modelId];
-  const dot = modelId.indexOf(".");
-  if (dot > 0) {
-    const family = modelId.slice(0, dot);
-    if (MODEL_PRICING_USD_PER_M[family]) return MODEL_PRICING_USD_PER_M[family];
-  }
-  return undefined;
-}
 
 function estimateCostUsd(tokens: TokenCounts, modelId: string | undefined): number | undefined {
   if (!modelId) return undefined;
-  const pricing = resolveModelPricing(modelId);
+  const pricing = MODEL_PRICING_USD_PER_M[modelId];
   if (!pricing) return undefined;
   const cacheRead = pricing.cacheRead ?? pricing.input;
   // Reasoning tokens are billed at the completion (output) rate.

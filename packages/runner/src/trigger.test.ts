@@ -916,9 +916,9 @@ describe("runner /trigger orchestration", () => {
         const html = await response.text();
         expect(html).toContain("Total tokens: 105,044");
         expect(html).toContain("Model: gpt-5.5");
-        // gpt-5.5 falls back to gpt-5 pricing ($1.25/$10/$0.125 per 1M tokens).
-        // input 50000 * 1.25 + (output 30000 + reasoning 5000) * 10 + cacheRead 20044 * 0.125 = 412506 → /1e6 = $0.413
-        expect(html).toMatch(/Est cost: ~\$0\.41/);
+        // gpt-5.5 pricing: $5 input, $30 output, $0.5 cacheRead per 1M tokens.
+        // 50000 * 5 + (30000 + 5000) * 30 + 20044 * 0.5 = 1,310,022 → /1e6 = $1.31
+        expect(html).toContain("Est cost: ~$1.31");
         expect(html).toContain("ses_subagent123");
         expect(html).toMatch(/Line one\nLine two\nLine three/);
         // Slack prompt preview is dropped because the decoded source covers it.
