@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { deriveGitHubAppBotIdentity } from "./github-identity.js";
-import { envCsv, envInt, envOptionalString, envString, type EnvSource } from "./env.js";
+import { envBaseUrl, envCsv, envInt, envOptionalString, envString, type EnvSource } from "./env.js";
 import { WORKSPACE_CONFIG_PATH } from "./workspace-config.js";
 
 export function loadGatewayEnv(env: EnvSource = process.env) {
@@ -22,7 +22,7 @@ export function loadGatewayEnv(env: EnvSource = process.env) {
     runnerUrl: envString(env, "RUNNER_URL", "http://runner:3000"),
     slackSigningSecret: envOptionalString(env, "SLACK_SIGNING_SECRET") ?? "",
     slackBotToken: envOptionalString(env, "SLACK_BOT_TOKEN") ?? "",
-    slackApiBaseUrl: envString(env, "SLACK_API_BASE_URL", "https://slack.com/api"),
+    slackApiBaseUrl: envBaseUrl(env, "SLACK_API_BASE_URL", "https://slack.com/api"),
     slackTimestampToleranceSeconds: envInt(env, "SLACK_TIMESTAMP_TOLERANCE_SECONDS", 300),
     queueDir: envString(env, "QUEUE_DIR", "data/queue"),
     slackBotUserId: envOptionalString(env, "SLACK_BOT_USER_ID") ?? "",
@@ -94,7 +94,7 @@ export function loadAdminEnv(env: EnvSource = process.env) {
 
 export function loadMetabaseEnv(env: EnvSource = process.env) {
   return {
-    url: envString(env, "METABASE_URL"),
+    url: envBaseUrl(env, "METABASE_URL"),
     apiKey: envString(env, "METABASE_API_KEY"),
     dbId: envInt(env, "METABASE_DATABASE_ID"),
     schemas: new Set(envCsv(env, "METABASE_ALLOWED_SCHEMAS")),
@@ -105,7 +105,7 @@ export function loadGitHubAppAuthEnv(env: EnvSource = process.env) {
   return {
     appId: envString(env, "GITHUB_APP_ID"),
     privateKeyPath: envString(env, "GITHUB_APP_PRIVATE_KEY_FILE"),
-    apiUrl: envString(env, "GITHUB_API_URL", "https://api.github.com"),
+    apiUrl: envBaseUrl(env, "GITHUB_API_URL", "https://api.github.com"),
     appDir: envString(env, "GITHUB_APP_DIR", "/var/lib/remote-cli/github-app"),
   };
 }
@@ -113,7 +113,7 @@ export function loadGitHubAppAuthEnv(env: EnvSource = process.env) {
 export function loadDaytonaEnv(env: EnvSource = process.env) {
   return {
     apiKey: envString(env, "DAYTONA_API_KEY"),
-    apiUrl: envString(env, "DAYTONA_API_URL", "https://app.daytona.io/api"),
+    apiUrl: envBaseUrl(env, "DAYTONA_API_URL", "https://app.daytona.io/api"),
     snapshot: envString(env, "DAYTONA_SNAPSHOT", "daytona-medium"),
   };
 }

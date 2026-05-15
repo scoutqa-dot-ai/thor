@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { envCsv, envInt, envOptionalString, envString, getRunnerBaseUrl } from "./env.js";
+import {
+  envBaseUrl,
+  envCsv,
+  envInt,
+  envOptionalString,
+  envString,
+  getRunnerBaseUrl,
+} from "./env.js";
 
 describe("env loader", () => {
   it("reads required and optional strings with trim/default semantics", () => {
@@ -32,5 +39,20 @@ describe("env loader", () => {
       "https://thor.example.com",
     );
     expect(() => getRunnerBaseUrl({})).toThrow("Missing required env var RUNNER_BASE_URL");
+  });
+
+  it("strips trailing slashes from base URLs so callers can safely append paths", () => {
+    expect(envBaseUrl({ API_URL: "https://api.example.com/" }, "API_URL")).toBe(
+      "https://api.example.com",
+    );
+    expect(envBaseUrl({ API_URL: "https://api.example.com///" }, "API_URL")).toBe(
+      "https://api.example.com",
+    );
+    expect(envBaseUrl({}, "API_URL", "https://default.example.com/")).toBe(
+      "https://default.example.com",
+    );
+    expect(getRunnerBaseUrl({ RUNNER_BASE_URL: "https://thor.example.com/" })).toBe(
+      "https://thor.example.com",
+    );
   });
 });
