@@ -162,8 +162,8 @@ interface AliasCacheState {
   reverse: Map<string, InternalReverseEntry>;
 }
 const aliasCache: AliasCacheState = { forward: new Map(), reverse: new Map() };
-/** Last observed size of aliases.jsonl. -1 = never loaded. */
-let aliasCacheLastSize = -1;
+/** Last observed file signature for aliases.jsonl. */
+let aliasCacheLastSignature: string | null = null;
 
 interface SessionRecordsCacheEntry {
   signature: string;
@@ -360,7 +360,7 @@ function completeLines(path: string): string[] {
 function fileStat(path: string): { signature: string; size: number } | null {
   try {
     const stat = statSync(path);
-    return { signature: `${stat.size}:${stat.mtimeMs}`, size: stat.size };
+    return { signature: `${path}:${stat.size}:${stat.mtimeMs}`, size: stat.size };
   } catch {
     return null;
   }
@@ -373,7 +373,7 @@ function readSessionRecords(sessionId: string): {
 } {
   const path = sessionLogPath(sessionId);
   const stat = fileStat(path);
-  const signature = stat?.signature ?? "missing";
+  const signature = stat?.signature ?? `${path}:missing`;
   const cached = sessionRecordsCache.get(sessionId);
   if (cached && cached.signature === signature) {
     return cached.oversized
@@ -502,10 +502,12 @@ function applyAliasToCache(alias: AliasRecord): void {
   applyAliasRecord(alias);
 
   // statSync mtime may round to the same ms after appendFileSync; bumping to
-  // the current size keeps loadAliasCacheIfChanged from doing a redundant
-  // rebuild on the next read.
+  // the current full signature keeps loadAliasCacheIfChanged from doing a
+  // redundant rebuild on the next read.
   try {
-    aliasCacheLastSize = statSync(aliasLogPath()).size;
+    const path = aliasLogPath();
+    const stat = statSync(path);
+    aliasCacheLastSignature = `${path}:${stat.size}:${stat.mtimeMs}`;
   } catch {
     // best-effort
   }
@@ -514,12 +516,15 @@ function applyAliasToCache(alias: AliasRecord): void {
 function loadAliasCacheIfChanged(): void {
   const path = aliasLogPath();
   let currentSize = 0;
+  let currentSignature = `${path}:missing`;
   try {
-    currentSize = statSync(path).size;
+    const stat = statSync(path);
+    currentSize = stat.size;
+    currentSignature = `${path}:${stat.size}:${stat.mtimeMs}`;
   } catch {
     // missing file → treat as size 0
   }
-  if (currentSize === aliasCacheLastSize) return;
+  if (currentSignature === aliasCacheLastSignature) return;
   aliasCache.forward.clear();
   aliasCache.reverse.clear();
   if (currentSize > 0) {
@@ -532,7 +537,7 @@ function loadAliasCacheIfChanged(): void {
       }
     }
   }
-  aliasCacheLastSize = currentSize;
+  aliasCacheLastSignature = currentSignature;
 }
 
 function pickNewestSession(entry: InternalReverseEntry): string | undefined {
@@ -698,9 +703,7 @@ export function listAnchorSessionStates(
       try {
         summary = sessionSummary(sessionId);
       } catch (err) {
-        readErrors.push(
-          `${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        readErrors.push(`${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
         continue;
       }
       skippedMalformed += summary.skippedMalformed;
@@ -714,7 +717,10 @@ export function listAnchorSessionStates(
       if (summary.open && (!bestOpen || summary.open.startedAt > bestOpen.startedAt)) {
         bestOpen = { ...summary.open, sessionId };
       }
-      if (summary.latestTerminal && (!latestTerminal || summary.latestTerminal.ts > latestTerminal.ts)) {
+      if (
+        summary.latestTerminal &&
+        (!latestTerminal || summary.latestTerminal.ts > latestTerminal.ts)
+      ) {
         latestTerminal = { ...summary.latestTerminal, sessionId };
       }
     }
@@ -826,7 +832,10 @@ export function listAnchorSessionStates(
     idle: 3,
   };
   return rows
-    .sort((a, b) => rank[a.status] - rank[b.status] || (b.lastEventTs ?? "").localeCompare(a.lastEventTs ?? ""))
+    .sort(
+      (a, b) =>
+        rank[a.status] - rank[b.status] || (b.lastEventTs ?? "").localeCompare(a.lastEventTs ?? ""),
+    )
     .slice(0, limit);
 }
 
