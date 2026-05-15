@@ -426,21 +426,27 @@ describe("runner /trigger orchestration", () => {
       expect(response.status).toBe(200);
       const html = await response.text();
       expect(html).toContain("slack trigger");
-      expect(html).toContain("Meaningful events");
+      expect(html).toContain("<h3>Activity</h3>");
       expect(html).toContain("tool</b> <span>read</span>");
       expect(html).toContain("filePath:");
       expect(html).toContain("tool</b> <span>gh auth</span>");
       expect(html).toContain("tool</b> <span>mcp</span>");
       expect(html).toContain("arguments hidden");
       expect(html).toContain("truncated payload");
-      expect(html).toContain("Subsessions exist");
-      expect(html).toContain("Multiple OpenCode sessions");
-      expect(html).toContain("records for another trigger");
+      expect(html).toContain("1 opencode event was truncated at write time and is not shown.");
       expect(html).toContain("Done with token=[redacted]");
       expect(html).toContain("step finish");
-      expect(html).toContain("cost $0.0123");
       expect(html).toContain("42 tokens");
-      expect(html).toContain("1 step finish row(s), $0.0123 total cost, 42 total tokens");
+      expect(html).toContain(
+        "3 tool row(s), 1 assistant text row(s), 1 step finish row(s), 42 total tokens",
+      );
+      expect(html).toContain('class="chips"');
+      expect(html).toContain("3 tools · last event");
+      expect(html).not.toContain("cost $");
+      expect(html).not.toContain("total cost");
+      expect(html).not.toContain("Sanitized diagnostics");
+      expect(html).not.toContain("Warnings");
+      expect(html).not.toContain("meta http-equiv");
       expect(html).not.toContain("supersecret");
       expect(html).not.toContain("should-not-render");
       expect(html).not.toContain("mutation { writeThing }");
@@ -507,7 +513,6 @@ describe("runner /trigger orchestration", () => {
       const html = await response.text();
       expect(html).toContain("[redacted]");
       expect(html).toContain("earlier meaningful event row(s) omitted");
-      expect(html).toContain("middle record(s) omitted from diagnostics");
       expect(html).toContain("tool</b> <span>jq</span>");
       expect(html).toContain("2m 0s");
       expect(html).not.toContain("1m 60s");
@@ -979,7 +984,7 @@ describe("runner /trigger orchestration", () => {
       expect(response.status).toBe(200);
       const html = await response.text();
       expect(html).toContain("crashed");
-      expect(html).toContain("Superseded by newer trigger");
+      expect(html).toContain(`superseded by ${newerTriggerId}`);
     });
   });
 
