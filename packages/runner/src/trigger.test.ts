@@ -931,10 +931,14 @@ describe("runner /trigger orchestration", () => {
         expect(html).toContain(
           "Tokens: 50.0K input · 20.0K cached · 30.0K output · 5.0K reasoning",
         );
-        expect(html).toContain("Model: gpt-5.5");
-        // gpt-5.5 pricing: $5 input, $30 output, $0.5 cacheRead per 1M tokens.
-        // 50000 * 5 + (30000 + 5000) * 30 + 20044 * 0.5 = 1,310,022 → /1e6 = $1.31
-        expect(html).toContain("Est cost: ~$1.31");
+        // Main agent's model defaults to gpt-5.4 today; the task tool's
+        // `metadata.model` is the subagent's model and is no longer
+        // mis-attributed to main. No subagent session file is seeded here so
+        // we stay on the single-line footer.
+        expect(html).toContain("Model: gpt-5.4");
+        // gpt-5.4 pricing: $2.5 input, $15 output, $0.25 cacheRead per 1M tokens.
+        // 50000*2.5 + (30000+5000)*15 + 20044*0.25 = 655,011 → /1e6 = ~$0.655
+        expect(html).toContain("Est cost: ~$0.655");
         expect(html).toContain("ses_subagent123");
         expect(html).toMatch(/Line one\nLine two\nLine three/);
         // Slack prompt preview is dropped because the decoded source covers it.
@@ -1234,13 +1238,178 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("renders multiple models in the totals footer and skips the cost estimate", async () => {
+  it("rolls subagent tokens into a per-agent totals table when subagents are present", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000511";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("rollup-parent", anchorId);
+    const subSessionId = "ses_subagent_rollup_001";
+    const taskStart = 1_700_000_000_000;
+    const taskEnd = taskStart + 10_000;
+    mkdirSync(`${worklogDir}/sessions`, { recursive: true });
+    writeFileSync(
+      `${worklogDir}/sessions/${subSessionId}.jsonl`,
+      [
+        // Subagent step-finish #1: 4K input, 1K cacheRead, 2K output.
+        JSON.stringify({
+          schemaVersion: 1,
+          ts: new Date(taskStart + 100).toISOString(),
+          type: "opencode_event",
+          event: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                type: "step-finish",
+                tokens: { input: 4000, output: 2000, cache: { read: 1000 } },
+                state: { metadata: { model: { modelID: "gpt-5.4" } } },
+              },
+            },
+          },
+        }),
+        // Subagent step-finish #2: 1K input, 3K cacheRead, 500 output, 200 reasoning.
+        JSON.stringify({
+          schemaVersion: 1,
+          ts: new Date(taskStart + 200).toISOString(),
+          type: "opencode_event",
+          event: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                type: "step-finish",
+                tokens: {
+                  input: 1000,
+                  output: 500,
+                  reasoning: 200,
+                  cache: { read: 3000 },
+                },
+              },
+            },
+          },
+        }),
+        "",
+      ].join("\n"),
+    );
+    appendSessionEvent("rollup-parent", { type: "trigger_start", triggerId });
+    // Main step-finish: 10K input, 5K cacheRead, 4K output, 1K reasoning.
+    appendSessionEvent("rollup-parent", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "step-finish",
+            tokens: {
+              input: 10000,
+              output: 4000,
+              reasoning: 1000,
+              cache: { read: 5000 },
+            },
+          },
+        },
+      },
+    });
+    // Task tool dispatching the subagent.
+    appendSessionEvent("rollup-parent", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: { subagent_type: "thinker", prompt: "go" },
+              metadata: {
+                sessionId: subSessionId,
+                model: { providerID: "openai", modelID: "gpt-5.4" },
+              },
+              time: { start: taskStart, end: taskEnd },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("rollup-parent", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      // Table is rendered (replaces the single-line footer).
+      expect(html).toContain('class="totals-table"');
+      expect(html).not.toContain("Tokens: 10.0K input");
+      // Main row + subagent row + total row.
+      expect(html).toMatch(/<th[^>]*>main /);
+      expect(html).toContain("task · thinker");
+      expect(html).toMatch(/<th[^>]*>Total</);
+      // Subagent token cells: 5.0K input · 4.0K cached · 2.5K output · 200 reasoning.
+      expect(html).toMatch(/task · thinker[\s\S]*?5\.0K[\s\S]*?4\.0K[\s\S]*?2\.5K[\s\S]*?200/);
+      // Totals row sums both agents: 15.0K input · 9.0K cached · 6.5K output · 1.2K reasoning.
+      expect(html).toMatch(/Total[\s\S]*?15\.0K[\s\S]*?9\.0K[\s\S]*?6\.5K[\s\S]*?1\.2K/);
+      // Subagent session id surfaces in the row's ledger chip.
+      expect(html).toContain(subSessionId);
+    });
+  });
+
+  it("renders distinct models per row when subagents use different models", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000507";
     const anchorId = mintAnchor();
     bindSessionToAnchor("multi-model-session", anchorId);
+    // Seed two subagent session files, each with one step-finish.
+    mkdirSync(`${worklogDir}/sessions`, { recursive: true });
+    const subs: Array<{ id: string; model: string; start: number; end: number }> = [
+      {
+        id: "ses_subagent_modelA",
+        model: "gpt-5.4",
+        start: 1_700_000_000_000,
+        end: 1_700_000_001_000,
+      },
+      {
+        id: "ses_subagent_modelB",
+        model: "gpt-5.5",
+        start: 1_700_000_002_000,
+        end: 1_700_000_003_000,
+      },
+    ];
+    for (const s of subs) {
+      writeFileSync(
+        `${worklogDir}/sessions/${s.id}.jsonl`,
+        [
+          JSON.stringify({
+            schemaVersion: 1,
+            ts: new Date(s.start + 100).toISOString(),
+            type: "opencode_event",
+            event: {
+              type: "message.part.updated",
+              properties: {
+                part: {
+                  type: "step-finish",
+                  tokens: { input: 1000, output: 500 },
+                },
+              },
+            },
+          }),
+          "",
+        ].join("\n"),
+      );
+    }
     appendSessionEvent("multi-model-session", { type: "trigger_start", triggerId });
-    for (const modelID of ["gpt-5.4", "gpt-5.5"]) {
+    // Main step-finish so the main row carries tokens too.
+    appendSessionEvent("multi-model-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: { part: { type: "step-finish", tokens: { input: 100, output: 200 } } },
+      },
+    });
+    for (const s of subs) {
       appendSessionEvent("multi-model-session", {
         type: "opencode_event",
         event: {
@@ -1248,30 +1417,21 @@ describe("runner /trigger orchestration", () => {
           properties: {
             part: {
               type: "tool",
-              tool: "read",
+              tool: "task",
               state: {
                 status: "completed",
-                input: { filePath: "/a" },
-                metadata: { model: { providerID: "openai", modelID } },
-                time: { start: 0, end: 1000 },
+                input: { subagent_type: "thinker", prompt: "go" },
+                metadata: {
+                  sessionId: s.id,
+                  model: { providerID: "openai", modelID: s.model },
+                },
+                time: { start: s.start, end: s.end },
               },
             },
           },
         },
       });
     }
-    appendSessionEvent("multi-model-session", {
-      type: "opencode_event",
-      event: {
-        type: "message.part.updated",
-        properties: {
-          part: {
-            type: "step-finish",
-            tokens: { input: 100, output: 200 },
-          },
-        },
-      },
-    });
     appendSessionEvent("multi-model-session", {
       type: "trigger_end",
       triggerId,
@@ -1283,9 +1443,13 @@ describe("runner /trigger orchestration", () => {
         headers: { "X-Vouch-User": "u@example.com" },
       });
       const html = await response.text();
-      expect(html).toContain("Models: gpt-5.4, gpt-5.5");
-      // Cost estimate is omitted because the pricing tables differ.
-      expect(html).not.toContain("Est cost:");
+      // Table is rendered (subagents present).
+      expect(html).toContain('class="totals-table"');
+      // Main row uses hardcoded gpt-5.4 default; each subagent row uses the
+      // model id taken from its parent task tool's metadata.
+      expect(html).toMatch(/<th[^>]*>main [\s\S]*?<td>gpt-5\.4<\/td>/);
+      expect(html).toMatch(/ses_subagent_modelA<\/code><\/th><td>gpt-5\.4<\/td>/);
+      expect(html).toMatch(/ses_subagent_modelB<\/code><\/th><td>gpt-5\.5<\/td>/);
     });
   });
 

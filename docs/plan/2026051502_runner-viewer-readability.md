@@ -171,6 +171,22 @@ Tighten the page after a real-data review on `feat/admin-ux`.
 
 **Exit**: `pnpm --filter @thor/runner test` green; manual spot check on a long real session shows formatted token counts, no row truncation, and slack/github headers without duplicated raw-prompt blob.
 
+### Phase 6 — Subagent token rollup as a table
+
+Today the totals footer only counts the main trigger's step-finish parts. When the trigger spawns subagents through the `task` tool, their token usage is invisible (you see the activity, but not how much they cost). Admin asked to fold them in via a table.
+
+- `packages/runner/src/index.ts`:
+  - Introduce an `AgentLedger` tree built alongside rendering: `{ label, sessionId, modelIds, tokens, children }`. The root is the main trigger (label `"main"`); each `task` tool that resolves to a subagent session pushes a child ledger.
+  - Extend `renderInlineSubagent` to walk `step-finish` parts inside the subagent's time window and accumulate `input / output / reasoning / cacheRead` into the child ledger. Also collect `state.metadata.model.modelID` from any part. Recurse via `renderTaskCard` so nested subagents nest in the ledger tree.
+  - When `rootLedger.children.length === 0`, keep the existing one-line totals footer (most triggers — no regression).
+  - When there is at least one child ledger, render a `<table class="totals-table">` with columns `Agent · Model · Input · Cached · Output · Reasoning · Cost`. One row per ledger in DFS order, indented by depth with `└ ` prefix; final `Total` row sums every bucket. Per-row cost is computed only when the ledger has exactly one priced model id; otherwise the cell renders `—`. Zero-token cells render `—` so the table doesn't look noisy.
+  - Add `.totals-table` CSS: tight, monospace numbers, muted header row, `Total` row bolded with a top border.
+- `packages/runner/src/trigger.test.ts`:
+  - New test seeds a subagent session file with two `step-finish` parts inside the parent task's time window and asserts the table renders rows for `main`, `task · thinker`, and `Total`, with the expected summed token cells.
+  - Verify existing single-agent tests still see the one-line `Tokens: …` footer (no table).
+
+**Exit**: tests pass; on a real session with subagents the footer table shows per-agent and total token usage; on a session without subagents the footer is unchanged.
+
 ## Verification
 
 After all five phases:
@@ -188,11 +204,14 @@ After all five phases:
 
 ## Decision Log
 
-| Date       | Decision                                            | Notes                                    |
-| ---------- | --------------------------------------------------- | ---------------------------------------- |
-| 2026-05-15 | Drop warnings, diagnostics, auto-refresh, cost line | Admin-reviewed; "page should show fact". |
-| 2026-05-15 | Reuse `SLACK_TEAM_ID` env (now read by runner too)  | Mirrors admin behavior; no new env.      |
-| 2026-05-15 | Static page, no polling; `● live` indicator only    | Admin refreshes manually.                |
-| 2026-05-15 | Remove activity-row cap; always render full         | Admin-reviewed; "no skip".               |
-| 2026-05-15 | Move tokens + model to a totals footer              | Header was busy; tokens belong at end.   |
-| 2026-05-15 | Drop redundant slack/github Prompt preview line     | Decoded source line carries it already.  |
+| Date       | Decision                                              | Notes                                    |
+| ---------- | ----------------------------------------------------- | ---------------------------------------- |
+| 2026-05-15 | Drop warnings, diagnostics, auto-refresh, cost line   | Admin-reviewed; "page should show fact". |
+| 2026-05-15 | Reuse `SLACK_TEAM_ID` env (now read by runner too)    | Mirrors admin behavior; no new env.      |
+| 2026-05-15 | Static page, no polling; `● live` indicator only      | Admin refreshes manually.                |
+| 2026-05-15 | Remove activity-row cap; always render full           | Admin-reviewed; "no skip".               |
+| 2026-05-15 | Move tokens + model to a totals footer                | Header was busy; tokens belong at end.   |
+| 2026-05-15 | Drop redundant slack/github Prompt preview line       | Decoded source line carries it already.  |
+| 2026-05-15 | Subagent tokens shown via per-agent footer table      | Single line stays when no subagents.     |
+| 2026-05-15 | Main agent model hardcoded `gpt-5.4` with TODO        | Real source needs `message.updated`.     |
+| 2026-05-15 | Subagent model read from parent task `metadata.model` | OpenCode tags spawn with child's model.  |

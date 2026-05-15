@@ -1688,7 +1688,9 @@ function renderInlineSubagent(
   sessionId: string,
   ctx: SubAgentCtx,
   window: { start: number; end?: number } | undefined,
-): string | undefined {
+  label: string,
+  modelId: string | undefined,
+): { html: string | undefined; ledger: AgentLedger } | undefined {
   if (ctx.visited.has(sessionId)) return undefined;
   // Without a time window we can't tell which subagent events belong to THIS
   // invocation versus earlier/later resumes of the same session. Skip the
@@ -1740,6 +1742,18 @@ function renderInlineSubagent(
     visited: new Set([...ctx.visited, sessionId]),
   };
 
+  // The subagent's model id comes from the parent's `task` tool part metadata
+  // (OpenCode tags the spawn with the child's model). Records inside the
+  // subagent's own session don't carry it on step-finish parts, and any
+  // modelID seen there would be a *grandchild's* model (another task tool).
+  const ledger: AgentLedger = {
+    label,
+    sessionId,
+    modelIds: new Set(modelId ? [modelId] : []),
+    tokens: emptyTokenCounts(),
+    children: [],
+  };
+
   const rows: string[] = [];
   for (let i = 0; i < records.length; i++) {
     const rec = records[i]!;
@@ -1751,10 +1765,15 @@ function renderInlineSubagent(
     if (id && firstIdxById.get(id) !== i) continue;
     const p = id ? (latestById.get(id) ?? raw) : raw;
     if (!p) continue;
+    if (p.type === "step-finish") {
+      const breakdown = extractTokenCounts(p.tokens);
+      if (breakdown) addTokenCounts(ledger.tokens, breakdown);
+      continue;
+    }
     if (p.type === "tool") {
       const toolName = typeof p.tool === "string" ? p.tool : "";
       if (toolName === "task") {
-        rows.push(renderTaskCard(p, partDuration(p), nextCtx));
+        rows.push(renderTaskCard(p, partDuration(p), nextCtx, ledger));
         // renderTaskCard reads partTimeWindow(p) internally for its own
         // subagent expansion call.
         continue;
@@ -1773,14 +1792,19 @@ function renderInlineSubagent(
       );
     }
   }
-  if (!rows.length) return undefined;
-  return `<details><summary>subagent activity (${rows.length} row${rows.length === 1 ? "" : "s"})</summary><ul class="events sub-events">${rows.join("")}</ul></details>`;
+  const html = rows.length
+    ? `<details><summary>subagent activity (${rows.length} row${rows.length === 1 ? "" : "s"})</summary><ul class="events sub-events">${rows.join("")}</ul></details>`
+    : undefined;
+  // Even when the subagent had no display-worthy rows we keep the ledger so
+  // its step-finish tokens still surface in the totals table.
+  return { html, ledger };
 }
 
 function renderTaskCard(
   part: ViewerToolPart,
   durationStr: string | undefined,
   ctx: SubAgentCtx,
+  parentLedger: AgentLedger,
 ): string {
   const input = isRecord(part.state?.input) ? part.state.input : undefined;
   const subagent = input ? safeStr(input.subagent_type) : undefined;
@@ -1804,9 +1828,25 @@ function renderTaskCard(
   // Task `state.output` is the model-facing summary of the subagent run.
   // We deliberately do not render it here — the subagent activity expansion
   // below already surfaces the assistant text and tool rows that comprise it.
-  const subActivity = subSession
-    ? (renderInlineSubagent(subSession, ctx, partTimeWindow(part)) ?? "")
-    : "";
+  let subActivity = "";
+  if (subSession) {
+    const ledgerLabel = subagent ? `task · ${subagent}` : "task";
+    // OpenCode tags the `task` tool part with the *child's* model — that's
+    // the reliable source for the subagent's model id.
+    const taskModelInfo = metadata && isRecord(metadata.model) ? metadata.model : undefined;
+    const childModelId = taskModelInfo ? safeStr(taskModelInfo.modelID) : undefined;
+    const result = renderInlineSubagent(
+      subSession,
+      ctx,
+      partTimeWindow(part),
+      ledgerLabel,
+      childModelId,
+    );
+    if (result) {
+      parentLedger.children.push(result.ledger);
+      subActivity = result.html ?? "";
+    }
+  }
   return `<li class="task-card" data-status="${escapeHtml(status)}"><div class="task-hdr">${hdr}</div>${desc}${subChip}${promptBlock}${subActivity}</li>`;
 }
 
@@ -1898,13 +1938,112 @@ function formatCostUsd(value: number): string {
   return `$${value.toFixed(4)}`;
 }
 
+type AgentLedger = {
+  label: string;
+  sessionId: string;
+  modelIds: Set<string>;
+  tokens: TokenCounts;
+  children: AgentLedger[];
+};
+
+function emptyTokenCounts(): TokenCounts {
+  return { input: 0, output: 0, reasoning: 0, cacheRead: 0 };
+}
+
+function addTokenCounts(target: TokenCounts, src: TokenCounts): void {
+  target.input += src.input;
+  target.output += src.output;
+  target.reasoning += src.reasoning;
+  target.cacheRead += src.cacheRead;
+}
+
+function hasAnyTokens(t: TokenCounts): boolean {
+  return t.input + t.output + t.reasoning + t.cacheRead > 0;
+}
+
+function sumLedgerTokens(node: AgentLedger): TokenCounts {
+  const acc = emptyTokenCounts();
+  const walk = (n: AgentLedger) => {
+    addTokenCounts(acc, n.tokens);
+    n.children.forEach(walk);
+  };
+  walk(node);
+  return acc;
+}
+
+function flattenLedger(root: AgentLedger): Array<{ ledger: AgentLedger; depth: number }> {
+  const out: Array<{ ledger: AgentLedger; depth: number }> = [];
+  const walk = (n: AgentLedger, depth: number) => {
+    out.push({ ledger: n, depth });
+    n.children.forEach((c) => walk(c, depth + 1));
+  };
+  walk(root, 0);
+  return out;
+}
+
+function ledgerRowCost(l: AgentLedger): number | undefined {
+  if (l.modelIds.size !== 1) return undefined;
+  const [m] = l.modelIds;
+  return estimateCostUsd(l.tokens, m);
+}
+
+function tokenCell(n: number): string {
+  return n > 0 ? escapeHtml(formatTokens(n)) : "—";
+}
+
+function renderTotalsTable(root: AgentLedger): string {
+  const flat = flattenLedger(root);
+  const total = sumLedgerTokens(root);
+  let totalCost = 0;
+  let costPartial = false;
+  const rows = flat.map(({ ledger, depth }) => {
+    const indent = `style="padding-left:${depth * 16 + 8}px"`;
+    const prefix = depth > 0 ? "└ " : "";
+    const sidChip = ledger.sessionId
+      ? ` <code class="ledger-sid" title="${escapeHtml(ledger.sessionId)}">${escapeHtml(ledger.sessionId)}</code>`
+      : "";
+    const models = [...ledger.modelIds].sort();
+    const modelCell = models.length ? escapeHtml(models.join(", ")) : "—";
+    const cost = ledgerRowCost(ledger);
+    if (cost !== undefined && cost > 0) {
+      totalCost += cost;
+    } else if (hasAnyTokens(ledger.tokens)) {
+      costPartial = true;
+    }
+    const costCell = cost !== undefined && cost > 0 ? `~${formatCostUsd(cost)}` : "—";
+    return (
+      `<tr><th scope="row" ${indent}>${prefix}${escapeHtml(ledger.label)}${sidChip}</th>` +
+      `<td>${modelCell}</td>` +
+      `<td>${tokenCell(ledger.tokens.input)}</td>` +
+      `<td>${tokenCell(ledger.tokens.cacheRead)}</td>` +
+      `<td>${tokenCell(ledger.tokens.output)}</td>` +
+      `<td>${tokenCell(ledger.tokens.reasoning)}</td>` +
+      `<td>${costCell}</td></tr>`
+    );
+  });
+  const totalCostCell =
+    totalCost > 0 ? `${costPartial ? "≥ " : ""}~${formatCostUsd(totalCost)}` : "—";
+  const totalRow =
+    `<tr class="totals-total"><th scope="row">Total</th><td>—</td>` +
+    `<td>${tokenCell(total.input)}</td>` +
+    `<td>${tokenCell(total.cacheRead)}</td>` +
+    `<td>${tokenCell(total.output)}</td>` +
+    `<td>${tokenCell(total.reasoning)}</td>` +
+    `<td>${totalCostCell}</td></tr>`;
+  return (
+    `<table class="totals-table"><thead><tr>` +
+    `<th>Agent</th><th>Model</th><th>Input</th><th>Cached</th><th>Output</th><th>Reasoning</th><th>Cost</th>` +
+    `</tr></thead><tbody>${rows.join("")}${totalRow}</tbody></table>`
+  );
+}
+
 /** UUIDs render as their last 7 characters everywhere on the viewer. */
 function shortUuid(value: string): string {
   return value.length > 7 ? value.slice(-7) : value;
 }
 
 function renderPage(title: string, body: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.truncated-footer{color:#64748b;font-size:0.9em;font-style:italic;margin-top:12px}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events,.step>ul{list-style:none;padding-left:0}.events>li,.step>ul>li{margin:6px 0}.row{position:relative;padding-left:18px}.row::before{content:"";position:absolute;left:2px;top:0.55em;width:8px;height:8px;border-radius:50%;background:#94a3b8}.row[data-status="completed"]::before{background:#22c55e}.row[data-status="running"]::before{background:#facc15}.row[data-status="pending"]::before{background:#cbd5e1}.row[data-status="error"]::before{background:#ef4444}.row[data-status="aborted"]::before{background:#f97316}.tool-title{color:#475569;font-style:italic;margin-left:6px}.text-body{white-space:pre-wrap;margin:4px 0 0;color:#0f172a;font-size:0.95em}.slack-bubble{background:#eff6ff;border-left:3px solid #3b82f6;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.slack-bubble .slack-hdr{color:#1e3a8a;font-size:0.9em;font-weight:600;margin-bottom:4px}.slack-bubble pre{background:transparent;color:#0f172a;padding:0;margin:0}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.sub-events{margin:6px 0 0;padding-left:12px;border-left:2px solid #c7d2fe}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}.step{list-style:none;margin:16px 0}.step>.step-hdr{color:#1e293b;font-weight:600;padding:6px 0;border-bottom:1px solid #e2e8f0}.step>ol{margin-top:6px;padding-left:24px}details{margin:4px 0}summary{cursor:pointer}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}</main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.truncated-footer{color:#64748b;font-size:0.9em;font-style:italic;margin-top:12px}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events,.step>ul{list-style:none;padding-left:0}.events>li,.step>ul>li{margin:6px 0}.row{position:relative;padding-left:18px}.row::before{content:"";position:absolute;left:2px;top:0.55em;width:8px;height:8px;border-radius:50%;background:#94a3b8}.row[data-status="completed"]::before{background:#22c55e}.row[data-status="running"]::before{background:#facc15}.row[data-status="pending"]::before{background:#cbd5e1}.row[data-status="error"]::before{background:#ef4444}.row[data-status="aborted"]::before{background:#f97316}.tool-title{color:#475569;font-style:italic;margin-left:6px}.text-body{white-space:pre-wrap;margin:4px 0 0;color:#0f172a;font-size:0.95em}.slack-bubble{background:#eff6ff;border-left:3px solid #3b82f6;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.slack-bubble .slack-hdr{color:#1e3a8a;font-size:0.9em;font-weight:600;margin-bottom:4px}.slack-bubble pre{background:transparent;color:#0f172a;padding:0;margin:0}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.sub-events{margin:6px 0 0;padding-left:12px;border-left:2px solid #c7d2fe}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.totals-table{border-collapse:collapse;font-size:0.9em;margin:8px 0;width:100%}.totals-table th,.totals-table td{padding:4px 8px;text-align:right;border-bottom:1px solid #e2e8f0}.totals-table thead th{color:#64748b;font-weight:600;text-align:right;border-bottom:1px solid #cbd5e1}.totals-table thead th:first-child,.totals-table tbody th{text-align:left}.totals-table tbody th{font-weight:500;color:#0f172a}.totals-table .ledger-sid{color:#64748b;font-size:0.85em;margin-left:4px}.totals-table tr.totals-total th,.totals-table tr.totals-total td{font-weight:700;border-top:2px solid #cbd5e1;border-bottom:none;padding-top:6px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}.step{list-style:none;margin:16px 0}.step>.step-hdr{color:#1e293b;font-weight:600;padding:6px 0;border-bottom:1px solid #e2e8f0}.step>ol{margin-top:6px;padding-left:24px}details{margin:4px 0}summary{cursor:pointer}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}</main></body></html>`;
 }
 
 function renderSlicePage(
@@ -1941,10 +2080,24 @@ function renderSlicePage(
   let toolParts = 0;
   let totalTokens = 0;
   let hasTokens = false;
-  const tokenTotals: TokenCounts = { input: 0, output: 0, reasoning: 0, cacheRead: 0 };
+  const rootLedger: AgentLedger = {
+    label: "main",
+    sessionId: ownerSessionId,
+    // TODO(model-attribution): the main agent's model isn't recorded anywhere
+    // in the on-disk JSONL today — OpenCode emits it on `message.updated`
+    // events which Thor's runner doesn't subscribe to, and `step-finish` parts
+    // don't carry it. We hardcode `gpt-5.4` (Thor's current default main-agent
+    // model) so the totals/cost stay useful; switch to the real value once
+    // the runner persists `message.updated` events or we call `sessions.get`
+    // at render time.
+    modelIds: new Set(["gpt-5.4"]),
+    tokens: emptyTokenCounts(),
+    children: [],
+  };
+  const tokenTotals = rootLedger.tokens;
+  const modelIds = rootLedger.modelIds;
   let errorRows = 0;
   let truncatedCount = 0;
-  const modelIds = new Set<string>();
   const steps: Step[] = [];
   let current: Step = { rows: [] };
   const subAgentCtx: SubAgentCtx = { visited: new Set([ownerSessionId]) };
@@ -1969,14 +2122,12 @@ function renderSlicePage(
     const id = partId(rawPart);
     if (id && firstIndexById.get(id) !== idx) continue;
     const part = id ? (latestPartById.get(id) ?? rawPart) : rawPart;
-    if (part) {
-      const stateMeta = isRecord((part.state as Record<string, unknown> | undefined)?.metadata)
-        ? ((part.state as Record<string, unknown>).metadata as Record<string, unknown>)
-        : undefined;
-      const modelInfo = stateMeta && isRecord(stateMeta.model) ? stateMeta.model : undefined;
-      const modelId = modelInfo ? safeStr(modelInfo.modelID) : undefined;
-      if (modelId) modelIds.add(modelId);
-    }
+    // Note: we deliberately do NOT collect `state.metadata.model.modelID` from
+    // parts in the main session — the only place that field actually appears
+    // in the corpus is on `task` tool parts, where it represents the
+    // *subagent's* model (the model the child runs as), not the main agent's.
+    // Folding it into the main ledger here would mislabel the main row.
+    // Subagent ledgers receive that modelID via `renderTaskCard` instead.
     if (part?.type === "tool") {
       toolParts++;
       const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
@@ -1992,7 +2143,7 @@ function renderSlicePage(
         continue;
       }
       if (toolName === "task") {
-        current.rows.push(renderTaskCard(part, duration, subAgentCtx));
+        current.rows.push(renderTaskCard(part, duration, subAgentCtx, rootLedger));
         continue;
       }
       const bashCommand = isRecord(part.state?.input) ? part.state.input.command : undefined;
@@ -2100,34 +2251,46 @@ function renderSlicePage(
     anchor.currentSessionId && anchor.currentSessionId !== ownerSessionId
       ? ` · current <code>${escapeHtml(safeSnippet(anchor.currentSessionId, 120))}</code>`
       : "";
-  const totalsBits: string[] = [];
-  if (hasTokens) {
-    const tokenParts: string[] = [];
-    if (tokenTotals.input) tokenParts.push(`${formatTokens(tokenTotals.input)} input`);
-    if (tokenTotals.cacheRead) tokenParts.push(`${formatTokens(tokenTotals.cacheRead)} cached`);
-    if (tokenTotals.output) tokenParts.push(`${formatTokens(tokenTotals.output)} output`);
-    if (tokenTotals.reasoning) tokenParts.push(`${formatTokens(tokenTotals.reasoning)} reasoning`);
-    totalsBits.push(
-      tokenParts.length
-        ? `Tokens: ${tokenParts.join(" · ")}`
-        : `Tokens: ${formatTokens(totalTokens)}`,
-    );
-  }
-  const sortedModelIds = [...modelIds].sort();
-  if (sortedModelIds.length === 1) {
-    totalsBits.push(`Model: ${escapeHtml(sortedModelIds[0]!)}`);
-  } else if (sortedModelIds.length > 1) {
-    totalsBits.push(`Models: ${sortedModelIds.map((m) => escapeHtml(m)).join(", ")}`);
-  }
-  // Cost is only meaningful when one model is in play; mixing pricing tables
-  // across multiple models would be misleading without per-step model tracking.
-  if (sortedModelIds.length === 1) {
-    const cost = estimateCostUsd(tokenTotals, sortedModelIds[0]);
-    if (cost !== undefined && cost > 0) {
-      totalsBits.push(`Est cost: ~${formatCostUsd(cost)}`);
+  // Subagent token rollup: when the trigger spawned subagents, render a table
+  // (one row per agent, indented by depth) so admins can see per-subagent cost
+  // alongside the main trigger. Otherwise keep the single-line footer.
+  let totalsFooter = "";
+  if (rootLedger.children.length > 0) {
+    totalsFooter = `<div class="totals">${renderTotalsTable(rootLedger)}</div>`;
+  } else {
+    const totalsBits: string[] = [];
+    if (hasTokens) {
+      const tokenParts: string[] = [];
+      if (tokenTotals.input) tokenParts.push(`${formatTokens(tokenTotals.input)} input`);
+      if (tokenTotals.cacheRead) tokenParts.push(`${formatTokens(tokenTotals.cacheRead)} cached`);
+      if (tokenTotals.output) tokenParts.push(`${formatTokens(tokenTotals.output)} output`);
+      if (tokenTotals.reasoning)
+        tokenParts.push(`${formatTokens(tokenTotals.reasoning)} reasoning`);
+      totalsBits.push(
+        tokenParts.length
+          ? `Tokens: ${tokenParts.join(" · ")}`
+          : `Tokens: ${formatTokens(totalTokens)}`,
+      );
     }
+    const sortedModelIds = [...modelIds].sort();
+    // Only surface model/cost when we actually saw token data — avoids
+    // confidently displaying the hardcoded `gpt-5.4` default on zero-token
+    // sessions (e.g. an aborted trigger with no step-finish parts).
+    if (hasTokens) {
+      if (sortedModelIds.length === 1) {
+        totalsBits.push(`Model: ${escapeHtml(sortedModelIds[0]!)}`);
+      } else if (sortedModelIds.length > 1) {
+        totalsBits.push(`Models: ${sortedModelIds.map((m) => escapeHtml(m)).join(", ")}`);
+      }
+      if (sortedModelIds.length === 1) {
+        const cost = estimateCostUsd(tokenTotals, sortedModelIds[0]);
+        if (cost !== undefined && cost > 0) {
+          totalsBits.push(`Est cost: ~${formatCostUsd(cost)}`);
+        }
+      }
+    }
+    totalsFooter = totalsBits.length ? `<p class="totals">${totalsBits.join(" · ")}</p>` : "";
   }
-  const totalsFooter = totalsBits.length ? `<p class="totals">${totalsBits.join(" · ")}</p>` : "";
   const decodedSource = decodeSourceLine(correlationKey, promptPreview, opts.slackTeamId);
   const sourceLine = decodedSource ? renderSourceLine(decodedSource) : "";
   // Tab title: <source-type> · <short-trigger-id> · Thor.
