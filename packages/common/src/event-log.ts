@@ -7,6 +7,7 @@ import { truncate } from "./logger.js";
 
 export const ALIAS_TYPES = [
   "slack.thread_id",
+  "slack.thread",
   "git.branch",
   "github.issue",
   "opencode.session",
@@ -698,9 +699,7 @@ export function listAnchorSessionStates(
       try {
         summary = sessionSummary(sessionId);
       } catch (err) {
-        readErrors.push(
-          `${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        readErrors.push(`${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
         continue;
       }
       skippedMalformed += summary.skippedMalformed;
@@ -714,7 +713,10 @@ export function listAnchorSessionStates(
       if (summary.open && (!bestOpen || summary.open.startedAt > bestOpen.startedAt)) {
         bestOpen = { ...summary.open, sessionId };
       }
-      if (summary.latestTerminal && (!latestTerminal || summary.latestTerminal.ts > latestTerminal.ts)) {
+      if (
+        summary.latestTerminal &&
+        (!latestTerminal || summary.latestTerminal.ts > latestTerminal.ts)
+      ) {
         latestTerminal = { ...summary.latestTerminal, sessionId };
       }
     }
@@ -826,7 +828,10 @@ export function listAnchorSessionStates(
     idle: 3,
   };
   return rows
-    .sort((a, b) => rank[a.status] - rank[b.status] || (b.lastEventTs ?? "").localeCompare(a.lastEventTs ?? ""))
+    .sort(
+      (a, b) =>
+        rank[a.status] - rank[b.status] || (b.lastEventTs ?? "").localeCompare(a.lastEventTs ?? ""),
+    )
     .slice(0, limit);
 }
 
