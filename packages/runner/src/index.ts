@@ -1795,13 +1795,12 @@ function renderSlicePage(
 
   type Step = { rows: string[] };
   let toolParts = 0;
-  let stepFinishes = 0;
   let totalTokens = 0;
   let hasTokens = false;
   const tokenTotals: TokenCounts = { input: 0, output: 0, reasoning: 0, cacheRead: 0 };
   let errorRows = 0;
   let truncatedCount = 0;
-  let latestModelId: string | undefined;
+  const modelIds = new Set<string>();
   const steps: Step[] = [];
   let current: Step = { rows: [] };
   for (let idx = 0; idx < slice.records.length; idx++) {
@@ -1831,7 +1830,7 @@ function renderSlicePage(
         : undefined;
       const modelInfo = stateMeta && isRecord(stateMeta.model) ? stateMeta.model : undefined;
       const modelId = modelInfo ? safeStr(modelInfo.modelID) : undefined;
-      if (modelId) latestModelId = modelId;
+      if (modelId) modelIds.add(modelId);
     }
     if (part?.type === "tool") {
       toolParts++;
@@ -1888,7 +1887,6 @@ function renderSlicePage(
     // Always drop.
     if (part?.type === "reasoning") continue;
     if (part?.type === "step-finish") {
-      stepFinishes++;
       const tokenTotal = numericTokenTotal(part.tokens);
       if (tokenTotal !== undefined) {
         totalTokens += tokenTotal;
@@ -1958,13 +1956,32 @@ function renderSlicePage(
       ? ` · current <code title="${escapeHtml(anchor.currentSessionId)}">${escapeHtml(shortId(safeSnippet(anchor.currentSessionId, 120), 13))}</code>`
       : "";
   const totalsBits: string[] = [];
-  if (hasTokens) totalsBits.push(`Total tokens: ${formatTokens(totalTokens)}`);
-  if (latestModelId) totalsBits.push(`Model: ${escapeHtml(latestModelId)}`);
-  const cost = estimateCostUsd(tokenTotals, latestModelId);
-  if (cost !== undefined && cost > 0) {
-    totalsBits.push(`Est cost: ~${formatCostUsd(cost)}`);
+  if (hasTokens) {
+    const tokenParts: string[] = [];
+    if (tokenTotals.input) tokenParts.push(`${formatTokens(tokenTotals.input)} input`);
+    if (tokenTotals.cacheRead) tokenParts.push(`${formatTokens(tokenTotals.cacheRead)} cached`);
+    if (tokenTotals.output) tokenParts.push(`${formatTokens(tokenTotals.output)} output`);
+    if (tokenTotals.reasoning) tokenParts.push(`${formatTokens(tokenTotals.reasoning)} reasoning`);
+    totalsBits.push(
+      tokenParts.length
+        ? `Tokens: ${tokenParts.join(" · ")}`
+        : `Tokens: ${formatTokens(totalTokens)}`,
+    );
   }
-  if (stepFinishes) totalsBits.push(`${stepFinishes} step${stepFinishes === 1 ? "" : "s"}`);
+  const sortedModelIds = [...modelIds].sort();
+  if (sortedModelIds.length === 1) {
+    totalsBits.push(`Model: ${escapeHtml(sortedModelIds[0]!)}`);
+  } else if (sortedModelIds.length > 1) {
+    totalsBits.push(`Models: ${sortedModelIds.map((m) => escapeHtml(m)).join(", ")}`);
+  }
+  // Cost is only meaningful when one model is in play; mixing pricing tables
+  // across multiple models would be misleading without per-step model tracking.
+  if (sortedModelIds.length === 1) {
+    const cost = estimateCostUsd(tokenTotals, sortedModelIds[0]);
+    if (cost !== undefined && cost > 0) {
+      totalsBits.push(`Est cost: ~${formatCostUsd(cost)}`);
+    }
+  }
   const totalsFooter = totalsBits.length ? `<p class="totals">${totalsBits.join(" · ")}</p>` : "";
   const decodedSource = decodeSourceLine(correlationKey, promptPreview, opts.slackTeamId);
   const sourceLine = decodedSource ? renderSourceLine(decodedSource) : "";

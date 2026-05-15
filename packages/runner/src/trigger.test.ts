@@ -441,7 +441,10 @@ describe("runner /trigger orchestration", () => {
       expect(html).not.toContain("tool row(s)");
       expect(html).not.toContain("assistant text row(s)");
       expect(html).toContain('class="totals"');
-      expect(html).toContain("Total tokens: 42");
+      // Per-bucket token breakdown: input 10, cacheRead 4, output 20, reasoning 3 = 42 total.
+      expect(html).toContain("Tokens: 10 input · 4 cached · 20 output · 3 reasoning");
+      expect(html).not.toContain("Total tokens: 42");
+      expect(html).not.toContain("1 step");
       expect(html).toContain('class="chips"');
       expect(html).toContain("3 tools · last event");
       expect(html).not.toContain("step finish row(s)");
@@ -854,8 +857,9 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain('class="step"');
       expect(html).toContain('class="step-hdr">Step 1<');
       expect(html).toContain('class="step-hdr">Step 2<');
-      expect(html).toContain("Total tokens: 84");
-      expect(html).toContain("2 steps");
+      // Two stepFinishEvents (input 10 · output 20 · reasoning 3 · cacheRead 4) doubled.
+      expect(html).toContain("Tokens: 20 input · 8 cached · 40 output · 6 reasoning");
+      expect(html).not.toContain("2 steps");
       // Step blocks themselves do not use <details>; only apply_patch/task do.
       expect(html).not.toContain('<li class="step"><details');
     });
@@ -924,7 +928,9 @@ describe("runner /trigger orchestration", () => {
           headers: { "X-Vouch-User": "u@example.com" },
         });
         const html = await response.text();
-        expect(html).toContain("Total tokens: 105,044");
+        expect(html).toContain(
+          "Tokens: 50,000 input · 20,044 cached · 30,000 output · 5,000 reasoning",
+        );
         expect(html).toContain("Model: gpt-5.5");
         // gpt-5.5 pricing: $5 input, $30 output, $0.5 cacheRead per 1M tokens.
         // 50000 * 5 + (30000 + 5000) * 30 + 20044 * 0.5 = 1,310,022 → /1e6 = $1.31
@@ -964,6 +970,61 @@ describe("runner /trigger orchestration", () => {
       const html = await response.text();
       expect(html).not.toContain('class="step"');
       expect(html).toContain("tool</b> <span>read</span>");
+    });
+  });
+
+  it("renders multiple models in the totals footer and skips the cost estimate", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000507";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("multi-model-session", anchorId);
+    appendSessionEvent("multi-model-session", { type: "trigger_start", triggerId });
+    for (const modelID of ["gpt-5.4", "gpt-5.5"]) {
+      appendSessionEvent("multi-model-session", {
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              type: "tool",
+              tool: "read",
+              state: {
+                status: "completed",
+                input: { filePath: "/a" },
+                metadata: { model: { providerID: "openai", modelID } },
+                time: { start: 0, end: 1000 },
+              },
+            },
+          },
+        },
+      });
+    }
+    appendSessionEvent("multi-model-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "step-finish",
+            tokens: { input: 100, output: 200 },
+          },
+        },
+      },
+    });
+    appendSessionEvent("multi-model-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain("Models: gpt-5.4, gpt-5.5");
+      // Cost estimate is omitted because the pricing tables differ.
+      expect(html).not.toContain("Est cost:");
     });
   });
 
