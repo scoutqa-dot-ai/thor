@@ -802,6 +802,79 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
+  it("groups rows into collapsible step sections with the last step open", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000503";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("step-group-session", anchorId);
+    appendSessionEvent("step-group-session", { type: "trigger_start", triggerId });
+    // Step 1: 1 tool then step-finish
+    appendSessionEvent("step-group-session", {
+      type: "opencode_event",
+      event: toolEvent("step-group-session", "read", "completed", { filePath: "/a" }),
+    });
+    appendSessionEvent("step-group-session", {
+      type: "opencode_event",
+      event: stepFinishEvent("step-group-session"),
+    });
+    // Step 2: 2 tools then step-finish
+    appendSessionEvent("step-group-session", {
+      type: "opencode_event",
+      event: toolEvent("step-group-session", "grep", "completed", { pattern: "x" }),
+    });
+    appendSessionEvent("step-group-session", {
+      type: "opencode_event",
+      event: toolEvent("step-group-session", "read", "completed", { filePath: "/b" }),
+    });
+    appendSessionEvent("step-group-session", {
+      type: "opencode_event",
+      event: stepFinishEvent("step-group-session"),
+    });
+    appendSessionEvent("step-group-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain('class="step"');
+      expect(html).toContain("Step 1 · 1 tool · 42 tokens");
+      expect(html).toContain("Step 2 · 2 tools · 42 tokens");
+      // Last step open, prior closed.
+      expect(html).toMatch(/Step 1[\s\S]*?<\/details>[\s\S]*?<details open><summary>Step 2/);
+    });
+  });
+
+  it("renders activity flat when there is no step-finish boundary", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000504";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("flat-session", anchorId);
+    appendSessionEvent("flat-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("flat-session", {
+      type: "opencode_event",
+      event: toolEvent("flat-session", "read", "completed", { filePath: "/a" }),
+    });
+    appendSessionEvent("flat-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).not.toContain('class="step"');
+      expect(html).toContain("tool</b> <span>read</span>");
+    });
+  });
+
   it("dedups streamed part updates by id and drops busy heartbeats and empty reasoning", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000502";
