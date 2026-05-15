@@ -1767,9 +1767,9 @@ function shortId(value: string, head = 8, tail = 4): string {
   return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
 
-/** UUIDs render as `…<last 7 chars>` everywhere on the viewer. */
+/** UUIDs render as their last 7 characters everywhere on the viewer. */
 function shortUuid(value: string): string {
-  return value.length > 7 ? `…${value.slice(-7)}` : value;
+  return value.length > 7 ? value.slice(-7) : value;
 }
 
 function renderPage(title: string, body: string): string {
