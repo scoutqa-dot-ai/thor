@@ -1647,19 +1647,33 @@ function renderApplyPatch(part: ViewerToolPart, durationStr: string | undefined)
   return `<li class="row" data-status="${escapeHtml(status)}"><details><summary>${hdr}</summary>${renderDiffLines(patchText)}</details></li>`;
 }
 
+/** Maximum nesting depth when expanding `task` subagents recursively. */
+const MAX_SUBAGENT_DEPTH = 10;
+
+type SubAgentCtx = { visited: Set<string>; depth: number };
+
+function partDuration(part: ViewerToolPart): string | undefined {
+  const time = part.state?.time;
+  if (typeof time?.start === "number" && typeof time.end === "number") {
+    return formatDuration(time.end - time.start);
+  }
+  return undefined;
+}
+
 /**
  * Render a subagent session's activity inline. Subagent sessions are written
  * to their own `ses_*.jsonl` files (no trigger boundaries — task tool spawns
  * them outside the trigger endpoint), so we read the whole file, dedup by
  * part id, and emit the major rows (tool + non-empty assistant text).
  *
- * No size cap is applied — the page is gated by Vouch and admin-only, and
- * the parent log already has its own size cap.
- *
- * No recursion: a subagent's own task tools render as plain rows without
- * their own inline expansion.
+ * Nested `task` tools call back into this function so the recursion follows
+ * the subagent chain. Guards: `ctx.visited` breaks cycles; `ctx.depth` is
+ * bounded by `MAX_SUBAGENT_DEPTH`. No file-size cap (the viewer is
+ * admin-only behind Vouch).
  */
-function renderInlineSubagent(sessionId: string): string | undefined {
+function renderInlineSubagent(sessionId: string, ctx: SubAgentCtx): string | undefined {
+  if (ctx.depth >= MAX_SUBAGENT_DEPTH) return undefined;
+  if (ctx.visited.has(sessionId)) return undefined;
   let path: string;
   try {
     path = sessionLogPath(sessionId);
@@ -1697,6 +1711,11 @@ function renderInlineSubagent(sessionId: string): string | undefined {
     if (!firstIdxById.has(id)) firstIdxById.set(id, i);
   });
 
+  const nextCtx: SubAgentCtx = {
+    visited: new Set([...ctx.visited, sessionId]),
+    depth: ctx.depth + 1,
+  };
+
   const rows: string[] = [];
   for (let i = 0; i < records.length; i++) {
     const rec = records[i]!;
@@ -1709,6 +1728,11 @@ function renderInlineSubagent(sessionId: string): string | undefined {
     const p = id ? (latestById.get(id) ?? raw) : raw;
     if (!p) continue;
     if (p.type === "tool") {
+      const toolName = typeof p.tool === "string" ? p.tool : "";
+      if (toolName === "task") {
+        rows.push(renderTaskCard(p, partDuration(p), nextCtx));
+        continue;
+      }
       const status = typeof p.state?.status === "string" ? p.state.status : "unknown";
       const name = viewerToolDisplayName(p);
       const title = getStateTitle(p);
@@ -1727,7 +1751,11 @@ function renderInlineSubagent(sessionId: string): string | undefined {
   return `<details><summary>subagent activity (${rows.length} row${rows.length === 1 ? "" : "s"})</summary><ul class="events sub-events">${rows.join("")}</ul></details>`;
 }
 
-function renderTaskCard(part: ViewerToolPart, durationStr: string | undefined): string {
+function renderTaskCard(
+  part: ViewerToolPart,
+  durationStr: string | undefined,
+  ctx: SubAgentCtx,
+): string {
   const input = isRecord(part.state?.input) ? part.state.input : undefined;
   const subagent = input ? safeStr(input.subagent_type) : undefined;
   const description = input ? safeStr(input.description) : undefined;
@@ -1751,7 +1779,7 @@ function renderTaskCard(part: ViewerToolPart, durationStr: string | undefined): 
   const outputBlock = output
     ? `<details><summary>output</summary><pre>${escapeHtml(safeMultilineSnippet(output, 4000))}</pre></details>`
     : "";
-  const subActivity = subSession ? (renderInlineSubagent(subSession) ?? "") : "";
+  const subActivity = subSession ? (renderInlineSubagent(subSession, ctx) ?? "") : "";
   return `<li class="task-card" data-status="${escapeHtml(status)}"><div class="task-hdr">${hdr}</div>${desc}${subChip}${promptBlock}${outputBlock}${subActivity}</li>`;
 }
 
@@ -1892,6 +1920,7 @@ function renderSlicePage(
   const modelIds = new Set<string>();
   const steps: Step[] = [];
   let current: Step = { rows: [] };
+  const subAgentCtx: SubAgentCtx = { visited: new Set([ownerSessionId]), depth: 0 };
   for (let idx = 0; idx < slice.records.length; idx++) {
     const record = slice.records[idx]!;
     // trigger_start / trigger_end rows are intentionally not rendered — the
@@ -1936,7 +1965,7 @@ function renderSlicePage(
         continue;
       }
       if (toolName === "task") {
-        current.rows.push(renderTaskCard(part, duration));
+        current.rows.push(renderTaskCard(part, duration, subAgentCtx));
         continue;
       }
       const bashCommand = isRecord(part.state?.input) ? part.state.input.command : undefined;

@@ -1052,6 +1052,163 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
+  it("recurses into nested subagent task tools when inlining", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000509";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("parent-recursive", anchorId);
+    const subA = "ses_subagent_recursive_a";
+    const subB = "ses_subagent_recursive_b";
+    mkdirSync(`${worklogDir}/sessions`, { recursive: true });
+    // subB just has a single read tool — leaf level.
+    writeFileSync(
+      `${worklogDir}/sessions/${subB}.jsonl`,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        ts: "2026-05-15T00:00:02.000Z",
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              type: "tool",
+              tool: "read",
+              state: { status: "completed", input: { filePath: "/deep" } },
+            },
+          },
+        },
+      })}\n`,
+    );
+    // subA has a nested task tool that points to subB.
+    writeFileSync(
+      `${worklogDir}/sessions/${subA}.jsonl`,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        ts: "2026-05-15T00:00:01.000Z",
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              type: "tool",
+              tool: "task",
+              state: {
+                status: "completed",
+                input: { subagent_type: "thinker", prompt: "deeper" },
+                metadata: { sessionId: subB },
+                time: { start: 0, end: 1000 },
+              },
+            },
+          },
+        },
+      })}\n`,
+    );
+    appendSessionEvent("parent-recursive", { type: "trigger_start", triggerId });
+    appendSessionEvent("parent-recursive", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: { subagent_type: "thinker", prompt: "go" },
+              metadata: { sessionId: subA },
+              time: { start: 0, end: 1000 },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("parent-recursive", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      // Two nested levels of subagent activity wrappers.
+      const subMatches = html.match(/class="events sub-events"/g) ?? [];
+      expect(subMatches.length).toBe(2);
+      // Leaf-level read tool from subB surfaces.
+      expect(html).toContain("tool</b> <span>read</span>");
+    });
+  });
+
+  it("breaks subagent recursion on cycles without infinite expansion", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000510";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("parent-cycle", anchorId);
+    const subSelf = "ses_subagent_cycle";
+    mkdirSync(`${worklogDir}/sessions`, { recursive: true });
+    // subSelf has a task tool that points to itself — must not infinite-loop.
+    writeFileSync(
+      `${worklogDir}/sessions/${subSelf}.jsonl`,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        ts: "2026-05-15T00:00:03.000Z",
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              type: "tool",
+              tool: "task",
+              state: {
+                status: "completed",
+                input: { subagent_type: "thinker", prompt: "self" },
+                metadata: { sessionId: subSelf },
+                time: { start: 0, end: 1000 },
+              },
+            },
+          },
+        },
+      })}\n`,
+    );
+    appendSessionEvent("parent-cycle", { type: "trigger_start", triggerId });
+    appendSessionEvent("parent-cycle", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: { subagent_type: "thinker", prompt: "go" },
+              metadata: { sessionId: subSelf },
+              time: { start: 0, end: 1000 },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("parent-cycle", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      const subMatches = html.match(/class="events sub-events"/g) ?? [];
+      // Only one expansion — the second self-reference is blocked by the
+      // visited set, so the nested task card has no sub-activity block.
+      expect(subMatches.length).toBe(1);
+    });
+  });
+
   it("renders multiple models in the totals footer and skips the cost estimate", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000507";
