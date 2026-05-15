@@ -842,12 +842,12 @@ describe("runner /trigger orchestration", () => {
       });
       const html = await response.text();
       expect(html).toContain('class="step"');
-      expect(html).toContain("Step 1 · 1 tool · 42 tokens");
-      expect(html).toContain("Step 2 · 2 tools · 42 tokens");
+      expect(html).toContain('class="step-hdr">Step 1<');
+      expect(html).toContain('class="step-hdr">Step 2<');
       expect(html).toContain("Total tokens: 84");
       expect(html).toContain("2 steps");
-      // Last step open, prior closed.
-      expect(html).toMatch(/Step 1[\s\S]*?<\/details>[\s\S]*?<details open><summary>Step 2/);
+      expect(html).not.toContain("<details");
+      expect(html).not.toContain("<summary");
     });
   });
 
