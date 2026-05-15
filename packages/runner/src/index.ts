@@ -1697,6 +1697,96 @@ function numericTokenTotal(tokens: unknown): number | undefined {
   return found ? total : undefined;
 }
 
+type TokenCounts = { input: number; output: number; reasoning: number; cacheRead: number };
+
+function extractTokenCounts(tokens: unknown): TokenCounts | undefined {
+  if (!isRecord(tokens)) return undefined;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const cache = isRecord(tokens.cache) ? tokens.cache : undefined;
+  const counts: TokenCounts = {
+    input: num(tokens.input),
+    output: num(tokens.output),
+    reasoning: num(tokens.reasoning),
+    cacheRead: cache ? num(cache.read) : 0,
+  };
+  if (counts.input + counts.output + counts.reasoning + counts.cacheRead === 0) {
+    return undefined;
+  }
+  return counts;
+}
+
+/**
+ * OpenAI per-million-token USD prices.
+ *
+ * Source: https://models.dev/ (snapshot 2026-05-15). To refresh:
+ *   curl -s https://models.dev/api.json | jq '.openai.models[] | {id, cost}'
+ * or visit the site and copy the OpenAI table.
+ *
+ * Unknown model ids fall back via `resolveModelPricing` — a `.<minor>` suffix
+ * is stripped (e.g. `gpt-5.5` → `gpt-5`) so internal/preview tiers inherit
+ * their family's published price.
+ */
+const MODEL_PRICING_USD_PER_M: Record<
+  string,
+  { input: number; output: number; cacheRead?: number }
+> = {
+  "gpt-5": { input: 1.25, output: 10, cacheRead: 0.125 },
+  "gpt-5.1": { input: 1.25, output: 10, cacheRead: 0.125 },
+  "gpt-5-chat-latest": { input: 1.25, output: 10, cacheRead: 0.125 },
+  "gpt-5-codex": { input: 1.25, output: 10, cacheRead: 0.125 },
+  "gpt-5.1-chat-latest": { input: 1.25, output: 10, cacheRead: 0.125 },
+  "gpt-5.1-codex": { input: 1.25, output: 10, cacheRead: 0.125 },
+  "gpt-5.1-codex-mini": { input: 0.25, output: 2, cacheRead: 0.025 },
+  "gpt-5-mini": { input: 0.25, output: 2, cacheRead: 0.025 },
+  "gpt-5-nano": { input: 0.05, output: 0.4, cacheRead: 0.005 },
+  "gpt-5-pro": { input: 15, output: 120 },
+  "gpt-4.1": { input: 2, output: 8, cacheRead: 0.5 },
+  "gpt-4.1-mini": { input: 0.4, output: 1.6, cacheRead: 0.1 },
+  "gpt-4.1-mini-2025-04-14": { input: 0.4, output: 1.6, cacheRead: 0.1 },
+  "gpt-4.1-nano": { input: 0.1, output: 0.4, cacheRead: 0.025 },
+  "gpt-4o": { input: 2.5, output: 10, cacheRead: 1.25 },
+  "gpt-4o-mini": { input: 0.15, output: 0.6, cacheRead: 0.075 },
+  "chatgpt-4o-latest": { input: 5, output: 20, cacheRead: 2.5 },
+  o1: { input: 15, output: 60, cacheRead: 7.5 },
+  "o1-mini": { input: 1.1, output: 4.4, cacheRead: 0.55 },
+  o3: { input: 2, output: 8, cacheRead: 0.5 },
+  "o3-mini": { input: 1.1, output: 4.4, cacheRead: 0.55 },
+  "o3-pro": { input: 20, output: 80 },
+  "o4-mini": { input: 1.1, output: 4.4, cacheRead: 0.275 },
+};
+
+function resolveModelPricing(
+  modelId: string,
+): { input: number; output: number; cacheRead?: number } | undefined {
+  if (MODEL_PRICING_USD_PER_M[modelId]) return MODEL_PRICING_USD_PER_M[modelId];
+  const dot = modelId.indexOf(".");
+  if (dot > 0) {
+    const family = modelId.slice(0, dot);
+    if (MODEL_PRICING_USD_PER_M[family]) return MODEL_PRICING_USD_PER_M[family];
+  }
+  return undefined;
+}
+
+function estimateCostUsd(tokens: TokenCounts, modelId: string | undefined): number | undefined {
+  if (!modelId) return undefined;
+  const pricing = resolveModelPricing(modelId);
+  if (!pricing) return undefined;
+  const cacheRead = pricing.cacheRead ?? pricing.input;
+  // Reasoning tokens are billed at the completion (output) rate.
+  return (
+    (tokens.input * pricing.input +
+      (tokens.output + tokens.reasoning) * pricing.output +
+      tokens.cacheRead * cacheRead) /
+    1_000_000
+  );
+}
+
+function formatCostUsd(value: number): string {
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  if (value >= 0.01) return `$${value.toFixed(3)}`;
+  return `$${value.toFixed(4)}`;
+}
+
 function shortId(value: string, head = 8, tail = 4): string {
   if (value.length <= head + tail + 1) return value;
   return `${value.slice(0, head)}…${value.slice(-tail)}`;
@@ -1742,6 +1832,7 @@ function renderSlicePage(
   let stepFinishes = 0;
   let totalTokens = 0;
   let hasTokens = false;
+  const tokenTotals: TokenCounts = { input: 0, output: 0, reasoning: 0, cacheRead: 0 };
   let errorRows = 0;
   let truncatedCount = 0;
   let latestAssistantText: string | undefined;
@@ -1843,6 +1934,13 @@ function renderSlicePage(
         totalTokens += tokenTotal;
         hasTokens = true;
       }
+      const breakdown = extractTokenCounts(part.tokens);
+      if (breakdown) {
+        tokenTotals.input += breakdown.input;
+        tokenTotals.output += breakdown.output;
+        tokenTotals.reasoning += breakdown.reasoning;
+        tokenTotals.cacheRead += breakdown.cacheRead;
+      }
       current.tokens = tokenTotal;
       steps.push(current);
       current = { rows: [], toolCount: 0, tokens: undefined };
@@ -1904,6 +2002,10 @@ function renderSlicePage(
   const totalsBits: string[] = [];
   if (hasTokens) totalsBits.push(`Total tokens: ${formatTokens(totalTokens)}`);
   if (latestModelId) totalsBits.push(`Model: ${escapeHtml(latestModelId)}`);
+  const cost = estimateCostUsd(tokenTotals, latestModelId);
+  if (cost !== undefined && cost > 0) {
+    totalsBits.push(`Est cost: ~${formatCostUsd(cost)}`);
+  }
   if (stepFinishes) totalsBits.push(`${stepFinishes} step${stepFinishes === 1 ? "" : "s"}`);
   const totalsFooter = totalsBits.length ? `<p class="totals">${totalsBits.join(" · ")}</p>` : "";
   const decodedSource = decodeSourceLine(correlationKey, promptPreview, opts.slackTeamId);
