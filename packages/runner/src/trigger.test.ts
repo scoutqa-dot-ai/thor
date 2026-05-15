@@ -963,6 +963,39 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
+  it("drops the [correlation-key:] prompt echo from the activity stream", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000506";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("prompt-echo-session", anchorId);
+    appendSessionEvent("prompt-echo-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("prompt-echo-session", {
+      type: "opencode_event",
+      event: textEvent(
+        "prompt-echo-session",
+        "[correlation-key: slack:thread:1778250522.057779] Slack event: {...}",
+      ),
+    });
+    appendSessionEvent("prompt-echo-session", {
+      type: "opencode_event",
+      event: textEvent("prompt-echo-session", "Real assistant reply."),
+    });
+    appendSessionEvent("prompt-echo-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).not.toContain("[correlation-key:");
+      expect(html).toContain("Real assistant reply.");
+    });
+  });
+
   it("dedups streamed part updates by id and drops busy heartbeats and empty reasoning", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000502";

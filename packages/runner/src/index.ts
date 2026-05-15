@@ -1880,11 +1880,16 @@ function renderSlicePage(
       continue;
     }
     if (part?.type === "text") {
+      // OpenCode echoes the user-message text parts through the same
+      // message.part.updated channel as assistant text. Thor prefixes every
+      // injected prompt with "[correlation-key: <key>]" (see
+      // `packages/runner/src/index.ts` prompt construction), so dropping
+      // those keeps the activity stream to assistant output only.
+      const text = typeof part.text === "string" ? part.text : "";
+      if (text.startsWith("[correlation-key:")) continue;
       textParts++;
-      latestAssistantText = safeSnippet(part.text, 1000);
-      current.rows.push(
-        `<li><b>assistant text</b> ${escapeHtml(safeSnippet(part.text, 300))}</li>`,
-      );
+      latestAssistantText = safeSnippet(text, 1000);
+      current.rows.push(`<li><b>assistant text</b> ${escapeHtml(safeSnippet(text, 300))}</li>`);
       continue;
     }
     if (part?.type === "reasoning") {
