@@ -1,0 +1,48 @@
+packages/gateway/src/slack.ts
+  794009cd90bb0071 172-182
+docs/plan/2026051501_admin-sessions-external-keys.md
+  794009cd90bb0071 1-99
+packages/common/src/correlation.ts
+  794009cd90bb0071 64-67,72,78-93,174-181
+packages/gateway/src/slack.test.ts
+  794009cd90bb0071 48,58
+packages/common/src/index.ts
+  794009cd90bb0071 118
+packages/common/src/correlation.test.ts
+  794009cd90bb0071 7,113-117,186-219
+packages/common/src/event-log.ts
+  794009cd90bb0071 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ea41d7c8e5993c51b9b3da8476146f8fc98e5f18",
+  "prompts": {
+    "794009cd90bb0071": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7a7b5a38-862d-4ba4-89b1-2d41caabda50",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 185,
+      "total_deletions": 10,
+      "accepted_lines": 185,
+      "overriden_lines": 0
+    },
+    "8eaf019e26b0e096": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03c9b3b9-8f37-4e65-b725-98beb0696869",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 48,
+      "total_deletions": 2,
+      "accepted_lines": 48,
+      "overriden_lines": 0
+    }
+  }
+}
