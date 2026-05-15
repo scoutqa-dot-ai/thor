@@ -158,10 +158,13 @@ export function resolveCorrelationKeys(rawKeys: string[]): string {
   return rawKeys[0];
 }
 
-export function hasSessionForCorrelationKey(key: string): boolean {
-  const anchorId = resolveAnchorForCorrelationKey(key);
-  if (!anchorId) return false;
-  return currentSessionForAnchor(anchorId) !== undefined;
+export function hasSessionForCorrelationKey(key: string | string[]): boolean {
+  const keys = Array.isArray(key) ? key : [key];
+  for (const k of keys) {
+    const anchorId = resolveAnchorForCorrelationKey(k);
+    if (anchorId && currentSessionForAnchor(anchorId) !== undefined) return true;
+  }
+  return false;
 }
 
 export function resolveCorrelationLockKey(key: string): string {
