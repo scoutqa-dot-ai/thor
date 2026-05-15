@@ -1647,10 +1647,7 @@ function renderApplyPatch(part: ViewerToolPart, durationStr: string | undefined)
   return `<li class="row" data-status="${escapeHtml(status)}"><details><summary>${hdr}</summary>${renderDiffLines(patchText)}</details></li>`;
 }
 
-/** Maximum nesting depth when expanding `task` subagents recursively. */
-const MAX_SUBAGENT_DEPTH = 10;
-
-type SubAgentCtx = { visited: Set<string>; depth: number };
+type SubAgentCtx = { visited: Set<string> };
 
 function partDuration(part: ViewerToolPart): string | undefined {
   const time = part.state?.time;
@@ -1682,16 +1679,16 @@ function partTimeWindow(part: ViewerToolPart): { start: number; end?: number } |
  * part id, and emit the major rows (tool + non-empty assistant text).
  *
  * Nested `task` tools call back into this function so the recursion follows
- * the subagent chain. Guards: `ctx.visited` breaks cycles; `ctx.depth` is
- * bounded by `MAX_SUBAGENT_DEPTH`. No file-size cap (the viewer is
- * admin-only behind Vouch).
+ * the subagent chain. `ctx.visited` is the only guard — cycles (a subagent
+ * pointing back at itself or an ancestor) are the only thing that would
+ * otherwise loop. No depth cap, no file-size cap (the viewer is admin-only
+ * behind Vouch).
  */
 function renderInlineSubagent(
   sessionId: string,
   ctx: SubAgentCtx,
   window: { start: number; end?: number } | undefined,
 ): string | undefined {
-  if (ctx.depth >= MAX_SUBAGENT_DEPTH) return undefined;
   if (ctx.visited.has(sessionId)) return undefined;
   // Without a time window we can't tell which subagent events belong to THIS
   // invocation versus earlier/later resumes of the same session. Skip the
@@ -1741,7 +1738,6 @@ function renderInlineSubagent(
 
   const nextCtx: SubAgentCtx = {
     visited: new Set([...ctx.visited, sessionId]),
-    depth: ctx.depth + 1,
   };
 
   const rows: string[] = [];
@@ -1952,7 +1948,7 @@ function renderSlicePage(
   const modelIds = new Set<string>();
   const steps: Step[] = [];
   let current: Step = { rows: [] };
-  const subAgentCtx: SubAgentCtx = { visited: new Set([ownerSessionId]), depth: 0 };
+  const subAgentCtx: SubAgentCtx = { visited: new Set([ownerSessionId]) };
   for (let idx = 0; idx < slice.records.length; idx++) {
     const record = slice.records[idx]!;
     // trigger_start / trigger_end rows are intentionally not rendered — the
