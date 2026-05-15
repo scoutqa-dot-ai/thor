@@ -435,13 +435,13 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("1 opencode event was truncated at write time and is not shown.");
       expect(html).not.toContain("truncated payload");
       expect(html).toContain("Done with token=[redacted]");
-      expect(html).toContain("step finish");
-      expect(html).toContain("42 tokens");
-      expect(html).toContain(
-        "3 tool row(s), 1 assistant text row(s), 1 step finish row(s), 42 total tokens",
-      );
+      expect(html).toContain("3 tool row(s), 1 assistant text row(s)");
+      expect(html).toContain('class="totals"');
+      expect(html).toContain("Total tokens: 42");
       expect(html).toContain('class="chips"');
       expect(html).toContain("3 tools · last event");
+      expect(html).not.toContain("step finish row(s)");
+      expect(html).not.toContain(">step finish<");
       expect(html).not.toContain("cost $");
       expect(html).not.toContain("total cost");
       expect(html).not.toContain("Sanitized diagnostics");
@@ -512,7 +512,7 @@ describe("runner /trigger orchestration", () => {
       expect(response.status).toBe(200);
       const html = await response.text();
       expect(html).toContain("[redacted]");
-      expect(html).toContain("earlier meaningful event row(s) omitted");
+      expect(html).not.toContain("earlier meaningful event row(s) omitted");
       expect(html).toContain("tool</b> <span>jq</span>");
       expect(html).toContain("2m 0s");
       expect(html).not.toContain("1m 60s");
@@ -844,9 +844,88 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain('class="step"');
       expect(html).toContain("Step 1 · 1 tool · 42 tokens");
       expect(html).toContain("Step 2 · 2 tools · 42 tokens");
+      expect(html).toContain("Total tokens: 84");
+      expect(html).toContain("2 steps");
       // Last step open, prior closed.
       expect(html).toMatch(/Step 1[\s\S]*?<\/details>[\s\S]*?<details open><summary>Step 2/);
     });
+  });
+
+  it("surfaces subagent session id, preserves task prompt newlines, formats totals, and drops redundant slack prompt preview", async () => {
+    process.env.SLACK_TEAM_ID = "T0TESTTEAM";
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000505";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("polish-session", anchorId);
+    appendSessionEvent("polish-session", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "slack:thread:C0APZ92A45U/1710000000.505",
+      promptPreview:
+        'Slack event:\n\n{"event":{"channel":"C0APZ92A45U","user":"UN4P4F5MY","text":"deploy please"}}',
+    });
+    appendSessionEvent("polish-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: {
+                subagent_type: "thinker",
+                description: "Plan migration",
+                prompt: "Line one\nLine two\nLine three",
+              },
+              output: "task_id: ses_subagent123\n\nAll done.",
+              metadata: {
+                sessionId: "ses_subagent123",
+                model: { providerID: "openai", modelID: "gpt-5.5" },
+              },
+              time: { start: 0, end: 5000 },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("polish-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "step-finish",
+            tokens: { input: 50000, output: 30000, reasoning: 5000, cache: { read: 20044 } },
+          },
+        },
+      },
+    });
+    appendSessionEvent("polish-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    try {
+      await withServer(h.app, async (url) => {
+        const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+          headers: { "X-Vouch-User": "u@example.com" },
+        });
+        const html = await response.text();
+        expect(html).toContain("Total tokens: 105,044");
+        expect(html).toContain("Model: gpt-5.5");
+        expect(html).toContain("ses_subagent123");
+        expect(html).toMatch(/Line one\nLine two\nLine three/);
+        // Slack prompt preview is dropped because the decoded source covers it.
+        expect(html).not.toContain("Prompt preview: Slack event:");
+        // Decoded source line still present.
+        expect(html).toContain("deploy please");
+      });
+    } finally {
+      delete process.env.SLACK_TEAM_ID;
+    }
   });
 
   it("renders activity flat when there is no step-finish boundary", async () => {

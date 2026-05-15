@@ -150,9 +150,30 @@ Group activity by `step-finish` boundary and finish the static-live polish.
 
 **Exit**: tests pass; page on a real multi-step session shows scannable step groups.
 
+### Phase 5 — Admin polish round
+
+Tighten the page after a real-data review on `feat/admin-ux`.
+
+- `packages/runner/src/index.ts`:
+  - Format token counts with `Intl.NumberFormat` (`"en-US"`) so `105044` renders as `105,044`.
+  - Remove `MAX_MEANINGFUL_ROWS` truncation: always render the full activity stream; admin would rather scroll than miss a row.
+  - Drop the per-row `step finish` `<li>` entirely; the `<details>` step summary already shows tokens for that step.
+  - Drop the top-of-activity counts paragraph's `step finish row(s)` and `total tokens` fragments; tokens live in the new totals footer.
+  - Remove tokens from the header summary strip (`status · duration · tokens · …`). Move tokens — and model id when discoverable — into a per-section totals footer under Activity.
+  - New helper `safeMultilineSnippet`: same redactions as `safeSnippet` but preserves `\n` so task prompts and slack-post heredoc bodies render with their original line breaks inside `<pre>`.
+  - Surface the subagent session id on `task` cards (from `state.metadata.sessionId`) so admins can trace nested work. Render the `state.output` body too.
+  - Drop the redundant `Prompt preview:` line from Trigger context when the source line already decoded it (slack / github). Keep it for cron and unknown sources.
+- `packages/runner/src/trigger.test.ts`:
+  - Update the operator-event-list test: assert the new activity summary (no `step finish row(s)`, no inline `total tokens`) and the new totals footer (`Total tokens: 42`).
+  - Update the multi-step test to assert comma-formatted thousands when applicable.
+  - Add a fixture for task tool `state.metadata.sessionId` rendering and multiline prompt preservation.
+  - Drop the "earlier meaningful event row(s) omitted" assertion (cap removed).
+
+**Exit**: `pnpm --filter @thor/runner test` green; manual spot check on a long real session shows formatted token counts, no row truncation, and slack/github headers without duplicated raw-prompt blob.
+
 ## Verification
 
-After all four phases:
+After all five phases:
 
 1. `pnpm --filter @thor/runner test` green locally.
 2. Push branch; the runner CI workflow (`runner-tests` if present, else the umbrella E2E job) is the final gate per AGENTS.md §3.
@@ -172,3 +193,6 @@ After all four phases:
 | 2026-05-15 | Drop warnings, diagnostics, auto-refresh, cost line | Admin-reviewed; "page should show fact". |
 | 2026-05-15 | Reuse `SLACK_TEAM_ID` env (now read by runner too)  | Mirrors admin behavior; no new env.      |
 | 2026-05-15 | Static page, no polling; `● live` indicator only    | Admin refreshes manually.                |
+| 2026-05-15 | Remove activity-row cap; always render full         | Admin-reviewed; "no skip".               |
+| 2026-05-15 | Move tokens + model to a totals footer              | Header was busy; tokens belong at end.   |
+| 2026-05-15 | Drop redundant slack/github Prompt preview line     | Decoded source line carries it already.  |

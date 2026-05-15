@@ -1270,7 +1270,6 @@ const KNOWN_BINS: Record<string, number> = {
   tar: 1,
   wc: 1,
 };
-const MAX_MEANINGFUL_ROWS = 100;
 
 type ViewerEvent = { type?: unknown; properties?: Record<string, unknown>; _truncated?: unknown };
 type ViewerToolPart = {
@@ -1292,38 +1291,53 @@ type ViewerToolPart = {
   text?: unknown;
 };
 
+function redactSnippet(text: string): string {
+  return text
+    .replace(
+      /-----BEGIN [^-]+PRIVATE KEY-----[\s\S]*?-----END [^-]+PRIVATE KEY-----/gi,
+      "[redacted]",
+    )
+    .replace(/\b(?:xox[baprs]-|gh[pousr]_|github_pat_)[A-Za-z0-9_\-]+/g, "[redacted]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
+    .replace(
+      /(["'])(token|access_token|api_key|password|secret)\1\s*:\s*(["'])(?:(?!\3).)*\3/gi,
+      "$1$2$1:$3[redacted]$3",
+    )
+    .replace(
+      /\b(token|access_token|api_key|password|secret)\b\s*:\s*(["'])(?:(?!\2).)*\2/gi,
+      "$1:$2[redacted]$2",
+    )
+    .replace(/\b(token|access_token|api_key|password|secret)=([^\s&]+)/gi, "$1=[redacted]")
+    .replace(
+      /\b(token|access_token|api_key|password|secret)\b\s*[:=]\s*["']?[^\s,"']+/gi,
+      "$1=[redacted]",
+    );
+}
+
+function coerceText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
 function safeSnippet(value: unknown, max = 300): string {
-  const text =
-    typeof value === "string"
-      ? value
-      : typeof value === "number" || typeof value === "boolean"
-        ? String(value)
-        : "";
+  const text = coerceText(value);
   return (
-    text
-      .replace(
-        /-----BEGIN [^-]+PRIVATE KEY-----[\s\S]*?-----END [^-]+PRIVATE KEY-----/gi,
-        "[redacted]",
-      )
-      .replace(/\b(?:xox[baprs]-|gh[pousr]_|github_pat_)[A-Za-z0-9_\-]+/g, "[redacted]")
-      .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
-      .replace(
-        /(["'])(token|access_token|api_key|password|secret)\1\s*:\s*(["'])(?:(?!\3).)*\3/gi,
-        "$1$2$1:$3[redacted]$3",
-      )
-      .replace(
-        /\b(token|access_token|api_key|password|secret)\b\s*:\s*(["'])(?:(?!\2).)*\2/gi,
-        "$1:$2[redacted]$2",
-      )
-      .replace(/\b(token|access_token|api_key|password|secret)=([^\s&]+)/gi, "$1=[redacted]")
-      .replace(
-        /\b(token|access_token|api_key|password|secret)\b\s*[:=]\s*["']?[^\s,"']+/gi,
-        "$1=[redacted]",
-      )
+    redactSnippet(text)
       .replace(/[\r\n\t]+/g, " ")
       .replace(/\s{2,}/g, " ")
       .slice(0, max) + (text.length > max ? "…" : "")
   );
+}
+
+function safeMultilineSnippet(value: unknown, max = 1500): string {
+  const text = coerceText(value);
+  return redactSnippet(text).slice(0, max) + (text.length > max ? "…" : "");
+}
+
+const TOKEN_FORMATTER = new Intl.NumberFormat("en-US");
+function formatTokens(n: number): string {
+  return TOKEN_FORMATTER.format(n);
 }
 
 function formatDuration(ms: unknown): string | undefined {
@@ -1587,7 +1601,7 @@ function renderSlackBubble(
   const target = info.channel ? `#${info.channel}` : "Slack";
   const hdr = `💬 → ${escapeHtml(target)}${info.threadTs ? ` · ts ${escapeHtml(info.threadTs)}` : ""}${durationStr ? ` · ${escapeHtml(durationStr)}` : ""}${status !== "completed" ? ` · ${escapeHtml(status)}` : ""}`;
   const body = info.message
-    ? `<pre>${escapeHtml(safeSnippet(info.message, 1200))}</pre>`
+    ? `<pre>${escapeHtml(safeMultilineSnippet(info.message, 1200))}</pre>`
     : "<em>message body not captured</em>";
   return `<li class="slack-bubble"><div class="slack-hdr">${hdr}</div>${body}</li>`;
 }
@@ -1630,13 +1644,26 @@ function renderTaskCard(part: ViewerToolPart, durationStr: string | undefined): 
   const subagent = input ? safeStr(input.subagent_type) : undefined;
   const description = input ? safeStr(input.description) : undefined;
   const prompt = input ? safeStr(input.prompt) : undefined;
+  const output = safeStr(part.state?.output);
   const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
+  const metadata = isRecord(part.state)
+    ? isRecord((part.state as Record<string, unknown>).metadata)
+      ? ((part.state as Record<string, unknown>).metadata as Record<string, unknown>)
+      : undefined
+    : undefined;
+  const subSession = metadata ? safeStr(metadata.sessionId) : undefined;
   const hdr = `🤖 <b>task</b>${subagent ? ` · ${escapeHtml(subagent)}` : ""} <span class="status">${escapeHtml(status)}</span>${durationStr ? ` · ${escapeHtml(durationStr)}` : ""}`;
   const desc = description ? `<div>${escapeHtml(safeSnippet(description, 240))}</div>` : "";
-  const promptBlock = prompt
-    ? `<details><summary>prompt</summary><pre>${escapeHtml(safeSnippet(prompt, 1500))}</pre></details>`
+  const subChip = subSession
+    ? `<div class="task-sub">subagent session <code>${escapeHtml(safeSnippet(subSession, 120))}</code></div>`
     : "";
-  return `<li class="task-card"><div class="task-hdr">${hdr}</div>${desc}${promptBlock}</li>`;
+  const promptBlock = prompt
+    ? `<details><summary>prompt</summary><pre>${escapeHtml(safeMultilineSnippet(prompt, 4000))}</pre></details>`
+    : "";
+  const outputBlock = output
+    ? `<details${status === "completed" ? " open" : ""}><summary>output</summary><pre>${escapeHtml(safeMultilineSnippet(output, 4000))}</pre></details>`
+    : "";
+  return `<li class="task-card"><div class="task-hdr">${hdr}</div>${desc}${subChip}${promptBlock}${outputBlock}</li>`;
 }
 
 function renderSourceLine(source: DecodedSource): string {
@@ -1670,21 +1697,13 @@ function numericTokenTotal(tokens: unknown): number | undefined {
   return found ? total : undefined;
 }
 
-function renderRows(rows: string[]): string {
-  const omitted = Math.max(0, rows.length - MAX_MEANINGFUL_ROWS);
-  const visible = omitted > 0 ? rows.slice(-MAX_MEANINGFUL_ROWS) : rows;
-  return visible.length
-    ? `${omitted > 0 ? `<p>${omitted} earlier meaningful event row(s) omitted; showing latest ${MAX_MEANINGFUL_ROWS}.</p>` : ""}<ol class="events">${visible.join("")}</ol>`
-    : "<p>No meaningful events recorded.</p>";
-}
-
 function shortId(value: string, head = 8, tail = 4): string {
   if (value.length <= head + tail + 1) return value;
   return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
 
 function renderPage(title: string, body: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · Thor</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.truncated-footer{color:#64748b;font-size:0.9em;font-style:italic;margin-top:12px}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events>li{margin:6px 0}.tool-title{color:#475569;font-style:italic;margin-left:6px}.slack-bubble{background:#eff6ff;border-left:3px solid #3b82f6;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.slack-bubble .slack-hdr{color:#1e3a8a;font-size:0.9em;font-weight:600;margin-bottom:4px}.slack-bubble pre{background:transparent;color:#0f172a;padding:0;margin:0}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}.step{list-style:none;margin:8px 0}.step>summary{cursor:pointer;color:#1e293b;font-weight:600;padding:6px 0;border-bottom:1px solid #e2e8f0}.step>summary:hover{color:#0f172a}.step>ol{margin-top:6px;padding-left:24px}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}details{margin:16px 0}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}<footer><p>Generated by Thor at <time datetime="${new Date().toISOString()}">${new Date().toUTCString()}</time></p></footer></main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · Thor</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.truncated-footer{color:#64748b;font-size:0.9em;font-style:italic;margin-top:12px}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events>li{margin:6px 0}.tool-title{color:#475569;font-style:italic;margin-left:6px}.slack-bubble{background:#eff6ff;border-left:3px solid #3b82f6;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.slack-bubble .slack-hdr{color:#1e3a8a;font-size:0.9em;font-weight:600;margin-bottom:4px}.slack-bubble pre{background:transparent;color:#0f172a;padding:0;margin:0}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}.step{list-style:none;margin:8px 0}.step>summary{cursor:pointer;color:#1e293b;font-weight:600;padding:6px 0;border-bottom:1px solid #e2e8f0}.step>summary:hover{color:#0f172a}.step>ol{margin-top:6px;padding-left:24px}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}details{margin:16px 0}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}<footer><p>Generated by Thor at <time datetime="${new Date().toISOString()}">${new Date().toUTCString()}</time></p></footer></main></body></html>`;
 }
 
 function renderSlicePage(
@@ -1726,6 +1745,7 @@ function renderSlicePage(
   let errorRows = 0;
   let truncatedCount = 0;
   let latestAssistantText: string | undefined;
+  let latestModelId: string | undefined;
   const headerRows: string[] = [];
   const footerRows: string[] = [];
   const steps: Step[] = [];
@@ -1758,6 +1778,14 @@ function renderSlicePage(
     const id = partId(rawPart);
     if (id && firstIndexById.get(id) !== idx) continue;
     const part = id ? (latestPartById.get(id) ?? rawPart) : rawPart;
+    if (part) {
+      const stateMeta = isRecord((part.state as Record<string, unknown> | undefined)?.metadata)
+        ? ((part.state as Record<string, unknown>).metadata as Record<string, unknown>)
+        : undefined;
+      const modelInfo = stateMeta && isRecord(stateMeta.model) ? stateMeta.model : undefined;
+      const modelId = modelInfo ? safeStr(modelInfo.modelID) : undefined;
+      if (modelId) latestModelId = modelId;
+    }
     if (part?.type === "tool") {
       toolParts++;
       current.toolCount++;
@@ -1816,9 +1844,6 @@ function renderSlicePage(
         hasTokens = true;
       }
       current.tokens = tokenTotal;
-      current.rows.push(
-        `<li><b>step finish</b>${typeof part.reason === "string" ? ` <span>${escapeHtml(safeSnippet(part.reason, 120))}</span>` : ""}${tokenTotal !== undefined ? ` <span>${tokenTotal} tokens</span>` : ""}</li>`,
-      );
       steps.push(current);
       current = { rows: [], toolCount: 0, tokens: undefined };
       continue;
@@ -1854,7 +1879,6 @@ function renderSlicePage(
   const ageStr = formatAge(slice.lastEventTs);
   const summaryBits = [
     durationStr,
-    hasTokens ? `${totalTokens} tokens` : undefined,
     `${toolParts} tools`,
     errorRows ? `${errorRows} errors` : undefined,
     ageStr ? `last event ${ageStr} ago` : undefined,
@@ -1876,30 +1900,46 @@ function renderSlicePage(
     anchor.currentSessionId && anchor.currentSessionId !== ownerSessionId
       ? ` · current <code title="${escapeHtml(anchor.currentSessionId)}">${escapeHtml(shortId(safeSnippet(anchor.currentSessionId, 120), 13))}</code>`
       : "";
-  const stepSummary = `${toolParts} tool row(s), ${textParts} assistant text row(s), ${stepFinishes} step finish row(s)${hasTokens ? `, ${totalTokens} total tokens` : ""}`;
+  const stepSummary = `${toolParts} tool row(s), ${textParts} assistant text row(s)`;
+  const totalsBits: string[] = [];
+  if (hasTokens) totalsBits.push(`Total tokens: ${formatTokens(totalTokens)}`);
+  if (latestModelId) totalsBits.push(`Model: ${escapeHtml(latestModelId)}`);
+  if (stepFinishes) totalsBits.push(`${stepFinishes} step${stepFinishes === 1 ? "" : "s"}`);
+  const totalsFooter = totalsBits.length ? `<p class="totals">${totalsBits.join(" · ")}</p>` : "";
   const decodedSource = decodeSourceLine(correlationKey, promptPreview, opts.slackTeamId);
   const sourceLine = decodedSource ? renderSourceLine(decodedSource) : "";
   const pageTitle = decodedSource
     ? `${decodedSource.label.slice(0, 80)} · Thor trigger`
     : "Thor trigger";
 
-  const totalStepRows = steps.reduce((sum, step) => sum + step.rows.length, 0);
-  const totalRows = headerRows.length + footerRows.length + totalStepRows;
   let activityHtml: string;
-  if (steps.length <= 1 || totalRows > MAX_MEANINGFUL_ROWS) {
+  if (steps.length <= 1) {
     const flat = [...headerRows, ...steps.flatMap((step) => step.rows), ...footerRows];
-    activityHtml = renderRows(flat);
+    activityHtml = flat.length
+      ? `<ol class="events">${flat.join("")}</ol>`
+      : "<p>No meaningful events recorded.</p>";
   } else {
     const stepBlocks = steps.map((step, i) => {
       const isLast = i === steps.length - 1;
-      const tokenLabel = step.tokens !== undefined ? ` · ${step.tokens} tokens` : "";
+      const tokenLabel = step.tokens !== undefined ? ` · ${formatTokens(step.tokens)} tokens` : "";
       const summary = `Step ${i + 1} · ${step.toolCount} tool${step.toolCount === 1 ? "" : "s"}${tokenLabel}`;
       return `<li class="step"><details${isLast ? " open" : ""}><summary>${escapeHtml(summary)}</summary><ol>${step.rows.join("")}</ol></details></li>`;
     });
     activityHtml = `<ol class="events">${headerRows.join("")}${stepBlocks.join("")}${footerRows.join("")}</ol>`;
   }
 
-  const body = `<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}${pillReason}</span>${livePill}<h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2>${sourceLine}${summaryLine ? `<p class="summary">${escapeHtml(summaryLine)}</p>` : ""}<p class="chips">anchor <code title="${escapeHtml(anchorId)}">${escapeHtml(shortId(anchorId))}</code> · trigger <code title="${escapeHtml(triggerId)}">${escapeHtml(shortId(triggerId))}</code> · session ${ownerChip}${currentChip}</p></section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreview ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>` : ""}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section><h3>Activity</h3><p>${stepSummary}.</p>${latestAssistantText ? `<blockquote>${escapeHtml(latestAssistantText)}</blockquote>` : ""}${activityHtml}${truncatedFooter}</section>`;
+  const sourceCoveredByDecode =
+    !!decodedSource &&
+    !!correlationKey &&
+    (correlationKey.startsWith("slack:thread:") ||
+      correlationKey.startsWith("github:") ||
+      correlationKey.startsWith("git:branch:"));
+  const promptPreviewBlock =
+    promptPreview && !sourceCoveredByDecode
+      ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>`
+      : "";
+
+  const body = `<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}${pillReason}</span>${livePill}<h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2>${sourceLine}${summaryLine ? `<p class="summary">${escapeHtml(summaryLine)}</p>` : ""}<p class="chips">anchor <code title="${escapeHtml(anchorId)}">${escapeHtml(shortId(anchorId))}</code> · trigger <code title="${escapeHtml(triggerId)}">${escapeHtml(shortId(triggerId))}</code> · session ${ownerChip}${currentChip}</p></section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreviewBlock}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section><h3>Activity</h3><p>${stepSummary}.</p>${latestAssistantText ? `<blockquote>${escapeHtml(latestAssistantText)}</blockquote>` : ""}${activityHtml}${totalsFooter}${truncatedFooter}</section>`;
   return renderPage(pageTitle, body);
 }
 
