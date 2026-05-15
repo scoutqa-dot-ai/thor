@@ -793,12 +793,18 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain('class="diff-del"');
       expect(html).toContain("+new line");
       expect(html).toContain("-old line");
+      // apply_patch diff is wrapped in a collapsed <details> by default.
+      expect(html).toMatch(/<details><summary><b>apply_patch<\/b>/);
+      expect(html).not.toMatch(/<details open><summary><b>apply_patch/);
       expect(html).toContain('class="slack-bubble"');
       expect(html).toContain("→ #C0APZ92A45U");
       expect(html).toContain("Hello team");
       expect(html).toContain('class="task-card"');
       expect(html).toContain("thinker");
       expect(html).toContain("Plan Bitbucket DC work");
+      // Task prompt and output are wrapped in collapsed <details>.
+      expect(html).toContain("<details><summary>prompt</summary>");
+      expect(html).not.toContain("<details open><summary>prompt");
     });
   });
 
@@ -846,8 +852,8 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain('class="step-hdr">Step 2<');
       expect(html).toContain("Total tokens: 84");
       expect(html).toContain("2 steps");
-      expect(html).not.toContain("<details");
-      expect(html).not.toContain("<summary");
+      // Step blocks themselves do not use <details>; only apply_patch/task do.
+      expect(html).not.toContain('<li class="step"><details');
     });
   });
 
