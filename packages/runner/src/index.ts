@@ -1786,7 +1786,6 @@ function renderTaskCard(
   const subagent = input ? safeStr(input.subagent_type) : undefined;
   const description = input ? safeStr(input.description) : undefined;
   const prompt = input ? safeStr(input.prompt) : undefined;
-  const output = safeStr(part.state?.output);
   const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
   const metadata = isRecord(part.state)
     ? isRecord((part.state as Record<string, unknown>).metadata)
@@ -1802,13 +1801,13 @@ function renderTaskCard(
   const promptBlock = prompt
     ? `<details><summary>prompt</summary><pre>${escapeHtml(safeMultilineSnippet(prompt, 4000))}</pre></details>`
     : "";
-  const outputBlock = output
-    ? `<details><summary>output</summary><pre>${escapeHtml(safeMultilineSnippet(output, 4000))}</pre></details>`
-    : "";
+  // Task `state.output` is the model-facing summary of the subagent run.
+  // We deliberately do not render it here — the subagent activity expansion
+  // below already surfaces the assistant text and tool rows that comprise it.
   const subActivity = subSession
     ? (renderInlineSubagent(subSession, ctx, partTimeWindow(part)) ?? "")
     : "";
-  return `<li class="task-card" data-status="${escapeHtml(status)}"><div class="task-hdr">${hdr}</div>${desc}${subChip}${promptBlock}${outputBlock}${subActivity}</li>`;
+  return `<li class="task-card" data-status="${escapeHtml(status)}"><div class="task-hdr">${hdr}</div>${desc}${subChip}${promptBlock}${subActivity}</li>`;
 }
 
 function renderSourceLine(source: DecodedSource): string {
