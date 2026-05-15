@@ -1,0 +1,25 @@
+packages/common/src/service-env.test.ts
+  9fef7bca4989c80d 111-125
+packages/common/src/service-env.ts
+  9fef7bca4989c80d 22,44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "21bdb7b60593edcf092eadbbed5ec5cc3b960073",
+  "prompts": {
+    "9fef7bca4989c80d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f00406ab-b051-48a0-8119-c301e05989cd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 2,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    }
+  }
+}
