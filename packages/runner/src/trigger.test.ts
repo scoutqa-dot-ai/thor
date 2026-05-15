@@ -428,15 +428,19 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("slack trigger");
       expect(html).not.toContain("<h3>Activity</h3>");
       expect(html).toContain("tool</b> <span>read</span>");
-      expect(html).toContain("filePath:");
-      expect(html).toContain("tool</b> <span>gh auth</span>");
+      // Tool input is rendered as full JSON inside a collapsed <details>.
+      expect(html).toContain("&quot;filePath&quot;");
+      // No more KNOWN_BINS bash-prefix heuristic — bash rows are just `bash`.
+      expect(html).toContain("tool</b> <span>bash</span>");
       expect(html).toContain("tool</b> <span>mcp</span>");
-      // "arguments hidden" is no longer rendered — silently omit when args
-      // cannot be displayed safely.
       expect(html).not.toContain("arguments hidden");
-      expect(html).toContain("1 opencode event was truncated at write time and is not shown.");
+      // Truncated events render as a muted in-stream row, not a footer notice.
+      expect(html).toContain('class="row truncated"');
+      expect(html).toContain(">truncated event<");
+      expect(html).not.toContain("opencode event was truncated at write time");
       expect(html).not.toContain("truncated payload");
-      expect(html).toContain("Done with token=[redacted]");
+      // Redaction has been removed — tokens render as-is.
+      expect(html).toContain("Done with token=abc123");
       // Per-section row-count preamble removed — step list speaks for itself.
       expect(html).not.toContain("tool row(s)");
       expect(html).not.toContain("assistant text row(s)");
@@ -446,7 +450,9 @@ describe("runner /trigger orchestration", () => {
       expect(html).not.toContain("Total tokens: 42");
       expect(html).not.toContain("1 step");
       expect(html).toContain('class="chips"');
-      expect(html).toContain("3 tools · last event");
+      // Terminal trigger: "last event ago" is suppressed (only useful for in_flight).
+      expect(html).toContain("3 tools");
+      expect(html).not.toContain("last event");
       expect(html).not.toContain("step finish row(s)");
       expect(html).not.toContain(">step finish<");
       expect(html).not.toContain("cost $");
@@ -454,94 +460,11 @@ describe("runner /trigger orchestration", () => {
       expect(html).not.toContain("Sanitized diagnostics");
       expect(html).not.toContain("Warnings");
       expect(html).not.toContain("meta http-equiv");
-      expect(html).not.toContain("supersecret");
-      expect(html).not.toContain("should-not-render");
-      expect(html).not.toContain("mutation { writeThing }");
-      expect(html).not.toContain("gh auth token --password");
-    });
-  });
-
-  it("redacts JSON-style secret fields in exposed viewer snippets", async () => {
-    const h = createHarness();
-    const triggerId = "00000000-0000-7000-8000-000000000321";
-    const anchorId = mintAnchor();
-    bindSessionToAnchor("secret-viewer-session", anchorId);
-    expect(
-      appendAlias({
-        aliasType: "git.branch",
-        aliasValue: "git:branch:repo:feature/secret=branch-secret-321",
-        anchorId,
-      }),
-    ).toEqual({ ok: true });
-    appendSessionEvent("secret-viewer-session", {
-      type: "trigger_start",
-      triggerId,
-      correlationKey: "slack:thread:1710000000.321",
-      promptPreview:
-        '{"token":"json-token-321","access_token":"json-access-321","api_key":"json-api-321","password":"json-pass-321","secret":"json-secret-321","github":"ghs_json321"}',
-    });
-    expect(
-      appendCorrelationAliasForAnchor(anchorId, "git:branch:repo:feature/secret=branch-secret-321"),
-    ).toEqual({ ok: true });
-    appendSessionEvent("secret-viewer-session", {
-      type: "opencode_event",
-      event: textEvent(
-        "secret-viewer-session",
-        'assistant saw {"token":"assistant-token-321", api_key: "assistant-api-321"} and Bearer bearer-token-321 plus ghu_assistant321 gho_assistant321 ghr_assistant321',
-      ),
-    });
-    for (let i = 0; i < 105; i++) {
-      appendSessionEvent("secret-viewer-session", {
-        type: "opencode_event",
-        event: textEvent("secret-viewer-session", `filler event ${i}`),
-      });
-    }
-    appendSessionEvent("secret-viewer-session", {
-      type: "opencode_event",
-      event: toolEvent(
-        "secret-viewer-session",
-        "bash",
-        "completed",
-        { command: "jq .report result.json" },
-        { start: 0, end: 119900 },
-      ),
-    });
-    appendSessionEvent("secret-viewer-session", {
-      type: "trigger_end",
-      triggerId,
-      status: "completed",
-    });
-
-    await withServer(h.app, async (url) => {
-      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
-        headers: { "X-Vouch-User": "u@example.com" },
-      });
-      expect(response.status).toBe(200);
-      const html = await response.text();
-      expect(html).toContain("[redacted]");
-      expect(html).not.toContain("earlier meaningful event row(s) omitted");
-      expect(html).toContain("tool</b> <span>jq</span>");
-      expect(html).toContain("2m 0s");
-      expect(html).not.toContain("1m 60s");
-      expect(html).toContain("git.branch: git:branch:repo:feature/secret=[redacted]");
-      for (const secret of [
-        "json-token-321",
-        "json-access-321",
-        "json-api-321",
-        "json-pass-321",
-        "json-secret-321",
-        "ghs_json321",
-        "assistant-token-321",
-        "assistant-api-321",
-        "bearer-token-321",
-        "ghu_assistant321",
-        "gho_assistant321",
-        "ghr_assistant321",
-        "branch-secret-321",
-        Buffer.from("git:branch:repo:feature/secret=branch-secret-321").toString("base64url"),
-      ]) {
-        expect(html).not.toContain(secret);
-      }
+      // Debugging UI: nothing is redacted. Every value is shown as-is.
+      expect(html).toContain("supersecret");
+      expect(html).toContain("should-not-render");
+      expect(html).toContain("mutation { writeThing }");
+      expect(html).toContain("gh auth token --password");
     });
   });
 
@@ -716,7 +639,7 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("renders apply_patch as a unified diff, slack-post-message as a chat bubble, and task as a card", async () => {
+  it("renders apply_patch as a unified diff and task as a card", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000501";
     const anchorId = mintAnchor();
@@ -803,8 +726,10 @@ describe("runner /trigger orchestration", () => {
       // apply_patch diff is wrapped in a collapsed <details> by default.
       expect(html).toMatch(/<details><summary><b>apply_patch<\/b>/);
       expect(html).not.toMatch(/<details open><summary><b>apply_patch/);
-      expect(html).toContain('class="slack-bubble"');
-      expect(html).toContain("→ #C0APZ92A45U");
+      // slack-post-message bash is no longer special-cased — it renders as a
+      // normal bash tool row with full input JSON inside a collapsed details.
+      expect(html).toContain("tool</b> <span>bash</span>");
+      expect(html).toContain("slack-post-message --channel C0APZ92A45U");
       expect(html).toContain("Hello team");
       expect(html).toContain('class="task-card"');
       expect(html).toContain("thinker");
@@ -1453,7 +1378,7 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("drops the [correlation-key:] prompt echo from the activity stream", async () => {
+  it("renders the [correlation-key:] prompt echo alongside the assistant reply", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000506";
     const anchorId = mintAnchor();
@@ -1481,12 +1406,13 @@ describe("runner /trigger orchestration", () => {
         headers: { "X-Vouch-User": "u@example.com" },
       });
       const html = await response.text();
-      expect(html).not.toContain("[correlation-key:");
+      // Debugging UI shows the data as-is — the prompt echo is no longer filtered.
+      expect(html).toContain("[correlation-key:");
       expect(html).toContain("Real assistant reply.");
     });
   });
 
-  it("dedups streamed part updates by id and drops busy heartbeats and empty reasoning", async () => {
+  it("dedups streamed part updates by id, drops empty reasoning, and drops busy heartbeats", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000502";
     const anchorId = mintAnchor();
@@ -1527,9 +1453,13 @@ describe("runner /trigger orchestration", () => {
       });
       const html = await response.text();
       expect(html).toContain("hello world");
-      const occurrences = html.match(/assistant text<\/b>/g);
+      // Dedup by part.id keeps the streamed text row as a single entry.
+      const occurrences = html.match(/<b>text<\/b>/g);
       expect(occurrences?.length ?? 0).toBe(1);
+      // Empty reasoning parts are filtered (no payload to show).
       expect(html).not.toContain("<b>reasoning</b>");
+      // session.status heartbeats are still suppressed (not in the user's
+      // "restore" list — they carry no payload beyond the status pill).
       expect(html).not.toContain("<b>session.status</b>");
     });
   });

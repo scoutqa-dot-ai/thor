@@ -1291,48 +1291,23 @@ type ViewerToolPart = {
   text?: unknown;
 };
 
-function redactSnippet(text: string): string {
-  return text
-    .replace(
-      /-----BEGIN [^-]+PRIVATE KEY-----[\s\S]*?-----END [^-]+PRIVATE KEY-----/gi,
-      "[redacted]",
-    )
-    .replace(/\b(?:xox[baprs]-|gh[pousr]_|github_pat_)[A-Za-z0-9_\-]+/g, "[redacted]")
-    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
-    .replace(
-      /(["'])(token|access_token|api_key|password|secret)\1\s*:\s*(["'])(?:(?!\3).)*\3/gi,
-      "$1$2$1:$3[redacted]$3",
-    )
-    .replace(
-      /\b(token|access_token|api_key|password|secret)\b\s*:\s*(["'])(?:(?!\2).)*\2/gi,
-      "$1:$2[redacted]$2",
-    )
-    .replace(/\b(token|access_token|api_key|password|secret)=([^\s&]+)/gi, "$1=[redacted]")
-    .replace(
-      /\b(token|access_token|api_key|password|secret)\b\s*[:=]\s*["']?[^\s,"']+/gi,
-      "$1=[redacted]",
-    );
-}
-
 function coerceText(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return "";
 }
 
-function safeSnippet(value: unknown, max = 300): string {
-  const text = coerceText(value);
-  return (
-    redactSnippet(text)
-      .replace(/[\r\n\t]+/g, " ")
-      .replace(/\s{2,}/g, " ")
-      .slice(0, max) + (text.length > max ? "…" : "")
-  );
+function safeSnippet(value: unknown): string {
+  // Debugging UI: no redaction, no length cap. Newlines/tabs are collapsed
+  // to spaces for one-line rendering surfaces — use safeMultilineSnippet when
+  // newlines should be preserved.
+  return coerceText(value)
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ");
 }
 
-function safeMultilineSnippet(value: unknown, max = 1500): string {
-  const text = coerceText(value);
-  return redactSnippet(text).slice(0, max) + (text.length > max ? "…" : "");
+function safeMultilineSnippet(value: unknown): string {
+  return coerceText(value);
 }
 
 /**
@@ -1351,12 +1326,13 @@ function formatTokens(n: number): string {
 function formatDuration(ms: unknown): string | undefined {
   if (typeof ms !== "number" || !Number.isFinite(ms)) return undefined;
   if (ms < 1000) return `${Math.round(ms)}ms`;
-  const roundedSeconds = Math.round(ms / 100) / 10;
-  if (roundedSeconds < 60) return `${roundedSeconds.toFixed(1)}s`;
-  const totalSeconds = Math.round(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}m ${seconds}s`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = seconds / 60;
+  if (minutes < 60) return `${minutes.toFixed(1)}m`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
 }
 
 function formatAge(ts: string | undefined): string | undefined {
@@ -1367,15 +1343,8 @@ function formatAge(ts: string | undefined): string | undefined {
 }
 
 function viewerToolDisplayName(part: ViewerToolPart): string {
-  const tool = typeof part.tool === "string" ? part.tool : "tool";
-  if (tool !== "bash") return tool;
-  const input = part.state?.input;
-  const command =
-    input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
-  if (typeof command !== "string") return "bash";
-  const parts = command.trimStart().split(/\s+/);
-  const depth = KNOWN_BINS[parts[0] ?? ""];
-  return depth === undefined ? "bash" : parts.slice(0, depth).join(" ");
+  // No bash-prefix heuristics — the raw `part.tool` is what the data says.
+  return typeof part.tool === "string" ? part.tool : "tool";
 }
 
 function decodeAliasValue(aliasType: string, aliasValue: string): string {
@@ -1388,20 +1357,35 @@ function decodeAliasValue(aliasType: string, aliasValue: string): string {
   }
 }
 
-function safeToolArgs(tool: string, input: unknown): string | undefined {
-  if (!input || typeof input !== "object") return undefined;
-  const args = input as Record<string, unknown>;
-  const allow: Record<string, string[]> = {
-    read: ["filePath", "offset", "limit"],
-    glob: ["pattern", "path"],
-    grep: ["pattern", "path", "include"],
-  };
-  const keys = allow[tool];
-  if (!keys) return undefined;
-  const shown = keys
-    .filter((key) => args[key] !== undefined)
-    .map((key) => `${key}: ${safeSnippet(args[key], 120)}`);
-  return shown.length ? shown.join(", ") : undefined;
+/**
+ * Some tools have a single input field that *is* the call (skill → `name`,
+ * bash → `command`). For those, render that one field inline so the row tells
+ * the whole story without a click. `inline` uses `<code>` for short
+ * one-liners; `block` uses `<pre>` to preserve newlines (heredocs etc.).
+ * Everything else falls back to the generic collapsible JSON dump.
+ */
+const TOOL_PRIMARY_INPUT_FIELD: Record<string, { field: string; mode: "inline" | "block" }> = {
+  skill: { field: "name", mode: "inline" },
+  bash: { field: "command", mode: "block" },
+};
+
+function renderToolInput(toolName: string, input: unknown): string {
+  if (input === undefined) return "";
+  const primary = TOOL_PRIMARY_INPUT_FIELD[toolName];
+  if (primary && isRecord(input)) {
+    const val = input[primary.field];
+    if (typeof val === "string" && val) {
+      const safe = escapeHtml(safeMultilineSnippet(val));
+      return primary.mode === "inline" ? ` <code>${safe}</code>` : `<pre>${safe}</pre>`;
+    }
+  }
+  let json: string;
+  try {
+    json = JSON.stringify(input, null, 2);
+  } catch {
+    json = String(input);
+  }
+  return `<details><summary>input</summary><pre>${escapeHtml(safeMultilineSnippet(json))}</pre></details>`;
 }
 
 function eventPart(record: SessionEventLogRecord): ViewerToolPart | undefined {
@@ -1478,7 +1462,7 @@ function decodeSlackSource(
   let label = head.join(" · ");
   if (text) {
     const firstLine = text.split("\n", 1)[0] ?? "";
-    const quoted = `“${safeSnippet(firstLine, 120)}”`;
+    const quoted = `“${safeSnippet(firstLine)}”`;
     label = label ? `${label} — ${quoted}` : quoted;
   } else if (!label) {
     label = `Slack thread ${ts}`;
@@ -1509,7 +1493,7 @@ function decodeGithubSource(promptPreview: string | undefined): DecodedSource | 
       repo,
       sender ? `@${sender}` : "",
     ].filter((s): s is string => !!s);
-    const label = title ? `${parts.join(" · ")} — “${safeSnippet(title, 120)}”` : parts.join(" · ");
+    const label = title ? `${parts.join(" · ")} — “${safeSnippet(title)}”` : parts.join(" · ");
     return { icon: "🔀", label, href };
   }
 
@@ -1526,7 +1510,7 @@ function decodeGithubSource(promptPreview: string | undefined): DecodedSource | 
       repo,
       sender ? `@${sender}` : "",
     ].filter((s): s is string => !!s);
-    const label = title ? `${parts.join(" · ")} — “${safeSnippet(title, 120)}”` : parts.join(" · ");
+    const label = title ? `${parts.join(" · ")} — “${safeSnippet(title)}”` : parts.join(" · ");
     return { icon: "🐞", label, href };
   }
 
@@ -1553,7 +1537,7 @@ function decodeGithubSource(promptPreview: string | undefined): DecodedSource | 
 function decodeCronSource(promptPreview: string | undefined): DecodedSource {
   if (!promptPreview) return { icon: "⏰", label: "Cron" };
   const sentence = promptPreview.split(/[.\n]/, 1)[0]?.trim();
-  return { icon: "⏰", label: sentence ? safeSnippet(sentence, 160) : "Cron" };
+  return { icon: "⏰", label: sentence ? safeSnippet(sentence) : "Cron" };
 }
 
 function decodeSourceLine(
@@ -1580,48 +1564,27 @@ function partId(part: ViewerToolPart | undefined): string | undefined {
 }
 
 function getStateTitle(part: ViewerToolPart): string | undefined {
+  // Prefer Claude's own `state.title` (e.g. "Lists test-management Thor
+  // worktrees"). Fall back to `state.input.description` for tools whose
+  // caller supplied it (most notably `task`) so the row carries a label even
+  // when `state.title` is absent.
   const title = part.state?.title;
-  return typeof title === "string" && title ? title : undefined;
-}
-
-function detectSlackPost(
-  command: unknown,
-): { channel?: string; threadTs?: string; message?: string } | null {
-  if (typeof command !== "string") return null;
-  const trimmed = command.trimStart();
-  if (!/^slack-post-message\b/.test(trimmed)) return null;
-  const channelMatch =
-    trimmed.match(/--channel(?:=|\s+)['"]?([^\s'"]+)/) ?? trimmed.match(/-c\s+['"]?([^\s'"]+)/);
-  const threadMatch = trimmed.match(/--thread-ts(?:=|\s+)['"]?([^\s'"]+)/);
-  const heredocMatch = trimmed.match(/<<-?\s*'?(\w+)'?\s*\n([\s\S]*?)\n\1\b/);
-  return {
-    channel: channelMatch?.[1],
-    threadTs: threadMatch?.[1],
-    message: heredocMatch?.[2],
-  };
-}
-
-function renderSlackBubble(
-  info: { channel?: string; threadTs?: string; message?: string },
-  durationStr: string | undefined,
-  status: string,
-): string {
-  const target = info.channel ? `#${info.channel}` : "Slack";
-  const hdr = `💬 → ${escapeHtml(target)}${info.threadTs ? ` · ts ${escapeHtml(info.threadTs)}` : ""}${durationStr ? ` · ${escapeHtml(durationStr)}` : ""}${status !== "completed" ? ` · ${escapeHtml(status)}` : ""}`;
-  const body = info.message
-    ? `<pre>${escapeHtml(safeMultilineSnippet(info.message, 1200))}</pre>`
-    : "<em>message body not captured</em>";
-  return `<li class="slack-bubble" data-status="${escapeHtml(status)}"><div class="slack-hdr">${hdr}</div>${body}</li>`;
+  if (typeof title === "string" && title) return title;
+  const input = part.state?.input;
+  if (input && typeof input === "object") {
+    const desc = (input as { description?: unknown }).description;
+    if (typeof desc === "string" && desc) return desc;
+  }
+  return undefined;
 }
 
 function renderDiffLines(patchText: string): string {
-  const MAX_LINES = 200;
-  const all = patchText.split("\n");
-  const lines = all.slice(0, MAX_LINES);
-  const truncatedLines = all.length - lines.length;
-  const out = lines
+  // No line cap — render the entire patch. The whole block lives inside a
+  // collapsed <details> on the apply_patch row, so volume is opt-in.
+  const out = patchText
+    .split("\n")
     .map((line) => {
-      const safe = escapeHtml(safeSnippet(line, 300));
+      const safe = escapeHtml(safeSnippet(line));
       if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
         return `<span class="diff-meta">${safe}</span>`;
       }
@@ -1630,11 +1593,7 @@ function renderDiffLines(patchText: string): string {
       return `<span>${safe}</span>`;
     })
     .join("");
-  const tail =
-    truncatedLines > 0
-      ? `<span class="diff-meta">… ${truncatedLines} more line(s) hidden</span>`
-      : "";
-  return `<pre class="diff">${out}${tail}</pre>`;
+  return `<pre class="diff">${out}</pre>`;
 }
 
 function renderApplyPatch(part: ViewerToolPart, durationStr: string | undefined): string {
@@ -1642,7 +1601,8 @@ function renderApplyPatch(part: ViewerToolPart, durationStr: string | undefined)
   const input = isRecord(part.state?.input) ? part.state.input : undefined;
   const patchText = input ? safeStr(input.patchText) : undefined;
   const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
-  const hdr = `<b>apply_patch</b> <span class="status">${escapeHtml(status)}</span>${durationStr ? ` <span>${escapeHtml(durationStr)}</span>` : ""}${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title, 200))}</span>` : ""}`;
+  // Status text is suppressed — the colored bullet on the row carries it.
+  const hdr = `<b>apply_patch</b>${durationStr ? ` <span>${escapeHtml(durationStr)}</span>` : ""}${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title))}</span>` : ""}`;
   if (!patchText) return `<li class="row" data-status="${escapeHtml(status)}">${hdr}</li>`;
   return `<li class="row" data-status="${escapeHtml(status)}"><details><summary>${hdr}</summary>${renderDiffLines(patchText)}</details></li>`;
 }
@@ -1781,14 +1741,20 @@ function renderInlineSubagent(
       const status = typeof p.state?.status === "string" ? p.state.status : "unknown";
       const name = viewerToolDisplayName(p);
       const title = getStateTitle(p);
+      const input = renderToolInput(name, p.state?.input);
       rows.push(
-        `<li class="row" data-status="${escapeHtml(status)}"><b>tool</b> <span>${escapeHtml(name)}</span> <span class="status">${escapeHtml(status)}</span>${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title, 200))}</span>` : ""}</li>`,
+        `<li class="row" data-status="${escapeHtml(status)}"><b>tool</b> <span>${escapeHtml(name)}</span>${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title))}</span>` : ""}${input}</li>`,
       );
     } else if (p.type === "text") {
       const text = typeof p.text === "string" ? p.text : "";
-      if (!text.trim() || text.startsWith("[correlation-key:")) continue;
       rows.push(
-        `<li class="row" data-status="completed"><b>assistant text</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text, 2000))}</div></li>`,
+        `<li class="row" data-status="completed"><b>text</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
+      );
+    } else if (p.type === "reasoning") {
+      const text = typeof p.text === "string" ? p.text : "";
+      if (!text.trim()) continue;
+      rows.push(
+        `<li class="row" data-status="completed"><b>reasoning</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
       );
     }
   }
@@ -1817,13 +1783,13 @@ function renderTaskCard(
       : undefined
     : undefined;
   const subSession = metadata ? safeStr(metadata.sessionId) : undefined;
-  const hdr = `🤖 <b>task</b>${subagent ? ` · ${escapeHtml(subagent)}` : ""} <span class="status">${escapeHtml(status)}</span>${durationStr ? ` · ${escapeHtml(durationStr)}` : ""}`;
-  const desc = description ? `<div>${escapeHtml(safeSnippet(description, 240))}</div>` : "";
+  const hdr = `🤖 <b>task</b>${subagent ? ` · ${escapeHtml(subagent)}` : ""}${durationStr ? ` · ${escapeHtml(durationStr)}` : ""}`;
+  const desc = description ? `<div>${escapeHtml(safeSnippet(description))}</div>` : "";
   const subChip = subSession
-    ? `<div class="task-sub">subagent session <code>${escapeHtml(safeSnippet(subSession, 120))}</code></div>`
+    ? `<div class="task-sub">subagent session <code>${escapeHtml(safeSnippet(subSession))}</code></div>`
     : "";
   const promptBlock = prompt
-    ? `<details><summary>prompt</summary><pre>${escapeHtml(safeMultilineSnippet(prompt, 4000))}</pre></details>`
+    ? `<details><summary>prompt</summary><pre>${escapeHtml(safeMultilineSnippet(prompt))}</pre></details>`
     : "";
   // Task `state.output` is the model-facing summary of the subagent run.
   // We deliberately do not render it here — the subagent activity expansion
@@ -2043,7 +2009,7 @@ function shortUuid(value: string): string {
 }
 
 function renderPage(title: string, body: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.truncated-footer{color:#64748b;font-size:0.9em;font-style:italic;margin-top:12px}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events,.step>ul{list-style:none;padding-left:0}.events>li,.step>ul>li{margin:6px 0}.row{position:relative;padding-left:18px}.row::before{content:"";position:absolute;left:2px;top:0.55em;width:8px;height:8px;border-radius:50%;background:#94a3b8}.row[data-status="completed"]::before{background:#22c55e}.row[data-status="running"]::before{background:#facc15}.row[data-status="pending"]::before{background:#cbd5e1}.row[data-status="error"]::before{background:#ef4444}.row[data-status="aborted"]::before{background:#f97316}.tool-title{color:#475569;font-style:italic;margin-left:6px}.text-body{white-space:pre-wrap;margin:4px 0 0;color:#0f172a;font-size:0.95em}.slack-bubble{background:#eff6ff;border-left:3px solid #3b82f6;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.slack-bubble .slack-hdr{color:#1e3a8a;font-size:0.9em;font-weight:600;margin-bottom:4px}.slack-bubble pre{background:transparent;color:#0f172a;padding:0;margin:0}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.sub-events{margin:6px 0 0;padding-left:12px;border-left:2px solid #c7d2fe}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.totals-table{border-collapse:collapse;font-size:0.9em;margin:8px 0;width:100%}.totals-table th,.totals-table td{padding:4px 8px;text-align:right;border-bottom:1px solid #e2e8f0}.totals-table thead th{color:#64748b;font-weight:600;text-align:right;border-bottom:1px solid #cbd5e1}.totals-table thead th:first-child,.totals-table tbody th{text-align:left}.totals-table tbody th{font-weight:500;color:#0f172a}.totals-table .ledger-sid{color:#64748b;font-size:0.85em;margin-left:4px}.totals-table tr.totals-total th,.totals-table tr.totals-total td{font-weight:700;border-top:2px solid #cbd5e1;border-bottom:none;padding-top:6px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}.step{list-style:none;margin:16px 0}.step>.step-hdr{color:#1e293b;font-weight:600;padding:6px 0;border-bottom:1px solid #e2e8f0}.step>ol{margin-top:6px;padding-left:24px}details{margin:4px 0}summary{cursor:pointer}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}</main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.row.truncated{color:#94a3b8;font-style:italic}.row.truncated .ts{color:#cbd5e1;font-size:0.85em;margin-left:4px}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events,.step>ul{list-style:none;padding-left:0}.events>li,.step>ul>li{margin:6px 0}.row{position:relative;padding-left:18px}.row::before{content:"";position:absolute;left:2px;top:0.55em;width:8px;height:8px;border-radius:50%;background:#94a3b8}.row[data-status="completed"]::before{background:#22c55e}.row[data-status="running"]::before{background:#facc15}.row[data-status="pending"]::before{background:#cbd5e1}.row[data-status="error"]::before{background:#ef4444}.row[data-status="aborted"]::before{background:#f97316}.tool-title{color:#475569;font-style:italic;margin-left:6px}.text-body{white-space:pre-wrap;margin:4px 0 0;color:#0f172a;font-size:0.95em}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.sub-events{margin:6px 0 0;padding-left:12px;border-left:2px solid #c7d2fe}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.totals-table{border-collapse:collapse;font-size:0.9em;margin:8px 0;width:100%}.totals-table th,.totals-table td{padding:4px 8px;text-align:right;border-bottom:1px solid #e2e8f0}.totals-table thead th{color:#64748b;font-weight:600;text-align:right;border-bottom:1px solid #cbd5e1}.totals-table thead th:first-child,.totals-table tbody th{text-align:left}.totals-table tbody th{font-weight:500;color:#0f172a}.totals-table .ledger-sid{color:#64748b;font-size:0.85em;margin-left:4px}.totals-table tr.totals-total th,.totals-table tr.totals-total td{font-weight:700;border-top:2px solid #cbd5e1;border-bottom:none;padding-top:6px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}.step{list-style:none;margin:16px 0}.step>.step-hdr{color:#1e293b;font-weight:600;padding:6px 0;border-bottom:1px solid #e2e8f0}.step>ol{margin-top:6px;padding-left:24px}details{margin:4px 0}summary{cursor:pointer}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}</main></body></html>`;
 }
 
 function renderSlicePage(
@@ -2097,7 +2063,6 @@ function renderSlicePage(
   const tokenTotals = rootLedger.tokens;
   const modelIds = rootLedger.modelIds;
   let errorRows = 0;
-  let truncatedCount = 0;
   const steps: Step[] = [];
   let current: Step = { rows: [] };
   const subAgentCtx: SubAgentCtx = { visited: new Set([ownerSessionId]) };
@@ -2114,7 +2079,13 @@ function renderSlicePage(
       typeof record.event === "object" &&
       (record.event as ViewerEvent)._truncated === true
     ) {
-      truncatedCount++;
+      // Truncated events carry no payload, only the outer record `ts` — render
+      // a muted row at the right chronological position so the gap is visible
+      // rather than silently swallowed by a footer count.
+      const ts = typeof record.ts === "string" ? record.ts : "";
+      current.rows.push(
+        `<li class="row truncated" data-status="pending"><b>truncated event</b>${ts ? ` <span class="ts">${escapeHtml(ts)}</span>` : ""}</li>`,
+      );
       continue;
     }
     const type = eventType(record);
@@ -2146,42 +2117,29 @@ function renderSlicePage(
         current.rows.push(renderTaskCard(part, duration, subAgentCtx, rootLedger));
         continue;
       }
-      const bashCommand = isRecord(part.state?.input) ? part.state.input.command : undefined;
-      const slackPost = toolName === "bash" ? detectSlackPost(bashCommand) : null;
-      if (slackPost) {
-        current.rows.push(renderSlackBubble(slackPost, duration, status));
-        continue;
-      }
-
       const name = viewerToolDisplayName(part);
       const title = getStateTitle(part);
-      const args =
-        safeToolArgs(name, part.state?.input) ?? safeToolArgs(toolName, part.state?.input);
+      const input = renderToolInput(name, part.state?.input);
       current.rows.push(
-        `<li class="row" data-status="${escapeHtml(status)}"><b>tool</b> <span>${escapeHtml(name)}</span> <span class="status">${escapeHtml(status)}</span>${duration ? ` <span>${duration}</span>` : ""}${args ? ` <code>${escapeHtml(args)}</code>` : ""}${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title, 200))}</span>` : ""}${status === "error" ? ` <span class="err">${escapeHtml(safeSnippet(part.state?.error, 300))}</span>` : ""}</li>`,
+        `<li class="row" data-status="${escapeHtml(status)}"><b>tool</b> <span>${escapeHtml(name)}</span>${duration ? ` <span>${duration}</span>` : ""}${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title))}</span>` : ""}${status === "error" ? ` <span class="err">${escapeHtml(safeSnippet(part.state?.error))}</span>` : ""}${input}</li>`,
       );
       continue;
     }
     if (part?.type === "text") {
-      // OpenCode echoes the user-message text parts through the same
-      // message.part.updated channel as assistant text. Thor prefixes every
-      // injected prompt with "[correlation-key: <key>]" (see
-      // `packages/runner/src/index.ts` prompt construction), so dropping
-      // those keeps the activity stream to assistant output only.
       const text = typeof part.text === "string" ? part.text : "";
-      if (text.startsWith("[correlation-key:")) continue;
-      // Preserve newlines (and bullet lists) instead of collapsing whitespace.
-      // No markdown renderer — `**bold**` etc. still show as literal text.
       current.rows.push(
-        `<li class="row" data-status="completed"><b>assistant text</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text, 2000))}</div></li>`,
+        `<li class="row" data-status="completed"><b>text</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
       );
       continue;
     }
-    // Reasoning parts are the model's internal chain of thought — rendered raw
-    // they're noisy (unrendered markdown, partial sentences) and the
-    // user-visible result is the text / tool / slack-bubble row that follows.
-    // Always drop.
-    if (part?.type === "reasoning") continue;
+    if (part?.type === "reasoning") {
+      const text = typeof part.text === "string" ? part.text : "";
+      if (!text.trim()) continue;
+      current.rows.push(
+        `<li class="row" data-status="completed"><b>reasoning</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
+      );
+      continue;
+    }
     if (part?.type === "step-finish") {
       const tokenTotal = numericTokenTotal(part.tokens);
       if (tokenTotal !== undefined) {
@@ -2211,7 +2169,7 @@ function renderSlicePage(
             (error as { name?: string }).name)
           : undefined;
       current.rows.push(
-        `<li class="row err" data-status="error"><b>session error</b> ${escapeHtml(safeSnippet(msg ?? "Unknown error", 500))}</li>`,
+        `<li class="row err" data-status="error"><b>session error</b> ${escapeHtml(safeSnippet(msg ?? "Unknown error"))}</li>`,
       );
       continue;
     }
@@ -2222,12 +2180,14 @@ function renderSlicePage(
 
   const aliases = anchor.externalKeys
     .map(
-      (key) =>
-        `${key.aliasType}: ${safeSnippet(decodeAliasValue(key.aliasType, key.aliasValue), 300)}`,
+      (key) => `${key.aliasType}: ${safeSnippet(decodeAliasValue(key.aliasType, key.aliasValue))}`,
     )
     .join("; ");
   const durationStr = formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined);
-  const ageStr = formatAge(slice.lastEventTs);
+  // "last event ago" is only useful while in flight (admin watching for a
+  // stall). On terminal triggers it just restates how long ago the trigger
+  // ended — drop it.
+  const ageStr = slice.status === "in_flight" ? formatAge(slice.lastEventTs) : undefined;
   const summaryBits = [
     durationStr,
     `${toolParts} tools`,
@@ -2238,18 +2198,14 @@ function renderSlicePage(
 
   const pillReason =
     (slice.status === "aborted" || slice.status === "crashed") && slice.reason
-      ? ` · ${escapeHtml(safeSnippet(slice.reason, 120))}`
+      ? ` · ${escapeHtml(safeSnippet(slice.reason))}`
       : "";
   const livePill =
     slice.status === "in_flight" ? ` <span class="live" aria-label="live">● live</span>` : "";
-  const truncatedFooter =
-    truncatedCount > 0
-      ? `<p class="truncated-footer">${truncatedCount === 1 ? "1 opencode event was truncated at write time and is not shown." : `${truncatedCount} opencode events were truncated at write time and are not shown.`}</p>`
-      : "";
-  const ownerChip = `<code>${escapeHtml(safeSnippet(ownerSessionId, 120))}</code>`;
+  const ownerChip = `<code>${escapeHtml(safeSnippet(ownerSessionId))}</code>`;
   const currentChip =
     anchor.currentSessionId && anchor.currentSessionId !== ownerSessionId
-      ? ` · current <code>${escapeHtml(safeSnippet(anchor.currentSessionId, 120))}</code>`
+      ? ` · current <code>${escapeHtml(safeSnippet(anchor.currentSessionId))}</code>`
       : "";
   // Subagent token rollup: when the trigger spawned subagents, render a table
   // (one row per agent, indented by depth) so admins can see per-subagent cost
@@ -2320,10 +2276,10 @@ function renderSlicePage(
       correlationKey.startsWith("git:branch:"));
   const promptPreviewBlock =
     promptPreview && !sourceCoveredByDecode
-      ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>`
+      ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview))}</p>`
       : "";
 
-  const body = `<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}${pillReason}</span>${livePill}<h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2>${sourceLine}${summaryLine ? `<p class="summary">${escapeHtml(summaryLine)}</p>` : ""}<p class="chips">anchor <code title="${escapeHtml(anchorId)}">${escapeHtml(shortUuid(anchorId))}</code> · trigger <code title="${escapeHtml(triggerId)}">${escapeHtml(shortUuid(triggerId))}</code> · session ${ownerChip}${currentChip}</p></section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreviewBlock}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section>${activityHtml}${totalsFooter}${truncatedFooter}</section>`;
+  const body = `<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}${pillReason}</span>${livePill}<h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2>${sourceLine}${summaryLine ? `<p class="summary">${escapeHtml(summaryLine)}</p>` : ""}<p class="chips">anchor <code title="${escapeHtml(anchorId)}">${escapeHtml(shortUuid(anchorId))}</code> · trigger <code title="${escapeHtml(triggerId)}">${escapeHtml(shortUuid(triggerId))}</code> · session ${ownerChip}${currentChip}</p></section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreviewBlock}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id))}</code>`).join(" ")}</p>` : ""}</section><section>${activityHtml}${totalsFooter}</section>`;
   return renderPage(pageTitle, body);
 }
 
