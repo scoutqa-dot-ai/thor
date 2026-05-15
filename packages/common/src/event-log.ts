@@ -459,6 +459,10 @@ function emptyReverseEntry(): InternalReverseEntry {
   return { sessions: new Map(), subsessions: new Set(), externalKeys: new Set() };
 }
 
+function isReverseEntryEmpty(entry: InternalReverseEntry): boolean {
+  return entry.sessions.size === 0 && entry.subsessions.size === 0 && entry.externalKeys.size === 0;
+}
+
 function ensureReverseEntry(anchorId: string): InternalReverseEntry {
   let entry = aliasCache.reverse.get(anchorId);
   if (!entry) {
@@ -483,6 +487,7 @@ function applyAliasRecord(r: AliasRecord): void {
       if (r.aliasType === "opencode.session") old.sessions.delete(r.aliasValue);
       else if (r.aliasType === "opencode.subsession") old.subsessions.delete(r.aliasValue);
       else old.externalKeys.delete(aliasKey);
+      if (isReverseEntryEmpty(old)) aliasCache.reverse.delete(previousAnchorId);
     }
   }
 

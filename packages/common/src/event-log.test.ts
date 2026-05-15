@@ -17,6 +17,7 @@ import {
   appendAlias,
   appendSessionEvent,
   findActiveTrigger,
+  listAnchors,
   listAnchorSessionStates,
   listSessionAliases,
   mintAnchor,
@@ -193,6 +194,28 @@ describe("session event log", () => {
       process.env.WORKLOG_DIR = testDir;
       rmSync(nextDir, { recursive: true, force: true });
     }
+  });
+
+  it("does not enumerate anchors after their last alias moves away", () => {
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "moved-session",
+      anchorId: anchorDashE,
+    });
+    expect(listAnchors().map((row) => row.anchorId)).toContain(anchorDashE);
+
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "moved-session",
+      anchorId: anchorDashF,
+    });
+
+    expect(listAnchors().map((row) => row.anchorId)).not.toContain(anchorDashE);
+    expect(listAnchorSessionStates().map((row) => row.anchorId)).not.toContain(anchorDashE);
+    expect(reverseLookupAnchor(anchorDashF)).toMatchObject({
+      sessionIds: ["moved-session"],
+      currentSessionId: "moved-session",
+    });
   });
 
   it("invalidates session record cache when the worklog directory changes", () => {
