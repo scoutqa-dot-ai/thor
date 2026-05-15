@@ -145,6 +145,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                            | Bot user ID used to ignore our own messages                                                                          |
 | `SLACK_SIGNING_SECRET`              | Yes      | `gateway`                            | Slack webhook verification                                                                                           |
 | `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | `gateway`                            | Signature timestamp tolerance                                                                                        |
+| `SLACK_TEAM_ID`                     | No       | `admin`                              | Slack workspace team id; enables clickable thread permalinks on the admin sessions dashboard                         |
 | `VOUCH_CALLBACK_URL`                | No       | `vouch`                              | OAuth callback URL                                                                                                   |
 | `VOUCH_COOKIE_DOMAIN`               | No       | `vouch`                              | Cookie domain                                                                                                        |
 | `VOUCH_ALLOWED_EMAIL_DOMAINS`       | No       | `compose -> vouch`                   | Thor/compose-facing input rendered into Vouch's `VOUCH_DOMAINS`; comma-separated email domains, default `scoutqa.cc` |

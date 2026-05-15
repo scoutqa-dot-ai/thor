@@ -233,6 +233,7 @@ services:
       - "127.0.0.1:3005:3005"
     environment:
       - NODE_ENV=production
+      - SLACK_TEAM_ID=${SLACK_TEAM_ID:-}
     volumes:
       - ./docker-volumes/workspace:/workspace
     healthcheck:

@@ -1,4 +1,4 @@
-import type { AnchorSessionState, AnchorSessionStatus } from "@thor/common";
+import type { AliasRecord, AnchorSessionState, AnchorSessionStatus } from "@thor/common";
 
 export interface Issue {
   path: string;
@@ -10,6 +10,96 @@ export interface SessionsProps {
   rows: AnchorSessionState[];
   refreshedAt: string;
   error: string | null;
+  /** Slack workspace team id used to build thread permalinks; null disables linking. */
+  slackTeamId: string | null;
+}
+
+interface DecodedExternalKey {
+  label: string;
+  href?: string;
+  title?: string;
+}
+
+const GIT_BRANCH_PREFIX = "git:branch:";
+const GITHUB_ISSUE_PREFIX = "github:issue:";
+
+export function decodeExternalKey(
+  key: { aliasType: AliasRecord["aliasType"]; aliasValue: string },
+  opts: { slackTeamId: string | null },
+): DecodedExternalKey | null {
+  switch (key.aliasType) {
+    case "slack.thread": {
+      const slash = key.aliasValue.indexOf("/");
+      if (slash <= 0) return { label: key.aliasValue };
+      const channel = key.aliasValue.slice(0, slash);
+      const ts = key.aliasValue.slice(slash + 1);
+      const date = slackTsToDate(ts);
+      const label = date ? `#${channel} · ${date}` : `#${channel} · ${ts}`;
+      if (opts.slackTeamId) {
+        return {
+          label,
+          href: `https://app.slack.com/client/${opts.slackTeamId}/${channel}/thread/${channel}-${ts}`,
+          title: `${channel}/${ts}`,
+        };
+      }
+      return { label, title: `${channel}/${ts}` };
+    }
+    case "slack.thread_id":
+      return { label: `thread ${key.aliasValue}` };
+    case "git.branch": {
+      const decoded = safeBase64UrlDecode(key.aliasValue);
+      if (!decoded?.startsWith(GIT_BRANCH_PREFIX)) return { label: key.aliasValue };
+      const body = decoded.slice(GIT_BRANCH_PREFIX.length);
+      const sep = body.indexOf(":");
+      if (sep <= 0) return { label: body };
+      const repo = body.slice(0, sep);
+      const branch = body.slice(sep + 1);
+      return { label: `${repo} · ${branch}`, title: decoded };
+    }
+    case "github.issue": {
+      const decoded = safeBase64UrlDecode(key.aliasValue);
+      if (!decoded?.startsWith(GITHUB_ISSUE_PREFIX)) return { label: key.aliasValue };
+      const body = decoded.slice(GITHUB_ISSUE_PREFIX.length);
+      // Body shape: "<inferredRepoName>:<owner>/<repo>#<number>". The owner/repo
+      // pair lives after the first colon; link with it directly.
+      const sep = body.indexOf(":");
+      const tail = sep >= 0 ? body.slice(sep + 1) : body;
+      const hash = tail.lastIndexOf("#");
+      if (hash <= 0) return { label: tail, title: decoded };
+      const ownerRepo = tail.slice(0, hash);
+      const num = tail.slice(hash + 1);
+      if (!/^\d+$/.test(num) || !ownerRepo.includes("/")) {
+        return { label: tail, title: decoded };
+      }
+      return {
+        label: `${ownerRepo}#${num}`,
+        href: `https://github.com/${ownerRepo}/issues/${num}`,
+        title: decoded,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function safeBase64UrlDecode(value: string): string | undefined {
+  try {
+    const decoded = Buffer.from(value, "base64url").toString("utf8");
+    // Round-trip guard: reject non-base64url inputs that decoded to garbage.
+    if (Buffer.from(decoded, "utf8").toString("base64url") !== value) return undefined;
+    return decoded;
+  } catch {
+    return undefined;
+  }
+}
+
+function slackTsToDate(ts: string): string | undefined {
+  const seconds = Number.parseFloat(ts);
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  const d = new Date(seconds * 1000);
+  if (Number.isNaN(d.getTime())) return undefined;
+  // Compact display: YYYY-MM-DD HH:MM
+  return d.toISOString().replace("T", " ").slice(0, 16);
 }
 
 export interface PageProps {
@@ -193,11 +283,20 @@ export function renderSessionsFragment(props: SessionsProps): string {
             row.ownerSessionId && row.ownerSessionId !== row.currentSessionId
               ? `<br><small>owner ${esc(row.ownerSessionId)}</small>`
               : "";
-          const keys = row.externalKeys.length
-            ? row.externalKeys
-                .map((k) => `<span class="chip">${esc(k.aliasType)}=${esc(k.aliasValue)}</span>`)
-                .join(" ")
-            : "—";
+          const hasNewSlack = row.externalKeys.some((k) => k.aliasType === "slack.thread");
+          const chipParts = row.externalKeys
+            .filter((k) => !(hasNewSlack && k.aliasType === "slack.thread_id"))
+            .map((k) => {
+              const decoded = decodeExternalKey(k, { slackTeamId: props.slackTeamId });
+              if (!decoded) return "";
+              const title = decoded.title ? ` title="${esc(decoded.title)}"` : "";
+              if (decoded.href) {
+                return `<a class="chip" href="${esc(decoded.href)}" target="_blank" rel="noopener"${title}>${esc(decoded.label)}</a>`;
+              }
+              return `<span class="chip"${title}>${esc(decoded.label)}</span>`;
+            })
+            .filter(Boolean);
+          const keys = chipParts.length ? chipParts.join(" ") : "—";
           const trigger = row.triggerId
             ? `<a href="/runner/v/${encodeURIComponent(row.anchorId)}/${encodeURIComponent(row.triggerId)}">${esc(short(row.triggerId))}</a>`
             : "—";
@@ -253,6 +352,8 @@ export function renderSessionsPage(props: SessionsProps): string {
   .badge.idle { background: #eef3f8; color: #35506b; }
   .badge.unknown { background: #eee; color: #555; }
   .chip { background: #f2f2f2; margin: 0 0.2rem 0.2rem 0; }
+  a.chip { color: #14559d; text-decoration: none; }
+  a.chip:hover { background: #e3ecf5; text-decoration: underline; }
   .empty { border: 1px dashed #bbb; border-radius: 6px; padding: 1rem; color: #666; }
   .refresh-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 0.5rem; font-size: 0.85rem; color: #666; }
   .refresh-bar button { padding: 0.25rem 0.7rem; font-size: 0.8rem; cursor: pointer; border: 1px solid #ccc; background: #fff; color: #333; border-radius: 4px; }
