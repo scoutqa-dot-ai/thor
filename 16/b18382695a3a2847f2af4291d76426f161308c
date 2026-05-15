@@ -1,0 +1,42 @@
+docs/feat/event-flow.md
+  a6dc967850964afe 223
+scripts/test-e2e.sh
+  a6dc967850964afe 319
+packages/runner/src/index.ts
+  a6dc967850964afe 826,1843-1865,2046-2052,2293-2295,2297
+packages/runner/src/trigger.test.ts
+  a6dc967850964afe 480-486,524-530,557-570,601-614,643-649,829-835,1820-1824
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "16b18382695a3a2847f2af4291d76426f161308c",
+  "prompts": {
+    "8eaf019e26b0e096": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03c9b3b9-8f37-4e65-b725-98beb0696869",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 0,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    },
+    "a6dc967850964afe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "368efb7a-82da-4e29-bf2f-df333d47b589",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 101,
+      "total_deletions": 63,
+      "accepted_lines": 98,
+      "overriden_lines": 0
+    }
+  }
+}
