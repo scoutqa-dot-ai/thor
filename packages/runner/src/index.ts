@@ -129,14 +129,13 @@ const inflightTriggers = new Map<string, { sessionId: string; startTime: number 
 function startTrigger(
   sessionId: string,
   triggerId: string,
-  payload: { correlationKey?: string; promptPreview?: string },
+  payload: { correlationKey?: string },
 ): void {
   unwrap(
     appendSessionEvent(sessionId, {
       type: "trigger_start",
       triggerId,
       ...(payload.correlationKey ? { correlationKey: payload.correlationKey } : {}),
-      promptPreview: payload.promptPreview ?? "",
     }),
   );
   inflightTriggers.set(triggerId, { sessionId, startTime: Date.now() });
@@ -243,7 +242,6 @@ function resolveOwnerSessionForTrigger(
 const E2eTriggerContextSchema = z.object({
   sessionId: z.string().trim().min(1).optional(),
   correlationKey: z.string().trim().min(1).optional(),
-  promptPreview: z.string().trim().min(1).optional(),
 });
 
 // --- Express app ---
@@ -314,7 +312,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             type: "trigger_start",
             triggerId,
             ...(parsed.data.correlationKey ? { correlationKey: parsed.data.correlationKey } : {}),
-            promptPreview: parsed.data.promptPreview ?? "e2e approval disclaimer context",
           }),
         );
         res.json({ sessionId, triggerId, anchorId });
@@ -625,7 +622,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     }
 
     let { prompt, model, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
-    const userPromptPreview = truncate(prompt, 500);
     let inflightTriggerId: string | undefined;
 
     try {
@@ -827,10 +823,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       const triggerId = mintTriggerId();
       inflightTriggerId = triggerId;
-      startTrigger(sessionId, triggerId, {
-        correlationKey,
-        promptPreview: userPromptPreview,
-      });
+      startTrigger(sessionId, triggerId, { correlationKey });
 
       const promptStart = Date.now();
       const asyncResult = await client.session.promptAsync({
@@ -1847,6 +1840,29 @@ function numericTokenTotal(tokens: unknown): number | undefined {
   return found ? total : undefined;
 }
 
+/**
+ * Recover the user prompt body from the opencode_event stream. Thor wraps
+ * every prompt as `[correlation-key: <key>]\n\n<body>` before sending it to
+ * OpenCode (see prompt construction in this file), and OpenCode echoes that
+ * text back through `message.part.updated` events. The first such text part
+ * for this trigger's correlation key is the original prompt.
+ */
+function extractCorrelationKeyPrompt(
+  records: SessionEventLogRecord[],
+  correlationKey: string,
+): string | undefined {
+  const prefix = `[correlation-key: ${correlationKey}]`;
+  for (const record of records) {
+    if (record.type !== "opencode_event") continue;
+    const part = eventPart(record);
+    if (!part || part.type !== "text") continue;
+    const text = typeof part.text === "string" ? part.text : "";
+    if (!text.startsWith(prefix)) continue;
+    return text.slice(prefix.length).replace(/^\s+/, "");
+  }
+  return undefined;
+}
+
 type TokenCounts = { input: number; output: number; reasoning: number; cacheRead: number };
 
 function extractTokenCounts(tokens: unknown): TokenCounts | undefined {
@@ -2027,7 +2043,13 @@ function renderSlicePage(
     (record) => record.type === "trigger_end" && record.triggerId === triggerId,
   );
   const correlationKey = start?.type === "trigger_start" ? start.correlationKey : undefined;
-  const promptPreview = start?.type === "trigger_start" ? start.promptPreview : undefined;
+  // The user prompt body lives in the opencode_event stream as the first
+  // `text` part prefixed with `[correlation-key: <key>]` — see prompt
+  // construction at `:814`. Strip the prefix to recover the original prompt;
+  // that's what `decodeSourceLine` parses for Slack/GitHub fields.
+  const promptPreview = correlationKey
+    ? extractCorrelationKeyPrompt(slice.records, correlationKey)
+    : undefined;
 
   // Dedup pre-pass: for parts that stream multiple updates under the same id,
   // we want one row per id with the latest state.
@@ -2268,18 +2290,11 @@ function renderSlicePage(
     activityHtml = `<ul class="events">${stepBlocks.join("")}</ul>`;
   }
 
-  const sourceCoveredByDecode =
-    !!decodedSource &&
-    !!correlationKey &&
-    (correlationKey.startsWith("slack:thread:") ||
-      correlationKey.startsWith("github:") ||
-      correlationKey.startsWith("git:branch:"));
-  const promptPreviewBlock =
-    promptPreview && !sourceCoveredByDecode
-      ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview))}</p>`
-      : "";
+  // The prompt body now lives as the first activity row (the
+  // `[correlation-key: …]` text part). No need for a separate preview block
+  // in Trigger context.
 
-  const body = `<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}${pillReason}</span>${livePill}<h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2>${sourceLine}${summaryLine ? `<p class="summary">${escapeHtml(summaryLine)}</p>` : ""}<p class="chips">anchor <code title="${escapeHtml(anchorId)}">${escapeHtml(shortUuid(anchorId))}</code> · trigger <code title="${escapeHtml(triggerId)}">${escapeHtml(shortUuid(triggerId))}</code> · session ${ownerChip}${currentChip}</p></section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreviewBlock}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id))}</code>`).join(" ")}</p>` : ""}</section><section>${activityHtml}${totalsFooter}</section>`;
+  const body = `<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}${pillReason}</span>${livePill}<h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2>${sourceLine}${summaryLine ? `<p class="summary">${escapeHtml(summaryLine)}</p>` : ""}<p class="chips">anchor <code title="${escapeHtml(anchorId)}">${escapeHtml(shortUuid(anchorId))}</code> · trigger <code title="${escapeHtml(triggerId)}">${escapeHtml(shortUuid(triggerId))}</code> · session ${ownerChip}${currentChip}</p></section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id))}</code>`).join(" ")}</p>` : ""}</section><section>${activityHtml}${totalsFooter}</section>`;
   return renderPage(pageTitle, body);
 }
 

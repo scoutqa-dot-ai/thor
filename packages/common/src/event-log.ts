@@ -43,7 +43,6 @@ export const TriggerStartRecordSchema = BaseRecordSchema.extend({
   type: z.literal("trigger_start"),
   triggerId: z.string().regex(UUID_V7_RE, { message: "triggerId must be a UUIDv7" }),
   correlationKey: z.string().optional(),
-  promptPreview: z.string().optional(),
 });
 
 export const TriggerEndRecordSchema = BaseRecordSchema.extend({
@@ -235,9 +234,6 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
       ...(typeof record.correlationKey === "string"
         ? { correlationKey: record.correlationKey }
         : {}),
-      ...(typeof record.promptPreview === "string"
-        ? { promptPreview: truncate(record.promptPreview, 512) }
-        : {}),
       _truncated: true,
     };
   } else if (record.type === "trigger_end") {
@@ -275,13 +271,6 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   }
 
   while (Buffer.byteLength(JSON.stringify(candidate), "utf8") >= MAX_RECORD_BYTES) {
-    if (candidate.type === "trigger_start" && typeof candidate.promptPreview === "string") {
-      candidate.promptPreview = truncate(
-        candidate.promptPreview,
-        Math.max(32, Math.floor(candidate.promptPreview.length / 2)),
-      );
-      continue;
-    }
     if (candidate.type === "trigger_end") {
       if (typeof candidate.error === "string" && candidate.error.length > 32) {
         candidate.error = truncate(

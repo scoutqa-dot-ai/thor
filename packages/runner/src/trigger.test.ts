@@ -376,7 +376,6 @@ describe("runner /trigger orchestration", () => {
         type: "trigger_start",
         triggerId,
         correlationKey: "slack:thread:1710000000.311",
-        promptPreview: "please inspect the repo",
       }),
     ).toEqual({ ok: true });
     appendSessionEvent("viewer-session", {
@@ -478,8 +477,13 @@ describe("runner /trigger orchestration", () => {
       type: "trigger_start",
       triggerId,
       correlationKey: "slack:thread:C0APZ92A45U/1710000000.401",
-      promptPreview:
-        'Slack event:\n\n{"event":{"channel":"C0APZ92A45U","user":"UN4P4F5MY","text":"deploy the new admin sessions UI"}}',
+    });
+    appendSessionEvent("slack-source-session", {
+      type: "opencode_event",
+      event: textEvent(
+        "slack-source-session",
+        '[correlation-key: slack:thread:C0APZ92A45U/1710000000.401]\n\nSlack event:\n\n{"event":{"channel":"C0APZ92A45U","user":"UN4P4F5MY","text":"deploy the new admin sessions UI"}}',
+      ),
     });
     appendSessionEvent("slack-source-session", {
       type: "trigger_end",
@@ -517,8 +521,13 @@ describe("runner /trigger orchestration", () => {
       type: "trigger_start",
       triggerId,
       correlationKey: "slack:thread:C0APZ92A45U/1710000000.402",
-      promptPreview:
-        'Slack event:\n\n{"event":{"channel":"C0APZ92A45U","user":"UN4P4F5MY","text":"hi"}}',
+    });
+    appendSessionEvent("slack-noteam-session", {
+      type: "opencode_event",
+      event: textEvent(
+        "slack-noteam-session",
+        '[correlation-key: slack:thread:C0APZ92A45U/1710000000.402]\n\nSlack event:\n\n{"event":{"channel":"C0APZ92A45U","user":"UN4P4F5MY","text":"hi"}}',
+      ),
     });
     appendSessionEvent("slack-noteam-session", {
       type: "trigger_end",
@@ -545,15 +554,21 @@ describe("runner /trigger orchestration", () => {
       type: "trigger_start",
       triggerId,
       correlationKey: "github:issue:demo:owner/repo#42",
-      promptPreview: JSON.stringify({
-        repository: { full_name: "owner/repo" },
-        sender: { login: "octocat" },
-        pull_request: {
-          number: 42,
-          html_url: "https://github.com/owner/repo/pull/42",
-          title: "Refactor the renderer",
-        },
-      }),
+    });
+    appendSessionEvent("github-pr-session", {
+      type: "opencode_event",
+      event: textEvent(
+        "github-pr-session",
+        `[correlation-key: github:issue:demo:owner/repo#42]\n\n${JSON.stringify({
+          repository: { full_name: "owner/repo" },
+          sender: { login: "octocat" },
+          pull_request: {
+            number: 42,
+            html_url: "https://github.com/owner/repo/pull/42",
+            title: "Refactor the renderer",
+          },
+        })}`,
+      ),
     });
     appendSessionEvent("github-pr-session", {
       type: "trigger_end",
@@ -583,15 +598,21 @@ describe("runner /trigger orchestration", () => {
       type: "trigger_start",
       triggerId,
       correlationKey: "github:issue:demo:owner/repo#87",
-      promptPreview: JSON.stringify({
-        repository: { full_name: "owner/repo" },
-        sender: { login: "octocat" },
-        issue: {
-          number: 87,
-          html_url: "https://github.com/owner/repo/issues/87",
-          title: "Renderer is hard to read",
-        },
-      }),
+    });
+    appendSessionEvent("github-issue-session", {
+      type: "opencode_event",
+      event: textEvent(
+        "github-issue-session",
+        `[correlation-key: github:issue:demo:owner/repo#87]\n\n${JSON.stringify({
+          repository: { full_name: "owner/repo" },
+          sender: { login: "octocat" },
+          issue: {
+            number: 87,
+            html_url: "https://github.com/owner/repo/issues/87",
+            title: "Renderer is hard to read",
+          },
+        })}`,
+      ),
     });
     appendSessionEvent("github-issue-session", {
       type: "trigger_end",
@@ -619,8 +640,13 @@ describe("runner /trigger orchestration", () => {
       type: "trigger_start",
       triggerId,
       correlationKey: "cron:abcd:1700000000",
-      promptPreview:
-        "Run the Katalon knowledge crawl using /workspace/memory/runbooks/katalon-knowledge-crawl.md.",
+    });
+    appendSessionEvent("cron-source-session", {
+      type: "opencode_event",
+      event: textEvent(
+        "cron-source-session",
+        "[correlation-key: cron:abcd:1700000000]\n\nRun the Katalon knowledge crawl using /workspace/memory/runbooks/katalon-knowledge-crawl.md.",
+      ),
     });
     appendSessionEvent("cron-source-session", {
       type: "trigger_end",
@@ -800,8 +826,13 @@ describe("runner /trigger orchestration", () => {
       type: "trigger_start",
       triggerId,
       correlationKey: "slack:thread:C0APZ92A45U/1710000000.505",
-      promptPreview:
-        'Slack event:\n\n{"event":{"channel":"C0APZ92A45U","user":"UN4P4F5MY","text":"deploy please"}}',
+    });
+    appendSessionEvent("polish-session", {
+      type: "opencode_event",
+      event: textEvent(
+        "polish-session",
+        '[correlation-key: slack:thread:C0APZ92A45U/1710000000.505]\n\nSlack event:\n\n{"event":{"channel":"C0APZ92A45U","user":"UN4P4F5MY","text":"deploy please"}}',
+      ),
     });
     appendSessionEvent("polish-session", {
       type: "opencode_event",
@@ -1786,10 +1817,13 @@ describe("runner /trigger orchestration", () => {
         .split("\n")
         .map((line) => JSON.parse(line));
       const firstTriggerStart = firstLogRecords.find((record) => record.type === "trigger_start");
-      expect(firstTriggerStart).toMatchObject({ promptPreview: "first" });
+      // trigger_start no longer carries a promptPreview field — the prompt
+      // body lives in the opencode_event stream as a `[correlation-key:]`
+      // text part.
+      expect(firstTriggerStart).toMatchObject({ correlationKey: "slack:thread:1710000000.005" });
+      expect(firstTriggerStart).not.toHaveProperty("promptPreview");
       expect(JSON.stringify(firstTriggerStart)).not.toContain("root memory text");
       expect(JSON.stringify(firstTriggerStart)).not.toContain("repo memory text");
-      expect(JSON.stringify(firstTriggerStart)).not.toContain("correlation-key");
 
       await trigger(url, {
         prompt: "second",

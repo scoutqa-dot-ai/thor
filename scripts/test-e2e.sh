@@ -316,7 +316,7 @@ else
   trigger_context_raw=$(curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
     -H 'Content-Type: application/json' \
     -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-    -d '{"correlationKey":"e2e-approval-flow","promptPreview":"e2e approval disclaimer context"}' \
+    -d '{"correlationKey":"e2e-approval-flow"}' \
     2>/dev/null || echo '{}')
   E2E_THOR_SESSION_ID=$(json_field "$trigger_context_raw" "sessionId")
   E2E_THOR_TRIGGER_ID=$(json_field "$trigger_context_raw" "triggerId")
