@@ -431,7 +431,9 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("filePath:");
       expect(html).toContain("tool</b> <span>gh auth</span>");
       expect(html).toContain("tool</b> <span>mcp</span>");
-      expect(html).toContain("arguments hidden");
+      // "arguments hidden" is no longer rendered — silently omit when args
+      // cannot be displayed safely.
+      expect(html).not.toContain("arguments hidden");
       expect(html).toContain("1 opencode event was truncated at write time and is not shown.");
       expect(html).not.toContain("truncated payload");
       expect(html).toContain("Done with token=[redacted]");
