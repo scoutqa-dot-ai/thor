@@ -385,7 +385,6 @@ describe("remote-cli MCP endpoints", () => {
       args: cleanArgs,
       origin: {
         sessionId: "parent-session",
-        anchor: { anchorId: activeAnchorId, triggerId: activeTriggerId },
         trigger: { anchorId: activeAnchorId, triggerId: activeTriggerId },
       },
     });

@@ -56,7 +56,7 @@ function resolveDisclaimerOrigin(
 
 function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   if (!approvalToolRequiresDisclaimer(action.tool)) return action.args;
-  const origin = action.origin?.anchor ?? action.origin?.trigger;
+  const origin = action.origin?.trigger;
   if (!origin) {
     throw new Error(`Approval action ${action.id} is missing origin provenance for disclaimer injection`);
   }
@@ -510,16 +510,15 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       const approvalArgs = approvalRequired.data.args;
       const formatError = validateDisclaimerCompatibleArgs(toolInfo.name, approvalArgs);
       if (formatError) return fail(formatError);
-      let anchor: { anchorId: string; triggerId?: string } | undefined;
+      let trigger: { anchorId: string; triggerId?: string } | undefined;
       try {
-        anchor = resolveDisclaimerOrigin(toolInfo.name, context.sessionId);
+        trigger = resolveDisclaimerOrigin(toolInfo.name, context.sessionId);
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
       const action = instance.approvalStore.create(toolInfo.name, approvalArgs, {
         sessionId: context.sessionId,
-        anchor,
-        ...(anchor?.triggerId ? { trigger: { anchorId: anchor.anchorId, triggerId: anchor.triggerId } } : {}),
+        trigger,
       });
       logInfo(log, "tool_call_pending_approval", {
         upstream: instance.name,
