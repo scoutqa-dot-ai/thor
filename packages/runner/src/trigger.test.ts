@@ -979,14 +979,17 @@ describe("runner /trigger orchestration", () => {
     const anchorId = mintAnchor();
     bindSessionToAnchor("parent-session", anchorId);
     const subSessionId = "ses_subagent_inline_test_001";
-    // Pre-seed the subagent's own session file with two events.
+    const taskStart = 1_700_000_000_000;
+    const taskEnd = taskStart + 10_000;
+    // Pre-seed the subagent's own session file with two events inside the
+    // task's time window plus one stale event outside it (a later resume).
     mkdirSync(`${worklogDir}/sessions`, { recursive: true });
     writeFileSync(
       `${worklogDir}/sessions/${subSessionId}.jsonl`,
       [
         JSON.stringify({
           schemaVersion: 1,
-          ts: "2026-05-15T00:00:00.000Z",
+          ts: new Date(taskStart + 100).toISOString(),
           type: "opencode_event",
           event: {
             type: "message.part.updated",
@@ -1001,12 +1004,25 @@ describe("runner /trigger orchestration", () => {
         }),
         JSON.stringify({
           schemaVersion: 1,
-          ts: "2026-05-15T00:00:01.000Z",
+          ts: new Date(taskStart + 200).toISOString(),
           type: "opencode_event",
           event: {
             type: "message.part.updated",
             properties: {
               part: { type: "text", text: "Subagent finished the read." },
+            },
+          },
+        }),
+        // Event after taskEnd — belongs to a later resume of the same subagent
+        // session, must NOT bleed into this task card.
+        JSON.stringify({
+          schemaVersion: 1,
+          ts: new Date(taskEnd + 5_000).toISOString(),
+          type: "opencode_event",
+          event: {
+            type: "message.part.updated",
+            properties: {
+              part: { type: "text", text: "STALE FOLLOW-UP — should not render" },
             },
           },
         }),
@@ -1028,7 +1044,7 @@ describe("runner /trigger orchestration", () => {
               input: { subagent_type: "thinker", prompt: "go" },
               output: `task_id: ${subSessionId}\nAll done.`,
               metadata: { sessionId: subSessionId },
-              time: { start: 0, end: 1000 },
+              time: { start: taskStart, end: taskEnd },
             },
           },
         },
@@ -1049,6 +1065,8 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain('class="events sub-events"');
       expect(html).toContain("Subagent finished the read.");
       expect(html).toContain("tool</b> <span>read</span>");
+      // Stale follow-up after taskEnd is filtered out.
+      expect(html).not.toContain("STALE FOLLOW-UP");
     });
   });
 
@@ -1059,13 +1077,17 @@ describe("runner /trigger orchestration", () => {
     bindSessionToAnchor("parent-recursive", anchorId);
     const subA = "ses_subagent_recursive_a";
     const subB = "ses_subagent_recursive_b";
+    const parentStart = 1_700_000_000_000;
+    const parentEnd = parentStart + 10_000;
+    const subATaskStart = parentStart + 500;
+    const subATaskEnd = parentStart + 1_500;
     mkdirSync(`${worklogDir}/sessions`, { recursive: true });
-    // subB just has a single read tool — leaf level.
+    // subB just has a single read tool inside subA's task time window.
     writeFileSync(
       `${worklogDir}/sessions/${subB}.jsonl`,
       `${JSON.stringify({
         schemaVersion: 1,
-        ts: "2026-05-15T00:00:02.000Z",
+        ts: new Date(subATaskStart + 100).toISOString(),
         type: "opencode_event",
         event: {
           type: "message.part.updated",
@@ -1079,12 +1101,13 @@ describe("runner /trigger orchestration", () => {
         },
       })}\n`,
     );
-    // subA has a nested task tool that points to subB.
+    // subA has a nested task tool that points to subB, inside the parent's
+    // task window.
     writeFileSync(
       `${worklogDir}/sessions/${subA}.jsonl`,
       `${JSON.stringify({
         schemaVersion: 1,
-        ts: "2026-05-15T00:00:01.000Z",
+        ts: new Date(subATaskStart).toISOString(),
         type: "opencode_event",
         event: {
           type: "message.part.updated",
@@ -1096,7 +1119,7 @@ describe("runner /trigger orchestration", () => {
                 status: "completed",
                 input: { subagent_type: "thinker", prompt: "deeper" },
                 metadata: { sessionId: subB },
-                time: { start: 0, end: 1000 },
+                time: { start: subATaskStart, end: subATaskEnd },
               },
             },
           },
@@ -1116,7 +1139,7 @@ describe("runner /trigger orchestration", () => {
               status: "completed",
               input: { subagent_type: "thinker", prompt: "go" },
               metadata: { sessionId: subA },
-              time: { start: 0, end: 1000 },
+              time: { start: parentStart, end: parentEnd },
             },
           },
         },
@@ -1147,13 +1170,15 @@ describe("runner /trigger orchestration", () => {
     const anchorId = mintAnchor();
     bindSessionToAnchor("parent-cycle", anchorId);
     const subSelf = "ses_subagent_cycle";
+    const parentStart = 1_700_000_000_000;
+    const parentEnd = parentStart + 10_000;
     mkdirSync(`${worklogDir}/sessions`, { recursive: true });
     // subSelf has a task tool that points to itself — must not infinite-loop.
     writeFileSync(
       `${worklogDir}/sessions/${subSelf}.jsonl`,
       `${JSON.stringify({
         schemaVersion: 1,
-        ts: "2026-05-15T00:00:03.000Z",
+        ts: new Date(parentStart + 100).toISOString(),
         type: "opencode_event",
         event: {
           type: "message.part.updated",
@@ -1165,7 +1190,7 @@ describe("runner /trigger orchestration", () => {
                 status: "completed",
                 input: { subagent_type: "thinker", prompt: "self" },
                 metadata: { sessionId: subSelf },
-                time: { start: 0, end: 1000 },
+                time: { start: parentStart + 100, end: parentStart + 200 },
               },
             },
           },
@@ -1185,7 +1210,7 @@ describe("runner /trigger orchestration", () => {
               status: "completed",
               input: { subagent_type: "thinker", prompt: "go" },
               metadata: { sessionId: subSelf },
-              time: { start: 0, end: 1000 },
+              time: { start: parentStart, end: parentEnd },
             },
           },
         },

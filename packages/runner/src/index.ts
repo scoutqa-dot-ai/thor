@@ -1661,6 +1661,21 @@ function partDuration(part: ViewerToolPart): string | undefined {
 }
 
 /**
+ * Time window (ms since epoch) during which this task tool was running. We
+ * use it to filter the subagent's session log so only events from THIS
+ * invocation surface — main agents often resume the same subagent session
+ * later, and we don't want unrelated events to bleed into the card.
+ */
+function partTimeWindow(part: ViewerToolPart): { start: number; end?: number } | undefined {
+  const time = part.state?.time;
+  if (typeof time?.start !== "number" || !Number.isFinite(time.start)) return undefined;
+  return {
+    start: time.start,
+    end: typeof time.end === "number" && Number.isFinite(time.end) ? time.end : undefined,
+  };
+}
+
+/**
  * Render a subagent session's activity inline. Subagent sessions are written
  * to their own `ses_*.jsonl` files (no trigger boundaries — task tool spawns
  * them outside the trigger endpoint), so we read the whole file, dedup by
@@ -1671,9 +1686,17 @@ function partDuration(part: ViewerToolPart): string | undefined {
  * bounded by `MAX_SUBAGENT_DEPTH`. No file-size cap (the viewer is
  * admin-only behind Vouch).
  */
-function renderInlineSubagent(sessionId: string, ctx: SubAgentCtx): string | undefined {
+function renderInlineSubagent(
+  sessionId: string,
+  ctx: SubAgentCtx,
+  window: { start: number; end?: number } | undefined,
+): string | undefined {
   if (ctx.depth >= MAX_SUBAGENT_DEPTH) return undefined;
   if (ctx.visited.has(sessionId)) return undefined;
+  // Without a time window we can't tell which subagent events belong to THIS
+  // invocation versus earlier/later resumes of the same session. Skip the
+  // inline render rather than show stale rows.
+  if (!window) return undefined;
   let path: string;
   try {
     path = sessionLogPath(sessionId);
@@ -1693,7 +1716,12 @@ function renderInlineSubagent(sessionId: string, ctx: SubAgentCtx): string | und
     try {
       const obj = JSON.parse(line);
       const v = SessionEventLogRecordSchema.safeParse(obj);
-      if (v.success) records.push(v.data);
+      if (!v.success) continue;
+      const ts = Date.parse(v.data.ts);
+      if (!Number.isFinite(ts)) continue;
+      if (ts < window.start) continue;
+      if (window.end !== undefined && ts > window.end) continue;
+      records.push(v.data);
     } catch {
       // skip malformed lines
     }
@@ -1731,6 +1759,8 @@ function renderInlineSubagent(sessionId: string, ctx: SubAgentCtx): string | und
       const toolName = typeof p.tool === "string" ? p.tool : "";
       if (toolName === "task") {
         rows.push(renderTaskCard(p, partDuration(p), nextCtx));
+        // renderTaskCard reads partTimeWindow(p) internally for its own
+        // subagent expansion call.
         continue;
       }
       const status = typeof p.state?.status === "string" ? p.state.status : "unknown";
@@ -1779,7 +1809,9 @@ function renderTaskCard(
   const outputBlock = output
     ? `<details><summary>output</summary><pre>${escapeHtml(safeMultilineSnippet(output, 4000))}</pre></details>`
     : "";
-  const subActivity = subSession ? (renderInlineSubagent(subSession, ctx) ?? "") : "";
+  const subActivity = subSession
+    ? (renderInlineSubagent(subSession, ctx, partTimeWindow(part)) ?? "")
+    : "";
   return `<li class="task-card" data-status="${escapeHtml(status)}"><div class="task-hdr">${hdr}</div>${desc}${subChip}${promptBlock}${outputBlock}${subActivity}</li>`;
 }
 
