@@ -144,10 +144,6 @@ export function renderConfigPage(props: PageProps): string {
 </html>`;
 }
 
-function fmtTime(value?: string): string {
-  return value ? esc(value) : "—";
-}
-
 function fmtDuration(ms?: number): string {
   if (ms === undefined) return "—";
   const sec = Math.floor(ms / 1000);
@@ -156,6 +152,12 @@ function fmtDuration(ms?: number): string {
   if (min < 60) return `${min}m`;
   const hr = Math.floor(min / 60);
   return `${hr}h ${min % 60}m`;
+}
+
+function fmtRelative(iso: string | undefined, ms: number | undefined): string {
+  if (!iso) return "—";
+  if (ms === undefined) return `<span title="${esc(iso)}">${esc(iso)}</span>`;
+  return `<span title="${esc(iso)}">${fmtDuration(ms)} ago</span>`;
 }
 
 function short(value?: string): string {
@@ -185,34 +187,47 @@ export function renderSessionsFragment(props: SessionsProps): string {
     ? `<div class="status error">Failed to read session state: ${esc(props.error)}</div>`
     : "";
   const body = props.rows.length
-    ? `<table><thead><tr><th>Status</th><th>Anchor</th><th>Session</th><th>External keys</th><th>Trigger</th><th>Started</th><th>Last event</th><th>Age / idle</th><th>Diagnostics</th></tr></thead><tbody>${props.rows
+    ? `<table><thead><tr><th>Status</th><th>Anchor</th><th>Current session</th><th>External keys</th><th>Trigger</th><th>Last result</th><th>Started</th><th>Last event</th><th>Age / idle</th><th>Diagnostics</th></tr></thead><tbody>${props.rows
         .map((row) => {
-          const owner = row.ownerSessionId && row.ownerSessionId !== row.currentSessionId ? `<br><small>owner ${esc(row.ownerSessionId)}</small>` : "";
+          const owner =
+            row.ownerSessionId && row.ownerSessionId !== row.currentSessionId
+              ? `<br><small>owner ${esc(row.ownerSessionId)}</small>`
+              : "";
           const keys = row.externalKeys.length
-            ? row.externalKeys.map((k) => `<span class="chip">${esc(k.aliasType)}=${esc(k.aliasValue)}</span>`).join(" ")
+            ? row.externalKeys
+                .map((k) => `<span class="chip">${esc(k.aliasType)}=${esc(k.aliasValue)}</span>`)
+                .join(" ")
             : "—";
           const trigger = row.triggerId
             ? `<a href="/runner/v/${encodeURIComponent(row.anchorId)}/${encodeURIComponent(row.triggerId)}">${esc(short(row.triggerId))}</a>`
-            : row.latestTerminalStatus
-              ? esc(row.latestTerminalStatus)
-              : "—";
-          const diag = [
-            `${row.sessionIds.length} sessions`,
-            `${row.subsessionIds.length} subsessions`,
-            row.skippedMalformed ? `${row.skippedMalformed} malformed` : null,
-            row.oversized ? "oversized" : null,
-            row.reason ?? null,
-          ]
-            .filter(Boolean)
-            .map((v) => esc(String(v)))
-            .join("; ");
-          return `<tr><td><span class="badge ${esc(row.status)}">${esc(statusLabel(row.status))}</span></td><td><code title="${esc(row.anchorId)}">${esc(short(row.anchorId))}</code></td><td>${esc(short(row.currentSessionId))}${owner}</td><td>${keys}</td><td>${trigger}</td><td>${fmtTime(row.triggerStartedAt)}</td><td>${fmtTime(row.lastEventTs)}</td><td>${fmtDuration(row.ageMs)} / ${fmtDuration(row.idleMs)}</td><td>${diag || "—"}</td></tr>`;
+            : "—";
+          const lastResult = row.latestTerminalStatus
+            ? `<span class="chip">${esc(row.latestTerminalStatus)}</span>`
+            : "—";
+          const ageIdle =
+            row.ageMs !== undefined &&
+            row.idleMs !== undefined &&
+            Math.abs(row.ageMs - row.idleMs) < 1000
+              ? fmtDuration(row.ageMs)
+              : `${fmtDuration(row.ageMs)} / ${fmtDuration(row.idleMs)}`;
+          const diagParts: string[] = [];
+          if (row.sessionIds.length) diagParts.push(`${row.sessionIds.length} sessions`);
+          if (row.subsessionIds.length) diagParts.push(`${row.subsessionIds.length} subsessions`);
+          if (row.skippedMalformed) diagParts.push(`${row.skippedMalformed} malformed`);
+          if (row.oversized) diagParts.push("oversized");
+          if (row.reason) diagParts.push(row.reason);
+          const diag = diagParts.map((v) => esc(v)).join("; ");
+          return `<tr><td><span class="badge ${esc(row.status)}">${esc(statusLabel(row.status))}</span></td><td><code title="${esc(row.anchorId)}">${esc(short(row.anchorId))}</code></td><td>${esc(short(row.currentSessionId))}${owner}</td><td>${keys}</td><td>${trigger}</td><td>${lastResult}</td><td>${fmtRelative(row.triggerStartedAt, row.ageMs)}</td><td>${fmtRelative(row.lastEventTs, row.idleMs)}</td><td>${ageIdle}</td><td>${diag || "—"}</td></tr>`;
         })
         .join("")}</tbody></table>`
     : `<div class="empty">No anchors have been recorded yet. Session state is derived from <code>aliases.jsonl</code> and <code>sessions/*.jsonl</code>.</div>`;
   return `<section id="sessions-panel" hx-get="/admin/sessions/fragment" hx-trigger="every 10s" hx-swap="outerHTML">
     ${error}
-    <div class="cards">${cards}<div class="card"><strong>${esc(props.refreshedAt)}</strong><span>last refreshed</span></div></div>
+    <div class="refresh-bar">
+      <span class="meta">Refreshed <span title="${esc(props.refreshedAt)}">${esc(props.refreshedAt)}</span></span>
+      <button type="button" hx-get="/admin/sessions/fragment" hx-target="#sessions-panel" hx-swap="outerHTML">Refresh</button>
+    </div>
+    <div class="cards">${cards}</div>
     ${body}
   </section>`;
 }
@@ -239,6 +254,10 @@ export function renderSessionsPage(props: SessionsProps): string {
   .badge.unknown { background: #eee; color: #555; }
   .chip { background: #f2f2f2; margin: 0 0.2rem 0.2rem 0; }
   .empty { border: 1px dashed #bbb; border-radius: 6px; padding: 1rem; color: #666; }
+  .refresh-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 0.5rem; font-size: 0.85rem; color: #666; }
+  .refresh-bar button { padding: 0.25rem 0.7rem; font-size: 0.8rem; cursor: pointer; border: 1px solid #ccc; background: #fff; color: #333; border-radius: 4px; }
+  .refresh-bar button:hover { background: #f4f4f4; }
+  td span[title] { cursor: help; }
 </style>
 </head>
 <body>
