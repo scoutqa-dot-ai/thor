@@ -973,6 +973,85 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
+  it("inlines the subagent session activity inside the task card", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000508";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("parent-session", anchorId);
+    const subSessionId = "ses_subagent_inline_test_001";
+    // Pre-seed the subagent's own session file with two events.
+    mkdirSync(`${worklogDir}/sessions`, { recursive: true });
+    writeFileSync(
+      `${worklogDir}/sessions/${subSessionId}.jsonl`,
+      [
+        JSON.stringify({
+          schemaVersion: 1,
+          ts: "2026-05-15T00:00:00.000Z",
+          type: "opencode_event",
+          event: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                type: "tool",
+                tool: "read",
+                state: { status: "completed", input: { filePath: "/x" } },
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          schemaVersion: 1,
+          ts: "2026-05-15T00:00:01.000Z",
+          type: "opencode_event",
+          event: {
+            type: "message.part.updated",
+            properties: {
+              part: { type: "text", text: "Subagent finished the read." },
+            },
+          },
+        }),
+        "",
+      ].join("\n"),
+    );
+
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("parent-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: { subagent_type: "thinker", prompt: "go" },
+              output: `task_id: ${subSessionId}\nAll done.`,
+              metadata: { sessionId: subSessionId },
+              time: { start: 0, end: 1000 },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("parent-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain("subagent activity (2 rows)");
+      expect(html).toContain('class="events sub-events"');
+      expect(html).toContain("Subagent finished the read.");
+      expect(html).toContain("tool</b> <span>read</span>");
+    });
+  });
+
   it("renders multiple models in the totals footer and skips the cost estimate", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000507";

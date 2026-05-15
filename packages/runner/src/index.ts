@@ -12,7 +12,7 @@ import type {
   ToolStateError,
 } from "@opencode-ai/sdk";
 import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   createLogger,
@@ -42,6 +42,7 @@ import {
   sessionLogPath,
   getWorklogDir,
   MAX_SESSION_FILE_BYTES,
+  SessionEventLogRecordSchema,
   loadRunnerEnv,
   matchesInternalSecret,
   ProgressApprovalRequiredSchema,
@@ -1647,6 +1648,86 @@ function renderApplyPatch(part: ViewerToolPart, durationStr: string | undefined)
   return `<li class="row" data-status="${escapeHtml(status)}"><details><summary>${hdr}</summary>${renderDiffLines(patchText)}</details></li>`;
 }
 
+/**
+ * Render a subagent session's activity inline. Subagent sessions are written
+ * to their own `ses_*.jsonl` files (no trigger boundaries — task tool spawns
+ * them outside the trigger endpoint), so we read the whole file, dedup by
+ * part id, and emit the major rows (tool + non-empty assistant text). No
+ * recursion: a subagent's own task tools render as plain rows without their
+ * own inline expansion.
+ */
+function renderInlineSubagent(sessionId: string): string | undefined {
+  let path: string;
+  try {
+    path = sessionLogPath(sessionId);
+  } catch {
+    return undefined;
+  }
+  let content: string;
+  try {
+    const stat = statSync(path);
+    if (stat.size > MAX_SESSION_FILE_BYTES) {
+      return `<div class="sub-note">Subagent log too large to inline (${stat.size} bytes).</div>`;
+    }
+    content = readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const records: SessionEventLogRecord[] = [];
+  for (const line of content.split("\n")) {
+    if (!line) continue;
+    try {
+      const obj = JSON.parse(line);
+      const v = SessionEventLogRecordSchema.safeParse(obj);
+      if (v.success) records.push(v.data);
+    } catch {
+      // skip malformed lines
+    }
+  }
+  if (!records.length) return undefined;
+
+  const latestById = new Map<string, ViewerToolPart>();
+  const firstIdxById = new Map<string, number>();
+  records.forEach((rec, i) => {
+    if (rec.type !== "opencode_event") return;
+    const p = eventPart(rec);
+    const id = partId(p);
+    if (!id || !p) return;
+    latestById.set(id, p);
+    if (!firstIdxById.has(id)) firstIdxById.set(id, i);
+  });
+
+  const rows: string[] = [];
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i]!;
+    if (rec.type !== "opencode_event") continue;
+    const ev = rec.event as ViewerEvent | undefined;
+    if (ev && ev._truncated === true) continue;
+    const raw = eventPart(rec);
+    const id = partId(raw);
+    if (id && firstIdxById.get(id) !== i) continue;
+    const p = id ? (latestById.get(id) ?? raw) : raw;
+    if (!p) continue;
+    if (p.type === "tool") {
+      const status = typeof p.state?.status === "string" ? p.state.status : "unknown";
+      const name = viewerToolDisplayName(p);
+      const title = getStateTitle(p);
+      rows.push(
+        `<li class="row" data-status="${escapeHtml(status)}"><b>tool</b> <span>${escapeHtml(name)}</span> <span class="status">${escapeHtml(status)}</span>${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title, 200))}</span>` : ""}</li>`,
+      );
+    } else if (p.type === "text") {
+      const text = typeof p.text === "string" ? p.text : "";
+      if (!text.trim() || text.startsWith("[correlation-key:")) continue;
+      rows.push(
+        `<li class="row" data-status="completed"><b>assistant text</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text, 2000))}</div></li>`,
+      );
+    }
+  }
+  if (!rows.length) return undefined;
+  return `<details><summary>subagent activity (${rows.length} row${rows.length === 1 ? "" : "s"})</summary><ul class="events sub-events">${rows.join("")}</ul></details>`;
+}
+
 function renderTaskCard(part: ViewerToolPart, durationStr: string | undefined): string {
   const input = isRecord(part.state?.input) ? part.state.input : undefined;
   const subagent = input ? safeStr(input.subagent_type) : undefined;
@@ -1671,7 +1752,8 @@ function renderTaskCard(part: ViewerToolPart, durationStr: string | undefined): 
   const outputBlock = output
     ? `<details><summary>output</summary><pre>${escapeHtml(safeMultilineSnippet(output, 4000))}</pre></details>`
     : "";
-  return `<li class="task-card" data-status="${escapeHtml(status)}"><div class="task-hdr">${hdr}</div>${desc}${subChip}${promptBlock}${outputBlock}</li>`;
+  const subActivity = subSession ? (renderInlineSubagent(subSession) ?? "") : "";
+  return `<li class="task-card" data-status="${escapeHtml(status)}"><div class="task-hdr">${hdr}</div>${desc}${subChip}${promptBlock}${outputBlock}${subActivity}</li>`;
 }
 
 function renderSourceLine(source: DecodedSource): string {
@@ -1768,7 +1850,7 @@ function shortUuid(value: string): string {
 }
 
 function renderPage(title: string, body: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.truncated-footer{color:#64748b;font-size:0.9em;font-style:italic;margin-top:12px}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events,.step>ul{list-style:none;padding-left:0}.events>li,.step>ul>li{margin:6px 0}.row{position:relative;padding-left:18px}.row::before{content:"";position:absolute;left:2px;top:0.55em;width:8px;height:8px;border-radius:50%;background:#94a3b8}.row[data-status="completed"]::before{background:#22c55e}.row[data-status="running"]::before{background:#facc15}.row[data-status="pending"]::before{background:#cbd5e1}.row[data-status="error"]::before{background:#ef4444}.row[data-status="aborted"]::before{background:#f97316}.tool-title{color:#475569;font-style:italic;margin-left:6px}.text-body{white-space:pre-wrap;margin:4px 0 0;color:#0f172a;font-size:0.95em}.slack-bubble{background:#eff6ff;border-left:3px solid #3b82f6;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.slack-bubble .slack-hdr{color:#1e3a8a;font-size:0.9em;font-weight:600;margin-bottom:4px}.slack-bubble pre{background:transparent;color:#0f172a;padding:0;margin:0}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}.step{list-style:none;margin:16px 0}.step>.step-hdr{color:#1e293b;font-weight:600;padding:6px 0;border-bottom:1px solid #e2e8f0}.step>ol{margin-top:6px;padding-left:24px}details{margin:4px 0}summary{cursor:pointer}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}</main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.truncated-footer{color:#64748b;font-size:0.9em;font-style:italic;margin-top:12px}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events,.step>ul{list-style:none;padding-left:0}.events>li,.step>ul>li{margin:6px 0}.row{position:relative;padding-left:18px}.row::before{content:"";position:absolute;left:2px;top:0.55em;width:8px;height:8px;border-radius:50%;background:#94a3b8}.row[data-status="completed"]::before{background:#22c55e}.row[data-status="running"]::before{background:#facc15}.row[data-status="pending"]::before{background:#cbd5e1}.row[data-status="error"]::before{background:#ef4444}.row[data-status="aborted"]::before{background:#f97316}.tool-title{color:#475569;font-style:italic;margin-left:6px}.text-body{white-space:pre-wrap;margin:4px 0 0;color:#0f172a;font-size:0.95em}.slack-bubble{background:#eff6ff;border-left:3px solid #3b82f6;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.slack-bubble .slack-hdr{color:#1e3a8a;font-size:0.9em;font-weight:600;margin-bottom:4px}.slack-bubble pre{background:transparent;color:#0f172a;padding:0;margin:0}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.sub-events{margin:6px 0 0;padding-left:12px;border-left:2px solid #c7d2fe}.sub-note{color:#475569;font-size:0.85em;font-style:italic}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}.step{list-style:none;margin:16px 0}.step>.step-hdr{color:#1e293b;font-weight:600;padding:6px 0;border-bottom:1px solid #e2e8f0}.step>ol{margin-top:6px;padding-left:24px}details{margin:4px 0}summary{cursor:pointer}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}</main></body></html>`;
 }
 
 function renderSlicePage(
