@@ -284,7 +284,7 @@ No HMAC. No TTL query params. UUIDv7 ids on `anchorId` and `triggerId` (~148 bit
 
 Ingress mapping (in `docker/ingress/nginx.conf`): `location /runner/ { ... }` proxies to the runner service. This single mount lets future runner-owned routes (admin tools, debug endpoints, etc.) ship without per-route ingress changes.
 
-Ingress/Vouch is the auth boundary for `/runner/*`. The runner viewer consumes `X-Vouch-User` when present for context/debugging, but does not enforce an additional app-layer 401 check.
+The runner reads `X-Vouch-User` from incoming requests on `/runner/*` (matches the existing `packages/admin/src/app.ts` pattern) and treats absence as 401.
 
 ### States
 
@@ -300,7 +300,7 @@ Ingress/Vouch is the auth boundary for `/runner/*`. The runner viewer consumes `
 | Oversized slice                                                    | 200             | "Slice truncated for display" marker; metadata-only render (status pill, hero, outcome card). No raw escape hatch.                                              |
 | Redacted fields present                                            | 200             | Inline `[redacted: tool output, NN bytes]` markers                                                                                                              |
 | Unknown anchor/trigger                                             | 404             | Branded 404                                                                                                                                                     |
-| Missing Vouch session at ingress                                   | 401/redirect    | Vouch redirects to OAuth before the request reaches the runner                                                                                                  |
+| Missing `X-Vouch-User`                                             | 401             | Vouch redirects to OAuth                                                                                                                                        |
 | Backend failure (parse, FS error)                                  | 503             | Branded retry copy                                                                                                                                              |
 
 ### Information hierarchy
@@ -370,17 +370,17 @@ Thor-created content includes a disclaimer/viewer link for:
 
 End-state rule: every Thor-authored content-creation surface gets a disclaimer link, except Slack messages (skipped to avoid noise). Surfaces without v1 injection support are denied rather than allowed to create disclaimer-less content. Confluence writes are denied entirely (removed from the approve list — see "Out of Scope"); GitHub issue creation/commenting (`gh issue create`, `gh issue comment`) is denied in v1 rather than expanded into the disclaimer injector.
 
-The disclaimer URL is the plain Vouch-gated canonical anchor viewer path: `/runner/v/<anchorId>`. No HMAC, no TTL. Exact trigger deep links (`/runner/v/<anchorId>/t/<triggerId>` and legacy `/runner/v/<anchorId>/<triggerId>`) remain available for diagnostics, but the default URL is anchor-keyed because the anchor is the durable conversation identity — disclaimer links survive `session_stale` recreate without 404.
+The disclaimer URL is the plain Vouch-gated viewer path: `/runner/v/<anchorId>/<triggerId>`. No HMAC, no TTL. The URL is anchor-keyed because the anchor is the durable conversation identity — disclaimer links survive `session_stale` recreate without 404.
 
-**Both paths fail-fast on missing provenance or unsupported mutation.** Every Thor-created artifact must be traceable to an anchor; if anchor context cannot be resolved, or if the per-tool args injector cannot find the expected field, the operation fails outright. A missing currently-open trigger does not block the write when anchor context is available.
+**Both paths fail-fast.** Every Thor-created artifact must be traceable to a trigger; if `findActiveTrigger(sessionId)` cannot return exactly one open trigger, or if the per-tool args injector cannot find the expected field, the operation fails outright. The artifact does not ship without the disclaimer. Silent skips would let routing bugs (missing `opencode.subsession` binding, runner crash mid-flight, schema drift on a Jira args shape) ship trivially-attributable artifacts as untraceable, which defeats the point of the disclaimer.
 
 ### Direct writes (GitHub `gh`)
 
 Inline at execute time. The shell command runs through remote-cli with `x-thor-session-id` already in the request context.
 
 1. remote-cli detects disclaimer-eligible commands: `gh pr create`, `gh pr comment`, `gh pr review`, and the explicit append-only `gh api repos/{owner}/{repo}/pulls/<pr>/comments/<comment>/replies --method POST -f body=...` shape.
-2. Resolve anchor context for the request session (`opencode.session` or `opencode.subsession`), retaining best-effort trigger metadata when present. **Fail-fast** only if no anchor can be resolved or a session log is oversized.
-3. Build the URL from the returned anchor: `${RUNNER_BASE_URL}/runner/v/${result.anchorId}`. The anchor is uniform whether the request originates from the top-level session or a child sub-session; exact trigger links are diagnostic deep links, not the default footer.
+2. Call `findActiveTrigger(requestSessionId)`. The helper resolves the request session's anchor (`opencode.session` or `opencode.subsession`), reverse-looks-up every session bound to that anchor, and scans each capped session log for a single open `trigger_start`. **Fail-fast** if `none` / `oversized`: the `gh` command exits non-zero with a clear error ("Disclaimer required: no single active trigger for session X — runner state may be broken"). No exec, no artifact.
+3. Build the URL from the returned anchor and trigger: `${RUNNER_BASE_URL}/runner/v/${result.anchorId}/${result.triggerId}`. The anchor is uniform whether the request originates from the top-level session or a child sub-session; only the owner session id differs internally, and the viewer resolves it back from the anchor.
 4. Rewrite the relevant body field:
    - `--body`/`-b` for PR/comment/review.
    - `-F <file>` / `--body-file <file>` for PR/comment paths by reading, mutating, and re-passing via stdin or a temp file.
@@ -399,13 +399,13 @@ The approval flow is async — humans review in Slack, can take minutes-to-hours
 
 At `packages/remote-cli/src/mcp-handler.ts:443`, before `approvalStore.create(toolInfo.name, args)`:
 
-1. Resolve anchor context using the current request's session id. **Fail-fast** if no anchor can be resolved or a session log is oversized; do not fail solely because there is no open trigger.
-2. Build the URL from the returned anchor: `${RUNNER_BASE_URL}/runner/v/${result.anchorId}`. Approve-gated calls also originate from child sessions during sub-agent work, but the anchor is uniform whether the request originates from the parent session or a sub-session — the URL is identical.
+1. Call `findActiveTrigger(requestSessionId)` using the current request's session id. **Fail-fast** if `none` / `oversized`: return an error to the LLM ("Cannot create approval: no single active trigger for this session") and persist no action.
+2. Build the URL from the returned anchor: `${RUNNER_BASE_URL}/runner/v/${result.anchorId}/${result.triggerId}`. Approve-gated calls also originate from child sessions during sub-agent work, but the anchor is uniform whether the request originates from the parent session or a sub-session — the URL is identical.
 3. Mutate `args` per a small per-tool injector. **The injector throws if the expected field is missing on the args shape** — defense-in-depth against MCP schema drift or LLM passing the wrong field name. Throws bubble up as approval-create errors; no half-mutated action is persisted.
 
 | Tool                    | Injection field | Strategy                                                                                                                    |
 | ----------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `createJiraIssue`       | `description`   | Append `\n\n---\n[View Thor context](<url>)` to the description body. Throw if `args.description` is missing or non-string. |
+| `createJiraIssue`       | `description`   | Append `\n\n---\n[View Thor trigger](<url>)` to the description body. Throw if `args.description` is missing or non-string. |
 | `addCommentToJiraIssue` | `commentBody`   | Append the same footer to the comment body. Throw if `args.commentBody` is missing or non-string.                           |
 
 4. Call `approvalStore.create(toolInfo.name, mutatedArgs)`. The persisted action carries the URL in `args` from the start.
@@ -535,7 +535,7 @@ Exit criteria:
 
 Scope:
 
-1. Add `GET /runner/v/:anchorId/:triggerId` route to the runner service. Single endpoint — no `/raw` variant; every byte rendered goes through the redaction allowlist. Ingress/Vouch remains the auth boundary for `/runner/*`.
+1. Add `GET /runner/v/:sessionId/:triggerId` route to the runner service. Single endpoint — no `/raw` variant; every byte rendered goes through the redaction allowlist. Routes read `X-Vouch-User`; absence → 401.
 2. Update `docker/ingress/nginx.conf` with a `location /runner/ { ... }` block proxying to the runner service, behind the existing Vouch flow used for `/admin/`.
 3. Server-side render HTML using the hierarchy in this plan (hero / outcome / collapsed timeline).
 4. Implement the state matrix from "Trigger Viewer" above: `completed` / `error` / `aborted` (terminal); `crashed` (superseded); `in_flight` with `<meta refresh>` and a soft staleness banner if the last record is > 5 min old; empty / oversized / redacted variants; branded 401/404/503.
@@ -549,7 +549,7 @@ Exit criteria:
 - Authenticated request renders the requested trigger slice with the correct status from `readTriggerSlice` (one of `completed` / `error` / `aborted` / `crashed` / `in_flight`).
 - A trigger that was superseded by a later `trigger_start` for the same session renders with the red "Crashed" pill and abandonment copy — without any time threshold required.
 - A trigger with no terminal record and no superseder renders as "Running" with `<meta refresh>`; the soft staleness banner appears only when the last record is older than 5 min.
-- Missing Vouch auth is handled upstream at ingress; unauthenticated browser requests are redirected before they reach the runner.
+- Missing `X-Vouch-User` returns 401 (Vouch handles the OAuth redirect upstream of the runner).
 - Unknown session/trigger returns branded 404.
 - Redaction default-deny is enforced (snapshot tests assert no raw tool output appears in HTML for non-allowlisted fields).
 - Mobile snapshot at 375px viewport renders single-column with 16px base font.

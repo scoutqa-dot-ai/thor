@@ -31,7 +31,7 @@ export function buildThorTriggerUrl(
   runnerBaseUrl = "",
 ): string {
   const base = runnerBaseUrl.replace(/\/$/, "");
-  return `${base}/runner/v/${activeTrigger.anchorId}/t/${activeTrigger.triggerId}`;
+  return `${base}/runner/v/${activeTrigger.anchorId}/${activeTrigger.triggerId}`;
 }
 
 export function findActiveTriggerOrThrow(sessionId: string | undefined): ActiveTriggerSnapshot {

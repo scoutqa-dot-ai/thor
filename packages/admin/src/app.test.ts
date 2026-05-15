@@ -61,8 +61,7 @@ describe("admin app sessions dashboard", () => {
     expect(html).toContain('href="/admin/config"');
     expect(html).toContain("Sessions");
     expect(html).toContain("feature/&lt;unsafe&gt;");
-    expect(html).toContain(`/runner/v/${anchor}`);
-    expect(html).toContain(`/runner/v/${anchor}/t/${trigger}`);
+    expect(html).toContain(`/runner/v/${anchor}/${trigger}`);
 
     const fragment = await fetch(`${baseUrl}/admin/sessions/fragment`);
     const fragHtml = await fragment.text();
@@ -80,8 +79,7 @@ describe("admin app sessions dashboard", () => {
 
     const page = await fetch(`${baseUrl}/admin/sessions`);
     const html = await page.text();
-    expect(html).toContain(`/runner/v/${anchor}`);
-    expect(html).toContain(`/runner/v/${anchor}/t/${trigger}`);
+    expect(html).toContain(`/runner/v/${anchor}/${trigger}`);
     expect(html).toContain("unsafe/session: Invalid session id");
     expect(html).toContain("unknown");
   });

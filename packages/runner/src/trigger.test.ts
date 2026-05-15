@@ -329,9 +329,9 @@ describe("runner /trigger orchestration", () => {
     ).toEqual({ ok: true });
 
     await withServer(h.app, async (url) => {
-      const unauthenticated = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
-      expect(unauthenticated.status).toBe(200);
-      expect(await unauthenticated.text()).toContain("completed");
+      const unauthorized = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
+      expect(unauthorized.status).toBe(401);
+      expect(await unauthorized.text()).toContain("Unauthorized");
 
       const missing = await fetch(
         `${url}/runner/v/${anchorId}/00000000-0000-7000-8000-000000000399`,
@@ -339,8 +339,8 @@ describe("runner /trigger orchestration", () => {
           headers: { "X-Vouch-User": "u@example.com" },
         },
       );
-      expect(missing.status).toBe(200);
-      expect(await missing.text()).toContain("Showing anchor context instead");
+      expect(missing.status).toBe(404);
+      expect(await missing.text()).toContain("Trigger not found");
 
       // Malformed (non-UUIDv7) anchor id is rejected without disk I/O.
       const invalidAnchor = await fetch(`${url}/runner/v/not-a-uuid/${triggerId}`, {

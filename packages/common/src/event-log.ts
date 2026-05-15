@@ -152,11 +152,6 @@ export interface ListAnchorSessionStatesOptions {
   limit?: number;
 }
 
-export interface GetAnchorSessionStateOptions {
-  now?: Date;
-  stuckAfterMs?: number;
-}
-
 interface InternalReverseEntry {
   /** sessionId → newest record ts seen for that binding. */
   sessions: Map<string, string>;
@@ -854,19 +849,6 @@ function buildAnchorSessionState(
     };
 }
 
-export function getAnchorSessionState(
-  anchorId: string,
-  options: GetAnchorSessionStateOptions = {},
-): AnchorSessionState | undefined {
-  const now = options.now ?? new Date();
-  const stuckAfterMs = options.stuckAfterMs ?? 5 * 60 * 1000;
-  const entry = reverseLookupAnchor(anchorId);
-  if (entry.sessionIds.length === 0 && entry.subsessionIds.length === 0 && entry.externalKeys.length === 0) {
-    return undefined;
-  }
-  return buildAnchorSessionState(anchorId, entry, { nowMs: now.getTime(), stuckAfterMs });
-}
-
 /**
  * Resolve the request session's anchor, then scan every opencode.session bound
  * to that anchor for an unclosed trigger_start. Sub-sessions don't carry their
@@ -913,13 +895,10 @@ export function findAnchorContext(requestSessionId: string): AnchorContextResult
   }
   if (active.reason === "oversized") return active;
 
-  const state = getAnchorSessionState(anchorId);
   return {
     ok: true,
     anchorId,
-    sessionId: state?.currentSessionId ?? currentSessionForAnchor(anchorId) ?? requestSessionId,
-    triggerId: state?.triggerId,
-    triggerSessionId: state?.ownerSessionId,
+    sessionId: currentSessionForAnchor(anchorId) ?? requestSessionId,
   };
 }
 

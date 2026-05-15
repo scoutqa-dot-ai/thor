@@ -36,7 +36,7 @@ describe("buildThorDisclaimerForSession", () => {
       sessionId: "parent",
       triggerId,
       anchorUrl: `https://thor.example.com/runner/v/${anchorId}`,
-      triggerUrl: `https://thor.example.com/runner/v/${anchorId}/t/${triggerId}`,
+      triggerUrl: `https://thor.example.com/runner/v/${anchorId}/${triggerId}`,
     });
     expect(disclaimer.footer).toContain(`[View Thor context](${disclaimer.anchorUrl})`);
   });
