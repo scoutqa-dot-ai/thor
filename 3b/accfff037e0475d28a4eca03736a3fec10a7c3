@@ -1,0 +1,27 @@
+packages/common/src/env.ts
+  d40047e65c8e9015 41-49,51
+packages/common/src/env.test.ts
+  d40047e65c8e9015 3,8,43-57
+packages/common/src/index.ts
+  d40047e65c8e9015 39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3baccfff037e0475d28a4eca03736a3fec10a7c3",
+  "prompts": {
+    "d40047e65c8e9015": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "12cc0d94-3fbb-489c-b93e-62292ef90c71",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 46,
+      "total_deletions": 7,
+      "accepted_lines": 34,
+      "overriden_lines": 0
+    }
+  }
+}
