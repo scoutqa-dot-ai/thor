@@ -313,7 +313,6 @@ export function renderSessionsFragment(props: SessionsProps): string {
           if (row.sessionIds.length) diagParts.push(`${row.sessionIds.length} sessions`);
           if (row.subsessionIds.length) diagParts.push(`${row.subsessionIds.length} subsessions`);
           if (row.skippedMalformed) diagParts.push(`${row.skippedMalformed} malformed`);
-          if (row.oversized) diagParts.push("oversized");
           if (row.reason) diagParts.push(row.reason);
           const diag = diagParts.map((v) => esc(v)).join("; ");
           return `<tr><td><span class="badge ${esc(row.status)}">${esc(statusLabel(row.status))}</span></td><td><code title="${esc(row.anchorId)}">${esc(short(row.anchorId))}</code></td><td>${esc(short(row.currentSessionId))}${owner}</td><td>${keys}</td><td>${trigger}</td><td>${lastResult}</td><td>${fmtRelative(row.triggerStartedAt, row.ageMs)}</td><td>${fmtRelative(row.lastEventTs, row.idleMs)}</td><td>${ageIdle}</td><td>${diag || "—"}</td></tr>`;

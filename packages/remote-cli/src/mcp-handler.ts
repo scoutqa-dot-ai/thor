@@ -7,7 +7,7 @@ import {
   createLogger,
   ExecResultSchema,
   extractRepoFromCwd,
-  findActiveTriggerOrThrow,
+  findAnchorContext,
   getProxyConfig,
   injectApprovalDisclaimer,
   isProxyName,
@@ -44,10 +44,16 @@ const MAX_DELAY_MS = 30_000;
 function resolveDisclaimerTrigger(
   tool: string,
   sessionId: string | undefined,
-): { anchorId: string; triggerId: string } | undefined {
+): { anchorId: string; triggerId?: string } | undefined {
   if (!approvalToolRequiresDisclaimer(tool)) return undefined;
-  const { anchorId, triggerId } = findActiveTriggerOrThrow(sessionId);
-  return { anchorId, triggerId };
+  if (!sessionId) throw new Error("Disclaimer required: missing Thor session id");
+  const context = findAnchorContext(sessionId);
+  if (!context.ok) {
+    throw new Error(
+      `Disclaimer required: no Thor anchor for session ${sessionId} (${context.reason})`,
+    );
+  }
+  return { anchorId: context.anchorId, triggerId: context.triggerId };
 }
 
 function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
@@ -508,7 +514,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       const approvalArgs = approvalRequired.data.args;
       const formatError = validateDisclaimerCompatibleArgs(toolInfo.name, approvalArgs);
       if (formatError) return fail(formatError);
-      let trigger: { anchorId: string; triggerId: string } | undefined;
+      let trigger: { anchorId: string; triggerId?: string } | undefined;
       try {
         trigger = resolveDisclaimerTrigger(toolInfo.name, context.sessionId);
       } catch (err) {
