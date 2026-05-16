@@ -72,7 +72,7 @@ def test_readonly_flag_and_deny_by_default() -> None:
 
 
 def test_builtins_apply_when_user_rules_empty() -> None:
-    ruleset = parse_ruleset({"repos": {}})
+    ruleset = parse_ruleset({})
 
     atlassian = ruleset.classify("api.atlassian.com")
     assert atlassian.action == "inject"
@@ -208,13 +208,13 @@ def test_user_rule_override_wins_over_builtin() -> None:
 
 
 def test_slack_files_domain_not_covered_by_builtin_slack_rules() -> None:
-    ruleset = parse_ruleset({"repos": {}})
+    ruleset = parse_ruleset({})
 
     assert ruleset.classify("slack-files.com").action == "deny"
 
 
 def test_openai_and_chatgpt_are_passthrough_by_default() -> None:
-    ruleset = parse_ruleset({"repos": {}})
+    ruleset = parse_ruleset({})
 
     assert ruleset.classify("api.media.atlassian.com").action == "passthrough"
     assert ruleset.classify("openai.com").action == "passthrough"
@@ -310,7 +310,6 @@ def test_rule_store_uses_last_good_on_invalid_reload(tmp_path) -> None:
     config_path.write_text(
         json.dumps(
             {
-                "repos": {},
                 "mitmproxy": [
                     {
                         "host": "api.example.com",

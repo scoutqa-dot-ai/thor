@@ -11,8 +11,8 @@
  *     Called by git via GIT_ASKPASS. Parses the URL out of git's prompt
  *     and prints the raw token for git to read as the password.
  *
- * If owner resolution fails or no installation is configured, exits silently
- * (exit 0, no stdout) so the caller falls back to existing auth.
+ * If owner resolution fails or no installation is configured, prints nothing
+ * so the caller can deny the authenticated operation.
  */
 
 import { fileURLToPath } from "node:url";
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     : resolveOwner(args, cwd);
 
   if (!owner) {
-    // Cannot determine owner — silent exit, caller falls back to existing auth
+    // Cannot determine owner; let the caller decide whether the command can run.
     return;
   }
 
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
       process.stdout.write(JSON.stringify(result));
     }
   } catch (err) {
-    // Log error to stderr for debugging, but don't fail the wrapper
+    // Log error to stderr for debugging; callers treat empty stdout as no token.
     process.stderr.write(`${formatAuthHelperError(err, TAG)}\n`);
   }
 }

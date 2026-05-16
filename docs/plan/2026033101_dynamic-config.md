@@ -1,5 +1,10 @@
 # Dynamic Workspace Config
 
+> **Partially superseded (2026-05-16):** The `repos` and channels blocks shown in
+> this plan have been removed. The `createConfigLoader` mechanism still exists and
+> still serves `owners` / `mitmproxy` / `mitmproxy_passthrough`. See current
+> `packages/common/src/workspace-config.ts`.
+
 Single `config.json` for the entire workspace — repos, channels, and MCP proxies. All config is dynamic (no restart required) except upstream connection details.
 
 ## Motivation

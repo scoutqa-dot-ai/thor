@@ -5,12 +5,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import {
-  appendAlias,
-  appendSessionEvent,
-  formatThorContextFooter,
-  type WorkspaceConfig,
-} from "@thor/common";
+import { appendAlias, appendSessionEvent, formatThorContextFooter } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.js";
 import type { UpstreamConnection } from "./upstream.js";
@@ -52,16 +47,9 @@ describe("remote-cli MCP endpoints", () => {
   let connectedUpstreams: string[];
   let closeRemoteCli: () => Promise<void>;
 
-  const config: WorkspaceConfig = {
-    repos: {
-      acme: {
-        proxies: ["atlassian"],
-      },
-    },
-  };
-
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
+    vi.stubEnv("POSTHOG_API_KEY", "test-posthog-key");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
     vi.stubEnv("WORKLOG_DIR", worklogDir);
     vi.stubEnv("RUNNER_BASE_URL", "https://thor.example.com/");
@@ -71,12 +59,8 @@ describe("remote-cli MCP endpoints", () => {
     createJiraIssueDelay = undefined;
     createJiraIssueFailure = undefined;
     connectedUpstreams = [];
-    const getConfig = Object.assign(() => config, {
-      invalidate: () => {},
-    });
 
     const remoteCli = createRemoteCliApp({
-      getConfig,
       mcp: {
         approvalsDir,
         isProduction: true,
@@ -152,7 +136,11 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(upstreams.status).toBe(200);
     expect(JSON.parse(upstreamBody.stdout)).toEqual({
-      upstreams: [{ name: "atlassian", toolCount: 0, connected: false }],
+      upstreams: [
+        { name: "atlassian", toolCount: 0, connected: false },
+        { name: "grafana", toolCount: 0, connected: false },
+        { name: "posthog", toolCount: 0, connected: false },
+      ],
     });
 
     const listedTools = await postJson("/exec/mcp", {
@@ -190,19 +178,14 @@ describe("remote-cli MCP endpoints", () => {
     };
 
     expect(health.status).toBe(200);
-    expect(healthBody.mcp.configured).toBe(1);
+    expect(healthBody.mcp.configured).toBe(3);
     expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 3 });
   });
 
-  it("warms only upstreams enabled by repo config", async () => {
+  it("warms every registered upstream", async () => {
     await closeRemoteCli();
 
-    const getConfig = Object.assign(() => config, {
-      invalidate: () => {},
-    });
-
     const remoteCli = createRemoteCliApp({
-      getConfig,
       mcp: {
         approvalsDir,
         isProduction: true,
@@ -223,7 +206,7 @@ describe("remote-cli MCP endpoints", () => {
     closeRemoteCli = remoteCli.close;
     await remoteCli.warmUp();
 
-    expect(connectedUpstreams).toEqual(["atlassian"]);
+    expect(connectedUpstreams.sort()).toEqual(["atlassian", "grafana", "posthog"]);
   });
 
   it("rejects worktree session directories for MCP authz", async () => {

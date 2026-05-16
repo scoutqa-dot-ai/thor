@@ -3,6 +3,11 @@
 **Date**: 2026-04-23
 **Status**: Ready to implement
 
+> **Note (2026-05-16):** Config examples in this plan show a `"repos": {...}` block
+> and an `orgs` key. The `repos` block has since been removed from
+> `WorkspaceConfigSchema`, and the org map landed under the name `owners` (not
+> `orgs`). The installation-ID lookup mechanism described here is otherwise current.
+
 > **Post-implementation note (2026-05-13):** pure issue comments are no longer unsupported. Mentioned pure-issue `issue_comment.created` events now route through `github:issue:<localRepo>:<repoFullName>#<issueNumber>`; PR-backed issue comments still use pending branch resolution. The older PR-scoped-only passages, ignore-early examples, and `pure_issue_comment_unsupported` tables below are historical plan text and are superseded by shipped behavior.
 
 > **Post-implementation note (2026-04-26):** the workspace-config block was renamed `orgs` → `owners` in commit `3d050bc3` to match GitHub's `owner` terminology (an installation can belong to a user or an org). References to `orgs.<name>.github_app_installation_id` below now read `owners.<name>.github_app_installation_id` in shipped code.

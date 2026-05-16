@@ -42,7 +42,7 @@ def _response_text(response: object) -> str:
 
 def test_health_endpoint_returns_200(tmp_path) -> None:
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host=HEALTH_HOST))
@@ -54,7 +54,7 @@ def test_health_endpoint_returns_200(tmp_path) -> None:
 
 def test_unknown_host_is_denied(tmp_path) -> None:
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host="example.com"))
@@ -67,7 +67,7 @@ def test_unknown_host_is_denied(tmp_path) -> None:
 
 def test_connect_unknown_host_is_denied(tmp_path) -> None:
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host="example.com", method="CONNECT"))
@@ -82,7 +82,6 @@ def test_missing_env_fails_closed_with_502(tmp_path) -> None:
     config.write_text(
         json.dumps(
             {
-                "repos": {},
                 "mitmproxy": [
                     {
                         "host": "api.example.com",
@@ -106,7 +105,7 @@ def test_builtin_missing_env_fails_closed_with_502(tmp_path, monkeypatch) -> Non
     monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
 
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/conversations.replies"))
@@ -118,7 +117,7 @@ def test_builtin_missing_env_fails_closed_with_502(tmp_path, monkeypatch) -> Non
 
 def test_connect_slack_host_with_path_scoped_rule_is_allowed(tmp_path) -> None:
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host="slack.com", method="CONNECT"))
@@ -129,7 +128,7 @@ def test_connect_slack_host_with_path_scoped_rule_is_allowed(tmp_path) -> None:
 
 def test_connect_slack_files_host_with_path_scoped_rule_is_allowed(tmp_path) -> None:
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host="files.slack.com", method="CONNECT"))
@@ -143,7 +142,6 @@ def test_readonly_rule_blocks_non_read_method(tmp_path) -> None:
     config.write_text(
         json.dumps(
             {
-                "repos": {},
                 "mitmproxy": [
                     {
                         "host": "api.example.com",
@@ -169,7 +167,7 @@ def test_builtin_atlassian_rule_blocks_non_read_method(tmp_path, monkeypatch) ->
     monkeypatch.setenv("ATLASSIAN_AUTH", "Basic test")
 
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host="api.atlassian.com", method="POST"))
@@ -184,7 +182,7 @@ def test_builtin_jira_attachment_upload_rules_inject_headers(tmp_path, monkeypat
     monkeypatch.setenv("ATLASSIAN_AUTH", "Basic test")
 
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flows = [
@@ -217,7 +215,7 @@ def test_builtin_jira_attachment_upload_rules_stay_path_and_method_scoped(
     monkeypatch.setenv("ATLASSIAN_AUTH", "Basic test")
 
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flows = [
@@ -256,7 +254,7 @@ def test_disallowed_builtin_slack_update_returns_403(tmp_path, monkeypatch) -> N
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/chat.update"))
@@ -271,7 +269,7 @@ def test_disallowed_builtin_slack_delete_returns_403(tmp_path, monkeypatch) -> N
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/chat.delete"))
@@ -286,7 +284,7 @@ def test_disallowed_builtin_slack_reaction_remove_returns_403(tmp_path, monkeypa
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/reactions.remove"))
@@ -301,7 +299,7 @@ def test_builtin_slack_post_message_is_denied_without_auth_injection(tmp_path, m
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/chat.postMessage"))
@@ -320,7 +318,7 @@ def test_builtin_slack_reaction_add_rule_sets_headers(tmp_path, monkeypatch) -> 
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(request=FakeRequest(host="slack.com", method="POST", path="/api/reactions.add"))
@@ -334,7 +332,7 @@ def test_builtin_slack_file_download_rule_is_readonly(tmp_path, monkeypatch) -> 
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(
@@ -355,7 +353,7 @@ def test_builtin_slack_file_upload_rule_allows_post(tmp_path, monkeypatch) -> No
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"repos": {}}), encoding="utf-8")
+    config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
     flow = FakeFlow(
@@ -376,7 +374,6 @@ def test_inject_rule_sets_headers(tmp_path) -> None:
     config.write_text(
         json.dumps(
             {
-                "repos": {},
                 "mitmproxy": [
                     {
                         "host": "api.example.com",

@@ -1,17 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   loadWorkspaceConfig,
   createConfigLoader,
-  getAllowedChannelIds,
-  getChannelRepoMap,
   extractRepoFromCwd,
-  getRepoUpstreams,
   getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
+  resolveSafeRepoDirectory,
+  resolveSlackChannelRepoDirectory,
 } from "./workspace-config.js";
 
 let tempDir: string;
@@ -31,12 +30,9 @@ function writeConfig(filename: string, data: unknown): string {
 }
 
 describe("loadWorkspaceConfig", () => {
-  it("loads a valid config with repos only", () => {
-    const path = writeConfig("config.json", {
-      repos: { "my-repo": { channels: ["C123"] } },
-    });
-    const config = loadWorkspaceConfig(path);
-    expect(config.repos["my-repo"].channels).toEqual(["C123"]);
+  it("loads an empty config", () => {
+    const path = writeConfig("config.json", {});
+    expect(loadWorkspaceConfig(path)).toEqual({});
   });
 
   it("throws on missing file", () => {
@@ -49,14 +45,13 @@ describe("loadWorkspaceConfig", () => {
     expect(() => loadWorkspaceConfig(path)).toThrow("Invalid JSON");
   });
 
-  it("throws on schema violation (missing repos)", () => {
-    const path = writeConfig("config.json", { owners: {} });
+  it("rejects unknown top-level fields", () => {
+    const path = writeConfig("config.json", { repos: {} });
     expect(() => loadWorkspaceConfig(path)).toThrow("Invalid workspace config");
   });
 
   it("rejects non-positive owner installation IDs with path details", () => {
     const path = writeConfig("config.json", {
-      repos: { "my-repo": {} },
       owners: {
         acme: { github_app_installation_id: 0 },
       },
@@ -64,58 +59,10 @@ describe("loadWorkspaceConfig", () => {
     expect(() => loadWorkspaceConfig(path)).toThrow("owners.acme.github_app_installation_id");
   });
 
-  it("rejects the legacy top-level proxies block with a migration hint", () => {
-    const path = writeConfig("config.json", {
-      repos: {},
-      proxies: {},
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow('Top-level "proxies" has moved to code');
-  });
-
-  it("throws on duplicate channel IDs across repos", () => {
-    const path = writeConfig("config.json", {
-      repos: {
-        "repo-a": { channels: ["C123"] },
-        "repo-b": { channels: ["C123"] },
-      },
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow('Duplicate channel ID "C123"');
-  });
-
-  it("accepts repo with valid proxies array", () => {
-    const path = writeConfig("config.json", {
-      repos: { "my-repo": { channels: ["C1"], proxies: ["posthog"] } },
-    });
-    const config = loadWorkspaceConfig(path);
-    expect(config.repos["my-repo"].proxies).toEqual(["posthog"]);
-  });
-
-  it("rejects removed slack proxy in repo proxies", () => {
-    const path = writeConfig("config.json", {
-      repos: { "my-repo": { proxies: ["slack"] } },
-    });
-
-    expect(() => loadWorkspaceConfig(path)).toThrow(
-      'Unknown proxy "slack". Available proxies: atlassian, grafana, posthog',
-    );
-  });
-
-  it("throws when repo references unknown proxy", () => {
-    const path = writeConfig("config.json", {
-      repos: { "my-repo": { proxies: ["nonexistent"] } },
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow(
-      "Available proxies: atlassian, grafana, posthog",
-    );
-  });
-
   it("loads the tracked workspace config example", () => {
     const config = loadWorkspaceConfig(
       join(process.cwd(), "docs/examples/workspace-config.example.json"),
     );
-
-    expect(config.repos["your-repo"]).toBeDefined();
-    expect(config.repos["your-repo"].proxies).toEqual(["atlassian", "grafana"]);
     expect(config.owners).toEqual({
       "scoutqa-dot-ai": { github_app_installation_id: 126669985 },
     });
@@ -123,7 +70,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("accepts mitmproxy rules and passthrough host list", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [
         {
           host: "api.example.com",
@@ -151,7 +97,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects mitmproxy rule without host selector", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [{ headers: { Authorization: "Bearer ${TOKEN}" } }],
     });
 
@@ -162,7 +107,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects mitmproxy rule with both host and host_suffix", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [
         {
           host: "api.example.com",
@@ -179,7 +123,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects invalid passthrough entries", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy_passthrough: ["https://openai.com"],
     });
 
@@ -190,7 +133,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects mitmproxy rules with invalid path_prefix", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [
         {
           host: "api.example.com",
@@ -205,7 +147,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects mitmproxy rules with invalid path_suffix", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [
         {
           host: "api.example.com",
@@ -220,7 +161,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects mitmproxy rules with empty headers", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [{ host: "api.example.com", headers: {} }],
     });
 
@@ -229,36 +169,29 @@ describe("loadWorkspaceConfig", () => {
 });
 
 describe("createConfigLoader", () => {
-  it("loads config on first call", () => {
-    const path = writeConfig("config.json", {
-      repos: { r: { channels: ["C1"] } },
-    });
-    const getConfig = createConfigLoader(path);
-    const config = getConfig();
-    expect(config.repos.r.channels).toEqual(["C1"]);
-  });
-
   it("picks up file changes on next call", () => {
     const path = writeConfig("config.json", {
-      repos: { r: { channels: ["C1"] } },
+      mitmproxy_passthrough: ["api.openai.com"],
     });
     const getConfig = createConfigLoader(path);
-    expect(getConfig().repos.r.channels).toEqual(["C1"]);
+    expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com"]);
 
-    writeFileSync(path, JSON.stringify({ repos: { r: { channels: ["C1", "C2"] } } }));
-    expect(getConfig().repos.r.channels).toEqual(["C1", "C2"]);
+    writeFileSync(
+      path,
+      JSON.stringify({ mitmproxy_passthrough: ["api.openai.com", ".anthropic.com"] }),
+    );
+    expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com", ".anthropic.com"]);
   });
 
   it("falls back to last good config on corrupt file", () => {
     const path = writeConfig("config.json", {
-      repos: { r: { channels: ["C1"] } },
+      mitmproxy_passthrough: ["api.openai.com"],
     });
     const getConfig = createConfigLoader(path);
-    expect(getConfig().repos.r.channels).toEqual(["C1"]);
+    expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com"]);
 
     writeFileSync(path, "corrupt{{{");
-    const config = getConfig();
-    expect(config.repos.r.channels).toEqual(["C1"]);
+    expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com"]);
   });
 
   it("throws when no file and no previous config", () => {
@@ -267,34 +200,63 @@ describe("createConfigLoader", () => {
   });
 });
 
-describe("getAllowedChannelIds", () => {
-  it("returns union of all channel IDs", () => {
-    const ids = getAllowedChannelIds({
-      repos: {
-        a: { channels: ["C1", "C2"] },
-        b: { channels: ["C3"] },
-      },
-    });
-    expect(ids).toEqual(new Set(["C1", "C2", "C3"]));
+describe("Slack channel repo routing helpers", () => {
+  const resolverFor = (mapping: Record<string, string>) => (repoName: string) => mapping[repoName];
+
+  it("rejects unsafe repo names and missing directories", () => {
+    expect(resolveSafeRepoDirectory("../escape", resolverFor({})).reason).toContain(
+      "repo name only",
+    );
+    expect(resolveSafeRepoDirectory("ghost", resolverFor({})).reason).toContain("not found");
   });
 
-  it("handles repos without channels", () => {
-    const ids = getAllowedChannelIds({ repos: { a: {} } });
-    expect(ids.size).toBe(0);
+  it("rejects repo realpaths outside /workspace/repos", () => {
+    expect(resolveSafeRepoDirectory("thor", resolverFor({ thor: tempDir })).reason).toContain(
+      "outside /workspace/repos",
+    );
   });
-});
 
-describe("getChannelRepoMap", () => {
-  it("maps channels to repo names", () => {
-    const map = getChannelRepoMap({
-      repos: {
-        "repo-a": { channels: ["C1"] },
-        "repo-b": { channels: ["C2", "C3"] },
-      },
+  it("falls back to default repo for missing or invalid channel overrides", () => {
+    const root = join(tempDir, "repo-by-slack-channel");
+    mkdirSync(root);
+    const resolveRepo = resolverFor({
+      thor: "/workspace/repos/thor",
+      opencode: "/workspace/repos/opencode",
     });
-    expect(map.get("C1")).toBe("repo-a");
-    expect(map.get("C2")).toBe("repo-b");
-    expect(map.get("C3")).toBe("repo-b");
+
+    expect(resolveSlackChannelRepoDirectory("C_MISSING", "thor", root, resolveRepo)).toMatchObject({
+      directory: "/workspace/repos/thor",
+      source: "default",
+    });
+
+    writeFileSync(join(root, "C123.txt"), "opencode\n");
+    expect(resolveSlackChannelRepoDirectory("C123", "thor", root, resolveRepo)).toMatchObject({
+      directory: "/workspace/repos/opencode",
+      source: "override",
+    });
+
+    writeFileSync(join(root, "C_BAD.txt"), "unknown-repo\n");
+    expect(resolveSlackChannelRepoDirectory("C_BAD", "thor", root, resolveRepo)).toMatchObject({
+      directory: "/workspace/repos/thor",
+      source: "default",
+      fallbackReason: "repo directory not found for unknown-repo",
+    });
+  });
+
+  it("rejects unsafe channel IDs and falls back silently when override is missing", () => {
+    const root = join(tempDir, "repo-by-slack-channel");
+    mkdirSync(root);
+    const resolveRepo = resolverFor({ thor: "/workspace/repos/thor" });
+
+    expect(resolveSlackChannelRepoDirectory("../C123", "thor", root, resolveRepo)).toMatchObject({
+      directory: "/workspace/repos/thor",
+      source: "default",
+      fallbackReason: "invalid channel id",
+    });
+
+    const missing = resolveSlackChannelRepoDirectory("C_NONE", "thor", root, resolveRepo);
+    expect(missing).toMatchObject({ directory: "/workspace/repos/thor", source: "default" });
+    expect(missing.fallbackReason).toBeUndefined();
   });
 });
 
@@ -350,52 +312,20 @@ describe("extractRepoFromCwd", () => {
   });
 });
 
-describe("getRepoUpstreams", () => {
-  it("returns proxies array for a configured repo", () => {
-    const config = loadWorkspaceConfig(
-      writeConfig("config.json", {
-        repos: { "acme-app": { proxies: ["atlassian", "posthog"] } },
-      }),
-    );
-    expect(getRepoUpstreams(config, "acme-app")).toEqual(["atlassian", "posthog"]);
-  });
-
-  it("returns empty array for repo without proxies field", () => {
-    const config = loadWorkspaceConfig(
-      writeConfig("config.json", { repos: { "acme-app": { channels: ["C1"] } } }),
-    );
-    expect(getRepoUpstreams(config, "acme-app")).toEqual([]);
-  });
-
-  it("returns undefined for unknown repo", () => {
-    const config = loadWorkspaceConfig(writeConfig("config.json", { repos: {} }));
-    expect(getRepoUpstreams(config, "unknown")).toBeUndefined();
-  });
-});
-
 describe("getInstallationIdForOwner", () => {
   it("returns installation id for known owner", () => {
     expect(
       getInstallationIdForOwner(
-        {
-          repos: {},
-          owners: { acme: { github_app_installation_id: 12345 } },
-        },
+        { owners: { acme: { github_app_installation_id: 12345 } } },
         "acme",
       ),
     ).toBe(12345);
   });
 
   it("returns undefined for unknown or missing owner map", () => {
-    expect(getInstallationIdForOwner({ repos: {} }, "acme")).toBeUndefined();
+    expect(getInstallationIdForOwner({}, "acme")).toBeUndefined();
     expect(
-      getInstallationIdForOwner(
-        {
-          repos: {},
-          owners: { other: { github_app_installation_id: 1 } },
-        },
-        "acme",
-      ),
+      getInstallationIdForOwner({ owners: { other: { github_app_installation_id: 1 } } }, "acme"),
     ).toBeUndefined();
   });
 });
