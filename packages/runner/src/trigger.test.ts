@@ -290,6 +290,25 @@ function bindSessionToAnchor(sessionId: string, anchorId: string): void {
   if (!result.ok) throw result.error;
 }
 
+function jsonLineWithSplitUtf8Text(buildRecord: (text: string) => Record<string, unknown>): {
+  line: string;
+  markerText: string;
+} {
+  const marker = "\u{1f680}";
+  const markerText = `${marker} split ok`;
+  const baseLine = JSON.stringify(buildRecord(markerText));
+  const markerIndex = baseLine.indexOf(marker);
+  if (markerIndex === -1) throw new Error("marker missing from JSON fixture");
+  const bytesBeforeMarker = Buffer.byteLength(baseLine.slice(0, markerIndex), "utf8");
+  const fillerLength = 64 * 1024 - 1 - bytesBeforeMarker;
+  if (fillerLength <= 0) throw new Error("JSON fixture prefix is too large");
+
+  const line = JSON.stringify(buildRecord(`${"a".repeat(fillerLength)}${markerText}`));
+  const finalMarkerIndex = line.indexOf(marker);
+  expect(Buffer.byteLength(line.slice(0, finalMarkerIndex), "utf8")).toBe(64 * 1024 - 1);
+  return { line, markerText };
+}
+
 function readAliases(): Array<{ aliasType: string; aliasValue: string; anchorId: string }> {
   try {
     return readFileSync(`${worklogDir}/aliases.jsonl`, "utf8")
@@ -463,6 +482,66 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("(metadata omitted, 4.0 KB)");
       // Stale follow-up after taskEnd is filtered out.
       expect(html).not.toContain("STALE FOLLOW-UP");
+    });
+  });
+
+  it("preserves UTF-8 text split across subagent JSONL read chunks", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000512";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("utf8-parent-session", anchorId);
+    const subSessionId = "ses_subagent_utf8_split_test_001";
+    const taskStart = 1_700_000_000_000;
+    const taskEnd = taskStart + 10_000;
+    mkdirSync(`${worklogDir}/sessions`, { recursive: true });
+
+    const { line, markerText } = jsonLineWithSplitUtf8Text((text) => ({
+      schemaVersion: 1,
+      ts: new Date(taskStart + 100).toISOString(),
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "prt_utf8_split", type: "text", text },
+        },
+      },
+    }));
+    writeFileSync(`${worklogDir}/sessions/${subSessionId}.jsonl`, `${line}\n`);
+
+    appendSessionEvent("utf8-parent-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("utf8-parent-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: { subagent_type: "thinker", prompt: "go" },
+              output: `task_id: ${subSessionId}\nAll done.`,
+              metadata: { sessionId: subSessionId },
+              time: { start: taskStart, end: taskEnd },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("utf8-parent-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain(markerText);
+      expect(html).not.toContain("\ufffd split ok");
     });
   });
 

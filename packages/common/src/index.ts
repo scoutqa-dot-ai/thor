@@ -83,6 +83,7 @@ export {
   mintAnchor,
   mintTriggerId,
   sessionLogPath,
+  iterateJsonlFileLinesSync,
   isUuidV7,
   UUID_V7_RE,
 } from "./event-log.js";

@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { getWorklogDir } from "./worklog.js";
 import { createLogger, logWarn, truncate } from "./logger.js";
@@ -419,7 +420,7 @@ export function appendAlias(
  * skipped. Use this for hot paths over potentially large JSONL files where
  * buffering the whole file via `readFileSync` would waste memory.
  */
-function* iterateFileLinesSync(path: string): Generator<string> {
+export function* iterateJsonlFileLinesSync(path: string): Generator<string> {
   let fd: number;
   try {
     fd = openSync(path, "r");
@@ -428,16 +429,19 @@ function* iterateFileLinesSync(path: string): Generator<string> {
   }
   try {
     const buf = Buffer.allocUnsafe(64 * 1024);
+    const decoder = new StringDecoder("utf8");
     let leftover = "";
     while (true) {
       const n = readSync(fd, buf, 0, buf.length, null);
       if (n === 0) break;
-      const chunk = leftover + buf.toString("utf8", 0, n);
+      const chunk = leftover + decoder.write(buf.subarray(0, n));
       const lines = chunk.split("\n");
       leftover = lines.pop() ?? "";
       for (const line of lines) if (line.length > 0) yield line;
     }
-    if (leftover.length > 0) yield leftover;
+    const tail = decoder.end();
+    const finalLine = leftover + tail;
+    if (finalLine.length > 0) yield finalLine;
   } finally {
     closeSync(fd);
   }
@@ -461,7 +465,7 @@ function* streamSessionRecords(sessionId: string): Generator<SessionEventLogReco
   let linesRead = 0;
   let yielded = 0;
   try {
-    for (const line of iterateFileLinesSync(path)) {
+    for (const line of iterateJsonlFileLinesSync(path)) {
       bytesRead += line.length + 1;
       linesRead++;
       try {

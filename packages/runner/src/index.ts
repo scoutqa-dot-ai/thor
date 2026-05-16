@@ -12,7 +12,7 @@ import type {
   ToolStateError,
 } from "@opencode-ai/sdk";
 import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
-import { closeSync, openSync, readFileSync, readSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   createLogger,
@@ -47,6 +47,7 @@ import {
   ProgressApprovalRequiredSchema,
   withKeyLock,
   isOmittedMarker,
+  iterateJsonlFileLinesSync,
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -1696,35 +1697,6 @@ function partTimeWindow(part: ViewerToolPart): { start: number; end?: number } |
 }
 
 /**
- * Stream complete newline-terminated lines from a file synchronously, in
- * 64 KB chunks, without buffering the whole file in memory. A trailing
- * unterminated line at EOF is yielded too. Empty lines are skipped.
- */
-function* iterateFileLinesSync(path: string): Generator<string> {
-  let fd: number;
-  try {
-    fd = openSync(path, "r");
-  } catch {
-    return;
-  }
-  try {
-    const buf = Buffer.allocUnsafe(64 * 1024);
-    let leftover = "";
-    while (true) {
-      const n = readSync(fd, buf, 0, buf.length, null);
-      if (n === 0) break;
-      const chunk = leftover + buf.toString("utf8", 0, n);
-      const lines = chunk.split("\n");
-      leftover = lines.pop() ?? "";
-      for (const line of lines) if (line.length > 0) yield line;
-    }
-    if (leftover.length > 0) yield leftover;
-  } finally {
-    closeSync(fd);
-  }
-}
-
-/**
  * Render a subagent session's activity inline. Subagent sessions are written
  * to their own `ses_*.jsonl` files (no trigger boundaries — task tool spawns
  * them outside the trigger endpoint), so we stream the file line-by-line,
@@ -1759,7 +1731,7 @@ function renderInlineSubagent(
   const readStarted = performance.now();
   let bytesRead = 0;
   let linesRead = 0;
-  for (const line of iterateFileLinesSync(path)) {
+  for (const line of iterateJsonlFileLinesSync(path)) {
     bytesRead += line.length + 1;
     linesRead++;
     try {
