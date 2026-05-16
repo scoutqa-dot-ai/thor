@@ -1,7 +1,7 @@
-import { findActiveTrigger } from "./event-log.js";
+import { findActiveTrigger, findAnchorContext } from "./event-log.js";
 
-export function formatThorDisclaimerFooter(triggerUrl: string): string {
-  return ["", "---", `AI-generated — verify before acting. [View trigger](${triggerUrl})`].join(
+export function formatThorContextFooter(thorUrl: string): string {
+  return ["", "---", `AI-generated — verify before acting. [View Thor context](${thorUrl})`].join(
     "\n",
   );
 }
@@ -12,9 +12,18 @@ export interface ActiveTriggerSnapshot {
   triggerId: string;
 }
 
-export interface ThorDisclaimerContext extends ActiveTriggerSnapshot {
-  triggerUrl: string;
+export interface ThorDisclaimerContext {
+  anchorId: string;
+  sessionId?: string;
+  triggerId?: string;
+  triggerUrl?: string;
+  anchorUrl: string;
   footer: string;
+}
+
+export function buildThorAnchorUrl(anchor: { anchorId: string }, runnerBaseUrl = ""): string {
+  const base = runnerBaseUrl.replace(/\/$/, "");
+  return `${base}/runner/v/${anchor.anchorId}`;
 }
 
 export function buildThorTriggerUrl(
@@ -39,17 +48,37 @@ export function findActiveTriggerOrThrow(sessionId: string | undefined): ActiveT
 }
 
 export function buildThorDisclaimer(
-  trigger: { anchorId: string; triggerId: string },
+  trigger: { anchorId: string; triggerId?: string },
   runnerBaseUrl = "",
-): { triggerUrl: string; footer: string } {
-  const triggerUrl = buildThorTriggerUrl(trigger, runnerBaseUrl);
-  return { triggerUrl, footer: formatThorDisclaimerFooter(triggerUrl) };
+): { anchorUrl: string; triggerUrl?: string; footer: string } {
+  const anchorUrl = buildThorAnchorUrl(trigger, runnerBaseUrl);
+  const triggerUrl = trigger.triggerId
+    ? buildThorTriggerUrl(
+        { anchorId: trigger.anchorId, triggerId: trigger.triggerId },
+        runnerBaseUrl,
+      )
+    : undefined;
+  return { anchorUrl, triggerUrl, footer: formatThorContextFooter(triggerUrl ?? anchorUrl) };
 }
 
 export function buildThorDisclaimerForSession(
   sessionId: string | undefined,
   runnerBaseUrl = "",
 ): ThorDisclaimerContext {
-  const trigger = findActiveTriggerOrThrow(sessionId);
-  return { ...trigger, ...buildThorDisclaimer(trigger, runnerBaseUrl) };
+  if (!sessionId) {
+    throw new Error("Disclaimer required: missing Thor session id");
+  }
+  const context = findAnchorContext(sessionId);
+  if (!context.ok) {
+    throw new Error(
+      `Disclaimer required: no Thor anchor for session ${sessionId} (${context.reason})`,
+    );
+  }
+  const { anchorId, sessionId: anchorSessionId, triggerId } = context;
+  return {
+    anchorId,
+    sessionId: anchorSessionId,
+    triggerId,
+    ...buildThorDisclaimer({ anchorId, triggerId }, runnerBaseUrl),
+  };
 }

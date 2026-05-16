@@ -75,6 +75,7 @@ export {
   appendAlias,
   readTriggerSlice,
   findActiveTrigger,
+  findAnchorContext,
   resolveAlias,
   reverseLookupAnchor,
   listAnchors,
@@ -86,13 +87,13 @@ export {
   sessionLogPath,
   isUuidV7,
   UUID_V7_RE,
-  MAX_SESSION_FILE_BYTES,
 } from "./event-log.js";
 export type {
   SessionEventLogRecord,
   AliasRecord,
   TriggerSlice,
   ActiveTriggerResult,
+  AnchorContextResult,
   ReverseAnchorEntry,
   AnchorSessionState,
   AnchorSessionStatus,
@@ -134,9 +135,10 @@ export type { GitHubAppBotIdentity, GitHubAppBotIdentityInput } from "./github-i
 export {
   buildThorDisclaimer,
   buildThorDisclaimerForSession,
+  buildThorAnchorUrl,
   buildThorTriggerUrl,
   findActiveTriggerOrThrow,
-  formatThorDisclaimerFooter,
+  formatThorContextFooter,
 } from "./disclaimer.js";
 export type { ActiveTriggerSnapshot, ThorDisclaimerContext } from "./disclaimer.js";
 export {

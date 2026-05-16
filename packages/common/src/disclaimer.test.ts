@@ -35,9 +35,10 @@ describe("buildThorDisclaimerForSession", () => {
       anchorId,
       sessionId: "parent",
       triggerId,
+      anchorUrl: `https://thor.example.com/runner/v/${anchorId}`,
       triggerUrl: `https://thor.example.com/runner/v/${anchorId}/${triggerId}`,
     });
-    expect(disclaimer.footer).toContain(`[View trigger](${disclaimer.triggerUrl})`);
+    expect(disclaimer.footer).toContain(`[View Thor context](${disclaimer.triggerUrl})`);
   });
 
   it("fails fast with actionable reasons when disclaimer context is unsafe", () => {
@@ -46,7 +47,23 @@ describe("buildThorDisclaimerForSession", () => {
     );
 
     expect(() => buildThorDisclaimerForSession("missing")).toThrowError(
-      "Disclaimer required: no single active trigger for session missing (none)",
+      "Disclaimer required: no Thor anchor for session missing (none)",
     );
+  });
+
+  it("builds an anchor footer when no trigger is open", () => {
+    expect(appendAlias({ aliasType: "opencode.session", aliasValue: "idle", anchorId })).toEqual({
+      ok: true,
+    });
+
+    const disclaimer = buildThorDisclaimerForSession("idle", "https://thor.example.com/");
+
+    expect(disclaimer).toMatchObject({
+      anchorId,
+      sessionId: "idle",
+      anchorUrl: `https://thor.example.com/runner/v/${anchorId}`,
+    });
+    expect(disclaimer.triggerId).toBeUndefined();
+    expect(disclaimer.footer).toContain(`[View Thor context](${disclaimer.anchorUrl})`);
   });
 });
