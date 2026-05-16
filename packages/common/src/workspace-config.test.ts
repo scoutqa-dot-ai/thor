@@ -10,8 +10,7 @@ import {
   getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
-  readSlackChannelRepoOverride,
-  resolveConfiguredRepoDirectory,
+  resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
 } from "./workspace-config.js";
 
@@ -268,113 +267,60 @@ describe("createConfigLoader", () => {
 describe("Slack channel repo routing helpers", () => {
   const resolverFor = (mapping: Record<string, string>) => (repoName: string) => mapping[repoName];
 
-  it("reads repo-name-only channel overrides", () => {
-    const root = join(tempDir, "repo-by-slack-channel");
-    mkdirSync(root);
-    writeFileSync(join(root, "C123.txt"), "thor\n");
-
-    expect(readSlackChannelRepoOverride("C123", root)).toEqual({
-      status: "found",
-      repoName: "thor",
-    });
-    expect(readSlackChannelRepoOverride("C999", root)).toEqual({ status: "missing" });
+  it("rejects unsafe repo names and missing directories", () => {
+    expect(resolveSafeRepoDirectory("../escape", resolverFor({})).reason).toContain(
+      "repo name only",
+    );
+    expect(resolveSafeRepoDirectory("ghost", resolverFor({})).reason).toContain("not found");
   });
 
-  it("rejects unsafe channel IDs and path-like repo override content", () => {
-    const root = join(tempDir, "repo-by-slack-channel");
-    mkdirSync(root);
-    writeFileSync(join(root, "C123.txt"), "../thor\n");
-
-    expect(readSlackChannelRepoOverride("../C123", root)).toMatchObject({ status: "invalid" });
-    expect(readSlackChannelRepoOverride("C123", root)).toMatchObject({
-      status: "invalid",
-      reason: "repo override must be a repo name only",
-    });
-  });
-
-  it("rejects oversized override files", () => {
-    const root = join(tempDir, "repo-by-slack-channel");
-    mkdirSync(root);
-    writeFileSync(join(root, "C123.txt"), "x".repeat(300));
-
-    expect(readSlackChannelRepoOverride("C123", root)).toMatchObject({
-      status: "invalid",
-      reason: "repo override exceeds 256 bytes",
-    });
-  });
-
-  it("resolves only configured repos under /workspace/repos", () => {
-    expect(
-      resolveConfiguredRepoDirectory(
-        { repos: { thor: {} } },
-        "thor",
-        resolverFor({ thor: "/workspace/repos/thor" }),
-      ),
-    ).toMatchObject({
-      directory: "/workspace/repos/thor",
-    });
-    expect(
-      resolveConfiguredRepoDirectory(
-        { repos: {} },
-        "thor",
-        resolverFor({ thor: "/workspace/repos/thor" }),
-      ).reason,
-    ).toContain("is not configured");
-    expect(
-      resolveConfiguredRepoDirectory({ repos: { "../escape": {} } }, "../escape", resolverFor({}))
-        .reason,
-    ).toContain("repo name only");
+  it("rejects repo realpaths outside /workspace/repos", () => {
+    expect(resolveSafeRepoDirectory("thor", resolverFor({ thor: tempDir })).reason).toContain(
+      "outside /workspace/repos",
+    );
   });
 
   it("falls back to default repo for missing or invalid channel overrides", () => {
     const root = join(tempDir, "repo-by-slack-channel");
     mkdirSync(root);
-    const config = { repos: { thor: {}, opencode: {} } };
     const resolveRepo = resolverFor({
       thor: "/workspace/repos/thor",
       opencode: "/workspace/repos/opencode",
     });
 
-    expect(
-      resolveSlackChannelRepoDirectory(config, "C_MISSING", "thor", root, resolveRepo),
-    ).toMatchObject({
+    expect(resolveSlackChannelRepoDirectory("C_MISSING", "thor", root, resolveRepo)).toMatchObject({
       directory: "/workspace/repos/thor",
       source: "default",
     });
 
     writeFileSync(join(root, "C123.txt"), "opencode\n");
-    expect(
-      resolveSlackChannelRepoDirectory(config, "C123", "thor", root, resolveRepo),
-    ).toMatchObject({
+    expect(resolveSlackChannelRepoDirectory("C123", "thor", root, resolveRepo)).toMatchObject({
       directory: "/workspace/repos/opencode",
       source: "override",
     });
 
     writeFileSync(join(root, "C_BAD.txt"), "unknown-repo\n");
-    expect(
-      resolveSlackChannelRepoDirectory(config, "C_BAD", "thor", root, resolveRepo),
-    ).toMatchObject({
+    expect(resolveSlackChannelRepoDirectory("C_BAD", "thor", root, resolveRepo)).toMatchObject({
       directory: "/workspace/repos/thor",
       source: "default",
-      fallbackReason: "repo unknown-repo is not configured",
+      fallbackReason: "repo directory not found for unknown-repo",
     });
   });
 
-  it("does not treat prototype properties as configured repos", () => {
-    const resolveRepo = resolverFor({ toString: "/workspace/repos/toString" });
-    expect(resolveConfiguredRepoDirectory({ repos: {} }, "toString", resolveRepo).reason).toContain(
-      "is not configured",
-    );
-  });
+  it("rejects unsafe channel IDs and falls back silently when override is missing", () => {
+    const root = join(tempDir, "repo-by-slack-channel");
+    mkdirSync(root);
+    const resolveRepo = resolverFor({ thor: "/workspace/repos/thor" });
 
-  it("rejects configured repo realpaths outside /workspace/repos", () => {
-    expect(
-      resolveConfiguredRepoDirectory(
-        { repos: { thor: {} } },
-        "thor",
-        resolverFor({ thor: tempDir }),
-      ).reason,
-    ).toContain("outside /workspace/repos");
+    expect(resolveSlackChannelRepoDirectory("../C123", "thor", root, resolveRepo)).toMatchObject({
+      directory: "/workspace/repos/thor",
+      source: "default",
+      fallbackReason: "invalid channel id",
+    });
+
+    const missing = resolveSlackChannelRepoDirectory("C_NONE", "thor", root, resolveRepo);
+    expect(missing).toMatchObject({ directory: "/workspace/repos/thor", source: "default" });
+    expect(missing.fallbackReason).toBeUndefined();
   });
 });
 

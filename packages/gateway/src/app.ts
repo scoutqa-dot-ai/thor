@@ -9,7 +9,7 @@ import {
   logInfo,
   resolveExistingDirectoryWithinRoot,
   resolveCorrelationKeys,
-  resolveConfiguredRepoDirectory,
+  resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
   truncate,
   resolveRepoDirectory,
@@ -930,7 +930,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     throw new Error("SLACK_DEFAULT_REPO is required");
   }
   if (config.getConfig && config.slackDefaultRepo !== undefined) {
-    const defaultRepo = resolveConfiguredRepoDirectory(config.getConfig(), config.slackDefaultRepo);
+    const defaultRepo = resolveSafeRepoDirectory(config.slackDefaultRepo);
     if (!defaultRepo.directory) {
       throw new Error(`Invalid SLACK_DEFAULT_REPO: ${defaultRepo.reason}`);
     }
@@ -940,7 +940,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     ? (channel: string): { directory?: string; reason?: string } => {
         if (!config.slackDefaultRepo) return { reason: "SLACK_DEFAULT_REPO is required" };
         const resolved = resolveSlackChannelRepoDirectory(
-          config.getConfig!(),
           channel,
           config.slackDefaultRepo,
           config.slackChannelRepoMemoryRoot,

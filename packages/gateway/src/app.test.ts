@@ -63,51 +63,61 @@ vi.mock("@thor/common", async (importOriginal) => {
     ...actual,
     resolveRepoDirectory: (repoName: string) =>
       mappedRepos.has(repoName) ? `/workspace/repos/${repoName}` : undefined,
-    resolveConfiguredRepoDirectory: (config: WorkspaceConfig, repoName: string) => {
+    resolveSafeRepoDirectory: (repoName: string) => {
       if (repoName.includes("/") || repoName.includes("\\")) {
         return { reason: "repo name must be a repo name only" };
       }
-      if (!config.repos[repoName]) return { reason: `repo ${repoName} is not configured` };
       return mappedRepos.has(repoName)
         ? { directory: `/workspace/repos/${repoName}` }
         : { reason: `repo directory not found for ${repoName}` };
     },
     resolveSlackChannelRepoDirectory: (
-      config: WorkspaceConfig,
       channel: string,
       defaultRepo: string,
       memoryRoot?: string,
     ) => {
-      const override = actual.readSlackChannelRepoOverride(channel, memoryRoot);
-      const resolveRepo = (
-        repo: string,
-        source: "override" | "default",
-        fallbackReason?: string,
-      ) => {
-        if (!Object.prototype.hasOwnProperty.call(config.repos, repo)) {
-          return { reason: `repo ${repo} is not configured` };
-        }
-        return mappedRepos.has(repo)
-          ? {
-              directory: `/workspace/repos/${repo}`,
-              repoName: repo,
-              source,
-              fallbackReason,
-            }
+      const resolveRepo = (repo: string) =>
+        mappedRepos.has(repo)
+          ? { directory: `/workspace/repos/${repo}` }
           : { reason: `repo directory not found for ${repo}` };
-      };
 
-      if (override.status === "found") {
-        const overrideResolved = resolveRepo(override.repoName, "override");
-        if ("directory" in overrideResolved) return overrideResolved;
-        return resolveRepo(defaultRepo, "default", overrideResolved.reason);
+      let overrideRepo: string | undefined;
+      let invalidReason: string | undefined;
+      const channelOk =
+        channel.length > 0 &&
+        channel !== "." &&
+        channel !== ".." &&
+        !channel.includes("/") &&
+        !channel.includes("\\");
+      if (!channelOk) {
+        invalidReason = "invalid channel id";
+      } else if (memoryRoot) {
+        try {
+          overrideRepo =
+            readFileSync(join(memoryRoot, `${channel}.txt`), "utf-8").trim() || undefined;
+        } catch (err) {
+          if (err && typeof err === "object" && "code" in err && err.code !== "ENOENT") {
+            invalidReason = err instanceof Error ? err.message : String(err);
+          }
+        }
       }
 
-      return resolveRepo(
-        defaultRepo,
-        "default",
-        override.status === "invalid" ? override.reason : undefined,
-      );
+      if (overrideRepo) {
+        const r = resolveRepo(overrideRepo);
+        if (r.directory) {
+          return { directory: r.directory, repoName: overrideRepo, source: "override" };
+        }
+        invalidReason = r.reason;
+      }
+
+      const fb = resolveRepo(defaultRepo);
+      if (!fb.directory) return { reason: fb.reason };
+      return {
+        directory: fb.directory,
+        repoName: defaultRepo,
+        source: "default",
+        fallbackReason: invalidReason,
+      };
     },
     resolveCorrelationKeys: (rawKeys: string[]) =>
       correlationKeyAliases.get(rawKeys[0] ?? "") ?? rawKeys[0] ?? "",
