@@ -280,7 +280,9 @@ describe("validateGitArgs", () => {
       ).toBeNull();
       expect(
         resolveGitArgs(["clone", "https://github.com/acme/web.git"], undefined, options),
-      ).toEqual({ args: ["clone", "https://github.com/acme/web.git", "/workspace/repos/web"] });
+      ).toEqual({
+        args: ["clone", "--", "https://github.com/acme/web.git", "/workspace/repos/web"],
+      });
 
       expectGitDenied(["clone", "https://github.com/acme/web.git"]);
       expect(

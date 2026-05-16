@@ -437,7 +437,7 @@ function resolveClone(args: string[], allowedPrefixes: readonly string[]): Resol
   const destination = `${WORKSPACE_REPOS_ROOT}/${repoName}`;
   if (!isSafeCloneDestination(destination)) return deny("git clone");
 
-  return { args: ["clone", source, destination] };
+  return { args: ["clone", "--", source, destination] };
 }
 
 function isAllowedCloneSource(source: string, allowedPrefixes: readonly string[]): boolean {
