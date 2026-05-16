@@ -154,6 +154,7 @@ export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
 // --- Loader ---
 
 const REPOS_PREFIX = "/workspace/repos";
+export const SLACK_CHANNEL_REPO_MEMORY_ROOT = "/workspace/memory/thor/repo-by-slack-channel";
 
 /**
  * Load and validate workspace config from a JSON file.
@@ -290,6 +291,98 @@ export function resolveRepoDirectory(repoName: string): string | undefined {
     // Path does not exist on disk
     return undefined;
   }
+}
+
+function isFilenameOnly(value: string): boolean {
+  return value.length > 0 && value !== "." && value !== ".." && !value.includes("/") && !value.includes("\\");
+}
+
+function isRepoNameOnly(value: string): boolean {
+  return isFilenameOnly(value);
+}
+
+export type SlackChannelRepoOverrideResult =
+  | { status: "found"; repoName: string }
+  | { status: "missing" }
+  | { status: "invalid"; reason: string; repoName?: string };
+
+export function readSlackChannelRepoOverride(
+  channelId: string,
+  memoryRoot = SLACK_CHANNEL_REPO_MEMORY_ROOT,
+): SlackChannelRepoOverrideResult {
+  if (!isFilenameOnly(channelId)) {
+    return { status: "invalid", reason: "invalid channel id" };
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(join(memoryRoot, `${channelId}.txt`), "utf-8");
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return { status: "missing" };
+    }
+    return { status: "invalid", reason: error instanceof Error ? error.message : String(error) };
+  }
+
+  const repoName = raw.trim();
+  if (!repoName) return { status: "invalid", reason: "empty repo name" };
+  if (!isRepoNameOnly(repoName)) {
+    return { status: "invalid", reason: "repo override must be a repo name only", repoName };
+  }
+  return { status: "found", repoName };
+}
+
+export function resolveConfiguredRepoDirectory(
+  config: WorkspaceConfig,
+  repoName: string,
+): { directory?: string; reason?: string } {
+  if (!isRepoNameOnly(repoName)) return { reason: "repo name must be a repo name only" };
+  if (!config.repos[repoName]) return { reason: `repo ${repoName} is not configured` };
+  const directory = resolveRepoDirectory(repoName);
+  if (!directory) return { reason: `repo directory not found for ${repoName}` };
+  if (!isAllowedDirectory(directory)) {
+    return { reason: `repo directory for ${repoName} is outside ${WORKSPACE_REPOS_ROOT}` };
+  }
+  return { directory };
+}
+
+export function resolveSlackChannelRepoDirectory(
+  config: WorkspaceConfig,
+  channelId: string,
+  defaultRepoName: string,
+  memoryRoot = SLACK_CHANNEL_REPO_MEMORY_ROOT,
+): {
+  directory?: string;
+  repoName?: string;
+  source?: "override" | "default";
+  fallbackReason?: string;
+  reason?: string;
+} {
+  const override = readSlackChannelRepoOverride(channelId, memoryRoot);
+  if (override.status === "found") {
+    const resolved = resolveConfiguredRepoDirectory(config, override.repoName);
+    if (resolved.directory) {
+      return { directory: resolved.directory, repoName: override.repoName, source: "override" };
+    }
+    const fallback = resolveConfiguredRepoDirectory(config, defaultRepoName);
+    return fallback.directory
+      ? {
+          directory: fallback.directory,
+          repoName: defaultRepoName,
+          source: "default",
+          fallbackReason: resolved.reason,
+        }
+      : { reason: fallback.reason ?? resolved.reason };
+  }
+
+  const fallback = resolveConfiguredRepoDirectory(config, defaultRepoName);
+  if (!fallback.directory) return { reason: fallback.reason };
+  return {
+    directory: fallback.directory,
+    repoName: defaultRepoName,
+    source: "default",
+    fallbackReason: override.status === "invalid" ? override.reason : undefined,
+  };
 }
 
 /**

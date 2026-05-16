@@ -27,6 +27,7 @@ jobs:
       OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}
+      SLACK_DEFAULT_REPO: acme-multi-hyphen-repo
       SLACK_E2E_CHANNEL_ID: ${{ vars.SLACK_E2E_CHANNEL_ID || vars.SLACK_CHANNEL_ID }}
       SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       GITHUB_APP_ID: ${{ vars.THOR_GITHUB_APP_ID }}

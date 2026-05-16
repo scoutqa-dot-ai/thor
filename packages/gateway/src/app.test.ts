@@ -74,6 +74,32 @@ vi.mock("@thor/common", async (importOriginal) => {
     ...actual,
     resolveRepoDirectory: (repoName: string) =>
       mappedRepos.has(repoName) ? `/workspace/repos/${repoName}` : undefined,
+    resolveConfiguredRepoDirectory: (config: WorkspaceConfig, repoName: string) => {
+      if (repoName.includes("/") || repoName.includes("\\")) {
+        return { reason: "repo name must be a repo name only" };
+      }
+      if (!config.repos[repoName]) return { reason: `repo ${repoName} is not configured` };
+      return mappedRepos.has(repoName)
+        ? { directory: `/workspace/repos/${repoName}` }
+        : { reason: `repo directory not found for ${repoName}` };
+    },
+    resolveSlackChannelRepoDirectory: (
+      config: WorkspaceConfig,
+      channel: string,
+      defaultRepo: string,
+      memoryRoot?: string,
+    ) => {
+      const override = actual.readSlackChannelRepoOverride(channel, memoryRoot);
+      const repo = override.status === "found" ? override.repoName : defaultRepo;
+      if (!config.repos[repo]) return { reason: `repo ${repo} is not configured` };
+      return mappedRepos.has(repo)
+        ? {
+            directory: `/workspace/repos/${repo}`,
+            repoName: repo,
+            source: repo === defaultRepo ? "default" : "override",
+          }
+        : { reason: `repo directory not found for ${repo}` };
+    },
     resolveCorrelationKeys: (rawKeys: string[]) =>
       correlationKeyAliases.get(rawKeys[0] ?? "") ?? rawKeys[0] ?? "",
     hasSessionForCorrelationKey: (correlationKey: string) => sessionKeys.has(correlationKey),
@@ -260,6 +286,7 @@ async function withServer<T>(
     shortDelayMs: 0,
     longDelayMs: 0,
     getConfig: fakeConfigLoader(["C123"], [["C123", "test-repo"]]),
+    slackDefaultRepo: "test-repo",
     slackClient: slack.client,
     ...extraConfig,
   });
@@ -2674,12 +2701,14 @@ describe("gateway", () => {
     });
   });
 
-  it("ignores events from channels not in the allowlist", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
+  it("accepts Slack events from channels without config mappings via default repo", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
 
     await withServer(
       fetchImpl,
-      async (baseUrl) => {
+      async (baseUrl, queue) => {
         const body = JSON.stringify({
           type: "event_callback",
           event_id: "EvBlocked",
@@ -2705,10 +2734,13 @@ describe("gateway", () => {
         });
 
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ ok: true, ignored: true });
-        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(await response.json()).toEqual({ ok: true });
+
+        await queue.flush();
+        const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
+        expect(triggerCall).toBeDefined();
       },
-      { getConfig: fakeConfigLoader(["C_ALLOWED"]) },
+      { getConfig: fakeConfigLoader(["C_ALLOWED"]), slackDefaultRepo: "test-repo" },
     );
   });
 
@@ -2753,8 +2785,82 @@ describe("gateway", () => {
         const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
         expect(triggerCall).toBeDefined();
       },
-      { getConfig: fakeConfigLoader(["C_ALLOWED"], [["C_ALLOWED", "test-repo"]]) },
+      { getConfig: fakeConfigLoader(["C_ALLOWED"], [["C_ALLOWED", "test-repo"]]), slackDefaultRepo: "test-repo" },
     );
+  });
+
+  it("routes Slack events through the channel repo memory override file", async () => {
+    const memoryRoot = mkdtempSync(join(tmpdir(), "gateway-slack-repo-memory-"));
+    writeFileSync(join(memoryRoot, "C_OVERRIDE.txt"), "thor\n");
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    try {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, queue) => {
+          const body = JSON.stringify({
+            type: "event_callback",
+            event_id: "EvMemoryOverride",
+            team_id: "T123",
+            event: {
+              type: "app_mention",
+              user: "U123",
+              text: "<@U999> route to thor",
+              ts: "1710000000.070",
+              channel: "C_OVERRIDE",
+            },
+          });
+          const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+          const response = await fetch(`${baseUrl}/slack/events`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Slack-Request-Timestamp": timestamp,
+              "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true });
+
+          await queue.flush();
+
+          const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
+          expect(triggerCall).toBeDefined();
+          expect(JSON.parse(String(triggerCall?.[1]?.body))).toMatchObject({
+            directory: "/workspace/repos/thor",
+          });
+        },
+        {
+          getConfig: fakeConfigLoader([], [
+            ["C123", "test-repo"],
+            ["C_OVERRIDE", "thor"],
+          ]),
+          slackDefaultRepo: "test-repo",
+          slackChannelRepoMemoryRoot: memoryRoot,
+        },
+      );
+    } finally {
+      rmSync(memoryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails app construction when the Slack default repo is invalid", () => {
+    expect(() =>
+      createGatewayApp({
+        signingSecret: "signing-secret",
+        slackBotToken: "xoxb-test",
+        slackBotUserId: "U0BOTEXAMPLE",
+        runnerUrl: "http://runner.test",
+        getConfig: fakeConfigLoader([], [["C123", "test-repo"]]),
+        slackDefaultRepo: "missing-repo",
+        disableQueueInterval: true,
+      }),
+    ).toThrow("Invalid SLACK_DEFAULT_REPO");
   });
 
   it("accepts signed Slack interactivity payloads on the configured endpoint", async () => {

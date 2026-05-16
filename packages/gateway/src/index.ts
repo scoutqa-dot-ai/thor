@@ -27,6 +27,7 @@ const { app } = createGatewayApp({
   slackBotToken: config.slackBotToken,
   slackApiBaseUrl: config.slackApiBaseUrl,
   slackBotUserId: config.slackBotUserId,
+  slackDefaultRepo: config.slackDefaultRepo,
   remoteCliHost: config.remoteCliHost,
   remoteCliPort: config.remoteCliPort,
   internalSecret: config.thorInternalSecret,
@@ -44,10 +45,11 @@ const { app } = createGatewayApp({
 app.listen(config.port, () => {
   let configSummary: Record<string, unknown> = {};
   try {
-    const config = getConfig();
+    const workspaceConfig = getConfig();
     configSummary = {
-      allowedChannels: [...getAllowedChannelIds(config)],
-      repos: Object.keys(config.repos),
+      allowedChannels: [...getAllowedChannelIds(workspaceConfig)],
+      repos: Object.keys(workspaceConfig.repos),
+      slackDefaultRepo: config.slackDefaultRepo,
     };
   } catch {
     configSummary = { config: "not available yet" };

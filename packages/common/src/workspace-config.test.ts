@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -12,6 +12,9 @@ import {
   getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
+  readSlackChannelRepoOverride,
+  resolveConfiguredRepoDirectory,
+  resolveSlackChannelRepoDirectory,
 } from "./workspace-config.js";
 
 let tempDir: string;
@@ -295,6 +298,95 @@ describe("getChannelRepoMap", () => {
     expect(map.get("C1")).toBe("repo-a");
     expect(map.get("C2")).toBe("repo-b");
     expect(map.get("C3")).toBe("repo-b");
+  });
+});
+
+describe("Slack channel repo routing helpers", () => {
+  it("reads repo-name-only channel overrides", () => {
+    const root = join(tempDir, "repo-by-slack-channel");
+    mkdirSync(root);
+    writeFileSync(join(root, "C123.txt"), "thor\n");
+
+    expect(readSlackChannelRepoOverride("C123", root)).toEqual({ status: "found", repoName: "thor" });
+    expect(readSlackChannelRepoOverride("C999", root)).toEqual({ status: "missing" });
+  });
+
+  it("rejects unsafe channel IDs and path-like repo override content", () => {
+    const root = join(tempDir, "repo-by-slack-channel");
+    mkdirSync(root);
+    writeFileSync(join(root, "C123.txt"), "../thor\n");
+
+    expect(readSlackChannelRepoOverride("../C123", root)).toMatchObject({ status: "invalid" });
+    expect(readSlackChannelRepoOverride("C123", root)).toMatchObject({
+      status: "invalid",
+      reason: "repo override must be a repo name only",
+    });
+  });
+
+  it("resolves only configured repos under /workspace/repos", () => {
+    const repoName = `thor-common-test-${Date.now()}`;
+    const repoPath = join("/workspace/repos", repoName);
+    mkdirSync(repoPath, { recursive: true });
+    try {
+      expect(resolveConfiguredRepoDirectory({ repos: { [repoName]: {} } }, repoName)).toMatchObject({
+        directory: repoPath,
+      });
+      expect(resolveConfiguredRepoDirectory({ repos: {} }, repoName).reason).toContain(
+        "is not configured",
+      );
+      expect(resolveConfiguredRepoDirectory({ repos: { "../escape": {} } }, "../escape").reason).toContain(
+        "repo name only",
+      );
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to default repo for missing or invalid channel overrides", () => {
+    const root = join(tempDir, "repo-by-slack-channel");
+    mkdirSync(root);
+    const defaultRepo = `thor-common-default-${Date.now()}`;
+    const overrideRepo = `thor-common-override-${Date.now()}`;
+    const defaultPath = join("/workspace/repos", defaultRepo);
+    const overridePath = join("/workspace/repos", overrideRepo);
+    mkdirSync(defaultPath, { recursive: true });
+    mkdirSync(overridePath, { recursive: true });
+    try {
+      const config = { repos: { [defaultRepo]: {}, [overrideRepo]: {} } };
+      expect(resolveSlackChannelRepoDirectory(config, "C_MISSING", defaultRepo, root)).toMatchObject({
+        directory: defaultPath,
+        source: "default",
+      });
+
+      writeFileSync(join(root, "C123.txt"), `${overrideRepo}\n`);
+      expect(resolveSlackChannelRepoDirectory(config, "C123", defaultRepo, root)).toMatchObject({
+        directory: overridePath,
+        source: "override",
+      });
+
+      writeFileSync(join(root, "C_BAD.txt"), "unknown-repo\n");
+      expect(resolveSlackChannelRepoDirectory(config, "C_BAD", defaultRepo, root)).toMatchObject({
+        directory: defaultPath,
+        source: "default",
+        fallbackReason: "repo unknown-repo is not configured",
+      });
+    } finally {
+      rmSync(defaultPath, { recursive: true, force: true });
+      rmSync(overridePath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects configured repo realpaths outside /workspace/repos", () => {
+    const repoName = `thor-common-link-${Date.now()}`;
+    const linkPath = join("/workspace/repos", repoName);
+    symlinkSync(tempDir, linkPath, "dir");
+    try {
+      expect(resolveConfiguredRepoDirectory({ repos: { [repoName]: {} } }, repoName).reason).toContain(
+        "outside /workspace/repos",
+      );
+    } finally {
+      rmSync(linkPath, { force: true });
+    }
   });
 });
 

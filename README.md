@@ -143,6 +143,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `THOR_E2E_TEST_HELPERS`             | No       | `runner`                             | Enables secret-gated deterministic runner e2e helpers                                                                |
 | `SLACK_BOT_TOKEN`                   | Yes      | `remote-cli`, `gateway`, `mitmproxy` | Slack bot token for controlled `slack-post-message`, gateway Slack calls, and mitmproxy default injection            |
 | `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                            | Bot user ID used to ignore our own messages                                                                          |
+| `SLACK_DEFAULT_REPO`                | Yes      | `gateway`                            | Configured repo name used for Slack channels with no valid repo override file                                        |
 | `SLACK_SIGNING_SECRET`              | Yes      | `gateway`                            | Slack webhook verification                                                                                           |
 | `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | `gateway`                            | Signature timestamp tolerance                                                                                        |
 | `VOUCH_CALLBACK_URL`                | No       | `vouch`                              | OAuth callback URL                                                                                                   |

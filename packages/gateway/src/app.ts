@@ -9,8 +9,8 @@ import {
   logInfo,
   resolveExistingDirectoryWithinRoot,
   resolveCorrelationKeys,
-  getAllowedChannelIds,
-  getChannelRepoMap,
+  resolveConfiguredRepoDirectory,
+  resolveSlackChannelRepoDirectory,
   truncate,
   resolveRepoDirectory,
   type ConfigLoader,
@@ -462,6 +462,10 @@ export interface GatewayAppConfig extends RunnerDeps {
   internalExec?: InternalExecClient;
   /** GitHub mention debounce delay in ms. Default: 3000. */
   githubMentionDelayMs?: number;
+  /** Required default configured repo name for Slack channels without a valid override. */
+  slackDefaultRepo?: string;
+  /** Test override for Slack channel repo memory root. */
+  slackChannelRepoMemoryRoot?: string;
 }
 
 const InteractivityBodySchema = z.object({
@@ -922,16 +926,35 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     return { status: "push_wake_triggered" };
   };
 
-  /** Read allowed channels dynamically from config on each call. */
-  const isChannelAllowed = (channel: string): boolean => {
-    if (!config.getConfig) return true; // no config = allow all
-    return getAllowedChannelIds(config.getConfig()).has(channel);
-  };
-  /** Read channel→repo map dynamically from config on each call. */
-  const getChannelRepos = (): Map<string, string> | undefined => {
-    if (!config.getConfig) return undefined;
-    return getChannelRepoMap(config.getConfig());
-  };
+  if (config.getConfig && !config.slackDefaultRepo) {
+    throw new Error("SLACK_DEFAULT_REPO is required");
+  }
+  if (config.getConfig && config.slackDefaultRepo !== undefined) {
+    const defaultRepo = resolveConfiguredRepoDirectory(config.getConfig(), config.slackDefaultRepo);
+    if (!defaultRepo.directory) {
+      throw new Error(`Invalid SLACK_DEFAULT_REPO: ${defaultRepo.reason}`);
+    }
+  }
+
+  const resolveSlackDirectory = config.getConfig
+    ? (channel: string): { directory?: string; reason?: string } => {
+        if (!config.slackDefaultRepo) return { reason: "SLACK_DEFAULT_REPO is required" };
+        const resolved = resolveSlackChannelRepoDirectory(
+          config.getConfig!(),
+          channel,
+          config.slackDefaultRepo,
+          config.slackChannelRepoMemoryRoot,
+        );
+        if (resolved.fallbackReason) {
+          logInfo(log, "slack_repo_override_fallback", {
+            channel,
+            defaultRepo: config.slackDefaultRepo,
+            reason: resolved.fallbackReason,
+          });
+        }
+        return resolved.directory ? { directory: resolved.directory } : { reason: resolved.reason };
+      }
+    : undefined;
 
   const runnerDeps: RunnerDeps = {
     runnerUrl: config.runnerUrl,
@@ -996,7 +1019,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           interrupt: hasInterrupt,
           onAccepted: ack,
           onRejected: reject,
-          channelRepos: getChannelRepos(),
+          slackDirectoryForChannel: resolveSlackDirectory,
         });
 
         if (plan.kind === "reroute") {
@@ -1217,17 +1240,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // Ignore our own messages
     if (event.user === selfUserId) {
       logInfo(log, "event_ignored_self", { eventId });
-      res.status(200).json({ ok: true, ignored: true });
-      return;
-    }
-
-    // Block non-allowlisted channels
-    if (
-      "channel" in event &&
-      typeof event.channel === "string" &&
-      !isChannelAllowed(event.channel)
-    ) {
-      logInfo(log, "event_ignored_channel_not_allowed", { eventId, channel: event.channel });
       res.status(200).json({ ok: true, ignored: true });
       return;
     }

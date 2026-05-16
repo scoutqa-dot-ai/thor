@@ -38,6 +38,7 @@ jobs:
       # Fakes: services not exercised by sandbox e2e, but referenced at compose startup.
       SLACK_BOT_TOKEN: ci-fake
       SLACK_BOT_USER_ID: U000000000
+      SLACK_DEFAULT_REPO: ci-fake
       SLACK_SIGNING_SECRET: ci-fake
       GRAFANA_URL: http://grafana-mcp:8000
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake

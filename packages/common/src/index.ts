@@ -4,10 +4,14 @@ export {
   validateWorkspaceConfig,
   getAllowedChannelIds,
   getChannelRepoMap,
+  readSlackChannelRepoOverride,
+  resolveConfiguredRepoDirectory,
+  resolveSlackChannelRepoDirectory,
   resolveRepoDirectory,
   isAllowedDirectory,
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
+  SLACK_CHANNEL_REPO_MEMORY_ROOT,
   extractRepoFromCwd,
   getRepoUpstreams,
   getInstallationIdForOwner,
@@ -61,6 +65,7 @@ export type {
   OwnerConfig,
   ValidationIssue,
   ValidationResult,
+  SlackChannelRepoOverrideResult,
 } from "./workspace-config.js";
 export type { ProxyName } from "./proxies.js";
 export { writeToolCallLog, appendJsonlWorklog, getWorklogDir } from "./worklog.js";
