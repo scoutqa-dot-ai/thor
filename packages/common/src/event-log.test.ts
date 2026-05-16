@@ -115,6 +115,76 @@ describe("session event log", () => {
     expect(reasoning._truncated).toBeUndefined();
   });
 
+  it("preserves the render skeleton when projecting oversized tool opencode_event", () => {
+    // Oversized tool output: the schema projection should keep tool name,
+    // callID, status, part id, and replace the large `output` field with an
+    // omitted marker so the viewer can still thread the call together.
+    const largeOutput = "z".repeat(10_000);
+    expect(
+      appendSessionEvent("projected-tool", {
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "ses_test",
+            time: 1_700_000_000_000,
+            part: {
+              id: "prt_tool_big",
+              messageID: "msg_test",
+              type: "tool",
+              tool: "read",
+              callID: "call_test",
+              state: {
+                status: "completed",
+                title: "Reads /etc/passwd",
+                input: { path: "/etc/passwd" },
+                output: largeOutput,
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual({ ok: true });
+
+    const line = readFileSync(sessionLogPath("projected-tool"), "utf8").trim();
+    const record = JSON.parse(line);
+    expect(record.event.type).toBe("message.part.updated");
+    expect(record.event.properties.sessionID).toBe("ses_test");
+    expect(record.event.properties.part).toMatchObject({
+      id: "prt_tool_big",
+      type: "tool",
+      tool: "read",
+      callID: "call_test",
+      state: {
+        status: "completed",
+        title: "Reads /etc/passwd",
+        input: { path: "/etc/passwd" }, // small input stays inline
+      },
+    });
+    expect(record.event.properties.part.state.output).toEqual({
+      _omitted: true,
+      bytes: expect.any(Number),
+    });
+    expect(record.event.properties.part.state.output.bytes).toBeGreaterThan(9000);
+  });
+
+  it("falls back to generic truncation envelope when projection cannot recognize the event", () => {
+    // Unknown top-level event.type — schema rejects, generic fallback applies.
+    expect(
+      appendSessionEvent("unknown-event", {
+        type: "opencode_event",
+        event: {
+          type: "totally.new.event.kind",
+          properties: { huge: "x".repeat(8000) },
+        },
+      }),
+    ).toEqual({ ok: true });
+
+    const line = readFileSync(sessionLogPath("unknown-event"), "utf8").trim();
+    const record = JSON.parse(line);
+    expect(record.event).toEqual({ _truncated: true });
+  });
+
   it("preserves required trigger_end fields when truncating oversized errors", () => {
     expect(
       appendSessionEvent("truncated-end", {

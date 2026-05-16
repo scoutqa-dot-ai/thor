@@ -4,6 +4,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { getWorklogDir } from "./worklog.js";
 import { truncate } from "./logger.js";
+import { projectOpencodeEvent } from "./opencode-event-view.js";
 
 export const ALIAS_TYPES = [
   "slack.thread_id",
@@ -242,6 +243,31 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   // Never truncate text/reasoning parts — long assistant replies or thinking
   // chains exceed 4 KB legitimately, and the debugging UI needs them whole.
   if (isTextOrReasoningOpencodeEvent(candidate)) return candidate as T;
+
+  // Try schema-driven projection first for opencode events: keeps the render
+  // skeleton (event type, part type, tool, callID, status) and replaces large
+  // leaves with { _omitted: true, bytes: N } markers. If the schema rejects
+  // the shape, fall through to the generic truncation envelope below.
+  if (record.type === "opencode_event" && "event" in candidate) {
+    const projected =
+      projectOpencodeEvent(candidate.event) ??
+      projectOpencodeEvent(candidate.event, { threshold: 0 });
+    if (projected) {
+      const next: Record<string, unknown> = {
+        schemaVersion: 1,
+        ts: String(record.ts),
+        type: "opencode_event",
+        event: projected,
+        _truncated: true,
+      };
+      if (Buffer.byteLength(JSON.stringify(next), "utf8") < MAX_RECORD_BYTES) {
+        return next as T & { _truncated?: true };
+      }
+      // Projected skeleton still too large (extremely unusual — would need
+      // many fields each just under the marker threshold). Fall through to
+      // the generic envelope.
+    }
+  }
 
   if ("event" in candidate) candidate.event = { _truncated: true };
   if ("payload" in candidate) candidate.payload = { _truncated: true };
