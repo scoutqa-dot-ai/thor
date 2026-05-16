@@ -272,8 +272,74 @@ describe("validateGitArgs", () => {
   });
 
   describe("blocked commands", () => {
-    it("blocks git clone", () => {
-      expectGitDenied(["clone", "https://github.com/foo/bar"]);
+    it("allows only allowlisted HTTPS GitHub clone sources and derives repo destinations", () => {
+      const options = { gitCloneAllowedOwners: ["acme"] };
+
+      expect(
+        validateGitArgs(["clone", "https://github.com/acme/web.git"], undefined, options),
+      ).toBeNull();
+      expect(
+        resolveGitArgs(["clone", "https://github.com/acme/web.git"], undefined, options),
+      ).toEqual({
+        args: [
+          "-c",
+          "credential.useHttpPath=true",
+          "clone",
+          "--",
+          "https://github.com/acme/web.git",
+          "/workspace/repos/web",
+        ],
+      });
+
+      expectGitDenied(["clone", "https://github.com/acme/web.git"]);
+      expect(
+        validateGitArgs(
+          ["clone", "https://github.com/acme/web.git", "/workspace/repos/web"],
+          undefined,
+          options,
+        ),
+      ).toContain("Load skill using-git");
+      expect(
+        validateGitArgs(["clone", "https://github.com/other/web.git"], undefined, options),
+      ).toContain("configured owners: acme");
+      expect(
+        validateGitArgs(["clone", "https://gitlab.com/acme/web.git"], undefined, options),
+      ).toContain("Load skill using-git");
+      expect(
+        validateGitArgs(["clone", "git@github.com:acme/web.git"], undefined, options),
+      ).toContain("Load skill using-git");
+
+      const dotSegmentSources = [
+        "https://github.com/acme/../other/web.git",
+        "https://github.com/acme/%2e%2e/other/web.git",
+        "https://github.com/acme/%2E%2E/other/web.git",
+        "https://github.com/acme/%2e./other/web.git",
+        "https://github.com/acme/.%2e/other/web.git",
+        "https://github.com/acme/web.git/extra",
+        "https://github.com/acme/web.git?depth=1",
+        "https://x-access-token@github.com/acme/web.git",
+      ];
+      for (const source of dotSegmentSources) {
+        expect(validateGitArgs(["clone", source], undefined, options)).toContain(
+          "Load skill using-git",
+        );
+      }
+
+      expect(
+        validateGitArgs(["clone", "https://github.com/acme/unsafe%2Frepo.git"], undefined, options),
+      ).toContain("Load skill using-git");
+
+      expect(
+        validateGitArgs(["clone", "https://github.com/acme/link.git"], undefined, options),
+      ).toBeNull();
+
+      expect(
+        validateGitArgs(
+          ["clone", "--recurse-submodules", "https://github.com/acme/web.git"],
+          undefined,
+          options,
+        ),
+      ).toContain("Load skill using-git");
     });
 
     it("blocks git init", () => {

@@ -58,13 +58,38 @@ describe("service env", () => {
         ...githubEnv,
         THOR_INTERNAL_SECRET: "secret",
         SLACK_BOT_TOKEN: "xoxb-test",
+        GIT_CLONE_ALLOWED_OWNERS: "acme, acme-labs",
       }),
     ).toMatchObject({
       port: 3004,
       slackBotToken: "xoxb-test",
       gitIdentityName: "thor-app[bot]",
       gitIdentityEmail: "12345+thor-app[bot]@users.noreply.github.com",
+      gitCloneAllowedOwners: ["acme", "acme-labs"],
     });
+    expect(
+      loadRemoteCliEnv({
+        ...githubEnv,
+        THOR_INTERNAL_SECRET: "secret",
+        SLACK_BOT_TOKEN: "xoxb-test",
+      }).gitCloneAllowedOwners,
+    ).toEqual([]);
+    expect(() =>
+      loadRemoteCliEnv({
+        ...githubEnv,
+        THOR_INTERNAL_SECRET: "secret",
+        SLACK_BOT_TOKEN: "xoxb-test",
+        GIT_CLONE_ALLOWED_OWNERS: "https://github.com/acme",
+      }),
+    ).toThrow("GIT_CLONE_ALLOWED_OWNERS entries must be GitHub owner names");
+    expect(() =>
+      loadRemoteCliEnv({
+        ...githubEnv,
+        THOR_INTERNAL_SECRET: "secret",
+        SLACK_BOT_TOKEN: "xoxb-test",
+        GIT_CLONE_ALLOWED_OWNERS: "..",
+      }),
+    ).toThrow("GIT_CLONE_ALLOWED_OWNERS entries must be GitHub owner names");
     expect(() => loadRemoteCliEnv({ ...githubEnv, THOR_INTERNAL_SECRET: "secret" })).toThrow(
       "Missing required env var SLACK_BOT_TOKEN",
     );

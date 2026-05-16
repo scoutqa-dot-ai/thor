@@ -38,6 +38,10 @@ const LS_REMOTE_FLAGS: readonly PolicyArgFlag[] = [
   { name: "sort", kind: "value", aliases: ["--sort"] },
 ];
 
+export interface GitPolicyOptions {
+  gitCloneAllowedOwners?: readonly string[];
+}
+
 interface ResolvedGitArgsSuccess {
   args: string[];
   // Optional rewritten cwd produced by stripping a leading `-C <path>`. When
@@ -67,6 +71,7 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "shortlog",
   "merge-base",
   "branch",
+  "clone",
   "rev-parse",
   "remote",
   "fetch",
@@ -119,6 +124,11 @@ const GIT_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   "git branch": {
     reason: "branch mutation is blocked; only read-only branch inspection is allowed.",
     instead: "git branch --show-current or git branch --list [<pattern>]",
+  },
+  "git clone": {
+    reason:
+      "clone is limited to one HTTPS github.com URL whose owner is configured; Thor derives the /workspace/repos/<repo> destination.",
+    instead: "git clone https://github.com/<allowed-owner>/<repo>[.git]",
   },
   "git remote": {
     reason: "remote mutation is blocked; Thor only allows reading the configured origin.",
@@ -199,7 +209,11 @@ const GIT_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
 };
 
-export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
+export function resolveGitArgs(
+  args: string[],
+  _cwd?: string,
+  options: GitPolicyOptions = {},
+): ResolvedGitArgs {
   if (!Array.isArray(args) || args.length === 0) {
     return { error: "args must be a non-empty array" };
   }
@@ -239,7 +253,7 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
     return deny(`git ${first}`);
   }
 
-  const resolved = resolveSubcommand(first, workingArgs);
+  const resolved = resolveSubcommand(first, workingArgs, options);
   if ("error" in resolved) return resolved;
   return withCwd(resolved, rewrittenCwd);
 }
@@ -276,7 +290,11 @@ function hasTraversalSegment(pathArg: string): boolean {
   return pathArg.split("/").includes("..");
 }
 
-function resolveSubcommand(first: string, args: string[]): ResolvedGitArgs {
+function resolveSubcommand(
+  first: string,
+  args: string[],
+  options: GitPolicyOptions,
+): ResolvedGitArgs {
   switch (first) {
     case "status":
     case "log":
@@ -298,6 +316,8 @@ function resolveSubcommand(first: string, args: string[]): ResolvedGitArgs {
       return wrap(validateMergeBase(args), args);
     case "branch":
       return wrap(validateBranch(args), args);
+    case "clone":
+      return resolveClone(args, options.gitCloneAllowedOwners ?? []);
     case "remote":
       return wrap(validateRemote(args), args);
     case "fetch":
@@ -329,8 +349,12 @@ function resolveSubcommand(first: string, args: string[]): ResolvedGitArgs {
   }
 }
 
-export function validateGitArgs(args: string[], cwd?: string): string | null {
-  const result = resolveGitArgs(args, cwd);
+export function validateGitArgs(
+  args: string[],
+  cwd?: string,
+  options: GitPolicyOptions = {},
+): string | null {
+  const result = resolveGitArgs(args, cwd, options);
   return "error" in result ? result.error : null;
 }
 
@@ -399,6 +423,42 @@ function validateBranch(args: string[]): string | null {
   }
 
   return null;
+}
+
+function resolveClone(args: string[], allowedOwners: readonly string[]): ResolvedGitArgs {
+  const cloneGuidance = gitCloneGuidance(allowedOwners);
+  if (allowedOwners.length === 0 || args.length !== 2) return deny("git clone", cloneGuidance);
+
+  const source = args[1];
+  const parsed = parseCloneSource(source);
+  if (!parsed || !allowedOwners.includes(parsed.owner)) return deny("git clone", cloneGuidance);
+
+  const destination = `${WORKSPACE_REPOS_ROOT}/${parsed.repo}`;
+
+  return {
+    args: ["-c", "credential.useHttpPath=true", "clone", "--", source, destination],
+  };
+}
+
+function gitCloneGuidance(allowedOwners: readonly string[]): DenyGuidance {
+  const configuredOwners =
+    allowedOwners.length > 0 ? allowedOwners.join(", ") : "(none configured)";
+  return {
+    reason: `clone is limited to https://github.com/<owner>/<repo>[.git] URLs for configured owners: ${configuredOwners}.`,
+    instead: "git clone <allowlisted-https-github-url>",
+  };
+}
+
+function parseCloneSource(source: string): { owner: string; repo: string } | null {
+  const match = source.match(
+    /^https:\/\/github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?$/,
+  );
+  if (!match) return null;
+  const [, owner, repo] = match;
+  if (!owner || !repo || owner === "." || owner === ".." || repo === "." || repo === "..") {
+    return null;
+  }
+  return { owner, repo };
 }
 
 function validateRemote(args: string[]): string | null {
