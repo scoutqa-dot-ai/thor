@@ -1,0 +1,57 @@
+packages/common/src/workspace-config.test.ts
+  b35dfadcf290b000 33-35,48-49,174,177,181,183,188,191,194,319,326
+docs/plan/2026042201_mitmproxy-http-proxy.md
+  b35dfadcf290b000 3-7
+packages/gateway/src/index.ts
+  b35dfadcf290b000 1,36
+docs/plan/2026032102_workspace-config-file.md
+  b35dfadcf290b000 3-10
+docs/plan/2026041701_hardcode-proxies.md
+  b35dfadcf290b000 3-10
+docs/plan/2026042301_refactor-slack-mcp.md
+  b35dfadcf290b000 3-6
+packages/remote-cli/src/mcp-handler.test.ts
+  b35dfadcf290b000 52,140-142,181,185,209
+docs/plan/2026042301_github-app-webhooks.md
+  b35dfadcf290b000 6-10
+packages/remote-cli/src/mcp-handler.ts
+  b35dfadcf290b000 297,348,645,647,660
+packages/remote-cli/src/index.ts
+  b35dfadcf290b000 1079
+packages/common/src/workspace-config.ts
+  b35dfadcf290b000 101
+docs/plan/2026033101_dynamic-config.md
+  b35dfadcf290b000 3-7
+packages/runner/src/tool-instructions.ts
+  b35dfadcf290b000 1,4,7,48
+packages/runner/src/tool-instructions.test.ts
+  b35dfadcf290b000 6,15-17
+packages/gateway/src/app.ts
+  b35dfadcf290b000 926-931,935-942,946,948,950-952
+README.md
+  b35dfadcf290b000 55-59
+docs/plan/2026041602_drop-proxy.md
+  b35dfadcf290b000 3-8
+docs/plan/2026040201_mcp-tool-cli.md
+  b35dfadcf290b000 6-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "52303e2d04707c2f7b8be8c8e9b512124c1b9b42",
+  "prompts": {
+    "b35dfadcf290b000": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26aeef55-0a9f-4c3d-8d67-08cabcae91d8",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 195,
+      "total_deletions": 478,
+      "accepted_lines": 128,
+      "overriden_lines": 0
+    }
+  }
+}
