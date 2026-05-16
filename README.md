@@ -33,10 +33,9 @@ ingress -> gateway -> runner -> opencode
 1. Copy `.env.example` to `.env` and fill in the required secrets.
    `SLACK_DEFAULT_REPO` must name an existing repo that is already present under
    `/workspace/repos` and configured in `/workspace/config.json` before you start
-   the stack. Gateway resolves Slack channels in this order:
-   1. `/workspace/memory/thor/repo-by-slack-channel/<channel>.txt`
-   2. any existing `repos.*.channels` mapping in `/workspace/config.json`
-   3. `SLACK_DEFAULT_REPO`
+   the stack. Gateway routes every Slack channel to this repo unless a per-channel
+   override file at `/workspace/memory/thor/repo-by-slack-channel/<channel>.txt`
+   names a different configured repo.
 2. Initialize the mitmproxy CA on the host:
 
 ```bash
@@ -148,7 +147,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `THOR_E2E_TEST_HELPERS`             | No       | `runner`                             | Enables secret-gated deterministic runner e2e helpers                                                                    |
 | `SLACK_BOT_TOKEN`                   | Yes      | `remote-cli`, `gateway`, `mitmproxy` | Slack bot token for controlled `slack-post-message`, gateway Slack calls, and mitmproxy default injection                |
 | `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                            | Bot user ID used to ignore our own messages                                                                              |
-| `SLACK_DEFAULT_REPO`                | Yes      | `gateway`                            | Configured repo name used for Slack channels only after no valid override file or `repos.*.channels` mapping applies |
+| `SLACK_DEFAULT_REPO`                | Yes      | `gateway`                            | Configured repo name used for every Slack channel unless a per-channel override file selects a different configured repo |
 | `SLACK_SIGNING_SECRET`              | Yes      | `gateway`                            | Slack webhook verification                                                                                               |
 | `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | `gateway`                            | Signature timestamp tolerance                                                                                            |
 | `VOUCH_CALLBACK_URL`                | No       | `vouch`                              | OAuth callback URL                                                                                                       |
