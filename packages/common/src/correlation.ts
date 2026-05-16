@@ -61,15 +61,36 @@ export function computeSlackCorrelationKey(
 ): string | undefined {
   const input = SlackPostMessageInput.safeParse(toolArgs);
   if (!input.success) return undefined;
-  if (input.data.thread_ts) return `${SLACK_THREAD_PREFIX}${input.data.thread_ts}`;
+  const channel = input.data.channel;
+  if (input.data.thread_ts) {
+    return buildSlackThreadCorrelationKey(channel, input.data.thread_ts);
+  }
 
   try {
     const output = SlackPostMessageOutput.safeParse(JSON.parse(result));
     if (!output.success) return undefined;
-    return `${SLACK_THREAD_PREFIX}${output.data.ts}`;
+    return buildSlackThreadCorrelationKey(channel ?? output.data.channel, output.data.ts);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Build Slack thread correlation key(s). Returns the new
+ * `slack:thread:<channel>/<ts>` form when channel is known, plus the legacy
+ * `slack:thread:<ts>` form for back-compat resolution against pre-existing
+ * aliases.
+ */
+export function buildSlackCorrelationKeys(channel: string | undefined, threadTs: string): string[] {
+  const legacy = `${SLACK_THREAD_PREFIX}${threadTs}`;
+  if (!channel) return [legacy];
+  return [`${SLACK_THREAD_PREFIX}${channel}/${threadTs}`, legacy];
+}
+
+function buildSlackThreadCorrelationKey(channel: string | undefined, threadTs: string): string {
+  return channel
+    ? `${SLACK_THREAD_PREFIX}${channel}/${threadTs}`
+    : `${SLACK_THREAD_PREFIX}${threadTs}`;
 }
 
 /** Bind a correlation-key alias directly to a known anchor id. */
@@ -137,10 +158,13 @@ export function resolveCorrelationKeys(rawKeys: string[]): string {
   return rawKeys[0];
 }
 
-export function hasSessionForCorrelationKey(key: string): boolean {
-  const anchorId = resolveAnchorForCorrelationKey(key);
-  if (!anchorId) return false;
-  return currentSessionForAnchor(anchorId) !== undefined;
+export function hasSessionForCorrelationKey(key: string | string[]): boolean {
+  const keys = Array.isArray(key) ? key : [key];
+  for (const k of keys) {
+    const anchorId = resolveAnchorForCorrelationKey(k);
+    if (anchorId && currentSessionForAnchor(anchorId) !== undefined) return true;
+  }
+  return false;
 }
 
 export function resolveCorrelationLockKey(key: string): string {
@@ -150,10 +174,14 @@ export function resolveCorrelationLockKey(key: string): string {
 
 function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
   if (key.startsWith(SLACK_THREAD_PREFIX)) {
-    return {
-      aliasType: "slack.thread_id",
-      aliasValue: key.slice(SLACK_THREAD_PREFIX.length),
-    };
+    const suffix = key.slice(SLACK_THREAD_PREFIX.length);
+    // New shape: "<channel>/<thread_ts>". Legacy: "<thread_ts>" only.
+    // Channel ids and Slack ts strings never contain "/", so the separator
+    // is unambiguous.
+    if (suffix.includes("/")) {
+      return { aliasType: "slack.thread", aliasValue: suffix };
+    }
+    return { aliasType: "slack.thread_id", aliasValue: suffix };
   }
   if (key.startsWith(GIT_BRANCH_PREFIX)) {
     return {

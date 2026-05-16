@@ -4,6 +4,7 @@ import { appendAlias } from "./event-log.js";
 import {
   appendCorrelationAlias,
   appendCorrelationAliasForAnchor,
+  buildSlackCorrelationKeys,
   computeGitCorrelationKey,
   computeSlackCorrelationKey,
   ensureAnchorForCorrelationKey,
@@ -109,7 +110,11 @@ describe("correlation key resolution", () => {
     ).toBe("git:branch:thor:feature/refactor");
     expect(
       computeSlackCorrelationKey({ channel: "C123" }, JSON.stringify({ ts: "1710000000.002" })),
-    ).toBe("slack:thread:1710000000.002");
+    ).toBe("slack:thread:C123/1710000000.002");
+    expect(computeSlackCorrelationKey({ channel: "C123", thread_ts: "1710000000.003" }, "{}")).toBe(
+      "slack:thread:C123/1710000000.003",
+    );
+    // Legacy fallback: no channel known.
     expect(computeSlackCorrelationKey({ thread_ts: "1710000000.003" }, "{}")).toBe(
       "slack:thread:1710000000.003",
     );
@@ -176,6 +181,40 @@ describe("correlation key resolution", () => {
     // Future GitHub events for the branch route to the parent's anchor.
     expect(resolveAnchorForCorrelationKey("git:branch:thor:feat-x")).toBe(anchor1);
     expect(resolveSessionForCorrelationKey("git:branch:thor:feat-x")).toBe("parent-session");
+  });
+
+  it("writes the new slack.thread alias and resolves under either key shape", () => {
+    const channel = "C0AKCHANNEL";
+    const ts = "1710000000.777";
+    const [newKey, legacyKey] = buildSlackCorrelationKeys(channel, ts);
+    expect(newKey).toBe(`slack:thread:${channel}/${ts}`);
+    expect(legacyKey).toBe(`slack:thread:${ts}`);
+
+    expect(appendCorrelationAliasForAnchor(anchor1, newKey)).toEqual({ ok: true });
+
+    // New-format lookup works.
+    expect(resolveAnchorForCorrelationKey(newKey)).toBe(anchor1);
+    // Multi-key resolve prefers the bound key.
+    expect(resolveCorrelationKeys([newKey, legacyKey])).toBe(newKey);
+    // The persisted alias has the new type.
+    expect(
+      readAliases().some(
+        (a) => a.aliasType === "slack.thread" && a.aliasValue === `${channel}/${ts}`,
+      ),
+    ).toBe(true);
+  });
+
+  it("falls back to a legacy slack.thread_id binding when only the legacy alias exists", () => {
+    const channel = "C0AKLEGACY";
+    const ts = "1710000000.888";
+    const [newKey, legacyKey] = buildSlackCorrelationKeys(channel, ts);
+
+    expect(appendCorrelationAliasForAnchor(anchor2, legacyKey)).toEqual({ ok: true });
+
+    expect(resolveAnchorForCorrelationKey(legacyKey)).toBe(anchor2);
+    expect(resolveAnchorForCorrelationKey(newKey)).toBeUndefined();
+    // Multi-key resolve picks legacy because new is unbound.
+    expect(resolveCorrelationKeys([newKey, legacyKey])).toBe(legacyKey);
   });
 
   it("does not treat untyped keys as alias values", () => {

@@ -75,6 +75,213 @@ describe("session event log", () => {
     expect(statSync(sessionLogPath("s1")).size).toBeLessThan(4096);
   });
 
+  it("never truncates text or reasoning opencode_event records, even when oversized", () => {
+    // Long assistant text / reasoning chains can legitimately exceed the
+    // 4 KB per-record cap. They must persist in full so the debugging UI
+    // sees the whole body.
+    const longText = "lorem ipsum ".repeat(2000); // ~24 KB
+    expect(
+      appendSessionEvent("longtext", {
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: {
+            part: { id: "prt_long_text", type: "text", text: longText },
+          },
+        },
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      appendSessionEvent("longtext", {
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: {
+            part: { id: "prt_long_reasoning", type: "reasoning", text: longText },
+          },
+        },
+      }),
+    ).toEqual({ ok: true });
+
+    const lines = readFileSync(sessionLogPath("longtext"), "utf8").trim().split("\n");
+    const parsed = lines.map((line) => JSON.parse(line));
+    const text = parsed.find((r) => r.event?.properties?.part?.type === "text");
+    const reasoning = parsed.find((r) => r.event?.properties?.part?.type === "reasoning");
+    expect(text.event.properties.part.text).toBe(longText);
+    expect(text._truncated).toBeUndefined();
+    expect(reasoning.event.properties.part.text).toBe(longText);
+    expect(reasoning._truncated).toBeUndefined();
+  });
+
+  it("preserves the render skeleton when projecting oversized tool opencode_event", () => {
+    // Oversized tool output: the fixed projection keeps tool name, callID,
+    // status, part id, and replaces payload leaves with omitted markers so the
+    // viewer can still thread the call together.
+    const largeOutput = "z".repeat(10_000);
+    expect(
+      appendSessionEvent("projected-tool", {
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "ses_test",
+            time: 1_700_000_000_000,
+            part: {
+              id: "prt_tool_big",
+              messageID: "msg_test",
+              type: "tool",
+              tool: "read",
+              callID: "call_test",
+              state: {
+                status: "completed",
+                title: "Reads /etc/passwd",
+                input: { path: "/etc/passwd" },
+                output: largeOutput,
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual({ ok: true });
+
+    const line = readFileSync(sessionLogPath("projected-tool"), "utf8").trim();
+    const record = JSON.parse(line);
+    expect(record._truncated).toBe(true);
+    expect(record.event.type).toBe("message.part.updated");
+    expect(record.event.properties.sessionID).toBe("ses_test");
+    expect(record.event.properties.part).toMatchObject({
+      id: "prt_tool_big",
+      type: "tool",
+      tool: "read",
+      callID: "call_test",
+      state: {
+        status: "completed",
+        title: "Reads /etc/passwd",
+        input: { _omitted: true, bytes: expect.any(Number) },
+      },
+    });
+    expect(record.event.properties.part.state.output).toEqual({
+      _omitted: true,
+      bytes: expect.any(Number),
+    });
+    expect(record.event.properties.part.state.output.bytes).toBeGreaterThan(9000);
+  });
+
+  it("strategically projects unknown opencode_event shapes instead of blanking them", () => {
+    // Unknown top-level event.type still carries the same fixed skeleton.
+    expect(
+      appendSessionEvent("unknown-event", {
+        type: "opencode_event",
+        event: {
+          id: "evt_future",
+          type: "totally.new.event.kind",
+          properties: {
+            sessionID: "ses_future",
+            time: 1_700_000_000_000,
+            part: {
+              id: "prt_future",
+              type: "future-part",
+              tool: "future-tool",
+              callID: "call_future",
+              state: {
+                status: "completed",
+                output: "x".repeat(8000),
+              },
+              vendorPayload: "not part of the fallback skeleton",
+            },
+          },
+        },
+      }),
+    ).toEqual({ ok: true });
+
+    const line = readFileSync(sessionLogPath("unknown-event"), "utf8").trim();
+    const record = JSON.parse(line);
+    expect(record.event).toMatchObject({
+      id: "evt_future",
+      type: "totally.new.event.kind",
+      properties: {
+        sessionID: "ses_future",
+        time: 1_700_000_000_000,
+        part: {
+          id: "prt_future",
+          type: "future-part",
+          tool: "future-tool",
+          callID: "call_future",
+          state: {
+            status: "completed",
+            output: { _omitted: true, bytes: expect.any(Number) },
+          },
+        },
+      },
+    });
+    expect(record.event.properties.part.vendorPayload).toBeUndefined();
+  });
+
+  it("drops non-skeleton future fields instead of needing projection retries", () => {
+    const medium = "x".repeat(240);
+    expect(
+      appendSessionEvent("fixed-projection", {
+        type: "opencode_event",
+        event: {
+          id: "evt_fixed",
+          type: "future.verbose.event",
+          properties: {
+            sessionID: "ses_fixed",
+            time: 1_700_000_000_000,
+            path: medium,
+            file: medium,
+            source: medium,
+            part: {
+              id: "prt_fixed",
+              type: "future-part",
+              tool: "future-tool",
+              callID: "call_fixed",
+              reason: medium,
+              text: medium,
+              prompt: medium,
+              description: medium,
+              agent: medium,
+              command: medium,
+              mime: medium,
+              filename: medium,
+              url: medium,
+              hash: medium,
+              name: medium,
+              tail_start_id: medium,
+              state: {
+                status: "completed",
+                title: medium,
+                error: { name: medium, message: medium },
+              },
+              error: { name: medium, message: medium },
+            },
+          },
+        },
+      }),
+    ).toEqual({ ok: true });
+
+    const line = readFileSync(sessionLogPath("fixed-projection"), "utf8").trim();
+    expect(Buffer.byteLength(line, "utf8")).toBeLessThan(4096);
+    const record = JSON.parse(line);
+    expect(record.event).toMatchObject({
+      id: "evt_fixed",
+      type: "future.verbose.event",
+      properties: {
+        sessionID: "ses_fixed",
+        part: {
+          id: "prt_fixed",
+          type: "future-part",
+          tool: "future-tool",
+          callID: "call_fixed",
+          state: { status: "completed" },
+        },
+      },
+    });
+    expect(record.event.properties.part.prompt).toBeUndefined();
+    expect(record.event.properties.part.reason).toBeUndefined();
+    expect(record.event.properties.path).toBeUndefined();
+  });
+
   it("preserves required trigger_end fields when truncating oversized errors", () => {
     expect(
       appendSessionEvent("truncated-end", {

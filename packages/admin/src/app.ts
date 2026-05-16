@@ -119,12 +119,14 @@ export function createAdminApp(cfg: AdminAppConfig): Express {
 
 function loadSessionsProps(req: Request): SessionsProps {
   const refreshedAt = new Date().toISOString();
+  const slackTeamId = process.env.SLACK_TEAM_ID?.trim() || null;
   try {
     return {
       user: req.header("X-Vouch-User") ?? null,
       rows: listAnchorSessionStates({ now: new Date(refreshedAt), stuckAfterMs: STUCK_AFTER_MS }),
       refreshedAt,
       error: null,
+      slackTeamId,
     };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -134,6 +136,7 @@ function loadSessionsProps(req: Request): SessionsProps {
       rows: [],
       refreshedAt,
       error,
+      slackTeamId,
     };
   }
 }

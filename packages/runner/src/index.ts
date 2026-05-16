@@ -39,10 +39,13 @@ import {
   readTriggerSlice,
   sessionLogPath,
   getWorklogDir,
+  SessionEventLogRecordSchema,
   loadRunnerEnv,
   matchesInternalSecret,
   ProgressApprovalRequiredSchema,
   withKeyLock,
+  isOmittedMarker,
+  iterateJsonlFileLinesSync,
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -59,9 +62,6 @@ const OPENCODE_CONNECT_TIMEOUT = config.opencodeConnectTimeout;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const ABORT_TIMEOUT = config.abortTimeout;
 const SESSION_ERROR_GRACE_MS = config.sessionErrorGraceMs;
-
-/** Threshold above which an in-flight slice renders the soft staleness banner. */
-const SLICE_STALE_AFTER_MS = 5 * 60_000;
 
 /** Memory directory root. */
 const MEMORY_DIR = "/workspace/memory";
@@ -127,14 +127,13 @@ const inflightTriggers = new Map<string, { sessionId: string; startTime: number 
 function startTrigger(
   sessionId: string,
   triggerId: string,
-  payload: { correlationKey?: string; promptPreview?: string },
+  payload: { correlationKey?: string },
 ): void {
   unwrap(
     appendSessionEvent(sessionId, {
       type: "trigger_start",
       triggerId,
       ...(payload.correlationKey ? { correlationKey: payload.correlationKey } : {}),
-      promptPreview: payload.promptPreview ?? "",
     }),
   );
   inflightTriggers.set(triggerId, { sessionId, startTime: Date.now() });
@@ -244,7 +243,6 @@ function anchorIsKnown(anchor: ReverseAnchorEntry): boolean {
 const E2eTriggerContextSchema = z.object({
   sessionId: z.string().trim().min(1).optional(),
   correlationKey: z.string().trim().min(1).optional(),
-  promptPreview: z.string().trim().min(1).optional(),
 });
 
 // --- Express app ---
@@ -315,7 +313,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             type: "trigger_start",
             triggerId,
             ...(parsed.data.correlationKey ? { correlationKey: parsed.data.correlationKey } : {}),
-            promptPreview: parsed.data.promptPreview ?? "e2e approval disclaimer context",
           }),
         );
         res.json({ sessionId, triggerId, anchorId });
@@ -411,6 +408,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             owner.sessionId,
             reverseLookupAnchor(anchorId),
             slice,
+            { slackTeamId: process.env.SLACK_TEAM_ID?.trim() || null },
           ),
         );
     },
@@ -621,7 +619,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     }
 
     let { prompt, model, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
-    const userPromptPreview = truncate(prompt, 500);
     let inflightTriggerId: string | undefined;
 
     try {
@@ -823,10 +820,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       const triggerId = mintTriggerId();
       inflightTriggerId = triggerId;
-      startTrigger(sessionId, triggerId, {
-        correlationKey,
-        promptPreview: userPromptPreview,
-      });
+      startTrigger(sessionId, triggerId, { correlationKey });
 
       const promptStart = Date.now();
       const asyncResult = await client.session.promptAsync({
@@ -1266,11 +1260,10 @@ const KNOWN_BINS: Record<string, number> = {
   tar: 1,
   wc: 1,
 };
-const MAX_MEANINGFUL_ROWS = 100;
-const DIAGNOSTIC_EDGE_RECORDS = 20;
 
 type ViewerEvent = { type?: unknown; properties?: Record<string, unknown>; _truncated?: unknown };
 type ViewerToolPart = {
+  id?: unknown;
   type?: unknown;
   tool?: unknown;
   callID?: unknown;
@@ -1279,56 +1272,57 @@ type ViewerToolPart = {
   reason?: unknown;
   state?: {
     status?: unknown;
+    title?: unknown;
     input?: unknown;
+    output?: unknown;
     error?: unknown;
     time?: { start?: unknown; end?: unknown };
   };
   text?: unknown;
 };
 
-function safeSnippet(value: unknown, max = 300): string {
-  const text =
-    typeof value === "string"
-      ? value
-      : typeof value === "number" || typeof value === "boolean"
-        ? String(value)
-        : "";
-  return (
-    text
-      .replace(
-        /-----BEGIN [^-]+PRIVATE KEY-----[\s\S]*?-----END [^-]+PRIVATE KEY-----/gi,
-        "[redacted]",
-      )
-      .replace(/\b(?:xox[baprs]-|gh[pousr]_|github_pat_)[A-Za-z0-9_\-]+/g, "[redacted]")
-      .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
-      .replace(
-        /(["'])(token|access_token|api_key|password|secret)\1\s*:\s*(["'])(?:(?!\3).)*\3/gi,
-        "$1$2$1:$3[redacted]$3",
-      )
-      .replace(
-        /\b(token|access_token|api_key|password|secret)\b\s*:\s*(["'])(?:(?!\2).)*\2/gi,
-        "$1:$2[redacted]$2",
-      )
-      .replace(/\b(token|access_token|api_key|password|secret)=([^\s&]+)/gi, "$1=[redacted]")
-      .replace(
-        /\b(token|access_token|api_key|password|secret)\b\s*[:=]\s*["']?[^\s,"']+/gi,
-        "$1=[redacted]",
-      )
-      .replace(/[\r\n\t]+/g, " ")
-      .replace(/\s{2,}/g, " ")
-      .slice(0, max) + (text.length > max ? "…" : "")
-  );
+function coerceText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function safeSnippet(value: unknown): string {
+  // Debugging UI: no redaction, no length cap. Newlines/tabs are collapsed
+  // to spaces for one-line rendering surfaces — use safeMultilineSnippet when
+  // newlines should be preserved.
+  return coerceText(value)
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ");
+}
+
+function safeMultilineSnippet(value: unknown): string {
+  return coerceText(value);
+}
+
+/**
+ * Compact token formatter: under 1k stays as-is, otherwise truncate (don't
+ * round) to one decimal place with a K/M suffix.
+ *   5_983     → "5.9K"
+ *   583_930   → "583.9K"
+ *   4_962_304 → "4.9M"
+ */
+function formatTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(Math.floor(n / 100) / 10).toFixed(1)}K`;
+  return `${(Math.floor(n / 100_000) / 10).toFixed(1)}M`;
 }
 
 function formatDuration(ms: unknown): string | undefined {
   if (typeof ms !== "number" || !Number.isFinite(ms)) return undefined;
   if (ms < 1000) return `${Math.round(ms)}ms`;
-  const roundedSeconds = Math.round(ms / 100) / 10;
-  if (roundedSeconds < 60) return `${roundedSeconds.toFixed(1)}s`;
-  const totalSeconds = Math.round(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}m ${seconds}s`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = seconds / 60;
+  if (minutes < 60) return `${minutes.toFixed(1)}m`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
 }
 
 function formatAge(ts: string | undefined): string | undefined {
@@ -1338,16 +1332,26 @@ function formatAge(ts: string | undefined): string | undefined {
   return formatDuration(ms);
 }
 
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "?";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Render an inline "(<label> omitted, N KB)" badge when `value` is a
+ * `{ _omitted: true, bytes: N }` marker produced by capRecord's projection
+ * step. Returns the empty string otherwise so callers can concatenate.
+ */
+function renderOmittedNote(value: unknown, label: string): string {
+  if (!isOmittedMarker(value)) return "";
+  return ` <span class="omitted">(${escapeHtml(label)} omitted, ${escapeHtml(formatBytes(value.bytes))})</span>`;
+}
+
 function viewerToolDisplayName(part: ViewerToolPart): string {
-  const tool = typeof part.tool === "string" ? part.tool : "tool";
-  if (tool !== "bash") return tool;
-  const input = part.state?.input;
-  const command =
-    input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
-  if (typeof command !== "string") return "bash";
-  const parts = command.trimStart().split(/\s+/);
-  const depth = KNOWN_BINS[parts[0] ?? ""];
-  return depth === undefined ? "bash" : parts.slice(0, depth).join(" ");
+  // No bash-prefix heuristics — the raw `part.tool` is what the data says.
+  return typeof part.tool === "string" ? part.tool : "tool";
 }
 
 function decodeAliasValue(aliasType: string, aliasValue: string): string {
@@ -1360,27 +1364,47 @@ function decodeAliasValue(aliasType: string, aliasValue: string): string {
   }
 }
 
-function safeToolArgs(tool: string, input: unknown): string | undefined {
-  if (!input || typeof input !== "object") return undefined;
-  const args = input as Record<string, unknown>;
-  const allow: Record<string, string[]> = {
-    read: ["filePath", "offset", "limit"],
-    glob: ["pattern", "path"],
-    grep: ["pattern", "path", "include"],
-  };
-  const keys = allow[tool];
-  if (!keys) return undefined;
-  const shown = keys
-    .filter((key) => args[key] !== undefined)
-    .map((key) => `${key}: ${safeSnippet(args[key], 120)}`);
-  return shown.length ? shown.join(", ") : undefined;
+/**
+ * Some tools have a single input field that *is* the call (skill → `name`,
+ * bash → `command`). For those, render that one field inline so the row tells
+ * the whole story without a click. `inline` uses `<code>` for short
+ * one-liners; `block` uses `<pre>` to preserve newlines (heredocs etc.).
+ * Everything else falls back to the generic collapsible JSON dump.
+ */
+const TOOL_PRIMARY_INPUT_FIELD: Record<string, { field: string; mode: "inline" | "block" }> = {
+  skill: { field: "name", mode: "inline" },
+  bash: { field: "command", mode: "block" },
+};
+
+function renderToolInput(toolName: string, input: unknown): string {
+  if (input === undefined) return "";
+  if (isOmittedMarker(input)) return renderOmittedNote(input, "input");
+  const primary = TOOL_PRIMARY_INPUT_FIELD[toolName];
+  if (primary && isRecord(input)) {
+    const val = input[primary.field];
+    if (typeof val === "string" && val) {
+      const safe = escapeHtml(safeMultilineSnippet(val));
+      return primary.mode === "inline" ? ` <code>${safe}</code>` : `<pre>${safe}</pre>`;
+    }
+  }
+  let json: string;
+  try {
+    json = JSON.stringify(input, null, 2);
+  } catch {
+    json = String(input);
+  }
+  return `<details><summary>input</summary><pre>${escapeHtml(safeMultilineSnippet(json))}</pre></details>`;
 }
 
-function eventPart(record: SessionEventLogRecord): ViewerToolPart | undefined {
+function eventProperties(record: SessionEventLogRecord): Record<string, unknown> | undefined {
   if (record.type !== "opencode_event" || !record.event || typeof record.event !== "object")
     return undefined;
   const event = record.event as ViewerEvent;
-  const props = event.properties;
+  return event.properties;
+}
+
+function eventPart(record: SessionEventLogRecord): ViewerToolPart | undefined {
+  const props = eventProperties(record);
   const part = props?.part;
   return part && typeof part === "object" ? (part as ViewerToolPart) : undefined;
 }
@@ -1392,6 +1416,52 @@ function eventType(record: SessionEventLogRecord): string | undefined {
   return typeof type === "string" ? type : undefined;
 }
 
+function renderUnknownOpencodeEvent(record: SessionEventLogRecord): string {
+  const type = eventType(record) ?? "unknown";
+  const props = eventProperties(record);
+  const part = eventPart(record);
+  const status = typeof part?.state?.status === "string" ? part.state.status : "pending";
+  const bits = [`<b>unknown event</b> <span>${escapeHtml(type)}</span>`];
+  if (typeof props?.sessionID === "string") {
+    bits.push(`<code>${escapeHtml(safeSnippet(props.sessionID))}</code>`);
+  }
+  if (typeof part?.type === "string") {
+    bits.push(`<span>part ${escapeHtml(part.type)}</span>`);
+  }
+  if (typeof part?.tool === "string") {
+    bits.push(`<span>tool ${escapeHtml(part.tool)}</span>`);
+  }
+  if (typeof part?.state?.status === "string") {
+    bits.push(`<span>${escapeHtml(part.state.status)}</span>`);
+  }
+
+  const omitted = [
+    renderOmittedNote(props?.input, "input"),
+    renderOmittedNote(props?.output, "output"),
+    renderOmittedNote(props?.raw, "raw"),
+    renderOmittedNote(props?.metadata, "metadata"),
+    renderOmittedNote(props?.snapshot, "snapshot"),
+    renderOmittedNote(part?.state?.input, "input"),
+    renderOmittedNote(part?.state?.output, "output"),
+    renderOmittedNote(
+      part?.state && "raw" in part.state ? (part.state as { raw?: unknown }).raw : undefined,
+      "raw",
+    ),
+    renderOmittedNote(
+      part?.state && "metadata" in part.state
+        ? (part.state as { metadata?: unknown }).metadata
+        : undefined,
+      "metadata",
+    ),
+  ].join("");
+
+  return `<li class="row unknown" data-status="${escapeHtml(status)}">${bits.join(" ")}${omitted}</li>`;
+}
+
+function shouldRenderUnknownEvent(type: string | undefined): boolean {
+  return !!type && type !== "session.status" && type !== "session.idle";
+}
+
 function sourceFrom(correlationKey: string | undefined): string {
   if (!correlationKey) return "direct";
   if (correlationKey.startsWith("slack:thread:")) return "slack";
@@ -1400,6 +1470,439 @@ function sourceFrom(correlationKey: string | undefined): string {
   if (correlationKey.startsWith("approval:")) return "approval";
   if (correlationKey.startsWith("cron:")) return "cron";
   return "direct";
+}
+
+type DecodedSource = { icon: string; label: string; href?: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function safeStr(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function tryParseJsonObject(value: string | undefined): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  const idx = value.indexOf("{");
+  if (idx === -1) return undefined;
+  try {
+    const parsed = JSON.parse(value.slice(idx));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function decodeSlackSource(
+  correlationKey: string,
+  promptPreview: string | undefined,
+  slackTeamId: string | null,
+): DecodedSource {
+  const tail = correlationKey.slice("slack:thread:".length);
+  const slash = tail.indexOf("/");
+  let channel: string | undefined = slash > 0 ? tail.slice(0, slash) : undefined;
+  const ts = slash > 0 ? tail.slice(slash + 1) : tail;
+
+  const payload = tryParseJsonObject(promptPreview);
+  let user: string | undefined;
+  let text: string | undefined;
+  if (payload) {
+    const event = isRecord(payload.event) ? payload.event : payload;
+    channel = channel ?? safeStr(event.channel);
+    user = safeStr(event.user);
+    text = safeStr(event.text);
+  }
+
+  const head: string[] = [];
+  if (channel) head.push(`#${channel}`);
+  if (user) head.push(`@${user}`);
+  let label = head.join(" · ");
+  if (text) {
+    const firstLine = text.split("\n", 1)[0] ?? "";
+    const quoted = `“${safeSnippet(firstLine)}”`;
+    label = label ? `${label} — ${quoted}` : quoted;
+  } else if (!label) {
+    label = `Slack thread ${ts}`;
+  }
+
+  const href =
+    channel && ts && slackTeamId
+      ? `https://app.slack.com/client/${slackTeamId}/${channel}/thread/${channel}-${ts}`
+      : undefined;
+  return { icon: "💬", label, href };
+}
+
+function decodeGithubSource(promptPreview: string | undefined): DecodedSource | undefined {
+  const payload = tryParseJsonObject(promptPreview);
+  if (!payload) return undefined;
+  const repo = isRecord(payload.repository) ? safeStr(payload.repository.full_name) : undefined;
+  const sender = isRecord(payload.sender) ? safeStr(payload.sender.login) : undefined;
+
+  if (isRecord(payload.pull_request)) {
+    const pr = payload.pull_request;
+    const num = typeof pr.number === "number" ? pr.number : undefined;
+    const htmlUrl = safeStr(pr.html_url);
+    const title = safeStr(pr.title);
+    const href =
+      htmlUrl ?? (repo && num !== undefined ? `https://github.com/${repo}/pull/${num}` : undefined);
+    const parts = [
+      num !== undefined ? `PR #${num}` : "PR",
+      repo,
+      sender ? `@${sender}` : "",
+    ].filter((s): s is string => !!s);
+    const label = title ? `${parts.join(" · ")} — “${safeSnippet(title)}”` : parts.join(" · ");
+    return { icon: "🔀", label, href };
+  }
+
+  if (isRecord(payload.issue)) {
+    const issue = payload.issue;
+    const num = typeof issue.number === "number" ? issue.number : undefined;
+    const htmlUrl = safeStr(issue.html_url);
+    const title = safeStr(issue.title);
+    const href =
+      htmlUrl ??
+      (repo && num !== undefined ? `https://github.com/${repo}/issues/${num}` : undefined);
+    const parts = [
+      num !== undefined ? `Issue #${num}` : "Issue",
+      repo,
+      sender ? `@${sender}` : "",
+    ].filter((s): s is string => !!s);
+    const label = title ? `${parts.join(" · ")} — “${safeSnippet(title)}”` : parts.join(" · ");
+    return { icon: "🐞", label, href };
+  }
+
+  if (
+    typeof payload.ref === "string" &&
+    (safeStr(payload.after) || isRecord(payload.head_commit))
+  ) {
+    const branch = payload.ref.replace(/^refs\/heads\//, "");
+    const sha = safeStr(payload.after)?.slice(0, 7);
+    const href = repo && sha ? `https://github.com/${repo}/commit/${sha}` : undefined;
+    const left = repo && sha ? `${repo}@${sha}` : repo;
+    const parts = [left, `on ${branch}`, sender ? `@${sender}` : ""].filter(
+      (s): s is string => !!s,
+    );
+    return { icon: "📦", label: parts.join(" · "), href };
+  }
+
+  if (repo) {
+    return { icon: "📦", label: repo, href: `https://github.com/${repo}` };
+  }
+  return undefined;
+}
+
+function decodeCronSource(promptPreview: string | undefined): DecodedSource {
+  if (!promptPreview) return { icon: "⏰", label: "Cron" };
+  const sentence = promptPreview.split(/[.\n]/, 1)[0]?.trim();
+  return { icon: "⏰", label: sentence ? safeSnippet(sentence) : "Cron" };
+}
+
+function decodeSourceLine(
+  correlationKey: string | undefined,
+  promptPreview: string | undefined,
+  slackTeamId: string | null,
+): DecodedSource | undefined {
+  if (!correlationKey) return undefined;
+  if (correlationKey.startsWith("slack:thread:")) {
+    return decodeSlackSource(correlationKey, promptPreview, slackTeamId);
+  }
+  if (correlationKey.startsWith("github:") || correlationKey.startsWith("git:branch:")) {
+    return decodeGithubSource(promptPreview);
+  }
+  if (correlationKey.startsWith("cron:")) {
+    return decodeCronSource(promptPreview);
+  }
+  return undefined;
+}
+
+function partId(part: ViewerToolPart | undefined): string | undefined {
+  if (!part) return undefined;
+  return typeof part.id === "string" ? part.id : undefined;
+}
+
+function getStateTitle(part: ViewerToolPart): string | undefined {
+  // Prefer Claude's own `state.title` (e.g. "Lists test-management Thor
+  // worktrees"). Fall back to `state.input.description` for tools whose
+  // caller supplied it (most notably `task`) so the row carries a label even
+  // when `state.title` is absent.
+  const title = part.state?.title;
+  if (typeof title === "string" && title) return title;
+  const input = part.state?.input;
+  if (input && typeof input === "object") {
+    const desc = (input as { description?: unknown }).description;
+    if (typeof desc === "string" && desc) return desc;
+  }
+  return undefined;
+}
+
+function renderDiffLines(patchText: string): string {
+  // No line cap — render the entire patch. The whole block lives inside a
+  // collapsed <details> on the apply_patch row, so volume is opt-in.
+  const out = patchText
+    .split("\n")
+    .map((line) => {
+      const safe = escapeHtml(safeMultilineSnippet(line));
+      if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
+        return `<span class="diff-meta">${safe}</span>`;
+      }
+      if (line.startsWith("+")) return `<span class="diff-add">${safe}</span>`;
+      if (line.startsWith("-")) return `<span class="diff-del">${safe}</span>`;
+      return `<span>${safe}</span>`;
+    })
+    .join("\n");
+  return `<pre class="diff">${out}</pre>`;
+}
+
+function renderApplyPatch(part: ViewerToolPart, durationStr: string | undefined): string {
+  const title = getStateTitle(part);
+  const rawInput = part.state?.input;
+  const inputOmitted = renderOmittedNote(rawInput, "patch");
+  const input = !inputOmitted && isRecord(rawInput) ? rawInput : undefined;
+  const patchText = input ? safeStr(input.patchText) : undefined;
+  const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
+  // Status text is suppressed — the colored bullet on the row carries it.
+  const hdr = `<b>apply_patch</b>${durationStr ? ` <span>${escapeHtml(durationStr)}</span>` : ""}${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title))}</span>` : ""}${inputOmitted}`;
+  if (!patchText) return `<li class="row" data-status="${escapeHtml(status)}">${hdr}</li>`;
+  return `<li class="row" data-status="${escapeHtml(status)}"><details><summary>${hdr}</summary>${renderDiffLines(patchText)}</details></li>`;
+}
+
+type SubAgentCtx = { visited: Set<string> };
+
+function partDuration(part: ViewerToolPart): string | undefined {
+  const time = part.state?.time;
+  if (typeof time?.start === "number" && typeof time.end === "number") {
+    return formatDuration(time.end - time.start);
+  }
+  return undefined;
+}
+
+/**
+ * Time window (ms since epoch) during which this task tool was running. We
+ * use it to filter the subagent's session log so only events from THIS
+ * invocation surface — main agents often resume the same subagent session
+ * later, and we don't want unrelated events to bleed into the card.
+ */
+function partTimeWindow(part: ViewerToolPart): { start: number; end?: number } | undefined {
+  const time = part.state?.time;
+  if (typeof time?.start !== "number" || !Number.isFinite(time.start)) return undefined;
+  return {
+    start: time.start,
+    end: typeof time.end === "number" && Number.isFinite(time.end) ? time.end : undefined,
+  };
+}
+
+/**
+ * Render a subagent session's activity inline. Subagent sessions are written
+ * to their own `ses_*.jsonl` files (no trigger boundaries — task tool spawns
+ * them outside the trigger endpoint), so we stream the file line-by-line,
+ * filter to the trigger's time window, dedup by part id, and emit every major
+ * row (tool + non-empty assistant text). No record cap — the viewer is
+ * admin-only behind Vouch and must show the full subagent activity.
+ *
+ * Nested `task` tools call back into this function so the recursion follows
+ * the subagent chain. `ctx.visited` is the only guard — cycles (a subagent
+ * pointing back at itself or an ancestor) are the only thing that would
+ * otherwise loop.
+ */
+function renderInlineSubagent(
+  sessionId: string,
+  ctx: SubAgentCtx,
+  window: { start: number; end?: number } | undefined,
+  label: string,
+  modelId: string | undefined,
+): { html: string | undefined; ledger: AgentLedger } | undefined {
+  if (ctx.visited.has(sessionId)) return undefined;
+  // Without a time window we can't tell which subagent events belong to THIS
+  // invocation versus earlier/later resumes of the same session. Skip the
+  // inline render rather than show stale rows.
+  if (!window) return undefined;
+  let path: string;
+  try {
+    path = sessionLogPath(sessionId);
+  } catch {
+    return undefined;
+  }
+  const records: SessionEventLogRecord[] = [];
+  const readStarted = performance.now();
+  let bytesRead = 0;
+  let linesRead = 0;
+  for (const line of iterateJsonlFileLinesSync(path)) {
+    bytesRead += line.length + 1;
+    linesRead++;
+    try {
+      const obj = JSON.parse(line);
+      const v = SessionEventLogRecordSchema.safeParse(obj);
+      if (!v.success) continue;
+      const ts = Date.parse(v.data.ts);
+      if (!Number.isFinite(ts)) continue;
+      if (ts < window.start) continue;
+      if (window.end !== undefined && ts > window.end) continue;
+      records.push(v.data);
+    } catch {
+      // skip malformed lines
+    }
+  }
+  const readElapsedMs = performance.now() - readStarted;
+  if (readElapsedMs > 50) {
+    logWarn(log, "slow_subagent_jsonl_read", {
+      sessionId,
+      path,
+      elapsedMs: Math.round(readElapsedMs),
+      bytes: bytesRead,
+      lines: linesRead,
+      retained: records.length,
+    });
+  }
+  if (!records.length) return undefined;
+
+  const latestById = new Map<string, ViewerToolPart>();
+  const firstIdxById = new Map<string, number>();
+  records.forEach((rec, i) => {
+    if (rec.type !== "opencode_event") return;
+    const p = eventPart(rec);
+    const id = partId(p);
+    if (!id || !p) return;
+    latestById.set(id, p);
+    if (!firstIdxById.has(id)) firstIdxById.set(id, i);
+  });
+
+  const nextCtx: SubAgentCtx = {
+    visited: new Set([...ctx.visited, sessionId]),
+  };
+
+  // The subagent's model id comes from the parent's `task` tool part metadata
+  // (OpenCode tags the spawn with the child's model). Records inside the
+  // subagent's own session don't carry it on step-finish parts, and any
+  // modelID seen there would be a *grandchild's* model (another task tool).
+  const ledger: AgentLedger = {
+    label,
+    sessionId,
+    modelIds: new Set(modelId ? [modelId] : []),
+    tokens: emptyTokenCounts(),
+    children: [],
+  };
+
+  const rows: string[] = [];
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i]!;
+    if (rec.type !== "opencode_event") continue;
+    const ev = rec.event as ViewerEvent | undefined;
+    if (ev && ev._truncated === true) continue;
+    const raw = eventPart(rec);
+    const id = partId(raw);
+    if (id && firstIdxById.get(id) !== i) continue;
+    const p = id ? (latestById.get(id) ?? raw) : raw;
+    if (!p) {
+      if (shouldRenderUnknownEvent(eventType(rec))) {
+        rows.push(renderUnknownOpencodeEvent(rec));
+      }
+      continue;
+    }
+    if (p.type === "step-finish") {
+      const breakdown = extractTokenCounts(p.tokens);
+      if (breakdown) addTokenCounts(ledger.tokens, breakdown);
+      continue;
+    }
+    if (p.type === "tool") {
+      const toolName = typeof p.tool === "string" ? p.tool : "";
+      if (toolName === "task") {
+        rows.push(renderTaskCard(p, partDuration(p), nextCtx, ledger));
+        // renderTaskCard reads partTimeWindow(p) internally for its own
+        // subagent expansion call.
+        continue;
+      }
+      const status = typeof p.state?.status === "string" ? p.state.status : "unknown";
+      const name = viewerToolDisplayName(p);
+      const title = getStateTitle(p);
+      const input = renderToolInput(name, p.state?.input);
+      rows.push(
+        `<li class="row" data-status="${escapeHtml(status)}"><b>tool</b> <span>${escapeHtml(name)}</span>${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title))}</span>` : ""}${input}</li>`,
+      );
+    } else if (p.type === "text") {
+      const text = typeof p.text === "string" ? p.text : "";
+      rows.push(
+        `<li class="row" data-status="completed"><b>text</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
+      );
+    } else if (p.type === "reasoning") {
+      const text = typeof p.text === "string" ? p.text : "";
+      if (!text.trim()) continue;
+      rows.push(
+        `<li class="row" data-status="completed"><b>reasoning</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
+      );
+    } else if (shouldRenderUnknownEvent(eventType(rec))) {
+      rows.push(renderUnknownOpencodeEvent(rec));
+    }
+  }
+  const html = rows.length
+    ? `<details><summary>subagent activity (${rows.length} row${rows.length === 1 ? "" : "s"})</summary><ul class="events sub-events">${rows.join("")}</ul></details>`
+    : undefined;
+  // Even when the subagent had no display-worthy rows we keep the ledger so
+  // its step-finish tokens still surface in the totals table.
+  return { html, ledger };
+}
+
+function renderTaskCard(
+  part: ViewerToolPart,
+  durationStr: string | undefined,
+  ctx: SubAgentCtx,
+  parentLedger: AgentLedger,
+): string {
+  const rawInput = part.state?.input;
+  const inputOmitted = renderOmittedNote(rawInput, "input");
+  const input = !inputOmitted && isRecord(rawInput) ? rawInput : undefined;
+  const subagent = input ? safeStr(input.subagent_type) : undefined;
+  const description = input ? safeStr(input.description) : undefined;
+  const prompt = input ? safeStr(input.prompt) : undefined;
+  const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
+  const rawMetadata = isRecord(part.state)
+    ? (part.state as Record<string, unknown>).metadata
+    : undefined;
+  const metadataOmitted = renderOmittedNote(rawMetadata, "metadata");
+  const metadata = !metadataOmitted && isRecord(rawMetadata) ? rawMetadata : undefined;
+  const subSession = metadata ? safeStr(metadata.sessionId) : undefined;
+  const hdr = `🤖 <b>task</b>${subagent ? ` · ${escapeHtml(subagent)}` : ""}${durationStr ? ` · ${escapeHtml(durationStr)}` : ""}${inputOmitted}${metadataOmitted}`;
+  const desc = description ? `<div>${escapeHtml(safeSnippet(description))}</div>` : "";
+  const subChip = subSession
+    ? `<div class="task-sub">subagent session <code>${escapeHtml(safeSnippet(subSession))}</code></div>`
+    : "";
+  const promptBlock = prompt
+    ? `<details><summary>prompt</summary><pre>${escapeHtml(safeMultilineSnippet(prompt))}</pre></details>`
+    : "";
+  // Task `state.output` is the model-facing summary of the subagent run.
+  // We deliberately do not render it here — the subagent activity expansion
+  // below already surfaces the assistant text and tool rows that comprise it.
+  let subActivity = "";
+  if (subSession) {
+    const ledgerLabel = subagent ? `task · ${subagent}` : "task";
+    // OpenCode tags the `task` tool part with the *child's* model — that's
+    // the reliable source for the subagent's model id.
+    const taskModelInfo = metadata && isRecord(metadata.model) ? metadata.model : undefined;
+    const childModelId = taskModelInfo ? safeStr(taskModelInfo.modelID) : undefined;
+    const result = renderInlineSubagent(
+      subSession,
+      ctx,
+      partTimeWindow(part),
+      ledgerLabel,
+      childModelId,
+    );
+    if (result) {
+      parentLedger.children.push(result.ledger);
+      subActivity = result.html ?? "";
+    }
+  }
+  return `<li class="task-card" data-status="${escapeHtml(status)}"><div class="task-hdr">${hdr}</div>${desc}${subChip}${promptBlock}${subActivity}</li>`;
+}
+
+function renderSourceLine(source: DecodedSource): string {
+  const inner = `${source.icon} ${escapeHtml(source.label)}`;
+  if (source.href) {
+    const safeHref = source.href.startsWith("https://") ? source.href : undefined;
+    if (safeHref) {
+      return `<p class="source"><a href="${escapeHtml(safeHref)}" rel="noopener noreferrer">${inner} ↗</a></p>`;
+    }
+  }
+  return `<p class="source">${inner}</p>`;
 }
 
 function numericTokenTotal(tokens: unknown): number | undefined {
@@ -1422,44 +1925,192 @@ function numericTokenTotal(tokens: unknown): number | undefined {
   return found ? total : undefined;
 }
 
-function renderRows(rows: string[]): string {
-  const omitted = Math.max(0, rows.length - MAX_MEANINGFUL_ROWS);
-  const visible = omitted > 0 ? rows.slice(-MAX_MEANINGFUL_ROWS) : rows;
-  return visible.length
-    ? `${omitted > 0 ? `<p>${omitted} earlier meaningful event row(s) omitted; showing latest ${MAX_MEANINGFUL_ROWS}.</p>` : ""}<ol class="events">${visible.join("")}</ol>`
-    : "<p>No meaningful events recorded.</p>";
+/**
+ * Recover the user prompt body from the opencode_event stream. Thor wraps
+ * every prompt as `[correlation-key: <key>]\n\n<body>` before sending it to
+ * OpenCode (see prompt construction in this file), and OpenCode echoes that
+ * text back through `message.part.updated` events. The first such text part
+ * for this trigger's correlation key is the original prompt.
+ */
+function extractCorrelationKeyPrompt(
+  records: SessionEventLogRecord[],
+  correlationKey: string,
+): string | undefined {
+  const prefix = `[correlation-key: ${correlationKey}]`;
+  for (const record of records) {
+    if (record.type !== "opencode_event") continue;
+    const part = eventPart(record);
+    if (!part || part.type !== "text") continue;
+    const text = typeof part.text === "string" ? part.text : "";
+    if (!text.startsWith(prefix)) continue;
+    return text.slice(prefix.length).replace(/^\s+/, "");
+  }
+  return undefined;
 }
 
-function diagnosticRecords(records: SessionEventLogRecord[]): {
-  visible: SessionEventLogRecord[];
-  omitted: number;
-} {
-  const max = DIAGNOSTIC_EDGE_RECORDS * 2;
-  if (records.length <= max) return { visible: records, omitted: 0 };
-  return {
-    visible: [
-      ...records.slice(0, DIAGNOSTIC_EDGE_RECORDS),
-      ...records.slice(-DIAGNOSTIC_EDGE_RECORDS),
-    ],
-    omitted: records.length - max,
+type TokenCounts = { input: number; output: number; reasoning: number; cacheRead: number };
+
+function extractTokenCounts(tokens: unknown): TokenCounts | undefined {
+  if (!isRecord(tokens)) return undefined;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const cache = isRecord(tokens.cache) ? tokens.cache : undefined;
+  const counts: TokenCounts = {
+    input: num(tokens.input),
+    output: num(tokens.output),
+    reasoning: num(tokens.reasoning),
+    cacheRead: cache ? num(cache.read) : 0,
   };
+  if (counts.input + counts.output + counts.reasoning + counts.cacheRead === 0) {
+    return undefined;
+  }
+  return counts;
+}
+
+/**
+ * Per-million-token USD prices for the model ids Thor currently runs against.
+ *
+ * Source: https://models.dev/api.json (snapshot 2026-05-15). To refresh:
+ *   curl -s https://models.dev/api.json | jq '.openai.models["gpt-5.4","gpt-5.5"]'
+ *
+ * Only the exact ids Thor uses are listed; any other model id renders without
+ * a cost estimate so we never surface guessed numbers. The 200k+ context tier
+ * (which roughly doubles the published prices) is intentionally ignored — we
+ * render the base-tier estimate and prefix it with `~`.
+ */
+const MODEL_PRICING_USD_PER_M: Record<
+  string,
+  { input: number; output: number; cacheRead?: number }
+> = {
+  "gpt-5.4": { input: 2.5, output: 15, cacheRead: 0.25 },
+  "gpt-5.5": { input: 5, output: 30, cacheRead: 0.5 },
+};
+
+function estimateCostUsd(tokens: TokenCounts, modelId: string | undefined): number | undefined {
+  if (!modelId) return undefined;
+  const pricing = MODEL_PRICING_USD_PER_M[modelId];
+  if (!pricing) return undefined;
+  const cacheRead = pricing.cacheRead ?? pricing.input;
+  // Reasoning tokens are billed at the completion (output) rate.
+  return (
+    (tokens.input * pricing.input +
+      (tokens.output + tokens.reasoning) * pricing.output +
+      tokens.cacheRead * cacheRead) /
+    1_000_000
+  );
+}
+
+function formatCostUsd(value: number): string {
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  if (value >= 0.01) return `$${value.toFixed(3)}`;
+  return `$${value.toFixed(4)}`;
+}
+
+type AgentLedger = {
+  label: string;
+  sessionId: string;
+  modelIds: Set<string>;
+  tokens: TokenCounts;
+  children: AgentLedger[];
+};
+
+function emptyTokenCounts(): TokenCounts {
+  return { input: 0, output: 0, reasoning: 0, cacheRead: 0 };
+}
+
+function addTokenCounts(target: TokenCounts, src: TokenCounts): void {
+  target.input += src.input;
+  target.output += src.output;
+  target.reasoning += src.reasoning;
+  target.cacheRead += src.cacheRead;
+}
+
+function hasAnyTokens(t: TokenCounts): boolean {
+  return t.input + t.output + t.reasoning + t.cacheRead > 0;
+}
+
+function sumLedgerTokens(node: AgentLedger): TokenCounts {
+  const acc = emptyTokenCounts();
+  const walk = (n: AgentLedger) => {
+    addTokenCounts(acc, n.tokens);
+    n.children.forEach(walk);
+  };
+  walk(node);
+  return acc;
+}
+
+function flattenLedger(root: AgentLedger): Array<{ ledger: AgentLedger; depth: number }> {
+  const out: Array<{ ledger: AgentLedger; depth: number }> = [];
+  const walk = (n: AgentLedger, depth: number) => {
+    out.push({ ledger: n, depth });
+    n.children.forEach((c) => walk(c, depth + 1));
+  };
+  walk(root, 0);
+  return out;
+}
+
+function ledgerRowCost(l: AgentLedger): number | undefined {
+  if (l.modelIds.size !== 1) return undefined;
+  const [m] = l.modelIds;
+  return estimateCostUsd(l.tokens, m);
+}
+
+function tokenCell(n: number): string {
+  return n > 0 ? escapeHtml(formatTokens(n)) : "—";
+}
+
+function renderTotalsTable(root: AgentLedger): string {
+  const flat = flattenLedger(root);
+  const total = sumLedgerTokens(root);
+  let totalCost = 0;
+  let costPartial = false;
+  const rows = flat.map(({ ledger, depth }) => {
+    const indent = `style="padding-left:${depth * 16 + 8}px"`;
+    const prefix = depth > 0 ? "└ " : "";
+    const sidChip = ledger.sessionId
+      ? ` <code class="ledger-sid" title="${escapeHtml(ledger.sessionId)}">${escapeHtml(ledger.sessionId)}</code>`
+      : "";
+    const models = [...ledger.modelIds].sort();
+    const modelCell = models.length ? escapeHtml(models.join(", ")) : "—";
+    const cost = ledgerRowCost(ledger);
+    if (cost !== undefined && cost > 0) {
+      totalCost += cost;
+    } else if (hasAnyTokens(ledger.tokens)) {
+      costPartial = true;
+    }
+    const costCell = cost !== undefined && cost > 0 ? `~${formatCostUsd(cost)}` : "—";
+    return (
+      `<tr><th scope="row" ${indent}>${prefix}${escapeHtml(ledger.label)}${sidChip}</th>` +
+      `<td>${modelCell}</td>` +
+      `<td>${tokenCell(ledger.tokens.input)}</td>` +
+      `<td>${tokenCell(ledger.tokens.cacheRead)}</td>` +
+      `<td>${tokenCell(ledger.tokens.output)}</td>` +
+      `<td>${tokenCell(ledger.tokens.reasoning)}</td>` +
+      `<td>${costCell}</td></tr>`
+    );
+  });
+  const totalCostCell =
+    totalCost > 0 ? `${costPartial ? "≥ " : ""}~${formatCostUsd(totalCost)}` : "—";
+  const totalRow =
+    `<tr class="totals-total"><th scope="row">Total</th><td>—</td>` +
+    `<td>${tokenCell(total.input)}</td>` +
+    `<td>${tokenCell(total.cacheRead)}</td>` +
+    `<td>${tokenCell(total.output)}</td>` +
+    `<td>${tokenCell(total.reasoning)}</td>` +
+    `<td>${totalCostCell}</td></tr>`;
+  return (
+    `<table class="totals-table"><thead><tr>` +
+    `<th>Agent</th><th>Model</th><th>Input</th><th>Cached</th><th>Output</th><th>Reasoning</th><th>Cost</th>` +
+    `</tr></thead><tbody>${rows.join("")}${totalRow}</tbody></table>`
+  );
+}
+
+/** UUIDs render as their last 7 characters everywhere on the viewer. */
+function shortUuid(value: string): string {
+  return value.length > 7 ? value.slice(-7) : value;
 }
 
 function renderPage(title: string, body: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · Thor</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}details{margin:16px 0}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}<footer><p>Generated by Thor at <time datetime="${new Date().toISOString()}">${new Date().toUTCString()}</time></p></footer></main></body></html>`;
-}
-
-function redactRecord(record: unknown): unknown {
-  if (!record || typeof record !== "object") return record;
-  const value = record as Record<string, unknown>;
-  if (value.type === "tool_call") return { ...value, payload: "[redacted: tool output]" };
-  if (value.type === "opencode_event") return { ...value, event: "[redacted: opencode event]" };
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [
-      key,
-      typeof entry === "string" ? safeSnippet(entry, key === "promptPreview" ? 800 : 500) : entry,
-    ]),
-  );
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.row.truncated{color:#94a3b8;font-style:italic}.row.truncated .ts{color:#cbd5e1;font-size:0.85em;margin-left:4px}.omitted{color:#94a3b8;font-style:italic;font-size:0.9em}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events,.step>ul{list-style:none;padding-left:0}.events>li,.step>ul>li{margin:6px 0}.row{position:relative;padding-left:18px}.row::before{content:"";position:absolute;left:2px;top:0.55em;width:8px;height:8px;border-radius:50%;background:#94a3b8}.row[data-status="completed"]::before{background:#22c55e}.row[data-status="running"]::before{background:#facc15}.row[data-status="pending"]::before{background:#cbd5e1}.row[data-status="error"]::before{background:#ef4444}.row[data-status="aborted"]::before{background:#f97316}.tool-title{color:#475569;font-style:italic;margin-left:6px}.text-body{white-space:pre-wrap;margin:4px 0 0;color:#0f172a;font-size:0.95em}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.sub-events{margin:6px 0 0;padding-left:12px;border-left:2px solid #c7d2fe}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.totals-table{border-collapse:collapse;font-size:0.9em;margin:8px 0;width:100%}.totals-table th,.totals-table td{padding:4px 8px;text-align:right;border-bottom:1px solid #e2e8f0}.totals-table thead th{color:#64748b;font-weight:600;text-align:right;border-bottom:1px solid #cbd5e1}.totals-table thead th:first-child,.totals-table tbody th{text-align:left}.totals-table tbody th{font-weight:500;color:#0f172a}.totals-table .ledger-sid{color:#64748b;font-size:0.85em;margin-left:4px}.totals-table tr.totals-total th,.totals-table tr.totals-total td{font-weight:700;border-top:2px solid #cbd5e1;border-bottom:none;padding-top:6px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}.step{list-style:none;margin:16px 0}.step>.step-hdr{color:#1e293b;font-weight:600;padding:6px 0;border-bottom:1px solid #e2e8f0}.step>ol{margin-top:6px;padding-left:24px}details{margin:4px 0}summary{cursor:pointer}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}</main></body></html>`;
 }
 
 function renderSlicePage(
@@ -1468,6 +2119,7 @@ function renderSlicePage(
   ownerSessionId: string,
   anchor: ReverseAnchorEntry,
   slice: Exclude<ReturnType<typeof readTriggerSlice>, { notFound: true }>,
+  opts: { slackTeamId: string | null },
 ): string {
   const start = slice.records.find(
     (record) => record.type === "trigger_start" && record.triggerId === triggerId,
@@ -1476,132 +2128,144 @@ function renderSlicePage(
     (record) => record.type === "trigger_end" && record.triggerId === triggerId,
   );
   const correlationKey = start?.type === "trigger_start" ? start.correlationKey : undefined;
-  const promptPreview = start?.type === "trigger_start" ? start.promptPreview : undefined;
-  const isStale =
-    slice.status === "in_flight" &&
-    slice.lastEventTs &&
-    Date.now() - Date.parse(slice.lastEventTs) > SLICE_STALE_AFTER_MS;
-  const refresh = slice.status === "in_flight" ? '<meta http-equiv="refresh" content="5">' : "";
-  const mismatched = slice.records.filter(
-    (record) =>
-      (record.type === "trigger_start" || record.type === "trigger_end") &&
-      record.triggerId !== triggerId,
-  );
-  const truncatedCount = slice.records.filter((record) => {
-    if (record.type === "opencode_event" && record.event && typeof record.event === "object") {
-      return (record.event as ViewerEvent)._truncated === true;
-    }
-    return false;
-  }).length;
-  const warnings = [
-    ...(isStale
-      ? [
-          "No new events in more than 5 minutes — the runner may have crashed without a close marker.",
-        ]
-      : []),
-    ...(slice.status === "crashed"
-      ? [`Superseded by newer trigger${slice.reason ? ` (${slice.reason})` : ""}.`]
-      : []),
-    ...(truncatedCount > 0
-      ? [`${truncatedCount} truncated payload(s); tool/text/status details may be incomplete.`]
-      : []),
-    ...(anchor.subsessionIds.length > 0
-      ? ["Subsessions exist; v1 lists child ids but does not merge child logs."]
-      : []),
-    ...(anchor.sessionIds.length > 1
-      ? [
-          "Multiple OpenCode sessions are bound to this anchor; duplicate-session or stale-session work may be hidden.",
-        ]
-      : []),
-    ...(mismatched.length > 0
-      ? [
-          "This slice contains records for another trigger; boundaries may be overlapping or late-written.",
-        ]
-      : []),
-    ...(slice.skippedMalformed > 0
-      ? [`${slice.skippedMalformed} malformed log record(s) were skipped.`]
-      : []),
-  ];
+  // The user prompt body lives in the opencode_event stream as the first
+  // `text` part prefixed with `[correlation-key: <key>]` — see prompt
+  // construction at `:814`. Strip the prefix to recover the original prompt;
+  // that's what `decodeSourceLine` parses for Slack/GitHub fields.
+  const promptPreview = correlationKey
+    ? extractCorrelationKeyPrompt(slice.records, correlationKey)
+    : undefined;
 
+  // Dedup pre-pass: for parts that stream multiple updates under the same id,
+  // we want one row per id with the latest state.
+  const latestPartById = new Map<string, ViewerToolPart>();
+  const firstIndexById = new Map<string, number>();
+  slice.records.forEach((record, idx) => {
+    if (record.type !== "opencode_event") return;
+    const part = eventPart(record);
+    const id = partId(part);
+    if (!id) return;
+    latestPartById.set(id, part!);
+    if (!firstIndexById.has(id)) firstIndexById.set(id, idx);
+  });
+
+  type Step = { rows: string[] };
   let toolParts = 0;
-  let textParts = 0;
-  let stepFinishes = 0;
-  let totalCost = 0;
-  let hasCost = false;
   let totalTokens = 0;
   let hasTokens = false;
-  let latestAssistantText: string | undefined;
-  const rows: string[] = [];
-  for (const record of slice.records) {
-    if (record.type === "trigger_start") {
-      rows.push(
-        `<li><b>trigger started</b>${record.correlationKey ? ` <span>${escapeHtml(safeSnippet(record.correlationKey))}</span>` : ""}</li>`,
-      );
-      continue;
-    }
-    if (record.type === "trigger_end") {
-      rows.push(
-        `<li><b>trigger ended</b> <span>${escapeHtml(record.status)}</span>${record.reason ? ` — ${escapeHtml(safeSnippet(record.reason))}` : record.error ? ` — ${escapeHtml(safeSnippet(record.error, 500))}` : ""}</li>`,
-      );
-      continue;
-    }
-    if (record.type === "tool_call") {
-      rows.push(
-        `<li class="warn"><b>tool call</b> <span>${escapeHtml(record.tool)}</span> <em>arguments hidden</em></li>`,
-      );
-      continue;
-    }
+  const rootLedger: AgentLedger = {
+    label: "main",
+    sessionId: ownerSessionId,
+    // TODO(model-attribution): the main agent's model isn't recorded anywhere
+    // in the on-disk JSONL today — OpenCode emits it on `message.updated`
+    // events which Thor's runner doesn't subscribe to, and `step-finish` parts
+    // don't carry it. We hardcode `gpt-5.4` (Thor's current default main-agent
+    // model) so the totals/cost stay useful; switch to the real value once
+    // the runner persists `message.updated` events or we call `sessions.get`
+    // at render time.
+    modelIds: new Set(["gpt-5.4"]),
+    tokens: emptyTokenCounts(),
+    children: [],
+  };
+  const tokenTotals = rootLedger.tokens;
+  const modelIds = rootLedger.modelIds;
+  let errorRows = 0;
+  const steps: Step[] = [];
+  let current: Step = { rows: [] };
+  const subAgentCtx: SubAgentCtx = { visited: new Set([ownerSessionId]) };
+  for (let idx = 0; idx < slice.records.length; idx++) {
+    const record = slice.records[idx]!;
+    // trigger_start / trigger_end rows are intentionally not rendered — the
+    // status pill, duration, and totals footer convey the same information
+    // without two stand-alone "[1] trigger started …" / "[N] trigger ended …"
+    // bullets that bracket every step.
+    if (record.type === "trigger_start" || record.type === "trigger_end") continue;
     if (record.type !== "opencode_event") continue;
     if (
       record.event &&
       typeof record.event === "object" &&
       (record.event as ViewerEvent)._truncated === true
     ) {
-      rows.push(`<li class="warn"><b>truncated payload</b> event details omitted by log cap</li>`);
+      // Truncated events carry no payload, only the outer record `ts` — render
+      // a muted row at the right chronological position so the gap is visible
+      // rather than silently swallowed by a footer count.
+      const ts = typeof record.ts === "string" ? record.ts : "";
+      current.rows.push(
+        `<li class="row truncated" data-status="pending"><b>truncated event</b>${ts ? ` <span class="ts">${escapeHtml(ts)}</span>` : ""}</li>`,
+      );
       continue;
     }
     const type = eventType(record);
-    const part = eventPart(record);
+    const rawPart = eventPart(record);
+    const id = partId(rawPart);
+    if (id && firstIndexById.get(id) !== idx) continue;
+    const part = id ? (latestPartById.get(id) ?? rawPart) : rawPart;
+    // Note: we deliberately do NOT collect `state.metadata.model.modelID` from
+    // parts in the main session — the only place that field actually appears
+    // in the corpus is on `task` tool parts, where it represents the
+    // *subagent's* model (the model the child runs as), not the main agent's.
+    // Folding it into the main ledger here would mislabel the main row.
+    // Subagent ledgers receive that modelID via `renderTaskCard` instead.
     if (part?.type === "tool") {
       toolParts++;
       const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
-      const name = viewerToolDisplayName(part);
-      const args =
-        safeToolArgs(name, part.state?.input) ??
-        safeToolArgs(typeof part.tool === "string" ? part.tool : "", part.state?.input);
-      const hasHiddenArgs = !args && !!part.state?.input;
+      if (status === "error") errorRows++;
       const duration =
         typeof part.state?.time?.start === "number" && typeof part.state.time.end === "number"
           ? formatDuration(part.state.time.end - part.state.time.start)
           : undefined;
-      rows.push(
-        `<li><b>tool</b> <span>${escapeHtml(name)}</span> <span class="status">${escapeHtml(status)}</span>${duration ? ` <span>${duration}</span>` : ""}${args ? ` <code>${escapeHtml(args)}</code>` : ""}${hasHiddenArgs ? " <em>arguments hidden</em>" : ""}${status === "error" ? ` <span class="err">${escapeHtml(safeSnippet(part.state?.error, 300))}</span>` : ""}</li>`,
+      const toolName = typeof part.tool === "string" ? part.tool : "";
+
+      if (toolName === "apply_patch") {
+        current.rows.push(renderApplyPatch(part, duration));
+        continue;
+      }
+      if (toolName === "task") {
+        current.rows.push(renderTaskCard(part, duration, subAgentCtx, rootLedger));
+        continue;
+      }
+      const name = viewerToolDisplayName(part);
+      const title = getStateTitle(part);
+      const input = renderToolInput(name, part.state?.input);
+      current.rows.push(
+        `<li class="row" data-status="${escapeHtml(status)}"><b>tool</b> <span>${escapeHtml(name)}</span>${duration ? ` <span>${duration}</span>` : ""}${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title))}</span>` : ""}${status === "error" ? ` <span class="err">${escapeHtml(safeSnippet(part.state?.error))}</span>` : ""}${input}</li>`,
       );
       continue;
     }
     if (part?.type === "text") {
-      textParts++;
-      latestAssistantText = safeSnippet(part.text, 1000);
-      rows.push(`<li><b>assistant text</b> ${escapeHtml(safeSnippet(part.text, 300))}</li>`);
+      const text = typeof part.text === "string" ? part.text : "";
+      current.rows.push(
+        `<li class="row" data-status="completed"><b>text</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
+      );
+      continue;
+    }
+    if (part?.type === "reasoning") {
+      const text = typeof part.text === "string" ? part.text : "";
+      if (!text.trim()) continue;
+      current.rows.push(
+        `<li class="row" data-status="completed"><b>reasoning</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
+      );
       continue;
     }
     if (part?.type === "step-finish") {
-      stepFinishes++;
-      if (typeof part.cost === "number" && Number.isFinite(part.cost)) {
-        totalCost += part.cost;
-        hasCost = true;
-      }
       const tokenTotal = numericTokenTotal(part.tokens);
       if (tokenTotal !== undefined) {
         totalTokens += tokenTotal;
         hasTokens = true;
       }
-      rows.push(
-        `<li><b>step finish</b>${typeof part.reason === "string" ? ` <span>${escapeHtml(safeSnippet(part.reason, 120))}</span>` : ""}${typeof part.cost === "number" && Number.isFinite(part.cost) ? ` <span>cost $${part.cost.toFixed(4)}</span>` : ""}${tokenTotal !== undefined ? ` <span>${tokenTotal} tokens</span>` : ""}</li>`,
-      );
+      const breakdown = extractTokenCounts(part.tokens);
+      if (breakdown) {
+        tokenTotals.input += breakdown.input;
+        tokenTotals.output += breakdown.output;
+        tokenTotals.reasoning += breakdown.reasoning;
+        tokenTotals.cacheRead += breakdown.cacheRead;
+      }
+      steps.push(current);
+      current = { rows: [] };
       continue;
     }
     if (type === "session.error") {
+      errorRows++;
       const event = record.event as ViewerEvent;
       const error = event.properties?.error;
       const msg =
@@ -1611,29 +2275,116 @@ function renderSlicePage(
             (error as { message?: string; name?: string }).message ??
             (error as { name?: string }).name)
           : undefined;
-      rows.push(
-        `<li class="err"><b>session error</b> ${escapeHtml(safeSnippet(msg ?? "Unknown error", 500))}</li>`,
+      current.rows.push(
+        `<li class="row err" data-status="error"><b>session error</b> ${escapeHtml(safeSnippet(msg ?? "Unknown error"))}</li>`,
       );
       continue;
     }
-    if (type === "session.status" || type === "session.idle") {
-      rows.push(`<li><b>${escapeHtml(type)}</b></li>`);
+    if (shouldRenderUnknownEvent(type)) {
+      current.rows.push(renderUnknownOpencodeEvent(record));
+      continue;
     }
+    // session.status (busy heartbeat) and session.idle are intentionally
+    // dropped — the pill conveys liveness; row-by-row heartbeats are noise.
   }
+  if (current.rows.length > 0) steps.push(current);
 
-  const diagnostics = diagnosticRecords(slice.records);
-  const records = diagnostics.visible
-    .map((record) => JSON.stringify(redactRecord(record), null, 2))
-    .join("\n");
   const aliases = anchor.externalKeys
     .map(
-      (key) =>
-        `${key.aliasType}: ${safeSnippet(decodeAliasValue(key.aliasType, key.aliasValue), 300)}`,
+      (key) => `${key.aliasType}: ${safeSnippet(decodeAliasValue(key.aliasType, key.aliasValue))}`,
     )
     .join("; ");
-  const stepSummary = `${stepFinishes} step finish row(s)${hasCost ? `, $${totalCost.toFixed(4)} total cost` : ""}${hasTokens ? `, ${totalTokens} total tokens` : ""}`;
-  const body = `${refresh}<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}</span><h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2><p>Status <b>${escapeHtml(slice.status)}</b>${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined) ? ` · Duration ${formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined)}` : ""}${formatAge(slice.lastEventTs) ? ` · Last event ${formatAge(slice.lastEventTs)} ago` : ""}</p><p>Anchor <code>${escapeHtml(anchorId)}</code><br>Trigger <code>${escapeHtml(triggerId)}</code><br>Owner session <code>${escapeHtml(safeSnippet(ownerSessionId, 120))}</code>${anchor.currentSessionId ? `<br>Current session <code>${escapeHtml(safeSnippet(anchor.currentSessionId, 120))}</code>` : ""}</p>${warnings.length ? `<div class="warnings"><h3>Warnings</h3><ul>${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul></div>` : ""}</section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${promptPreview ? `<p>Prompt preview: ${escapeHtml(safeSnippet(promptPreview, 800))}</p>` : ""}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id, 120))}</code>`).join(" ")}</p>` : ""}</section><section><h3>Meaningful events</h3><p>${toolParts} tool row(s), ${textParts} assistant text row(s), ${stepSummary}, ${truncatedCount} truncated payload(s).</p>${latestAssistantText ? `<blockquote>${escapeHtml(latestAssistantText)}</blockquote>` : ""}${renderRows(rows)}</section><details><summary>Sanitized diagnostics</summary><p>Raw opencode payloads, tool outputs, bash commands, and unsafe tool arguments are hidden.${diagnostics.omitted > 0 ? ` ${diagnostics.omitted} middle record(s) omitted from diagnostics.` : ""}</p><pre>${escapeHtml(records)}</pre></details>`;
-  return renderPage("Thor trigger", body);
+  const durationStr = formatDuration(end?.type === "trigger_end" ? end.durationMs : undefined);
+  // "last event ago" is only useful while in flight (admin watching for a
+  // stall). On terminal triggers it just restates how long ago the trigger
+  // ended — drop it.
+  const ageStr = slice.status === "in_flight" ? formatAge(slice.lastEventTs) : undefined;
+  const summaryBits = [
+    durationStr,
+    `${toolParts} tools`,
+    errorRows ? `${errorRows} errors` : undefined,
+    ageStr ? `last event ${ageStr} ago` : undefined,
+  ].filter((s): s is string => !!s);
+  const summaryLine = summaryBits.join(" · ");
+
+  const pillReason =
+    (slice.status === "aborted" || slice.status === "crashed") && slice.reason
+      ? ` · ${escapeHtml(safeSnippet(slice.reason))}`
+      : "";
+  const livePill =
+    slice.status === "in_flight" ? ` <span class="live" aria-label="live">● live</span>` : "";
+  const ownerChip = `<code>${escapeHtml(safeSnippet(ownerSessionId))}</code>`;
+  const currentChip =
+    anchor.currentSessionId && anchor.currentSessionId !== ownerSessionId
+      ? ` · current <code>${escapeHtml(safeSnippet(anchor.currentSessionId))}</code>`
+      : "";
+  // Subagent token rollup: when the trigger spawned subagents, render a table
+  // (one row per agent, indented by depth) so admins can see per-subagent cost
+  // alongside the main trigger. Otherwise keep the single-line footer.
+  let totalsFooter = "";
+  if (rootLedger.children.length > 0) {
+    totalsFooter = `<div class="totals">${renderTotalsTable(rootLedger)}</div>`;
+  } else {
+    const totalsBits: string[] = [];
+    if (hasTokens) {
+      const tokenParts: string[] = [];
+      if (tokenTotals.input) tokenParts.push(`${formatTokens(tokenTotals.input)} input`);
+      if (tokenTotals.cacheRead) tokenParts.push(`${formatTokens(tokenTotals.cacheRead)} cached`);
+      if (tokenTotals.output) tokenParts.push(`${formatTokens(tokenTotals.output)} output`);
+      if (tokenTotals.reasoning)
+        tokenParts.push(`${formatTokens(tokenTotals.reasoning)} reasoning`);
+      totalsBits.push(
+        tokenParts.length
+          ? `Tokens: ${tokenParts.join(" · ")}`
+          : `Tokens: ${formatTokens(totalTokens)}`,
+      );
+    }
+    const sortedModelIds = [...modelIds].sort();
+    // Only surface model/cost when we actually saw token data — avoids
+    // confidently displaying the hardcoded `gpt-5.4` default on zero-token
+    // sessions (e.g. an aborted trigger with no step-finish parts).
+    if (hasTokens) {
+      if (sortedModelIds.length === 1) {
+        totalsBits.push(`Model: ${escapeHtml(sortedModelIds[0]!)}`);
+      } else if (sortedModelIds.length > 1) {
+        totalsBits.push(`Models: ${sortedModelIds.map((m) => escapeHtml(m)).join(", ")}`);
+      }
+      if (sortedModelIds.length === 1) {
+        const cost = estimateCostUsd(tokenTotals, sortedModelIds[0]);
+        if (cost !== undefined && cost > 0) {
+          totalsBits.push(`Est cost: ~${formatCostUsd(cost)}`);
+        }
+      }
+    }
+    totalsFooter = totalsBits.length ? `<p class="totals">${totalsBits.join(" · ")}</p>` : "";
+  }
+  const decodedSource = decodeSourceLine(correlationKey, promptPreview, opts.slackTeamId);
+  const sourceLine = decodedSource ? renderSourceLine(decodedSource) : "";
+  // Tab title: <source-type> · <short-trigger-id> · Thor.
+  // Short id makes multiple open tabs distinguishable without duplicating the
+  // full source label that the in-page source line already shows.
+  const pageTitle = `${sourceFrom(correlationKey)} · ${shortUuid(triggerId)} · Thor`;
+
+  let activityHtml: string;
+  if (steps.length <= 1) {
+    const flat = steps.flatMap((step) => step.rows);
+    activityHtml = flat.length
+      ? `<ul class="events">${flat.join("")}</ul>`
+      : "<p>No meaningful events recorded.</p>";
+  } else {
+    const stepBlocks = steps.map((step, i) => {
+      const heading = `Step ${i + 1}`;
+      return `<li class="step"><div class="step-hdr">${escapeHtml(heading)}</div><ul>${step.rows.join("")}</ul></li>`;
+    });
+    activityHtml = `<ul class="events">${stepBlocks.join("")}</ul>`;
+  }
+
+  // The prompt body now lives as the first activity row (the
+  // `[correlation-key: …]` text part). No need for a separate preview block
+  // in Trigger context.
+
+  const body = `<section><span class="pill ${slice.status}">${escapeHtml(slice.status.replace("_", " "))}${pillReason}</span>${livePill}<h2>${escapeHtml(sourceFrom(correlationKey))} trigger</h2>${sourceLine}${summaryLine ? `<p class="summary">${escapeHtml(summaryLine)}</p>` : ""}<p class="chips">anchor <code title="${escapeHtml(anchorId)}">${escapeHtml(shortUuid(anchorId))}</code> · trigger <code title="${escapeHtml(triggerId)}">${escapeHtml(shortUuid(triggerId))}</code> · session ${ownerChip}${currentChip}</p></section><section><h3>Trigger context</h3>${correlationKey ? `<p>Correlation <code>${escapeHtml(safeSnippet(correlationKey))}</code></p>` : ""}${aliases ? `<p>Aliases: ${escapeHtml(aliases)}</p>` : ""}<p>Sessions: ${anchor.sessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id))}</code>`).join(" ") || "none"}</p>${anchor.subsessionIds.length ? `<p>Subsessions: ${anchor.subsessionIds.map((id) => `<code>${escapeHtml(safeSnippet(id))}</code>`).join(" ")}</p>` : ""}</section><section>${activityHtml}${totalsFooter}</section>`;
+  return renderPage(pageTitle, body);
 }
 
 // --- Startup ---

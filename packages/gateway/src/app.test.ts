@@ -51,6 +51,18 @@ vi.mock("@thor/common", async (importOriginal) => {
     ...actual,
     resolveRepoDirectory: (repoName: string) =>
       mappedRepos.has(repoName) ? `/workspace/repos/${repoName}` : undefined,
+    resolveCorrelationKeys: (rawKeys: string[]) => {
+      for (const k of rawKeys) {
+        const aliased = correlationKeyAliases.get(k);
+        if (aliased) return aliased;
+        if (sessionKeys.has(k)) return k;
+      }
+      return rawKeys[0] ?? "";
+    },
+    hasSessionForCorrelationKey: (correlationKey: string | string[]) => {
+      const keys = Array.isArray(correlationKey) ? correlationKey : [correlationKey];
+      return keys.some((k) => sessionKeys.has(k));
+    },
     resolveSafeRepoDirectory: (repoName: string) => {
       if (repoName.includes("/") || repoName.includes("\\")) {
         return { reason: "repo name must be a repo name only" };
@@ -107,9 +119,6 @@ vi.mock("@thor/common", async (importOriginal) => {
         fallbackReason: invalidReason,
       };
     },
-    resolveCorrelationKeys: (rawKeys: string[]) =>
-      correlationKeyAliases.get(rawKeys[0] ?? "") ?? rawKeys[0] ?? "",
-    hasSessionForCorrelationKey: (correlationKey: string) => sessionKeys.has(correlationKey),
   };
 });
 
@@ -2365,7 +2374,7 @@ describe("gateway", () => {
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
-      expect(resolveAnchorForCorrelationKey("slack:thread:1710000000.001")).toBeDefined();
+      expect(resolveAnchorForCorrelationKey("slack:thread:C123/1710000000.001")).toBeDefined();
 
       await queue.flush();
 
@@ -2380,7 +2389,7 @@ describe("gateway", () => {
       const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
       expect(triggerCall).toBeDefined();
       const triggerBody = JSON.parse(String(triggerCall![1]?.body));
-      expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
+      expect(triggerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
       const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
       const promptPayload = JSON.parse(promptJson);
       expect(promptPayload.event_type).toBe("app_mention");
@@ -2590,7 +2599,7 @@ describe("gateway", () => {
       );
       expect(triggerCalls).toHaveLength(1);
       const triggerBody = JSON.parse(String(triggerCalls[0][1]?.body));
-      expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
+      expect(triggerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
       const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
       const promptPayloads = JSON.parse(promptJson);
       expect(promptPayloads).toHaveLength(3);
@@ -2984,7 +2993,7 @@ describe("gateway", () => {
     );
     expect(runnerCall).toBeDefined();
     const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
-    expect(runnerBody.correlationKey).toBe("slack:thread:1710000000.001");
+    expect(runnerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
     expect(runnerBody.interrupt).toBe(false);
   });
 
@@ -3139,7 +3148,7 @@ describe("gateway", () => {
 
     const firstBody = JSON.parse(String(runnerCalls[0]?.[1]?.body));
     expect(firstBody.interrupt).toBe(false);
-    expect(firstBody.correlationKey).toBe("slack:thread:1710000000.001");
+    expect(firstBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
     expect(firstBody.prompt).toContain("act-1");
   });
 

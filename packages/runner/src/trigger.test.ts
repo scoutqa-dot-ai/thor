@@ -290,6 +290,25 @@ function bindSessionToAnchor(sessionId: string, anchorId: string): void {
   if (!result.ok) throw result.error;
 }
 
+function jsonLineWithSplitUtf8Text(buildRecord: (text: string) => Record<string, unknown>): {
+  line: string;
+  markerText: string;
+} {
+  const marker = "\u{1f680}";
+  const markerText = `${marker} split ok`;
+  const baseLine = JSON.stringify(buildRecord(markerText));
+  const markerIndex = baseLine.indexOf(marker);
+  if (markerIndex === -1) throw new Error("marker missing from JSON fixture");
+  const bytesBeforeMarker = Buffer.byteLength(baseLine.slice(0, markerIndex), "utf8");
+  const fillerLength = 64 * 1024 - 1 - bytesBeforeMarker;
+  if (fillerLength <= 0) throw new Error("JSON fixture prefix is too large");
+
+  const line = JSON.stringify(buildRecord(`${"a".repeat(fillerLength)}${markerText}`));
+  const finalMarkerIndex = line.indexOf(marker);
+  expect(Buffer.byteLength(line.slice(0, finalMarkerIndex), "utf8")).toBe(64 * 1024 - 1);
+  return { line, markerText };
+}
+
 function readAliases(): Array<{ aliasType: string; aliasValue: string; anchorId: string }> {
   try {
     return readFileSync(`${worklogDir}/aliases.jsonl`, "utf8")
@@ -354,171 +373,394 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("renders the trigger viewer as a safe operator event list", async () => {
+  it("inlines the subagent session activity inside the task card", async () => {
     const h = createHarness();
-    const triggerId = "00000000-0000-7000-8000-000000000311";
-    const otherTriggerId = "00000000-0000-7000-8000-000000000312";
+    const triggerId = "00000000-0000-7000-8000-000000000508";
     const anchorId = mintAnchor();
-    bindSessionToAnchor("viewer-session", anchorId);
-    bindSessionToAnchor("older-viewer-session", anchorId);
-    expect(
-      appendAlias({ aliasType: "opencode.subsession", aliasValue: "viewer-child", anchorId }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("viewer-session", {
-        type: "trigger_start",
-        triggerId,
-        correlationKey: "slack:thread:1710000000.311",
-        promptPreview: "please inspect the repo",
-      }),
-    ).toEqual({ ok: true });
-    appendSessionEvent("viewer-session", {
+    bindSessionToAnchor("parent-session", anchorId);
+    const subSessionId = "ses_subagent_inline_test_001";
+    const taskStart = 1_700_000_000_000;
+    const taskEnd = taskStart + 10_000;
+    // Pre-seed the subagent's own session file with three events inside the
+    // task's time window plus one stale event outside it (a later resume).
+    mkdirSync(`${worklogDir}/sessions`, { recursive: true });
+    writeFileSync(
+      `${worklogDir}/sessions/${subSessionId}.jsonl`,
+      [
+        JSON.stringify({
+          schemaVersion: 1,
+          ts: new Date(taskStart + 100).toISOString(),
+          type: "opencode_event",
+          event: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                type: "tool",
+                tool: "read",
+                state: { status: "completed", input: { filePath: "/x" } },
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          schemaVersion: 1,
+          ts: new Date(taskStart + 200).toISOString(),
+          type: "opencode_event",
+          event: {
+            type: "message.future.delta",
+            properties: {
+              sessionID: subSessionId,
+              metadata: { _omitted: true, bytes: 4096 },
+            },
+          },
+        }),
+        JSON.stringify({
+          schemaVersion: 1,
+          ts: new Date(taskStart + 300).toISOString(),
+          type: "opencode_event",
+          event: {
+            type: "message.part.updated",
+            properties: {
+              part: { type: "text", text: "Subagent finished the read." },
+            },
+          },
+        }),
+        // Event after taskEnd — belongs to a later resume of the same subagent
+        // session, must NOT bleed into this task card.
+        JSON.stringify({
+          schemaVersion: 1,
+          ts: new Date(taskEnd + 5_000).toISOString(),
+          type: "opencode_event",
+          event: {
+            type: "message.part.updated",
+            properties: {
+              part: { type: "text", text: "STALE FOLLOW-UP — should not render" },
+            },
+          },
+        }),
+        "",
+      ].join("\n"),
+    );
+
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("parent-session", {
       type: "opencode_event",
-      event: toolEvent("viewer-session", "read", "completed", {
-        filePath: "/workspace/repos/thor/README.md",
-      }),
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: { subagent_type: "thinker", prompt: "go" },
+              output: `task_id: ${subSessionId}\nAll done.`,
+              metadata: { sessionId: subSessionId },
+              time: { start: taskStart, end: taskEnd },
+            },
+          },
+        },
+      },
     });
-    appendSessionEvent("viewer-session", {
-      type: "opencode_event",
-      event: toolEvent("viewer-session", "bash", "completed", {
-        command: "gh auth token --password=supersecret",
-      }),
-    });
-    appendSessionEvent("viewer-session", {
-      type: "opencode_event",
-      event: toolEvent("viewer-session", "mcp", "completed", {
-        token: "should-not-render",
-        query: "mutation { writeThing }",
-      }),
-    });
-    appendSessionEvent("viewer-session", {
-      type: "opencode_event",
-      event: textEvent("viewer-session", "Done with token=abc123"),
-    });
-    appendSessionEvent("viewer-session", {
-      type: "opencode_event",
-      event: stepFinishEvent("viewer-session"),
-    });
-    appendSessionEvent("viewer-session", { type: "opencode_event", event: { _truncated: true } });
-    appendSessionEvent("viewer-session", {
-      type: "trigger_end",
-      triggerId: otherTriggerId,
-      status: "completed",
-    });
-    appendSessionEvent("viewer-session", {
+    appendSessionEvent("parent-session", {
       type: "trigger_end",
       triggerId,
       status: "completed",
-      durationMs: 1234,
     });
 
     await withServer(h.app, async (url) => {
-      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
       expect(response.status).toBe(200);
       const html = await response.text();
-      expect(html).toContain("slack trigger");
-      expect(html).toContain("Meaningful events");
+      expect(html).toContain("subagent activity (3 rows)");
+      expect(html).toContain('class="events sub-events"');
+      expect(html).toContain("Subagent finished the read.");
       expect(html).toContain("tool</b> <span>read</span>");
-      expect(html).toContain("filePath:");
-      expect(html).toContain("tool</b> <span>gh auth</span>");
-      expect(html).toContain("tool</b> <span>mcp</span>");
-      expect(html).toContain("arguments hidden");
-      expect(html).toContain("truncated payload");
-      expect(html).toContain("Subsessions exist");
-      expect(html).toContain("Multiple OpenCode sessions");
-      expect(html).toContain("records for another trigger");
-      expect(html).toContain("Done with token=[redacted]");
-      expect(html).toContain("step finish");
-      expect(html).toContain("cost $0.0123");
-      expect(html).toContain("42 tokens");
-      expect(html).toContain("1 step finish row(s), $0.0123 total cost, 42 total tokens");
-      expect(html).not.toContain("supersecret");
-      expect(html).not.toContain("should-not-render");
-      expect(html).not.toContain("mutation { writeThing }");
-      expect(html).not.toContain("gh auth token --password");
+      expect(html).toContain("message.future.delta");
+      expect(html).toContain("(metadata omitted, 4.0 KB)");
+      // Stale follow-up after taskEnd is filtered out.
+      expect(html).not.toContain("STALE FOLLOW-UP");
     });
   });
 
-  it("redacts JSON-style secret fields in exposed viewer snippets", async () => {
+  it("preserves UTF-8 text split across subagent JSONL read chunks", async () => {
     const h = createHarness();
-    const triggerId = "00000000-0000-7000-8000-000000000321";
+    const triggerId = "00000000-0000-7000-8000-000000000512";
     const anchorId = mintAnchor();
-    bindSessionToAnchor("secret-viewer-session", anchorId);
-    expect(
-      appendAlias({
-        aliasType: "git.branch",
-        aliasValue: "git:branch:repo:feature/secret=branch-secret-321",
-        anchorId,
-      }),
-    ).toEqual({ ok: true });
-    appendSessionEvent("secret-viewer-session", {
-      type: "trigger_start",
-      triggerId,
-      correlationKey: "slack:thread:1710000000.321",
-      promptPreview:
-        '{"token":"json-token-321","access_token":"json-access-321","api_key":"json-api-321","password":"json-pass-321","secret":"json-secret-321","github":"ghs_json321"}',
-    });
-    expect(
-      appendCorrelationAliasForAnchor(anchorId, "git:branch:repo:feature/secret=branch-secret-321"),
-    ).toEqual({ ok: true });
-    appendSessionEvent("secret-viewer-session", {
+    bindSessionToAnchor("utf8-parent-session", anchorId);
+    const subSessionId = "ses_subagent_utf8_split_test_001";
+    const taskStart = 1_700_000_000_000;
+    const taskEnd = taskStart + 10_000;
+    mkdirSync(`${worklogDir}/sessions`, { recursive: true });
+
+    const { line, markerText } = jsonLineWithSplitUtf8Text((text) => ({
+      schemaVersion: 1,
+      ts: new Date(taskStart + 100).toISOString(),
       type: "opencode_event",
-      event: textEvent(
-        "secret-viewer-session",
-        'assistant saw {"token":"assistant-token-321", api_key: "assistant-api-321"} and Bearer bearer-token-321 plus ghu_assistant321 gho_assistant321 ghr_assistant321',
-      ),
-    });
-    for (let i = 0; i < 105; i++) {
-      appendSessionEvent("secret-viewer-session", {
-        type: "opencode_event",
-        event: textEvent("secret-viewer-session", `filler event ${i}`),
-      });
-    }
-    appendSessionEvent("secret-viewer-session", {
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "prt_utf8_split", type: "text", text },
+        },
+      },
+    }));
+    writeFileSync(`${worklogDir}/sessions/${subSessionId}.jsonl`, `${line}\n`);
+
+    appendSessionEvent("utf8-parent-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("utf8-parent-session", {
       type: "opencode_event",
-      event: toolEvent(
-        "secret-viewer-session",
-        "bash",
-        "completed",
-        { command: "jq .report result.json" },
-        { start: 0, end: 119900 },
-      ),
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: { subagent_type: "thinker", prompt: "go" },
+              output: `task_id: ${subSessionId}\nAll done.`,
+              metadata: { sessionId: subSessionId },
+              time: { start: taskStart, end: taskEnd },
+            },
+          },
+        },
+      },
     });
-    appendSessionEvent("secret-viewer-session", {
+    appendSessionEvent("utf8-parent-session", {
       type: "trigger_end",
       triggerId,
       status: "completed",
     });
 
     await withServer(h.app, async (url) => {
-      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
       expect(response.status).toBe(200);
       const html = await response.text();
-      expect(html).toContain("[redacted]");
-      expect(html).toContain("earlier meaningful event row(s) omitted");
-      expect(html).toContain("middle record(s) omitted from diagnostics");
-      expect(html).toContain("tool</b> <span>jq</span>");
-      expect(html).toContain("2m 0s");
-      expect(html).not.toContain("1m 60s");
-      expect(html).toContain("git.branch: git:branch:repo:feature/secret=[redacted]");
-      for (const secret of [
-        "json-token-321",
-        "json-access-321",
-        "json-api-321",
-        "json-pass-321",
-        "json-secret-321",
-        "ghs_json321",
-        "assistant-token-321",
-        "assistant-api-321",
-        "bearer-token-321",
-        "ghu_assistant321",
-        "gho_assistant321",
-        "ghr_assistant321",
-        "branch-secret-321",
-        Buffer.from("git:branch:repo:feature/secret=branch-secret-321").toString("base64url"),
-      ]) {
-        expect(html).not.toContain(secret);
-      }
+      expect(html).toContain(markerText);
+      expect(html).not.toContain("\ufffd split ok");
+    });
+  });
+
+  it("renders omitted-marker tool inputs as a muted note instead of raw JSON", async () => {
+    // When capRecord projects an oversized opencode_event, the tool part's
+    // `state.input` becomes `{ _omitted: true, bytes: N }`. The viewer must
+    // recognize that shape and render a "(input omitted, N KB)" badge —
+    // otherwise the page would dump the marker JSON literally where the
+    // tool input HTML normally goes.
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000511";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("omitted-session", anchorId);
+    appendSessionEvent("omitted-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("omitted-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_omitted_read",
+            type: "tool",
+            tool: "read",
+            callID: "call_om",
+            state: {
+              status: "completed",
+              title: "Reads /etc/passwd",
+              input: { _omitted: true, bytes: 38_912 },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("omitted-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("tool</b> <span>read</span>");
+      expect(html).toContain('class="omitted"');
+      expect(html).toMatch(/\(input omitted, 38\.0 KB\)/);
+      // The marker JSON itself must not leak into the page.
+      expect(html).not.toContain("_omitted");
+    });
+  });
+
+  it("preserves apply_patch context-line breaks in the rendered diff", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000513";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("patch-session", anchorId);
+    const patchText = [
+      "*** Begin Patch",
+      "*** Update File: src/example.ts",
+      "@@",
+      " const keepOne = 1;",
+      " const keepTwo = 2;",
+      "-const oldValue = keepOne + keepTwo;",
+      "+const newValue = keepOne + keepTwo;",
+      "*** End Patch",
+    ].join("\n");
+    appendSessionEvent("patch-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("patch-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_patch",
+            type: "tool",
+            tool: "apply_patch",
+            callID: "call_patch",
+            state: {
+              status: "completed",
+              title: "Updates src/example.ts",
+              input: { patchText },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("patch-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain("apply_patch");
+      expect(html).toContain('<span class="diff-del">-const oldValue = keepOne + keepTwo;</span>');
+      expect(html).toContain('<span class="diff-add">+const newValue = keepOne + keepTwo;</span>');
+      expect(html).toContain("<span> const keepOne = 1;</span>\n<span> const keepTwo = 2;</span>");
+      expect(html).not.toContain(
+        "<span> const keepOne = 1;</span><span> const keepTwo = 2;</span>",
+      );
+    });
+  });
+
+  it("renders unknown opencode events through the fallback row", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000512";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("unknown-event-session", anchorId);
+    appendSessionEvent("unknown-event-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("unknown-event-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.future.delta",
+        properties: {
+          sessionID: "unknown-event-session",
+          part: {
+            type: "future-part",
+            tool: "future-tool",
+            state: {
+              status: "completed",
+              output: { _omitted: true, bytes: 8192 },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("unknown-event-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain("unknown event");
+      expect(html).toContain("message.future.delta");
+      expect(html).toContain("part future-part");
+      expect(html).toContain("tool future-tool");
+      expect(html).toContain("(output omitted, 8.0 KB)");
+      expect(html).not.toContain("No meaningful events recorded");
+    });
+  });
+
+  it("breaks subagent recursion on cycles without infinite expansion", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000510";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("parent-cycle", anchorId);
+    const subSelf = "ses_subagent_cycle";
+    const parentStart = 1_700_000_000_000;
+    const parentEnd = parentStart + 10_000;
+    mkdirSync(`${worklogDir}/sessions`, { recursive: true });
+    // subSelf has a task tool that points to itself — must not infinite-loop.
+    writeFileSync(
+      `${worklogDir}/sessions/${subSelf}.jsonl`,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        ts: new Date(parentStart + 100).toISOString(),
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              type: "tool",
+              tool: "task",
+              state: {
+                status: "completed",
+                input: { subagent_type: "thinker", prompt: "self" },
+                metadata: { sessionId: subSelf },
+                time: { start: parentStart + 100, end: parentStart + 200 },
+              },
+            },
+          },
+        },
+      })}\n`,
+    );
+    appendSessionEvent("parent-cycle", { type: "trigger_start", triggerId });
+    appendSessionEvent("parent-cycle", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: { subagent_type: "thinker", prompt: "go" },
+              metadata: { sessionId: subSelf },
+              time: { start: parentStart, end: parentEnd },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("parent-cycle", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      const subMatches = html.match(/class="events sub-events"/g) ?? [];
+      // Only one expansion — the second self-reference is blocked by the
+      // visited set, so the nested task card has no sub-activity block.
+      expect(subMatches.length).toBe(1);
     });
   });
 
@@ -844,10 +1086,13 @@ describe("runner /trigger orchestration", () => {
         .split("\n")
         .map((line) => JSON.parse(line));
       const firstTriggerStart = firstLogRecords.find((record) => record.type === "trigger_start");
-      expect(firstTriggerStart).toMatchObject({ promptPreview: "first" });
+      // trigger_start no longer carries a promptPreview field — the prompt
+      // body lives in the opencode_event stream as a `[correlation-key:]`
+      // text part.
+      expect(firstTriggerStart).toMatchObject({ correlationKey: "slack:thread:1710000000.005" });
+      expect(firstTriggerStart).not.toHaveProperty("promptPreview");
       expect(JSON.stringify(firstTriggerStart)).not.toContain("root memory text");
       expect(JSON.stringify(firstTriggerStart)).not.toContain("repo memory text");
-      expect(JSON.stringify(firstTriggerStart)).not.toContain("correlation-key");
 
       await trigger(url, {
         prompt: "second",
@@ -966,7 +1211,7 @@ describe("runner /trigger orchestration", () => {
       expect(response.status).toBe(200);
       const html = await response.text();
       expect(html).toContain("crashed");
-      expect(html).toContain("Superseded by newer trigger");
+      expect(html).toContain(`superseded by ${newerTriggerId}`);
     });
   });
 

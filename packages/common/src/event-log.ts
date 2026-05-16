@@ -1,12 +1,26 @@
-import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { getWorklogDir } from "./worklog.js";
-import { truncate } from "./logger.js";
+import { createLogger, logWarn, truncate } from "./logger.js";
+import { projectOpencodeEvent } from "./opencode-event-view.js";
+
+const log = createLogger("event-log");
+const SLOW_READ_THRESHOLD_MS = 50;
 
 export const ALIAS_TYPES = [
   "slack.thread_id",
+  "slack.thread",
   "git.branch",
   "github.issue",
   "opencode.session",
@@ -36,13 +50,13 @@ const BaseRecordSchema = z.object({
   schemaVersion: z.literal(1),
   ts: z.string(),
   type: z.string(),
+  _truncated: z.literal(true).optional(),
 });
 
 export const TriggerStartRecordSchema = BaseRecordSchema.extend({
   type: z.literal("trigger_start"),
   triggerId: z.string().regex(UUID_V7_RE, { message: "triggerId must be a UUIDv7" }),
   correlationKey: z.string().optional(),
-  promptPreview: z.string().optional(),
 });
 
 export const TriggerEndRecordSchema = BaseRecordSchema.extend({
@@ -160,6 +174,7 @@ interface InternalReverseEntry {
 }
 
 const MAX_RECORD_BYTES = 4095;
+const PROJECTED_OPENCODE_RECORD_MAX_BYTES = 8192;
 
 interface AliasCacheState {
   /** "<aliasType>\0<aliasValue>" → anchorId. */
@@ -175,7 +190,24 @@ interface SessionRecordsCacheEntry {
   records: SessionEventLogRecord[];
   skippedMalformed: number;
 }
+// Bounded LRU: the cache holds the full parsed records array per session, so
+// without a cap a long-running process accumulates every session it has ever
+// touched (disclaimer/anchor resolution touches every session bound to an
+// anchor). Map insertion order is the LRU order; on hit we re-set to mark
+// recent, and on overflow we evict the oldest key. 64 sessions is well above
+// any single trigger fan-out (typical anchors bind 1–3 sessions).
+const SESSION_RECORDS_CACHE_MAX = 64;
 const sessionRecordsCache = new Map<string, SessionRecordsCacheEntry>();
+
+function touchSessionRecordsCache(sessionId: string, entry: SessionRecordsCacheEntry): void {
+  if (sessionRecordsCache.has(sessionId)) sessionRecordsCache.delete(sessionId);
+  sessionRecordsCache.set(sessionId, entry);
+  while (sessionRecordsCache.size > SESSION_RECORDS_CACHE_MAX) {
+    const oldest = sessionRecordsCache.keys().next().value;
+    if (oldest === undefined) break;
+    sessionRecordsCache.delete(oldest);
+  }
+}
 
 function safeId(value: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(value)) throw new Error(`Invalid session id: ${value}`);
@@ -220,10 +252,53 @@ export function mintAnchor(): string {
 
 export const mintTriggerId = mintAnchor;
 
+/**
+ * Detects opencode_event records whose part is `text` or `reasoning` — the
+ * user-visible message body we must never lose. Tool inputs/outputs can run
+ * arbitrarily large (file reads, big JSON payloads) and still get capped;
+ * text/reasoning bypass the cap unconditionally.
+ */
+function isTextOrReasoningOpencodeEvent(record: Record<string, unknown>): boolean {
+  if (record.type !== "opencode_event") return false;
+  const event = record.event;
+  if (!event || typeof event !== "object") return false;
+  const properties = (event as { properties?: unknown }).properties;
+  if (!properties || typeof properties !== "object") return false;
+  const part = (properties as { part?: unknown }).part;
+  if (!part || typeof part !== "object") return false;
+  const partType = (part as { type?: unknown }).type;
+  return partType === "text" || partType === "reasoning";
+}
+
 function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncated?: true } {
   let candidate: Record<string, unknown> = { ...record };
   if (Buffer.byteLength(JSON.stringify(candidate), "utf8") < MAX_RECORD_BYTES)
     return candidate as T;
+
+  // Never truncate text/reasoning parts — long assistant replies or thinking
+  // chains exceed 4 KB legitimately, and the debugging UI needs them whole.
+  if (isTextOrReasoningOpencodeEvent(candidate)) return candidate as T;
+
+  // Project oversized opencode events to a fixed viewer skeleton. The per-record
+  // 4 KB cap is a soft target for opencode payloads; keeping a projected event
+  // up to 8 KB is more useful than blanking the skeleton.
+  if (record.type === "opencode_event" && "event" in candidate) {
+    const projected = projectOpencodeEvent(candidate.event);
+    if (projected) {
+      const next: Record<string, unknown> = {
+        schemaVersion: 1,
+        ts: String(record.ts),
+        type: "opencode_event",
+        event: projected,
+        _truncated: true,
+      };
+      if (Buffer.byteLength(JSON.stringify(next), "utf8") < PROJECTED_OPENCODE_RECORD_MAX_BYTES) {
+        return next as T & { _truncated?: true };
+      }
+      // If even the fixed skeleton is pathological, fall through to the
+      // generic envelope.
+    }
+  }
 
   if ("event" in candidate) candidate.event = { _truncated: true };
   if ("payload" in candidate) candidate.payload = { _truncated: true };
@@ -237,9 +312,6 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
       triggerId: String(record.triggerId),
       ...(typeof record.correlationKey === "string"
         ? { correlationKey: record.correlationKey }
-        : {}),
-      ...(typeof record.promptPreview === "string"
-        ? { promptPreview: truncate(record.promptPreview, 512) }
         : {}),
       _truncated: true,
     };
@@ -278,13 +350,6 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   }
 
   while (Buffer.byteLength(JSON.stringify(candidate), "utf8") >= MAX_RECORD_BYTES) {
-    if (candidate.type === "trigger_start" && typeof candidate.promptPreview === "string") {
-      candidate.promptPreview = truncate(
-        candidate.promptPreview,
-        Math.max(32, Math.floor(candidate.promptPreview.length / 2)),
-      );
-      continue;
-    }
     if (candidate.type === "trigger_end") {
       if (typeof candidate.error === "string" && candidate.error.length > 32) {
         candidate.error = truncate(
@@ -349,7 +414,87 @@ export function appendAlias(
   }
 }
 
+/**
+ * Stream complete newline-terminated lines from a file synchronously in 64 KB
+ * chunks. Trailing unterminated line at EOF is yielded too. Empty lines are
+ * skipped. Use this for hot paths over potentially large JSONL files where
+ * buffering the whole file via `readFileSync` would waste memory.
+ */
+export function* iterateJsonlFileLinesSync(path: string): Generator<string> {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return;
+  }
+  try {
+    const buf = Buffer.allocUnsafe(64 * 1024);
+    const decoder = new StringDecoder("utf8");
+    let leftover = "";
+    while (true) {
+      const n = readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      const chunk = leftover + decoder.write(buf.subarray(0, n));
+      const lines = chunk.split("\n");
+      leftover = lines.pop() ?? "";
+      for (const line of lines) if (line.length > 0) yield line;
+    }
+    const tail = decoder.end();
+    const finalLine = leftover + tail;
+    if (finalLine.length > 0) yield finalLine;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Stream parsed session records line-by-line. Skips malformed lines and any
+ * lines that don't match the schema. Times the whole iteration and emits a
+ * `slow_jsonl_read` warning above 50 ms. Caller can `break` early — the
+ * generator closes the fd in `finally`.
+ */
+function* streamSessionRecords(sessionId: string): Generator<SessionEventLogRecord> {
+  let path: string;
+  try {
+    path = sessionLogPath(sessionId);
+  } catch {
+    return;
+  }
+  const started = performance.now();
+  let bytesRead = 0;
+  let linesRead = 0;
+  let yielded = 0;
+  try {
+    for (const line of iterateJsonlFileLinesSync(path)) {
+      bytesRead += line.length + 1;
+      linesRead++;
+      try {
+        const parsed = SessionEventLogRecordSchema.safeParse(JSON.parse(line));
+        if (parsed.success) {
+          yielded++;
+          yield parsed.data;
+        }
+      } catch {
+        // skip malformed line
+      }
+    }
+  } finally {
+    const elapsedMs = performance.now() - started;
+    if (elapsedMs > SLOW_READ_THRESHOLD_MS) {
+      logWarn(log, "slow_jsonl_stream", {
+        sessionId,
+        path,
+        elapsedMs: Math.round(elapsedMs),
+        bytes: bytesRead,
+        lines: linesRead,
+        records: yielded,
+      });
+    }
+  }
+}
+
 function completeLines(path: string): string[] {
+  const started = performance.now();
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -358,7 +503,17 @@ function completeLines(path: string): string[] {
   }
   const lines = text.split("\n");
   if (!text.endsWith("\n")) lines.pop();
-  return lines.filter((line) => line.length > 0);
+  const filtered = lines.filter((line) => line.length > 0);
+  const elapsedMs = performance.now() - started;
+  if (elapsedMs > SLOW_READ_THRESHOLD_MS) {
+    logWarn(log, "slow_jsonl_read", {
+      path,
+      elapsedMs: Math.round(elapsedMs),
+      bytes: text.length,
+      lines: filtered.length,
+    });
+  }
+  return filtered;
 }
 
 function fileStat(path: string): { signature: string; size: number } | null {
@@ -379,10 +534,11 @@ function readSessionRecords(sessionId: string): {
   const signature = stat?.signature ?? `${path}:missing`;
   const cached = sessionRecordsCache.get(sessionId);
   if (cached && cached.signature === signature) {
+    touchSessionRecordsCache(sessionId, cached);
     return { records: cached.records, skippedMalformed: cached.skippedMalformed };
   }
   if (!stat) {
-    sessionRecordsCache.set(sessionId, { signature, records: [], skippedMalformed: 0 });
+    touchSessionRecordsCache(sessionId, { signature, records: [], skippedMalformed: 0 });
     return { records: [], skippedMalformed: 0 };
   }
   let skippedMalformed = 0;
@@ -396,7 +552,7 @@ function readSessionRecords(sessionId: string): {
       skippedMalformed++;
     }
   }
-  sessionRecordsCache.set(sessionId, { signature, records, skippedMalformed });
+  touchSessionRecordsCache(sessionId, { signature, records, skippedMalformed });
   return { records, skippedMalformed };
 }
 
@@ -596,17 +752,6 @@ export function listSessionAliases(sessionId: string): AliasRecord[] {
         ]
       : [],
   );
-}
-
-function openTrigger(
-  records: SessionEventLogRecord[],
-): { triggerId: string; ts: string } | undefined {
-  let open: { triggerId: string; ts: string } | undefined;
-  for (const record of records) {
-    if (record.type === "trigger_start") open = { triggerId: record.triggerId, ts: record.ts };
-    if (record.type === "trigger_end" && record.triggerId === open?.triggerId) open = undefined;
-  }
-  return open;
 }
 
 interface SessionOpenSummary {
@@ -820,6 +965,22 @@ export function listAnchorSessionStates(
  * wins — the same supersede-by-newest semantics readTriggerSlice uses inside
  * a single session.
  */
+/**
+ * Stream the session's records and return the currently-open trigger (latest
+ * `trigger_start` with no matching `trigger_end`), or undefined. Avoids
+ * materializing the full record array — this is the disclaimer/anchor hot
+ * path, run once per MCP tool call.
+ */
+function streamOpenTrigger(sessionId: string): { triggerId: string; ts: string } | undefined {
+  let open: { triggerId: string; ts: string } | undefined;
+  for (const record of streamSessionRecords(sessionId)) {
+    if (record.type === "trigger_start") open = { triggerId: record.triggerId, ts: record.ts };
+    else if (record.type === "trigger_end" && record.triggerId === open?.triggerId)
+      open = undefined;
+  }
+  return open;
+}
+
 export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult {
   const anchorId =
     resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
@@ -829,8 +990,7 @@ export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult
   const reverse = reverseLookupAnchor(anchorId);
   let best: { sessionId: string; triggerId: string; ts: string } | undefined;
   for (const sessionId of reverse.sessionIds) {
-    const read = readSessionRecords(sessionId);
-    const open = openTrigger(read.records);
+    const open = streamOpenTrigger(sessionId);
     if (!open) continue;
     if (!best || open.ts > best.ts) best = { sessionId, ...open };
   }
