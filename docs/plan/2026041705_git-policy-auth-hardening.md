@@ -1,5 +1,7 @@
 # Git Policy and Auth Hardening
 
+> **Superseded note (2026-05-16):** legacy PAT fallback for `git` / `gh` has been removed. GitHub App installation tokens are now the only supported auth path, so fallback-preservation notes below describe the earlier rollout state, not current behavior.
+
 Strengthen `remote-cli` git/gh policy and wrapper behavior in six focused phases. These changes are valuable on their own: they reduce credential exposure, close policy gaps, and make the agent's worktree-based workflow clearer.
 
 ## Motivation
@@ -48,7 +50,7 @@ After this work:
 - Blocked branch-changing commands point the agent to `git worktree add <path> <ref>`.
 - The `git` wrapper only invokes Node when Git actually needs credentials.
 - Git commands must start with a bare allowed subcommand; leading flags are rejected.
-- PAT fallback behavior remains intact when GitHub App auth is not configured or cannot resolve a target org.
+- Legacy PAT fallback is no longer supported when GitHub App auth is not configured or cannot resolve a target org.
 - README wording matches the actual `git`/`gh` auth flow instead of describing a generic GitHub CLI setup.
 
 ## Phases
@@ -122,13 +124,13 @@ Reduce wrapper overhead and narrow token handling to the path where Git actually
 - Update `packages/remote-cli/bin/git` so local commands do not always spawn Node
 - Move token resolution into `packages/remote-cli/bin/git-askpass`
 - Extend `auth-helper.ts` to support askpass-style prompts and print only the token when Git requests credentials
-- Keep PAT fallback intact when GitHub App auth cannot resolve an org or is not configured
+- 2026-05-16 follow-up: remove legacy PAT fallback when GitHub App auth cannot resolve an org or is not configured
 
 **Exit criteria:**
 
 - Local Git operations (`status`, `log`, `diff`, local branch ops) do not require auth-helper boot
 - Remote-auth flows still work via `GIT_ASKPASS`
-- PAT fallback remains available for non-GitHub-App cases
+- GitHub App installation-token auth is the only supported authenticated remote flow
 
 ### Phase 6 — Close the remaining policy and docs gaps
 
@@ -138,14 +140,14 @@ Finish the hardening pass by blocking global git flags ahead of the subcommand a
 
 - Reject leading git flags such as `-C`, `-c`, `--exec-path`, and similar global overrides before subcommand validation runs
 - Keep the test surface narrow: one focused test for representative leading-flag cases
-- Update README env/auth/security wording so it matches the current `git` and `gh` wrapper behavior and PAT fallback path
+- Update README env/auth/security wording so it matches the current `git` and `gh` wrapper behavior
 
 **Exit criteria:**
 
 - `validateGitArgs` rejects argument vectors whose first token is a flag
 - `policy.test.ts` covers representative leading-flag rejection without expanding into low-value permutations
 - README no longer describes `GITHUB_PAT` as required or as generic GitHub CLI auth
-- README explains the GitHub App / PAT fallback model accurately enough for operators
+- README explains the GitHub App auth model accurately enough for operators
 
 ## Verification
 
@@ -174,7 +176,7 @@ If Phase 5 adds or changes auth-helper-specific tests, include them in the secon
 | 3   | Fully block `git config` instead of maintaining a partial allowlist                  | The agent has no legitimate need for it, and the partial policy still leaves unnecessary surface area.                      |
 | 4   | Keep worktrees as the standard escape hatch for blocked branch-changing commands     | It matches the repo's operating model and avoids letting the agent leave its assigned branch.                               |
 | 5   | Move auth resolution into `GIT_ASKPASS` instead of resolving on every git invocation | Git only needs credentials on remote operations; local operations should stay fast and avoid unnecessary token plumbing.    |
-| 6   | Preserve PAT fallback during the wrapper refactor                                    | Avoids breaking installations that still rely on legacy auth paths.                                                         |
+| 6   | Initially preserve PAT fallback during the wrapper refactor; removed on 2026-05-16   | The rollout fallback reduced migration risk, but current deployments should use only GitHub App installation tokens.        |
 | 7   | Reject leading git flags instead of trying to selectively sanitize them              | Global git flags can override config, helpers, and execution paths before subcommand policy has a chance to constrain them. |
 | 8   | Keep README auth wording at the wrapper-behavior level                               | Operators need docs that match the actual git/gh execution paths and fallback behavior, not stale shorthand.                |
 
@@ -185,6 +187,6 @@ If Phase 5 adds or changes auth-helper-specific tests, include them in the secon
 | Tightening `git push` policy may block valid existing workflows                     | Keep the allowlist small but explicit, preserve `--no-verify`, and add focused tests for the reviewed safe paths we intend to support. |
 | Removing `git config` may conflict with hidden assumptions in tests or wrapper code | Audit relevant tests before landing Phase 2 and keep the commit message explicit about the behavior change.                            |
 | Worktree guidance could drift between `git` and `gh` deny messages                  | Keep Phases 3 and 4 aligned on exact wording and test both surfaces.                                                                   |
-| Phase 5 may regress PAT fallback or GitHub App auth resolution                      | Keep the change isolated, verify wrapper behavior carefully, and run focused auth tests before review.                                 |
+| Phase 5 may regress GitHub App auth resolution                                      | Keep the change isolated, verify wrapper behavior carefully, and run focused auth tests before review.                                 |
 | Rejecting leading git flags may block benign conveniences such as `git -C`          | The agent already passes `cwd` separately, so blocking global flags removes ambiguity without taking away required capability.         |
 | README auth wording may drift again as wrappers evolve                              | Keep the docs focused on the stable behavior contract and update them in the same phase as future auth-wrapper changes.                |

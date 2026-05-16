@@ -27,11 +27,13 @@ describe("service env", () => {
       GITHUB_APP_BOT_ID: "12345",
       GITHUB_WEBHOOK_SECRET: "webhook",
       RUNNER_URL: "http://runner:3000",
+      SLACK_DEFAULT_REPO: "thor",
     });
 
     expect(config.port).toBe(3002);
     expect(config.runnerUrl).toBe("http://runner:3000");
     expect(config.slackApiBaseUrl).toBe("https://slack.com/api");
+    expect(config.slackDefaultRepo).toBe("thor");
     expect(config.githubAppBotEmail).toBe("12345+thor-app[bot]@users.noreply.github.com");
     expect(() =>
       loadGatewayEnv({
@@ -39,8 +41,17 @@ describe("service env", () => {
         GITHUB_APP_SLUG: "thor-app",
         GITHUB_APP_BOT_ID: "0",
         GITHUB_WEBHOOK_SECRET: "webhook",
+        SLACK_DEFAULT_REPO: "thor",
       }),
     ).toThrow("GITHUB_APP_BOT_ID must be a positive integer");
+    expect(() =>
+      loadGatewayEnv({
+        THOR_INTERNAL_SECRET: "secret",
+        GITHUB_APP_SLUG: "thor-app",
+        GITHUB_APP_BOT_ID: "12345",
+        GITHUB_WEBHOOK_SECRET: "webhook",
+      }),
+    ).toThrow("Missing required env var SLACK_DEFAULT_REPO");
   });
 
   it("loads runner defaults and strictly validates integers", () => {
@@ -114,6 +125,7 @@ describe("service env", () => {
       GITHUB_APP_SLUG: "thor-app",
       GITHUB_APP_BOT_ID: "12345",
       GITHUB_WEBHOOK_SECRET: "webhook",
+      SLACK_DEFAULT_REPO: "test-repo",
       RUNNER_URL: "http://runner:3000///",
     });
     expect(gateway.runnerUrl).toBe("http://runner:3000");

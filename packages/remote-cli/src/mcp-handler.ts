@@ -11,7 +11,6 @@ import {
   getProxyConfig,
   injectApprovalDisclaimer,
   isProxyName,
-  getRepoUpstreams,
   getRunnerBaseUrl,
   ApprovalRequiredEventPayloadSchema,
   interpolateHeaders,
@@ -19,9 +18,7 @@ import {
   logInfo,
   logWarn,
   PROXY_NAMES,
-  type ConfigLoader,
   type ProxyConfig,
-  type WorkspaceConfig,
   writeToolCallLog,
 } from "@thor/common";
 import type { ApprovalRequiredEventPayload } from "@thor/common";
@@ -87,7 +84,6 @@ export interface McpCommandContext {
 }
 
 export interface McpServiceDeps {
-  getConfig: ConfigLoader;
   approvalsDir?: string;
   isProduction?: boolean;
   connectUpstreamFn?: typeof connectUpstream;
@@ -147,7 +143,7 @@ function suggestMatch(input: string, candidates: string[]): string {
 
 export interface McpService {
   getHealth(): Record<string, unknown>;
-  connectConfiguredUpstreams(): Promise<void>;
+  warmUpstreams(): Promise<void>;
   closeAll(): Promise<void>;
   executeMcp(args: string[], context: McpCommandContext): Promise<McpExecResult>;
   executeApproval(args: string[]): Promise<McpExecResult>;
@@ -170,27 +166,11 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
   >();
 
-  function getConfig(): WorkspaceConfig {
-    return deps.getConfig();
-  }
-
   function getThorIds(context: McpCommandContext): { sessionId?: string; callId?: string } {
     return {
       ...(context.sessionId && { sessionId: context.sessionId }),
       ...(context.callId && { callId: context.callId }),
     };
-  }
-
-  function getConfiguredUpstreamNames(): string[] {
-    const enabled = new Set<string>();
-    for (const repo of Object.values(getConfig().repos)) {
-      for (const upstreamName of repo.proxies ?? []) {
-        if (isProxyName(upstreamName)) {
-          enabled.add(upstreamName);
-        }
-      }
-    }
-    return PROXY_NAMES.filter((name) => enabled.has(name));
   }
 
   function getApprovalStore(name: string): ApprovalStore {
@@ -301,37 +281,22 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
   }
 
-  function getRepoFromDirectory(directory?: string): string | McpExecResult {
+  function validateRepoDirectory(directory?: string): McpExecResult | undefined {
     if (!directory) {
       return fail("Missing required field: directory");
     }
-    const repo = extractRepoFromCwd(directory);
-    if (!repo) {
+    if (!extractRepoFromCwd(directory)) {
       return fail(
         `Cannot determine repo from directory: ${directory}. Expected /workspace/repos/<repo> (worktrees are not allowed for MCP authz)`,
       );
     }
-    return repo;
+    return undefined;
   }
 
-  function getAllowedUpstreamsForRepo(repo: string): string[] | McpExecResult {
-    const config = getConfig();
-    const allowed = getRepoUpstreams(config, repo);
-    if (allowed === undefined) {
-      return fail(`Repo "${repo}" not found in config`);
-    }
-    return allowed.filter(isProxyName);
-  }
-
-  async function listVisibleTools(
-    upstreamName: string,
-    repo: string,
-  ): Promise<ToolInfo[] | McpExecResult> {
-    const allowed = getAllowedUpstreamsForRepo(repo);
-    if (!Array.isArray(allowed)) return allowed;
-    if (!allowed.includes(upstreamName)) {
+  async function listVisibleTools(upstreamName: string): Promise<ToolInfo[] | McpExecResult> {
+    if (!isProxyName(upstreamName)) {
       return fail(
-        `Unknown upstream "${upstreamName}". Available upstreams: ${allowed.join(", ") || "(none)"}`,
+        `Unknown upstream "${upstreamName}". Available upstreams: ${PROXY_NAMES.join(", ")}`,
       );
     }
 
@@ -379,13 +344,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   }
 
   async function listUpstreams(directory?: string): Promise<McpExecResult> {
-    const repo = getRepoFromDirectory(directory);
-    if (typeof repo !== "string") return repo;
+    const failure = validateRepoDirectory(directory);
+    if (failure) return failure;
 
-    const allowed = getAllowedUpstreamsForRepo(repo);
-    if (!Array.isArray(allowed)) return allowed;
-
-    const upstreams = allowed.map((name) => {
+    const upstreams = PROXY_NAMES.map((name) => {
       const instance = instances.get(name);
       return {
         name,
@@ -556,7 +518,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   }
 
   function findApproval(actionId: string): ApprovalLookup | undefined {
-    for (const upstreamName of getConfiguredUpstreamNames()) {
+    for (const upstreamName of PROXY_NAMES) {
       const store = getApprovalStore(upstreamName);
       const action = store.get(actionId);
       if (action) {
@@ -680,45 +642,27 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   return {
     getHealth(): Record<string, unknown> {
-      try {
-        const upstreamNames = getConfiguredUpstreamNames();
-        return {
-          configured: upstreamNames.length,
-          connected: upstreamNames.filter((name) => instances.has(name)).length,
-          instances: Object.fromEntries(
-            upstreamNames.map((name) => [
-              name,
-              {
-                connected: instances.has(name),
-                tools: instances.get(name)?.upstream.tools.length ?? 0,
-              },
-            ]),
-          ),
-        };
-      } catch (err) {
-        return {
-          configured: "unavailable",
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
+      return {
+        configured: PROXY_NAMES.length,
+        connected: PROXY_NAMES.filter((name) => instances.has(name)).length,
+        instances: Object.fromEntries(
+          PROXY_NAMES.map((name) => [
+            name,
+            {
+              connected: instances.has(name),
+              tools: instances.get(name)?.upstream.tools.length ?? 0,
+            },
+          ]),
+        ),
+      };
     },
 
-    async connectConfiguredUpstreams(): Promise<void> {
-      let upstreamNames: string[] = [];
-      try {
-        upstreamNames = getConfiguredUpstreamNames();
-      } catch (err) {
-        logWarn(log, "config_not_available", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-        return;
-      }
-
-      const results = await Promise.allSettled(upstreamNames.map((name) => getInstance(name)));
-      for (let index = 0; index < upstreamNames.length; index += 1) {
+    async warmUpstreams(): Promise<void> {
+      const results = await Promise.allSettled(PROXY_NAMES.map((name) => getInstance(name)));
+      for (let index = 0; index < PROXY_NAMES.length; index += 1) {
         const result = results[index];
         if (result.status === "rejected") {
-          logError(log, "upstream_connect_failed", result.reason, { name: upstreamNames[index] });
+          logError(log, "upstream_connect_failed", result.reason, { name: PROXY_NAMES[index] });
         }
       }
     },
@@ -747,22 +691,20 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         return listUpstreams(context.directory);
       }
 
-      const repo = getRepoFromDirectory(context.directory);
-      if (typeof repo !== "string") return repo;
+      const failure = validateRepoDirectory(context.directory);
+      if (failure) return failure;
 
-      const upstreams = getAllowedUpstreamsForRepo(repo);
-      if (!Array.isArray(upstreams)) return upstreams;
       const upstreamName = args[0];
-      if (!upstreams.includes(upstreamName)) {
+      if (!isProxyName(upstreamName)) {
         return fail(
           `Unknown upstream "${upstreamName}". ${suggestMatch(
             upstreamName,
-            upstreams,
-          )}Available upstreams: ${upstreams.join(", ") || "(none)"}\n`,
+            PROXY_NAMES.slice(),
+          )}Available upstreams: ${PROXY_NAMES.join(", ")}\n`,
         );
       }
 
-      const tools = await listVisibleTools(upstreamName, repo);
+      const tools = await listVisibleTools(upstreamName);
       if (!Array.isArray(tools)) return tools;
 
       if (args.length === 1) {
@@ -805,7 +747,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
 
       if (args[0] === "list") {
-        const approvals = getConfiguredUpstreamNames().flatMap((upstreamName) =>
+        const approvals = PROXY_NAMES.flatMap((upstreamName) =>
           getApprovalStore(upstreamName).listPending(),
         );
         return ok(stringify({ approvals }));

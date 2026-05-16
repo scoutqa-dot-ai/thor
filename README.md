@@ -32,6 +32,11 @@ ingress -> gateway -> runner -> opencode
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and fill in the required secrets.
+   `SLACK_DEFAULT_REPO` must name an existing repo that is already present under
+   `/workspace/repos` before you start the stack. Gateway routes every Slack
+   channel to this repo unless a per-channel override file at
+   `/workspace/memory/thor/repo-by-slack-channel/<channel>.txt` names a different
+   existing repo directory.
 2. Initialize the mitmproxy CA on the host:
 
 ```bash
@@ -41,33 +46,33 @@ ingress -> gateway -> runner -> opencode
 This keeps the private key on the host and only exposes the public trust bundle
 inside `opencode`.
 
-3. Start the stack:
+3. Create `/workspace/config.json` with GitHub App installation IDs for each
+   GitHub owner you need Thor to access, plus any mitmproxy rules. On the host,
+   this file lives at `docker-volumes/workspace/config.json`. See
+   [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json).
+   MCP upstream access is enabled for every repo automatically — no per-repo
+   config required.
+
+4. Clone repos into the shared workspace:
 
 ```bash
-docker compose up --build -d
-curl http://localhost:8080/health
+docker compose run --rm remote-cli \
+  git clone https://github.com/your-org/your-repo.git
 ```
 
-4. Clone repos into the shared workspace from the `remote-cli` container:
+If the stack is already running, you can clone the same repo from the
+`remote-cli` container instead:
 
 ```bash
 docker compose exec remote-cli \
   git clone https://github.com/your-org/your-repo.git
 ```
 
-5. Configure `/workspace/config.json` with repo-to-upstream access rules.
+5. Start the stack:
 
-Example:
-
-```json
-{
-  "repos": {
-    "your-repo": {
-      "channels": ["C12345678"],
-      "proxies": ["atlassian", "grafana"]
-    }
-  }
-}
+```bash
+docker compose up --build -d
+curl http://localhost:8080/health
 ```
 
 The shared upstream registry and allow/approve policy are checked into
@@ -115,44 +120,44 @@ Built-in defaults are intentionally narrow:
 
 Thor ships with generic defaults. A new deployment typically needs:
 
-| Variable                            | Required | Service                              | Purpose                                                                                                                                |
-| ----------------------------------- | -------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `ATLASSIAN_AUTH`                    | Yes      | `remote-cli`, `mitmproxy`            | Atlassian MCP auth header value and mitmproxy default injection                                                                        |
-| `CRON_SECRET`                       | Yes      | `gateway`, `cron`                    | Shared secret for cron endpoint auth                                                                                                   |
-| `GITHUB_APP_ID`                     | Yes      | `remote-cli`                         | GitHub App ID for GitHub App auth                                                                                                      |
-| `GITHUB_APP_BOT_ID`                 | Yes      | `remote-cli`, `gateway`              | GitHub App bot user ID (commit identity + CI wake author gate)                                                                         |
-| `GITHUB_APP_SLUG`                   | Yes      | `remote-cli`, `gateway`              | GitHub App slug (commit identity + mention detection)                                                                                  |
-| `GITHUB_API_URL`                    | No       | `remote-cli`                         | GitHub API base URL override                                                                                                           |
-| `GITHUB_APP_PRIVATE_KEY_FILE`       | Yes      | `remote-cli`                         | GitHub App private key path                                                                                                            |
-| `GITHUB_WEBHOOK_SECRET`             | Yes      | `gateway`                            | GitHub webhook signature secret                                                                                                        |
-| `GITHUB_PAT`                        | No       | `remote-cli`                         | Optional fallback token for `git` / `gh` after GitHub App startup                                                                      |
-| `GRAFANA_ORG_ID`                    | No       | `grafana-mcp`                        | Grafana org ID (defaults to `1`)                                                                                                       |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | `grafana-mcp`                        | Grafana service account token                                                                                                          |
-| `GRAFANA_URL`                       | Yes      | `grafana-mcp`                        | Grafana instance URL                                                                                                                   |
-| `INGRESS_PORT`                      | No       | `ingress`                            | Host port for the reverse proxy                                                                                                        |
-| `LANGFUSE_HOST`                     | No       | `remote-cli`                         | Langfuse host URL                                                                                                                      |
-| `LANGFUSE_PUBLIC_KEY`               | No       | `remote-cli`                         | Langfuse public key                                                                                                                    |
-| `LANGFUSE_SECRET_KEY`               | No       | `remote-cli`                         | Langfuse secret key                                                                                                                    |
-| `METABASE_ALLOWED_SCHEMAS`          | No       | `remote-cli`                         | Comma-separated schema allowlist                                                                                                       |
-| `METABASE_API_KEY`                  | No       | `remote-cli`                         | Metabase API key                                                                                                                       |
-| `METABASE_DATABASE_ID`              | No       | `remote-cli`                         | Metabase database ID                                                                                                                   |
-| `METABASE_URL`                      | No       | `remote-cli`                         | Metabase instance URL                                                                                                                  |
-| `THOR_ADMIN_EMAILS`                 | Yes      | `ingress`                            | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes                                   |
-| `POSTHOG_API_KEY`                   | Yes      | `remote-cli`                         | PostHog MCP auth                                                                                                                       |
-| `RUNNER_BASE_URL`                   | Yes      | `remote-cli`                         | Public base URL for Thor trigger viewer links in PR/Jira content                                                                       |
-| `THOR_INTERNAL_SECRET`              | Yes      | `remote-cli`, `gateway`              | Secret-gates gateway↔remote-cli internal APIs                                                                                          |
-| `THOR_E2E_TEST_HELPERS`             | No       | `runner`                             | Enables secret-gated deterministic runner e2e helpers                                                                                  |
-| `SLACK_BOT_TOKEN`                   | Yes      | `remote-cli`, `gateway`, `mitmproxy` | Slack bot token for controlled `slack-post-message`, gateway Slack calls, and mitmproxy default injection                              |
-| `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                            | Bot user ID used to ignore our own messages                                                                                            |
-| `SLACK_SIGNING_SECRET`              | Yes      | `gateway`                            | Slack webhook verification                                                                                                             |
-| `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | `gateway`                            | Signature timestamp tolerance                                                                                                          |
-| `SLACK_TEAM_ID`                     | No       | `admin`, `runner`                    | Slack workspace team id; enables clickable thread permalinks on the admin sessions dashboard and the runner trigger viewer source link |
-| `VOUCH_CALLBACK_URL`                | No       | `vouch`                              | OAuth callback URL                                                                                                                     |
-| `VOUCH_COOKIE_DOMAIN`               | No       | `vouch`                              | Cookie domain                                                                                                                          |
-| `VOUCH_ALLOWED_EMAIL_DOMAINS`       | No       | `compose -> vouch`                   | Thor/compose-facing input rendered into Vouch's `VOUCH_DOMAINS`; comma-separated email domains, default `scoutqa.cc`                   |
-| `VOUCH_GOOGLE_CLIENT_ID`            | Yes      | `vouch`                              | Google OAuth client ID                                                                                                                 |
-| `VOUCH_GOOGLE_CLIENT_SECRET`        | Yes      | `vouch`                              | Google OAuth client secret                                                                                                             |
-| `VOUCH_JWT_SECRET`                  | Yes      | `vouch`                              | Session JWT signing secret                                                                                                             |
+| Variable                            | Required | Service                              | Purpose                                                                                                                                              |
+| ----------------------------------- | -------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ATLASSIAN_AUTH`                    | Yes      | `remote-cli`, `mitmproxy`            | Atlassian MCP auth header value and mitmproxy default injection                                                                                      |
+| `CRON_SECRET`                       | Yes      | `gateway`, `cron`                    | Shared secret for cron endpoint auth                                                                                                                 |
+| `GITHUB_APP_ID`                     | Yes      | `remote-cli`                         | GitHub App ID for GitHub App auth                                                                                                                    |
+| `GITHUB_APP_BOT_ID`                 | Yes      | `remote-cli`, `gateway`              | GitHub App bot user ID (commit identity + CI wake author gate)                                                                                       |
+| `GITHUB_APP_SLUG`                   | Yes      | `remote-cli`, `gateway`              | GitHub App slug (commit identity + mention detection)                                                                                                |
+| `GITHUB_API_URL`                    | No       | `remote-cli`                         | GitHub API base URL override                                                                                                                         |
+| `GITHUB_APP_PRIVATE_KEY_FILE`       | Yes      | `remote-cli`                         | GitHub App private key path                                                                                                                          |
+| `GITHUB_WEBHOOK_SECRET`             | Yes      | `gateway`                            | GitHub webhook signature secret                                                                                                                      |
+| `GRAFANA_ORG_ID`                    | No       | `grafana-mcp`                        | Grafana org ID (defaults to `1`)                                                                                                                     |
+| `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | `grafana-mcp`                        | Grafana service account token                                                                                                                        |
+| `GRAFANA_URL`                       | Yes      | `grafana-mcp`                        | Grafana instance URL                                                                                                                                 |
+| `INGRESS_PORT`                      | No       | `ingress`                            | Host port for the reverse proxy                                                                                                                      |
+| `LANGFUSE_HOST`                     | No       | `remote-cli`                         | Langfuse host URL                                                                                                                                    |
+| `LANGFUSE_PUBLIC_KEY`               | No       | `remote-cli`                         | Langfuse public key                                                                                                                                  |
+| `LANGFUSE_SECRET_KEY`               | No       | `remote-cli`                         | Langfuse secret key                                                                                                                                  |
+| `METABASE_ALLOWED_SCHEMAS`          | No       | `remote-cli`                         | Comma-separated schema allowlist                                                                                                                     |
+| `METABASE_API_KEY`                  | No       | `remote-cli`                         | Metabase API key                                                                                                                                     |
+| `METABASE_DATABASE_ID`              | No       | `remote-cli`                         | Metabase database ID                                                                                                                                 |
+| `METABASE_URL`                      | No       | `remote-cli`                         | Metabase instance URL                                                                                                                                |
+| `THOR_ADMIN_EMAILS`                 | Yes      | `ingress`                            | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes                                                 |
+| `POSTHOG_API_KEY`                   | Yes      | `remote-cli`                         | PostHog MCP auth                                                                                                                                     |
+| `RUNNER_BASE_URL`                   | Yes      | `remote-cli`                         | Public base URL for Thor trigger viewer links in PR/Jira content                                                                                     |
+| `THOR_INTERNAL_SECRET`              | Yes      | `remote-cli`, `gateway`              | Secret-gates gateway↔remote-cli internal APIs                                                                                                        |
+| `THOR_E2E_TEST_HELPERS`             | No       | `runner`                             | Enables secret-gated deterministic runner e2e helpers                                                                                                |
+| `SLACK_BOT_TOKEN`                   | Yes      | `remote-cli`, `gateway`, `mitmproxy` | Slack bot token for controlled `slack-post-message`, gateway Slack calls, and mitmproxy default injection                                            |
+| `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                            | Bot user ID used to ignore our own messages                                                                                                          |
+| `SLACK_DEFAULT_REPO`                | Yes      | `gateway`                            | Existing `/workspace/repos/<repo>` directory name used for every Slack channel unless a per-channel override file selects a different repo directory |
+| `SLACK_SIGNING_SECRET`              | Yes      | `gateway`                            | Slack webhook verification                                                                                                                           |
+| `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | `gateway`                            | Signature timestamp tolerance                                                                                                                        |
+| `SLACK_TEAM_ID`                     | No       | `admin`, `runner`                    | Slack workspace team id; enables clickable thread permalinks on the admin sessions dashboard and the runner trigger viewer source link               |
+| `VOUCH_CALLBACK_URL`                | No       | `vouch`                              | OAuth callback URL                                                                                                                                   |
+| `VOUCH_COOKIE_DOMAIN`               | No       | `vouch`                              | Cookie domain                                                                                                                                        |
+| `VOUCH_ALLOWED_EMAIL_DOMAINS`       | No       | `compose -> vouch`                   | Thor/compose-facing input rendered into Vouch's `VOUCH_DOMAINS`; comma-separated email domains, default `scoutqa.cc`                                 |
+| `VOUCH_GOOGLE_CLIENT_ID`            | Yes      | `vouch`                              | Google OAuth client ID                                                                                                                               |
+| `VOUCH_GOOGLE_CLIENT_SECRET`        | Yes      | `vouch`                              | Google OAuth client secret                                                                                                                           |
+| `VOUCH_JWT_SECRET`                  | Yes      | `vouch`                              | Session JWT signing secret                                                                                                                           |
 
 Use [`docs/github-app-webhooks.md`](docs/github-app-webhooks.md) for GitHub App webhook setup, required permissions/subscriptions, and troubleshooting.
 
@@ -172,7 +177,7 @@ GitHub App installation entries live under `owners.<owner>.github_app_installati
 }
 ```
 
-The `git` wrapper resolves installation tokens lazily through `GIT_ASKPASS`, and the `gh` wrapper resolves them before invoking `gh`. `remote-cli` now requires GitHub App env vars at startup; `GITHUB_PAT` is only an optional fallback for command execution after the service is up.
+The `git` wrapper resolves installation tokens lazily through `GIT_ASKPASS`, and the `gh` wrapper resolves them before invoking `gh`. `remote-cli` requires GitHub App env vars at startup and does not support static PAT fallback auth.
 
 If you have internal APIs that Thor should access with injected credentials,
 define rules in `/workspace/config.json` and keep only secret values in `.env`:
@@ -218,8 +223,8 @@ Rules match by exact host or suffix first, then by optional `path_prefix` and
   assets (`/assets/`, `/oc-theme-preload.js`) bypass Vouch for performance.
 - `remote-cli` enforces MCP allow/approve policy server-side and stores approvals under `/workspace/data/approvals`.
 - Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution and `POST /internal/exec`.
-- `git` uses GitHub App installation tokens through `GIT_ASKPASS` when `owners.<owner>.github_app_installation_id` is configured and the target owner can be resolved; `GITHUB_PAT` is only a fallback during command execution.
-- `gh` resolves GitHub App auth before execution and can fall back to inherited `GH_TOKEN` / `GITHUB_PAT` when no installation token is available, but the service itself still requires GitHub App env at startup.
+- `git` uses GitHub App installation tokens through `GIT_ASKPASS` when the target owner can be resolved from the command or repo remote.
+- `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.
 - Source repos are mounted read-only into OpenCode; edits happen in `/workspace/worktrees`.
 - Tool calls are audit-logged under `/workspace/worklog`.
 

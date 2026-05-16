@@ -21,8 +21,6 @@ import {
   logError,
   truncate,
   isAllowedDirectory,
-  createConfigLoader,
-  WORKSPACE_CONFIG_PATH,
   extractRepoFromCwd,
   ANCHOR_LOCK_PREFIX,
   SESSION_LOCK_PREFIX,
@@ -72,8 +70,6 @@ const TaskDelegateInputSchema = z.object({
   subagent_type: z.string().trim().min(1),
 });
 
-const getWorkspaceConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
-
 /** Shared event bus — one global SSE connection, dispatches to per-session listeners. */
 const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
 
@@ -112,7 +108,7 @@ function readRepoMemory(directory: string, memoryDir = MEMORY_DIR): string | und
 
 function getToolInstructions(directory: string): string | undefined {
   try {
-    return buildToolInstructions(getWorkspaceConfig(), directory);
+    return buildToolInstructions(directory);
   } catch {
     return undefined;
   }

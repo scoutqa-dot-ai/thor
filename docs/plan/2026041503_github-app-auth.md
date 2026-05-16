@@ -1,6 +1,6 @@
 # GitHub App Auth via Thor `git` / `gh` Wrappers
 
-> **Superseded note (2026-04-24):** parts of this plan are now outdated. The implemented config model uses `owners.<owner>.github_app_installation_id` instead of `github_app.installations`, and the runtime env naming is documented in `docs/github-app-webhooks.md`, `README.md`, and `docs/plan/2026042301_github-app-webhooks.md`. Use those documents as the current source of truth.
+> **Superseded note (2026-04-24, updated 2026-05-16):** parts of this plan are now outdated. The implemented config model uses `owners.<owner>.github_app_installation_id` instead of `github_app.installations`, and the runtime env naming is documented in `docs/github-app-webhooks.md`, `README.md`, and `docs/plan/2026042301_github-app-webhooks.md`. As of 2026-05-16, legacy PAT fallback for `git` / `gh` has been removed; GitHub App installation tokens are the only supported auth path. Use the current docs as the source of truth.
 
 **Date**: 2026-04-15
 **Status**: Draft
