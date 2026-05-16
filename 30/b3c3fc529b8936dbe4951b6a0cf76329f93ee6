@@ -1,0 +1,23 @@
+docs/compare.md
+  b1f635792db79bd7 5-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "30b3c3fc529b8936dbe4951b6a0cf76329f93ee6",
+  "prompts": {
+    "b1f635792db79bd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d10e41bb-ac1e-41a7-9e37-9b39c4909e88",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 2,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
