@@ -92,7 +92,6 @@ describe("getInstallationIdFromWorkspace", () => {
     writeFileSync(
       mockedWorkspace.configPath,
       JSON.stringify({
-        repos: { thor: {} },
         owners: { acme: { github_app_installation_id: 123456 } },
       }),
     );
@@ -104,7 +103,6 @@ describe("getInstallationIdFromWorkspace", () => {
     writeFileSync(
       mockedWorkspace.configPath,
       JSON.stringify({
-        repos: { thor: {} },
         owners: {
           alpha: { github_app_installation_id: 1 },
           zeta: { github_app_installation_id: 2 },
@@ -134,7 +132,6 @@ describe("getInstallationToken", () => {
     writeFileSync(
       mockedWorkspace.configPath,
       JSON.stringify({
-        repos: { thor: {} },
         owners: { acme: { github_app_installation_id: 999 } },
       }),
     );

@@ -1,22 +1,17 @@
 #!/bin/sh
-# Thor git wrapper — wires GIT_ASKPASS to the Thor helper when GitHub App
-# auth is configured. Git only invokes askpass when a remote operation
-# actually needs credentials, so local commands avoid the Node startup cost.
-# Falls back to PAT auth (GH_TOKEN / GIT_ASKPASS) when GitHub App is not configured.
+# Thor git wrapper — wires GIT_ASKPASS to the Thor helper for GitHub App
+# installation tokens. Git only invokes askpass when a remote operation actually
+# needs credentials, so local commands avoid the Node startup cost.
 
 set -e
 
 REAL_GIT="/usr/bin/git"
-. /usr/local/lib/thor/bin/github-app-config.sh
-
-# If no GitHub App config exists, pass through to real git unchanged
-if ! thor_has_github_app_config /workspace/config.json; then
-  exec "$REAL_GIT" "$@"
-fi
 
 export GIT_ASKPASS="/usr/local/lib/thor/bin/git-askpass"
 export GIT_TERMINAL_PROMPT=0
-export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_COUNT=2
 export GIT_CONFIG_KEY_0="credential.username"
 export GIT_CONFIG_VALUE_0="x-access-token"
+export GIT_CONFIG_KEY_1="credential.helper"
+export GIT_CONFIG_VALUE_1=""
 exec "$REAL_GIT" "$@"

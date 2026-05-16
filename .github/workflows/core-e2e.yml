@@ -27,6 +27,7 @@ jobs:
       OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}
+      SLACK_DEFAULT_REPO: acme-multi-hyphen-repo
       SLACK_E2E_CHANNEL_ID: ${{ vars.SLACK_E2E_CHANNEL_ID || vars.SLACK_CHANNEL_ID }}
       SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       GITHUB_APP_ID: ${{ vars.THOR_GITHUB_APP_ID }}
@@ -109,12 +110,6 @@ jobs:
 
           cat > docker-volumes/workspace/config.json <<EOF
           {
-            "repos": {
-              "acme-multi-hyphen-repo": {
-                "channels": ["${SLACK_E2E_CHANNEL_ID:-C123456789}"],
-                "proxies": ["atlassian"]
-              }
-            },
             "owners": {
               "${{ github.repository_owner }}": {
                 "github_app_installation_id": ${THOR_GITHUB_APP_INSTALLATION_ID}
@@ -149,7 +144,7 @@ jobs:
         run: pnpm test:create-jira-approval-e2e
 
       - name: Run OpenCode LLM smoke test
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/slack-channel-repo-routing'
         env:
           CI: "true"
         run: pnpm test:opencode-e2e

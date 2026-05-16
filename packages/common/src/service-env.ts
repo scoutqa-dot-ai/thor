@@ -22,6 +22,7 @@ export function loadGatewayEnv(env: EnvSource = process.env) {
     runnerUrl: envBaseUrl(env, "RUNNER_URL", "http://runner:3000"),
     slackSigningSecret: envOptionalString(env, "SLACK_SIGNING_SECRET") ?? "",
     slackBotToken: envOptionalString(env, "SLACK_BOT_TOKEN") ?? "",
+    slackDefaultRepo: envString(env, "SLACK_DEFAULT_REPO"),
     slackApiBaseUrl: envBaseUrl(env, "SLACK_API_BASE_URL", "https://slack.com/api"),
     slackTimestampToleranceSeconds: envInt(env, "SLACK_TIMESTAMP_TOLERANCE_SECONDS", 300),
     queueDir: envString(env, "QUEUE_DIR", "data/queue"),
