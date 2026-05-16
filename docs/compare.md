@@ -75,7 +75,7 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 | Worktree-based edits in shared workspace    | ✅   | ❌        | ❌       | ❌        | ❌     | ❌    |
 | Session continuity / resume                 | ✅   | ✅        | ✅       | ✅ (Durable Objects) | ✅ (turn-resume) | ✅ |
 | Multi-user multiplayer in one session       | ❌   | 🟡        | ❌       | ✅        | ❌     | ❌    |
-| Multi-LLM provider                          | 🟡 (via OpenCode) | ✅ | ✅ | ✅ | ✅ | ✅ (15+) |
+| Multi-LLM provider                          | 🟡 (via OpenCode) | ✅ | ✅ | ✅ | ✅ | ✅ (30+) |
 | Outbound HTTPS credential injection         | ✅ (mitmproxy) | ❌ | ❌ | ❌ | ✅ (egress proxy) | ❌ |
 | Audit log of tool calls                     | ✅   | 🟡        | 🟡 (LangSmith) | 🟡 | ✅ | 🟡 |
 | Plugin / extension ecosystem                | 🟡 (MCP upstreams) | ✅ | ✅ | 🟡 | ✅ (plugins) | ✅ (70+ extensions) |
@@ -106,7 +106,8 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 **Where Thor is doing better than OpenHands**
 
 1. **Server-side MCP policy.** Allow / approve / hide on tools is a Thor
-   invariant in `remote-cli`. OpenHands' MCP router is a pass-through.
+   invariant in `remote-cli`. OpenHands' MCP router authenticates and proxies
+   but doesn't enforce per-tool allow/approve/hide policy.
 2. **Slack-native triggers + cron.** OpenHands' Slack is a webhook plugin;
    Thor's whole event model assumes Slack is the primary surface.
 3. **Outbound credential injection via mitmproxy.** Lets supported HTTP
@@ -264,7 +265,7 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 
 **Where goose is doing better than Thor**
 
-1. **15+ LLM providers** behind one provider trait. Thor inherits OpenCode's
+1. **30+ LLM providers** behind one provider trait. Thor inherits OpenCode's
    provider list and can't swap mid-session.
 2. **70+ MCP extensions** as a community ecosystem. Thor's MCP upstreams are
    a manually curated list.
