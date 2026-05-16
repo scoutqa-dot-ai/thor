@@ -84,7 +84,6 @@ export {
   sessionLogPath,
   isUuidV7,
   UUID_V7_RE,
-  MAX_SESSION_FILE_BYTES,
 } from "./event-log.js";
 export type {
   SessionEventLogRecord,

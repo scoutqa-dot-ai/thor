@@ -41,7 +41,6 @@ import {
   readTriggerSlice,
   sessionLogPath,
   getWorklogDir,
-  MAX_SESSION_FILE_BYTES,
   loadRunnerEnv,
   matchesInternalSecret,
   ProgressApprovalRequiredSchema,
@@ -233,11 +232,10 @@ async function ensureOpencodeAvailable(): Promise<void> {
 function resolveOwnerSessionForTrigger(
   anchorId: string,
   triggerId: string,
-): { ok: true; sessionId: string } | { ok: false; reason: "not_found" | "oversized" } {
+): { ok: true; sessionId: string } | { ok: false; reason: "not_found" } {
   const reverse = reverseLookupAnchor(anchorId);
   for (const sessionId of reverse.sessionIds) {
     const slice = readTriggerSlice(sessionId, triggerId);
-    if ("oversized" in slice) return { ok: false, reason: "oversized" };
     if (!("notFound" in slice)) return { ok: true, sessionId };
   }
   return { ok: false, reason: "not_found" };
@@ -366,17 +364,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       const owner = resolveOwnerSessionForTrigger(anchorId, triggerId);
       if (!owner.ok) {
-        if (owner.reason === "oversized") {
-          res
-            .type("html")
-            .send(
-              renderPage(
-                "Slice truncated",
-                "<p>This session log is oversized for display. Engineers needing the bytes can read the JSONL directly from the worklog volume.</p>",
-              ),
-            );
-          return;
-        }
         res
           .status(404)
           .type("html")
@@ -404,17 +391,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           .type("html")
           .send(
             renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
-          );
-        return;
-      }
-      if ("oversized" in slice) {
-        res
-          .type("html")
-          .send(
-            renderPage(
-              "Slice truncated",
-              "<p>This session log is oversized for display. Engineers needing the bytes can read the JSONL directly from the worklog volume.</p>",
-            ),
           );
         return;
       }
@@ -1483,7 +1459,7 @@ function renderSlicePage(
   triggerId: string,
   ownerSessionId: string,
   anchor: ReverseAnchorEntry,
-  slice: Exclude<ReturnType<typeof readTriggerSlice>, { notFound: true } | { oversized: true }>,
+  slice: Exclude<ReturnType<typeof readTriggerSlice>, { notFound: true }>,
 ): string {
   const start = slice.records.find(
     (record) => record.type === "trigger_start" && record.triggerId === triggerId,
