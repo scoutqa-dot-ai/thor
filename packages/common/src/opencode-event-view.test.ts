@@ -96,6 +96,45 @@ describe("opencode-event-view", () => {
     }
   });
 
+  it("parses SDK-canonical part variants beyond compaction (subtask, file, patch, agent, retry, snapshot)", () => {
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["subtask", { description: "do thing", agent: "thinker", prompt: "go" }],
+      ["file", { mime: "text/plain", filename: "x.md", url: "file:///x.md" }],
+      ["patch", { hash: "abc", files: ["a.ts", "b.ts"] }],
+      ["agent", { name: "thinker" }],
+      ["retry", { attempt: 2, error: { message: "rate limited" }, time: { created: 1 } }],
+      ["snapshot", { snapshot: "snap_xyz" }],
+    ];
+    for (const [type, extra] of cases) {
+      const out = projectOpencodeEvent({
+        type: "message.part.updated",
+        properties: { part: { id: `p_${type}`, type, ...extra } },
+      });
+      expect(out, `${type} should parse`).not.toBeNull();
+      if (out?.type === "message.part.updated") {
+        expect(out.properties.part.type).toBe(type);
+      }
+    }
+  });
+
+  it("accepts forward-compat tool status values beyond the four canonical ones", () => {
+    const out = projectOpencodeEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "p1",
+          type: "tool",
+          tool: "x",
+          state: { status: "cancelled" },
+        },
+      },
+    });
+    expect(out).not.toBeNull();
+    if (out?.type === "message.part.updated" && out.properties.part.type === "tool") {
+      expect(out.properties.part.state.status).toBe("cancelled");
+    }
+  });
+
   it("preserves status.type enum forward-compat (session.status with new status)", () => {
     const out = projectOpencodeEvent({
       type: "session.status",
