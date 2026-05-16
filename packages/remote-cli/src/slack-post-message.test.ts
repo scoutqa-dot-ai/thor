@@ -85,7 +85,10 @@ describe("remote-cli slack-post-message endpoint", () => {
         body: JSON.stringify({ channel: "C999", text: "hello *world*\n", mrkdwn: true }),
       }),
     );
-    expect(appendAliasMock).toHaveBeenCalledWith("session-1", "slack:thread:1777940309.867569");
+    expect(appendAliasMock).toHaveBeenCalledWith(
+      "session-1",
+      "slack:thread:C999/1777940309.867569",
+    );
   });
 
   it("registers reply aliases against the requested thread value", async () => {
@@ -113,7 +116,10 @@ describe("remote-cli slack-post-message endpoint", () => {
         }),
       }),
     );
-    expect(appendAliasMock).toHaveBeenCalledWith("session-2", "slack:thread:thread-parent-token");
+    expect(appendAliasMock).toHaveBeenCalledWith(
+      "session-2",
+      "slack:thread:C123/thread-parent-token",
+    );
   });
 
   it("requires a live Thor session before calling Slack", async () => {
@@ -243,7 +249,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(body.exitCode).toBe(0);
     expect(aliasErrorMock).toHaveBeenCalledWith(error, {
       sessionId: "session-5",
-      correlationKey: "slack:thread:1777940309.867569",
+      correlationKey: "slack:thread:C123/1777940309.867569",
     });
   });
 
@@ -289,7 +295,7 @@ describe("remote-cli slack-post-message endpoint", () => {
         }),
       });
       expect(topLevel.status).toBe(200);
-      expect(resolveSessionForCorrelationKey("slack:thread:1777940309.867569")).toBe(
+      expect(resolveSessionForCorrelationKey("slack:thread:C123/1777940309.867569")).toBe(
         "non-slack-session",
       );
 
@@ -303,7 +309,7 @@ describe("remote-cli slack-post-message endpoint", () => {
         }),
       });
       expect(reply.status).toBe(200);
-      expect(resolveSessionForCorrelationKey("slack:thread:1777940309.867569")).toBe(
+      expect(resolveSessionForCorrelationKey("slack:thread:C123/1777940309.867569")).toBe(
         "non-slack-session",
       );
 
@@ -327,7 +333,7 @@ describe("remote-cli slack-post-message endpoint", () => {
         }),
       });
       expect(childPost.status).toBe(200);
-      expect(resolveSessionForCorrelationKey("slack:thread:1777940311.222222")).toBe(
+      expect(resolveSessionForCorrelationKey("slack:thread:C123/1777940311.222222")).toBe(
         "non-slack-session",
       );
     } finally {
