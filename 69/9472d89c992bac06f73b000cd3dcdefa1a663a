@@ -1,0 +1,33 @@
+docs/compare/background-agents.md
+  b1f635792db79bd7 3-4
+docs/compare.md
+  b1f635792db79bd7 1-338
+docs/compare/open-swe.md
+  b1f635792db79bd7 3
+docs/compare/junior.md
+  b1f635792db79bd7 3-4
+docs/compare/goose.md
+  b1f635792db79bd7 5-6
+docs/compare/openhands.md
+  b1f635792db79bd7 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "699472d89c992bac06f73b000cd3dcdefa1a663a",
+  "prompts": {
+    "b1f635792db79bd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d10e41bb-ac1e-41a7-9e37-9b39c4909e88",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 346,
+      "total_deletions": 0,
+      "accepted_lines": 346,
+      "overriden_lines": 0
+    }
+  }
+}
