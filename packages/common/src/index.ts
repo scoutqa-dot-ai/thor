@@ -96,11 +96,7 @@ export type {
   AnchorSessionStatus,
   ListAnchorSessionStatesOptions,
 } from "./event-log.js";
-export {
-  OpencodeEventViewSchema,
-  projectOpencodeEvent,
-  isOmittedMarker,
-} from "./opencode-event-view.js";
+export { projectOpencodeEvent, isOmittedMarker } from "./opencode-event-view.js";
 export type {
   OpencodeEventView,
   OpencodeEventPart,

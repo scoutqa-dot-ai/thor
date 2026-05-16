@@ -112,9 +112,9 @@ describe("session event log", () => {
   });
 
   it("preserves the render skeleton when projecting oversized tool opencode_event", () => {
-    // Oversized tool output: the schema projection should keep tool name,
-    // callID, status, part id, and replace the large `output` field with an
-    // omitted marker so the viewer can still thread the call together.
+    // Oversized tool output: the fixed projection keeps tool name, callID,
+    // status, part id, and replaces payload leaves with omitted markers so the
+    // viewer can still thread the call together.
     const largeOutput = "z".repeat(10_000);
     expect(
       appendSessionEvent("projected-tool", {
@@ -154,7 +154,7 @@ describe("session event log", () => {
       state: {
         status: "completed",
         title: "Reads /etc/passwd",
-        input: { path: "/etc/passwd" }, // small input stays inline
+        input: { _omitted: true, bytes: expect.any(Number) },
       },
     });
     expect(record.event.properties.part.state.output).toEqual({
@@ -165,8 +165,7 @@ describe("session event log", () => {
   });
 
   it("strategically projects unknown opencode_event shapes instead of blanking them", () => {
-    // Unknown top-level event.type — schema rejects, fallback projection keeps
-    // the routing/render skeleton and omits only the large leaves.
+    // Unknown top-level event.type still carries the same fixed skeleton.
     expect(
       appendSessionEvent("unknown-event", {
         type: "opencode_event",
@@ -213,6 +212,71 @@ describe("session event log", () => {
       },
     });
     expect(record.event.properties.part.vendorPayload).toBeUndefined();
+  });
+
+  it("drops non-skeleton future fields instead of needing projection retries", () => {
+    const medium = "x".repeat(240);
+    expect(
+      appendSessionEvent("fixed-projection", {
+        type: "opencode_event",
+        event: {
+          id: "evt_fixed",
+          type: "future.verbose.event",
+          properties: {
+            sessionID: "ses_fixed",
+            time: 1_700_000_000_000,
+            path: medium,
+            file: medium,
+            source: medium,
+            part: {
+              id: "prt_fixed",
+              type: "future-part",
+              tool: "future-tool",
+              callID: "call_fixed",
+              reason: medium,
+              text: medium,
+              prompt: medium,
+              description: medium,
+              agent: medium,
+              command: medium,
+              mime: medium,
+              filename: medium,
+              url: medium,
+              hash: medium,
+              name: medium,
+              tail_start_id: medium,
+              state: {
+                status: "completed",
+                title: medium,
+                error: { name: medium, message: medium },
+              },
+              error: { name: medium, message: medium },
+            },
+          },
+        },
+      }),
+    ).toEqual({ ok: true });
+
+    const line = readFileSync(sessionLogPath("fixed-projection"), "utf8").trim();
+    expect(Buffer.byteLength(line, "utf8")).toBeLessThan(4096);
+    const record = JSON.parse(line);
+    expect(record.event).toMatchObject({
+      id: "evt_fixed",
+      type: "future.verbose.event",
+      properties: {
+        sessionID: "ses_fixed",
+        part: {
+          id: "prt_fixed",
+          type: "future-part",
+          tool: "future-tool",
+          callID: "call_fixed",
+          state: { status: "completed" },
+        },
+      },
+    });
+    expect(record.event.properties.part.prompt).toBeUndefined();
+    expect(record.event.properties.part.reason).toBeUndefined();
+    expect(record.event.properties.path).toBeUndefined();
   });
 
   it("preserves required trigger_end fields when truncating oversized errors", () => {

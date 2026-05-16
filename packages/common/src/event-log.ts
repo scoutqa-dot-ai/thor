@@ -172,6 +172,7 @@ interface InternalReverseEntry {
 }
 
 const MAX_RECORD_BYTES = 4095;
+const PROJECTED_OPENCODE_RECORD_MAX_BYTES = 8192;
 
 interface AliasCacheState {
   /** "<aliasType>\0<aliasValue>" → anchorId. */
@@ -276,14 +277,11 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   // chains exceed 4 KB legitimately, and the debugging UI needs them whole.
   if (isTextOrReasoningOpencodeEvent(candidate)) return candidate as T;
 
-  // Try schema-driven projection first for opencode events: known event shapes
-  // and unknown fallback shapes keep the render skeleton (event type, part
-  // type, tool, callID, status) while replacing large leaves with
-  // { _omitted: true, bytes: N } markers.
+  // Project oversized opencode events to a fixed viewer skeleton. The per-record
+  // 4 KB cap is a soft target for opencode payloads; keeping a projected event
+  // up to 8 KB is more useful than blanking the skeleton.
   if (record.type === "opencode_event" && "event" in candidate) {
-    const projected =
-      projectOpencodeEvent(candidate.event) ??
-      projectOpencodeEvent(candidate.event, { threshold: 0 });
+    const projected = projectOpencodeEvent(candidate.event);
     if (projected) {
       const next: Record<string, unknown> = {
         schemaVersion: 1,
@@ -292,12 +290,11 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
         event: projected,
         _truncated: true,
       };
-      if (Buffer.byteLength(JSON.stringify(next), "utf8") < MAX_RECORD_BYTES) {
+      if (Buffer.byteLength(JSON.stringify(next), "utf8") < PROJECTED_OPENCODE_RECORD_MAX_BYTES) {
         return next as T & { _truncated?: true };
       }
-      // Projected skeleton still too large (extremely unusual — would need
-      // many fields each just under the marker threshold). Fall through to
-      // the generic envelope.
+      // If even the fixed skeleton is pathological, fall through to the
+      // generic envelope.
     }
   }
 
