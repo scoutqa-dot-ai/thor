@@ -60,6 +60,29 @@ describe("opencode-event-view", () => {
     expect(projectOpencodeEvent({ foo: "bar" })).toBeNull();
   });
 
+  it("parses a compaction part as a known variant", () => {
+    const out = projectOpencodeEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "prt_compact",
+          messageID: "msg_x",
+          sessionID: "ses_x",
+          type: "compaction",
+          auto: true,
+          overflow: false,
+        },
+      },
+    });
+    expect(out).not.toBeNull();
+    if (out?.type === "message.part.updated" && out.properties.part.type === "compaction") {
+      expect(out.properties.part.auto).toBe(true);
+      expect(out.properties.part.overflow).toBe(false);
+    } else {
+      throw new Error("expected compaction part");
+    }
+  });
+
   it("accepts unknown part.type via passthrough escape hatch", () => {
     const out = projectOpencodeEvent({
       type: "message.part.updated",

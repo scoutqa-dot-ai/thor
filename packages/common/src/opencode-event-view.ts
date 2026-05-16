@@ -95,10 +95,17 @@ const StepFinishPartSchema = z.object({
   tokens: z.unknown().optional(),
 });
 
-const SnapshotPartSchema = z.object({
+/**
+ * Rare context-compaction marker (12 occurrences across the live corpus).
+ * The viewer can silently drop these or surface a "context compacted" row;
+ * either way the part must parse rather than fall to the unknown-event
+ * branch.
+ */
+const CompactionPartSchema = z.object({
   ...PartCommon,
-  type: z.literal("snapshot"),
-  snapshot: z.unknown().optional(),
+  type: z.literal("compaction"),
+  auto: z.boolean().optional(),
+  overflow: z.boolean().optional(),
 });
 
 /**
@@ -119,7 +126,7 @@ const KnownPartSchema = z.discriminatedUnion("type", [
   ToolPartSchema,
   StepStartPartSchema,
   StepFinishPartSchema,
-  SnapshotPartSchema,
+  CompactionPartSchema,
 ]);
 
 const PartSchema = z.union([KnownPartSchema, UnknownPartSchema]);
