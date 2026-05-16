@@ -77,6 +77,7 @@ Exit criteria: local verification passes, with any skipped or blocked checks cal
 | **Always mark known payload leaves**              | `input`, `output`, `raw`, `metadata`, and `snapshot` are the observed large leaves. Always replacing them avoids size retries and makes the projected shape predictable.              |
 | **Drop non-skeleton fields silently**             | The purpose of the projected record is preserving renderer context, not retaining every SDK/vendor field. Under-cap records still keep full fidelity.                                 |
 | **Text/reasoning carve-out stays in `capRecord`** | Long assistant prose is user-visible debugging content and should remain whole; projection is for non-text oversized events.                                                          |
+| **Allow truncation marker on base records**       | `capRecord` stamps `_truncated: true` before schema validation; the base event-log schema must preserve that marker for projected and generic capped records.                         |
 
 ## Risks
 

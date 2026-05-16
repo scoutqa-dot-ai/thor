@@ -49,6 +49,7 @@ const BaseRecordSchema = z.object({
   schemaVersion: z.literal(1),
   ts: z.string(),
   type: z.string(),
+  _truncated: z.literal(true).optional(),
 });
 
 export const TriggerStartRecordSchema = BaseRecordSchema.extend({

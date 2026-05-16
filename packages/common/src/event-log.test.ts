@@ -146,6 +146,7 @@ describe("session event log", () => {
 
     const line = readFileSync(sessionLogPath("projected-tool"), "utf8").trim();
     const record = JSON.parse(line);
+    expect(record._truncated).toBe(true);
     expect(record.event.type).toBe("message.part.updated");
     expect(record.event.properties.sessionID).toBe("ses_test");
     expect(record.event.properties.part).toMatchObject({
