@@ -426,16 +426,25 @@ function validateBranch(args: string[]): string | null {
 }
 
 function resolveClone(args: string[], allowedOwners: readonly string[]): ResolvedGitArgs {
-  if (allowedOwners.length === 0 || args.length !== 2) return deny("git clone");
+  const cloneGuidance = gitCloneGuidance(allowedOwners);
+  if (allowedOwners.length === 0 || args.length !== 2) return deny("git clone", cloneGuidance);
 
   const source = args[1];
   const parsed = parseCloneSource(source);
-  if (!parsed || !allowedOwners.includes(parsed.owner)) return deny("git clone");
+  if (!parsed || !allowedOwners.includes(parsed.owner)) return deny("git clone", cloneGuidance);
 
   const destination = `${WORKSPACE_REPOS_ROOT}/${parsed.repo}`;
-  if (!isSafeCloneDestination(destination)) return deny("git clone");
+  if (!isSafeCloneDestination(destination)) return deny("git clone", cloneGuidance);
 
   return { args: ["clone", "--", source, destination] };
+}
+
+function gitCloneGuidance(allowedOwners: readonly string[]): DenyGuidance {
+  const configuredOwners = allowedOwners.length > 0 ? allowedOwners.join(", ") : "(none configured)";
+  return {
+    reason: `clone is limited to https://github.com/<owner>/<repo>[.git] URLs for configured owners: ${configuredOwners}.`,
+    instead: "git clone <allowlisted-https-github-url>",
+  };
 }
 
 function parseCloneSource(source: string): { owner: string; repo: string } | null {

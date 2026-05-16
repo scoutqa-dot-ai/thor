@@ -298,7 +298,7 @@ describe("validateGitArgs", () => {
           undefined,
           options,
         ),
-      ).toContain("Load skill using-git");
+      ).toContain("configured owners: acme");
       expect(
         validateGitArgs(
           ["clone", "https://gitlab.com/acme/web.git"],
