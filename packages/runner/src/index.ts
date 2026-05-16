@@ -1423,6 +1423,7 @@ function renderUnknownOpencodeEvent(record: SessionEventLogRecord): string {
   const type = eventType(record) ?? "unknown";
   const props = eventProperties(record);
   const part = eventPart(record);
+  const status = typeof part?.state?.status === "string" ? part.state.status : "pending";
   const bits = [`<b>unknown event</b> <span>${escapeHtml(type)}</span>`];
   if (typeof props?.sessionID === "string") {
     bits.push(`<code>${escapeHtml(safeSnippet(props.sessionID))}</code>`);
@@ -1457,7 +1458,7 @@ function renderUnknownOpencodeEvent(record: SessionEventLogRecord): string {
     ),
   ].join("");
 
-  return `<li class="row unknown" data-status="pending">${bits.join(" ")}${omitted}</li>`;
+  return `<li class="row unknown" data-status="${escapeHtml(status)}">${bits.join(" ")}${omitted}</li>`;
 }
 
 function shouldRenderUnknownEvent(type: string | undefined): boolean {
