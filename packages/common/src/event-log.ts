@@ -216,10 +216,32 @@ export function mintAnchor(): string {
 
 export const mintTriggerId = mintAnchor;
 
+/**
+ * Detects opencode_event records whose part is `text` or `reasoning` — the
+ * user-visible message body we must never lose. Tool inputs/outputs can run
+ * arbitrarily large (file reads, big JSON payloads) and still get capped;
+ * text/reasoning bypass the cap unconditionally.
+ */
+function isTextOrReasoningOpencodeEvent(record: Record<string, unknown>): boolean {
+  if (record.type !== "opencode_event") return false;
+  const event = record.event;
+  if (!event || typeof event !== "object") return false;
+  const properties = (event as { properties?: unknown }).properties;
+  if (!properties || typeof properties !== "object") return false;
+  const part = (properties as { part?: unknown }).part;
+  if (!part || typeof part !== "object") return false;
+  const partType = (part as { type?: unknown }).type;
+  return partType === "text" || partType === "reasoning";
+}
+
 function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncated?: true } {
   let candidate: Record<string, unknown> = { ...record };
   if (Buffer.byteLength(JSON.stringify(candidate), "utf8") < MAX_RECORD_BYTES)
     return candidate as T;
+
+  // Never truncate text/reasoning parts — long assistant replies or thinking
+  // chains exceed 4 KB legitimately, and the debugging UI needs them whole.
+  if (isTextOrReasoningOpencodeEvent(candidate)) return candidate as T;
 
   if ("event" in candidate) candidate.event = { _truncated: true };
   if ("payload" in candidate) candidate.payload = { _truncated: true };

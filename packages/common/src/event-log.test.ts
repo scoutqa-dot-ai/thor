@@ -77,6 +77,44 @@ describe("session event log", () => {
     expect(statSync(sessionLogPath("s1")).size).toBeLessThan(4096);
   });
 
+  it("never truncates text or reasoning opencode_event records, even when oversized", () => {
+    // Long assistant text / reasoning chains can legitimately exceed the
+    // 4 KB per-record cap. They must persist in full so the debugging UI
+    // sees the whole body.
+    const longText = "lorem ipsum ".repeat(2000); // ~24 KB
+    expect(
+      appendSessionEvent("longtext", {
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: {
+            part: { id: "prt_long_text", type: "text", text: longText },
+          },
+        },
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      appendSessionEvent("longtext", {
+        type: "opencode_event",
+        event: {
+          type: "message.part.updated",
+          properties: {
+            part: { id: "prt_long_reasoning", type: "reasoning", text: longText },
+          },
+        },
+      }),
+    ).toEqual({ ok: true });
+
+    const lines = readFileSync(sessionLogPath("longtext"), "utf8").trim().split("\n");
+    const parsed = lines.map((line) => JSON.parse(line));
+    const text = parsed.find((r) => r.event?.properties?.part?.type === "text");
+    const reasoning = parsed.find((r) => r.event?.properties?.part?.type === "reasoning");
+    expect(text.event.properties.part.text).toBe(longText);
+    expect(text._truncated).toBeUndefined();
+    expect(reasoning.event.properties.part.text).toBe(longText);
+    expect(reasoning._truncated).toBeUndefined();
+  });
+
   it("preserves required trigger_end fields when truncating oversized errors", () => {
     expect(
       appendSessionEvent("truncated-end", {
@@ -278,12 +316,27 @@ describe("session event log", () => {
     appendAlias({ aliasType: "slack.thread_id", aliasValue: "111.222", anchorId: anchorDashA });
     appendAlias({ aliasType: "opencode.session", aliasValue: "live", anchorId: anchorDashB });
     appendAlias({ aliasType: "opencode.session", aliasValue: "stale", anchorId: anchorDashC });
-    appendAlias({ aliasType: "opencode.session", aliasValue: "sup-old", anchorId: anchorDashD, ts: "2026-05-14T12:00:00.000Z" });
-    appendAlias({ aliasType: "opencode.session", aliasValue: "sup-new", anchorId: anchorDashD, ts: "2026-05-14T12:00:01.000Z" });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "sup-old",
+      anchorId: anchorDashD,
+      ts: "2026-05-14T12:00:00.000Z",
+    });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "sup-new",
+      anchorId: anchorDashD,
+      ts: "2026-05-14T12:00:01.000Z",
+    });
 
     writeSession("idle", [
       { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA },
-      { ts: "2026-05-14T12:01:00.000Z", type: "trigger_end", triggerId: triggerA, status: "completed" },
+      {
+        ts: "2026-05-14T12:01:00.000Z",
+        type: "trigger_end",
+        triggerId: triggerA,
+        status: "completed",
+      },
     ]);
     writeSession("live", [
       { ts: "2026-05-14T12:08:00.000Z", type: "trigger_start", triggerId: triggerB },
@@ -297,7 +350,12 @@ describe("session event log", () => {
     ]);
     writeSession("sup-new", [
       { ts: "2026-05-14T12:03:00.000Z", type: "trigger_start", triggerId: triggerE },
-      { ts: "2026-05-14T12:03:10.000Z", type: "trigger_end", triggerId: triggerE, status: "aborted" },
+      {
+        ts: "2026-05-14T12:03:10.000Z",
+        type: "trigger_end",
+        triggerId: triggerE,
+        status: "aborted",
+      },
     ]);
 
     const rows = listAnchorSessionStates({ now, stuckAfterMs: 5 * 60 * 1000, limit: 10 });
@@ -320,11 +378,17 @@ describe("session event log", () => {
 
   it("surfaces malformed and oversized session diagnostics in anchor session states", () => {
     appendAlias({ aliasType: "opencode.session", aliasValue: "bad-lines", anchorId: anchorDashE });
-    writeSession("bad-lines", [
-      { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA },
-    ], "not-json\n");
+    writeSession(
+      "bad-lines",
+      [{ ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA }],
+      "not-json\n",
+    );
     let row = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") })[0];
-    expect(row).toMatchObject({ anchorId: anchorDashE, status: "in_progress", skippedMalformed: 1 });
+    expect(row).toMatchObject({
+      anchorId: anchorDashE,
+      status: "in_progress",
+      skippedMalformed: 1,
+    });
 
     writeFileSync(sessionLogPath("bad-lines"), "x".repeat(53 * 1024 * 1024));
     row = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") })[0];
@@ -332,8 +396,16 @@ describe("session event log", () => {
   });
 
   it("marks only anchors with unsafe session aliases unknown and preserves other rows", () => {
-    appendAlias({ aliasType: "opencode.session", aliasValue: "good-session", anchorId: anchorDashE });
-    appendAlias({ aliasType: "opencode.session", aliasValue: "unsafe/session", anchorId: anchorDashF });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "good-session",
+      anchorId: anchorDashE,
+    });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "unsafe/session",
+      anchorId: anchorDashF,
+    });
     writeSession("good-session", [
       { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA },
       { ts: "2026-05-14T12:00:10.000Z", type: "opencode_event", event: { ok: true } },
@@ -352,8 +424,16 @@ describe("session event log", () => {
   });
 
   it("marks anchors with invalid trigger timestamps unknown instead of returning NaN durations", () => {
-    appendAlias({ aliasType: "opencode.session", aliasValue: "bad-ts-open", anchorId: anchorDashE });
-    appendAlias({ aliasType: "opencode.session", aliasValue: "bad-ts-idle", anchorId: anchorDashF });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "bad-ts-open",
+      anchorId: anchorDashE,
+    });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "bad-ts-idle",
+      anchorId: anchorDashF,
+    });
 
     writeSession("bad-ts-open", [
       { ts: "not-a-date", type: "trigger_start", triggerId: triggerA },
@@ -434,6 +514,8 @@ function writeSession(
   mkdirSync(join(process.env.WORKLOG_DIR ?? "", "sessions"), { recursive: true });
   writeFileSync(
     sessionLogPath(sessionId),
-    records.map((record) => JSON.stringify({ schemaVersion: 1, ...record })).join("\n") + "\n" + extra,
+    records.map((record) => JSON.stringify({ schemaVersion: 1, ...record })).join("\n") +
+      "\n" +
+      extra,
   );
 }
