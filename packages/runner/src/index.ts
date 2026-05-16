@@ -1400,11 +1400,15 @@ function renderToolInput(toolName: string, input: unknown): string {
   return `<details><summary>input</summary><pre>${escapeHtml(safeMultilineSnippet(json))}</pre></details>`;
 }
 
-function eventPart(record: SessionEventLogRecord): ViewerToolPart | undefined {
+function eventProperties(record: SessionEventLogRecord): Record<string, unknown> | undefined {
   if (record.type !== "opencode_event" || !record.event || typeof record.event !== "object")
     return undefined;
   const event = record.event as ViewerEvent;
-  const props = event.properties;
+  return event.properties;
+}
+
+function eventPart(record: SessionEventLogRecord): ViewerToolPart | undefined {
+  const props = eventProperties(record);
   const part = props?.part;
   return part && typeof part === "object" ? (part as ViewerToolPart) : undefined;
 }
@@ -1414,6 +1418,51 @@ function eventType(record: SessionEventLogRecord): string | undefined {
     return undefined;
   const type = (record.event as ViewerEvent).type;
   return typeof type === "string" ? type : undefined;
+}
+
+function renderUnknownOpencodeEvent(record: SessionEventLogRecord): string {
+  const type = eventType(record) ?? "unknown";
+  const props = eventProperties(record);
+  const part = eventPart(record);
+  const bits = [`<b>unknown event</b> <span>${escapeHtml(type)}</span>`];
+  if (typeof props?.sessionID === "string") {
+    bits.push(`<code>${escapeHtml(safeSnippet(props.sessionID))}</code>`);
+  }
+  if (typeof part?.type === "string") {
+    bits.push(`<span>part ${escapeHtml(part.type)}</span>`);
+  }
+  if (typeof part?.tool === "string") {
+    bits.push(`<span>tool ${escapeHtml(part.tool)}</span>`);
+  }
+  if (typeof part?.state?.status === "string") {
+    bits.push(`<span>${escapeHtml(part.state.status)}</span>`);
+  }
+
+  const omitted = [
+    renderOmittedNote(props?.input, "input"),
+    renderOmittedNote(props?.output, "output"),
+    renderOmittedNote(props?.raw, "raw"),
+    renderOmittedNote(props?.metadata, "metadata"),
+    renderOmittedNote(props?.snapshot, "snapshot"),
+    renderOmittedNote(part?.state?.input, "input"),
+    renderOmittedNote(part?.state?.output, "output"),
+    renderOmittedNote(
+      part?.state && "raw" in part.state ? (part.state as { raw?: unknown }).raw : undefined,
+      "raw",
+    ),
+    renderOmittedNote(
+      part?.state && "metadata" in part.state
+        ? (part.state as { metadata?: unknown }).metadata
+        : undefined,
+      "metadata",
+    ),
+  ].join("");
+
+  return `<li class="row unknown" data-status="pending">${bits.join(" ")}${omitted}</li>`;
+}
+
+function shouldRenderUnknownEvent(type: string | undefined): boolean {
+  return !!type && type !== "session.status" && type !== "session.idle";
 }
 
 function sourceFrom(correlationKey: string | undefined): string {
@@ -1738,7 +1787,12 @@ function renderInlineSubagent(
     const id = partId(raw);
     if (id && firstIdxById.get(id) !== i) continue;
     const p = id ? (latestById.get(id) ?? raw) : raw;
-    if (!p) continue;
+    if (!p) {
+      if (shouldRenderUnknownEvent(eventType(rec))) {
+        rows.push(renderUnknownOpencodeEvent(rec));
+      }
+      continue;
+    }
     if (p.type === "step-finish") {
       const breakdown = extractTokenCounts(p.tokens);
       if (breakdown) addTokenCounts(ledger.tokens, breakdown);
@@ -1770,6 +1824,8 @@ function renderInlineSubagent(
       rows.push(
         `<li class="row" data-status="completed"><b>reasoning</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
       );
+    } else if (shouldRenderUnknownEvent(eventType(rec))) {
+      rows.push(renderUnknownOpencodeEvent(rec));
     }
   }
   const html = rows.length
@@ -2216,6 +2272,10 @@ function renderSlicePage(
       current.rows.push(
         `<li class="row err" data-status="error"><b>session error</b> ${escapeHtml(safeSnippet(msg ?? "Unknown error"))}</li>`,
       );
+      continue;
+    }
+    if (shouldRenderUnknownEvent(type)) {
+      current.rows.push(renderUnknownOpencodeEvent(record));
       continue;
     }
     // session.status (busy heartbeat) and session.idle are intentionally

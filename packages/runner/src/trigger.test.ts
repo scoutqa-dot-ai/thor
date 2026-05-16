@@ -369,7 +369,7 @@ describe("runner /trigger orchestration", () => {
     const subSessionId = "ses_subagent_inline_test_001";
     const taskStart = 1_700_000_000_000;
     const taskEnd = taskStart + 10_000;
-    // Pre-seed the subagent's own session file with two events inside the
+    // Pre-seed the subagent's own session file with three events inside the
     // task's time window plus one stale event outside it (a later resume).
     mkdirSync(`${worklogDir}/sessions`, { recursive: true });
     writeFileSync(
@@ -393,6 +393,18 @@ describe("runner /trigger orchestration", () => {
         JSON.stringify({
           schemaVersion: 1,
           ts: new Date(taskStart + 200).toISOString(),
+          type: "opencode_event",
+          event: {
+            type: "message.future.delta",
+            properties: {
+              sessionID: subSessionId,
+              metadata: { _omitted: true, bytes: 4096 },
+            },
+          },
+        }),
+        JSON.stringify({
+          schemaVersion: 1,
+          ts: new Date(taskStart + 300).toISOString(),
           type: "opencode_event",
           event: {
             type: "message.part.updated",
@@ -449,10 +461,12 @@ describe("runner /trigger orchestration", () => {
         headers: { "X-Vouch-User": "u@example.com" },
       });
       const html = await response.text();
-      expect(html).toContain("subagent activity (2 rows)");
+      expect(html).toContain("subagent activity (3 rows)");
       expect(html).toContain('class="events sub-events"');
       expect(html).toContain("Subagent finished the read.");
       expect(html).toContain("tool</b> <span>read</span>");
+      expect(html).toContain("message.future.delta");
+      expect(html).toContain("(metadata omitted, 4.0 KB)");
       // Stale follow-up after taskEnd is filtered out.
       expect(html).not.toContain("STALE FOLLOW-UP");
     });
@@ -504,6 +518,49 @@ describe("runner /trigger orchestration", () => {
       expect(html).toMatch(/\(input omitted, 38\.0 KB\)/);
       // The marker JSON itself must not leak into the page.
       expect(html).not.toContain("_omitted");
+    });
+  });
+
+  it("renders unknown opencode events through the fallback row", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000512";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("unknown-event-session", anchorId);
+    appendSessionEvent("unknown-event-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("unknown-event-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.future.delta",
+        properties: {
+          sessionID: "unknown-event-session",
+          part: {
+            type: "future-part",
+            tool: "future-tool",
+            state: {
+              status: "completed",
+              output: { _omitted: true, bytes: 8192 },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("unknown-event-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain("unknown event");
+      expect(html).toContain("message.future.delta");
+      expect(html).toContain("part future-part");
+      expect(html).toContain("tool future-tool");
+      expect(html).toContain("(output omitted, 8.0 KB)");
+      expect(html).not.toContain("No meaningful events recorded");
     });
   });
 

@@ -14,7 +14,7 @@ After this change:
 
 - Under-cap records (75% today) are stored whole — full debugging fidelity preserved.
 - Over-cap records are projected through a zod schema that keeps the render skeleton and replaces large leaves with `{ _omitted: true, bytes: N }` markers, then stamped `_truncated: true`.
-- Records that fail the schema (unknown SDK shape) fall back to today's blanket `{ _truncated: true }` — safe and forward-compatible.
+- Records that fail the known-event schema (unknown SDK shape) route to a compact fallback projection that preserves event type, session/time, part/tool/state skeleton, and omitted markers for large leaves.
 - The same schema is imported by the runner viewer to render events; `safeParse` + an unknown-event fallback renderer absorbs both legacy records on disk and future SDK additions.
 
 ## Scope
@@ -173,10 +173,12 @@ export type OpencodeEventView = z.infer<typeof OpencodeEventViewSchema>;
 ```ts
 const OMIT_THRESHOLD = 256; // bytes — fields larger than this become markers
 
-export function projectOpencodeEvent(event: unknown): OpencodeEventView | null {
+type ProjectedOpencodeEvent = OpencodeEventView | UnknownOpencodeEventView;
+
+export function projectOpencodeEvent(event: unknown): ProjectedOpencodeEvent | null {
   const projected = shrinkLargeLeaves(event);
   const parsed = OpencodeEventViewSchema.safeParse(projected);
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? parsed.data : projectUnknownOpencodeEvent(projected);
 }
 
 function shrinkLargeLeaves(value: unknown): unknown {
@@ -194,7 +196,8 @@ if (record.type === "opencode_event" && record.event !== undefined) {
   if (projected !== null) {
     return { ...record, event: projected, _truncated: true } as T;
   }
-  // fall through to generic { event: { _truncated: true } } fallback
+  // fall through to generic { event: { _truncated: true } } fallback only
+  // when no usable event.type exists or the fallback skeleton remains too large
 }
 ```
 
@@ -211,8 +214,10 @@ function renderOpencodeEvent(event: unknown): string {
 }
 
 function renderUnknownEvent(event: unknown): string {
-  // Legacy { _truncated: true } records and future SDK shapes land here.
-  // Show a minimal "event withheld" row with whatever shallow fields exist.
+  // Legacy { _truncated: true } records, fallback-projected future SDK shapes,
+  // and under-cap future SDK shapes land here.
+  // Show a compact row with event type, session/part/tool/status skeleton,
+  // and omitted-marker notes where present.
 }
 
 function renderKnownEvent(event: OpencodeEventView): string {
@@ -241,7 +246,7 @@ Renderer branches handle `{ _omitted: true, bytes }` markers explicitly: e.g. to
   - Under-cap opencode record: unchanged.
   - Text/reasoning carve-out: still bypasses cap unconditionally.
   - Oversized `message.part.updated` with `tool` part: skeleton preserved, `state.output` becomes omitted marker, `_truncated: true` stamped.
-  - Oversized record with unknown `event.type`: falls back to `{ event: { _truncated: true } }`.
+  - Oversized record with unknown `event.type`: keeps strategic fallback skeleton instead of falling back to `{ event: { _truncated: true } }`.
   - Real-corpus fixture from `docker-volumes/.../sessions/*.jsonl`: projects without losing skeleton fields the viewer needs.
 
 Exit criteria: `pnpm -F @thor/common test` green; new fixtures cover the four cases above.
@@ -265,16 +270,17 @@ Exit criteria: E2E green; spot-check shows skeletons preserved on previously-tru
 
 ## Decision Log
 
-| Decision                                                                                                                                  | Rationale                                                                                                                                                                                                                                                                                             |
-| ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Hybrid (project only on overflow), not project-always**                                                                                 | Keeps 75% of records full-fidelity for engineering debugging. The schema is a preservation contract for the over-cap minority and a render contract for the viewer. Always-project would turn the worklog into a viewer cache, sacrificing the ability to grep raw JSONL for surprising SDK behavior. |
-| **Share schema between writer and viewer**                                                                                                | Single source of truth eliminates drift. Adding a `part.type` updates both projection and render branches from one diff. `safeParse` failures on either side both route to the unknown-event fallback — symmetric forward-compat.                                                                     |
-| **Enums use `z.string()` for `status` / `event.type` discriminators where possible, with `.passthrough()` parts for unknown `part.type`** | Strict `z.enum(...)` would silently drop new SDK values to the generic-truncate fallback — worse than projection. Permissive strings preserve forward-compat at the cost of weaker typing; renderers handle unknown values as a default branch.                                                       |
-| **`{ _omitted: true, bytes: N }` marker rather than dropping fields silently**                                                            | Engineers can see exactly which field blew the budget and how big it was; informs future raised limits or sidecar-blob storage. Costs ~20 bytes per omitted leaf vs. lossy total drop.                                                                                                                |
-| **`safeParse` + `renderUnknownEvent` fallback over a one-time JSONL rewrite migration**                                                   | Legacy records are debugging artifacts; rewriting risks corrupting them and adds migration code that lives forever. Treating old shapes as "unknown event, here's what we have" is honest and zero-risk.                                                                                              |
-| **256-byte `OMIT_THRESHOLD` for large-leaf detection during projection**                                                                  | Small inputs (a path, a search query) stay inline; large outputs (file contents, search results) become markers. Threshold tuneable; not a hard contract.                                                                                                                                             |
-| **Text/reasoning carve-out stays in `capRecord`, not enforced by schema**                                                                 | The unbounded-string allowance for text/reasoning is a preservation rule, not a render rule. Keeping it in `capRecord` (existing `isTextOrReasoningOpencodeEvent` early return) means schema authors don't accidentally bound text length with `.max(...)` and silently truncate assistant replies.   |
-| **No off-record blob storage in this plan**                                                                                               | Adding sidecar files / S3 is a separate infra decision. Markers buy us the option without committing to it.                                                                                                                                                                                           |
+| Decision                                                                                                                                  | Rationale                                                                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Hybrid (project only on overflow), not project-always**                                                                                 | Keeps 75% of records full-fidelity for engineering debugging. The schema is a preservation contract for the over-cap minority and a render contract for the viewer. Always-project would turn the worklog into a viewer cache, sacrificing the ability to grep raw JSONL for surprising SDK behavior.    |
+| **Share schema between writer and viewer**                                                                                                | Single source of truth eliminates drift. Adding a `part.type` updates both projection and render branches from one diff. `safeParse` failures on either side both route to the unknown-event fallback — symmetric forward-compat.                                                                        |
+| **Enums use `z.string()` for `status` / `event.type` discriminators where possible, with `.passthrough()` parts for unknown `part.type`** | Strict `z.enum(...)` would silently drop new SDK values to the generic-truncate fallback — worse than projection. Permissive strings preserve forward-compat at the cost of weaker typing; renderers handle unknown values as a default branch.                                                          |
+| **`{ _omitted: true, bytes: N }` marker rather than dropping fields silently**                                                            | Engineers can see exactly which field blew the budget and how big it was; informs future raised limits or sidecar-blob storage. Costs ~20 bytes per omitted leaf vs. lossy total drop.                                                                                                                   |
+| **`safeParse` + `renderUnknownEvent` fallback over a one-time JSONL rewrite migration**                                                   | Legacy records are debugging artifacts; rewriting risks corrupting them and adds migration code that lives forever. Treating old shapes as "unknown event, here's what we have" is honest and zero-risk.                                                                                                 |
+| **Unknown top-level OpenCode events use strategic fallback projection, not blanket truncation**                                           | A future SDK event can be unfamiliar but still carry the same small routing/render fields. Keeping `event.type`, `properties.sessionID`/`time`, part id/type/tool/callID, state status/time/error, and omitted markers lets the viewer surface the event while still dropping unbounded vendor payloads. |
+| **256-byte `OMIT_THRESHOLD` for large-leaf detection during projection**                                                                  | Small inputs (a path, a search query) stay inline; large outputs (file contents, search results) become markers. Threshold tuneable; not a hard contract.                                                                                                                                                |
+| **Text/reasoning carve-out stays in `capRecord`, not enforced by schema**                                                                 | The unbounded-string allowance for text/reasoning is a preservation rule, not a render rule. Keeping it in `capRecord` (existing `isTextOrReasoningOpencodeEvent` early return) means schema authors don't accidentally bound text length with `.max(...)` and silently truncate assistant replies.      |
+| **No off-record blob storage in this plan**                                                                                               | Adding sidecar files / S3 is a separate infra decision. Markers buy us the option without committing to it.                                                                                                                                                                                              |
 
 ## Risks
 

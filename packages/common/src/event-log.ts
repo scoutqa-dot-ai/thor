@@ -244,10 +244,10 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   // chains exceed 4 KB legitimately, and the debugging UI needs them whole.
   if (isTextOrReasoningOpencodeEvent(candidate)) return candidate as T;
 
-  // Try schema-driven projection first for opencode events: keeps the render
-  // skeleton (event type, part type, tool, callID, status) and replaces large
-  // leaves with { _omitted: true, bytes: N } markers. If the schema rejects
-  // the shape, fall through to the generic truncation envelope below.
+  // Try schema-driven projection first for opencode events: known event shapes
+  // and unknown fallback shapes keep the render skeleton (event type, part
+  // type, tool, callID, status) while replacing large leaves with
+  // { _omitted: true, bytes: N } markers.
   if (record.type === "opencode_event" && "event" in candidate) {
     const projected =
       projectOpencodeEvent(candidate.event) ??

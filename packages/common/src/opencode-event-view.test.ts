@@ -55,8 +55,55 @@ describe("opencode-event-view", () => {
     }
   });
 
-  it("returns null for unrecognized top-level event.type", () => {
-    expect(projectOpencodeEvent({ type: "unknown.kind", properties: {} })).toBeNull();
+  it("projects unrecognized top-level event.type through the strategic fallback", () => {
+    const out = projectOpencodeEvent({
+      id: "evt_future",
+      type: "message.future.delta",
+      properties: {
+        sessionID: "ses_future",
+        time: 123,
+        part: {
+          id: "prt_future",
+          type: "future-part",
+          tool: "future-tool",
+          callID: "call_future",
+          state: {
+            status: "completed",
+            input: { path: "/tmp/x" },
+            output: "z".repeat(5000),
+          },
+          vendorPayload: "should be dropped",
+        },
+        metadata: { trace: "m".repeat(5000) },
+        vendorPayload: "should be dropped",
+      },
+    });
+    expect(out).toMatchObject({
+      id: "evt_future",
+      type: "message.future.delta",
+      properties: {
+        sessionID: "ses_future",
+        time: 123,
+        part: {
+          id: "prt_future",
+          type: "future-part",
+          tool: "future-tool",
+          callID: "call_future",
+          state: {
+            status: "completed",
+            input: { path: "/tmp/x" },
+          },
+        },
+      },
+    });
+    if (out && "properties" in out) {
+      const props = out.properties as Record<string, unknown>;
+      const part = props.part as { state?: { output?: unknown } };
+      expect(isOmittedMarker(part.state?.output)).toBe(true);
+      expect(isOmittedMarker(props.metadata)).toBe(true);
+      expect(props.vendorPayload).toBeUndefined();
+      expect((props.part as Record<string, unknown>).vendorPayload).toBeUndefined();
+    }
     expect(projectOpencodeEvent({ foo: "bar" })).toBeNull();
   });
 

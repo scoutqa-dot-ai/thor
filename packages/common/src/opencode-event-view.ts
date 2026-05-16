@@ -10,13 +10,14 @@ import { z } from "zod/v4";
  *    type, tool name, callID, status, sessionID, time) while replacing
  *    large leaves (`state.input`, `state.output`, `state.raw`,
  *    `state.metadata`, `snapshot`) with `{ _omitted: true, bytes: N }`
- *    markers. Falls back to the generic `{ event: { _truncated: true } }`
- *    only when projection fails (unknown SDK shape).
+ *    markers. Unknown SDK shapes route to a compact fallback projection that
+ *    keeps the same strategic skeleton instead of blanking the whole event.
  *
  * 2. Render contract for the viewer (reader side). The viewer runs
  *    `OpencodeEventViewSchema.safeParse(record.event)` to obtain a typed
- *    union; un-recognized shapes (legacy `{ _truncated: true }` carcasses
- *    or future SDK additions) route to the viewer's unknown-event fallback.
+ *    union; un-recognized shapes (legacy `{ _truncated: true }` carcasses,
+ *    fallback-projected future SDK additions, or under-cap future events)
+ *    route to the viewer's unknown-event fallback.
  *
  * The text/reasoning carve-out lives in `event-log.ts`
  * (`isTextOrReasoningOpencodeEvent`) and runs before projection, so this
@@ -266,11 +267,29 @@ export const OpencodeEventViewSchema = z.discriminatedUnion("type", [
 
 export type OpencodeEventView = z.infer<typeof OpencodeEventViewSchema>;
 
+export interface UnknownOpencodeEventView {
+  id?: string;
+  type: string;
+  properties?: Record<string, unknown>;
+}
+
+export type ProjectedOpencodeEvent = OpencodeEventView | UnknownOpencodeEventView;
+
 /**
  * Field names whose values are replaced with omitted markers during
  * projection. These are the large-payload leaves observed in the corpus.
  */
 const OMITTABLE_KEYS = new Set(["input", "output", "raw", "metadata", "snapshot"]);
+
+const STABLE_SKELETON_STRING_KEYS = new Set([
+  "id",
+  "messageID",
+  "sessionID",
+  "type",
+  "tool",
+  "callID",
+  "status",
+]);
 
 function byteLen(value: unknown): number {
   try {
@@ -311,13 +330,184 @@ function shrinkLargeLeaves(value: unknown, threshold: number): unknown {
   return out;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function projectLeaf(key: string, value: unknown, threshold: number): unknown {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (isOmittedMarker(value)) return value;
+  const size = byteLen(value);
+  if (
+    (OMITTABLE_KEYS.has(key) ||
+      (typeof value === "string" && !STABLE_SKELETON_STRING_KEYS.has(key))) &&
+    size > threshold
+  ) {
+    return { _omitted: true, bytes: size };
+  }
+  return shrinkLargeLeaves(value, threshold);
+}
+
+function assignProjectedKey(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+  key: string,
+  threshold: number,
+): void {
+  if (!(key in source)) return;
+  const projected = projectLeaf(key, source[key], threshold);
+  if (projected !== undefined) target[key] = projected;
+}
+
+function assignPrimitive(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+  key: string,
+): void {
+  const value = source[key];
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    target[key] = value;
+  }
+}
+
+function projectTime(value: unknown): Record<string, number> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, number> = {};
+  for (const key of ["start", "end", "created", "compacted"]) {
+    const child = value[key];
+    if (typeof child === "number" && Number.isFinite(child)) out[key] = child;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function projectStatus(value: unknown): unknown {
+  if (!isRecord(value)) return typeof value === "string" ? value : undefined;
+  const out: Record<string, unknown> = {};
+  assignPrimitive(out, value, "type");
+  assignPrimitive(out, value, "status");
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function projectError(value: unknown, threshold: number): unknown {
+  if (typeof value === "string") return projectLeaf("error", value, threshold);
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, unknown> = {};
+  assignProjectedKey(out, value, "name", threshold);
+  assignProjectedKey(out, value, "message", threshold);
+  if (isRecord(value.data)) {
+    const data: Record<string, unknown> = {};
+    assignProjectedKey(data, value.data, "name", threshold);
+    assignProjectedKey(data, value.data, "message", threshold);
+    if (Object.keys(data).length > 0) out.data = data;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function projectUnknownState(
+  value: unknown,
+  threshold: number,
+): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, unknown> = {};
+  assignPrimitive(out, value, "status");
+  assignProjectedKey(out, value, "title", threshold);
+  assignProjectedKey(out, value, "input", threshold);
+  assignProjectedKey(out, value, "output", threshold);
+  assignProjectedKey(out, value, "raw", threshold);
+  assignProjectedKey(out, value, "metadata", threshold);
+  const error = projectError(value.error, threshold);
+  if (error !== undefined) out.error = error;
+  const time = projectTime(value.time);
+  if (time) out.time = time;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function projectUnknownPart(
+  value: unknown,
+  threshold: number,
+): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const key of [
+    "id",
+    "messageID",
+    "sessionID",
+    "type",
+    "tool",
+    "callID",
+    "cost",
+    "tokens",
+    "reason",
+    "text",
+    "prompt",
+    "description",
+    "agent",
+    "command",
+    "mime",
+    "filename",
+    "url",
+    "hash",
+    "files",
+    "name",
+    "attempt",
+    "auto",
+    "overflow",
+    "tail_start_id",
+    "snapshot",
+  ]) {
+    assignProjectedKey(out, value, key, threshold);
+  }
+  const state = projectUnknownState(value.state, threshold);
+  if (state) out.state = state;
+  const time = projectTime(value.time);
+  if (time) out.time = time;
+  const error = projectError(value.error, threshold);
+  if (error !== undefined) out.error = error;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function projectUnknownProperties(
+  value: unknown,
+  threshold: number,
+): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const key of ["sessionID", "messageID", "time", "path", "file", "source"]) {
+    assignProjectedKey(out, value, key, threshold);
+  }
+  const part = projectUnknownPart(value.part, threshold);
+  if (part) out.part = part;
+  const status = projectStatus(value.status);
+  if (status !== undefined) out.status = status;
+  const error = projectError(value.error, threshold);
+  if (error !== undefined) out.error = error;
+  for (const key of ["input", "output", "raw", "metadata", "snapshot"]) {
+    assignProjectedKey(out, value, key, threshold);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function projectUnknownOpencodeEvent(
+  event: unknown,
+  threshold: number,
+): UnknownOpencodeEventView | null {
+  if (!isRecord(event) || typeof event.type !== "string") return null;
+  const out: UnknownOpencodeEventView = { type: event.type };
+  if (typeof event.id === "string") out.id = event.id;
+  const properties = projectUnknownProperties(event.properties, threshold);
+  if (properties) out.properties = properties;
+  return out;
+}
+
 /**
  * Project an opencode event payload through the view schema.
  *
  * Strategy: shrink large leaves above `threshold` bytes, parse through the
  * schema, return the parsed value on success. On parse failure (unknown
- * event type, missing required field), return `null` so the caller falls
- * back to the generic `{ _truncated: true }` envelope.
+ * event type, missing required field), return a strategic fallback projection
+ * keyed by the event's own `type` so the writer/viewer can preserve context
+ * without dumping the whole payload.
  *
  * The default 256-byte threshold keeps small inputs inline (a file path, a
  * search query) while turning large outputs (file bodies, search results)
@@ -327,9 +517,9 @@ function shrinkLargeLeaves(value: unknown, threshold: number): unknown {
 export function projectOpencodeEvent(
   event: unknown,
   options: { threshold?: number } = {},
-): OpencodeEventView | null {
+): ProjectedOpencodeEvent | null {
   const threshold = options.threshold ?? 256;
   const shrunk = shrinkLargeLeaves(event, threshold);
   const parsed = OpencodeEventViewSchema.safeParse(shrunk);
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? parsed.data : projectUnknownOpencodeEvent(shrunk, threshold);
 }

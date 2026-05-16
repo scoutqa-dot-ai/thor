@@ -168,21 +168,55 @@ describe("session event log", () => {
     expect(record.event.properties.part.state.output.bytes).toBeGreaterThan(9000);
   });
 
-  it("falls back to generic truncation envelope when projection cannot recognize the event", () => {
-    // Unknown top-level event.type — schema rejects, generic fallback applies.
+  it("strategically projects unknown opencode_event shapes instead of blanking them", () => {
+    // Unknown top-level event.type — schema rejects, fallback projection keeps
+    // the routing/render skeleton and omits only the large leaves.
     expect(
       appendSessionEvent("unknown-event", {
         type: "opencode_event",
         event: {
+          id: "evt_future",
           type: "totally.new.event.kind",
-          properties: { huge: "x".repeat(8000) },
+          properties: {
+            sessionID: "ses_future",
+            time: 1_700_000_000_000,
+            part: {
+              id: "prt_future",
+              type: "future-part",
+              tool: "future-tool",
+              callID: "call_future",
+              state: {
+                status: "completed",
+                output: "x".repeat(8000),
+              },
+              vendorPayload: "not part of the fallback skeleton",
+            },
+          },
         },
       }),
     ).toEqual({ ok: true });
 
     const line = readFileSync(sessionLogPath("unknown-event"), "utf8").trim();
     const record = JSON.parse(line);
-    expect(record.event).toEqual({ _truncated: true });
+    expect(record.event).toMatchObject({
+      id: "evt_future",
+      type: "totally.new.event.kind",
+      properties: {
+        sessionID: "ses_future",
+        time: 1_700_000_000_000,
+        part: {
+          id: "prt_future",
+          type: "future-part",
+          tool: "future-tool",
+          callID: "call_future",
+          state: {
+            status: "completed",
+            output: { _omitted: true, bytes: expect.any(Number) },
+          },
+        },
+      },
+    });
+    expect(record.event.properties.part.vendorPayload).toBeUndefined();
   });
 
   it("preserves required trigger_end fields when truncating oversized errors", () => {
