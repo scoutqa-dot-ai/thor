@@ -1,9 +1,20 @@
-import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { getWorklogDir } from "./worklog.js";
-import { truncate } from "./logger.js";
+import { createLogger, logWarn, truncate } from "./logger.js";
+
+const log = createLogger("event-log");
+const SLOW_READ_THRESHOLD_MS = 50;
 import { projectOpencodeEvent } from "./opencode-event-view.js";
 
 export const ALIAS_TYPES = [
@@ -176,7 +187,24 @@ interface SessionRecordsCacheEntry {
   records: SessionEventLogRecord[];
   skippedMalformed: number;
 }
+// Bounded LRU: the cache holds the full parsed records array per session, so
+// without a cap a long-running process accumulates every session it has ever
+// touched (disclaimer/anchor resolution touches every session bound to an
+// anchor). Map insertion order is the LRU order; on hit we re-set to mark
+// recent, and on overflow we evict the oldest key. 64 sessions is well above
+// any single trigger fan-out (typical anchors bind 1–3 sessions).
+const SESSION_RECORDS_CACHE_MAX = 64;
 const sessionRecordsCache = new Map<string, SessionRecordsCacheEntry>();
+
+function touchSessionRecordsCache(sessionId: string, entry: SessionRecordsCacheEntry): void {
+  if (sessionRecordsCache.has(sessionId)) sessionRecordsCache.delete(sessionId);
+  sessionRecordsCache.set(sessionId, entry);
+  while (sessionRecordsCache.size > SESSION_RECORDS_CACHE_MAX) {
+    const oldest = sessionRecordsCache.keys().next().value;
+    if (oldest === undefined) break;
+    sessionRecordsCache.delete(oldest);
+  }
+}
 
 function safeId(value: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(value)) throw new Error(`Invalid session id: ${value}`);
@@ -387,7 +415,84 @@ export function appendAlias(
   }
 }
 
+/**
+ * Stream complete newline-terminated lines from a file synchronously in 64 KB
+ * chunks. Trailing unterminated line at EOF is yielded too. Empty lines are
+ * skipped. Use this for hot paths over potentially large JSONL files where
+ * buffering the whole file via `readFileSync` would waste memory.
+ */
+function* iterateFileLinesSync(path: string): Generator<string> {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return;
+  }
+  try {
+    const buf = Buffer.allocUnsafe(64 * 1024);
+    let leftover = "";
+    while (true) {
+      const n = readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      const chunk = leftover + buf.toString("utf8", 0, n);
+      const lines = chunk.split("\n");
+      leftover = lines.pop() ?? "";
+      for (const line of lines) if (line.length > 0) yield line;
+    }
+    if (leftover.length > 0) yield leftover;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Stream parsed session records line-by-line. Skips malformed lines and any
+ * lines that don't match the schema. Times the whole iteration and emits a
+ * `slow_jsonl_read` warning above 50 ms. Caller can `break` early — the
+ * generator closes the fd in `finally`.
+ */
+function* streamSessionRecords(sessionId: string): Generator<SessionEventLogRecord> {
+  let path: string;
+  try {
+    path = sessionLogPath(sessionId);
+  } catch {
+    return;
+  }
+  const started = performance.now();
+  let bytesRead = 0;
+  let linesRead = 0;
+  let yielded = 0;
+  try {
+    for (const line of iterateFileLinesSync(path)) {
+      bytesRead += line.length + 1;
+      linesRead++;
+      try {
+        const parsed = SessionEventLogRecordSchema.safeParse(JSON.parse(line));
+        if (parsed.success) {
+          yielded++;
+          yield parsed.data;
+        }
+      } catch {
+        // skip malformed line
+      }
+    }
+  } finally {
+    const elapsedMs = performance.now() - started;
+    if (elapsedMs > SLOW_READ_THRESHOLD_MS) {
+      logWarn(log, "slow_jsonl_stream", {
+        sessionId,
+        path,
+        elapsedMs: Math.round(elapsedMs),
+        bytes: bytesRead,
+        lines: linesRead,
+        records: yielded,
+      });
+    }
+  }
+}
+
 function completeLines(path: string): string[] {
+  const started = performance.now();
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -396,7 +501,17 @@ function completeLines(path: string): string[] {
   }
   const lines = text.split("\n");
   if (!text.endsWith("\n")) lines.pop();
-  return lines.filter((line) => line.length > 0);
+  const filtered = lines.filter((line) => line.length > 0);
+  const elapsedMs = performance.now() - started;
+  if (elapsedMs > SLOW_READ_THRESHOLD_MS) {
+    logWarn(log, "slow_jsonl_read", {
+      path,
+      elapsedMs: Math.round(elapsedMs),
+      bytes: text.length,
+      lines: filtered.length,
+    });
+  }
+  return filtered;
 }
 
 function fileStat(path: string): { signature: string; size: number } | null {
@@ -417,10 +532,11 @@ function readSessionRecords(sessionId: string): {
   const signature = stat?.signature ?? "missing";
   const cached = sessionRecordsCache.get(sessionId);
   if (cached && cached.signature === signature) {
+    touchSessionRecordsCache(sessionId, cached);
     return { records: cached.records, skippedMalformed: cached.skippedMalformed };
   }
   if (!stat) {
-    sessionRecordsCache.set(sessionId, { signature, records: [], skippedMalformed: 0 });
+    touchSessionRecordsCache(sessionId, { signature, records: [], skippedMalformed: 0 });
     return { records: [], skippedMalformed: 0 };
   }
   let skippedMalformed = 0;
@@ -434,7 +550,7 @@ function readSessionRecords(sessionId: string): {
       skippedMalformed++;
     }
   }
-  sessionRecordsCache.set(sessionId, { signature, records, skippedMalformed });
+  touchSessionRecordsCache(sessionId, { signature, records, skippedMalformed });
   return { records, skippedMalformed };
 }
 
@@ -624,17 +740,6 @@ export function listSessionAliases(sessionId: string): AliasRecord[] {
         ]
       : [],
   );
-}
-
-function openTrigger(
-  records: SessionEventLogRecord[],
-): { triggerId: string; ts: string } | undefined {
-  let open: { triggerId: string; ts: string } | undefined;
-  for (const record of records) {
-    if (record.type === "trigger_start") open = { triggerId: record.triggerId, ts: record.ts };
-    if (record.type === "trigger_end" && record.triggerId === open?.triggerId) open = undefined;
-  }
-  return open;
 }
 
 interface SessionOpenSummary {
@@ -848,6 +953,22 @@ export function listAnchorSessionStates(
  * wins — the same supersede-by-newest semantics readTriggerSlice uses inside
  * a single session.
  */
+/**
+ * Stream the session's records and return the currently-open trigger (latest
+ * `trigger_start` with no matching `trigger_end`), or undefined. Avoids
+ * materializing the full record array — this is the disclaimer/anchor hot
+ * path, run once per MCP tool call.
+ */
+function streamOpenTrigger(sessionId: string): { triggerId: string; ts: string } | undefined {
+  let open: { triggerId: string; ts: string } | undefined;
+  for (const record of streamSessionRecords(sessionId)) {
+    if (record.type === "trigger_start") open = { triggerId: record.triggerId, ts: record.ts };
+    else if (record.type === "trigger_end" && record.triggerId === open?.triggerId)
+      open = undefined;
+  }
+  return open;
+}
+
 export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult {
   const anchorId =
     resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
@@ -857,8 +978,7 @@ export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult
   const reverse = reverseLookupAnchor(anchorId);
   let best: { sessionId: string; triggerId: string; ts: string } | undefined;
   for (const sessionId of reverse.sessionIds) {
-    const read = readSessionRecords(sessionId);
-    const open = openTrigger(read.records);
+    const open = streamOpenTrigger(sessionId);
     if (!open) continue;
     if (!best || open.ts > best.ts) best = { sessionId, ...open };
   }

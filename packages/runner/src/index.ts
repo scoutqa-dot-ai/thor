@@ -12,7 +12,7 @@ import type {
   ToolStateError,
 } from "@opencode-ai/sdk";
 import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   createLogger,
@@ -1696,16 +1696,46 @@ function partTimeWindow(part: ViewerToolPart): { start: number; end?: number } |
 }
 
 /**
+ * Stream complete newline-terminated lines from a file synchronously, in
+ * 64 KB chunks, without buffering the whole file in memory. A trailing
+ * unterminated line at EOF is yielded too. Empty lines are skipped.
+ */
+function* iterateFileLinesSync(path: string): Generator<string> {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return;
+  }
+  try {
+    const buf = Buffer.allocUnsafe(64 * 1024);
+    let leftover = "";
+    while (true) {
+      const n = readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      const chunk = leftover + buf.toString("utf8", 0, n);
+      const lines = chunk.split("\n");
+      leftover = lines.pop() ?? "";
+      for (const line of lines) if (line.length > 0) yield line;
+    }
+    if (leftover.length > 0) yield leftover;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
  * Render a subagent session's activity inline. Subagent sessions are written
  * to their own `ses_*.jsonl` files (no trigger boundaries — task tool spawns
- * them outside the trigger endpoint), so we read the whole file, dedup by
- * part id, and emit the major rows (tool + non-empty assistant text).
+ * them outside the trigger endpoint), so we stream the file line-by-line,
+ * filter to the trigger's time window, dedup by part id, and emit every major
+ * row (tool + non-empty assistant text). No record cap — the viewer is
+ * admin-only behind Vouch and must show the full subagent activity.
  *
  * Nested `task` tools call back into this function so the recursion follows
  * the subagent chain. `ctx.visited` is the only guard — cycles (a subagent
  * pointing back at itself or an ancestor) are the only thing that would
- * otherwise loop. No depth cap, no file-size cap (the viewer is admin-only
- * behind Vouch).
+ * otherwise loop.
  */
 function renderInlineSubagent(
   sessionId: string,
@@ -1725,16 +1755,13 @@ function renderInlineSubagent(
   } catch {
     return undefined;
   }
-  let content: string;
-  try {
-    content = readFileSync(path, "utf8");
-  } catch {
-    return undefined;
-  }
-
   const records: SessionEventLogRecord[] = [];
-  for (const line of content.split("\n")) {
-    if (!line) continue;
+  const readStarted = performance.now();
+  let bytesRead = 0;
+  let linesRead = 0;
+  for (const line of iterateFileLinesSync(path)) {
+    bytesRead += line.length + 1;
+    linesRead++;
     try {
       const obj = JSON.parse(line);
       const v = SessionEventLogRecordSchema.safeParse(obj);
@@ -1747,6 +1774,17 @@ function renderInlineSubagent(
     } catch {
       // skip malformed lines
     }
+  }
+  const readElapsedMs = performance.now() - readStarted;
+  if (readElapsedMs > 50) {
+    logWarn(log, "slow_subagent_jsonl_read", {
+      sessionId,
+      path,
+      elapsedMs: Math.round(readElapsedMs),
+      bytes: bytesRead,
+      lines: linesRead,
+      retained: records.length,
+    });
   }
   if (!records.length) return undefined;
 
