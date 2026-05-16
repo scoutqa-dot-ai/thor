@@ -518,6 +518,7 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
+  const gitCloneAllowedOwners = config.env?.gitCloneAllowedOwners ?? [];
   const internalSecret = appEnv.thorInternalSecret;
   const mcpService = createMcpService({
     isProduction: appEnv.isProduction,
@@ -541,7 +542,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      const gitResolution = resolveGitArgs(args, cwd);
+      const gitResolution = resolveGitArgs(args, cwd, { gitCloneAllowedOwners });
       if ("error" in gitResolution) {
         res.status(400).json({ stdout: "", stderr: gitResolution.error, exitCode: 1 });
         return;

@@ -9,7 +9,12 @@
  * metabase) stay inline below.
  */
 
-export { resolveGitArgs, validateGitArgs, type ResolvedGitArgs } from "./policy-git.js";
+export {
+  resolveGitArgs,
+  validateGitArgs,
+  type GitPolicyOptions,
+  type ResolvedGitArgs,
+} from "./policy-git.js";
 export { validateGhArgs } from "./policy-gh.js";
 
 import {
