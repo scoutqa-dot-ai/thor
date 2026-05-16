@@ -81,7 +81,7 @@ Remove the parts the admin asked to drop and reshape the header. No new data par
   - Pill abort reason: `[aborted · user_interrupt]` / `[aborted · shutdown]` when present.
 - `packages/runner/src/trigger.test.ts`:
   - Replace the assertions that lock the dropped strings (`cost $0.0123`, `Subsessions exist`, `Multiple OpenCode sessions`, `records for another trigger`, `middle record(s) omitted from diagnostics`, `1 step finish row(s), $0.0123 total cost, 42 total tokens`) with assertions that lock the new fact-only summary, the chip row, and the truncated-footer line.
-  - Keep the redaction/secret-leak assertions; they apply to the activity rows that remain.
+  - Do not add app-level regex redaction assertions; secret redaction is handled at the LLM/infrastructure boundary.
 
 **Exit**: `pnpm --filter @thor/runner test` passes. Page renders for a sample session with the four sections only: pill + summary, chip row, trigger context, activity list.
 
@@ -160,7 +160,7 @@ Tighten the page after a real-data review on `feat/admin-ux`.
   - Drop the per-row `step finish` `<li>` entirely; the `<details>` step summary already shows tokens for that step.
   - Drop the top-of-activity counts paragraph's `step finish row(s)` and `total tokens` fragments; tokens live in the new totals footer.
   - Remove tokens from the header summary strip (`status · duration · tokens · …`). Move tokens — and model id when discoverable — into a per-section totals footer under Activity.
-  - New helper `safeMultilineSnippet`: same redactions as `safeSnippet` but preserves `\n` so task prompts and slack-post heredoc bodies render with their original line breaks inside `<pre>`.
+  - New helper `safeMultilineSnippet`: same text coercion as `safeSnippet` but preserves `\n` so task prompts and slack-post heredoc bodies render with their original line breaks inside `<pre>`.
   - Surface the subagent session id on `task` cards (from `state.metadata.sessionId`) so admins can trace nested work. Render the `state.output` body too.
   - Drop the redundant `Prompt preview:` line from Trigger context when the source line already decoded it (slack / github). Keep it for cron and unknown sources.
 - `packages/runner/src/trigger.test.ts`:
@@ -216,3 +216,4 @@ After all five phases:
 | 2026-05-15 | Main agent model hardcoded `gpt-5.4` with TODO        | Real source needs `message.updated`.                                              |
 | 2026-05-15 | Subagent model read from parent task `metadata.model` | OpenCode tags spawn with child's model.                                           |
 | 2026-05-16 | Diff rows emit real newline separators                | Consecutive `apply_patch` context lines must not visually concatenate in `<pre>`. |
+| 2026-05-16 | No app-level regex redaction in viewer snippets       | Redaction belongs at the LLM/infrastructure boundary; regex redaction is brittle. |

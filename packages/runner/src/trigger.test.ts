@@ -516,60 +516,6 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("redacts and caps one-line viewer snippets", async () => {
-    const h = createHarness();
-    const triggerId = "00000000-0000-7000-8000-000000000514";
-    const anchorId = mintAnchor();
-    const sessionId = "redacted-snippet-session";
-    const secretToken = "ghp_1234567890abcdefghijklmnopqrstuv";
-    const longTail = "x".repeat(320);
-    const correlationKey = `git:branch:thor:feature/token=${secretToken}/tail-${longTail}`;
-    const aliasKey = `git:branch:thor:feature/token=${secretToken}`;
-    bindSessionToAnchor(sessionId, anchorId);
-    const aliasResult = appendAlias({
-      aliasType: "git.branch",
-      aliasValue: Buffer.from(aliasKey, "utf8").toString("base64url"),
-      anchorId,
-    });
-    if (!aliasResult.ok) throw aliasResult.error;
-
-    appendSessionEvent(sessionId, { type: "trigger_start", triggerId, correlationKey });
-    appendSessionEvent(sessionId, {
-      type: "opencode_event",
-      event: {
-        type: "message.part.updated",
-        properties: {
-          part: {
-            type: "tool",
-            tool: "bash",
-            state: {
-              status: "error",
-              title: `failed with password=hunter2 and Bearer ${secretToken} ${longTail}`,
-              error: `token=${secretToken}`,
-            },
-          },
-        },
-      },
-    });
-    appendSessionEvent(sessionId, {
-      type: "trigger_end",
-      triggerId,
-      status: "completed",
-    });
-
-    await withServer(h.app, async (url) => {
-      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
-        headers: { "X-Vouch-User": "u@example.com" },
-      });
-      expect(response.status).toBe(200);
-      const html = await response.text();
-      expect(html).toContain("[redacted]");
-      expect(html).not.toContain(secretToken);
-      expect(html).not.toContain("hunter2");
-      expect(html).not.toContain(longTail);
-    });
-  });
-
   it("preserves apply_patch context-line breaks in the rendered diff", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000513";
