@@ -1,8 +1,15 @@
 # Thor vs. Other Coding Agent Platforms
 
 Comparison of Thor against five open-source / public-architecture coding agents:
-OpenHands, open-swe, background-agents, junior, goose. Per-tool deep dives live
-in [`docs/compare/`](./compare/).
+OpenHands, open-swe, background-agents, junior, goose.
+
+| Tool              | Repository                              | License                              |
+| ----------------- | --------------------------------------- | ------------------------------------ |
+| OpenHands         | github.com/OpenHands/OpenHands          | MIT (core) + Polyform (enterprise)   |
+| open-swe          | github.com/langchain-ai/open-swe        | MIT                                  |
+| background-agents | Open-Inspect (Ramp-style reference)     | Open-source                          |
+| junior            | Sentry-operated Slack bot runtime       | Sentry-internal                      |
+| goose             | github.com/aaif-goose/goose             | Apache 2.0                           |
 
 ## 1. Thor in one paragraph
 
