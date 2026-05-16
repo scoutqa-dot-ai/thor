@@ -696,26 +696,6 @@ export function listAnchorSessionStates(
   const limit = options.limit ?? 100;
 
   const rows = listAnchors().map(({ anchorId, entry }): AnchorSessionState => {
-    return buildAnchorSessionState(anchorId, entry, { nowMs, stuckAfterMs });
-  });
-
-  const rank: Record<AnchorSessionStatus, number> = {
-    stuck: 0,
-    in_progress: 1,
-    unknown: 2,
-    idle: 3,
-  };
-  return rows
-    .sort((a, b) => rank[a.status] - rank[b.status] || (b.lastEventTs ?? "").localeCompare(a.lastEventTs ?? ""))
-    .slice(0, limit);
-}
-
-function buildAnchorSessionState(
-  anchorId: string,
-  entry: ReverseAnchorEntry,
-  options: { nowMs: number; stuckAfterMs: number },
-): AnchorSessionState {
-  const { nowMs, stuckAfterMs } = options;
     let skippedMalformed = 0;
     let oversized = false;
     let bestOpen: (SessionOpenSummary & { sessionId: string }) | undefined;
@@ -847,6 +827,17 @@ function buildAnchorSessionState(
       oversized: false,
       reason: latestTerminal?.reason,
     };
+  });
+
+  const rank: Record<AnchorSessionStatus, number> = {
+    stuck: 0,
+    in_progress: 1,
+    unknown: 2,
+    idle: 3,
+  };
+  return rows
+    .sort((a, b) => rank[a.status] - rank[b.status] || (b.lastEventTs ?? "").localeCompare(a.lastEventTs ?? ""))
+    .slice(0, limit);
 }
 
 /**

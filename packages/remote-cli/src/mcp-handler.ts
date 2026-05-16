@@ -41,7 +41,7 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
 
-function resolveDisclaimerOrigin(
+function resolveDisclaimerTrigger(
   tool: string,
   sessionId: string | undefined,
 ): { anchorId: string; triggerId?: string } | undefined {
@@ -56,11 +56,13 @@ function resolveDisclaimerOrigin(
 
 function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   if (!approvalToolRequiresDisclaimer(action.tool)) return action.args;
-  const origin = action.origin?.trigger;
-  if (!origin) {
-    throw new Error(`Approval action ${action.id} is missing origin provenance for disclaimer injection`);
+  const trigger = action.origin?.trigger;
+  if (!trigger) {
+    throw new Error(
+      `Approval action ${action.id} is missing origin.trigger for disclaimer injection`,
+    );
   }
-  const { footer } = buildThorDisclaimer(origin, getRunnerBaseUrl());
+  const { footer } = buildThorDisclaimer(trigger, getRunnerBaseUrl());
   return injectApprovalDisclaimer(action.tool, action.args, footer);
 }
 
@@ -512,7 +514,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       if (formatError) return fail(formatError);
       let trigger: { anchorId: string; triggerId?: string } | undefined;
       try {
-        trigger = resolveDisclaimerOrigin(toolInfo.name, context.sessionId);
+        trigger = resolveDisclaimerTrigger(toolInfo.name, context.sessionId);
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
