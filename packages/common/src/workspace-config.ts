@@ -1,6 +1,14 @@
 import { z } from "zod/v4";
 import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.js";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  constants as fsConstants,
+  closeSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+} from "node:fs";
 import { join, resolve, normalize } from "node:path";
 import { createLogger, logWarn } from "./logger.js";
 import { PROXY_NAMES } from "./proxies.js";
@@ -9,6 +17,7 @@ import { PROXY_NAMES } from "./proxies.js";
 
 const RepoConfigSchema = z
   .object({
+    channels: z.array(z.string()).optional(),
     proxies: z.array(z.string()).optional(),
   })
   .strict();
@@ -88,7 +97,7 @@ export type ValidationResult =
 
 /**
  * Validate an already-parsed config object. Aggregates all issues
- * (schema, unknown proxies) before returning.
+ * (schema, duplicate channels, unknown proxies) before returning.
  */
 export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
   if (
@@ -121,6 +130,21 @@ export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
 
   const issues: ValidationIssue[] = [];
 
+  const seenChannels = new Map<string, string>();
+  for (const [repo, config] of Object.entries(result.data.repos)) {
+    for (const channel of config.channels ?? []) {
+      const existing = seenChannels.get(channel);
+      if (existing) {
+        issues.push({
+          path: `repos.${repo}.channels`,
+          message: `Duplicate channel ID "${channel}" — already mapped to repo "${existing}"`,
+        });
+      } else {
+        seenChannels.set(channel, repo);
+      }
+    }
+  }
+
   const proxyNames = new Set<string>(PROXY_NAMES);
   for (const [repo, repoConfig] of Object.entries(result.data.repos)) {
     for (const proxyRef of repoConfig.proxies ?? []) {
@@ -145,7 +169,8 @@ const MAX_SLACK_CHANNEL_REPO_OVERRIDE_BYTES = 256;
 
 /**
  * Load and validate workspace config from a JSON file.
- * Throws on: missing file, invalid JSON, schema violation, duplicate channel IDs.
+ * Throws on: missing file, invalid JSON, schema violation, duplicate channel IDs,
+ * and unknown proxies.
  */
 export function loadWorkspaceConfig(path: string): WorkspaceConfig {
   let raw: string;
@@ -272,6 +297,13 @@ function hasConfiguredRepo(config: WorkspaceConfig, repoName: string): boolean {
   return Object.prototype.hasOwnProperty.call(config.repos, repoName);
 }
 
+function getConfiguredChannelRepo(config: WorkspaceConfig, channelId: string): string | undefined {
+  for (const [repoName, repoConfig] of Object.entries(config.repos)) {
+    if (repoConfig.channels?.includes(channelId)) return repoName;
+  }
+  return undefined;
+}
+
 export type SlackChannelRepoOverrideResult =
   | { status: "found"; repoName: string }
   | { status: "missing" }
@@ -286,25 +318,27 @@ export function readSlackChannelRepoOverride(
   }
 
   const path = join(memoryRoot, `${channelId}.txt`);
-  let stat;
+  let fd: number | undefined;
   let raw: string;
   try {
-    stat = statSync(path);
+    const stat = lstatSync(path);
     if (!stat.isFile()) {
       return { status: "invalid", reason: "repo override must be a regular file" };
     }
-    if (stat.size > MAX_SLACK_CHANNEL_REPO_OVERRIDE_BYTES) {
-      return {
-        status: "invalid",
-        reason: `repo override exceeds ${MAX_SLACK_CHANNEL_REPO_OVERRIDE_BYTES} bytes`,
-      };
+    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const buffer = Buffer.alloc(MAX_SLACK_CHANNEL_REPO_OVERRIDE_BYTES + 1);
+    const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
+    if (bytesRead > MAX_SLACK_CHANNEL_REPO_OVERRIDE_BYTES) {
+      return { status: "invalid", reason: `repo override exceeds ${MAX_SLACK_CHANNEL_REPO_OVERRIDE_BYTES} bytes` };
     }
-    raw = readFileSync(path, "utf-8");
+    raw = buffer.subarray(0, bytesRead).toString("utf-8");
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return { status: "missing" };
     }
     return { status: "invalid", reason: error instanceof Error ? error.message : String(error) };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 
   const repoName = raw.trim();
@@ -339,11 +373,12 @@ export function resolveSlackChannelRepoDirectory(
 ): {
   directory?: string;
   repoName?: string;
-  source?: "override" | "default";
+  source?: "override" | "config" | "default";
   fallbackReason?: string;
   reason?: string;
 } {
   const override = readSlackChannelRepoOverride(channelId, memoryRoot);
+  const configuredRepo = getConfiguredChannelRepo(config, channelId);
 
   if (override.status === "found") {
     const overrideResolved = resolveConfiguredRepoDirectory(
@@ -356,6 +391,22 @@ export function resolveSlackChannelRepoDirectory(
         directory: overrideResolved.directory,
         repoName: override.repoName,
         source: "override",
+      };
+    }
+    if (configuredRepo) {
+      const configuredResolved = resolveConfiguredRepoDirectory(
+        config,
+        configuredRepo,
+        resolveRepoDirectoryFn,
+      );
+      if (!configuredResolved.directory) {
+        return { reason: configuredResolved.reason ?? overrideResolved.reason };
+      }
+      return {
+        directory: configuredResolved.directory,
+        repoName: configuredRepo,
+        source: "config",
+        fallbackReason: overrideResolved.reason,
       };
     }
     const defaultResolved = resolveConfiguredRepoDirectory(
@@ -371,6 +422,21 @@ export function resolveSlackChannelRepoDirectory(
           fallbackReason: overrideResolved.reason,
         }
       : { reason: defaultResolved.reason ?? overrideResolved.reason };
+  }
+
+  if (configuredRepo) {
+    const configuredResolved = resolveConfiguredRepoDirectory(
+      config,
+      configuredRepo,
+      resolveRepoDirectoryFn,
+    );
+    if (!configuredResolved.directory) return { reason: configuredResolved.reason };
+    return {
+      directory: configuredResolved.directory,
+      repoName: configuredRepo,
+      source: "config",
+      fallbackReason: override.status === "invalid" ? override.reason : undefined,
+    };
   }
 
   const fallback = resolveConfiguredRepoDirectory(config, defaultRepoName, resolveRepoDirectoryFn);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -75,17 +75,35 @@ describe("loadWorkspaceConfig", () => {
 
   it("accepts repo with valid proxies array", () => {
     const path = writeConfig("config.json", {
-      repos: { "my-repo": { proxies: ["posthog"] } },
+      repos: { "my-repo": { channels: ["C1"], proxies: ["posthog"] } },
     });
     const config = loadWorkspaceConfig(path);
     expect(config.repos["my-repo"].proxies).toEqual(["posthog"]);
   });
 
-  it("rejects unknown repo fields", () => {
+  it("accepts legacy channels field during transition", () => {
     const path = writeConfig("config.json", {
       repos: { "my-repo": { channels: ["C1"] } },
     });
+    const config = loadWorkspaceConfig(path);
+    expect(config.repos["my-repo"].channels).toEqual(["C1"]);
+  });
+
+  it("rejects unknown repo fields", () => {
+    const path = writeConfig("config.json", {
+      repos: { "my-repo": { unexpected: true } },
+    });
     expect(() => loadWorkspaceConfig(path)).toThrow();
+  });
+
+  it("rejects duplicate channels across repos", () => {
+    const path = writeConfig("config.json", {
+      repos: {
+        one: { channels: ["C1"] },
+        two: { channels: ["C1"] },
+      },
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow('Duplicate channel ID "C1"');
   });
 
   it("rejects removed slack proxy in repo proxies", () => {
@@ -280,6 +298,18 @@ describe("Slack channel repo routing helpers", () => {
     expect(readSlackChannelRepoOverride("C999", root)).toEqual({ status: "missing" });
   });
 
+  it("rejects symlink override files", () => {
+    const root = join(tempDir, "repo-by-slack-channel");
+    mkdirSync(root);
+    writeFileSync(join(tempDir, "real.txt"), "thor\n");
+    symlinkSync(join(tempDir, "real.txt"), join(root, "C123.txt"));
+
+    expect(readSlackChannelRepoOverride("C123", root)).toMatchObject({
+      status: "invalid",
+      reason: "repo override must be a regular file",
+    });
+  });
+
   it("rejects unsafe channel IDs and path-like repo override content", () => {
     const root = join(tempDir, "repo-by-slack-channel");
     mkdirSync(root);
@@ -329,7 +359,7 @@ describe("Slack channel repo routing helpers", () => {
   it("falls back to default repo for missing or invalid channel overrides", () => {
     const root = join(tempDir, "repo-by-slack-channel");
     mkdirSync(root);
-    const config = { repos: { thor: {}, opencode: {} } };
+    const config = { repos: { thor: {}, opencode: { channels: ["C_BAD"] } } };
     const resolveRepo = resolverFor({
       thor: "/workspace/repos/thor",
       opencode: "/workspace/repos/opencode",
@@ -354,9 +384,20 @@ describe("Slack channel repo routing helpers", () => {
     expect(
       resolveSlackChannelRepoDirectory(config, "C_BAD", "thor", root, resolveRepo),
     ).toMatchObject({
-      directory: "/workspace/repos/thor",
-      source: "default",
+      directory: "/workspace/repos/opencode",
+      source: "config",
       fallbackReason: "repo unknown-repo is not configured",
+    });
+  });
+
+  it("returns configured repo failure instead of defaulting when mapped repo is missing", () => {
+    const root = join(tempDir, "repo-by-slack-channel");
+    mkdirSync(root);
+    const config = { repos: { thor: {}, missing: { channels: ["C_BROKEN"] } } };
+    const resolveRepo = resolverFor({ thor: "/workspace/repos/thor" });
+
+    expect(resolveSlackChannelRepoDirectory(config, "C_BROKEN", "thor", root, resolveRepo)).toEqual({
+      reason: "repo directory not found for missing",
     });
   });
 
