@@ -1,0 +1,27 @@
+packages/remote-cli/src/index.ts
+  3ab8aa31a18391fa 99-102,554-556
+scripts/test-e2e.sh
+  3ab8aa31a18391fa 20-21
+README.md
+  3ab8aa31a18391fa 237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d03a0a2a9495193a2aa54dcd1e442baaa8172e5d",
+  "prompts": {
+    "3ab8aa31a18391fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0f7c52b2-6457-4215-b85b-f00c06bed86d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 59,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}
