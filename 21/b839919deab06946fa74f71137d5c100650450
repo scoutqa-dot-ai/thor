@@ -1,0 +1,25 @@
+packages/remote-cli/src/mcp-handler.ts
+  ff94f92e4ba75310 44,59-60,62,65,517
+packages/common/src/event-log.ts
+  ff94f92e4ba75310 830-840
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "21b839919deab06946fa74f71137d5c100650450",
+  "prompts": {
+    "ff94f92e4ba75310": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1af9e5fb-12f9-4f24-837c-02f589c7a589",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 19,
+      "total_deletions": 26,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    }
+  }
+}
