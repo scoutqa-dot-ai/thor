@@ -47,7 +47,7 @@ app.listen(config.port, () => {
   try {
     const workspaceConfig = getConfig();
     configSummary = {
-      allowedChannels: [...getAllowedChannelIds(workspaceConfig)],
+      configuredChannelMappings: [...getAllowedChannelIds(workspaceConfig)],
       repos: Object.keys(workspaceConfig.repos),
       slackDefaultRepo: config.slackDefaultRepo,
     };

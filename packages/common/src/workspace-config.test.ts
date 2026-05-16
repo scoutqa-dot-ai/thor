@@ -346,7 +346,7 @@ describe("Slack channel repo routing helpers", () => {
   it("falls back to default repo for missing or invalid channel overrides", () => {
     const root = join(tempDir, "repo-by-slack-channel");
     mkdirSync(root);
-    const config = { repos: { thor: {}, opencode: {} } };
+    const config = { repos: { thor: {}, opencode: { channels: ["C_CFG"] } } };
     const resolveRepo = resolverFor({
       thor: "/workspace/repos/thor",
       opencode: "/workspace/repos/opencode",
@@ -363,12 +363,24 @@ describe("Slack channel repo routing helpers", () => {
       source: "override",
     });
 
+    expect(resolveSlackChannelRepoDirectory(config, "C_CFG", "thor", root, resolveRepo)).toMatchObject({
+      directory: "/workspace/repos/opencode",
+      source: "config",
+    });
+
     writeFileSync(join(root, "C_BAD.txt"), "unknown-repo\n");
     expect(resolveSlackChannelRepoDirectory(config, "C_BAD", "thor", root, resolveRepo)).toMatchObject({
       directory: "/workspace/repos/thor",
       source: "default",
       fallbackReason: "repo unknown-repo is not configured",
     });
+  });
+
+  it("does not treat prototype properties as configured repos", () => {
+    const resolveRepo = resolverFor({ toString: "/workspace/repos/toString" });
+    expect(resolveConfiguredRepoDirectory({ repos: {} }, "toString", resolveRepo).reason).toContain(
+      "is not configured",
+    );
   });
 
   it("rejects configured repo realpaths outside /workspace/repos", () => {

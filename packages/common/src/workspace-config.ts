@@ -301,6 +301,17 @@ function isRepoNameOnly(value: string): boolean {
   return isFilenameOnly(value);
 }
 
+function hasConfiguredRepo(config: WorkspaceConfig, repoName: string): boolean {
+  return Object.prototype.hasOwnProperty.call(config.repos, repoName);
+}
+
+function getConfiguredChannelRepo(config: WorkspaceConfig, channelId: string): string | undefined {
+  for (const [repoName, repoConfig] of Object.entries(config.repos)) {
+    if (repoConfig.channels?.includes(channelId)) return repoName;
+  }
+  return undefined;
+}
+
 export type SlackChannelRepoOverrideResult =
   | { status: "found"; repoName: string }
   | { status: "missing" }
@@ -338,7 +349,7 @@ export function resolveConfiguredRepoDirectory(
   resolveRepoDirectoryFn: (repoName: string) => string | undefined = resolveRepoDirectory,
 ): { directory?: string; reason?: string } {
   if (!isRepoNameOnly(repoName)) return { reason: "repo name must be a repo name only" };
-  if (!config.repos[repoName]) return { reason: `repo ${repoName} is not configured` };
+  if (!hasConfiguredRepo(config, repoName)) return { reason: `repo ${repoName} is not configured` };
   const directory = resolveRepoDirectoryFn(repoName);
   if (!directory) return { reason: `repo directory not found for ${repoName}` };
   if (!isAllowedDirectory(directory)) {
@@ -356,7 +367,7 @@ export function resolveSlackChannelRepoDirectory(
 ): {
   directory?: string;
   repoName?: string;
-  source?: "override" | "default";
+  source?: "override" | "config" | "default";
   fallbackReason?: string;
   reason?: string;
 } {
@@ -375,6 +386,19 @@ export function resolveSlackChannelRepoDirectory(
           fallbackReason: resolved.reason,
         }
       : { reason: fallback.reason ?? resolved.reason };
+  }
+
+  const configuredRepo = getConfiguredChannelRepo(config, channelId);
+  if (configuredRepo) {
+    const resolved = resolveConfiguredRepoDirectory(config, configuredRepo, resolveRepoDirectoryFn);
+    if (resolved.directory) {
+      return {
+        directory: resolved.directory,
+        repoName: configuredRepo,
+        source: "config",
+        fallbackReason: override.status === "invalid" ? override.reason : undefined,
+      };
+    }
   }
 
   const fallback = resolveConfiguredRepoDirectory(config, defaultRepoName, resolveRepoDirectoryFn);

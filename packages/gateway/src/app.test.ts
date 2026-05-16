@@ -90,13 +90,18 @@ vi.mock("@thor/common", async (importOriginal) => {
       memoryRoot?: string,
     ) => {
       const override = actual.readSlackChannelRepoOverride(channel, memoryRoot);
-      const repo = override.status === "found" ? override.repoName : defaultRepo;
+      const configuredRepo = Object.entries(config.repos).find(([, repoConfig]) =>
+        repoConfig.channels?.includes(channel),
+      )?.[0];
+      const repo =
+        override.status === "found" ? override.repoName : configuredRepo ? configuredRepo : defaultRepo;
       if (!config.repos[repo]) return { reason: `repo ${repo} is not configured` };
       return mappedRepos.has(repo)
         ? {
             directory: `/workspace/repos/${repo}`,
             repoName: repo,
-            source: repo === defaultRepo ? "default" : "override",
+            source:
+              override.status === "found" ? "override" : configuredRepo ? "config" : "default",
           }
         : { reason: `repo directory not found for ${repo}` };
     },
@@ -2847,6 +2852,57 @@ describe("gateway", () => {
     } finally {
       rmSync(memoryRoot, { recursive: true, force: true });
     }
+  });
+
+  it("falls back to configured channel repo before the default repo", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const body = JSON.stringify({
+          type: "event_callback",
+          event_id: "EvConfigFallback",
+          team_id: "T123",
+          event: {
+            type: "app_mention",
+            user: "U123",
+            text: "<@U999> use mapped repo",
+            ts: "1710000000.080",
+            channel: "C_MAPPED",
+          },
+        });
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
+        expect(response.status).toBe(200);
+        await queue.flush();
+
+        const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
+        expect(triggerCall).toBeDefined();
+        expect(JSON.parse(String(triggerCall?.[1]?.body))).toMatchObject({
+          directory: "/workspace/repos/thor",
+        });
+      },
+      {
+        getConfig: fakeConfigLoader([], [
+          ["C_MAPPED", "thor"],
+          ["C_DEFAULT", "test-repo"],
+        ]),
+        slackDefaultRepo: "test-repo",
+      },
+    );
   });
 
   it("fails app construction when the Slack default repo is invalid", () => {
