@@ -1,0 +1,25 @@
+docker/opencode/config/skills/using-git/SKILL.md
+  1e8d6ae39e817dbe 3,8,10-15,20,26,33,35,45,52,54,76,79,87,91,96,107,110,115,129
+AGENTS.md
+  1e8d6ae39e817dbe 40-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "133aa3db7620989848b0c9828cfcac0435fe77de",
+  "prompts": {
+    "1e8d6ae39e817dbe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d1632e93-ddd1-4a19-97bd-dadb95ac23e8",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 69,
+      "total_deletions": 100,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}
