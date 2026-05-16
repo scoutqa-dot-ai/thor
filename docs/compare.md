@@ -11,10 +11,10 @@ Thor is an **event-driven, single-tenant, internal-team AI teammate**. A
 manages OpenCode session continuity and streams progress back to Slack; the
 OpenCode agent reaches the outside world through `remote-cli`, which is the
 **MCP / CLI policy gateway** (allow / approve / hide). Outbound HTTPS goes
-through `mitmproxy` for credential injection. Everything runs as one Docker
-Compose stack behind `ingress` + `vouch` for SSO. The whole product is
-deliberately small — one shared workspace, one OpenCode runtime, one runner,
-no per-user sandbox fleet.
+through explicit `mitmproxy` rules for configured outbound credential
+injection. Everything runs as one Docker Compose stack behind `ingress` +
+`vouch` for SSO. The whole product is deliberately small — one shared
+workspace, one OpenCode runtime, one runner, no per-user sandbox fleet.
 
 ## 2. The other five at a glance
 
@@ -50,9 +50,11 @@ Two axes matter most:
   self-hosted quadrant.
 - **background-agents** is the only one explicitly built around "fire async,
   come back later, multiplayer reconnect."
-- **junior, open-swe, background-agents, OpenHands** all assume **a fleet of
-  ephemeral sandboxes per session**. Thor is the only one that uses **one
-  shared OpenCode runtime + worktrees** for session isolation.
+- **junior, open-swe, background-agents, OpenHands** all assume the agent's
+  primary execution environment is **a fleet of per-session or per-thread
+  sandboxes**. Thor uses **one shared OpenCode runtime + worktrees** for the
+  agent session, with Daytona sandboxes available on demand for project
+  commands through the `sandbox` tool.
 
 ## 4. Feature matrix
 
@@ -61,15 +63,15 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 | Capability                                  | Thor | OpenHands | open-swe | bg-agents | junior | goose |
 | ------------------------------------------- | :--: | :-------: | :------: | :-------: | :----: | :---: |
 | Slack ingress                               | ✅   | 🟡        | ✅       | ✅        | ✅     | ❌    |
-| GitHub webhook ingress                      | ✅   | ✅        | ✅       | ✅        | 🟡     | ❌    |
-| Linear / Jira ingress                       | 🟡 (Jira via MCP) | 🟡 | ✅ (Linear) | ✅ (Linear) | 🟡 (via plugins) | ❌ |
-| Cron / scheduled prompts                    | ✅   | ❌        | ❌       | ✅        | ❌     | 🟡 (recipes) |
-| Web UI for sessions                         | ❌   | ✅        | ✅       | ✅        | ❌     | ✅ (desktop) |
+| GitHub webhook ingress                      | ✅   | ✅        | ✅       | ✅        | ❌ (plugin tools only) | ❌ |
+| Linear / Jira ingress                       | 🟡 (Jira via MCP) | 🟡 | ✅ (Linear) | ✅ (Linear) | ❌ (plugin tools only) | ❌ |
+| Cron / scheduled prompts                    | ✅   | ❌        | ❌       | ✅        | ❌     | ✅ (scheduled recipes) |
+| Web UI for sessions                         | 🟡 (admin/replay) | ✅ | ✅       | ✅        | ❌     | ✅ (desktop) |
 | CLI / IDE                                   | ❌   | ✅        | 🟡       | ❌        | ❌     | ✅    |
-| MCP tool support                            | ✅   | ✅        | ✅       | 🟡        | ✅     | ✅ (core) |
+| MCP tool support                            | ✅   | ✅        | ❌ (custom tools) | 🟡 | ✅     | ✅ (core) |
 | **MCP policy gateway** (allow/approve/hide) | ✅   | ❌        | ❌       | ❌        | 🟡 (allowlists) | ❌ |
-| Human approval workflow                     | ✅   | 🟡        | 🟡 (PR review) | 🟡 | 🟡 (OAuth pause) | ❌ |
-| Per-session sandbox                         | ❌   | ✅        | ✅       | ✅        | ✅     | 🟡    |
+| Human approval workflow                     | ✅   | 🟡        | 🟡 (PR review) | 🟡 | 🟡 (OAuth pause) | ✅ (tool approval) |
+| Per-session sandbox                         | 🟡 (Daytona per worktree/tool) | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Worktree-based edits in shared workspace    | ✅   | ❌        | ❌       | ❌        | ❌     | ❌    |
 | Session continuity / resume                 | ✅   | ✅        | ✅       | ✅ (Durable Objects) | ✅ (turn-resume) | ✅ |
 | Multi-user multiplayer in one session       | ❌   | 🟡        | ❌       | ✅        | ❌     | ❌    |
@@ -78,7 +80,7 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 | Audit log of tool calls                     | ✅   | 🟡        | 🟡 (LangSmith) | 🟡 | ✅ | 🟡 |
 | Plugin / extension ecosystem                | 🟡 (MCP upstreams) | ✅ | ✅ | 🟡 | ✅ (plugins) | ✅ (70+ extensions) |
 | Browser / web-use tool                      | 🟡 (via MCP) | ✅ | 🟡 | ✅ | ✅ | ✅ |
-| Multi-agent / subagent spawning             | ❌   | 🟡        | ✅ (`task` tool, reviewer subgraph) | ✅ (sub-tasks) | ❌ | 🟡 |
+| Multi-agent / subagent spawning             | ✅ (OpenCode task) | 🟡 | ✅ (`task` tool, reviewer subgraph) | ✅ (sub-tasks) | ❌ | 🟡 |
 | Snapshot / fast cold-start                  | n/a  | ❌        | 🟡       | ✅ (Modal) | ❌    | n/a   |
 
 ## 5. Per-tool comparison
@@ -87,15 +89,17 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 
 **Where OpenHands is doing better than Thor**
 
-1. **Web GUI.** Full conversation list, chat, settings, RBAC, OAuth. Thor has
-   nothing of the sort — everything happens in Slack threads. If Thor users
-   ever need to browse history, replay a session, or grant scoped access to
-   non-engineers, OpenHands' surface is the proven shape.
+1. **Full web GUI.** Full conversation list, chat, settings, RBAC, OAuth.
+   Thor has a lightweight admin session/replay surface, but day-to-day
+   interaction still happens in Slack threads. If Thor users ever need a full
+   browser-native workbench or scoped access for non-engineers, OpenHands'
+   surface is the proven shape.
 2. **First-class CLI.** OpenHands ships a headless CLI mode. Thor only exposes
    `remote-cli` HTTP, which is service-to-service.
 3. **Per-conversation sandboxing.** Docker-per-session means cross-task blast
-   radius is contained. Thor has one shared OpenCode workspace; an agent
-   misbehavior touches everyone's worktrees.
+   radius is contained. Thor has Daytona sandboxes for `sandbox` tool
+   execution, but the OpenCode agent itself still runs in one shared runtime
+   with access to the writable worktree area.
 4. **Enterprise plumbing.** SQLAlchemy async, RBAC, workspace management,
    pluggable file storage. Thor punts all of this.
 
@@ -105,15 +109,17 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
    invariant in `remote-cli`. OpenHands' MCP router is a pass-through.
 2. **Slack-native triggers + cron.** OpenHands' Slack is a webhook plugin;
    Thor's whole event model assumes Slack is the primary surface.
-3. **Outbound credential injection via mitmproxy.** Lets agents call any HTTP
-   API without ever holding the secret. OpenHands gives the agent the API key.
+3. **Outbound credential injection via mitmproxy.** Lets supported HTTP
+   clients call configured host/path rules without the agent holding the
+   secret. OpenHands gives the agent the API key.
 4. **Operational simplicity.** One Docker Compose file. OpenHands stack is
-   substantial (FastAPI + Redux SPA + Postgres + sandbox controller).
+   substantial (FastAPI + React SPA + Postgres + sandbox controller).
 
 **Should we adopt anything?**
 
-- ✅ **A minimal session/replay UI.** Even a read-only NDJSON viewer keyed on
-  Slack thread ID would close the biggest UX gap.
+- ✅ **Extend the session/replay UI.** The current admin view is enough for
+  diagnostics; richer filtering, search, and non-admin access would close the
+  remaining UX gap.
 - ✅ **Per-conversation worktree isolation.** Already partially there — make
   the worktree-per-thread invariant explicit and enforced in `runner`.
 - ❌ Don't adopt their full SaaS shape. Not the product Thor is.
@@ -123,26 +129,32 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 **Where open-swe is doing better than Thor**
 
 1. **Reviewer subgraph.** A separate LangGraph reviewer that critiques the
-   agent's findings before posting. Thor has no equivalent — the OpenCode
-   session writes directly.
-2. **Subagent spawning via a `task` tool.** Lets the agent fan out work
-   (read this file / search this repo / draft this comment) into bounded
-   subtasks. Thor's agent is monolithic.
+   agent's findings before posting. Thor has an OpenCode `thinker` review step
+   for code changes, but not a mandatory final reviewer before every Slack
+   post.
+2. **Framework-level subagent spawning via a `task` tool.** Lets the agent fan
+   out work (read this file / search this repo / draft this comment) into
+   bounded subtasks. Thor has OpenCode subagents, but they are prompt/protocol
+   driven rather than a product-level orchestration graph.
 3. **AGENTS.md injection convention.** open-swe systematically injects
-   `AGENTS.md` from the target repo. Thor's `AGENTS.md` is for human
-   contributors; the agent doesn't read it.
+   `AGENTS.md` from the target repo. Thor instructs agents to follow repo
+   `AGENTS.md` / `CLAUDE.md`, but does not automatically inject the file into
+   the system prompt.
 4. **Thread-deterministic routing.** A stable `thread_id` derived from
    (repo, issue, channel) means re-entry "just works." Thor has its own
    correlation-key batching but the rules are less explicit.
-5. **Pluggable sandbox backends.** LangSmith / Daytona / Modal / Runloop
-   behind one interface. Thor is OpenCode-only.
+5. **Pluggable primary sandbox backends.** LangSmith / Daytona / Modal /
+   Runloop behind one interface. Thor has Daytona command sandboxes, but
+   OpenCode remains the primary agent runtime.
 6. **Built-in LangSmith tracing.** Per-turn traces, replays, eval datasets.
 
 **Where Thor is doing better than open-swe**
 
-1. **MCP policy gateway.** open-swe binds tools at agent construction; there's
-   no allow/approve/hide enforcement boundary.
-2. **mitmproxy credential injection.** open-swe gives agents real tokens.
+1. **MCP policy gateway.** open-swe binds custom tools at agent construction;
+   there's no allow/approve/hide enforcement boundary.
+2. **mitmproxy credential injection.** open-swe relies on sandbox credentials
+   and LangSmith GitHub proxying rather than Thor's configured host/path
+   injection rules.
 3. **Cron triggers.** open-swe is webhook-driven only.
 4. **Simpler stack.** open-swe presumes LangGraph + LangSmith + FastAPI +
    React dashboard + sandbox provider account. Thor is one host.
@@ -152,12 +164,14 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 - ✅ **Reviewer pattern.** A second pass that critiques the draft before the
   agent posts to Slack would catch a lot of the "Thor said something weird"
   failure mode. Cheap to bolt on as a final OpenCode prompt.
-- ✅ **Read `AGENTS.md` from the target repo into the system prompt.** Already
-  a community convention; Thor should respect it.
+- 🟡 **Automatic `AGENTS.md` injection.** Thor already tells agents to follow
+  repo conventions; automatic injection would make that behavior more
+  reliable and closer to open-swe.
 - ✅ **Make `thread_id` derivation explicit and documented.** Move the
   correlation-key rules out of `runner` internals into the protocol doc.
-- 🟡 **Subagent spawning.** Tempting, but OpenCode already supports it
-  natively — expose it as an allowed tool rather than building a new layer.
+- 🟡 **Productize subagent/reviewer routing.** OpenCode already supports this
+  natively in Thor; the gap is making when and how to use it observable and
+  consistently enforced.
 
 ### 5.3 background-agents
 
@@ -167,8 +181,8 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
    web client, watching the same stream. Cloudflare Durable Objects own the
    session state. Thor streams to one Slack thread only.
 2. **Snapshot / fast restart.** Modal snapshots restore a hot sandbox in
-   seconds. Thor has no cold-start because the workspace is always warm —
-   but it's the same workspace for everyone.
+   seconds. Thor has reusable Daytona worktree sandboxes for command
+   execution, but the always-on agent workspace is shared.
 3. **Automation engine.** JSONPath-conditioned webhook automations with
    idempotency keys. Thor has cron + raw webhooks; no condition layer.
 4. **Commit attribution per prompt.** Each prompt's effect is a separate
@@ -181,12 +195,13 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 
 1. **MCP policy.** Same story — bg-agents lets the agent talk to whatever
    tools are bound.
-2. **Single-host self-host.** bg-agents requires Cloudflare + Modal **and**
-   Daytona accounts and Terraform IaC. Thor is `docker compose up`.
-3. **Cron-native.** bg-agents has scheduled automations but cron-as-a-trigger
-   is a Thor first-class feature.
-4. **Cost / footprint.** Cloudflare Workers + Durable Objects + Modal
-   sandboxes is real money at idle. Thor is one VM.
+2. **Single-host self-host.** bg-agents requires a Cloudflare/Vercel-style
+   control plane plus a sandbox backend such as Modal or Daytona and Terraform
+   IaC. Thor is `docker compose up`.
+3. **Cron-native simplicity.** bg-agents has scheduled automations; Thor's
+   cron trigger is simpler to operate in a single-host deployment.
+4. **Cost / footprint.** Cloudflare Workers + Durable Objects plus Modal or
+   Daytona sandboxes is real money at idle. Thor is one VM.
 
 **Should we adopt anything?**
 
@@ -225,7 +240,9 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 1. **MCP policy as a service.** junior's allowlists are per-plugin config;
    Thor's `remote-cli` enforces the boundary centrally and uniformly.
 2. **Cron triggers.** junior is request-driven only.
-3. **GitHub webhook ingress.** First-class in Thor, less so in junior.
+3. **GitHub webhook ingress.** First-class in Thor; junior has GitHub and
+   Linear plugins for actions inside Slack-driven turns, not inbound GitHub or
+   Linear event adapters.
 4. **Self-host friendliness.** junior is tightly coupled to Vercel Functions
    + Redis + nitro. Thor runs anywhere Docker runs.
 
@@ -266,7 +283,8 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
    listen for events. Thor is event-driven by design.
 2. **MCP policy enforcement.** goose trusts the user; tools are whatever
    the user installed. Thor enforces server-side policy.
-3. **Approval workflow.** goose has none.
+3. **Server-side approval workflow.** goose has local/manual and smart tool
+   approval modes, but not Thor's centralized service-side approval boundary.
 4. **Audit logs.** goose has session history; Thor has audited tool calls.
 5. **Multi-user.** goose is single-user-per-process by design.
 
@@ -285,28 +303,32 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 ### Patterns Thor uniquely has and should keep
 
 1. **Server-side MCP policy boundary in `remote-cli`.** None of the five
-   competitors enforce allow/approve/hide outside the agent. This is the
-   single best architectural decision in Thor.
-2. **mitmproxy outbound credential injection.** Lets the agent talk to any
-   HTTP API without ever holding the secret. Only junior has a comparable
-   pattern, and theirs is per-plugin rather than universal.
+   competitors enforce allow/approve/hide outside the agent in the same
+   centralized way. This is the single best architectural decision in Thor.
+2. **mitmproxy outbound credential injection.** Lets supported clients talk to
+   configured HTTP APIs without ever holding the secret. Junior has a
+   comparable egress-proxy pattern, and theirs is per-plugin rather than
+   Thor's host/path rule surface.
 3. **Single-Docker-Compose deployment.** Real operational advantage vs.
-   open-swe (LangGraph Cloud), bg-agents (Cloudflare + Modal + Terraform),
-   junior (Vercel + Redis), OpenHands Cloud (full SaaS).
+   open-swe (LangGraph Cloud), bg-agents (Cloudflare/Vercel + Modal/Daytona +
+   Terraform), junior (Vercel + Redis), OpenHands Cloud (full SaaS).
 
 ### Common patterns Thor is missing
 
 These appear in 3+ competitors and Thor should likely adopt at least the
 simpler ones:
 
-1. **Per-session sandbox isolation** (OpenHands, open-swe, bg-agents, junior).
-   At minimum, enforce one worktree per thread and document the invariant.
-2. **A reviewer / second-pass critique** (open-swe explicitly; OpenHands and
-   junior via prompt patterns).
+1. **Primary per-session sandbox isolation** (OpenHands, open-swe, bg-agents,
+   junior). Thor has Daytona command sandboxes tied to worktrees; the missing
+   piece is making sandbox isolation the default execution boundary for every
+   agent session/turn instead of an explicit tool path.
+2. **A mandatory reviewer / second-pass critique for user-visible output**
+   (open-swe explicitly; OpenHands and junior via prompt patterns). Thor has
+   reviewer subagents for code-change loops, but not a universal final gate.
 3. **Per-prompt / per-user commit attribution** (bg-agents).
 4. **Thinking-level / model-tier routing** (junior; bg-agents partially).
-5. **A web UI for session replay** (OpenHands, open-swe, bg-agents) — even
-   read-only.
+5. **A richer web UI for session replay** (OpenHands, open-swe, bg-agents).
+   Thor has an admin/replay base, but it is not a full session workbench.
 6. **Recipes / reusable prompt templates** (goose).
 
 ### Things Thor should explicitly *not* adopt
@@ -323,14 +345,15 @@ simpler ones:
 ## 7. Recommended next moves, in priority order
 
 1. **Recipes** (goose-style YAML) for cron prompts. High leverage, low cost.
-2. **Reviewer second pass** (open-swe-style) before posting to Slack.
+2. **Mandatory reviewer second pass** (open-swe-style) before posting
+   substantial results to Slack.
 3. **Thinking-level routing** (junior-style) to cut LLM cost.
 4. **Per-prompt commit attribution** (bg-agents-style) in `runner` worktree
    commits.
-5. **AGENTS.md injection** from the target repo into the agent's system
-   prompt.
-6. **Minimal read-only session replay UI** (OpenHands-style) for non-Slack
-   users and post-hoc audit.
+5. **Automatic AGENTS.md injection** from the target repo into the agent's
+   system prompt.
+6. **Richer session replay UI** (OpenHands-style) for non-Slack users and
+   post-hoc audit.
 7. **Plugin bundling abstraction** (junior-style) once we have ≥10 upstreams.
 
 Items 1–4 are each a few days of work and don't touch the architectural
