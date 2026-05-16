@@ -335,10 +335,11 @@ export function readSlackChannelRepoOverride(
 export function resolveConfiguredRepoDirectory(
   config: WorkspaceConfig,
   repoName: string,
+  resolveRepoDirectoryFn: (repoName: string) => string | undefined = resolveRepoDirectory,
 ): { directory?: string; reason?: string } {
   if (!isRepoNameOnly(repoName)) return { reason: "repo name must be a repo name only" };
   if (!config.repos[repoName]) return { reason: `repo ${repoName} is not configured` };
-  const directory = resolveRepoDirectory(repoName);
+  const directory = resolveRepoDirectoryFn(repoName);
   if (!directory) return { reason: `repo directory not found for ${repoName}` };
   if (!isAllowedDirectory(directory)) {
     return { reason: `repo directory for ${repoName} is outside ${WORKSPACE_REPOS_ROOT}` };
@@ -351,6 +352,7 @@ export function resolveSlackChannelRepoDirectory(
   channelId: string,
   defaultRepoName: string,
   memoryRoot = SLACK_CHANNEL_REPO_MEMORY_ROOT,
+  resolveRepoDirectoryFn: (repoName: string) => string | undefined = resolveRepoDirectory,
 ): {
   directory?: string;
   repoName?: string;
@@ -360,11 +362,11 @@ export function resolveSlackChannelRepoDirectory(
 } {
   const override = readSlackChannelRepoOverride(channelId, memoryRoot);
   if (override.status === "found") {
-    const resolved = resolveConfiguredRepoDirectory(config, override.repoName);
+    const resolved = resolveConfiguredRepoDirectory(config, override.repoName, resolveRepoDirectoryFn);
     if (resolved.directory) {
       return { directory: resolved.directory, repoName: override.repoName, source: "override" };
     }
-    const fallback = resolveConfiguredRepoDirectory(config, defaultRepoName);
+    const fallback = resolveConfiguredRepoDirectory(config, defaultRepoName, resolveRepoDirectoryFn);
     return fallback.directory
       ? {
           directory: fallback.directory,
@@ -375,7 +377,7 @@ export function resolveSlackChannelRepoDirectory(
       : { reason: fallback.reason ?? resolved.reason };
   }
 
-  const fallback = resolveConfiguredRepoDirectory(config, defaultRepoName);
+  const fallback = resolveConfiguredRepoDirectory(config, defaultRepoName, resolveRepoDirectoryFn);
   if (!fallback.directory) return { reason: fallback.reason };
   return {
     directory: fallback.directory,
