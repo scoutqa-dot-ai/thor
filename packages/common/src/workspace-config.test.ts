@@ -5,8 +5,6 @@ import { tmpdir } from "node:os";
 import {
   loadWorkspaceConfig,
   createConfigLoader,
-  getAllowedChannelIds,
-  getChannelRepoMap,
   extractRepoFromCwd,
   getRepoUpstreams,
   getInstallationIdForOwner,
@@ -36,10 +34,10 @@ function writeConfig(filename: string, data: unknown): string {
 describe("loadWorkspaceConfig", () => {
   it("loads a valid config with repos only", () => {
     const path = writeConfig("config.json", {
-      repos: { "my-repo": { channels: ["C123"] } },
+      repos: { "my-repo": {} },
     });
     const config = loadWorkspaceConfig(path);
-    expect(config.repos["my-repo"].channels).toEqual(["C123"]);
+    expect(config.repos["my-repo"]).toBeDefined();
   });
 
   it("throws on missing file", () => {
@@ -75,22 +73,19 @@ describe("loadWorkspaceConfig", () => {
     expect(() => loadWorkspaceConfig(path)).toThrow('Top-level "proxies" has moved to code');
   });
 
-  it("throws on duplicate channel IDs across repos", () => {
-    const path = writeConfig("config.json", {
-      repos: {
-        "repo-a": { channels: ["C123"] },
-        "repo-b": { channels: ["C123"] },
-      },
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow('Duplicate channel ID "C123"');
-  });
-
   it("accepts repo with valid proxies array", () => {
     const path = writeConfig("config.json", {
-      repos: { "my-repo": { channels: ["C1"], proxies: ["posthog"] } },
+      repos: { "my-repo": { proxies: ["posthog"] } },
     });
     const config = loadWorkspaceConfig(path);
     expect(config.repos["my-repo"].proxies).toEqual(["posthog"]);
+  });
+
+  it("rejects unknown repo fields", () => {
+    const path = writeConfig("config.json", {
+      repos: { "my-repo": { channels: ["C1"] } },
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow();
   });
 
   it("rejects removed slack proxy in repo proxies", () => {
@@ -234,70 +229,39 @@ describe("loadWorkspaceConfig", () => {
 describe("createConfigLoader", () => {
   it("loads config on first call", () => {
     const path = writeConfig("config.json", {
-      repos: { r: { channels: ["C1"] } },
+      repos: { r: { proxies: ["posthog"] } },
     });
     const getConfig = createConfigLoader(path);
     const config = getConfig();
-    expect(config.repos.r.channels).toEqual(["C1"]);
+    expect(config.repos.r.proxies).toEqual(["posthog"]);
   });
 
   it("picks up file changes on next call", () => {
     const path = writeConfig("config.json", {
-      repos: { r: { channels: ["C1"] } },
+      repos: { r: { proxies: ["posthog"] } },
     });
     const getConfig = createConfigLoader(path);
-    expect(getConfig().repos.r.channels).toEqual(["C1"]);
+    expect(getConfig().repos.r.proxies).toEqual(["posthog"]);
 
-    writeFileSync(path, JSON.stringify({ repos: { r: { channels: ["C1", "C2"] } } }));
-    expect(getConfig().repos.r.channels).toEqual(["C1", "C2"]);
+    writeFileSync(path, JSON.stringify({ repos: { r: { proxies: ["posthog", "grafana"] } } }));
+    expect(getConfig().repos.r.proxies).toEqual(["posthog", "grafana"]);
   });
 
   it("falls back to last good config on corrupt file", () => {
     const path = writeConfig("config.json", {
-      repos: { r: { channels: ["C1"] } },
+      repos: { r: { proxies: ["posthog"] } },
     });
     const getConfig = createConfigLoader(path);
-    expect(getConfig().repos.r.channels).toEqual(["C1"]);
+    expect(getConfig().repos.r.proxies).toEqual(["posthog"]);
 
     writeFileSync(path, "corrupt{{{");
     const config = getConfig();
-    expect(config.repos.r.channels).toEqual(["C1"]);
+    expect(config.repos.r.proxies).toEqual(["posthog"]);
   });
 
   it("throws when no file and no previous config", () => {
     const getConfig = createConfigLoader("/nonexistent/config.json");
     expect(() => getConfig()).toThrow("no previous config available");
-  });
-});
-
-describe("getAllowedChannelIds", () => {
-  it("returns union of all channel IDs", () => {
-    const ids = getAllowedChannelIds({
-      repos: {
-        a: { channels: ["C1", "C2"] },
-        b: { channels: ["C3"] },
-      },
-    });
-    expect(ids).toEqual(new Set(["C1", "C2", "C3"]));
-  });
-
-  it("handles repos without channels", () => {
-    const ids = getAllowedChannelIds({ repos: { a: {} } });
-    expect(ids.size).toBe(0);
-  });
-});
-
-describe("getChannelRepoMap", () => {
-  it("maps channels to repo names", () => {
-    const map = getChannelRepoMap({
-      repos: {
-        "repo-a": { channels: ["C1"] },
-        "repo-b": { channels: ["C2", "C3"] },
-      },
-    });
-    expect(map.get("C1")).toBe("repo-a");
-    expect(map.get("C2")).toBe("repo-b");
-    expect(map.get("C3")).toBe("repo-b");
   });
 });
 
@@ -309,7 +273,10 @@ describe("Slack channel repo routing helpers", () => {
     mkdirSync(root);
     writeFileSync(join(root, "C123.txt"), "thor\n");
 
-    expect(readSlackChannelRepoOverride("C123", root)).toEqual({ status: "found", repoName: "thor" });
+    expect(readSlackChannelRepoOverride("C123", root)).toEqual({
+      status: "found",
+      repoName: "thor",
+    });
     expect(readSlackChannelRepoOverride("C999", root)).toEqual({ status: "missing" });
   });
 
@@ -346,55 +313,50 @@ describe("Slack channel repo routing helpers", () => {
     ).toMatchObject({
       directory: "/workspace/repos/thor",
     });
-    expect(resolveConfiguredRepoDirectory({ repos: {} }, "thor", resolverFor({ thor: "/workspace/repos/thor" })).reason).toContain(
-      "is not configured",
-    );
-    expect(resolveConfiguredRepoDirectory({ repos: { "../escape": {} } }, "../escape", resolverFor({})).reason).toContain(
-      "repo name only",
-    );
+    expect(
+      resolveConfiguredRepoDirectory(
+        { repos: {} },
+        "thor",
+        resolverFor({ thor: "/workspace/repos/thor" }),
+      ).reason,
+    ).toContain("is not configured");
+    expect(
+      resolveConfiguredRepoDirectory({ repos: { "../escape": {} } }, "../escape", resolverFor({}))
+        .reason,
+    ).toContain("repo name only");
   });
 
   it("falls back to default repo for missing or invalid channel overrides", () => {
     const root = join(tempDir, "repo-by-slack-channel");
     mkdirSync(root);
-    const config = { repos: { thor: {}, opencode: { channels: ["C_CFG", "C_BAD"] } } };
+    const config = { repos: { thor: {}, opencode: {} } };
     const resolveRepo = resolverFor({
       thor: "/workspace/repos/thor",
       opencode: "/workspace/repos/opencode",
     });
 
-    expect(resolveSlackChannelRepoDirectory(config, "C_MISSING", "thor", root, resolveRepo)).toMatchObject({
+    expect(
+      resolveSlackChannelRepoDirectory(config, "C_MISSING", "thor", root, resolveRepo),
+    ).toMatchObject({
       directory: "/workspace/repos/thor",
       source: "default",
     });
 
     writeFileSync(join(root, "C123.txt"), "opencode\n");
-    expect(resolveSlackChannelRepoDirectory(config, "C123", "thor", root, resolveRepo)).toMatchObject({
+    expect(
+      resolveSlackChannelRepoDirectory(config, "C123", "thor", root, resolveRepo),
+    ).toMatchObject({
       directory: "/workspace/repos/opencode",
       source: "override",
     });
 
-    expect(resolveSlackChannelRepoDirectory(config, "C_CFG", "thor", root, resolveRepo)).toMatchObject({
-      directory: "/workspace/repos/opencode",
-      source: "config",
-    });
-
     writeFileSync(join(root, "C_BAD.txt"), "unknown-repo\n");
-    expect(resolveSlackChannelRepoDirectory(config, "C_BAD", "thor", root, resolveRepo)).toMatchObject({
-      directory: "/workspace/repos/opencode",
-      source: "config",
+    expect(
+      resolveSlackChannelRepoDirectory(config, "C_BAD", "thor", root, resolveRepo),
+    ).toMatchObject({
+      directory: "/workspace/repos/thor",
+      source: "default",
       fallbackReason: "repo unknown-repo is not configured",
-    });
-  });
-
-  it("returns the configured-repo error instead of falling back to default when a mapped repo is missing", () => {
-    const root = join(tempDir, "repo-by-slack-channel");
-    mkdirSync(root);
-    const config = { repos: { thor: {}, missing: { channels: ["C_BROKEN"] } } };
-    const resolveRepo = resolverFor({ thor: "/workspace/repos/thor" });
-
-    expect(resolveSlackChannelRepoDirectory(config, "C_BROKEN", "thor", root, resolveRepo)).toMatchObject({
-      reason: "repo directory not found for missing",
     });
   });
 
@@ -479,9 +441,7 @@ describe("getRepoUpstreams", () => {
   });
 
   it("returns empty array for repo without proxies field", () => {
-    const config = loadWorkspaceConfig(
-      writeConfig("config.json", { repos: { "acme-app": { channels: ["C1"] } } }),
-    );
+    const config = loadWorkspaceConfig(writeConfig("config.json", { repos: { "acme-app": {} } }));
     expect(getRepoUpstreams(config, "acme-app")).toEqual([]);
   });
 

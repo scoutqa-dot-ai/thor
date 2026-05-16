@@ -2,8 +2,6 @@ export {
   WorkspaceConfigSchema,
   loadWorkspaceConfig,
   validateWorkspaceConfig,
-  getAllowedChannelIds,
-  getChannelRepoMap,
   readSlackChannelRepoOverride,
   resolveConfiguredRepoDirectory,
   resolveSlackChannelRepoDirectory,

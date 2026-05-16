@@ -3,7 +3,6 @@ import {
   logError,
   logInfo,
   createConfigLoader,
-  getAllowedChannelIds,
   loadGatewayEnv,
   WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
@@ -47,7 +46,6 @@ app.listen(config.port, () => {
   try {
     const workspaceConfig = getConfig();
     configSummary = {
-      configuredChannelMappings: [...getAllowedChannelIds(workspaceConfig)],
       repos: Object.keys(workspaceConfig.repos),
       slackDefaultRepo: config.slackDefaultRepo,
     };

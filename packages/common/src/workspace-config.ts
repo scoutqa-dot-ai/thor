@@ -7,10 +7,11 @@ import { PROXY_NAMES } from "./proxies.js";
 
 // --- Schema ---
 
-const RepoConfigSchema = z.object({
-  channels: z.array(z.string()).optional(),
-  proxies: z.array(z.string()).optional(),
-});
+const RepoConfigSchema = z
+  .object({
+    proxies: z.array(z.string()).optional(),
+  })
+  .strict();
 
 const OwnerConfigSchema = z.object({
   github_app_installation_id: z.number().int().positive(),
@@ -87,7 +88,7 @@ export type ValidationResult =
 
 /**
  * Validate an already-parsed config object. Aggregates all issues
- * (schema, duplicate channels, unknown proxies) before returning.
+ * (schema, unknown proxies) before returning.
  */
 export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
   if (
@@ -119,21 +120,6 @@ export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
   }
 
   const issues: ValidationIssue[] = [];
-
-  const seen = new Map<string, string>(); // channel → repo
-  for (const [repo, config] of Object.entries(result.data.repos)) {
-    for (const channel of config.channels ?? []) {
-      const existing = seen.get(channel);
-      if (existing) {
-        issues.push({
-          path: `repos.${repo}.channels`,
-          message: `Duplicate channel ID "${channel}" — already mapped to repo "${existing}"`,
-        });
-      } else {
-        seen.set(channel, repo);
-      }
-    }
-  }
 
   const proxyNames = new Set<string>(PROXY_NAMES);
   for (const [repo, repoConfig] of Object.entries(result.data.repos)) {
@@ -227,32 +213,6 @@ export function createConfigLoader(path: string): ConfigLoader {
 // --- Helpers ---
 
 /**
- * Union of all channel IDs across all repos.
- */
-export function getAllowedChannelIds(config: WorkspaceConfig): Set<string> {
-  const ids = new Set<string>();
-  for (const repo of Object.values(config.repos)) {
-    for (const ch of repo.channels ?? []) {
-      ids.add(ch);
-    }
-  }
-  return ids;
-}
-
-/**
- * Map from channel ID → repo name.
- */
-export function getChannelRepoMap(config: WorkspaceConfig): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const [repo, repoConfig] of Object.entries(config.repos)) {
-    for (const ch of repoConfig.channels ?? []) {
-      map.set(ch, repo);
-    }
-  }
-  return map;
-}
-
-/**
  * Interpolate ${ENV_VAR} references in a string.
  */
 export function interpolateEnv(value: string): string {
@@ -295,7 +255,13 @@ export function resolveRepoDirectory(repoName: string): string | undefined {
 }
 
 function isFilenameOnly(value: string): boolean {
-  return value.length > 0 && value !== "." && value !== ".." && !value.includes("/") && !value.includes("\\");
+  return (
+    value.length > 0 &&
+    value !== "." &&
+    value !== ".." &&
+    !value.includes("/") &&
+    !value.includes("\\")
+  );
 }
 
 function isRepoNameOnly(value: string): boolean {
@@ -304,13 +270,6 @@ function isRepoNameOnly(value: string): boolean {
 
 function hasConfiguredRepo(config: WorkspaceConfig, repoName: string): boolean {
   return Object.prototype.hasOwnProperty.call(config.repos, repoName);
-}
-
-function getConfiguredChannelRepo(config: WorkspaceConfig, channelId: string): string | undefined {
-  for (const [repoName, repoConfig] of Object.entries(config.repos)) {
-    if (repoConfig.channels?.includes(channelId)) return repoName;
-  }
-  return undefined;
 }
 
 export type SlackChannelRepoOverrideResult =
@@ -380,36 +339,30 @@ export function resolveSlackChannelRepoDirectory(
 ): {
   directory?: string;
   repoName?: string;
-  source?: "override" | "config" | "default";
+  source?: "override" | "default";
   fallbackReason?: string;
   reason?: string;
 } {
   const override = readSlackChannelRepoOverride(channelId, memoryRoot);
-  const configuredRepo = getConfiguredChannelRepo(config, channelId);
 
   if (override.status === "found") {
-    const overrideResolved = resolveConfiguredRepoDirectory(config, override.repoName, resolveRepoDirectoryFn);
+    const overrideResolved = resolveConfiguredRepoDirectory(
+      config,
+      override.repoName,
+      resolveRepoDirectoryFn,
+    );
     if (overrideResolved.directory) {
-      return { directory: overrideResolved.directory, repoName: override.repoName, source: "override" };
+      return {
+        directory: overrideResolved.directory,
+        repoName: override.repoName,
+        source: "override",
+      };
     }
-    if (configuredRepo) {
-      const configuredResolved = resolveConfiguredRepoDirectory(
-        config,
-        configuredRepo,
-        resolveRepoDirectoryFn,
-      );
-      if (configuredResolved.directory) {
-        return {
-          directory: configuredResolved.directory,
-          repoName: configuredRepo,
-          source: "config",
-          fallbackReason: overrideResolved.reason,
-        };
-      }
-      return { reason: configuredResolved.reason ?? overrideResolved.reason };
-    }
-
-    const defaultResolved = resolveConfiguredRepoDirectory(config, defaultRepoName, resolveRepoDirectoryFn);
+    const defaultResolved = resolveConfiguredRepoDirectory(
+      config,
+      defaultRepoName,
+      resolveRepoDirectoryFn,
+    );
     return defaultResolved.directory
       ? {
           directory: defaultResolved.directory,
@@ -418,17 +371,6 @@ export function resolveSlackChannelRepoDirectory(
           fallbackReason: overrideResolved.reason,
         }
       : { reason: defaultResolved.reason ?? overrideResolved.reason };
-  }
-
-  if (configuredRepo) {
-    const resolved = resolveConfiguredRepoDirectory(config, configuredRepo, resolveRepoDirectoryFn);
-    if (!resolved.directory) return { reason: resolved.reason };
-    return {
-      directory: resolved.directory,
-      repoName: configuredRepo,
-      source: "config",
-      fallbackReason: override.status === "invalid" ? override.reason : undefined,
-    };
   }
 
   const fallback = resolveConfiguredRepoDirectory(config, defaultRepoName, resolveRepoDirectoryFn);

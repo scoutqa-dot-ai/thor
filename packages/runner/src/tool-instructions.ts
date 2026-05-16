@@ -15,8 +15,6 @@ export function buildToolInstructions(
   const repoConfig = config.repos[repo];
   if (!repoConfig) return undefined;
 
-  const hasSlackChannels = (repoConfig.channels?.length ?? 0) > 0;
-
   const allowed = getRepoUpstreams(config, repo);
   if (!allowed) return undefined;
 
@@ -69,16 +67,13 @@ export function buildToolInstructions(
     );
   }
 
-  if (hasSlackChannels) {
-    blocks.push(
-      [
-        "[Slack capability]",
-        "Use `slack-post-message` for Slack message writes.",
-        "Load Slack skill for details about using `curl`/`fetch` with `reactions.add`, `conversations.replies` etc.",
-      ].join("\n"),
-    );
-  }
+  blocks.push(
+    [
+      "[Slack capability]",
+      "Use `slack-post-message` for Slack message writes.",
+      "Load Slack skill for details about using `curl`/`fetch` with `reactions.add`, `conversations.replies` etc.",
+    ].join("\n"),
+  );
 
-  if (blocks.length === 0) return undefined;
   return blocks.join("\n\n");
 }
