@@ -204,14 +204,15 @@ After all five phases:
 
 ## Decision Log
 
-| Date       | Decision                                              | Notes                                    |
-| ---------- | ----------------------------------------------------- | ---------------------------------------- |
-| 2026-05-15 | Drop warnings, diagnostics, auto-refresh, cost line   | Admin-reviewed; "page should show fact". |
-| 2026-05-15 | Reuse `SLACK_TEAM_ID` env (now read by runner too)    | Mirrors admin behavior; no new env.      |
-| 2026-05-15 | Static page, no polling; `● live` indicator only      | Admin refreshes manually.                |
-| 2026-05-15 | Remove activity-row cap; always render full           | Admin-reviewed; "no skip".               |
-| 2026-05-15 | Move tokens + model to a totals footer                | Header was busy; tokens belong at end.   |
-| 2026-05-15 | Drop redundant slack/github Prompt preview line       | Decoded source line carries it already.  |
-| 2026-05-15 | Subagent tokens shown via per-agent footer table      | Single line stays when no subagents.     |
-| 2026-05-15 | Main agent model hardcoded `gpt-5.4` with TODO        | Real source needs `message.updated`.     |
-| 2026-05-15 | Subagent model read from parent task `metadata.model` | OpenCode tags spawn with child's model.  |
+| Date       | Decision                                              | Notes                                                                             |
+| ---------- | ----------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 2026-05-15 | Drop warnings, diagnostics, auto-refresh, cost line   | Admin-reviewed; "page should show fact".                                          |
+| 2026-05-15 | Reuse `SLACK_TEAM_ID` env (now read by runner too)    | Mirrors admin behavior; no new env.                                               |
+| 2026-05-15 | Static page, no polling; `● live` indicator only      | Admin refreshes manually.                                                         |
+| 2026-05-15 | Remove activity-row cap; always render full           | Admin-reviewed; "no skip".                                                        |
+| 2026-05-15 | Move tokens + model to a totals footer                | Header was busy; tokens belong at end.                                            |
+| 2026-05-15 | Drop redundant slack/github Prompt preview line       | Decoded source line carries it already.                                           |
+| 2026-05-15 | Subagent tokens shown via per-agent footer table      | Single line stays when no subagents.                                              |
+| 2026-05-15 | Main agent model hardcoded `gpt-5.4` with TODO        | Real source needs `message.updated`.                                              |
+| 2026-05-15 | Subagent model read from parent task `metadata.model` | OpenCode tags spawn with child's model.                                           |
+| 2026-05-16 | Diff rows emit real newline separators                | Consecutive `apply_patch` context lines must not visually concatenate in `<pre>`. |

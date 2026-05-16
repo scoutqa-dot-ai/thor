@@ -516,6 +516,62 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
+  it("preserves apply_patch context-line breaks in the rendered diff", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000513";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("patch-session", anchorId);
+    const patchText = [
+      "*** Begin Patch",
+      "*** Update File: src/example.ts",
+      "@@",
+      " const keepOne = 1;",
+      " const keepTwo = 2;",
+      "-const oldValue = keepOne + keepTwo;",
+      "+const newValue = keepOne + keepTwo;",
+      "*** End Patch",
+    ].join("\n");
+    appendSessionEvent("patch-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("patch-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_patch",
+            type: "tool",
+            tool: "apply_patch",
+            callID: "call_patch",
+            state: {
+              status: "completed",
+              title: "Updates src/example.ts",
+              input: { patchText },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("patch-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain("apply_patch");
+      expect(html).toContain('<span class="diff-del">-const oldValue = keepOne + keepTwo;</span>');
+      expect(html).toContain('<span class="diff-add">+const newValue = keepOne + keepTwo;</span>');
+      expect(html).toContain("<span> const keepOne = 1;</span>\n<span> const keepTwo = 2;</span>");
+      expect(html).not.toContain(
+        "<span> const keepOne = 1;</span><span> const keepTwo = 2;</span>",
+      );
+    });
+  });
+
   it("renders unknown opencode events through the fallback row", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000512";

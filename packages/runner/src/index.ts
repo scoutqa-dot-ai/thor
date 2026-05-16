@@ -1644,7 +1644,7 @@ function renderDiffLines(patchText: string): string {
   const out = patchText
     .split("\n")
     .map((line) => {
-      const safe = escapeHtml(safeSnippet(line));
+      const safe = escapeHtml(safeMultilineSnippet(line));
       if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
         return `<span class="diff-meta">${safe}</span>`;
       }
@@ -1652,7 +1652,7 @@ function renderDiffLines(patchText: string): string {
       if (line.startsWith("-")) return `<span class="diff-del">${safe}</span>`;
       return `<span>${safe}</span>`;
     })
-    .join("");
+    .join("\n");
   return `<pre class="diff">${out}</pre>`;
 }
 
