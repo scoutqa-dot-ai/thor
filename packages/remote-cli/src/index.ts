@@ -6,6 +6,7 @@ import {
   appendCorrelationAlias,
   buildThorDisclaimerForSession,
   computeGitCorrelationKey,
+  createConfigLoader,
   createLogger,
   getRunnerBaseUrl,
   logError,
@@ -15,6 +16,7 @@ import {
   loadRemoteCliGitHubEnv,
   loadRemoteCliInternalEnv,
   matchesInternalSecret,
+  WORKSPACE_CONFIG_PATH,
   type ExecStreamEvent,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
@@ -90,6 +92,10 @@ export interface RemoteCliApp {
   app: Express;
   warmUp(): Promise<void>;
   close(): Promise<void>;
+}
+
+function isGitCloneArgs(args: unknown): boolean {
+  return Array.isArray(args) && args[0] === "clone";
 }
 
 function thorIds(req: express.Request): { sessionId?: string; callId?: string } {
@@ -518,8 +524,8 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
-  const gitCloneAllowedOwners = config.env?.gitCloneAllowedOwners ?? [];
   const internalSecret = appEnv.thorInternalSecret;
+  const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
   const mcpService = createMcpService({
     isProduction: appEnv.isProduction,
     ...config.mcp,
@@ -542,6 +548,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
+      const gitCloneAllowedOwners = isGitCloneArgs(args)
+        ? Object.keys(getConfig().owners ?? {})
+        : [];
       const gitResolution = resolveGitArgs(args, cwd, { gitCloneAllowedOwners });
       if ("error" in gitResolution) {
         res.status(400).json({ stdout: "", stderr: gitResolution.error, exitCode: 1 });

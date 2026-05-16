@@ -22,6 +22,7 @@ ingress -> gateway -> runner -> opencode
 | `mitmproxy`   | 3080 | `docker/mitmproxy` | Explicit outbound HTTP(S) proxy             |
 | `gateway`     | 3002 | `@thor/gateway`    | Slack/GitHub webhook ingestion and batching |
 | `remote-cli`  | 3004 | `@thor/remote-cli` | CLI + MCP policy gateway                    |
+| `admin`       | 3005 | `@thor/admin`      | Admin dashboard and workspace configuration |
 | `grafana-mcp` | 8000 | Docker image       | Grafana MCP server                          |
 | `ingress`     | 8080 | `docker/ingress`   | Reverse proxy + Vouch integration           |
 | `opencode`    | 4096 | Docker image       | Headless agent runtime                      |
@@ -234,14 +235,13 @@ pnpm test
 pnpm test:mcp
 REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
 REMOTE_CLI_GITHUB_REPO=owner/repo \
-GIT_CLONE_ALLOWED_OWNERS=owner \
   pnpm test:e2e
 pnpm test:create-jira-approval-e2e # live Slack/OpenCode approval-card e2e for Atlassian approval-required tools
 pnpm test:opencode-e2e # separate explicit OpenCode/LLM smoke path
 pnpm typecheck
 ```
 
-`pnpm test:e2e` is deterministic and never calls `/trigger`. The clone repo env vars are required because the test exercises `remote-cli`'s `/exec/git clone` policy.
+`pnpm test:e2e` is deterministic and never calls `/trigger`. The clone repo env vars are required because the test exercises `remote-cli`'s `/exec/git clone` policy; the repo's owner must be present in `/workspace/config.json`'s `owners` map.
 
 `pnpm test:create-jira-approval-e2e` requires live Slack/OpenCode credentials, a connected Atlassian MCP upstream, and a writable Slack test channel via `SLACK_E2E_CHANNEL_ID` (or `SLACK_CHANNEL_ID`). It intentionally leaves approvals pending for human inspection.
 

@@ -69,38 +69,13 @@ describe("service env", () => {
         ...githubEnv,
         THOR_INTERNAL_SECRET: "secret",
         SLACK_BOT_TOKEN: "xoxb-test",
-        GIT_CLONE_ALLOWED_OWNERS: "acme, acme-labs",
       }),
     ).toMatchObject({
       port: 3004,
       slackBotToken: "xoxb-test",
       gitIdentityName: "thor-app[bot]",
       gitIdentityEmail: "12345+thor-app[bot]@users.noreply.github.com",
-      gitCloneAllowedOwners: ["acme", "acme-labs"],
     });
-    expect(
-      loadRemoteCliEnv({
-        ...githubEnv,
-        THOR_INTERNAL_SECRET: "secret",
-        SLACK_BOT_TOKEN: "xoxb-test",
-      }).gitCloneAllowedOwners,
-    ).toEqual([]);
-    expect(() =>
-      loadRemoteCliEnv({
-        ...githubEnv,
-        THOR_INTERNAL_SECRET: "secret",
-        SLACK_BOT_TOKEN: "xoxb-test",
-        GIT_CLONE_ALLOWED_OWNERS: "https://github.com/acme",
-      }),
-    ).toThrow("GIT_CLONE_ALLOWED_OWNERS entries must be GitHub owner names");
-    expect(() =>
-      loadRemoteCliEnv({
-        ...githubEnv,
-        THOR_INTERNAL_SECRET: "secret",
-        SLACK_BOT_TOKEN: "xoxb-test",
-        GIT_CLONE_ALLOWED_OWNERS: "..",
-      }),
-    ).toThrow("GIT_CLONE_ALLOWED_OWNERS entries must be GitHub owner names");
     expect(() => loadRemoteCliEnv({ ...githubEnv, THOR_INTERNAL_SECRET: "secret" })).toThrow(
       "Missing required env var SLACK_BOT_TOKEN",
     );
@@ -142,6 +117,22 @@ describe("service env", () => {
         METABASE_ALLOWED_SCHEMAS: "dm_products",
       }),
     ).toThrow("METABASE_DATABASE_ID must be an integer");
+  });
+
+  it("strips trailing slashes from RUNNER_URL and OPENCODE_URL", () => {
+    const gateway = loadGatewayEnv({
+      THOR_INTERNAL_SECRET: "secret",
+      GITHUB_APP_SLUG: "thor-app",
+      GITHUB_APP_BOT_ID: "12345",
+      GITHUB_WEBHOOK_SECRET: "webhook",
+      SLACK_DEFAULT_REPO: "test-repo",
+      RUNNER_URL: "http://runner:3000///",
+    });
+    expect(gateway.runnerUrl).toBe("http://runner:3000");
+
+    expect(loadRunnerEnv({ OPENCODE_URL: "http://127.0.0.1:4096/" }).opencodeUrl).toBe(
+      "http://127.0.0.1:4096",
+    );
   });
 
   it("loads admin defaults and derived audit log path", () => {
