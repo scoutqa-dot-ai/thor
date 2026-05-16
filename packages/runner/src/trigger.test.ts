@@ -340,6 +340,10 @@ describe("runner /trigger orchestration", () => {
       expect(invalidAnchor.status).toBe(404);
       expect(await invalidAnchor.text()).toContain("Trigger not found");
 
+      const unknownAnchor = await fetch(`${url}/runner/v/00000000-0000-7000-8000-000000000398`);
+      expect(unknownAnchor.status).toBe(404);
+      expect(await unknownAnchor.text()).toContain("Anchor not found");
+
       const ok = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
       const html = await ok.text();
       expect(ok.status).toBe(200);

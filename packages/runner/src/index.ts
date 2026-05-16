@@ -241,6 +241,10 @@ function resolveOwnerSessionForTrigger(
   return { ok: false, reason: "not_found" };
 }
 
+function anchorIsKnown(anchor: ReverseAnchorEntry): boolean {
+  return anchor.sessionIds.length + anchor.subsessionIds.length + anchor.externalKeys.length > 0;
+}
+
 const E2eTriggerContextSchema = z.object({
   sessionId: z.string().trim().min(1).optional(),
   correlationKey: z.string().trim().min(1).optional(),
@@ -333,7 +337,15 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     // lgtm[js/missing-rate-limiting]
     (req, res) => {
       const anchorId = routeParam(req.params.anchorId);
-      if (!isUuidV7(anchorId) || !reverseLookupAnchor(anchorId)) {
+      if (!isUuidV7(anchorId)) {
+        res
+          .status(404)
+          .type("html")
+          .send(renderPage("Anchor not found", "No Thor anchor context was found."));
+        return;
+      }
+      const anchor = reverseLookupAnchor(anchorId);
+      if (!anchorIsKnown(anchor)) {
         res
           .status(404)
           .type("html")
