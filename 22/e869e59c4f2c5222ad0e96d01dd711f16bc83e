@@ -1,0 +1,25 @@
+packages/runner/src/trigger.test.ts
+  02696685ea6969df 319,961
+packages/runner/src/index.ts
+  02696685ea6969df 328-329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "22e869e59c4f2c5222ad0e96d01dd711f16bc83e",
+  "prompts": {
+    "02696685ea6969df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc452587-de48-4584-a7bd-4245bf26263b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 32,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
