@@ -458,6 +458,55 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
+  it("renders omitted-marker tool inputs as a muted note instead of raw JSON", async () => {
+    // When capRecord projects an oversized opencode_event, the tool part's
+    // `state.input` becomes `{ _omitted: true, bytes: N }`. The viewer must
+    // recognize that shape and render a "(input omitted, N KB)" badge —
+    // otherwise the page would dump the marker JSON literally where the
+    // tool input HTML normally goes.
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000511";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("omitted-session", anchorId);
+    appendSessionEvent("omitted-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("omitted-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_omitted_read",
+            type: "tool",
+            tool: "read",
+            callID: "call_om",
+            state: {
+              status: "completed",
+              title: "Reads /etc/passwd",
+              input: { _omitted: true, bytes: 38_912 },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("omitted-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
+        headers: { "X-Vouch-User": "u@example.com" },
+      });
+      const html = await response.text();
+      expect(html).toContain("tool</b> <span>read</span>");
+      expect(html).toContain('class="omitted"');
+      expect(html).toMatch(/\(input omitted, 38\.0 KB\)/);
+      // The marker JSON itself must not leak into the page.
+      expect(html).not.toContain("_omitted");
+    });
+  });
+
   it("breaks subagent recursion on cycles without infinite expansion", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000510";
