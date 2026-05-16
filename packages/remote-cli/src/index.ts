@@ -96,6 +96,10 @@ export interface RemoteCliApp {
   close(): Promise<void>;
 }
 
+function isGitCloneArgs(args: unknown): boolean {
+  return Array.isArray(args) && args[0] === "clone";
+}
+
 function thorIds(req: express.Request): { sessionId?: string; callId?: string } {
   const sessionId = req.headers["x-thor-session-id"] as string | undefined;
   const callId = req.headers["x-thor-call-id"] as string | undefined;
@@ -523,7 +527,6 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const getConfig = config.getConfig ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
-  const gitCloneAllowedOwners = config.env?.gitCloneAllowedOwners ?? [];
   const internalSecret = appEnv.thorInternalSecret;
   const mcpService = createMcpService({
     getConfig,
@@ -548,6 +551,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
+      const gitCloneAllowedOwners = isGitCloneArgs(args)
+        ? Object.keys(getConfig().owners ?? {})
+        : [];
       const gitResolution = resolveGitArgs(args, cwd, { gitCloneAllowedOwners });
       if ("error" in gitResolution) {
         res.status(400).json({ stdout: "", stderr: gitResolution.error, exitCode: 1 });

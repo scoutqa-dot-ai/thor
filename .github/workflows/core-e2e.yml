@@ -39,7 +39,6 @@ jobs:
       GITHUB_APP_SLUG: thor-ci
       GITHUB_APP_BOT_ID: "1"
       GITHUB_WEBHOOK_SECRET: ci-fake
-      GIT_CLONE_ALLOWED_OWNERS: ${{ github.repository_owner }}
       REMOTE_CLI_GIT_REPO_URL: https://github.com/${{ github.repository }}
       REMOTE_CLI_GITHUB_REPO: ${{ github.repository }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
