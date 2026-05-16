@@ -1,0 +1,25 @@
+packages/runner/src/index.ts
+  ff94f92e4ba75310 338
+packages/common/src/disclaimer.ts
+  ff94f92e4ba75310 72-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "20f4549913c96516b5213b288978fc0a1d58427c",
+  "prompts": {
+    "ff94f92e4ba75310": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1af9e5fb-12f9-4f24-837c-02f589c7a589",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 2,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
