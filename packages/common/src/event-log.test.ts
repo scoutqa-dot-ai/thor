@@ -51,21 +51,17 @@ const anchorDashF = "00000000-0000-7000-8000-0000000000b6";
 
 describe("session event log", () => {
   const originalWorklogDir = process.env.WORKLOG_DIR;
-  const originalMax = process.env.SESSION_LOG_MAX_BYTES;
   let testDir = "";
 
   beforeEach(() => {
     testDir = mkdtempSync(join(tmpdir(), "thor-event-log-"));
     process.env.WORKLOG_DIR = testDir;
-    delete process.env.SESSION_LOG_MAX_BYTES;
   });
 
   afterEach(() => {
     rmSync(testDir, { recursive: true, force: true });
     if (originalWorklogDir === undefined) delete process.env.WORKLOG_DIR;
     else process.env.WORKLOG_DIR = originalWorklogDir;
-    if (originalMax === undefined) delete process.env.SESSION_LOG_MAX_BYTES;
-    else process.env.SESSION_LOG_MAX_BYTES = originalMax;
   });
 
   it("appends capped records with visible success", () => {
@@ -367,13 +363,6 @@ describe("session event log", () => {
     });
   });
 
-  it("fails active-trigger lookup closed on oversized files", () => {
-    appendAlias({ aliasType: "opencode.session", aliasValue: "big", anchorId: anchorA });
-    mkdirSync(join(testDir, "sessions"), { recursive: true });
-    writeFileSync(sessionLogPath("big"), "x".repeat(53 * 1024 * 1024));
-    expect(findActiveTrigger("big")).toEqual({ ok: false, reason: "oversized" });
-  });
-
   it("fails active-trigger lookup closed when no anchor binding exists", () => {
     // Session log has an open trigger but no opencode.session binding → none.
     appendSessionEvent("orphan", { type: "trigger_start", triggerId: triggerOversized });
@@ -446,23 +435,19 @@ describe("session event log", () => {
     });
   });
 
-  it("surfaces malformed and oversized session diagnostics in anchor session states", () => {
+  it("surfaces malformed session diagnostics in anchor session states", () => {
     appendAlias({ aliasType: "opencode.session", aliasValue: "bad-lines", anchorId: anchorDashE });
     writeSession(
       "bad-lines",
       [{ ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA }],
       "not-json\n",
     );
-    let row = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") })[0];
+    const row = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") })[0];
     expect(row).toMatchObject({
       anchorId: anchorDashE,
       status: "in_progress",
       skippedMalformed: 1,
     });
-
-    writeFileSync(sessionLogPath("bad-lines"), "x".repeat(53 * 1024 * 1024));
-    row = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") })[0];
-    expect(row).toMatchObject({ anchorId: anchorDashE, status: "unknown", oversized: true });
   });
 
   it("marks only anchors with unsafe session aliases unknown and preserves other rows", () => {
@@ -488,7 +473,6 @@ describe("session event log", () => {
     });
     expect(rows.find((r) => r.anchorId === anchorDashF)).toMatchObject({
       status: "unknown",
-      oversized: false,
     });
     expect(rows.find((r) => r.anchorId === anchorDashF)?.reason).toContain("Invalid session id");
   });

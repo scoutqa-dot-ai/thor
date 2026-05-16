@@ -107,7 +107,17 @@ export interface TriggerSlice {
 
 export type ActiveTriggerResult =
   | { ok: true; anchorId: string; sessionId: string; triggerId: string }
-  | { ok: false; reason: "none" | "oversized" };
+  | { ok: false; reason: "none" };
+
+export type AnchorContextResult =
+  | {
+      ok: true;
+      anchorId: string;
+      sessionId?: string;
+      triggerId?: string;
+      triggerSessionId?: string;
+    }
+  | { ok: false; reason: "none" };
 
 export interface ReverseAnchorEntry {
   sessionIds: string[];
@@ -133,7 +143,6 @@ export interface AnchorSessionState {
   sessionIds: string[];
   subsessionIds: string[];
   skippedMalformed: number;
-  oversized: boolean;
   reason?: string;
 }
 
@@ -152,10 +161,6 @@ interface InternalReverseEntry {
 }
 
 const MAX_RECORD_BYTES = 4095;
-export const MAX_SESSION_FILE_BYTES = Number.parseInt(
-  process.env.SESSION_LOG_MAX_BYTES || "52428800",
-  10,
-);
 
 interface AliasCacheState {
   /** "<aliasType>\0<aliasValue>" → anchorId. */
@@ -170,7 +175,6 @@ interface SessionRecordsCacheEntry {
   signature: string;
   records: SessionEventLogRecord[];
   skippedMalformed: number;
-  oversized: boolean;
 }
 const sessionRecordsCache = new Map<string, SessionRecordsCacheEntry>();
 
@@ -407,34 +411,17 @@ function fileStat(path: string): { signature: string; size: number } | null {
 function readSessionRecords(sessionId: string): {
   records: SessionEventLogRecord[];
   skippedMalformed: number;
-  oversized?: true;
 } {
   const path = sessionLogPath(sessionId);
   const stat = fileStat(path);
   const signature = stat?.signature ?? "missing";
   const cached = sessionRecordsCache.get(sessionId);
   if (cached && cached.signature === signature) {
-    return cached.oversized
-      ? { records: [], skippedMalformed: cached.skippedMalformed, oversized: true }
-      : { records: cached.records, skippedMalformed: cached.skippedMalformed };
+    return { records: cached.records, skippedMalformed: cached.skippedMalformed };
   }
   if (!stat) {
-    sessionRecordsCache.set(sessionId, {
-      signature,
-      records: [],
-      skippedMalformed: 0,
-      oversized: false,
-    });
+    sessionRecordsCache.set(sessionId, { signature, records: [], skippedMalformed: 0 });
     return { records: [], skippedMalformed: 0 };
-  }
-  if (stat.size > MAX_SESSION_FILE_BYTES) {
-    sessionRecordsCache.set(sessionId, {
-      signature,
-      records: [],
-      skippedMalformed: 0,
-      oversized: true,
-    });
-    return { records: [], skippedMalformed: 0, oversized: true };
   }
   let skippedMalformed = 0;
   const records: SessionEventLogRecord[] = [];
@@ -447,16 +434,15 @@ function readSessionRecords(sessionId: string): {
       skippedMalformed++;
     }
   }
-  sessionRecordsCache.set(sessionId, { signature, records, skippedMalformed, oversized: false });
+  sessionRecordsCache.set(sessionId, { signature, records, skippedMalformed });
   return { records, skippedMalformed };
 }
 
 export function readTriggerSlice(
   sessionId: string,
   triggerId: string,
-): TriggerSlice | { notFound: true; skippedMalformed: number } | { oversized: true } {
+): TriggerSlice | { notFound: true; skippedMalformed: number } {
   const read = readSessionRecords(sessionId);
-  if (read.oversized) return { oversized: true };
   const startIndex = read.records.findIndex(
     (r) => r.type === "trigger_start" && r.triggerId === triggerId,
   );
@@ -664,17 +650,13 @@ interface SessionTerminalSummary {
   reason?: string;
 }
 
-function sessionSummary(sessionId: string):
-  | {
-      oversized?: false;
-      skippedMalformed: number;
-      open?: SessionOpenSummary;
-      latestTerminal?: SessionTerminalSummary;
-      lastEventTs?: string;
-    }
-  | { oversized: true; skippedMalformed: number } {
+function sessionSummary(sessionId: string): {
+  skippedMalformed: number;
+  open?: SessionOpenSummary;
+  latestTerminal?: SessionTerminalSummary;
+  lastEventTs?: string;
+} {
   const read = readSessionRecords(sessionId);
-  if (read.oversized) return { oversized: true, skippedMalformed: read.skippedMalformed };
 
   let open: SessionOpenSummary | undefined;
   let latestTerminal: SessionTerminalSummary | undefined;
@@ -725,7 +707,6 @@ export function listAnchorSessionStates(
 
   const rows = listAnchors().map(({ anchorId, entry }): AnchorSessionState => {
     let skippedMalformed = 0;
-    let oversized = false;
     let bestOpen: (SessionOpenSummary & { sessionId: string }) | undefined;
     let latestTerminal: (SessionTerminalSummary & { sessionId: string }) | undefined;
     let lastEventTs: string | undefined;
@@ -740,10 +721,6 @@ export function listAnchorSessionStates(
         continue;
       }
       skippedMalformed += summary.skippedMalformed;
-      if (summary.oversized) {
-        oversized = true;
-        continue;
-      }
       if (summary.lastEventTs && (!lastEventTs || summary.lastEventTs > lastEventTs)) {
         lastEventTs = summary.lastEventTs;
       }
@@ -758,7 +735,7 @@ export function listAnchorSessionStates(
       }
     }
 
-    if (oversized || readErrors.length > 0) {
+    if (readErrors.length > 0) {
       return {
         anchorId,
         status: "unknown",
@@ -770,13 +747,7 @@ export function listAnchorSessionStates(
         sessionIds: entry.sessionIds,
         subsessionIds: entry.subsessionIds,
         skippedMalformed,
-        oversized,
-        reason: [
-          oversized ? "one or more session logs exceeded the configured size cap" : null,
-          ...readErrors,
-        ]
-          .filter(Boolean)
-          .join("; "),
+        reason: readErrors.join("; "),
         lastEventTs: bestOpen?.lastEventTs ?? latestTerminal?.ts ?? lastEventTs,
       };
     }
@@ -797,7 +768,6 @@ export function listAnchorSessionStates(
           sessionIds: entry.sessionIds,
           subsessionIds: entry.subsessionIds,
           skippedMalformed,
-          oversized: false,
           reason: "invalid trigger timestamp in session log",
         };
       }
@@ -816,7 +786,6 @@ export function listAnchorSessionStates(
         sessionIds: entry.sessionIds,
         subsessionIds: entry.subsessionIds,
         skippedMalformed,
-        oversized: false,
       };
     }
 
@@ -835,7 +804,6 @@ export function listAnchorSessionStates(
         sessionIds: entry.sessionIds,
         subsessionIds: entry.subsessionIds,
         skippedMalformed,
-        oversized: false,
         reason: "invalid terminal timestamp in session log",
       };
     }
@@ -853,7 +821,6 @@ export function listAnchorSessionStates(
       sessionIds: entry.sessionIds,
       subsessionIds: entry.subsessionIds,
       skippedMalformed,
-      oversized: false,
       reason: latestTerminal?.reason,
     };
   });
@@ -891,13 +858,36 @@ export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult
   let best: { sessionId: string; triggerId: string; ts: string } | undefined;
   for (const sessionId of reverse.sessionIds) {
     const read = readSessionRecords(sessionId);
-    if (read.oversized) return { ok: false, reason: "oversized" };
     const open = openTrigger(read.records);
     if (!open) continue;
     if (!best || open.ts > best.ts) best = { sessionId, ...open };
   }
   if (!best) return { ok: false, reason: "none" };
   return { ok: true, anchorId, sessionId: best.sessionId, triggerId: best.triggerId };
+}
+
+export function findAnchorContext(requestSessionId: string): AnchorContextResult {
+  const anchorId =
+    resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
+    resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
+  if (!anchorId) return { ok: false, reason: "none" };
+
+  const active = findActiveTrigger(requestSessionId);
+  if (active.ok) {
+    return {
+      ok: true,
+      anchorId,
+      sessionId: active.sessionId,
+      triggerId: active.triggerId,
+      triggerSessionId: active.sessionId,
+    };
+  }
+
+  return {
+    ok: true,
+    anchorId,
+    sessionId: currentSessionForAnchor(anchorId) ?? requestSessionId,
+  };
 }
 
 export function currentSessionForAnchor(anchorId: string): string | undefined {

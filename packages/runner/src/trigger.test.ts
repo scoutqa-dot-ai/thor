@@ -316,7 +316,7 @@ function setupBusySession(slackThreadTs: string): string {
 }
 
 describe("runner /trigger orchestration", () => {
-  it("serves the Vouch-gated trigger viewer with 401, 404, and rendered status", async () => {
+  it("serves the trigger viewer with 404 and rendered status", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000301";
     const anchorId = mintAnchor();
@@ -329,29 +329,22 @@ describe("runner /trigger orchestration", () => {
     ).toEqual({ ok: true });
 
     await withServer(h.app, async (url) => {
-      const unauthorized = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
-      expect(unauthorized.status).toBe(401);
-      expect(await unauthorized.text()).toContain("Unauthorized");
-
       const missing = await fetch(
         `${url}/runner/v/${anchorId}/00000000-0000-7000-8000-000000000399`,
-        {
-          headers: { "X-Vouch-User": "u@example.com" },
-        },
       );
       expect(missing.status).toBe(404);
       expect(await missing.text()).toContain("Trigger not found");
 
       // Malformed (non-UUIDv7) anchor id is rejected without disk I/O.
-      const invalidAnchor = await fetch(`${url}/runner/v/not-a-uuid/${triggerId}`, {
-        headers: { "X-Vouch-User": "u@example.com" },
-      });
+      const invalidAnchor = await fetch(`${url}/runner/v/not-a-uuid/${triggerId}`);
       expect(invalidAnchor.status).toBe(404);
       expect(await invalidAnchor.text()).toContain("Trigger not found");
 
-      const ok = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
-        headers: { "X-Vouch-User": "u@example.com" },
-      });
+      const unknownAnchor = await fetch(`${url}/runner/v/00000000-0000-7000-8000-000000000398`);
+      expect(unknownAnchor.status).toBe(404);
+      expect(await unknownAnchor.text()).toContain("Anchor not found");
+
+      const ok = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
       const html = await ok.text();
       expect(ok.status).toBe(200);
       expect(html).toContain("completed");
@@ -448,6 +441,7 @@ describe("runner /trigger orchestration", () => {
       const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
         headers: { "X-Vouch-User": "u@example.com" },
       });
+      expect(response.status).toBe(200);
       const html = await response.text();
       expect(html).toContain("subagent activity (2 rows)");
       expect(html).toContain('class="events sub-events"');
@@ -498,6 +492,7 @@ describe("runner /trigger orchestration", () => {
       const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`, {
         headers: { "X-Vouch-User": "u@example.com" },
       });
+      expect(response.status).toBe(200);
       const html = await response.text();
       expect(html).toContain("tool</b> <span>read</span>");
       expect(html).toContain('class="omitted"');
@@ -1020,9 +1015,7 @@ describe("runner /trigger orchestration", () => {
 
     const h = createHarness();
     await withServer(h.app, async (url) => {
-      const response = await fetch(`${url}/runner/v/${crashAnchor}/${olderTriggerId}`, {
-        headers: { "X-Vouch-User": "u@example.com" },
-      });
+      const response = await fetch(`${url}/runner/v/${crashAnchor}/${olderTriggerId}`);
       expect(response.status).toBe(200);
       const html = await response.text();
       expect(html).toContain("crashed");
