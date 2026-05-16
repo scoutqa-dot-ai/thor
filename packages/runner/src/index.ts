@@ -1290,13 +1290,38 @@ function coerceText(value: unknown): string {
   return "";
 }
 
+const SAFE_SNIPPET_MAX_CHARS = 240;
+const REDACTED = "[redacted]";
+const SECRET_VALUE_RE =
+  /\b(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[a-z]-[A-Za-z0-9-]{10,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|sk-ant-[A-Za-z0-9_-]{20,})\b/g;
+const SECRET_ASSIGNMENT_RE =
+  /\b((?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|id[_-]?token|password|passwd|private[_-]?key|pwd|refresh[_-]?token|secret|token)\b\s*[:=]\s*)(["']?)([^"',;\s]+)(["']?)/gi;
+
+function redactSnippetSecrets(value: string): string {
+  return value
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----/g, REDACTED)
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]{12,}/gi, `$1${REDACTED}`)
+    .replace(/\/\/([^/\s:@]+):([^@\s/]+)@/g, `//$1:${REDACTED}@`)
+    .replace(
+      SECRET_ASSIGNMENT_RE,
+      (_match, prefix: string, open: string, _value: string, close: string) => {
+        const closing = open && close === open ? close : "";
+        return `${prefix}${open}${REDACTED}${closing}`;
+      },
+    )
+    .replace(SECRET_VALUE_RE, REDACTED);
+}
+
+function capSnippet(value: string): string {
+  if (value.length <= SAFE_SNIPPET_MAX_CHARS) return value;
+  return `${value.slice(0, SAFE_SNIPPET_MAX_CHARS - 3)}...`;
+}
+
 function safeSnippet(value: unknown): string {
-  // Debugging UI: no redaction, no length cap. Newlines/tabs are collapsed
-  // to spaces for one-line rendering surfaces — use safeMultilineSnippet when
-  // newlines should be preserved.
-  return coerceText(value)
+  const oneLine = coerceText(value)
     .replace(/[\r\n\t]+/g, " ")
     .replace(/\s{2,}/g, " ");
+  return capSnippet(redactSnippetSecrets(oneLine));
 }
 
 function safeMultilineSnippet(value: unknown): string {

@@ -168,7 +168,6 @@ services:
       - OPENCODE_URL=http://opencode:4096
       - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
       - THOR_E2E_TEST_HELPERS=${THOR_E2E_TEST_HELPERS:-}
-      - SESSION_LOG_MAX_BYTES=${SESSION_LOG_MAX_BYTES:-}
       - SLACK_TEAM_ID=${SLACK_TEAM_ID:-}
     volumes:
       - ./docker-volumes/workspace:/workspace

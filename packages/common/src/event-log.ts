@@ -12,10 +12,10 @@ import { dirname, join, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { getWorklogDir } from "./worklog.js";
 import { createLogger, logWarn, truncate } from "./logger.js";
+import { projectOpencodeEvent } from "./opencode-event-view.js";
 
 const log = createLogger("event-log");
 const SLOW_READ_THRESHOLD_MS = 50;
-import { projectOpencodeEvent } from "./opencode-event-view.js";
 
 export const ALIAS_TYPES = [
   "slack.thread_id",
