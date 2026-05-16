@@ -335,7 +335,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     // lgtm[js/missing-rate-limiting]
     (req, res) => {
       const anchorId = routeParam(req.params.anchorId);
-      if (!isUuidV7(anchorId)) {
+      if (!isUuidV7(anchorId) || !reverseLookupAnchor(anchorId)) {
         res
           .status(404)
           .type("html")

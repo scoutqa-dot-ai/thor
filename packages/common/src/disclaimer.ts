@@ -69,5 +69,11 @@ export function buildThorDisclaimerForSession(
   if (!context.ok) {
     throw new Error(`Disclaimer required: no Thor anchor for session ${sessionId} (${context.reason})`);
   }
-  return { ...context, ...buildThorDisclaimer(context, runnerBaseUrl) };
+  const { anchorId, sessionId: anchorSessionId, triggerId } = context;
+  return {
+    anchorId,
+    sessionId: anchorSessionId,
+    triggerId,
+    ...buildThorDisclaimer({ anchorId, triggerId }, runnerBaseUrl),
+  };
 }
