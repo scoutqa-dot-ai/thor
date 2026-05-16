@@ -361,7 +361,7 @@ describe("remote-cli MCP endpoints", () => {
     };
     const upstreamArgs = {
       ...cleanArgs,
-      description: `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${activeAnchorId}`)}`,
+      description: `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
     };
     expect(approvalOutput).toMatchObject({
       type: "approval_required",

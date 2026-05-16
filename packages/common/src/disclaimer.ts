@@ -58,7 +58,7 @@ export function buildThorDisclaimer(
         runnerBaseUrl,
       )
     : undefined;
-  return { anchorUrl, triggerUrl, footer: formatThorContextFooter(anchorUrl) };
+  return { anchorUrl, triggerUrl, footer: formatThorContextFooter(triggerUrl ?? anchorUrl) };
 }
 
 export function buildThorDisclaimerForSession(

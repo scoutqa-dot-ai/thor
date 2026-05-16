@@ -230,7 +230,7 @@ describe("gh disclaimer injection", () => {
         "42",
         "--body",
         `note
-${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
+${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
       ]);
       expect(
         resolveAlias({
@@ -260,7 +260,7 @@ ${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`
         "--title",
         "Bug",
         "--body",
-        `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
+        `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
       ]);
       expect(
         resolveAlias({
@@ -317,7 +317,7 @@ ${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`
         "comment",
         "123",
         "--body",
-        `note\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorSuperseded}`)}`,
+        `note\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorSuperseded}/${secondTriggerId}`)}`,
       ]);
     });
   });
@@ -349,7 +349,7 @@ ${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`
         "--title",
         "x",
         "--body",
-        `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorChild}`)}`,
+        `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorChild}/${triggerId}`)}`,
       ]);
     });
   });
@@ -375,7 +375,7 @@ ${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`
       );
       expect(response.status).toBe(200);
       expect(execCalls[0].args.at(-1)).toBe(
-        `body=Done\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
+        `body=Done\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
       );
     });
   });

@@ -38,7 +38,7 @@ describe("buildThorDisclaimerForSession", () => {
       anchorUrl: `https://thor.example.com/runner/v/${anchorId}`,
       triggerUrl: `https://thor.example.com/runner/v/${anchorId}/${triggerId}`,
     });
-    expect(disclaimer.footer).toContain(`[View Thor context](${disclaimer.anchorUrl})`);
+    expect(disclaimer.footer).toContain(`[View Thor context](${disclaimer.triggerUrl})`);
   });
 
   it("fails fast with actionable reasons when disclaimer context is unsafe", () => {
