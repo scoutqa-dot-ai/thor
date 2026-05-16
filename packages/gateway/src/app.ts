@@ -460,7 +460,7 @@ export interface GatewayAppConfig extends RunnerDeps {
   internalExec?: InternalExecClient;
   /** GitHub mention debounce delay in ms. Default: 3000. */
   githubMentionDelayMs?: number;
-  /** Required default configured repo name for Slack channels without a valid override. */
+  /** Required default repo directory name for Slack channels without a valid override. */
   slackDefaultRepo?: string;
   /** Test override for Slack channel repo memory root. */
   slackChannelRepoMemoryRoot?: string;

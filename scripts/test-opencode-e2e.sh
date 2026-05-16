@@ -203,34 +203,39 @@ echo "=== Approval-status re-entry ==="
 APPROVAL_UPSTREAM=""
 APPROVAL_TOOL=""
 APPROVAL_DIR=""
-CONFIG_FILE="${HOST_WORKSPACE}/config.json"
 APPROVAL_DISCOVERY_DEBUG=""
 
-if [[ ! -f "$CONFIG_FILE" ]]; then
-  APPROVAL_DISCOVERY_DEBUG="workspace config not found at $CONFIG_FILE"
+if [[ "$remote_cli_health" != *'"status":"ok"'* ]]; then
+  APPROVAL_DISCOVERY_DEBUG="remote-cli health unavailable at $REMOTE_CLI_URL"
 else
-  repo_upstream_pairs=$(CONFIG_FILE="$CONFIG_FILE" node -e "
-    const fs = require('fs');
-    const health = JSON.parse(fs.readFileSync(0, 'utf8'));
-    const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_FILE, 'utf8'));
+  connected_upstreams=$(node -e "
+    const health = JSON.parse(require('fs').readFileSync(0, 'utf8'));
     const connected = new Set(Object.entries(health.mcp?.instances || {}).filter(([, info]) => info && info.connected).map(([name]) => name));
-    for (const [repo, rcfg] of Object.entries(cfg.repos || {})) {
-      for (const upstream of (rcfg.proxies || [])) if (connected.has(upstream)) console.log(repo + ':' + upstream);
-    }
+    for (const upstream of connected) console.log(upstream);
   " <<<"$remote_cli_health" 2>/dev/null || echo "")
 
-  while IFS= read -r pair; do
-    [[ -n "$pair" ]] || continue
-    repo_name="${pair%%:*}"
-    upstream_name="${pair##*:}"
-    found_tool="$(approval_tool_for_upstream "$upstream_name")"
-    if [[ -n "$found_tool" && -d "${HOST_WORKSPACE}/repos/$repo_name" ]]; then
-      APPROVAL_UPSTREAM="$upstream_name"
-      APPROVAL_TOOL="$found_tool"
-      APPROVAL_DIR="/workspace/repos/$repo_name"
-      break
-    fi
-  done <<<"$repo_upstream_pairs"
+  approval_repo="${SLACK_DEFAULT_REPO:-}"
+  if [[ -z "$approval_repo" || ! -d "${HOST_WORKSPACE}/repos/$approval_repo" ]]; then
+    approval_repo=$(ls -1 "${HOST_WORKSPACE}/repos" 2>/dev/null | head -n 1)
+  fi
+
+  if [[ -z "$connected_upstreams" ]]; then
+    APPROVAL_DISCOVERY_DEBUG="No MCP upstream is connected. Check $REMOTE_CLI_URL/health."
+  elif [[ -z "$approval_repo" || ! -d "${HOST_WORKSPACE}/repos/$approval_repo" ]]; then
+    APPROVAL_DISCOVERY_DEBUG="No repo found under ${HOST_WORKSPACE}/repos."
+  else
+    while IFS= read -r upstream_name; do
+      [[ -n "$upstream_name" ]] || continue
+      found_tool="$(approval_tool_for_upstream "$upstream_name")"
+      if [[ -n "$found_tool" ]]; then
+        APPROVAL_UPSTREAM="$upstream_name"
+        APPROVAL_TOOL="$found_tool"
+        APPROVAL_DIR="/workspace/repos/$approval_repo"
+        break
+      fi
+      APPROVAL_DISCOVERY_DEBUG="${APPROVAL_DISCOVERY_DEBUG:+$APPROVAL_DISCOVERY_DEBUG; }upstream $upstream_name has no approval-required tool in e2e map"
+    done <<<"$connected_upstreams"
+  fi
 fi
 
 if [[ -z "$APPROVAL_TOOL" ]]; then
