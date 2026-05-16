@@ -13,7 +13,7 @@ All `git` commands go through Thor's remote-cli which enforces:
 - **No `git pull`.** It depends on local upstream/config and can silently rebase. Run `git fetch origin <branch>` then `git merge origin/<branch>` instead.
 - **`git config` is read-only.** Only `--get`, `--get-all`, and `--list` (with optional `--local`/`--show-origin`/`--show-scope`) are allowed. Scope overrides (`--global`, `--system`, `--file`) and mutation (`--add`, `--unset`, `--replace-all`, …) are denied.
 - **`git -C <abspath>` is allowed when `<abspath>` resolves inside `/workspace/repos` or `/workspace/worktrees`.** The flag is stripped and the path becomes the effective working directory for the rest of the command. Paths outside the workspace, relative paths, and bare `git -C <path>` (with no subcommand) are denied.
-- **`git clone` is narrow and deployment-configured.** Only one URL positional is allowed; it must be an HTTPS GitHub URL matching `GIT_CLONE_ALLOWED_URL_PREFIXES`, and Thor derives `/workspace/repos/<repo>`.
+- **`git clone` is narrow and deployment-configured.** Only one URL positional is allowed; it must be `https://github.com/<owner>/<repo>[.git]` with an owner in `GIT_CLONE_ALLOWED_OWNERS`, and Thor derives `/workspace/repos/<repo>`.
 - **Use `git restore` for file restore.** `git checkout -- <path>` is not part of the supported surface.
 
 ## Common redirects
@@ -42,10 +42,10 @@ Supported shapes: `git merge-base <left> <right>`, `git merge-base --is-ancestor
 Supported shape:
 
 ```
-git clone <allowlisted-https-github-url>
+git clone https://github.com/<allowed-owner>/<repo>[.git]
 ```
 
-The source URL must be an HTTPS `github.com` URL whose string prefix matches one configured in `GIT_CLONE_ALLOWED_URL_PREFIXES` (entries must include a trailing slash, e.g. `https://github.com/acme/`). Do not pass a destination; Thor derives `/workspace/repos/<repo-name-from-url>`. Explicit destinations, traversal, SSH/scp remotes, arbitrary hosts, and extra clone flags are denied. When Git prompts for credentials, Thor's existing GitHub App askpass flow selects the installation by the owner in the clone URL.
+The source URL must exactly match `https://github.com/<owner>/<repo>` or `https://github.com/<owner>/<repo>.git`, and `<owner>` must be listed in `GIT_CLONE_ALLOWED_OWNERS`. Do not pass a destination; Thor derives `/workspace/repos/<repo-name-from-url>`. Explicit destinations, traversal, query strings, embedded credentials, SSH/scp remotes, arbitrary hosts, and extra clone flags are denied. When Git prompts for credentials, Thor's existing GitHub App askpass flow selects the installation by the owner in the clone URL.
 
 ### `git ls-remote`
 

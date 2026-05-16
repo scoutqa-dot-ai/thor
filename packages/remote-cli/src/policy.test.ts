@@ -273,7 +273,7 @@ describe("validateGitArgs", () => {
 
   describe("blocked commands", () => {
     it("allows only allowlisted HTTPS GitHub clone sources and derives repo destinations", () => {
-      const options = { gitCloneAllowedUrlPrefixes: ["https://github.com/acme/"] };
+      const options = { gitCloneAllowedOwners: ["acme"] };
 
       expect(
         validateGitArgs(["clone", "https://github.com/acme/web.git"], undefined, options),
@@ -300,16 +300,6 @@ describe("validateGitArgs", () => {
         ),
       ).toContain("Load skill using-git");
       expect(
-        validateGitArgs(["clone", "https://github.com/other/web.git"], undefined, {
-          gitCloneAllowedUrlPrefixes: ["https://github.com/acme/../"],
-        }),
-      ).toContain("Load skill using-git");
-      expect(
-        validateGitArgs(["clone", "https://github.com/other/web.git"], undefined, {
-          gitCloneAllowedUrlPrefixes: ["https://github.com/acme/%2e%2e/"],
-        }),
-      ).toContain("Load skill using-git");
-      expect(
         validateGitArgs(
           ["clone", "https://gitlab.com/acme/web.git"],
           undefined,
@@ -330,6 +320,9 @@ describe("validateGitArgs", () => {
         "https://github.com/acme/%2E%2E/other/web.git",
         "https://github.com/acme/%2e./other/web.git",
         "https://github.com/acme/.%2e/other/web.git",
+        "https://github.com/acme/web.git/extra",
+        "https://github.com/acme/web.git?depth=1",
+        "https://x-access-token@github.com/acme/web.git",
       ];
       for (const source of dotSegmentSources) {
         expect(validateGitArgs(["clone", source], undefined, options)).toContain(
