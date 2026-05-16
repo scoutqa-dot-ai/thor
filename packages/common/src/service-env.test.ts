@@ -58,13 +58,47 @@ describe("service env", () => {
         ...githubEnv,
         THOR_INTERNAL_SECRET: "secret",
         SLACK_BOT_TOKEN: "xoxb-test",
+        GIT_CLONE_ALLOWED_URL_PREFIXES:
+          "https://github.com/acme/, https://github.com/acme-labs/",
       }),
     ).toMatchObject({
       port: 3004,
       slackBotToken: "xoxb-test",
       gitIdentityName: "thor-app[bot]",
       gitIdentityEmail: "12345+thor-app[bot]@users.noreply.github.com",
+      gitCloneAllowedUrlPrefixes: ["https://github.com/acme/", "https://github.com/acme-labs/"],
     });
+    expect(
+      loadRemoteCliEnv({
+        ...githubEnv,
+        THOR_INTERNAL_SECRET: "secret",
+        SLACK_BOT_TOKEN: "xoxb-test",
+      }).gitCloneAllowedUrlPrefixes,
+    ).toEqual([]);
+    expect(() =>
+      loadRemoteCliEnv({
+        ...githubEnv,
+        THOR_INTERNAL_SECRET: "secret",
+        SLACK_BOT_TOKEN: "xoxb-test",
+        GIT_CLONE_ALLOWED_URL_PREFIXES: "git@github.com:acme/",
+      }),
+    ).toThrow("GIT_CLONE_ALLOWED_URL_PREFIXES entries must be HTTPS GitHub URL prefixes");
+    expect(() =>
+      loadRemoteCliEnv({
+        ...githubEnv,
+        THOR_INTERNAL_SECRET: "secret",
+        SLACK_BOT_TOKEN: "xoxb-test",
+        GIT_CLONE_ALLOWED_URL_PREFIXES: "https://github.com/acme/../",
+      }),
+    ).toThrow("GIT_CLONE_ALLOWED_URL_PREFIXES entries must be HTTPS GitHub URL prefixes");
+    expect(() =>
+      loadRemoteCliEnv({
+        ...githubEnv,
+        THOR_INTERNAL_SECRET: "secret",
+        SLACK_BOT_TOKEN: "xoxb-test",
+        GIT_CLONE_ALLOWED_URL_PREFIXES: "https://github.com/acme/%2e%2e/",
+      }),
+    ).toThrow("GIT_CLONE_ALLOWED_URL_PREFIXES entries must be HTTPS GitHub URL prefixes");
     expect(() => loadRemoteCliEnv({ ...githubEnv, THOR_INTERNAL_SECRET: "secret" })).toThrow(
       "Missing required env var SLACK_BOT_TOKEN",
     );

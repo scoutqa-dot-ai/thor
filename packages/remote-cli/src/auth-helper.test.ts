@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRemoteUrlFromAskpassPrompt } from "./auth-helper.js";
+import { parseRemoteUrlFromAskpassPrompt, resolveOwnerFromAskpassPrompt } from "./auth-helper.js";
 
 describe("parseRemoteUrlFromAskpassPrompt", () => {
   it("extracts the remote URL from a git password prompt", () => {
@@ -18,5 +18,14 @@ describe("parseRemoteUrlFromAskpassPrompt", () => {
 
   it("returns undefined when the prompt does not include a quoted URL", () => {
     expect(parseRemoteUrlFromAskpassPrompt("Password: ")).toBeUndefined();
+  });
+
+  it("resolves the owner from clone credential prompts", () => {
+    expect(
+      resolveOwnerFromAskpassPrompt(
+        "Password for 'https://x-access-token@github.com/acme/web.git': ",
+        "/workspace/repos/web",
+      ),
+    ).toBe("acme");
   });
 });

@@ -78,9 +78,52 @@ export function loadRemoteCliEnv(env: EnvSource = process.env) {
     port: envInt(env, "PORT", 3004),
     nodeEnv: envOptionalString(env, "NODE_ENV") ?? "",
     slackBotToken: envString(env, "SLACK_BOT_TOKEN"),
+    gitCloneAllowedUrlPrefixes: loadGitCloneAllowedUrlPrefixes(env),
     ...loadRemoteCliInternalEnv(env),
     ...loadRemoteCliGitHubEnv(env),
   };
+}
+
+function loadGitCloneAllowedUrlPrefixes(env: EnvSource): string[] {
+  const raw = envOptionalString(env, "GIT_CLONE_ALLOWED_URL_PREFIXES");
+  if (!raw) return [];
+
+  const prefixes = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  for (const prefix of prefixes) {
+    let parsed: URL;
+    try {
+      parsed = new URL(prefix);
+    } catch {
+      throw new Error("GIT_CLONE_ALLOWED_URL_PREFIXES entries must be HTTPS GitHub URL prefixes");
+    }
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname.toLowerCase() !== "github.com" ||
+      hasRawUrlDotSegment(prefix)
+    ) {
+      throw new Error("GIT_CLONE_ALLOWED_URL_PREFIXES entries must be HTTPS GitHub URL prefixes");
+    }
+  }
+
+  return prefixes;
+}
+
+function hasRawUrlDotSegment(value: string): boolean {
+  const match = value.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]*(\/[^?#]*)?/);
+  const path = match?.[1] ?? "";
+  return path.split("/").some((segment) => {
+    if (segment === "." || segment === "..") return true;
+    try {
+      const decoded = decodeURIComponent(segment);
+      return decoded === "." || decoded === "..";
+    } catch {
+      return true;
+    }
+  });
 }
 
 export function loadAdminEnv(env: EnvSource = process.env) {

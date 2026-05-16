@@ -523,6 +523,7 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const getConfig = config.getConfig ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
+  const gitCloneAllowedUrlPrefixes = config.env?.gitCloneAllowedUrlPrefixes ?? [];
   const internalSecret = appEnv.thorInternalSecret;
   const mcpService = createMcpService({
     getConfig,
@@ -547,7 +548,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      const gitResolution = resolveGitArgs(args, cwd);
+      const gitResolution = resolveGitArgs(args, cwd, { gitCloneAllowedUrlPrefixes });
       if ("error" in gitResolution) {
         res.status(400).json({ stdout: "", stderr: gitResolution.error, exitCode: 1 });
         return;

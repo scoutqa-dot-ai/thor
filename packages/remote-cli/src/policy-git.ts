@@ -38,6 +38,10 @@ const LS_REMOTE_FLAGS: readonly PolicyArgFlag[] = [
   { name: "sort", kind: "value", aliases: ["--sort"] },
 ];
 
+export interface GitPolicyOptions {
+  gitCloneAllowedUrlPrefixes?: readonly string[];
+}
+
 interface ResolvedGitArgsSuccess {
   args: string[];
   // Optional rewritten cwd produced by stripping a leading `-C <path>`. When
@@ -67,6 +71,7 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "shortlog",
   "merge-base",
   "branch",
+  "clone",
   "rev-parse",
   "remote",
   "fetch",
@@ -119,6 +124,11 @@ const GIT_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   "git branch": {
     reason: "branch mutation is blocked; only read-only branch inspection is allowed.",
     instead: "git branch --show-current or git branch --list [<pattern>]",
+  },
+  "git clone": {
+    reason:
+      "clone is limited to one configured HTTPS GitHub URL; Thor derives the /workspace/repos/<repo> destination.",
+    instead: "git clone <allowlisted-https-github-url>",
   },
   "git remote": {
     reason: "remote mutation is blocked; Thor only allows reading the configured origin.",
@@ -199,7 +209,11 @@ const GIT_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
 };
 
-export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
+export function resolveGitArgs(
+  args: string[],
+  _cwd?: string,
+  options: GitPolicyOptions = {},
+): ResolvedGitArgs {
   if (!Array.isArray(args) || args.length === 0) {
     return { error: "args must be a non-empty array" };
   }
@@ -239,7 +253,7 @@ export function resolveGitArgs(args: string[], _cwd?: string): ResolvedGitArgs {
     return deny(`git ${first}`);
   }
 
-  const resolved = resolveSubcommand(first, workingArgs);
+  const resolved = resolveSubcommand(first, workingArgs, options);
   if ("error" in resolved) return resolved;
   return withCwd(resolved, rewrittenCwd);
 }
@@ -276,7 +290,11 @@ function hasTraversalSegment(pathArg: string): boolean {
   return pathArg.split("/").includes("..");
 }
 
-function resolveSubcommand(first: string, args: string[]): ResolvedGitArgs {
+function resolveSubcommand(
+  first: string,
+  args: string[],
+  options: GitPolicyOptions,
+): ResolvedGitArgs {
   switch (first) {
     case "status":
     case "log":
@@ -298,6 +316,8 @@ function resolveSubcommand(first: string, args: string[]): ResolvedGitArgs {
       return wrap(validateMergeBase(args), args);
     case "branch":
       return wrap(validateBranch(args), args);
+    case "clone":
+      return resolveClone(args, options.gitCloneAllowedUrlPrefixes ?? []);
     case "remote":
       return wrap(validateRemote(args), args);
     case "fetch":
@@ -329,8 +349,12 @@ function resolveSubcommand(first: string, args: string[]): ResolvedGitArgs {
   }
 }
 
-export function validateGitArgs(args: string[], cwd?: string): string | null {
-  const result = resolveGitArgs(args, cwd);
+export function validateGitArgs(
+  args: string[],
+  cwd?: string,
+  options: GitPolicyOptions = {},
+): string | null {
+  const result = resolveGitArgs(args, cwd, options);
   return "error" in result ? result.error : null;
 }
 
@@ -399,6 +423,108 @@ function validateBranch(args: string[]): string | null {
   }
 
   return null;
+}
+
+function resolveClone(args: string[], allowedPrefixes: readonly string[]): ResolvedGitArgs {
+  if (allowedPrefixes.length === 0 || args.length !== 2) return deny("git clone");
+
+  const source = args[1];
+  if (!isAllowedCloneSource(source, allowedPrefixes)) return deny("git clone");
+
+  const repoName = parseCloneRepoName(source);
+  if (!repoName) return deny("git clone");
+
+  const destination = `${WORKSPACE_REPOS_ROOT}/${repoName}`;
+  if (!isSafeCloneDestination(destination)) return deny("git clone");
+
+  return { args: ["clone", source, destination] };
+}
+
+function isAllowedCloneSource(source: string, allowedPrefixes: readonly string[]): boolean {
+  if (!source || source.includes("\0")) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(source);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "github.com") {
+    return false;
+  }
+  if (hasRawUrlDotSegment(source)) return false;
+  if (hasUrlDotSegment(parsed)) return false;
+
+  return allowedPrefixes.some((prefix) => {
+    let parsedPrefix: URL;
+    if (hasRawUrlDotSegment(prefix)) return false;
+    try {
+      parsedPrefix = new URL(prefix);
+    } catch {
+      return false;
+    }
+    if (parsedPrefix.protocol !== "https:" || parsedPrefix.hostname.toLowerCase() !== "github.com") {
+      return false;
+    }
+    if (hasUrlDotSegment(parsedPrefix)) return false;
+    return parsed.href.startsWith(parsedPrefix.href);
+  });
+}
+
+function parseCloneRepoName(source: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(source);
+  } catch {
+    return null;
+  }
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  if (parts.length !== 2) return null;
+
+  const repoWithSuffix = parts[1];
+  const repo = repoWithSuffix.endsWith(".git")
+    ? repoWithSuffix.slice(0, -".git".length)
+    : repoWithSuffix;
+  return isSafeRepoName(repo) ? repo : null;
+}
+
+function isSafeRepoName(repo: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(repo) && repo !== "." && repo !== "..";
+}
+
+function hasRawUrlDotSegment(source: string): boolean {
+  const match = source.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]*(\/[^?#]*)?/);
+  const path = match?.[1] ?? "";
+  return path.split("/").some(isDotSegment);
+}
+
+function hasUrlDotSegment(url: URL): boolean {
+  return url.pathname.split("/").some(isDotSegment);
+}
+
+function isDotSegment(segment: string): boolean {
+  if (segment === "." || segment === "..") return true;
+  try {
+    const decoded = decodeURIComponent(segment);
+    return decoded === "." || decoded === "..";
+  } catch {
+    return true;
+  }
+}
+
+function isSafeCloneDestination(destination: string): boolean {
+  if (!destination || destination.includes("\0") || !isAbsolute(destination)) return false;
+  if (hasTraversalSegment(destination)) return false;
+  if (normalizePosix(destination) !== destination) return false;
+  if (!destination.startsWith(`${WORKSPACE_REPOS_ROOT}/`)) return false;
+  if (destination === WORKSPACE_REPOS_ROOT) return false;
+
+  const relative = destination.slice(`${WORKSPACE_REPOS_ROOT}/`.length);
+  if (!relative || relative.includes("/")) return false;
+  if (relative === "." || relative === "..") return false;
+
+  const real = realpathOrNull(destination);
+  if (real && !isPathWithin(WORKSPACE_REPOS_ROOT, real)) return false;
+  return true;
 }
 
 function validateRemote(args: string[]): string | null {
