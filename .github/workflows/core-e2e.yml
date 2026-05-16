@@ -110,7 +110,6 @@ jobs:
           {
             "repos": {
               "acme-multi-hyphen-repo": {
-                "channels": ["${SLACK_E2E_CHANNEL_ID:-C123456789}"],
                 "proxies": ["atlassian"]
               }
             },
