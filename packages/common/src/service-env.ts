@@ -79,9 +79,28 @@ export function loadRemoteCliEnv(env: EnvSource = process.env) {
     port: envInt(env, "PORT", 3004),
     nodeEnv: envOptionalString(env, "NODE_ENV") ?? "",
     slackBotToken: envString(env, "SLACK_BOT_TOKEN"),
+    gitCloneAllowedOwners: loadGitCloneAllowedOwners(env),
     ...loadRemoteCliInternalEnv(env),
     ...loadRemoteCliGitHubEnv(env),
   };
+}
+
+function loadGitCloneAllowedOwners(env: EnvSource): string[] {
+  const raw = envOptionalString(env, "GIT_CLONE_ALLOWED_OWNERS");
+  if (!raw) return [];
+
+  const owners = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  for (const owner of owners) {
+    if (!/^[A-Za-z0-9._-]+$/.test(owner) || owner === "." || owner === "..") {
+      throw new Error("GIT_CLONE_ALLOWED_OWNERS entries must be GitHub owner names");
+    }
+  }
+
+  return owners;
 }
 
 export function loadAdminEnv(env: EnvSource = process.env) {

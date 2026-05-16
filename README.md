@@ -52,6 +52,14 @@ docker compose run --rm remote-cli \
   git clone https://github.com/your-org/your-repo.git /workspace/repos/your-repo
 ```
 
+If the stack is already running, you can clone the same repo from the
+`remote-cli` container instead:
+
+```bash
+docker compose exec remote-cli \
+  git clone https://github.com/your-org/your-repo.git
+```
+
 4. Configure `/workspace/config.json` with repo-to-upstream access rules.
 
 Example:
@@ -129,6 +137,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `GITHUB_APP_PRIVATE_KEY_FILE`       | Yes      | `remote-cli`                         | GitHub App private key path                                                                                              |
 | `GITHUB_WEBHOOK_SECRET`             | Yes      | `gateway`                            | GitHub webhook signature secret                                                                                          |
 | `GITHUB_PAT`                        | No       | `remote-cli`                         | Optional fallback token for `git` / `gh` after GitHub App startup                                                        |
+| `GIT_CLONE_ALLOWED_OWNERS`          | No       | `remote-cli`                         | Comma-separated GitHub owners allowed for exact `https://github.com/<owner>/<repo>[.git]` clones; Thor derives `/workspace/repos/<repo>` destinations |
 | `GRAFANA_ORG_ID`                    | No       | `grafana-mcp`                        | Grafana org ID (defaults to `1`)                                                                                         |
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | `grafana-mcp`                        | Grafana service account token                                                                                            |
 | `GRAFANA_URL`                       | Yes      | `grafana-mcp`                        | Grafana instance URL                                                                                                     |
@@ -231,11 +240,16 @@ Rules match by exact host or suffix first, then by optional `path_prefix` and
 ```bash
 pnpm test
 pnpm test:mcp
-pnpm test:e2e          # deterministic direct checks only; never calls /trigger
+REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
+REMOTE_CLI_GITHUB_REPO=owner/repo \
+GIT_CLONE_ALLOWED_OWNERS=owner \
+  pnpm test:e2e
 pnpm test:create-jira-approval-e2e # live Slack/OpenCode approval-card e2e for Atlassian approval-required tools
 pnpm test:opencode-e2e # separate explicit OpenCode/LLM smoke path
 pnpm typecheck
 ```
+
+`pnpm test:e2e` is deterministic and never calls `/trigger`. The clone repo env vars are required because the test exercises `remote-cli`'s `/exec/git clone` policy.
 
 `pnpm test:create-jira-approval-e2e` requires live Slack/OpenCode credentials, a connected Atlassian MCP upstream, and a writable Slack test channel via `SLACK_E2E_CHANNEL_ID` (or `SLACK_CHANNEL_ID`). It intentionally leaves approvals pending for human inspection.
 
