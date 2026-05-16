@@ -1,0 +1,25 @@
+packages/common/src/event-log.ts
+  a6dc967850964afe 219-236,242-244
+packages/common/src/event-log.test.ts
+  a6dc967850964afe 80-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "97d203a1183858944882d5611e3ecea8d34a34a9",
+  "prompts": {
+    "a6dc967850964afe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "368efb7a-82da-4e29-bf2f-df333d47b589",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 60,
+      "total_deletions": 0,
+      "accepted_lines": 60,
+      "overriden_lines": 0
+    }
+  }
+}
