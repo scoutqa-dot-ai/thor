@@ -3,13 +3,13 @@
 Comparison of Thor against five open-source / public-architecture coding agents:
 OpenHands, open-swe, background-agents, junior, goose.
 
-| Tool              | Repository                              | License                              |
-| ----------------- | --------------------------------------- | ------------------------------------ |
-| OpenHands         | github.com/OpenHands/OpenHands          | MIT (core) + Polyform (enterprise)   |
-| open-swe          | github.com/langchain-ai/open-swe        | MIT                                  |
-| background-agents | Open-Inspect (Ramp-style reference)     | Open-source                          |
-| junior            | Sentry-operated Slack bot runtime       | Sentry-internal                      |
-| goose             | github.com/aaif-goose/goose             | Apache 2.0                           |
+| Tool              | Repository                                                                      | License                              |
+| ----------------- | ------------------------------------------------------------------------------- | ------------------------------------ |
+| OpenHands         | [OpenHands/OpenHands](https://github.com/OpenHands/OpenHands)                   | MIT (core) + Polyform (enterprise)   |
+| open-swe          | [langchain-ai/open-swe](https://github.com/langchain-ai/open-swe)               | MIT                                  |
+| background-agents | [ColeMurray/background-agents](https://github.com/ColeMurray/background-agents) | Open-source                          |
+| junior            | [getsentry/junior](https://github.com/getsentry/junior)                         | Sentry-operated                      |
+| goose             | [aaif-goose/goose](https://github.com/aaif-goose/goose)                         | Apache 2.0                           |
 
 ## 1. Thor in one paragraph
 
@@ -81,12 +81,12 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 | Per-session sandbox                         | 🟡 (Daytona per worktree/tool) | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Worktree-based edits in shared workspace    | ✅   | ❌        | ❌       | ❌        | ❌     | ❌    |
 | Session continuity / resume                 | ✅   | ✅        | ✅       | ✅ (Durable Objects) | ✅ (turn-resume) | ✅ |
-| Multi-user multiplayer in one session       | ❌   | 🟡        | ❌       | ✅        | ❌     | ❌    |
+| Multi-user multiplayer in one session       | 🟡 (shared Slack thread / PR) | 🟡 | ❌ | ✅ (real-time WS) | ❌ | ❌ |
 | Multi-LLM provider                          | 🟡 (via OpenCode) | ✅ | ✅ | ✅ | ✅ | ✅ (30+) |
 | Outbound HTTPS credential injection         | ✅ (mitmproxy) | ❌ | ❌ | ❌ | ✅ (egress proxy) | ❌ |
 | Audit log of tool calls                     | ✅   | 🟡        | 🟡 (LangSmith) | 🟡 | ✅ | 🟡 |
-| Plugin / extension ecosystem                | 🟡 (MCP upstreams) | ✅ | ✅ | 🟡 | ✅ (plugins) | ✅ (70+ extensions) |
-| Browser / web-use tool                      | 🟡 (via MCP) | ✅ | 🟡 | ✅ | ✅ | ✅ |
+| Plugin / extension ecosystem                | ❌   | ✅        | ✅       | 🟡        | ✅ (plugins) | ✅ (70+ extensions) |
+| Browser / web-use tool                      | 🟡 (sandbox skill: `agent-browser`) | ✅ | 🟡 | ✅ | ✅ | ✅ |
 | Multi-agent / subagent spawning             | ✅ (OpenCode task) | 🟡 | ✅ (`task` tool, reviewer subgraph) | ✅ (sub-tasks) | ❌ | 🟡 |
 | Snapshot / fast cold-start                  | n/a  | ❌        | 🟡       | ✅ (Modal) | ❌    | n/a   |
 
@@ -185,9 +185,12 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 
 **Where background-agents is doing better than Thor**
 
-1. **Async multiplayer.** Multiple Slack users in the same thread, plus the
-   web client, watching the same stream. Cloudflare Durable Objects own the
-   session state. Thor streams to one Slack thread only.
+1. **Real-time WebSocket multiplayer.** Multiple Slack users in the same
+   thread, plus web clients, watching the same stream over WebSockets backed
+   by Cloudflare Durable Objects. Thor supports multi-user participation
+   within a Slack thread / GitHub PR (the gateway batches events by
+   correlation key), but there is no real-time web-client multiplayer or
+   shared session state outside the Slack/PR thread.
 2. **Snapshot / fast restart.** Modal snapshots restore a hot sandbox in
    seconds. Thor has reusable Daytona worktree sandboxes for command
    execution, but the always-on agent workspace is shared.
@@ -338,6 +341,11 @@ simpler ones:
 5. **A richer web UI for session replay** (OpenHands, open-swe, bg-agents).
    Thor has an admin/replay base, but it is not a full session workbench.
 6. **Recipes / reusable prompt templates** (goose).
+7. **A plugin / extension abstraction** (OpenHands, open-swe, junior, goose).
+   Thor has none at all today — every new upstream is a manual edit across
+   `proxies.ts`, mitmproxy config, MCP policy, and Slack permissions. Junior's
+   plugin model (skills + capabilities + credentials bundled per provider) is
+   the closest fit.
 
 ### Things Thor should explicitly *not* adopt
 
@@ -358,11 +366,14 @@ simpler ones:
 3. **Thinking-level routing** (junior-style) to cut LLM cost.
 4. **Per-prompt commit attribution** (bg-agents-style) in `runner` worktree
    commits.
-5. **Automatic AGENTS.md injection** from the target repo into the agent's
+5. **Plugin / extension abstraction** (junior-style) — bundles MCP policy,
+   mitmproxy rules, and credentials for each upstream into one unit. Today
+   adding a new upstream touches 4+ files; this is a real gap, not just a
+   scale concern.
+6. **Automatic AGENTS.md injection** from the target repo into the agent's
    system prompt.
-6. **Richer session replay UI** (OpenHands-style) for non-Slack users and
+7. **Richer session replay UI** (OpenHands-style) for non-Slack users and
    post-hoc audit.
-7. **Plugin bundling abstraction** (junior-style) once we have ≥10 upstreams.
 
 Items 1–4 are each a few days of work and don't touch the architectural
 invariants. Items 5–7 are larger and worth their own plan docs in
