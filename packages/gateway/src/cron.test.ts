@@ -179,4 +179,42 @@ describe("POST /cron", () => {
       expect(fetchImpl).not.toHaveBeenCalled();
     });
   });
+
+  it("rejects a same-length wrong secret via constant-time comparison", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    // Same byte length as the configured secret so the comparison reaches
+    // timingSafeEqual instead of short-circuiting on length.
+    await withServer(fetchImpl, { cronSecret: "abcdefgh" }, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/cron`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer abcdefgX",
+        },
+        body: JSON.stringify({ prompt: "Do the thing" }),
+      });
+
+      expect(response.status).toBe(401);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("returns 401 when authorization scheme is not Bearer", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, { cronSecret: "my-secret" }, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/cron`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Basic my-secret",
+        },
+        body: JSON.stringify({ prompt: "Do the thing" }),
+      });
+
+      expect(response.status).toBe(401);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
 });

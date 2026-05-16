@@ -8,6 +8,7 @@ import {
   hasSessionForCorrelationKey,
   logError,
   logInfo,
+  matchesInternalSecret,
   resolveExistingDirectoryWithinRoot,
   resolveCorrelationKeys,
   getAllowedChannelIds,
@@ -1761,7 +1762,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     const auth = req.header("authorization");
-    if (auth !== `Bearer ${config.cronSecret}`) {
+    const bearerPrefix = "Bearer ";
+    const providedSecret = auth?.startsWith(bearerPrefix)
+      ? auth.slice(bearerPrefix.length)
+      : undefined;
+    if (!matchesInternalSecret(config.cronSecret, providedSecret)) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }

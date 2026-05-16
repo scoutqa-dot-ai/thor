@@ -180,8 +180,8 @@ interface AliasCacheState {
   reverse: Map<string, InternalReverseEntry>;
 }
 const aliasCache: AliasCacheState = { forward: new Map(), reverse: new Map() };
-/** Last observed size of aliases.jsonl. -1 = never loaded. */
-let aliasCacheLastSize = -1;
+/** Last observed file signature for aliases.jsonl. */
+let aliasCacheLastSignature: string | null = null;
 
 interface SessionRecordsCacheEntry {
   signature: string;
@@ -514,7 +514,7 @@ function completeLines(path: string): string[] {
 function fileStat(path: string): { signature: string; size: number } | null {
   try {
     const stat = statSync(path);
-    return { signature: `${stat.size}:${stat.mtimeMs}`, size: stat.size };
+    return { signature: `${path}:${stat.size}:${stat.mtimeMs}`, size: stat.size };
   } catch {
     return null;
   }
@@ -526,7 +526,7 @@ function readSessionRecords(sessionId: string): {
 } {
   const path = sessionLogPath(sessionId);
   const stat = fileStat(path);
-  const signature = stat?.signature ?? "missing";
+  const signature = stat?.signature ?? `${path}:missing`;
   const cached = sessionRecordsCache.get(sessionId);
   if (cached && cached.signature === signature) {
     touchSessionRecordsCache(sessionId, cached);
@@ -596,6 +596,10 @@ function emptyReverseEntry(): InternalReverseEntry {
   return { sessions: new Map(), subsessions: new Set(), externalKeys: new Set() };
 }
 
+function isReverseEntryEmpty(entry: InternalReverseEntry): boolean {
+  return entry.sessions.size === 0 && entry.subsessions.size === 0 && entry.externalKeys.size === 0;
+}
+
 function ensureReverseEntry(anchorId: string): InternalReverseEntry {
   let entry = aliasCache.reverse.get(anchorId);
   if (!entry) {
@@ -620,6 +624,7 @@ function applyAliasRecord(r: AliasRecord): void {
       if (r.aliasType === "opencode.session") old.sessions.delete(r.aliasValue);
       else if (r.aliasType === "opencode.subsession") old.subsessions.delete(r.aliasValue);
       else old.externalKeys.delete(aliasKey);
+      if (isReverseEntryEmpty(old)) aliasCache.reverse.delete(previousAnchorId);
     }
   }
 
@@ -639,10 +644,12 @@ function applyAliasToCache(alias: AliasRecord): void {
   applyAliasRecord(alias);
 
   // statSync mtime may round to the same ms after appendFileSync; bumping to
-  // the current size keeps loadAliasCacheIfChanged from doing a redundant
-  // rebuild on the next read.
+  // the current full signature keeps loadAliasCacheIfChanged from doing a
+  // redundant rebuild on the next read.
   try {
-    aliasCacheLastSize = statSync(aliasLogPath()).size;
+    const path = aliasLogPath();
+    const stat = statSync(path);
+    aliasCacheLastSignature = `${path}:${stat.size}:${stat.mtimeMs}`;
   } catch {
     // best-effort
   }
@@ -651,12 +658,15 @@ function applyAliasToCache(alias: AliasRecord): void {
 function loadAliasCacheIfChanged(): void {
   const path = aliasLogPath();
   let currentSize = 0;
+  let currentSignature = `${path}:missing`;
   try {
-    currentSize = statSync(path).size;
+    const stat = statSync(path);
+    currentSize = stat.size;
+    currentSignature = `${path}:${stat.size}:${stat.mtimeMs}`;
   } catch {
     // missing file → treat as size 0
   }
-  if (currentSize === aliasCacheLastSize) return;
+  if (currentSignature === aliasCacheLastSignature) return;
   aliasCache.forward.clear();
   aliasCache.reverse.clear();
   if (currentSize > 0) {
@@ -669,7 +679,7 @@ function loadAliasCacheIfChanged(): void {
       }
     }
   }
-  aliasCacheLastSize = currentSize;
+  aliasCacheLastSignature = currentSignature;
 }
 
 function pickNewestSession(entry: InternalReverseEntry): string | undefined {

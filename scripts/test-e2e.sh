@@ -11,14 +11,14 @@
 # Usage:
 #   REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
 #   REMOTE_CLI_GITHUB_REPO=owner/repo \
-#   GIT_CLONE_ALLOWED_OWNERS=owner \
 #     ./scripts/test-e2e.sh
 #   RUNNER_URL=http://localhost:3000 REMOTE_CLI_URL=http://localhost:3004 \
 #   REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
 #   REMOTE_CLI_GITHUB_REPO=owner/repo \
-#   GIT_CLONE_ALLOWED_OWNERS=owner \
 #     ./scripts/test-e2e.sh
 #
+# The repo's owner must be present in /workspace/config.json's `owners` map for
+# `git clone` to pass policy and resolve a GitHub App installation.
 set -euo pipefail
 
 repo_name_from_clone_url() {
@@ -30,7 +30,6 @@ repo_name_from_clone_url() {
 
 : "${REMOTE_CLI_GIT_REPO_URL:?REMOTE_CLI_GIT_REPO_URL is required}"
 : "${REMOTE_CLI_GITHUB_REPO:?REMOTE_CLI_GITHUB_REPO is required}"
-: "${GIT_CLONE_ALLOWED_OWNERS:?GIT_CLONE_ALLOWED_OWNERS is required}"
 
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 REMOTE_CLI_URL="${REMOTE_CLI_URL:-http://localhost:3004}"

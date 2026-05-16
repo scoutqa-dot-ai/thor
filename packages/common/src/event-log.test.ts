@@ -6,6 +6,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +17,7 @@ import {
   appendAlias,
   appendSessionEvent,
   findActiveTrigger,
+  listAnchors,
   listAnchorSessionStates,
   listSessionAliases,
   mintAnchor,
@@ -362,6 +364,88 @@ describe("session event log", () => {
     expect(listSessionAliases("s1")).toMatchObject([
       { aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorA },
     ]);
+  });
+
+  it("invalidates alias cache when the worklog directory changes", () => {
+    appendAlias({
+      ts: "2026-05-14T12:00:00.000Z",
+      aliasType: "slack.thread_id",
+      aliasValue: "same-size",
+      anchorId: anchorA,
+    });
+    expect(resolveAlias({ aliasType: "slack.thread_id", aliasValue: "same-size" })).toBe(anchorA);
+
+    const oldAliasLog = readFileSync(join(testDir, "aliases.jsonl"), "utf8");
+    const nextDir = mkdtempSync(join(tmpdir(), "thor-event-log-next-"));
+    try {
+      const nextAliasLog =
+        JSON.stringify({
+          ts: "2026-05-14T12:00:00.000Z",
+          aliasType: "slack.thread_id",
+          aliasValue: "same-size",
+          anchorId: anchorB,
+        }) + "\n";
+      expect(Buffer.byteLength(nextAliasLog, "utf8")).toBe(Buffer.byteLength(oldAliasLog, "utf8"));
+
+      process.env.WORKLOG_DIR = nextDir;
+      writeFileSync(join(nextDir, "aliases.jsonl"), nextAliasLog);
+
+      expect(resolveAlias({ aliasType: "slack.thread_id", aliasValue: "same-size" })).toBe(anchorB);
+      expect(resolveAlias({ aliasType: "opencode.session", aliasValue: "s1" })).toBeUndefined();
+    } finally {
+      process.env.WORKLOG_DIR = testDir;
+      rmSync(nextDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not enumerate anchors after their last alias moves away", () => {
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "moved-session",
+      anchorId: anchorDashE,
+    });
+    expect(listAnchors().map((row) => row.anchorId)).toContain(anchorDashE);
+
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "moved-session",
+      anchorId: anchorDashF,
+    });
+
+    expect(listAnchors().map((row) => row.anchorId)).not.toContain(anchorDashE);
+    expect(listAnchorSessionStates().map((row) => row.anchorId)).not.toContain(anchorDashE);
+    expect(reverseLookupAnchor(anchorDashF)).toMatchObject({
+      sessionIds: ["moved-session"],
+      currentSessionId: "moved-session",
+    });
+  });
+
+  it("invalidates session record cache when the worklog directory changes", () => {
+    const fixedTime = new Date("2026-05-14T12:00:00.000Z");
+    writeSession("same-session", [
+      { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA },
+    ]);
+    utimesSync(sessionLogPath("same-session"), fixedTime, fixedTime);
+    const oldStat = statSync(sessionLogPath("same-session"));
+    expect(readTriggerSlice("same-session", triggerA)).toMatchObject({ status: "in_flight" });
+
+    const nextDir = mkdtempSync(join(tmpdir(), "thor-event-log-next-"));
+    try {
+      process.env.WORKLOG_DIR = nextDir;
+      writeSession("same-session", [
+        { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerB },
+      ]);
+      utimesSync(sessionLogPath("same-session"), fixedTime, fixedTime);
+      const nextStat = statSync(sessionLogPath("same-session"));
+      expect(nextStat.size).toBe(oldStat.size);
+      expect(nextStat.mtimeMs).toBe(oldStat.mtimeMs);
+
+      expect(readTriggerSlice("same-session", triggerB)).toMatchObject({ status: "in_flight" });
+      expect(readTriggerSlice("same-session", triggerA)).toMatchObject({ notFound: true });
+    } finally {
+      process.env.WORKLOG_DIR = testDir;
+      rmSync(nextDir, { recursive: true, force: true });
+    }
   });
 
   it("finds active triggers via anchor reverse-lookup", () => {
