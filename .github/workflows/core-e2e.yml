@@ -144,7 +144,7 @@ jobs:
         run: pnpm test:create-jira-approval-e2e
 
       - name: Run OpenCode LLM smoke test
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/slack-channel-repo-routing'
         env:
           CI: "true"
         run: pnpm test:opencode-e2e
