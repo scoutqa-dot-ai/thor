@@ -22,6 +22,7 @@ ingress -> gateway -> runner -> opencode
 | `mitmproxy`   | 3080 | `docker/mitmproxy` | Explicit outbound HTTP(S) proxy             |
 | `gateway`     | 3002 | `@thor/gateway`    | Slack/GitHub webhook ingestion and batching |
 | `remote-cli`  | 3004 | `@thor/remote-cli` | CLI + MCP policy gateway                    |
+| `admin`       | 3005 | `@thor/admin`      | Admin dashboard and workspace configuration |
 | `grafana-mcp` | 8000 | Docker image       | Grafana MCP server                          |
 | `ingress`     | 8080 | `docker/ingress`   | Reverse proxy + Vouch integration           |
 | `opencode`    | 4096 | Docker image       | Headless agent runtime                      |

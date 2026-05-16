@@ -108,6 +108,21 @@ describe("service env", () => {
     ).toThrow("METABASE_DATABASE_ID must be an integer");
   });
 
+  it("strips trailing slashes from RUNNER_URL and OPENCODE_URL", () => {
+    const gateway = loadGatewayEnv({
+      THOR_INTERNAL_SECRET: "secret",
+      GITHUB_APP_SLUG: "thor-app",
+      GITHUB_APP_BOT_ID: "12345",
+      GITHUB_WEBHOOK_SECRET: "webhook",
+      RUNNER_URL: "http://runner:3000///",
+    });
+    expect(gateway.runnerUrl).toBe("http://runner:3000");
+
+    expect(loadRunnerEnv({ OPENCODE_URL: "http://127.0.0.1:4096/" }).opencodeUrl).toBe(
+      "http://127.0.0.1:4096",
+    );
+  });
+
   it("loads admin defaults and derived audit log path", () => {
     expect(loadAdminEnv({})).toEqual({
       port: 3005,
