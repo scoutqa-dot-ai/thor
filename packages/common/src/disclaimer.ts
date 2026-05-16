@@ -1,6 +1,6 @@
 import { findActiveTrigger, findAnchorContext } from "./event-log.js";
 
-export function formatThorDisclaimerFooter(thorUrl: string): string {
+export function formatThorContextFooter(thorUrl: string): string {
   return ["", "---", `AI-generated — verify before acting. [View Thor context](${thorUrl})`].join(
     "\n",
   );
@@ -53,9 +53,12 @@ export function buildThorDisclaimer(
 ): { anchorUrl: string; triggerUrl?: string; footer: string } {
   const anchorUrl = buildThorAnchorUrl(trigger, runnerBaseUrl);
   const triggerUrl = trigger.triggerId
-    ? buildThorTriggerUrl({ anchorId: trigger.anchorId, triggerId: trigger.triggerId }, runnerBaseUrl)
+    ? buildThorTriggerUrl(
+        { anchorId: trigger.anchorId, triggerId: trigger.triggerId },
+        runnerBaseUrl,
+      )
     : undefined;
-  return { anchorUrl, triggerUrl, footer: formatThorDisclaimerFooter(anchorUrl) };
+  return { anchorUrl, triggerUrl, footer: formatThorContextFooter(anchorUrl) };
 }
 
 export function buildThorDisclaimerForSession(
@@ -67,7 +70,9 @@ export function buildThorDisclaimerForSession(
   }
   const context = findAnchorContext(sessionId);
   if (!context.ok) {
-    throw new Error(`Disclaimer required: no Thor anchor for session ${sessionId} (${context.reason})`);
+    throw new Error(
+      `Disclaimer required: no Thor anchor for session ${sessionId} (${context.reason})`,
+    );
   }
   const { anchorId, sessionId: anchorSessionId, triggerId } = context;
   return {

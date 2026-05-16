@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import {
   appendAlias,
   appendSessionEvent,
-  formatThorDisclaimerFooter,
+  formatThorContextFooter,
   type WorkspaceConfig,
 } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -361,7 +361,7 @@ describe("remote-cli MCP endpoints", () => {
     };
     const upstreamArgs = {
       ...cleanArgs,
-      description: `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${activeAnchorId}`)}`,
+      description: `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${activeAnchorId}`)}`,
     };
     expect(approvalOutput).toMatchObject({
       type: "approval_required",

@@ -135,7 +135,7 @@ export {
   buildThorAnchorUrl,
   buildThorTriggerUrl,
   findActiveTriggerOrThrow,
-  formatThorDisclaimerFooter,
+  formatThorContextFooter,
 } from "./disclaimer.js";
 export type { ActiveTriggerSnapshot, ThorDisclaimerContext } from "./disclaimer.js";
 export {

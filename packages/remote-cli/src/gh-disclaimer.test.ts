@@ -5,7 +5,12 @@ import type { AddressInfo } from "node:net";
 import { readFileSync, rmSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { normalize as normalizePosix } from "node:path/posix";
-import { appendAlias, appendSessionEvent, formatThorDisclaimerFooter, resolveAlias } from "@thor/common";
+import {
+  appendAlias,
+  appendSessionEvent,
+  formatThorContextFooter,
+  resolveAlias,
+} from "@thor/common";
 
 vi.hoisted(() => {
   process.env.WORKLOG_DIR = "/tmp/thor-remote-cli-gh-test/worklog";
@@ -21,7 +26,11 @@ vi.mock("./exec.js", () => ({
       return { stdout: "https://github.com/acme/thor/issues/42\n", stderr: "", exitCode: 0 };
     }
     if (bin === "gh" && args[0] === "issue" && args[1] === "comment") {
-      return { stdout: "https://github.com/acme/thor/issues/42#issuecomment-1\n", stderr: "", exitCode: 0 };
+      return {
+        stdout: "https://github.com/acme/thor/issues/42#issuecomment-1\n",
+        stderr: "",
+        exitCode: 0,
+      };
     }
     return { stdout: "ok", stderr: "", exitCode: 0 };
   }),
@@ -221,7 +230,7 @@ describe("gh disclaimer injection", () => {
         "42",
         "--body",
         `note
-${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
+${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
       ]);
       expect(
         resolveAlias({
@@ -251,7 +260,7 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}`
         "--title",
         "Bug",
         "--body",
-        `Broken\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
+        `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
       ]);
       expect(
         resolveAlias({
@@ -282,7 +291,7 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}`
         "comment",
         "123",
         "--body",
-        `note\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
+        `note\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
       ]);
     });
   });
@@ -308,7 +317,7 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}`
         "comment",
         "123",
         "--body",
-        `note\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorSuperseded}`)}`,
+        `note\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorSuperseded}`)}`,
       ]);
     });
   });
@@ -340,7 +349,7 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}`
         "--title",
         "x",
         "--body",
-        `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorChild}`)}`,
+        `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorChild}`)}`,
       ]);
     });
   });
@@ -366,7 +375,7 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}`
       );
       expect(response.status).toBe(200);
       expect(execCalls[0].args.at(-1)).toBe(
-        `body=Done\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
+        `body=Done\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
       );
     });
   });
