@@ -1,0 +1,25 @@
+packages/runner/src/index.ts
+  9bdcf96f8a37cc5b 15,1699-1726,1730-1733,1759-1764,1778-1788
+packages/common/src/event-log.ts
+  9bdcf96f8a37cc5b 3-5,7-8,14-17,190-196,199-207,418-493,495,504-514,535,539,553,956-971
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1160515ab5d8ff6cf3c0120ea6ae274684ae2b84",
+  "prompts": {
+    "9bdcf96f8a37cc5b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d7a234d0-b49b-43d4-8bab-aad6c5a06e96",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 211,
+      "total_deletions": 51,
+      "accepted_lines": 187,
+      "overriden_lines": 0
+    }
+  }
+}
