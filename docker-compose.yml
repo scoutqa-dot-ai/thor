@@ -15,7 +15,6 @@ services:
       - "127.0.0.1:3004:3004"
     environment:
       - NODE_ENV=production
-      - GITHUB_PAT=${GITHUB_PAT:-}
       - GITHUB_APP_ID=${GITHUB_APP_ID:?set GITHUB_APP_ID}
       - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:?set GITHUB_APP_SLUG}
       - GITHUB_APP_BOT_ID=${GITHUB_APP_BOT_ID:?set GITHUB_APP_BOT_ID}

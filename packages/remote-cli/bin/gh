@@ -1,16 +1,32 @@
 #!/bin/sh
 # Thor gh wrapper — resolves GitHub App auth before executing real gh.
 # Placed on PATH before /usr/bin/gh inside the remote-cli container.
-# Falls back to PAT auth (GH_TOKEN) when GitHub App is not configured.
 
 set -e
 
 REAL_GH="/usr/bin/gh"
 TAG="[thor-github-app]"
-. /usr/local/lib/thor/bin/github-app-config.sh
 
-# If no GitHub App config exists, pass through to real gh unchanged
-if ! thor_has_github_app_config /workspace/config.json; then
+is_help_command() {
+  case "${1:-}" in
+    help | version | --version)
+      return 0
+      ;;
+  esac
+
+  for arg in "$@"; do
+    case "$arg" in
+      -h | --help)
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+if is_help_command "$@"; then
+  unset GH_TOKEN GITHUB_TOKEN
   exec "$REAL_GH" "$@"
 fi
 
@@ -20,10 +36,11 @@ AUTH_JSON=$(node /app/packages/remote-cli/dist/auth-helper.js gh "$@") || true
 if [ -n "$AUTH_JSON" ]; then
   TOKEN=$(echo "$AUTH_JSON" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
   if [ -n "$TOKEN" ]; then
+    unset GITHUB_TOKEN
     export GH_TOKEN="$TOKEN"
     exec "$REAL_GH" "$@"
   fi
 fi
 
-# Fallback: run real gh with whatever env is already set (PAT mode)
-exec "$REAL_GH" "$@"
+echo "$TAG GitHub App auth could not resolve an installation token for this gh command. Configure owners.<owner>.github_app_installation_id in /workspace/config.json." >&2
+exit 1

@@ -46,7 +46,14 @@ ingress -> gateway -> runner -> opencode
 This keeps the private key on the host and only exposes the public trust bundle
 inside `opencode`.
 
-3. Clone repos into the shared workspace (no need to start the stack first):
+3. Create `/workspace/config.json` with GitHub App installation IDs for each
+   GitHub owner you need Thor to access, plus any mitmproxy rules. On the host,
+   this file lives at `docker-volumes/workspace/config.json`. See
+   [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json).
+   MCP upstream access is enabled for every repo automatically — no per-repo
+   config required.
+
+4. Clone repos into the shared workspace:
 
 ```bash
 docker compose run --rm remote-cli \
@@ -60,12 +67,6 @@ If the stack is already running, you can clone the same repo from the
 docker compose exec remote-cli \
   git clone https://github.com/your-org/your-repo.git
 ```
-
-4. (Optional) Create `/workspace/config.json` for GitHub App owners or
-   mitmproxy rules. See
-   [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json).
-   MCP upstream access is enabled for every repo automatically — no
-   per-repo config required.
 
 5. Start the stack:
 
@@ -129,7 +130,6 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `GITHUB_API_URL`                    | No       | `remote-cli`                         | GitHub API base URL override                                                                                                                         |
 | `GITHUB_APP_PRIVATE_KEY_FILE`       | Yes      | `remote-cli`                         | GitHub App private key path                                                                                                                          |
 | `GITHUB_WEBHOOK_SECRET`             | Yes      | `gateway`                            | GitHub webhook signature secret                                                                                                                      |
-| `GITHUB_PAT`                        | No       | `remote-cli`                         | Optional fallback token for `git` / `gh` after GitHub App startup                                                                                    |
 | `GRAFANA_ORG_ID`                    | No       | `grafana-mcp`                        | Grafana org ID (defaults to `1`)                                                                                                                     |
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN`     | Yes      | `grafana-mcp`                        | Grafana service account token                                                                                                                        |
 | `GRAFANA_URL`                       | Yes      | `grafana-mcp`                        | Grafana instance URL                                                                                                                                 |
@@ -176,7 +176,7 @@ GitHub App installation entries live under `owners.<owner>.github_app_installati
 }
 ```
 
-The `git` wrapper resolves installation tokens lazily through `GIT_ASKPASS`, and the `gh` wrapper resolves them before invoking `gh`. `remote-cli` now requires GitHub App env vars at startup; `GITHUB_PAT` is only an optional fallback for command execution after the service is up.
+The `git` wrapper resolves installation tokens lazily through `GIT_ASKPASS`, and the `gh` wrapper resolves them before invoking `gh`. `remote-cli` requires GitHub App env vars at startup and does not support static PAT fallback auth.
 
 If you have internal APIs that Thor should access with injected credentials,
 define rules in `/workspace/config.json` and keep only secret values in `.env`:
@@ -222,8 +222,8 @@ Rules match by exact host or suffix first, then by optional `path_prefix` and
   assets (`/assets/`, `/oc-theme-preload.js`) bypass Vouch for performance.
 - `remote-cli` enforces MCP allow/approve policy server-side and stores approvals under `/workspace/data/approvals`.
 - Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution and `POST /internal/exec`.
-- `git` uses GitHub App installation tokens through `GIT_ASKPASS` when `owners.<owner>.github_app_installation_id` is configured and the target owner can be resolved; `GITHUB_PAT` is only a fallback during command execution.
-- `gh` resolves GitHub App auth before execution and can fall back to inherited `GH_TOKEN` / `GITHUB_PAT` when no installation token is available, but the service itself still requires GitHub App env at startup.
+- `git` uses GitHub App installation tokens through `GIT_ASKPASS` when the target owner can be resolved from the command or repo remote.
+- `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.
 - Source repos are mounted read-only into OpenCode; edits happen in `/workspace/worktrees`.
 - Tool calls are audit-logged under `/workspace/worklog`.
 
