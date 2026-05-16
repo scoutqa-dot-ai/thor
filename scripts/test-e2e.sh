@@ -9,8 +9,15 @@
 #   - Both services running (either `pnpm dev` or `docker compose up`)
 #
 # Usage:
-#   ./scripts/test-e2e.sh
-#   RUNNER_URL=http://localhost:3000 REMOTE_CLI_URL=http://localhost:3004 ./scripts/test-e2e.sh
+#   REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
+#   REMOTE_CLI_GITHUB_REPO=owner/repo \
+#   GIT_CLONE_ALLOWED_OWNERS=owner \
+#     ./scripts/test-e2e.sh
+#   RUNNER_URL=http://localhost:3000 REMOTE_CLI_URL=http://localhost:3004 \
+#   REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
+#   REMOTE_CLI_GITHUB_REPO=owner/repo \
+#   GIT_CLONE_ALLOWED_OWNERS=owner \
+#     ./scripts/test-e2e.sh
 #
 set -euo pipefail
 
@@ -21,13 +28,15 @@ repo_name_from_clone_url() {
   echo "$repo"
 }
 
+: "${REMOTE_CLI_GIT_REPO_URL:?REMOTE_CLI_GIT_REPO_URL is required}"
+: "${REMOTE_CLI_GITHUB_REPO:?REMOTE_CLI_GITHUB_REPO is required}"
+: "${GIT_CLONE_ALLOWED_OWNERS:?GIT_CLONE_ALLOWED_OWNERS is required}"
+
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 REMOTE_CLI_URL="${REMOTE_CLI_URL:-http://localhost:3004}"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
 HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
 THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
-REMOTE_CLI_GIT_REPO_URL="${REMOTE_CLI_GIT_REPO_URL:-https://github.com/scoutqa-dot-ai/thor}"
-REMOTE_CLI_GITHUB_REPO="${REMOTE_CLI_GITHUB_REPO:-scoutqa-dot-ai/thor}"
 REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-$(repo_name_from_clone_url "$REMOTE_CLI_GIT_REPO_URL")}"
 REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
 HOST_REMOTE_CLI_GIT_REPO_DIR="${HOST_REMOTE_CLI_GIT_REPO_DIR:-${HOST_WORKSPACE}/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
