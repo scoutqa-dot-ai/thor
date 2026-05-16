@@ -80,6 +80,14 @@ describe("service env", () => {
         ...githubEnv,
         THOR_INTERNAL_SECRET: "secret",
         SLACK_BOT_TOKEN: "xoxb-test",
+        GIT_CLONE_ALLOWED_URL_PREFIXES: "https://github.com/acme",
+      }),
+    ).toThrow("GIT_CLONE_ALLOWED_URL_PREFIXES entries must be HTTPS GitHub URL prefixes");
+    expect(() =>
+      loadRemoteCliEnv({
+        ...githubEnv,
+        THOR_INTERNAL_SECRET: "secret",
+        SLACK_BOT_TOKEN: "xoxb-test",
         GIT_CLONE_ALLOWED_URL_PREFIXES: "git@github.com:acme/",
       }),
     ).toThrow("GIT_CLONE_ALLOWED_URL_PREFIXES entries must be HTTPS GitHub URL prefixes");

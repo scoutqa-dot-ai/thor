@@ -45,7 +45,7 @@ Supported shape:
 git clone <allowlisted-https-github-url>
 ```
 
-The source URL must be an HTTPS `github.com` URL whose string prefix matches one configured in `GIT_CLONE_ALLOWED_URL_PREFIXES` (operators should include a trailing slash, e.g. `https://github.com/acme/`). Do not pass a destination; Thor derives `/workspace/repos/<repo-name-from-url>`. Explicit destinations, traversal, SSH/scp remotes, arbitrary hosts, and extra clone flags are denied. When Git prompts for credentials, Thor's existing GitHub App askpass flow selects the installation by the owner in the clone URL.
+The source URL must be an HTTPS `github.com` URL whose string prefix matches one configured in `GIT_CLONE_ALLOWED_URL_PREFIXES` (entries must include a trailing slash, e.g. `https://github.com/acme/`). Do not pass a destination; Thor derives `/workspace/repos/<repo-name-from-url>`. Explicit destinations, traversal, SSH/scp remotes, arbitrary hosts, and extra clone flags are denied. When Git prompts for credentials, Thor's existing GitHub App askpass flow selects the installation by the owner in the clone URL.
 
 ### `git ls-remote`
 

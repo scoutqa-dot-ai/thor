@@ -103,6 +103,7 @@ function loadGitCloneAllowedUrlPrefixes(env: EnvSource): string[] {
     if (
       parsed.protocol !== "https:" ||
       parsed.hostname.toLowerCase() !== "github.com" ||
+      !parsed.pathname.endsWith("/") ||
       hasRawUrlDotSegment(prefix)
     ) {
       throw new Error("GIT_CLONE_ALLOWED_URL_PREFIXES entries must be HTTPS GitHub URL prefixes");
