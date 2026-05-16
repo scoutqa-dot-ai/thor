@@ -325,6 +325,17 @@ describe("Slack channel repo routing helpers", () => {
     });
   });
 
+  it("rejects oversized override files", () => {
+    const root = join(tempDir, "repo-by-slack-channel");
+    mkdirSync(root);
+    writeFileSync(join(root, "C123.txt"), "x".repeat(300));
+
+    expect(readSlackChannelRepoOverride("C123", root)).toMatchObject({
+      status: "invalid",
+      reason: "repo override exceeds 256 bytes",
+    });
+  });
+
   it("resolves only configured repos under /workspace/repos", () => {
     expect(
       resolveConfiguredRepoDirectory(
@@ -346,7 +357,7 @@ describe("Slack channel repo routing helpers", () => {
   it("falls back to default repo for missing or invalid channel overrides", () => {
     const root = join(tempDir, "repo-by-slack-channel");
     mkdirSync(root);
-    const config = { repos: { thor: {}, opencode: { channels: ["C_CFG"] } } };
+    const config = { repos: { thor: {}, opencode: { channels: ["C_CFG", "C_BAD"] } } };
     const resolveRepo = resolverFor({
       thor: "/workspace/repos/thor",
       opencode: "/workspace/repos/opencode",
@@ -370,9 +381,20 @@ describe("Slack channel repo routing helpers", () => {
 
     writeFileSync(join(root, "C_BAD.txt"), "unknown-repo\n");
     expect(resolveSlackChannelRepoDirectory(config, "C_BAD", "thor", root, resolveRepo)).toMatchObject({
-      directory: "/workspace/repos/thor",
-      source: "default",
+      directory: "/workspace/repos/opencode",
+      source: "config",
       fallbackReason: "repo unknown-repo is not configured",
+    });
+  });
+
+  it("returns the configured-repo error instead of falling back to default when a mapped repo is missing", () => {
+    const root = join(tempDir, "repo-by-slack-channel");
+    mkdirSync(root);
+    const config = { repos: { thor: {}, missing: { channels: ["C_BROKEN"] } } };
+    const resolveRepo = resolverFor({ thor: "/workspace/repos/thor" });
+
+    expect(resolveSlackChannelRepoDirectory(config, "C_BROKEN", "thor", root, resolveRepo)).toMatchObject({
+      reason: "repo directory not found for missing",
     });
   });
 

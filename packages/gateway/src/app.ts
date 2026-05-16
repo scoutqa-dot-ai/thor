@@ -948,7 +948,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         if (resolved.fallbackReason) {
           logInfo(log, "slack_repo_override_fallback", {
             channel,
-            defaultRepo: config.slackDefaultRepo,
+            selectedRepo: resolved.repoName,
+            selectedSource: resolved.source,
+            ...(resolved.source === "default" ? { defaultRepo: config.slackDefaultRepo } : {}),
             reason: resolved.fallbackReason,
           });
         }

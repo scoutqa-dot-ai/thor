@@ -93,17 +93,43 @@ vi.mock("@thor/common", async (importOriginal) => {
       const configuredRepo = Object.entries(config.repos).find(([, repoConfig]) =>
         repoConfig.channels?.includes(channel),
       )?.[0];
-      const repo =
-        override.status === "found" ? override.repoName : configuredRepo ? configuredRepo : defaultRepo;
-      if (!config.repos[repo]) return { reason: `repo ${repo} is not configured` };
-      return mappedRepos.has(repo)
-        ? {
-            directory: `/workspace/repos/${repo}`,
-            repoName: repo,
-            source:
-              override.status === "found" ? "override" : configuredRepo ? "config" : "default",
-          }
-        : { reason: `repo directory not found for ${repo}` };
+      const resolveRepo = (repo: string, source: "override" | "config" | "default", fallbackReason?: string) => {
+        if (!Object.prototype.hasOwnProperty.call(config.repos, repo)) {
+          return { reason: `repo ${repo} is not configured` };
+        }
+        return mappedRepos.has(repo)
+          ? {
+              directory: `/workspace/repos/${repo}`,
+              repoName: repo,
+              source,
+              fallbackReason,
+            }
+          : { reason: `repo directory not found for ${repo}` };
+      };
+
+      if (override.status === "found") {
+        const overrideResolved = resolveRepo(override.repoName, "override");
+        if ("directory" in overrideResolved) return overrideResolved;
+        if (configuredRepo) {
+          const configuredResolved = resolveRepo(configuredRepo, "config", overrideResolved.reason);
+          return "directory" in configuredResolved ? configuredResolved : configuredResolved;
+        }
+        return resolveRepo(defaultRepo, "default", overrideResolved.reason);
+      }
+
+      if (configuredRepo) {
+        return resolveRepo(
+          configuredRepo,
+          "config",
+          override.status === "invalid" ? override.reason : undefined,
+        );
+      }
+
+      return resolveRepo(
+        defaultRepo,
+        "default",
+        override.status === "invalid" ? override.reason : undefined,
+      );
     },
     resolveCorrelationKeys: (rawKeys: string[]) =>
       correlationKeyAliases.get(rawKeys[0] ?? "") ?? rawKeys[0] ?? "",
@@ -2842,8 +2868,8 @@ describe("gateway", () => {
         },
         {
           getConfig: fakeConfigLoader([], [
-            ["C123", "test-repo"],
-            ["C_OVERRIDE", "thor"],
+            ["C_OTHER", "thor"],
+            ["C_OVERRIDE", "test-repo"],
           ]),
           slackDefaultRepo: "test-repo",
           slackChannelRepoMemoryRoot: memoryRoot,
@@ -2855,16 +2881,19 @@ describe("gateway", () => {
   });
 
   it("falls back to configured channel repo before the default repo", async () => {
+    const memoryRoot = mkdtempSync(join(tmpdir(), "gateway-slack-config-fallback-"));
+    writeFileSync(join(memoryRoot, "C_MAPPED.txt"), "unknown-repo\n");
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
 
-    await withServer(
-      fetchImpl,
-      async (baseUrl, queue) => {
-        const body = JSON.stringify({
-          type: "event_callback",
-          event_id: "EvConfigFallback",
+    try {
+      await withServer(
+        fetchImpl,
+        async (baseUrl, queue) => {
+          const body = JSON.stringify({
+            type: "event_callback",
+            event_id: "EvConfigFallback",
           team_id: "T123",
           event: {
             type: "app_mention",
@@ -2886,18 +2915,66 @@ describe("gateway", () => {
           body,
         });
 
+          expect(response.status).toBe(200);
+          await queue.flush();
+
+          const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
+          expect(triggerCall).toBeDefined();
+          expect(JSON.parse(String(triggerCall?.[1]?.body))).toMatchObject({
+            directory: "/workspace/repos/thor",
+          });
+        },
+        {
+          getConfig: fakeConfigLoader([], [
+            ["C_MAPPED", "thor"],
+            ["C_DEFAULT", "test-repo"],
+          ]),
+          slackDefaultRepo: "test-repo",
+          slackChannelRepoMemoryRoot: memoryRoot,
+        },
+      );
+    } finally {
+      rmSync(memoryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("drops when a configured channel repo cannot be resolved", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue) => {
+        const body = JSON.stringify({
+          type: "event_callback",
+          event_id: "EvBrokenConfig",
+          team_id: "T123",
+          event: {
+            type: "app_mention",
+            user: "U123",
+            text: "<@U999> broken repo mapping",
+            ts: "1710000000.081",
+            channel: "C_BROKEN",
+          },
+        });
+        const timestamp = `${Math.floor(Date.now() / 1000)}`;
+
+        const response = await fetch(`${baseUrl}/slack/events`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": timestamp,
+            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
+          },
+          body,
+        });
+
         expect(response.status).toBe(200);
         await queue.flush();
-
-        const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
-        expect(triggerCall).toBeDefined();
-        expect(JSON.parse(String(triggerCall?.[1]?.body))).toMatchObject({
-          directory: "/workspace/repos/thor",
-        });
+        expect(fetchImpl).not.toHaveBeenCalled();
       },
       {
         getConfig: fakeConfigLoader([], [
-          ["C_MAPPED", "thor"],
+          ["C_BROKEN", "missing-repo"],
           ["C_DEFAULT", "test-repo"],
         ]),
         slackDefaultRepo: "test-repo",

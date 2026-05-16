@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.js";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
 import { createLogger, logWarn } from "./logger.js";
 import { PROXY_NAMES } from "./proxies.js";
@@ -155,6 +155,7 @@ export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
 
 const REPOS_PREFIX = "/workspace/repos";
 export const SLACK_CHANNEL_REPO_MEMORY_ROOT = "/workspace/memory/thor/repo-by-slack-channel";
+const MAX_SLACK_CHANNEL_REPO_OVERRIDE_BYTES = 256;
 
 /**
  * Load and validate workspace config from a JSON file.
@@ -325,9 +326,21 @@ export function readSlackChannelRepoOverride(
     return { status: "invalid", reason: "invalid channel id" };
   }
 
+  const path = join(memoryRoot, `${channelId}.txt`);
+  let stat;
   let raw: string;
   try {
-    raw = readFileSync(join(memoryRoot, `${channelId}.txt`), "utf-8");
+    stat = statSync(path);
+    if (!stat.isFile()) {
+      return { status: "invalid", reason: "repo override must be a regular file" };
+    }
+    if (stat.size > MAX_SLACK_CHANNEL_REPO_OVERRIDE_BYTES) {
+      return {
+        status: "invalid",
+        reason: `repo override exceeds ${MAX_SLACK_CHANNEL_REPO_OVERRIDE_BYTES} bytes`,
+      };
+    }
+    raw = readFileSync(path, "utf-8");
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return { status: "missing" };
@@ -372,33 +385,50 @@ export function resolveSlackChannelRepoDirectory(
   reason?: string;
 } {
   const override = readSlackChannelRepoOverride(channelId, memoryRoot);
+  const configuredRepo = getConfiguredChannelRepo(config, channelId);
+
   if (override.status === "found") {
-    const resolved = resolveConfiguredRepoDirectory(config, override.repoName, resolveRepoDirectoryFn);
-    if (resolved.directory) {
-      return { directory: resolved.directory, repoName: override.repoName, source: "override" };
+    const overrideResolved = resolveConfiguredRepoDirectory(config, override.repoName, resolveRepoDirectoryFn);
+    if (overrideResolved.directory) {
+      return { directory: overrideResolved.directory, repoName: override.repoName, source: "override" };
     }
-    const fallback = resolveConfiguredRepoDirectory(config, defaultRepoName, resolveRepoDirectoryFn);
-    return fallback.directory
+    if (configuredRepo) {
+      const configuredResolved = resolveConfiguredRepoDirectory(
+        config,
+        configuredRepo,
+        resolveRepoDirectoryFn,
+      );
+      if (configuredResolved.directory) {
+        return {
+          directory: configuredResolved.directory,
+          repoName: configuredRepo,
+          source: "config",
+          fallbackReason: overrideResolved.reason,
+        };
+      }
+      return { reason: configuredResolved.reason ?? overrideResolved.reason };
+    }
+
+    const defaultResolved = resolveConfiguredRepoDirectory(config, defaultRepoName, resolveRepoDirectoryFn);
+    return defaultResolved.directory
       ? {
-          directory: fallback.directory,
+          directory: defaultResolved.directory,
           repoName: defaultRepoName,
           source: "default",
-          fallbackReason: resolved.reason,
+          fallbackReason: overrideResolved.reason,
         }
-      : { reason: fallback.reason ?? resolved.reason };
+      : { reason: defaultResolved.reason ?? overrideResolved.reason };
   }
 
-  const configuredRepo = getConfiguredChannelRepo(config, channelId);
   if (configuredRepo) {
     const resolved = resolveConfiguredRepoDirectory(config, configuredRepo, resolveRepoDirectoryFn);
-    if (resolved.directory) {
-      return {
-        directory: resolved.directory,
-        repoName: configuredRepo,
-        source: "config",
-        fallbackReason: override.status === "invalid" ? override.reason : undefined,
-      };
-    }
+    if (!resolved.directory) return { reason: resolved.reason };
+    return {
+      directory: resolved.directory,
+      repoName: configuredRepo,
+      source: "config",
+      fallbackReason: override.status === "invalid" ? override.reason : undefined,
+    };
   }
 
   const fallback = resolveConfiguredRepoDirectory(config, defaultRepoName, resolveRepoDirectoryFn);

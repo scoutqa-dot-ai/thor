@@ -31,6 +31,11 @@ ingress -> gateway -> runner -> opencode
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and fill in the required secrets.
+   `SLACK_DEFAULT_REPO` must name an existing repo that is already present under
+   `/workspace/repos` and configured in `/workspace/config.json` before you start
+   the stack. Gateway uses it only after checking, in order, a per-channel
+   override file at `/workspace/memory/thor/repo-by-slack-channel/<channel>.txt`
+   and any existing `repos.*.channels` mapping in workspace config.
 2. Initialize the mitmproxy CA on the host:
 
 ```bash
@@ -40,21 +45,14 @@ ingress -> gateway -> runner -> opencode
 This keeps the private key on the host and only exposes the public trust bundle
 inside `opencode`.
 
-3. Start the stack:
-
-```bash
-docker compose up --build -d
-curl http://localhost:8080/health
-```
-
-4. Clone repos into the shared workspace from the `remote-cli` container:
+3. Clone repos into the shared workspace from the `remote-cli` container:
 
 ```bash
 docker compose exec remote-cli \
   git clone https://github.com/your-org/your-repo.git /workspace/repos/your-repo
 ```
 
-5. Configure `/workspace/config.json` with repo-to-upstream access rules.
+4. Configure `/workspace/config.json` with repo-to-upstream access rules.
 
 Example:
 
@@ -67,6 +65,13 @@ Example:
     }
   }
 }
+```
+
+5. Start the stack:
+
+```bash
+docker compose up --build -d
+curl http://localhost:8080/health
 ```
 
 The shared upstream registry and allow/approve policy are checked into
@@ -143,7 +148,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `THOR_E2E_TEST_HELPERS`             | No       | `runner`                             | Enables secret-gated deterministic runner e2e helpers                                                                |
 | `SLACK_BOT_TOKEN`                   | Yes      | `remote-cli`, `gateway`, `mitmproxy` | Slack bot token for controlled `slack-post-message`, gateway Slack calls, and mitmproxy default injection            |
 | `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                            | Bot user ID used to ignore our own messages                                                                          |
-| `SLACK_DEFAULT_REPO`                | Yes      | `gateway`                            | Configured repo name used for Slack channels with no valid repo override file                                        |
+| `SLACK_DEFAULT_REPO`                | Yes      | `gateway`                            | Configured repo name used for Slack channels only after no valid override file or `repos.*.channels` mapping applies |
 | `SLACK_SIGNING_SECRET`              | Yes      | `gateway`                            | Slack webhook verification                                                                                           |
 | `SLACK_TIMESTAMP_TOLERANCE_SECONDS` | No       | `gateway`                            | Signature timestamp tolerance                                                                                        |
 | `VOUCH_CALLBACK_URL`                | No       | `vouch`                              | OAuth callback URL                                                                                                   |
