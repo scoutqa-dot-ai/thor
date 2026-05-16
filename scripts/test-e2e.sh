@@ -14,6 +14,13 @@
 #
 set -euo pipefail
 
+repo_name_from_clone_url() {
+  local url="$1"
+  local repo="${url##*/}"
+  repo="${repo%.git}"
+  echo "$repo"
+}
+
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 REMOTE_CLI_URL="${REMOTE_CLI_URL:-http://localhost:3004}"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
@@ -21,9 +28,10 @@ HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
 THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
 REMOTE_CLI_GIT_REPO_URL="${REMOTE_CLI_GIT_REPO_URL:-https://github.com/scoutqa-dot-ai/thor}"
 REMOTE_CLI_GITHUB_REPO="${REMOTE_CLI_GITHUB_REPO:-scoutqa-dot-ai/thor}"
-REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-scoutqa-dot-ai-thor-e2e}"
+REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-$(repo_name_from_clone_url "$REMOTE_CLI_GIT_REPO_URL")}"
 REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
 HOST_REMOTE_CLI_GIT_REPO_DIR="${HOST_REMOTE_CLI_GIT_REPO_DIR:-${HOST_WORKSPACE}/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
+HOST_REMOTE_CLI_GIT_REPO_MARKER="${HOST_REMOTE_CLI_GIT_REPO_DIR}/.thor-e2e-clone"
 REMOTE_CLI_AUTH_TS="${REMOTE_CLI_AUTH_TS:-$(date +%s)}"
 REMOTE_CLI_WORKTREE_BRANCH="${REMOTE_CLI_WORKTREE_BRANCH:-e2e-remote-cli-${REMOTE_CLI_AUTH_TS}}"
 REMOTE_CLI_WORKTREE_DIR="${REMOTE_CLI_WORKTREE_DIR:-/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
@@ -142,19 +150,42 @@ fi
 echo ""
 echo "=== Remote-CLI Git/GH Auth ==="
 
-[[ -n "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+if [[ -e "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]]; then
+  if [[ -f "$HOST_REMOTE_CLI_GIT_REPO_MARKER" ]]; then
+    rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+  else
+    echo "  ✗ refusing to remove existing repo without e2e marker: $HOST_REMOTE_CLI_GIT_REPO_DIR"
+    echo "    → choose a disposable REMOTE_CLI_GIT_REPO_URL or remove the directory manually"
+    echo ""
+    echo "FAIL — clone target is not safe to replace"
+    exit 1
+  fi
+fi
 [[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
 mkdir -p "$(dirname "$HOST_REMOTE_CLI_GIT_REPO_DIR")" "$(dirname "$HOST_REMOTE_CLI_WORKTREE_DIR")"
 
-echo "  Cloning $REMOTE_CLI_GIT_REPO_URL inside $remote_cli_container..."
-clone_output=$(docker exec "$remote_cli_container" \
-  git clone "$REMOTE_CLI_GIT_REPO_URL" "$REMOTE_CLI_GIT_REPO_DIR" 2>&1 || true)
-clone_origin=$(docker exec "$remote_cli_container" \
-  git -C "$REMOTE_CLI_GIT_REPO_DIR" remote get-url origin 2>/dev/null || echo "")
+echo "  Cloning $REMOTE_CLI_GIT_REPO_URL through /exec/git..."
+clone_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"clone\",\"$REMOTE_CLI_GIT_REPO_URL\"],\"cwd\":\"/workspace/repos\"}" \
+  2>/dev/null || echo '{}')
+clone_exit=$(json_field "$clone_raw" "exitCode")
+clone_output=$(json_field "$clone_raw" "stderr")
+clone_origin_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"remote\",\"get-url\",\"origin\"],\"cwd\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+  2>/dev/null || echo '{}')
+clone_origin=$(json_field "$clone_origin_raw" "stdout")
 
+assert '[[ "$clone_exit" == "0" ]]' \
+  "remote-cli /exec/git cloned the GitHub repo" \
+  "response: ${clone_raw:0:300}"
 assert '[[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" ]]' \
-  "docker exec in remote-cli cloned the GitHub repo" \
+  "cloned repo exists on the shared host workspace" \
   "output: ${clone_output:0:300}"
+if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" ]]; then
+  touch "$HOST_REMOTE_CLI_GIT_REPO_MARKER"
+fi
 assert '[[ "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]' \
   "cloned repo origin matches expected URL" \
   "origin='$clone_origin'"
@@ -497,7 +528,9 @@ echo "  $passed passed, $failed failed"
 echo ""
 
 [[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
-[[ -n "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+if [[ -f "$HOST_REMOTE_CLI_GIT_REPO_MARKER" ]]; then
+  rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+fi
 
 if [[ $failed -gt 0 ]]; then
   echo "FAIL"
