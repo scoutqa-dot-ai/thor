@@ -6,7 +6,6 @@ import {
   loadWorkspaceConfig,
   createConfigLoader,
   extractRepoFromCwd,
-  getRepoUpstreams,
   getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
@@ -31,12 +30,9 @@ function writeConfig(filename: string, data: unknown): string {
 }
 
 describe("loadWorkspaceConfig", () => {
-  it("loads a valid config with repos only", () => {
-    const path = writeConfig("config.json", {
-      repos: { "my-repo": {} },
-    });
-    const config = loadWorkspaceConfig(path);
-    expect(config.repos["my-repo"]).toBeDefined();
+  it("loads an empty config", () => {
+    const path = writeConfig("config.json", {});
+    expect(loadWorkspaceConfig(path)).toEqual({});
   });
 
   it("throws on missing file", () => {
@@ -49,14 +45,13 @@ describe("loadWorkspaceConfig", () => {
     expect(() => loadWorkspaceConfig(path)).toThrow("Invalid JSON");
   });
 
-  it("throws on schema violation (missing repos)", () => {
-    const path = writeConfig("config.json", { owners: {} });
+  it("rejects unknown top-level fields", () => {
+    const path = writeConfig("config.json", { repos: {} });
     expect(() => loadWorkspaceConfig(path)).toThrow("Invalid workspace config");
   });
 
   it("rejects non-positive owner installation IDs with path details", () => {
     const path = writeConfig("config.json", {
-      repos: { "my-repo": {} },
       owners: {
         acme: { github_app_installation_id: 0 },
       },
@@ -64,55 +59,10 @@ describe("loadWorkspaceConfig", () => {
     expect(() => loadWorkspaceConfig(path)).toThrow("owners.acme.github_app_installation_id");
   });
 
-  it("rejects the legacy top-level proxies block with a migration hint", () => {
-    const path = writeConfig("config.json", {
-      repos: {},
-      proxies: {},
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow('Top-level "proxies" has moved to code');
-  });
-
-  it("accepts repo with valid proxies array", () => {
-    const path = writeConfig("config.json", {
-      repos: { "my-repo": { proxies: ["posthog"] } },
-    });
-    const config = loadWorkspaceConfig(path);
-    expect(config.repos["my-repo"].proxies).toEqual(["posthog"]);
-  });
-
-  it("rejects unknown repo fields", () => {
-    const path = writeConfig("config.json", {
-      repos: { "my-repo": { channels: ["C1"] } },
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow();
-  });
-
-  it("rejects removed slack proxy in repo proxies", () => {
-    const path = writeConfig("config.json", {
-      repos: { "my-repo": { proxies: ["slack"] } },
-    });
-
-    expect(() => loadWorkspaceConfig(path)).toThrow(
-      'Unknown proxy "slack". Available proxies: atlassian, grafana, posthog',
-    );
-  });
-
-  it("throws when repo references unknown proxy", () => {
-    const path = writeConfig("config.json", {
-      repos: { "my-repo": { proxies: ["nonexistent"] } },
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow(
-      "Available proxies: atlassian, grafana, posthog",
-    );
-  });
-
   it("loads the tracked workspace config example", () => {
     const config = loadWorkspaceConfig(
       join(process.cwd(), "docs/examples/workspace-config.example.json"),
     );
-
-    expect(config.repos["your-repo"]).toBeDefined();
-    expect(config.repos["your-repo"].proxies).toEqual(["atlassian", "grafana"]);
     expect(config.owners).toEqual({
       "scoutqa-dot-ai": { github_app_installation_id: 126669985 },
     });
@@ -120,7 +70,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("accepts mitmproxy rules and passthrough host list", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [
         {
           host: "api.example.com",
@@ -148,7 +97,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects mitmproxy rule without host selector", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [{ headers: { Authorization: "Bearer ${TOKEN}" } }],
     });
 
@@ -159,7 +107,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects mitmproxy rule with both host and host_suffix", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [
         {
           host: "api.example.com",
@@ -176,7 +123,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects invalid passthrough entries", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy_passthrough: ["https://openai.com"],
     });
 
@@ -187,7 +133,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects mitmproxy rules with invalid path_prefix", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [
         {
           host: "api.example.com",
@@ -202,7 +147,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects mitmproxy rules with invalid path_suffix", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [
         {
           host: "api.example.com",
@@ -217,7 +161,6 @@ describe("loadWorkspaceConfig", () => {
 
   it("rejects mitmproxy rules with empty headers", () => {
     const path = writeConfig("config.json", {
-      repos: {},
       mitmproxy: [{ host: "api.example.com", headers: {} }],
     });
 
@@ -226,36 +169,29 @@ describe("loadWorkspaceConfig", () => {
 });
 
 describe("createConfigLoader", () => {
-  it("loads config on first call", () => {
-    const path = writeConfig("config.json", {
-      repos: { r: { proxies: ["posthog"] } },
-    });
-    const getConfig = createConfigLoader(path);
-    const config = getConfig();
-    expect(config.repos.r.proxies).toEqual(["posthog"]);
-  });
-
   it("picks up file changes on next call", () => {
     const path = writeConfig("config.json", {
-      repos: { r: { proxies: ["posthog"] } },
+      mitmproxy_passthrough: ["api.openai.com"],
     });
     const getConfig = createConfigLoader(path);
-    expect(getConfig().repos.r.proxies).toEqual(["posthog"]);
+    expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com"]);
 
-    writeFileSync(path, JSON.stringify({ repos: { r: { proxies: ["posthog", "grafana"] } } }));
-    expect(getConfig().repos.r.proxies).toEqual(["posthog", "grafana"]);
+    writeFileSync(
+      path,
+      JSON.stringify({ mitmproxy_passthrough: ["api.openai.com", ".anthropic.com"] }),
+    );
+    expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com", ".anthropic.com"]);
   });
 
   it("falls back to last good config on corrupt file", () => {
     const path = writeConfig("config.json", {
-      repos: { r: { proxies: ["posthog"] } },
+      mitmproxy_passthrough: ["api.openai.com"],
     });
     const getConfig = createConfigLoader(path);
-    expect(getConfig().repos.r.proxies).toEqual(["posthog"]);
+    expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com"]);
 
     writeFileSync(path, "corrupt{{{");
-    const config = getConfig();
-    expect(config.repos.r.proxies).toEqual(["posthog"]);
+    expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com"]);
   });
 
   it("throws when no file and no previous config", () => {
@@ -376,50 +312,20 @@ describe("extractRepoFromCwd", () => {
   });
 });
 
-describe("getRepoUpstreams", () => {
-  it("returns proxies array for a configured repo", () => {
-    const config = loadWorkspaceConfig(
-      writeConfig("config.json", {
-        repos: { "acme-app": { proxies: ["atlassian", "posthog"] } },
-      }),
-    );
-    expect(getRepoUpstreams(config, "acme-app")).toEqual(["atlassian", "posthog"]);
-  });
-
-  it("returns empty array for repo without proxies field", () => {
-    const config = loadWorkspaceConfig(writeConfig("config.json", { repos: { "acme-app": {} } }));
-    expect(getRepoUpstreams(config, "acme-app")).toEqual([]);
-  });
-
-  it("returns undefined for unknown repo", () => {
-    const config = loadWorkspaceConfig(writeConfig("config.json", { repos: {} }));
-    expect(getRepoUpstreams(config, "unknown")).toBeUndefined();
-  });
-});
-
 describe("getInstallationIdForOwner", () => {
   it("returns installation id for known owner", () => {
     expect(
       getInstallationIdForOwner(
-        {
-          repos: {},
-          owners: { acme: { github_app_installation_id: 12345 } },
-        },
+        { owners: { acme: { github_app_installation_id: 12345 } } },
         "acme",
       ),
     ).toBe(12345);
   });
 
   it("returns undefined for unknown or missing owner map", () => {
-    expect(getInstallationIdForOwner({ repos: {} }, "acme")).toBeUndefined();
+    expect(getInstallationIdForOwner({}, "acme")).toBeUndefined();
     expect(
-      getInstallationIdForOwner(
-        {
-          repos: {},
-          owners: { other: { github_app_installation_id: 1 } },
-        },
-        "acme",
-      ),
+      getInstallationIdForOwner({ owners: { other: { github_app_installation_id: 1 } } }, "acme"),
     ).toBeUndefined();
   });
 });

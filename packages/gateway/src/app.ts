@@ -13,7 +13,6 @@ import {
   resolveSlackChannelRepoDirectory,
   truncate,
   resolveRepoDirectory,
-  type ConfigLoader,
   type InboundWebhookHistoryEntry,
 } from "@thor/common";
 import { z } from "zod/v4";
@@ -446,8 +445,6 @@ export interface GatewayAppConfig extends RunnerDeps {
   longDelayMs?: number;
   /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
   cronSecret?: string;
-  /** Dynamic workspace config loader — re-reads config.json on each request. */
-  getConfig?: ConfigLoader;
   /** Path to opencode auth.json for Codex usage check. */
   openaiAuthPath?: string;
   /** GitHub webhook HMAC secret. */
@@ -926,36 +923,33 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     return { status: "push_wake_triggered" };
   };
 
-  if (config.getConfig && !config.slackDefaultRepo) {
-    throw new Error("SLACK_DEFAULT_REPO is required");
-  }
-  if (config.getConfig && config.slackDefaultRepo !== undefined) {
-    const defaultRepo = resolveSafeRepoDirectory(config.slackDefaultRepo);
+  const slackDefaultRepo = config.slackDefaultRepo;
+  let resolveSlackDirectory:
+    | ((channel: string) => { directory?: string; reason?: string })
+    | undefined;
+  if (slackDefaultRepo !== undefined) {
+    const defaultRepo = resolveSafeRepoDirectory(slackDefaultRepo);
     if (!defaultRepo.directory) {
       throw new Error(`Invalid SLACK_DEFAULT_REPO: ${defaultRepo.reason}`);
     }
-  }
-
-  const resolveSlackDirectory = config.getConfig
-    ? (channel: string): { directory?: string; reason?: string } => {
-        if (!config.slackDefaultRepo) return { reason: "SLACK_DEFAULT_REPO is required" };
-        const resolved = resolveSlackChannelRepoDirectory(
+    resolveSlackDirectory = (channel) => {
+      const resolved = resolveSlackChannelRepoDirectory(
+        channel,
+        slackDefaultRepo,
+        config.slackChannelRepoMemoryRoot,
+      );
+      if (resolved.fallbackReason) {
+        logInfo(log, "slack_repo_override_fallback", {
           channel,
-          config.slackDefaultRepo,
-          config.slackChannelRepoMemoryRoot,
-        );
-        if (resolved.fallbackReason) {
-          logInfo(log, "slack_repo_override_fallback", {
-            channel,
-            selectedRepo: resolved.repoName,
-            selectedSource: resolved.source,
-            ...(resolved.source === "default" ? { defaultRepo: config.slackDefaultRepo } : {}),
-            reason: resolved.fallbackReason,
-          });
-        }
-        return resolved.directory ? { directory: resolved.directory } : { reason: resolved.reason };
+          selectedRepo: resolved.repoName,
+          selectedSource: resolved.source,
+          ...(resolved.source === "default" ? { defaultRepo: slackDefaultRepo } : {}),
+          reason: resolved.fallbackReason,
+        });
       }
-    : undefined;
+      return resolved.directory ? { directory: resolved.directory } : { reason: resolved.reason };
+    };
+  }
 
   const runnerDeps: RunnerDeps = {
     runnerUrl: config.runnerUrl,

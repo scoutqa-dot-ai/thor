@@ -6,7 +6,6 @@ import {
   appendCorrelationAlias,
   buildThorDisclaimerForSession,
   computeGitCorrelationKey,
-  createConfigLoader,
   createLogger,
   getRunnerBaseUrl,
   logError,
@@ -16,9 +15,7 @@ import {
   loadRemoteCliGitHubEnv,
   loadRemoteCliInternalEnv,
   matchesInternalSecret,
-  type ConfigLoader,
   type ExecStreamEvent,
-  WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
 import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
@@ -83,10 +80,9 @@ function deriveBotGitIdentity(env: NodeJS.ProcessEnv = process.env): {
 }
 
 export interface RemoteCliAppConfig {
-  getConfig?: ConfigLoader;
   appEnv?: ReturnType<typeof loadRemoteCliAppEnv>;
   env?: ReturnType<typeof loadRemoteCliEnv>;
-  mcp?: Omit<McpServiceDeps, "getConfig">;
+  mcp?: McpServiceDeps;
   slackPostMessage?: SlackPostMessageDeps;
 }
 
@@ -521,11 +517,9 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 }
 
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
-  const getConfig = config.getConfig ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
   const internalSecret = appEnv.thorInternalSecret;
   const mcpService = createMcpService({
-    getConfig,
     isProduction: appEnv.isProduction,
     ...config.mcp,
   });
@@ -1082,7 +1076,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
   return {
     app,
-    warmUp: () => mcpService.connectConfiguredUpstreams(),
+    warmUp: () => mcpService.warmUpstreams(),
     close: () => mcpService.closeAll(),
   };
 }

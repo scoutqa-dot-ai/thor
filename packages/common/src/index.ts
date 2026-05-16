@@ -10,7 +10,6 @@ export {
   WORKSPACE_CONFIG_PATH,
   SLACK_CHANNEL_REPO_MEMORY_ROOT,
   extractRepoFromCwd,
-  getRepoUpstreams,
   getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
@@ -55,7 +54,6 @@ export {
 } from "./service-env.js";
 export type {
   WorkspaceConfig,
-  RepoConfig,
   ProxyConfig,
   ProxyUpstream,
   ConfigLoader,

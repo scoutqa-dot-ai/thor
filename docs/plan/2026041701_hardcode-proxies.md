@@ -1,5 +1,13 @@
 # Hard-code Upstream Registry
 
+> **Superseded (2026-05-16):** The per-repo opt-in (`repos[name].proxies`) described
+> here was dropped. The `repos` block has been removed from `WorkspaceConfigSchema`
+> entirely, and every directory under `/workspace/repos/` now has access to every
+> upstream in `PROXY_REGISTRY`. `getRepoUpstreams`, `RepoConfig`, and the
+> per-repo `proxies` array no longer exist. The hard-coded registry (`PROXY_REGISTRY`,
+> `PROXY_NAMES`, `getProxyConfig`) from this plan is still the source of truth.
+> See `packages/common/src/workspace-config.ts` and `packages/common/src/proxies.ts`.
+
 Move the top-level `proxies` block out of `config.json` and into a checked-in TypeScript constant in `@thor/common`. Keep per-repo opt-in (`repos[name].proxies: string[]`) as the user-facing switch.
 
 ## Motivation

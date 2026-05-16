@@ -3,15 +3,8 @@ import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.js";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
 import { createLogger, logWarn } from "./logger.js";
-import { PROXY_NAMES } from "./proxies.js";
 
 // --- Schema ---
-
-const RepoConfigSchema = z
-  .object({
-    proxies: z.array(z.string()).optional(),
-  })
-  .strict();
 
 const OwnerConfigSchema = z.object({
   github_app_installation_id: z.number().int().positive(),
@@ -53,7 +46,6 @@ const MitmproxyPassthroughHostSchema = z.string().refine((value) => {
 
 export const WorkspaceConfigSchema = z
   .object({
-    repos: z.record(z.string(), RepoConfigSchema),
     owners: z.record(z.string(), OwnerConfigSchema).optional(),
     mitmproxy: z.array(MitmproxyRuleSchema).optional(),
     mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
@@ -61,7 +53,6 @@ export const WorkspaceConfigSchema = z
   .strict();
 
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
-export type RepoConfig = z.infer<typeof RepoConfigSchema>;
 export type OwnerConfig = z.infer<typeof OwnerConfigSchema>;
 
 export interface ProxyUpstream {
@@ -86,28 +77,7 @@ export type ValidationResult =
   | { ok: true; data: WorkspaceConfig }
   | { ok: false; issues: ValidationIssue[] };
 
-/**
- * Validate an already-parsed config object. Aggregates all issues
- * (schema, unknown proxies) before returning.
- */
 export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
-  if (
-    parsed &&
-    typeof parsed === "object" &&
-    Object.prototype.hasOwnProperty.call(parsed, "proxies")
-  ) {
-    return {
-      ok: false,
-      issues: [
-        {
-          path: "proxies",
-          message:
-            'Top-level "proxies" has moved to code (packages/common/src/proxies.ts). Remove it from config.json.',
-        },
-      ],
-    };
-  }
-
   const result = WorkspaceConfigSchema.safeParse(parsed);
   if (!result.success) {
     return {
@@ -118,22 +88,6 @@ export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
       })),
     };
   }
-
-  const issues: ValidationIssue[] = [];
-
-  const proxyNames = new Set<string>(PROXY_NAMES);
-  for (const [repo, repoConfig] of Object.entries(result.data.repos)) {
-    for (const proxyRef of repoConfig.proxies ?? []) {
-      if (!proxyNames.has(proxyRef)) {
-        issues.push({
-          path: `repos.${repo}.proxies`,
-          message: `Unknown proxy "${proxyRef}". Available proxies: ${PROXY_NAMES.join(", ")}`,
-        });
-      }
-    }
-  }
-
-  if (issues.length > 0) return { ok: false, issues };
   return { ok: true, data: result.data };
 }
 
@@ -144,7 +98,7 @@ export const SLACK_CHANNEL_REPO_MEMORY_ROOT = "/workspace/memory/thor/repo-by-sl
 
 /**
  * Load and validate workspace config from a JSON file.
- * Throws on: missing file, invalid JSON, schema violation, duplicate channel IDs.
+ * Throws on: missing file, invalid JSON, schema violation.
  */
 export function loadWorkspaceConfig(path: string): WorkspaceConfig {
   let raw: string;
@@ -333,17 +287,6 @@ export function extractRepoFromCwd(cwd: string): string | undefined {
   // Take the first path segment as the repo name
   const slash = rest.indexOf("/");
   return slash === -1 ? rest : rest.slice(0, slash);
-}
-
-/**
- * Get the list of upstream names allowed for a repo.
- * Returns undefined if the repo is not in config.
- * Returns empty array if repo exists but has no proxies field.
- */
-export function getRepoUpstreams(config: WorkspaceConfig, repoName: string): string[] | undefined {
-  const repo = config.repos[repoName];
-  if (!repo) return undefined;
-  return repo.proxies ?? [];
 }
 
 /**

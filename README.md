@@ -52,19 +52,11 @@ docker compose run --rm remote-cli \
   git clone https://github.com/your-org/your-repo.git /workspace/repos/your-repo
 ```
 
-4. Configure `/workspace/config.json` with repo-to-upstream access rules.
-
-Example:
-
-```json
-{
-  "repos": {
-    "your-repo": {
-      "proxies": ["atlassian", "grafana"]
-    }
-  }
-}
-```
+4. (Optional) Create `/workspace/config.json` for GitHub App owners or
+   mitmproxy rules. See
+   [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json).
+   MCP upstream access is enabled for every repo automatically — no
+   per-repo config required.
 
 5. Start the stack:
 

@@ -13,11 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebClient } from "@slack/web-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  resolveAnchorForCorrelationKey,
-  type ConfigLoader,
-  type WorkspaceConfig,
-} from "@thor/common";
+import { resolveAnchorForCorrelationKey } from "@thor/common";
 import { createGatewayApp, type GatewayAppConfig } from "./app.js";
 import type { EventQueue } from "./queue.js";
 
@@ -44,14 +40,6 @@ function createMockSlackClient(): MockSlackClient {
     delete: del,
     reactionsAdd,
   };
-}
-
-/** Create a fake ConfigLoader from a list of configured repo names. */
-function fakeConfigLoader(repoNames: string[] = ["test-repo"]): ConfigLoader {
-  const repos: Record<string, Record<string, never>> = {};
-  for (const name of repoNames) repos[name] = {};
-  const config: WorkspaceConfig = { repos };
-  return () => config;
 }
 
 let mappedRepos = new Set<string>(["test-repo", "thor"]);
@@ -304,7 +292,6 @@ async function withServer<T>(
     disableQueueInterval: true,
     shortDelayMs: 0,
     longDelayMs: 0,
-    getConfig: fakeConfigLoader(),
     slackDefaultRepo: "test-repo",
     slackClient: slack.client,
     ...extraConfig,
@@ -2815,7 +2802,6 @@ describe("gateway", () => {
           });
         },
         {
-          getConfig: fakeConfigLoader(["thor", "test-repo"]),
           slackDefaultRepo: "test-repo",
           slackChannelRepoMemoryRoot: memoryRoot,
         },
@@ -2888,7 +2874,6 @@ describe("gateway", () => {
         slackBotToken: "xoxb-test",
         slackBotUserId: "U0BOTEXAMPLE",
         runnerUrl: "http://runner.test",
-        getConfig: fakeConfigLoader(),
         slackDefaultRepo: "missing-repo",
         disableQueueInterval: true,
       }),

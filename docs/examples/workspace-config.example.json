@@ -1,9 +1,4 @@
 {
-  "repos": {
-    "your-repo": {
-      "proxies": ["atlassian", "grafana"]
-    }
-  },
   "owners": {
     "scoutqa-dot-ai": {
       "github_app_installation_id": 126669985

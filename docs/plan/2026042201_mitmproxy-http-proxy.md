@@ -1,5 +1,10 @@
 # mitmproxy HTTP Proxy — 2026-04-22-01
 
+> **Note (2026-05-16):** Config examples in this plan show a `"repos": {}` field
+> alongside `mitmproxy` rules. That field has since been removed from
+> `WorkspaceConfigSchema`. The mitmproxy parser ignored it and continues to work
+> on configs that omit it. Examples in this doc are otherwise still accurate.
+
 **Goal**: implement outbound credential injection from scratch as a conventional
 explicit HTTP proxy:
 
