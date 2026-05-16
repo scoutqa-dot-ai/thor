@@ -281,7 +281,14 @@ describe("validateGitArgs", () => {
       expect(
         resolveGitArgs(["clone", "https://github.com/acme/web.git"], undefined, options),
       ).toEqual({
-        args: ["clone", "--", "https://github.com/acme/web.git", "/workspace/repos/web"],
+        args: [
+          "-c",
+          "credential.useHttpPath=true",
+          "clone",
+          "--",
+          "https://github.com/acme/web.git",
+          "/workspace/repos/web",
+        ],
       });
 
       expectGitDenied(["clone", "https://github.com/acme/web.git"]);
@@ -293,25 +300,13 @@ describe("validateGitArgs", () => {
         ),
       ).toContain("Load skill using-git");
       expect(
-        validateGitArgs(
-          ["clone", "https://github.com/other/web.git"],
-          undefined,
-          options,
-        ),
+        validateGitArgs(["clone", "https://github.com/other/web.git"], undefined, options),
       ).toContain("configured owners: acme");
       expect(
-        validateGitArgs(
-          ["clone", "https://gitlab.com/acme/web.git"],
-          undefined,
-          options,
-        ),
+        validateGitArgs(["clone", "https://gitlab.com/acme/web.git"], undefined, options),
       ).toContain("Load skill using-git");
       expect(
-        validateGitArgs(
-          ["clone", "git@github.com:acme/web.git"],
-          undefined,
-          options,
-        ),
+        validateGitArgs(["clone", "git@github.com:acme/web.git"], undefined, options),
       ).toContain("Load skill using-git");
 
       const dotSegmentSources = [
@@ -330,16 +325,12 @@ describe("validateGitArgs", () => {
         );
       }
 
-      expect(validateGitArgs(["clone", "https://github.com/acme/unsafe%2Frepo.git"], undefined, options)).toContain(
-        "Load skill using-git",
-      );
+      expect(
+        validateGitArgs(["clone", "https://github.com/acme/unsafe%2Frepo.git"], undefined, options),
+      ).toContain("Load skill using-git");
 
       expect(
-        validateGitArgs(
-          ["clone", "https://github.com/acme/link.git"],
-          undefined,
-          options,
-        ),
+        validateGitArgs(["clone", "https://github.com/acme/link.git"], undefined, options),
       ).toBeNull();
 
       vi.mocked(realpathSync.native).mockImplementation((path) => {
@@ -347,11 +338,7 @@ describe("validateGitArgs", () => {
         return normalizePosix(String(path));
       });
       expect(
-        validateGitArgs(
-          ["clone", "https://github.com/acme/link.git"],
-          undefined,
-          options,
-        ),
+        validateGitArgs(["clone", "https://github.com/acme/link.git"], undefined, options),
       ).toContain("Load skill using-git");
 
       expect(

@@ -28,4 +28,13 @@ describe("parseRemoteUrlFromAskpassPrompt", () => {
       ),
     ).toBe("acme");
   });
+
+  it("cannot resolve owner from host-only clone credential prompts without an existing remote", () => {
+    expect(
+      resolveOwnerFromAskpassPrompt(
+        "Password for 'https://x-access-token@github.com': ",
+        "/path/that/does/not/exist",
+      ),
+    ).toBeUndefined();
+  });
 });

@@ -436,11 +436,14 @@ function resolveClone(args: string[], allowedOwners: readonly string[]): Resolve
   const destination = `${WORKSPACE_REPOS_ROOT}/${parsed.repo}`;
   if (!isSafeCloneDestination(destination)) return deny("git clone", cloneGuidance);
 
-  return { args: ["clone", "--", source, destination] };
+  return {
+    args: ["-c", "credential.useHttpPath=true", "clone", "--", source, destination],
+  };
 }
 
 function gitCloneGuidance(allowedOwners: readonly string[]): DenyGuidance {
-  const configuredOwners = allowedOwners.length > 0 ? allowedOwners.join(", ") : "(none configured)";
+  const configuredOwners =
+    allowedOwners.length > 0 ? allowedOwners.join(", ") : "(none configured)";
   return {
     reason: `clone is limited to https://github.com/<owner>/<repo>[.git] URLs for configured owners: ${configuredOwners}.`,
     instead: "git clone <allowlisted-https-github-url>",
@@ -448,7 +451,9 @@ function gitCloneGuidance(allowedOwners: readonly string[]): DenyGuidance {
 }
 
 function parseCloneSource(source: string): { owner: string; repo: string } | null {
-  const match = source.match(/^https:\/\/github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?$/);
+  const match = source.match(
+    /^https:\/\/github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?$/,
+  );
   if (!match) return null;
   const [, owner, repo] = match;
   if (!owner || !repo || owner === "." || owner === ".." || repo === "." || repo === "..") {
