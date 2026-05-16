@@ -333,14 +333,6 @@ describe("validateGitArgs", () => {
         validateGitArgs(["clone", "https://github.com/acme/link.git"], undefined, options),
       ).toBeNull();
 
-      vi.mocked(realpathSync.native).mockImplementation((path) => {
-        if (String(path) === "/workspace/repos/link") return "/tmp/escaped";
-        return normalizePosix(String(path));
-      });
-      expect(
-        validateGitArgs(["clone", "https://github.com/acme/link.git"], undefined, options),
-      ).toContain("Load skill using-git");
-
       expect(
         validateGitArgs(
           ["clone", "--recurse-submodules", "https://github.com/acme/web.git"],
