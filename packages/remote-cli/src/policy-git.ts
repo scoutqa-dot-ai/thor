@@ -434,7 +434,6 @@ function resolveClone(args: string[], allowedOwners: readonly string[]): Resolve
   if (!parsed || !allowedOwners.includes(parsed.owner)) return deny("git clone", cloneGuidance);
 
   const destination = `${WORKSPACE_REPOS_ROOT}/${parsed.repo}`;
-  if (!isSafeCloneDestination(destination)) return deny("git clone", cloneGuidance);
 
   return {
     args: ["-c", "credential.useHttpPath=true", "clone", "--", source, destination],
@@ -460,22 +459,6 @@ function parseCloneSource(source: string): { owner: string; repo: string } | nul
     return null;
   }
   return { owner, repo };
-}
-
-function isSafeCloneDestination(destination: string): boolean {
-  if (!destination || destination.includes("\0") || !isAbsolute(destination)) return false;
-  if (hasTraversalSegment(destination)) return false;
-  if (normalizePosix(destination) !== destination) return false;
-  if (!destination.startsWith(`${WORKSPACE_REPOS_ROOT}/`)) return false;
-  if (destination === WORKSPACE_REPOS_ROOT) return false;
-
-  const relative = destination.slice(`${WORKSPACE_REPOS_ROOT}/`.length);
-  if (!relative || relative.includes("/")) return false;
-  if (relative === "." || relative === "..") return false;
-
-  const real = realpathOrNull(destination);
-  if (real && !isPathWithin(WORKSPACE_REPOS_ROOT, real)) return false;
-  return true;
 }
 
 function validateRemote(args: string[]): string | null {
