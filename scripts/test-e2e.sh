@@ -34,6 +34,9 @@ repo_name_from_clone_url() {
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 REMOTE_CLI_URL="${REMOTE_CLI_URL:-http://localhost:3004}"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
+SLACK_API_URL="${SLACK_API_URL:-https://slack.com/api}"
+SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
+SLACK_CHANNEL_ID="${SLACK_E2E_CHANNEL_ID:-${SLACK_CHANNEL_ID:-}}"
 HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
 THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
 REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-$(repo_name_from_clone_url "$REMOTE_CLI_GIT_REPO_URL")}"
@@ -67,9 +70,11 @@ assert() {
 json_field() {
   local json="$1"
   local field="$2"
-  echo "$json" | node -e "
+  echo "$json" | FIELD="$field" node -e "
     const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-    const v = d[\"$field\"];
+    const path = process.env.FIELD.split('.');
+    let v = d;
+    for (const part of path) v = v?.[part];
     console.log(v === undefined ? '' : typeof v === 'boolean' ? String(v) : String(v));
   " 2>/dev/null || echo ""
 }
@@ -95,6 +100,41 @@ resolve_remote_cli_container() {
   docker ps --filter label=com.docker.compose.service=remote-cli --format '{{.Names}}' 2>/dev/null | head -n 1
 }
 
+resolve_opencode_container() {
+  if [[ -n "${OPENCODE_CONTAINER:-}" ]]; then
+    echo "$OPENCODE_CONTAINER"
+    return 0
+  fi
+
+  docker ps --filter label=com.docker.compose.service=opencode --format '{{.Names}}' 2>/dev/null | head -n 1
+}
+
+slack_post_json() {
+  local method="$1"
+  local json="$2"
+  curl -sS -X POST "$SLACK_API_URL/$method" \
+    -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+    -H 'Content-Type: application/json; charset=utf-8' \
+    --data-binary "$json"
+}
+
+slack_replies() {
+  local channel="$1"
+  local ts="$2"
+  curl -sS --get "$SLACK_API_URL/conversations.replies" \
+    -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+    --data-urlencode "channel=$channel" \
+    --data-urlencode "ts=$ts" \
+    --data-urlencode 'limit=100'
+}
+
+slack_file_info() {
+  local file_id="$1"
+  curl -sS --get "$SLACK_API_URL/files.info" \
+    -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+    --data-urlencode "file=$file_id"
+}
+
 approval_tool_for_upstream() {
   case "$1" in
     atlassian) echo "createJiraIssue" ;;
@@ -113,6 +153,7 @@ echo "=== Prerequisites ==="
 echo "  ℹ deterministic mode: no /trigger OpenCode/LLM prompts are executed"
 
 remote_cli_container=$(resolve_remote_cli_container)
+opencode_container=$(resolve_opencode_container)
 remote_cli_health=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null || echo '{}')
 runner_health=$(curl -sf "$RUNNER_URL/health" 2>/dev/null || echo '{}')
 gateway_health=$(curl -sf "$GATEWAY_URL/health" 2>/dev/null || echo '{}')
@@ -124,6 +165,12 @@ if [[ -z "$remote_cli_container" ]]; then
   preflight_ok=false
 else
   echo "  ✓ remote-cli container: $remote_cli_container"
+fi
+
+if [[ -n "$opencode_container" ]]; then
+  echo "  ✓ opencode container: $opencode_container"
+else
+  echo "  ⚠ opencode container not found; Slack upload e2e will be skipped"
 fi
 
 if [[ "$remote_cli_health" == *"ok"* ]]; then
@@ -514,6 +561,80 @@ status_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
   2>/dev/null || echo '{}')
 status_exit=$(json_field "$status_raw" "exitCode")
 assert '[[ "$status_exit" == "0" ]]' "git status (allowed) succeeds" "exitCode='$status_exit'"
+
+# 7. slack-upload should complete a real Slack external upload flow
+echo ""
+echo "=== Slack upload wrapper ==="
+
+if [[ -z "$SLACK_BOT_TOKEN" || -z "$SLACK_CHANNEL_ID" || -z "$opencode_container" ]]; then
+  echo "  ⚠ skipping Slack upload e2e (requires SLACK_BOT_TOKEN, SLACK_E2E_CHANNEL_ID/SLACK_CHANNEL_ID, and opencode container)"
+else
+  slack_upload_run_id="slack-upload-e2e-${REMOTE_CLI_AUTH_TS}"
+  slack_upload_title="slack-upload e2e ${slack_upload_run_id}.txt"
+  slack_upload_comment="slack-upload e2e comment ${slack_upload_run_id}"
+  slack_upload_body="slack-upload e2e body ${slack_upload_run_id}"
+  export SLACK_CHANNEL_ID slack_upload_run_id
+
+  seed_json=$(node -e "
+    console.log(JSON.stringify({
+      channel: process.env.SLACK_CHANNEL_ID,
+      text: '*slack-upload e2e seed* ' + process.env.slack_upload_run_id
+    }));
+  ")
+  seed_raw=$(slack_post_json "chat.postMessage" "$seed_json")
+  seed_ok=$(json_field "$seed_raw" "ok")
+  seed_ts=$(json_field "$seed_raw" "ts")
+  assert '[[ "$seed_ok" == "true" && -n "$seed_ts" ]]' "seeded Slack thread for slack-upload e2e" "response: ${seed_raw:0:500}"
+
+  if [[ "$seed_ok" == "true" && -n "$seed_ts" ]]; then
+    slack_upload_raw=$(docker exec \
+      -e FILE_CONTENT="$slack_upload_body" \
+      -e FILE_TITLE="$slack_upload_title" \
+      -e CHANNEL_ID="$SLACK_CHANNEL_ID" \
+      -e THREAD_TS="$seed_ts" \
+      -e INITIAL_COMMENT="$slack_upload_comment" \
+      "$opencode_container" \
+      sh -lc 'printf "%s\n" "$FILE_CONTENT" > /tmp/slack-upload-e2e.txt && slack-upload /tmp/slack-upload-e2e.txt --title "$FILE_TITLE" --channel "$CHANNEL_ID" --thread-ts "$THREAD_TS" --comment "$INITIAL_COMMENT"' 2>&1 || true)
+    assert '[[ "$slack_upload_raw" == "{\"ok\":true}" ]]' "slack-upload returns minimal success payload" "output: ${slack_upload_raw:0:500}"
+
+    upload_reply_json=""
+    upload_file_id=""
+    upload_file_title=""
+    replies='{}'
+    for _ in $(seq 1 24); do
+      replies=$(slack_replies "$SLACK_CHANNEL_ID" "$seed_ts" 2>/dev/null || echo '{}')
+      upload_reply_json=$(echo "$replies" | EXPECT_COMMENT="$slack_upload_comment" EXPECT_TITLE="$slack_upload_title" node -e "
+        const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+        const messages = d.messages || [];
+        const match = [...messages].reverse().find((message) => {
+          const files = Array.isArray(message.files) ? message.files : [];
+          return (message.text || '').includes(process.env.EXPECT_COMMENT) &&
+            files.some((file) => file.title === process.env.EXPECT_TITLE);
+        });
+        if (!match) process.exit(1);
+        const file = (match.files || []).find((candidate) => candidate.title === process.env.EXPECT_TITLE);
+        console.log(JSON.stringify({ ts: match.ts || '', fileId: file?.id || '', title: file?.title || '' }));
+      " 2>/dev/null || echo "")
+      upload_file_id=$(json_field "$upload_reply_json" "fileId")
+      upload_file_title=$(json_field "$upload_reply_json" "title")
+      if [[ -n "$upload_file_id" ]]; then
+        break
+      fi
+      sleep 5
+    done
+
+    assert '[[ -n "$upload_file_id" ]]' "Slack thread shows uploaded file reply" "replies: ${replies:0:1000}"
+    assert '[[ "$upload_file_title" == "$slack_upload_title" ]]' "uploaded file keeps requested title" "reply: ${upload_reply_json:0:300}"
+
+    if [[ -n "$upload_file_id" ]]; then
+      file_info_raw=$(slack_file_info "$upload_file_id" 2>/dev/null || echo '{}')
+      file_info_ok=$(json_field "$file_info_raw" "ok")
+      file_info_title=$(json_field "$file_info_raw" "file.title")
+      assert '[[ "$file_info_ok" == "true" ]]' "files.info returns uploaded Slack file" "response: ${file_info_raw:0:500}"
+      assert '[[ "$file_info_title" == "$slack_upload_title" ]]' "files.info matches uploaded title" "response: ${file_info_raw:0:500}"
+    fi
+  fi
+fi
 
 # ── Results ─────────────────────────────────────────────────────────────────
 
