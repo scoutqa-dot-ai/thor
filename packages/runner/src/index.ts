@@ -71,10 +71,6 @@ const SESSION_ERROR_GRACE_MS = config.sessionErrorGraceMs;
 /** Memory directory root. */
 const MEMORY_DIR = "/workspace/memory";
 
-const TaskDelegateInputSchema = z.object({
-  subagent_type: z.string().trim().min(1),
-});
-
 /** Shared event bus — one global SSE connection, dispatches to per-session listeners. */
 const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
 
@@ -911,19 +907,16 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       function emitTaskDelegateProgress(toolPart: ToolPart): void {
         if (toolPart.tool !== "task") return;
 
-        const input = (toolPart.state as { input?: unknown }).input;
-        const parsed = TaskDelegateInputSchema.safeParse(input);
-        if (!parsed.success) return;
+        const raw = toolPart.state.input.subagent_type;
+        if (typeof raw !== "string") return;
+        const agent = raw.trim();
+        if (!agent) return;
 
         const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
         if (emittedTaskDelegates.has(key)) return;
         emittedTaskDelegates.add(key);
 
-        const { subagent_type: agent } = parsed.data;
-        emit({
-          type: "delegate",
-          agent,
-        });
+        emit({ type: "delegate", agent });
       }
 
       await withNdjsonHeartbeat(emit, async () => {
