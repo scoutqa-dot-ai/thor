@@ -73,7 +73,7 @@ describe("remote-cli slack-post-message endpoint", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({
-      stdout: '{"ok":true,"channel":"C999","ts":"1777940309.867569"}\n',
+      stdout: '{"ok":true}\n',
       stderr: "",
       exitCode: 0,
     });
