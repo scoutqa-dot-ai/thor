@@ -155,7 +155,7 @@ Append entries only. Format: `YYYY-MM-DD HH:MM <agent>: <one-line summary>`.
 
 `Lifecycle:` (run lifetime) and `Verdict:` (latest review state) are different fields — do not conflate. Suggested values, not exhaustive: `Lifecycle:` `open` | `merged` | `abandoned`; `Verdict:` empty before first review, then `BLOCK` | `SUBSTANTIVE` | `NIT` | `MERGED`. Use a different value when the suggested set genuinely doesn't fit, and prefer reusing existing values across runs so the field stays scannable.
 
-For PR-producing work, always fill `Requested-By:` with the person who asked Thor to do the work. Prefer canonical identities that are stable across wakes, for example `slack:<user-id>` or `github:<login>`. Use `Requested-In:` to point at the originating surface when it helps future follow-up, for example `slack:<channel>/<thread-ts>` or `github:<owner>/<repo>#<number>`.
+Try to fill `Requested-By:` with the person who asked Thor to do the work. Prefer canonical identities that are stable across wakes, for example `slack:<user-id>` or `github:<login>`. Use `Requested-In:` to point at the originating surface when it helps future follow-up, for example `slack:<channel>/<thread-ts>` or `github:<owner>/<repo>#<number>`.
 
 Verdict meaning when used: `BLOCK` (defect, iterate), `SUBSTANTIVE` (non-trivial improvements, iterate), `NIT` (nitpicks only, ship), `MERGED` (PR landed, terminal — set by the orchestrator after merge, not by the reviewer).
 
@@ -194,7 +194,7 @@ After step 7 the run sits in `Lifecycle: open` waiting on the PR. Six GitHub eve
 
 Events on the same correlation key are debounced over 3s and arrive as a JSON array. A submitted PR review usually arrives as one `pull_request_review.submitted` plus its constituent `pull_request_review_comment.created` events together — they are one logical message from the human.
 
-When the run README exists, treat `Requested-By:` as the authority for who may directly steer follow-up code changes on that PR. If a review/comment wake comes from someone other than `Requested-By:` — human or bot — do not apply the requested fix immediately. Summarize the review in the Slack thread from `Thread:` and ask the original requester whether Thor should apply it. Only continue to implement after explicit confirmation from that original requester in Slack. If identity matching is uncertain (for example Slack user id vs GitHub login) or `Requested-By:` is missing/ambiguous, treat it as non-matching and ask first.
+When the run README exists, treat `Requested-By:` as the authority for who may directly steer follow-up code changes on that PR. If a review/comment wake comes from someone other than `Requested-By:` — summarize the review and confirm with the original requester before implementation.
 
 **`issue_comment.created`** — top-level PR comment mentioning you. The body can be Q&A or a change request. `gh pr comment <N>` replies in the same surface.
 
