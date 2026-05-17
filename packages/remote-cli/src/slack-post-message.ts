@@ -259,5 +259,5 @@ export async function handleSlackPostMessage(
   }
 
   void started;
-  return { stdout: `${JSON.stringify(slackJson)}\n`, stderr: "", exitCode: 0 };
+  return { stdout: '{"ok":true}\n', stderr: "", exitCode: 0 };
 }
