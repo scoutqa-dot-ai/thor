@@ -1,0 +1,25 @@
+packages/common/src/event-log.ts
+  240da525711be52b 281-282,293
+docs/plan/2026051601_opencode-event-view-schema.md
+  240da525711be52b 9,18,26,31,41,76,85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "098771e7bf6c4f5d01dae134708740b012466b59",
+  "prompts": {
+    "240da525711be52b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98097418-81c8-4231-983d-c8e662a8dad3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 10,
+      "total_deletions": 16,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}
