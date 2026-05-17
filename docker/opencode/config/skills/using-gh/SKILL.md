@@ -45,7 +45,7 @@ Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatabl
 
 ### `gh pr comment`
 
-Required: numeric PR selector plus `--body`/`-b`. Blocked: non-numeric selectors, edit/delete modes, `--editor`, `-F`/`--body-file`, and `--repo`/`-R`.
+Required: numeric PR selector plus `--body`/`-b`. Blocked: non-numeric selectors, edit/delete modes, `--editor`, `-F`/`--body-file`, and `--repo`/`-R`. Use this for PR conversation-level replies, not inline review-thread replies.
 
 ### `gh issue comment`
 
@@ -77,6 +77,8 @@ Append-only review-comment reply path: the current-repo placeholder endpoint is 
 gh api repos/{owner}/{repo}/pulls/<pull-number>/comments/<comment-id>/replies --method POST -f body=<text>
 gh api repos/<owner>/<repo>/pulls/<pull-number>/comments/<comment-id>/replies --method POST -f body=<text>
 ```
+
+Use this reply path for inline PR review-thread replies; `gh pr comment` creates a top-level PR conversation comment instead.
 
 `<pull-number>` and `<comment-id>` must be numeric, `body` must be non-empty, and `-f`/`--raw-field` is the only accepted body source. Explicit endpoints require an origin remote on `github.com` with the same owner/repo because `--hostname` is blocked. Cross-repo or wrong-host explicit write endpoints, `-F`/`--field`, `--input`, headers, previews, GraphQL, edit/delete endpoints, and arbitrary `--method` use remain blocked.
 
