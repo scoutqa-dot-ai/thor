@@ -1,0 +1,33 @@
+packages/common/src/index.ts
+  71c99c560b05cfe9 100-111,114-123
+packages/common/src/event-log.ts
+  71c99c560b05cfe9 16,374-377,385-394
+packages/common/src/opencode-event.test.ts
+  71c99c560b05cfe9 2,4,6,32,65,75,78,84,91-138,142,146,153,157,161-163,167-295
+packages/common/src/opencode-event.ts
+  71c99c560b05cfe9 4,6,8-16,18,20-33,113-129,137-142,238,257-282,284-433
+docs/plan/2026051601_opencode-event-view-schema.md
+  71c99c560b05cfe9 69
+packages/runner/src/index.ts
+  71c99c560b05cfe9 54-61,1266,1269-1270,1274-1283,1340,1343,1345,1348-1351,1354-1356,1513,1522-1524,1549,1584-1723,1796-1797,1814,1821,1829,1967-1975,1978-1994,2093,2126,2130-2131,2209-2210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "fb53008c5727ec7ff46fb0df4ef17bc53804caa3",
+  "prompts": {
+    "71c99c560b05cfe9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57f5fded-ff13-466b-b13f-f0866668f29d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1158,
+      "total_deletions": 520,
+      "accepted_lines": 1030,
+      "overriden_lines": 0
+    }
+  }
+}
