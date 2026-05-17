@@ -146,19 +146,13 @@ describe("EventQueue", () => {
 
   it("batches different raw keys that resolve to the same anchor", async () => {
     const anchorId = mintAnchor();
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "session-1",
-        anchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(appendCorrelationAliasForAnchor(anchorId, "slack:thread:1710000000.001")).toEqual({
-      ok: true,
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "session-1",
+      anchorId,
     });
-    expect(appendCorrelationAliasForAnchor(anchorId, "git:branch:thor:feature/shared")).toEqual({
-      ok: true,
-    });
+    appendCorrelationAliasForAnchor(anchorId, "slack:thread:1710000000.001");
+    appendCorrelationAliasForAnchor(anchorId, "git:branch:thor:feature/shared");
 
     const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
@@ -195,7 +189,7 @@ describe("EventQueue", () => {
         const existing = resolveAnchorForCorrelationKey(key);
         if (!existing) {
           const anchorId = mintAnchor();
-          expect(appendCorrelationAliasForAnchor(anchorId, key)).toEqual({ ok: true });
+          appendCorrelationAliasForAnchor(anchorId, key);
         }
         markFirstStarted();
         await holdFirst;

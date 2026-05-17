@@ -220,7 +220,7 @@ If the resolved session is `busy`:
 
 Every trigger emits two records into the per-session JSONL log (`packages/common/src/event-log.ts`):
 
-- `trigger_start` (event-log.ts:29) — `triggerId` (UUID), `correlationKey`, `promptPreview`.
+- `trigger_start` (event-log.ts:29) — `triggerId` (UUID), `correlationKey`. The user prompt body is recoverable from the opencode_event stream (the first `text` part prefixed with `[correlation-key: <key>]`), so it's not duplicated on this record.
 - `trigger_end` (event-log.ts:36) — `status: completed | error | aborted`, `durationMs`, optional `error`, optional `reason`.
 
 **Invariant**: every `trigger_start` is paired with a `trigger_end`. The runner emits `trigger_end` from the Express error path, the abort path above, and the SIGTERM shutdown handler — the log can never end with an open `trigger_start`. The viewer relies on this to compute slice status.

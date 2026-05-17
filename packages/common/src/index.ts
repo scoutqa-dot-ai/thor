@@ -82,6 +82,7 @@ export {
   mintAnchor,
   mintTriggerId,
   sessionLogPath,
+  iterateJsonlFileLinesSync,
   isUuidV7,
   UUID_V7_RE,
 } from "./event-log.js";
@@ -96,7 +97,32 @@ export type {
   AnchorSessionStatus,
   ListAnchorSessionStatesOptions,
 } from "./event-log.js";
+export {
+  OpencodeEventSchema,
+  ViewerPartSchema,
+  ViewerToolPartSchema,
+  ViewerTextPartSchema,
+  ViewerReasoningPartSchema,
+  ViewerStepFinishPartSchema,
+  ViewerCompactionPartSchema,
+  isOmittedMarker,
+  parseOpencodeEvent,
+  projectOpencodeEvent,
+} from "./opencode-event.js";
+export type {
+  OmittedMarker,
+  OpencodeEvent,
+  ViewerPart,
+  ViewerToolPart,
+  ViewerTextPart,
+  ViewerReasoningPart,
+  ViewerStepFinishPart,
+  ViewerCompactionPart,
+  ViewerPayloadOrOmitted,
+  ParsedOpencodeEvent,
+} from "./opencode-event.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
+export { formatTokens, formatDuration, formatAge, formatBytes, formatCostUsd } from "./format.js";
 export type { Logger } from "./logger.js";
 export { errorToMetadata } from "./errors.js";
 export type { ErrorMetadataOptions } from "./errors.js";
@@ -116,6 +142,7 @@ export {
   ensureAnchorForCorrelationKey,
   appendCorrelationAlias,
   appendCorrelationAliasForAnchor,
+  buildSlackCorrelationKeys,
   computeGitCorrelationKey,
   computeSlackCorrelationKey,
   resolveAnchorForCorrelationKey,

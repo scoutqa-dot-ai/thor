@@ -22,7 +22,7 @@ describe("remote-cli slack-post-message endpoint", () => {
 
   beforeEach(async () => {
     fetchMock = vi.fn();
-    appendAliasMock = vi.fn(() => ({ ok: true }));
+    appendAliasMock = vi.fn();
     aliasErrorMock = vi.fn();
     testCwd = mkdtempSync(join("/tmp", "remote-cli-slack-cwd-"));
     worklogRoot = mkdtempSync(join(tmpdir(), "remote-cli-slack-post-"));
@@ -85,7 +85,10 @@ describe("remote-cli slack-post-message endpoint", () => {
         body: JSON.stringify({ channel: "C999", text: "hello *world*\n", mrkdwn: true }),
       }),
     );
-    expect(appendAliasMock).toHaveBeenCalledWith("session-1", "slack:thread:1777940309.867569");
+    expect(appendAliasMock).toHaveBeenCalledWith(
+      "session-1",
+      "slack:thread:C999/1777940309.867569",
+    );
   });
 
   it("registers reply aliases against the requested thread value", async () => {
@@ -113,24 +116,23 @@ describe("remote-cli slack-post-message endpoint", () => {
         }),
       }),
     );
-    expect(appendAliasMock).toHaveBeenCalledWith("session-2", "slack:thread:thread-parent-token");
+    expect(appendAliasMock).toHaveBeenCalledWith(
+      "session-2",
+      "slack:thread:C123/thread-parent-token",
+    );
   });
 
   it("requires a live Thor session before calling Slack", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "session-stale",
-        anchorId: "00000000-0000-7000-8000-000000000107",
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "session-current",
-        anchorId: "00000000-0000-7000-8000-000000000107",
-      }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "session-stale",
+      anchorId: "00000000-0000-7000-8000-000000000107",
+    });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "session-current",
+      anchorId: "00000000-0000-7000-8000-000000000107",
+    });
 
     await expectFailure(
       { args: ["--channel", "C123"], stdin: "hello" },
@@ -231,7 +233,9 @@ describe("remote-cli slack-post-message endpoint", () => {
       jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }),
     );
     const error = new Error("alias store unavailable");
-    appendAliasMock.mockReturnValue({ ok: false, error });
+    appendAliasMock.mockImplementation(() => {
+      throw error;
+    });
 
     const response = await postSlack(
       { args: ["--channel", "C123"], stdin: "hello" },
@@ -243,7 +247,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(body.exitCode).toBe(0);
     expect(aliasErrorMock).toHaveBeenCalledWith(error, {
       sessionId: "session-5",
-      correlationKey: "slack:thread:1777940309.867569",
+      correlationKey: "slack:thread:C123/1777940309.867569",
     });
   });
 
@@ -267,13 +271,11 @@ describe("remote-cli slack-post-message endpoint", () => {
     const integrationServer = createServer(remoteCli.app);
 
     try {
-      expect(
-        appendAlias({
-          aliasType: "opencode.session",
-          aliasValue: "non-slack-session",
-          anchorId: "00000000-0000-7000-8000-000000000c01",
-        }),
-      ).toEqual({ ok: true });
+      appendAlias({
+        aliasType: "opencode.session",
+        aliasValue: "non-slack-session",
+        anchorId: "00000000-0000-7000-8000-000000000c01",
+      });
 
       integrationServer.listen(0, "127.0.0.1");
       await once(integrationServer, "listening");
@@ -289,7 +291,7 @@ describe("remote-cli slack-post-message endpoint", () => {
         }),
       });
       expect(topLevel.status).toBe(200);
-      expect(resolveSessionForCorrelationKey("slack:thread:1777940309.867569")).toBe(
+      expect(resolveSessionForCorrelationKey("slack:thread:C123/1777940309.867569")).toBe(
         "non-slack-session",
       );
 
@@ -303,17 +305,15 @@ describe("remote-cli slack-post-message endpoint", () => {
         }),
       });
       expect(reply.status).toBe(200);
-      expect(resolveSessionForCorrelationKey("slack:thread:1777940309.867569")).toBe(
+      expect(resolveSessionForCorrelationKey("slack:thread:C123/1777940309.867569")).toBe(
         "non-slack-session",
       );
 
-      expect(
-        appendAlias({
-          aliasType: "opencode.subsession",
-          aliasValue: "child-non-slack-session",
-          anchorId: "00000000-0000-7000-8000-000000000c01",
-        }),
-      ).toEqual({ ok: true });
+      appendAlias({
+        aliasType: "opencode.subsession",
+        aliasValue: "child-non-slack-session",
+        anchorId: "00000000-0000-7000-8000-000000000c01",
+      });
       const childPost = await fetch(`${integrationUrl}/exec/slack-post-message`, {
         method: "POST",
         headers: {
@@ -327,7 +327,7 @@ describe("remote-cli slack-post-message endpoint", () => {
         }),
       });
       expect(childPost.status).toBe(200);
-      expect(resolveSessionForCorrelationKey("slack:thread:1777940311.222222")).toBe(
+      expect(resolveSessionForCorrelationKey("slack:thread:C123/1777940311.222222")).toBe(
         "non-slack-session",
       );
     } finally {
@@ -345,13 +345,11 @@ describe("remote-cli slack-post-message endpoint", () => {
   });
 
   function bindSession(sessionId: string, anchorId: string): void {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: sessionId,
-        anchorId,
-      }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: sessionId,
+      anchorId,
+    });
   }
 
   async function expectFailure(

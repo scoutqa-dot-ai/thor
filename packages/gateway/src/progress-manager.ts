@@ -1,4 +1,4 @@
-import { createLogger, logInfo, logError } from "@thor/common";
+import { createLogger, logInfo, logError, formatDuration } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import {
   postMessage,
@@ -30,14 +30,6 @@ function tickDelayForElapsed(elapsedMs: number): number {
 
 function threadKey(channel: string, threadTs: string): string {
   return `${channel}:${threadTs}`;
-}
-
-function formatDuration(ms: number): string {
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remaining = seconds % 60;
-  return `${minutes}m ${remaining}s`;
 }
 
 /** A run of consecutive identical tool calls. */

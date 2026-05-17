@@ -1,5 +1,6 @@
 import {
   appendCorrelationAlias,
+  buildSlackCorrelationKeys,
   currentSessionForAnchor,
   isPathWithin,
   realpathOrNull,
@@ -251,11 +252,15 @@ export async function handleSlackPostMessage(
   }
 
   const aliasTs = parsed.threadTs ?? responseTs;
-  const correlationKey = `slack:thread:${aliasTs}`;
+  const correlationKey = buildSlackCorrelationKeys(parsed.channel, aliasTs)[0];
   const appendAlias = deps.appendAlias ?? appendCorrelationAlias;
-  const aliasResult = appendAlias(sessionId, correlationKey);
-  if (!aliasResult.ok) {
-    deps.logAliasError?.(aliasResult.error, { sessionId, correlationKey });
+  try {
+    appendAlias(sessionId, correlationKey);
+  } catch (err) {
+    deps.logAliasError?.(err instanceof Error ? err : new Error(String(err)), {
+      sessionId,
+      correlationKey,
+    });
   }
 
   void started;
