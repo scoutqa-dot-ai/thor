@@ -103,6 +103,22 @@ function taskRunningEvent(sessionId: string): Event {
   } as unknown as Event;
 }
 
+function taskRunningWithoutInputEvent(sessionId: string): Event {
+  return {
+    type: "message.part.updated",
+    properties: {
+      part: {
+        type: "tool",
+        sessionID: sessionId,
+        messageID: `m-${sessionId}`,
+        callID: "call-task-no-input",
+        tool: "task",
+        state: { status: "running" },
+      },
+    },
+  } as unknown as Event;
+}
+
 function toolEvent(
   sessionId: string,
   tool: string,
@@ -680,6 +696,7 @@ describe("runner /trigger orchestration", () => {
       const html = await response.text();
       expect(html).toContain("unknown event");
       expect(html).toContain("message.future.delta");
+      expect(html).toContain('class="row unknown" data-status="completed"');
       expect(html).not.toContain("No meaningful events recorded");
     });
   });
@@ -1119,6 +1136,28 @@ describe("runner /trigger orchestration", () => {
     expect(childAlias).toBeDefined();
     // Both bind to the same anchor so findActiveTrigger walks from child → parent.
     expect(childAlias.anchorId).toBe(parentAlias.anchorId);
+  });
+
+  it("skips task delegate progress when task input is missing", async () => {
+    const h = createHarness({
+      promptEvents: (sessionId) => [
+        taskRunningWithoutInputEvent(sessionId),
+        textEvent(sessionId, "continued"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "delegate without input",
+        correlationKey: "slack:thread:1710000000.061",
+      });
+      expect(result.events.find((e) => e.type === "delegate")).toBeUndefined();
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "completed",
+        response: "continued",
+      });
+    });
   });
 
   it("emits session errors as tool progress and continues when later activity arrives", async () => {

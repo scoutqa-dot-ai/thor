@@ -905,7 +905,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       function emitTaskDelegateProgress(toolPart: ToolPart): void {
         if (toolPart.tool !== "task") return;
 
-        const raw = toolPart.state.input.subagent_type;
+        const input = (toolPart.state as { input?: unknown }).input;
+        if (!isRecord(input)) return;
+        const raw = input.subagent_type;
         if (typeof raw !== "string") return;
         const agent = raw.trim();
         if (!agent) return;
@@ -1341,9 +1343,26 @@ function eventPart(record: SessionEventLogRecord): ViewerPart | undefined {
   return parsed.event.type === "message.part.updated" ? parsed.event.properties.part : undefined;
 }
 
-function renderUnrecognizedEvent(ts: string, rawType: string | undefined): string {
+function statusFromRawEvent(raw: unknown): "pending" | "running" | "completed" | "error" {
+  if (!isRecord(raw)) return "pending";
+  const properties = raw.properties;
+  if (!isRecord(properties)) return "pending";
+  const part = properties.part;
+  if (!isRecord(part)) return "pending";
+  const state = part.state;
+  if (!isRecord(state)) return "pending";
+  const status = state.status;
+  return status === "running" || status === "completed" || status === "error" ? status : "pending";
+}
+
+function renderUnrecognizedEvent(
+  ts: string,
+  rawType: string | undefined,
+  rawEvent: unknown,
+): string {
   const type = rawType ?? "unknown";
-  return `<li class="row unknown" data-status="pending"><b>unknown event</b> <span>${escapeHtml(type)}</span> <span class="ts">${escapeHtml(ts)}</span></li>`;
+  const status = statusFromRawEvent(rawEvent);
+  return `<li class="row unknown" data-status="${escapeHtml(status)}"><b>unknown event</b> <span>${escapeHtml(type)}</span> <span class="ts">${escapeHtml(ts)}</span></li>`;
 }
 
 function sourceFrom(correlationKey: string | undefined): string {
@@ -1498,10 +1517,6 @@ function decodeSourceLine(
     return decodeCronSource(promptPreview);
   }
   return undefined;
-}
-
-function partId(part: ViewerPart | undefined): string | undefined {
-  return part?.id;
 }
 
 function getStateTitle(part: ViewerToolPart): string | undefined {
@@ -1693,7 +1708,8 @@ function renderActivity(
       continue;
     }
     if (parsed.kind === "unrecognized") {
-      rows.push(renderUnrecognizedEvent(rec.ts, parsed.rawType));
+      const rawEvent = rec.type === "opencode_event" ? rec.event : undefined;
+      rows.push(renderUnrecognizedEvent(rec.ts, parsed.rawType, rawEvent));
       continue;
     }
     const event = parsed.event;
