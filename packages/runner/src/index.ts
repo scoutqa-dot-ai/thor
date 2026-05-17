@@ -119,10 +119,6 @@ function getToolInstructions(directory: string): string | undefined {
   }
 }
 
-function unwrap(result: { ok: true } | { ok: false; error: Error }): void {
-  if (!result.ok) throw result.error;
-}
-
 /**
  * In-flight trigger registry. Drives reliable trigger_end emission across normal
  * completion, caught throws, user-initiated aborts, and graceful shutdown.
@@ -134,13 +130,11 @@ function startTrigger(
   triggerId: string,
   payload: { correlationKey?: string },
 ): void {
-  unwrap(
-    appendSessionEvent(sessionId, {
-      type: "trigger_start",
-      triggerId,
-      ...(payload.correlationKey ? { correlationKey: payload.correlationKey } : {}),
-    }),
-  );
+  appendSessionEvent(sessionId, {
+    type: "trigger_start",
+    triggerId,
+    ...(payload.correlationKey ? { correlationKey: payload.correlationKey } : {}),
+  });
   inflightTriggers.set(triggerId, { sessionId, startTime: Date.now() });
 }
 
@@ -152,15 +146,16 @@ function endTrigger(
   const entry = inflightTriggers.get(triggerId);
   if (!entry) return;
   inflightTriggers.delete(triggerId);
-  const result = appendSessionEvent(entry.sessionId, {
-    type: "trigger_end",
-    triggerId,
-    status,
-    durationMs: Date.now() - entry.startTime,
-    ...extras,
-  });
-  if (!result.ok) {
-    logError(log, "trigger_end_write_failed", result.error.message, {
+  try {
+    appendSessionEvent(entry.sessionId, {
+      type: "trigger_end",
+      triggerId,
+      status,
+      durationMs: Date.now() - entry.startTime,
+      ...extras,
+    });
+  } catch (err) {
+    logError(log, "trigger_end_write_failed", err instanceof Error ? err.message : String(err), {
       sessionId: entry.sessionId,
       triggerId,
       status,
@@ -182,13 +177,17 @@ function findInflightTriggerForSession(sessionId: string): string | undefined {
  */
 export function flushInflightTriggersOnShutdown(): void {
   for (const [triggerId, entry] of inflightTriggers) {
-    appendSessionEvent(entry.sessionId, {
-      type: "trigger_end",
-      triggerId,
-      status: "aborted",
-      reason: "shutdown",
-      durationMs: Date.now() - entry.startTime,
-    });
+    try {
+      appendSessionEvent(entry.sessionId, {
+        type: "trigger_end",
+        triggerId,
+        status: "aborted",
+        reason: "shutdown",
+        durationMs: Date.now() - entry.startTime,
+      });
+    } catch {
+      // best-effort on shutdown; keep flushing the rest
+    }
   }
   inflightTriggers.clear();
 }
@@ -306,20 +305,16 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         const sessionId = parsed.data.sessionId ?? `e2e-${randomUUID()}`;
         const triggerId = mintTriggerId();
         const anchorId = mintAnchor();
-        unwrap(
-          appendAlias({
-            aliasType: "opencode.session",
-            aliasValue: sessionId,
-            anchorId,
-          }),
-        );
-        unwrap(
-          appendSessionEvent(sessionId, {
-            type: "trigger_start",
-            triggerId,
-            ...(parsed.data.correlationKey ? { correlationKey: parsed.data.correlationKey } : {}),
-          }),
-        );
+        appendAlias({
+          aliasType: "opencode.session",
+          aliasValue: sessionId,
+          anchorId,
+        });
+        appendSessionEvent(sessionId, {
+          type: "trigger_start",
+          triggerId,
+          ...(parsed.data.correlationKey ? { correlationKey: parsed.data.correlationKey } : {}),
+        });
         res.json({ sessionId, triggerId, anchorId });
       },
     );
@@ -673,7 +668,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             anchorId = existing;
           } else {
             anchorId = mintAnchor();
-            unwrap(appendCorrelationAliasForAnchor(anchorId, correlationKey));
+            appendCorrelationAliasForAnchor(anchorId, correlationKey);
           }
         } else {
           anchorId = mintAnchor();
@@ -715,11 +710,11 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         // session_stale recreate appends a fresh opencode.session alongside
         // the old; original Slack/git aliases keep pointing at the same anchor.
         if (resolveAlias({ aliasType: "opencode.session", aliasValue: id }) !== anchorId) {
-          unwrap(appendAlias({ aliasType: "opencode.session", aliasValue: id, anchorId }));
+          appendAlias({ aliasType: "opencode.session", aliasValue: id, anchorId });
         }
 
         if (correlationKey && resolveAnchorForCorrelationKey(correlationKey) !== anchorId) {
-          unwrap(appendCorrelationAliasForAnchor(anchorId, correlationKey));
+          appendCorrelationAliasForAnchor(anchorId, correlationKey);
         }
 
         return { sessionId: id, resumed: didResume, anchorId };
@@ -961,7 +956,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             // Child sub-session events land in the child's own log so the
             // viewer's owner-only slice never surfaces them.
             const originSessionId = eventSessionId(event) ?? sessionId;
-            unwrap(appendSessionEvent(originSessionId, { type: "opencode_event", event }));
+            appendSessionEvent(originSessionId, { type: "opencode_event", event });
 
             const isParent = isSessionEvent(event, sessionId);
 
@@ -1021,16 +1016,17 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                         if (childSessionIds.has(child.id)) continue;
                         childSessionIds.add(child.id);
                         subscription.addSessionId(child.id);
-                        const aliasResult = appendAlias({
-                          aliasType: "opencode.subsession",
-                          aliasValue: child.id,
-                          anchorId,
-                        });
-                        if (!aliasResult.ok) {
+                        try {
+                          appendAlias({
+                            aliasType: "opencode.subsession",
+                            aliasValue: child.id,
+                            anchorId,
+                          });
+                        } catch (err) {
                           logError(
                             log,
                             "opencode_subsession_alias_write_failed",
-                            aliasResult.error.message,
+                            err instanceof Error ? err.message : String(err),
                             { sessionId, anchorId, childId: child.id },
                           );
                         }

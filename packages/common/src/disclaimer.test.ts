@@ -19,15 +19,9 @@ describe("buildThorDisclaimerForSession", () => {
   });
 
   it("uses the active trigger owner when building the disclaimer footer", () => {
-    expect(appendAlias({ aliasType: "opencode.session", aliasValue: "parent", anchorId })).toEqual({
-      ok: true,
-    });
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
-      ok: true,
-    });
-    expect(
-      appendAlias({ aliasType: "opencode.subsession", aliasValue: "child", anchorId }),
-    ).toEqual({ ok: true });
+    appendAlias({ aliasType: "opencode.session", aliasValue: "parent", anchorId });
+    appendSessionEvent("parent", { type: "trigger_start", triggerId });
+    appendAlias({ aliasType: "opencode.subsession", aliasValue: "child", anchorId });
 
     const disclaimer = buildThorDisclaimerForSession("child", "https://thor.example.com/");
 
@@ -52,9 +46,7 @@ describe("buildThorDisclaimerForSession", () => {
   });
 
   it("builds an anchor footer when no trigger is open", () => {
-    expect(appendAlias({ aliasType: "opencode.session", aliasValue: "idle", anchorId })).toEqual({
-      ok: true,
-    });
+    appendAlias({ aliasType: "opencode.session", aliasValue: "idle", anchorId });
 
     const disclaimer = buildThorDisclaimerForSession("idle", "https://thor.example.com/");
 

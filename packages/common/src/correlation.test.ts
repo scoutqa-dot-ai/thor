@@ -21,12 +21,11 @@ const anchor2 = "00000000-0000-7000-8000-000000000c02";
 const anchor3 = "00000000-0000-7000-8000-000000000c03";
 
 function bindSession(sessionId: string, anchorId: string): void {
-  const result = appendAlias({
+  appendAlias({
     aliasType: "opencode.session",
     aliasValue: sessionId,
     anchorId,
   });
-  if (!result.ok) throw result.error;
 }
 
 function readAliases(): Array<{ aliasType: string; aliasValue: string; anchorId: string }> {
@@ -54,13 +53,11 @@ describe("correlation key resolution", () => {
 
   it("resolves correlation keys to anchors and routes lock keys at the anchor level", () => {
     bindSession("session-1", anchor1);
-    expect(
-      appendAlias({
-        aliasType: "slack.thread_id",
-        aliasValue: "1710000000.001",
-        anchorId: anchor1,
-      }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "slack.thread_id",
+      aliasValue: "1710000000.001",
+      anchorId: anchor1,
+    });
 
     const rawKey = "slack:thread:1710000000.001";
 
@@ -75,7 +72,7 @@ describe("correlation key resolution", () => {
     bindSession("session-git", anchor2);
     const rawKey = "git:branch:thor:feature/refactor";
 
-    expect(appendCorrelationAlias("session-git", rawKey)).toEqual({ ok: true });
+    appendCorrelationAlias("session-git", rawKey);
     expect(resolveAnchorForCorrelationKey(rawKey)).toBe(anchor2);
     expect(resolveSessionForCorrelationKey(rawKey)).toBe("session-git");
   });
@@ -84,7 +81,7 @@ describe("correlation key resolution", () => {
     bindSession("session-issue", anchor2);
     const rawKey = "github:issue:thor:acme/thor#42";
 
-    expect(appendCorrelationAlias("session-issue", rawKey)).toEqual({ ok: true });
+    appendCorrelationAlias("session-issue", rawKey);
     expect(resolveAnchorForCorrelationKey(rawKey)).toBe(anchor2);
     expect(resolveSessionForCorrelationKey(rawKey)).toBe("session-issue");
     expect(readAliases()).toContainEqual({
@@ -150,33 +147,27 @@ describe("correlation key resolution", () => {
 
   it("registers correlation aliases against the executing session's anchor", () => {
     bindSession("session-2", anchor2);
-    expect(appendCorrelationAlias("session-2", "slack:thread:1710000000.004")).toEqual({
-      ok: true,
-    });
+    appendCorrelationAlias("session-2", "slack:thread:1710000000.004");
     expect(resolveAnchorForCorrelationKey("slack:thread:1710000000.004")).toBe(anchor2);
     expect(resolveSessionForCorrelationKey("slack:thread:1710000000.004")).toBe("session-2");
   });
 
   it("appendCorrelationAlias fails closed when the session has no anchor binding yet", () => {
-    const result = appendCorrelationAlias("session-no-anchor", "slack:thread:1710000000.020");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.message).toContain("no anchor binding yet");
-    }
+    expect(() =>
+      appendCorrelationAlias("session-no-anchor", "slack:thread:1710000000.020"),
+    ).toThrow(/no anchor binding yet/);
   });
 
   it("appendCorrelationAlias resolves child sessions via opencode.subsession to the parent's anchor", () => {
     bindSession("parent-session", anchor1);
-    expect(
-      appendAlias({
-        aliasType: "opencode.subsession",
-        aliasValue: "child-session",
-        anchorId: anchor1,
-      }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.subsession",
+      aliasValue: "child-session",
+      anchorId: anchor1,
+    });
 
     // Delegated subagent's git push: x-thor-session-id is the child's id.
-    expect(appendCorrelationAlias("child-session", "git:branch:thor:feat-x")).toEqual({ ok: true });
+    appendCorrelationAlias("child-session", "git:branch:thor:feat-x");
 
     // Future GitHub events for the branch route to the parent's anchor.
     expect(resolveAnchorForCorrelationKey("git:branch:thor:feat-x")).toBe(anchor1);
@@ -190,7 +181,7 @@ describe("correlation key resolution", () => {
     expect(newKey).toBe(`slack:thread:${channel}/${ts}`);
     expect(legacyKey).toBe(`slack:thread:${ts}`);
 
-    expect(appendCorrelationAliasForAnchor(anchor1, newKey)).toEqual({ ok: true });
+    appendCorrelationAliasForAnchor(anchor1, newKey);
 
     // New-format lookup works.
     expect(resolveAnchorForCorrelationKey(newKey)).toBe(anchor1);
@@ -209,7 +200,7 @@ describe("correlation key resolution", () => {
     const ts = "1710000000.888";
     const [newKey, legacyKey] = buildSlackCorrelationKeys(channel, ts);
 
-    expect(appendCorrelationAliasForAnchor(anchor2, legacyKey)).toEqual({ ok: true });
+    appendCorrelationAliasForAnchor(anchor2, legacyKey);
 
     expect(resolveAnchorForCorrelationKey(legacyKey)).toBe(anchor2);
     expect(resolveAnchorForCorrelationKey(newKey)).toBeUndefined();
@@ -228,12 +219,8 @@ describe("correlation key resolution", () => {
 
   it("resolves different correlation keys on the same anchor to a single anchor lock", () => {
     bindSession("session-3", anchor3);
-    expect(appendCorrelationAliasForAnchor(anchor3, "slack:thread:1710000000.005")).toEqual({
-      ok: true,
-    });
-    expect(appendCorrelationAliasForAnchor(anchor3, "git:branch:thor:feature/shared")).toEqual({
-      ok: true,
-    });
+    appendCorrelationAliasForAnchor(anchor3, "slack:thread:1710000000.005");
+    appendCorrelationAliasForAnchor(anchor3, "git:branch:thor:feature/shared");
 
     expect(resolveCorrelationLockKey("slack:thread:1710000000.005")).toBe(`anchor:${anchor3}`);
     expect(resolveCorrelationLockKey("git:branch:thor:feature/shared")).toBe(`anchor:${anchor3}`);
@@ -311,7 +298,7 @@ describe("correlation key resolution", () => {
 
   it("returns an existing correlation anchor without minting", async () => {
     const key = "slack:thread:1710000000.040";
-    expect(appendCorrelationAliasForAnchor(anchor2, key)).toEqual({ ok: true });
+    appendCorrelationAliasForAnchor(anchor2, key);
 
     const result = await ensureAnchorForCorrelationKey(key);
 

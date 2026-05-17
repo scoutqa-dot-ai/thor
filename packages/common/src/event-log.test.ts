@@ -67,11 +67,10 @@ describe("session event log", () => {
   });
 
   it("appends capped records with visible success", () => {
-    const result = appendSessionEvent("s1", {
+    appendSessionEvent("s1", {
       type: "opencode_event",
       event: { huge: "x".repeat(8000) },
     });
-    expect(result.ok).toBe(true);
     expect(statSync(sessionLogPath("s1")).size).toBeLessThan(4096);
   });
 
@@ -80,28 +79,24 @@ describe("session event log", () => {
     // 4 KB per-record cap. They must persist in full so the debugging UI
     // sees the whole body.
     const longText = "lorem ipsum ".repeat(2000); // ~24 KB
-    expect(
-      appendSessionEvent("longtext", {
-        type: "opencode_event",
-        event: {
-          type: "message.part.updated",
-          properties: {
-            part: { id: "prt_long_text", type: "text", text: longText },
-          },
+    appendSessionEvent("longtext", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "prt_long_text", type: "text", text: longText },
         },
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("longtext", {
-        type: "opencode_event",
-        event: {
-          type: "message.part.updated",
-          properties: {
-            part: { id: "prt_long_reasoning", type: "reasoning", text: longText },
-          },
+      },
+    });
+    appendSessionEvent("longtext", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "prt_long_reasoning", type: "reasoning", text: longText },
         },
-      }),
-    ).toEqual({ ok: true });
+      },
+    });
 
     const lines = readFileSync(sessionLogPath("longtext"), "utf8").trim().split("\n");
     const parsed = lines.map((line) => JSON.parse(line));
@@ -118,31 +113,29 @@ describe("session event log", () => {
     // status, part id, and replaces payload leaves with omitted markers so the
     // viewer can still thread the call together.
     const largeOutput = "z".repeat(10_000);
-    expect(
-      appendSessionEvent("projected-tool", {
-        type: "opencode_event",
-        event: {
-          type: "message.part.updated",
-          properties: {
-            sessionID: "ses_test",
-            time: 1_700_000_000_000,
-            part: {
-              id: "prt_tool_big",
-              messageID: "msg_test",
-              type: "tool",
-              tool: "read",
-              callID: "call_test",
-              state: {
-                status: "completed",
-                title: "Reads /etc/passwd",
-                input: { path: "/etc/passwd" },
-                output: largeOutput,
-              },
+    appendSessionEvent("projected-tool", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "ses_test",
+          time: 1_700_000_000_000,
+          part: {
+            id: "prt_tool_big",
+            messageID: "msg_test",
+            type: "tool",
+            tool: "read",
+            callID: "call_test",
+            state: {
+              status: "completed",
+              title: "Reads /etc/passwd",
+              input: { path: "/etc/passwd" },
+              output: largeOutput,
             },
           },
         },
-      }),
-    ).toEqual({ ok: true });
+      },
+    });
 
     const line = readFileSync(sessionLogPath("projected-tool"), "utf8").trim();
     const record = JSON.parse(line);
@@ -169,30 +162,28 @@ describe("session event log", () => {
 
   it("strategically projects unknown opencode_event shapes instead of blanking them", () => {
     // Unknown top-level event.type still carries the same fixed skeleton.
-    expect(
-      appendSessionEvent("unknown-event", {
-        type: "opencode_event",
-        event: {
-          id: "evt_future",
-          type: "totally.new.event.kind",
-          properties: {
-            sessionID: "ses_future",
-            time: 1_700_000_000_000,
-            part: {
-              id: "prt_future",
-              type: "future-part",
-              tool: "future-tool",
-              callID: "call_future",
-              state: {
-                status: "completed",
-                output: "x".repeat(8000),
-              },
-              vendorPayload: "not part of the fallback skeleton",
+    appendSessionEvent("unknown-event", {
+      type: "opencode_event",
+      event: {
+        id: "evt_future",
+        type: "totally.new.event.kind",
+        properties: {
+          sessionID: "ses_future",
+          time: 1_700_000_000_000,
+          part: {
+            id: "prt_future",
+            type: "future-part",
+            tool: "future-tool",
+            callID: "call_future",
+            state: {
+              status: "completed",
+              output: "x".repeat(8000),
             },
+            vendorPayload: "not part of the fallback skeleton",
           },
         },
-      }),
-    ).toEqual({ ok: true });
+      },
+    });
 
     const line = readFileSync(sessionLogPath("unknown-event"), "utf8").trim();
     const record = JSON.parse(line);
@@ -219,46 +210,44 @@ describe("session event log", () => {
 
   it("drops non-skeleton future fields instead of needing projection retries", () => {
     const medium = "x".repeat(240);
-    expect(
-      appendSessionEvent("fixed-projection", {
-        type: "opencode_event",
-        event: {
-          id: "evt_fixed",
-          type: "future.verbose.event",
-          properties: {
-            sessionID: "ses_fixed",
-            time: 1_700_000_000_000,
-            path: medium,
-            file: medium,
-            source: medium,
-            part: {
-              id: "prt_fixed",
-              type: "future-part",
-              tool: "future-tool",
-              callID: "call_fixed",
-              reason: medium,
-              text: medium,
-              prompt: medium,
-              description: medium,
-              agent: medium,
-              command: medium,
-              mime: medium,
-              filename: medium,
-              url: medium,
-              hash: medium,
-              name: medium,
-              tail_start_id: medium,
-              state: {
-                status: "completed",
-                title: medium,
-                error: { name: medium, message: medium },
-              },
+    appendSessionEvent("fixed-projection", {
+      type: "opencode_event",
+      event: {
+        id: "evt_fixed",
+        type: "future.verbose.event",
+        properties: {
+          sessionID: "ses_fixed",
+          time: 1_700_000_000_000,
+          path: medium,
+          file: medium,
+          source: medium,
+          part: {
+            id: "prt_fixed",
+            type: "future-part",
+            tool: "future-tool",
+            callID: "call_fixed",
+            reason: medium,
+            text: medium,
+            prompt: medium,
+            description: medium,
+            agent: medium,
+            command: medium,
+            mime: medium,
+            filename: medium,
+            url: medium,
+            hash: medium,
+            name: medium,
+            tail_start_id: medium,
+            state: {
+              status: "completed",
+              title: medium,
               error: { name: medium, message: medium },
             },
+            error: { name: medium, message: medium },
           },
         },
-      }),
-    ).toEqual({ ok: true });
+      },
+    });
 
     const line = readFileSync(sessionLogPath("fixed-projection"), "utf8").trim();
     expect(Buffer.byteLength(line, "utf8")).toBeLessThan(4096);
@@ -283,20 +272,16 @@ describe("session event log", () => {
   });
 
   it("preserves required trigger_end fields when truncating oversized errors", () => {
-    expect(
-      appendSessionEvent("truncated-end", {
-        type: "trigger_start",
-        triggerId: triggerErr,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("truncated-end", {
-        type: "trigger_end",
-        triggerId: triggerErr,
-        status: "error",
-        error: "x".repeat(20_000),
-      }),
-    ).toEqual({ ok: true });
+    appendSessionEvent("truncated-end", {
+      type: "trigger_start",
+      triggerId: triggerErr,
+    });
+    appendSessionEvent("truncated-end", {
+      type: "trigger_end",
+      triggerId: triggerErr,
+      status: "error",
+      error: "x".repeat(20_000),
+    });
 
     expect(readTriggerSlice("truncated-end", triggerErr)).toMatchObject({
       status: "error",
@@ -340,28 +325,20 @@ describe("session event log", () => {
   });
 
   it("resolves aliases newest-wins and lists session aliases", () => {
-    expect(
-      appendAlias({ aliasType: "opencode.session", aliasValue: "s1", anchorId: anchorA }).ok,
-    ).toBe(true);
-    expect(
-      appendAlias({ aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorA }).ok,
-    ).toBe(true);
-    expect(
-      appendAlias({ aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorB }).ok,
-    ).toBe(true);
+    appendAlias({ aliasType: "opencode.session", aliasValue: "s1", anchorId: anchorA });
+    appendAlias({ aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorA });
+    appendAlias({ aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorB });
     expect(resolveAlias({ aliasType: "slack.thread_id", aliasValue: "1.2" })).toBe(anchorB);
 
     // Session-scoped alias audit only fires when callers explicitly write the
     // alias record into the session log; the global alias is the routing source
     // of truth. listSessionAliases reflects whatever the session itself recorded.
-    expect(
-      appendSessionEvent("s1", {
-        type: "alias",
-        aliasType: "slack.thread_id",
-        aliasValue: "1.2",
-        anchorId: anchorA,
-      }),
-    ).toEqual({ ok: true });
+    appendSessionEvent("s1", {
+      type: "alias",
+      aliasType: "slack.thread_id",
+      aliasValue: "1.2",
+      anchorId: anchorA,
+    });
     expect(listSessionAliases("s1")).toMatchObject([
       { aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorA },
     ]);
@@ -705,11 +682,12 @@ describe("session event log", () => {
   });
 
   it("rejects writes with a non-UUIDv7 trigger id", () => {
-    const result = appendSessionEvent("bad", {
-      type: "trigger_start",
-      triggerId: "00000000-0000-4000-8000-000000000001", // v4 — should fail
-    });
-    expect(result.ok).toBe(false);
+    expect(() =>
+      appendSessionEvent("bad", {
+        type: "trigger_start",
+        triggerId: "00000000-0000-4000-8000-000000000001", // v4 — should fail
+      }),
+    ).toThrow();
   });
 
   it("multi-process appends produce zero corrupt JSONL lines", async () => {

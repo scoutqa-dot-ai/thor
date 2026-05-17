@@ -371,23 +371,15 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   return candidate as T & { _truncated?: true };
 }
 
-export function appendSessionEvent(
-  sessionId: string,
-  record: Record<string, unknown>,
-): { ok: true } | { ok: false; error: Error } {
-  try {
-    const full = capRecord({
-      schemaVersion: 1,
-      ts: new Date().toISOString(),
-      ...record,
-    });
-    const parsed = SessionEventLogRecordSchema.parse(full);
-    appendJsonlFileOrThrow(sessionLogPath(sessionId), parsed);
-    sessionRecordsCache.delete(sessionId);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
-  }
+export function appendSessionEvent(sessionId: string, record: Record<string, unknown>): void {
+  const full = capRecord({
+    schemaVersion: 1,
+    ts: new Date().toISOString(),
+    ...record,
+  });
+  const parsed = SessionEventLogRecordSchema.parse(full);
+  appendJsonlFileOrThrow(sessionLogPath(sessionId), parsed);
+  sessionRecordsCache.delete(sessionId);
 }
 
 /**
@@ -395,17 +387,10 @@ export function appendSessionEvent(
  * incrementally for the new record; full rebuild is deferred to the next
  * size-signature miss.
  */
-export function appendAlias(
-  record: Omit<AliasRecord, "ts"> & { ts?: string },
-): { ok: true } | { ok: false; error: Error } {
-  try {
-    const alias = AliasRecordSchema.parse({ ts: new Date().toISOString(), ...record });
-    appendJsonlFileOrThrow(aliasLogPath(), alias);
-    applyAliasToCache(alias);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
-  }
+export function appendAlias(record: Omit<AliasRecord, "ts"> & { ts?: string }): void {
+  const alias = AliasRecordSchema.parse({ ts: new Date().toISOString(), ...record });
+  appendJsonlFileOrThrow(aliasLogPath(), alias);
+  applyAliasToCache(alias);
 }
 
 /**

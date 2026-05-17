@@ -413,18 +413,23 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       if (toolName === "post_message" && opts.sessionId) {
         const correlationKey = computeSlackCorrelationKey(args, stdout);
         if (correlationKey) {
-          const aliasResult = appendCorrelationAlias(opts.sessionId, correlationKey);
-          if (aliasResult.ok) {
+          try {
+            appendCorrelationAlias(opts.sessionId, correlationKey);
             logInfo(log, "alias_registered", {
               sessionId: opts.sessionId,
               correlationKey,
               source: "mcp:post_message",
             });
-          } else {
-            logError(log, "alias_registration_error", aliasResult.error.message, {
-              sessionId: opts.sessionId,
-              correlationKey,
-            });
+          } catch (err) {
+            logError(
+              log,
+              "alias_registration_error",
+              err instanceof Error ? err.message : String(err),
+              {
+                sessionId: opts.sessionId,
+                correlationKey,
+              },
+            );
           }
         }
       }

@@ -94,13 +94,10 @@ function buildSlackThreadCorrelationKey(channel: string | undefined, threadTs: s
 }
 
 /** Bind a correlation-key alias directly to a known anchor id. */
-export function appendCorrelationAliasForAnchor(
-  anchorId: string,
-  correlationKey: string,
-): { ok: true } | { ok: false; error: Error } {
+export function appendCorrelationAliasForAnchor(anchorId: string, correlationKey: string): void {
   const alias = aliasForCorrelationKey(correlationKey);
-  if (!alias) return { ok: true };
-  return appendAlias({ ...alias, anchorId });
+  if (!alias) return;
+  appendAlias({ ...alias, anchorId });
 }
 
 export function ensureAnchorForCorrelationKey(key: string): Promise<EnsureAnchorResult> {
@@ -117,8 +114,7 @@ export function ensureAnchorForCorrelationKey(key: string): Promise<EnsureAnchor
     if (existing) return { anchorId: existing, minted: false };
 
     const anchorId = mintAnchor();
-    const result = appendCorrelationAliasForAnchor(anchorId, key);
-    if (!result.ok) throw result.error;
+    appendCorrelationAliasForAnchor(anchorId, key);
     return { anchorId, minted: true };
   });
 }
@@ -128,11 +124,8 @@ export function ensureAnchorForCorrelationKey(key: string): Promise<EnsureAnchor
  * session's anchor. Fails closed when the session has no anchor binding —
  * surfaces producers that run before the runner registers opencode.session.
  */
-export function appendCorrelationAlias(
-  sessionId: string,
-  correlationKey: string,
-): { ok: true } | { ok: false; error: Error } {
-  if (!aliasForCorrelationKey(correlationKey)) return { ok: true };
+export function appendCorrelationAlias(sessionId: string, correlationKey: string): void {
+  if (!aliasForCorrelationKey(correlationKey)) return;
   // Delegated subagents run under an opencode.subsession; fall back so their
   // git/Slack producer calls bind to the parent's anchor instead of being
   // silently dropped.
@@ -140,14 +133,11 @@ export function appendCorrelationAlias(
     resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) ??
     resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId });
   if (!anchorId) {
-    return {
-      ok: false,
-      error: new Error(
-        `cannot bind correlation alias: session ${sessionId} has no anchor binding yet`,
-      ),
-    };
+    throw new Error(
+      `cannot bind correlation alias: session ${sessionId} has no anchor binding yet`,
+    );
   }
-  return appendCorrelationAliasForAnchor(anchorId, correlationKey);
+  appendCorrelationAliasForAnchor(anchorId, correlationKey);
 }
 
 export function resolveCorrelationKeys(rawKeys: string[]): string {

@@ -116,9 +116,13 @@ function registerGitCorrelationAlias(
   const correlationKey = computeGitCorrelationKey(args, cwd);
   if (!correlationKey) return;
 
-  const result = appendCorrelationAlias(sessionId, correlationKey);
-  if (!result.ok) {
-    logError(log, "alias_registration_error", result.error.message, { sessionId, correlationKey });
+  try {
+    appendCorrelationAlias(sessionId, correlationKey);
+  } catch (err) {
+    logError(log, "alias_registration_error", err instanceof Error ? err.message : String(err), {
+      sessionId,
+      correlationKey,
+    });
     return;
   }
   logInfo(log, "alias_registered", { sessionId, correlationKey, source: "git" });
@@ -193,9 +197,13 @@ function registerIssueCorrelationAlias(
       ? parseCreatedIssueCorrelationKey(stdout, cwd)
       : parseIssueCommentCorrelationKey(args, cwd, stdout);
   if (!correlationKey) return;
-  const result = appendCorrelationAlias(sessionId, correlationKey);
-  if (!result.ok) {
-    logError(log, "alias_registration_error", result.error.message, { sessionId, correlationKey });
+  try {
+    appendCorrelationAlias(sessionId, correlationKey);
+  } catch (err) {
+    logError(log, "alias_registration_error", err instanceof Error ? err.message : String(err), {
+      sessionId,
+      correlationKey,
+    });
     return;
   }
   logInfo(log, "alias_registered", { sessionId, correlationKey, source: "gh" });

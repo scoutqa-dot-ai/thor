@@ -257,16 +257,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("rejects invalid approval args before persisting an action", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
 
     const pending = await postJson(
       "/exec/mcp",
@@ -299,16 +295,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("creates approvals with Jira disclaimers, exposes them via approval commands, and returns 401 for resolve without the internal secret", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -418,16 +410,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("blocks Jira approvals when contentFormat is not markdown", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -459,16 +447,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("deduplicates concurrent same-decision approval resolves in one process", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -530,16 +514,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("rejects concurrent same-decision approval resolves from different reviewers", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -594,16 +574,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("keeps approvals pending when approved tool execution fails and returns a clear error for corrupt approved records", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
 
     const pending = await postJson(
       "/exec/mcp",

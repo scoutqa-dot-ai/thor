@@ -286,8 +286,7 @@ afterEach(() => {
 });
 
 function bindSessionToAnchor(sessionId: string, anchorId: string): void {
-  const result = appendAlias({ aliasType: "opencode.session", aliasValue: sessionId, anchorId });
-  if (!result.ok) throw result.error;
+  appendAlias({ aliasType: "opencode.session", aliasValue: sessionId, anchorId });
 }
 
 function jsonLineWithSplitUtf8Text(buildRecord: (text: string) => Record<string, unknown>): {
@@ -325,12 +324,11 @@ function readAliases(): Array<{ aliasType: string; aliasValue: string; anchorId:
 function setupBusySession(slackThreadTs: string): string {
   const anchorId = mintAnchor();
   bindSessionToAnchor("busy-session", anchorId);
-  const aliasResult = appendAlias({
+  appendAlias({
     aliasType: "slack.thread_id",
     aliasValue: slackThreadTs,
     anchorId,
   });
-  if (!aliasResult.ok) throw aliasResult.error;
   return anchorId;
 }
 
@@ -340,12 +338,8 @@ describe("runner /trigger orchestration", () => {
     const triggerId = "00000000-0000-7000-8000-000000000301";
     const anchorId = mintAnchor();
     bindSessionToAnchor("viewer-session", anchorId);
-    expect(appendSessionEvent("viewer-session", { type: "trigger_start", triggerId })).toEqual({
-      ok: true,
-    });
-    expect(
-      appendSessionEvent("viewer-session", { type: "trigger_end", triggerId, status: "completed" }),
-    ).toEqual({ ok: true });
+    appendSessionEvent("viewer-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("viewer-session", { type: "trigger_end", triggerId, status: "completed" });
 
     await withServer(h.app, async (url) => {
       const missing = await fetch(
@@ -926,15 +920,13 @@ describe("runner /trigger orchestration", () => {
     const slackKey = "slack:thread:1710000000.010";
     const gitKey = "git:branch:runner-trigger-test:feature/shared";
     const sharedAnchor = mintAnchor();
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "shared-session",
-        anchorId: sharedAnchor,
-      }),
-    ).toEqual({ ok: true });
-    expect(appendCorrelationAliasForAnchor(sharedAnchor, slackKey)).toEqual({ ok: true });
-    expect(appendCorrelationAliasForAnchor(sharedAnchor, gitKey)).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "shared-session",
+      anchorId: sharedAnchor,
+    });
+    appendCorrelationAliasForAnchor(sharedAnchor, slackKey);
+    appendCorrelationAliasForAnchor(sharedAnchor, gitKey);
 
     let activeGets = 0;
     let maxActiveGets = 0;
