@@ -3,6 +3,11 @@ import type { RunnerDeps } from "./service.js";
 import type { SlackDeps } from "./slack-api.js";
 import type { GitHubWebhookEvent } from "./github.js";
 
+vi.mock("@thor/common", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, resolveRepoDirectory: () => "/workspace/repos/my-repo" };
+});
+
 function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
   const text = lines.join("\n") + "\n";
   return new ReadableStream({
@@ -125,11 +130,6 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
         reactions: { add: reactionsAdd },
       },
     } as unknown as SlackDeps;
-
-    vi.mock("@thor/common", async (importOriginal) => {
-      const actual = (await importOriginal()) as Record<string, unknown>;
-      return { ...actual, resolveRepoDirectory: () => "/workspace/repos/my-repo" };
-    });
   });
 
   const slackEvent = {

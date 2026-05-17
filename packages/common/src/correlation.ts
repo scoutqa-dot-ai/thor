@@ -61,25 +61,43 @@ export function computeSlackCorrelationKey(
 ): string | undefined {
   const input = SlackPostMessageInput.safeParse(toolArgs);
   if (!input.success) return undefined;
-  if (input.data.thread_ts) return `${SLACK_THREAD_PREFIX}${input.data.thread_ts}`;
+  const channel = input.data.channel;
+  if (input.data.thread_ts) {
+    return buildSlackThreadCorrelationKey(channel, input.data.thread_ts);
+  }
 
   try {
     const output = SlackPostMessageOutput.safeParse(JSON.parse(result));
     if (!output.success) return undefined;
-    return `${SLACK_THREAD_PREFIX}${output.data.ts}`;
+    return buildSlackThreadCorrelationKey(channel ?? output.data.channel, output.data.ts);
   } catch {
     return undefined;
   }
 }
 
+/**
+ * Build Slack thread correlation key(s). Returns the new
+ * `slack:thread:<channel>/<ts>` form when channel is known, plus the legacy
+ * `slack:thread:<ts>` form for back-compat resolution against pre-existing
+ * aliases.
+ */
+export function buildSlackCorrelationKeys(channel: string | undefined, threadTs: string): string[] {
+  const legacy = `${SLACK_THREAD_PREFIX}${threadTs}`;
+  if (!channel) return [legacy];
+  return [`${SLACK_THREAD_PREFIX}${channel}/${threadTs}`, legacy];
+}
+
+function buildSlackThreadCorrelationKey(channel: string | undefined, threadTs: string): string {
+  return channel
+    ? `${SLACK_THREAD_PREFIX}${channel}/${threadTs}`
+    : `${SLACK_THREAD_PREFIX}${threadTs}`;
+}
+
 /** Bind a correlation-key alias directly to a known anchor id. */
-export function appendCorrelationAliasForAnchor(
-  anchorId: string,
-  correlationKey: string,
-): { ok: true } | { ok: false; error: Error } {
+export function appendCorrelationAliasForAnchor(anchorId: string, correlationKey: string): void {
   const alias = aliasForCorrelationKey(correlationKey);
-  if (!alias) return { ok: true };
-  return appendAlias({ ...alias, anchorId });
+  if (!alias) return;
+  appendAlias({ ...alias, anchorId });
 }
 
 export function ensureAnchorForCorrelationKey(key: string): Promise<EnsureAnchorResult> {
@@ -96,8 +114,7 @@ export function ensureAnchorForCorrelationKey(key: string): Promise<EnsureAnchor
     if (existing) return { anchorId: existing, minted: false };
 
     const anchorId = mintAnchor();
-    const result = appendCorrelationAliasForAnchor(anchorId, key);
-    if (!result.ok) throw result.error;
+    appendCorrelationAliasForAnchor(anchorId, key);
     return { anchorId, minted: true };
   });
 }
@@ -107,11 +124,8 @@ export function ensureAnchorForCorrelationKey(key: string): Promise<EnsureAnchor
  * session's anchor. Fails closed when the session has no anchor binding —
  * surfaces producers that run before the runner registers opencode.session.
  */
-export function appendCorrelationAlias(
-  sessionId: string,
-  correlationKey: string,
-): { ok: true } | { ok: false; error: Error } {
-  if (!aliasForCorrelationKey(correlationKey)) return { ok: true };
+export function appendCorrelationAlias(sessionId: string, correlationKey: string): void {
+  if (!aliasForCorrelationKey(correlationKey)) return;
   // Delegated subagents run under an opencode.subsession; fall back so their
   // git/Slack producer calls bind to the parent's anchor instead of being
   // silently dropped.
@@ -119,14 +133,11 @@ export function appendCorrelationAlias(
     resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) ??
     resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId });
   if (!anchorId) {
-    return {
-      ok: false,
-      error: new Error(
-        `cannot bind correlation alias: session ${sessionId} has no anchor binding yet`,
-      ),
-    };
+    throw new Error(
+      `cannot bind correlation alias: session ${sessionId} has no anchor binding yet`,
+    );
   }
-  return appendCorrelationAliasForAnchor(anchorId, correlationKey);
+  appendCorrelationAliasForAnchor(anchorId, correlationKey);
 }
 
 export function resolveCorrelationKeys(rawKeys: string[]): string {
@@ -137,10 +148,13 @@ export function resolveCorrelationKeys(rawKeys: string[]): string {
   return rawKeys[0];
 }
 
-export function hasSessionForCorrelationKey(key: string): boolean {
-  const anchorId = resolveAnchorForCorrelationKey(key);
-  if (!anchorId) return false;
-  return currentSessionForAnchor(anchorId) !== undefined;
+export function hasSessionForCorrelationKey(key: string | string[]): boolean {
+  const keys = Array.isArray(key) ? key : [key];
+  for (const k of keys) {
+    const anchorId = resolveAnchorForCorrelationKey(k);
+    if (anchorId && currentSessionForAnchor(anchorId) !== undefined) return true;
+  }
+  return false;
 }
 
 export function resolveCorrelationLockKey(key: string): string {
@@ -150,10 +164,14 @@ export function resolveCorrelationLockKey(key: string): string {
 
 function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
   if (key.startsWith(SLACK_THREAD_PREFIX)) {
-    return {
-      aliasType: "slack.thread_id",
-      aliasValue: key.slice(SLACK_THREAD_PREFIX.length),
-    };
+    const suffix = key.slice(SLACK_THREAD_PREFIX.length);
+    // New shape: "<channel>/<thread_ts>". Legacy: "<thread_ts>" only.
+    // Channel ids and Slack ts strings never contain "/", so the separator
+    // is unambiguous.
+    if (suffix.includes("/")) {
+      return { aliasType: "slack.thread", aliasValue: suffix };
+    }
+    return { aliasType: "slack.thread_id", aliasValue: suffix };
   }
   if (key.startsWith(GIT_BRANCH_PREFIX)) {
     return {

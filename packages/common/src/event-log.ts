@@ -1,12 +1,26 @@
-import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { getWorklogDir } from "./worklog.js";
-import { truncate } from "./logger.js";
+import { createLogger, logWarn, truncate } from "./logger.js";
+import { parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.js";
+
+const log = createLogger("event-log");
+const SLOW_READ_THRESHOLD_MS = 50;
 
 export const ALIAS_TYPES = [
   "slack.thread_id",
+  "slack.thread",
   "git.branch",
   "github.issue",
   "opencode.session",
@@ -36,13 +50,13 @@ const BaseRecordSchema = z.object({
   schemaVersion: z.literal(1),
   ts: z.string(),
   type: z.string(),
+  _truncated: z.literal(true).optional(),
 });
 
 export const TriggerStartRecordSchema = BaseRecordSchema.extend({
   type: z.literal("trigger_start"),
   triggerId: z.string().regex(UUID_V7_RE, { message: "triggerId must be a UUIDv7" }),
   correlationKey: z.string().optional(),
-  promptPreview: z.string().optional(),
 });
 
 export const TriggerEndRecordSchema = BaseRecordSchema.extend({
@@ -106,7 +120,17 @@ export interface TriggerSlice {
 
 export type ActiveTriggerResult =
   | { ok: true; anchorId: string; sessionId: string; triggerId: string }
-  | { ok: false; reason: "none" | "oversized" };
+  | { ok: false; reason: "none" };
+
+export type AnchorContextResult =
+  | {
+      ok: true;
+      anchorId: string;
+      sessionId?: string;
+      triggerId?: string;
+      triggerSessionId?: string;
+    }
+  | { ok: false; reason: "none" };
 
 export interface ReverseAnchorEntry {
   sessionIds: string[];
@@ -132,7 +156,6 @@ export interface AnchorSessionState {
   sessionIds: string[];
   subsessionIds: string[];
   skippedMalformed: number;
-  oversized: boolean;
   reason?: string;
 }
 
@@ -151,10 +174,6 @@ interface InternalReverseEntry {
 }
 
 const MAX_RECORD_BYTES = 4095;
-export const MAX_SESSION_FILE_BYTES = Number.parseInt(
-  process.env.SESSION_LOG_MAX_BYTES || "52428800",
-  10,
-);
 
 interface AliasCacheState {
   /** "<aliasType>\0<aliasValue>" → anchorId. */
@@ -162,16 +181,32 @@ interface AliasCacheState {
   reverse: Map<string, InternalReverseEntry>;
 }
 const aliasCache: AliasCacheState = { forward: new Map(), reverse: new Map() };
-/** Last observed size of aliases.jsonl. -1 = never loaded. */
-let aliasCacheLastSize = -1;
+/** Last observed file signature for aliases.jsonl. */
+let aliasCacheLastSignature: string | null = null;
 
 interface SessionRecordsCacheEntry {
   signature: string;
   records: SessionEventLogRecord[];
   skippedMalformed: number;
-  oversized: boolean;
 }
+// Bounded LRU: the cache holds the full parsed records array per session, so
+// without a cap a long-running process accumulates every session it has ever
+// touched (disclaimer/anchor resolution touches every session bound to an
+// anchor). Map insertion order is the LRU order; on hit we re-set to mark
+// recent, and on overflow we evict the oldest key. 64 sessions is well above
+// any single trigger fan-out (typical anchors bind 1–3 sessions).
+const SESSION_RECORDS_CACHE_MAX = 64;
 const sessionRecordsCache = new Map<string, SessionRecordsCacheEntry>();
+
+function touchSessionRecordsCache(sessionId: string, entry: SessionRecordsCacheEntry): void {
+  if (sessionRecordsCache.has(sessionId)) sessionRecordsCache.delete(sessionId);
+  sessionRecordsCache.set(sessionId, entry);
+  while (sessionRecordsCache.size > SESSION_RECORDS_CACHE_MAX) {
+    const oldest = sessionRecordsCache.keys().next().value;
+    if (oldest === undefined) break;
+    sessionRecordsCache.delete(oldest);
+  }
+}
 
 function safeId(value: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(value)) throw new Error(`Invalid session id: ${value}`);
@@ -216,10 +251,48 @@ export function mintAnchor(): string {
 
 export const mintTriggerId = mintAnchor;
 
+/**
+ * Detects opencode_event records whose part is `text` or `reasoning` — the
+ * user-visible message body we must never lose. Tool inputs/outputs can run
+ * arbitrarily large (file reads, big JSON payloads) and still get capped;
+ * text/reasoning bypass the cap unconditionally.
+ */
+function isTextOrReasoningOpencodeEvent(record: Record<string, unknown>): boolean {
+  if (record.type !== "opencode_event") return false;
+  const event = record.event;
+  if (!event || typeof event !== "object") return false;
+  const properties = (event as { properties?: unknown }).properties;
+  if (!properties || typeof properties !== "object") return false;
+  const part = (properties as { part?: unknown }).part;
+  if (!part || typeof part !== "object") return false;
+  const partType = (part as { type?: unknown }).type;
+  return partType === "text" || partType === "reasoning";
+}
+
 function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncated?: true } {
   let candidate: Record<string, unknown> = { ...record };
   if (Buffer.byteLength(JSON.stringify(candidate), "utf8") < MAX_RECORD_BYTES)
     return candidate as T;
+
+  // Never truncate text/reasoning parts — long assistant replies or thinking
+  // chains exceed 4 KB legitimately, and the debugging UI needs them whole.
+  if (isTextOrReasoningOpencodeEvent(candidate)) return candidate as T;
+
+  // Project oversized opencode events to a fixed viewer skeleton. The projected
+  // schema has a bounded set of keys, so size is naturally constrained.
+  if (record.type === "opencode_event" && "event" in candidate) {
+    const projected = projectOpencodeEvent(candidate.event);
+    if (projected) {
+      const next: Record<string, unknown> = {
+        schemaVersion: 1,
+        ts: String(record.ts),
+        type: "opencode_event",
+        event: projected,
+        _truncated: true,
+      };
+      return next as T & { _truncated?: true };
+    }
+  }
 
   if ("event" in candidate) candidate.event = { _truncated: true };
   if ("payload" in candidate) candidate.payload = { _truncated: true };
@@ -233,9 +306,6 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
       triggerId: String(record.triggerId),
       ...(typeof record.correlationKey === "string"
         ? { correlationKey: record.correlationKey }
-        : {}),
-      ...(typeof record.promptPreview === "string"
-        ? { promptPreview: truncate(record.promptPreview, 512) }
         : {}),
       _truncated: true,
     };
@@ -274,13 +344,6 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   }
 
   while (Buffer.byteLength(JSON.stringify(candidate), "utf8") >= MAX_RECORD_BYTES) {
-    if (candidate.type === "trigger_start" && typeof candidate.promptPreview === "string") {
-      candidate.promptPreview = truncate(
-        candidate.promptPreview,
-        Math.max(32, Math.floor(candidate.promptPreview.length / 2)),
-      );
-      continue;
-    }
     if (candidate.type === "trigger_end") {
       if (typeof candidate.error === "string" && candidate.error.length > 32) {
         candidate.error = truncate(
@@ -308,23 +371,29 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   return candidate as T & { _truncated?: true };
 }
 
-export function appendSessionEvent(
-  sessionId: string,
-  record: Record<string, unknown>,
-): { ok: true } | { ok: false; error: Error } {
-  try {
-    const full = capRecord({
-      schemaVersion: 1,
-      ts: new Date().toISOString(),
-      ...record,
-    });
-    const parsed = SessionEventLogRecordSchema.parse(full);
-    appendJsonlFileOrThrow(sessionLogPath(sessionId), parsed);
-    sessionRecordsCache.delete(sessionId);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
+/** Bounds the warn volume when OpenCode adds a new event type — log each
+ * unrecognized `type` value at most once per process. */
+const seenUnrecognizedOpencodeEventTypes = new Set<string>();
+
+export function appendSessionEvent(sessionId: string, record: Record<string, unknown>): void {
+  const full = capRecord({
+    schemaVersion: 1,
+    ts: new Date().toISOString(),
+    ...record,
+  });
+  const parsed = SessionEventLogRecordSchema.parse(full);
+  if (parsed.type === "opencode_event") {
+    const probe = parseOpencodeEvent(parsed.event);
+    if (probe.kind === "unrecognized") {
+      const key = probe.rawType ?? "<no type>";
+      if (!seenUnrecognizedOpencodeEventTypes.has(key)) {
+        seenUnrecognizedOpencodeEventTypes.add(key);
+        logWarn(log, "unrecognized_opencode_event", { rawType: probe.rawType });
+      }
+    }
   }
+  appendJsonlFileOrThrow(sessionLogPath(sessionId), parsed);
+  sessionRecordsCache.delete(sessionId);
 }
 
 /**
@@ -332,20 +401,93 @@ export function appendSessionEvent(
  * incrementally for the new record; full rebuild is deferred to the next
  * size-signature miss.
  */
-export function appendAlias(
-  record: Omit<AliasRecord, "ts"> & { ts?: string },
-): { ok: true } | { ok: false; error: Error } {
+export function appendAlias(record: Omit<AliasRecord, "ts"> & { ts?: string }): void {
+  const alias = AliasRecordSchema.parse({ ts: new Date().toISOString(), ...record });
+  appendJsonlFileOrThrow(aliasLogPath(), alias);
+  applyAliasToCache(alias);
+}
+
+/**
+ * Stream complete newline-terminated lines from a file synchronously in 64 KB
+ * chunks. Trailing unterminated line at EOF is yielded too. Empty lines are
+ * skipped. Use this for hot paths over potentially large JSONL files where
+ * buffering the whole file via `readFileSync` would waste memory.
+ */
+export function* iterateJsonlFileLinesSync(path: string): Generator<string> {
+  let fd: number;
   try {
-    const alias = AliasRecordSchema.parse({ ts: new Date().toISOString(), ...record });
-    appendJsonlFileOrThrow(aliasLogPath(), alias);
-    applyAliasToCache(alias);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
+    fd = openSync(path, "r");
+  } catch {
+    return;
+  }
+  try {
+    const buf = Buffer.allocUnsafe(64 * 1024);
+    const decoder = new StringDecoder("utf8");
+    let leftover = "";
+    while (true) {
+      const n = readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      const chunk = leftover + decoder.write(buf.subarray(0, n));
+      const lines = chunk.split("\n");
+      leftover = lines.pop() ?? "";
+      for (const line of lines) if (line.length > 0) yield line;
+    }
+    const tail = decoder.end();
+    const finalLine = leftover + tail;
+    if (finalLine.length > 0) yield finalLine;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Stream parsed session records line-by-line. Skips malformed lines and any
+ * lines that don't match the schema. Times the whole iteration and emits a
+ * `slow_jsonl_read` warning above 50 ms. Caller can `break` early — the
+ * generator closes the fd in `finally`.
+ */
+function* streamSessionRecords(sessionId: string): Generator<SessionEventLogRecord> {
+  let path: string;
+  try {
+    path = sessionLogPath(sessionId);
+  } catch {
+    return;
+  }
+  const started = performance.now();
+  let bytesRead = 0;
+  let linesRead = 0;
+  let yielded = 0;
+  try {
+    for (const line of iterateJsonlFileLinesSync(path)) {
+      bytesRead += line.length + 1;
+      linesRead++;
+      try {
+        const parsed = SessionEventLogRecordSchema.safeParse(JSON.parse(line));
+        if (parsed.success) {
+          yielded++;
+          yield parsed.data;
+        }
+      } catch {
+        // skip malformed line
+      }
+    }
+  } finally {
+    const elapsedMs = performance.now() - started;
+    if (elapsedMs > SLOW_READ_THRESHOLD_MS) {
+      logWarn(log, "slow_jsonl_stream", {
+        sessionId,
+        path,
+        elapsedMs: Math.round(elapsedMs),
+        bytes: bytesRead,
+        lines: linesRead,
+        records: yielded,
+      });
+    }
   }
 }
 
 function completeLines(path: string): string[] {
+  const started = performance.now();
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -354,13 +496,23 @@ function completeLines(path: string): string[] {
   }
   const lines = text.split("\n");
   if (!text.endsWith("\n")) lines.pop();
-  return lines.filter((line) => line.length > 0);
+  const filtered = lines.filter((line) => line.length > 0);
+  const elapsedMs = performance.now() - started;
+  if (elapsedMs > SLOW_READ_THRESHOLD_MS) {
+    logWarn(log, "slow_jsonl_read", {
+      path,
+      elapsedMs: Math.round(elapsedMs),
+      bytes: text.length,
+      lines: filtered.length,
+    });
+  }
+  return filtered;
 }
 
 function fileStat(path: string): { signature: string; size: number } | null {
   try {
     const stat = statSync(path);
-    return { signature: `${stat.size}:${stat.mtimeMs}`, size: stat.size };
+    return { signature: `${path}:${stat.size}:${stat.mtimeMs}`, size: stat.size };
   } catch {
     return null;
   }
@@ -369,34 +521,18 @@ function fileStat(path: string): { signature: string; size: number } | null {
 function readSessionRecords(sessionId: string): {
   records: SessionEventLogRecord[];
   skippedMalformed: number;
-  oversized?: true;
 } {
   const path = sessionLogPath(sessionId);
   const stat = fileStat(path);
-  const signature = stat?.signature ?? "missing";
+  const signature = stat?.signature ?? `${path}:missing`;
   const cached = sessionRecordsCache.get(sessionId);
   if (cached && cached.signature === signature) {
-    return cached.oversized
-      ? { records: [], skippedMalformed: cached.skippedMalformed, oversized: true }
-      : { records: cached.records, skippedMalformed: cached.skippedMalformed };
+    touchSessionRecordsCache(sessionId, cached);
+    return { records: cached.records, skippedMalformed: cached.skippedMalformed };
   }
   if (!stat) {
-    sessionRecordsCache.set(sessionId, {
-      signature,
-      records: [],
-      skippedMalformed: 0,
-      oversized: false,
-    });
+    touchSessionRecordsCache(sessionId, { signature, records: [], skippedMalformed: 0 });
     return { records: [], skippedMalformed: 0 };
-  }
-  if (stat.size > MAX_SESSION_FILE_BYTES) {
-    sessionRecordsCache.set(sessionId, {
-      signature,
-      records: [],
-      skippedMalformed: 0,
-      oversized: true,
-    });
-    return { records: [], skippedMalformed: 0, oversized: true };
   }
   let skippedMalformed = 0;
   const records: SessionEventLogRecord[] = [];
@@ -409,16 +545,15 @@ function readSessionRecords(sessionId: string): {
       skippedMalformed++;
     }
   }
-  sessionRecordsCache.set(sessionId, { signature, records, skippedMalformed, oversized: false });
+  touchSessionRecordsCache(sessionId, { signature, records, skippedMalformed });
   return { records, skippedMalformed };
 }
 
 export function readTriggerSlice(
   sessionId: string,
   triggerId: string,
-): TriggerSlice | { notFound: true; skippedMalformed: number } | { oversized: true } {
+): TriggerSlice | { notFound: true; skippedMalformed: number } {
   const read = readSessionRecords(sessionId);
-  if (read.oversized) return { oversized: true };
   const startIndex = read.records.findIndex(
     (r) => r.type === "trigger_start" && r.triggerId === triggerId,
   );
@@ -459,6 +594,10 @@ function emptyReverseEntry(): InternalReverseEntry {
   return { sessions: new Map(), subsessions: new Set(), externalKeys: new Set() };
 }
 
+function isReverseEntryEmpty(entry: InternalReverseEntry): boolean {
+  return entry.sessions.size === 0 && entry.subsessions.size === 0 && entry.externalKeys.size === 0;
+}
+
 function ensureReverseEntry(anchorId: string): InternalReverseEntry {
   let entry = aliasCache.reverse.get(anchorId);
   if (!entry) {
@@ -483,6 +622,7 @@ function applyAliasRecord(r: AliasRecord): void {
       if (r.aliasType === "opencode.session") old.sessions.delete(r.aliasValue);
       else if (r.aliasType === "opencode.subsession") old.subsessions.delete(r.aliasValue);
       else old.externalKeys.delete(aliasKey);
+      if (isReverseEntryEmpty(old)) aliasCache.reverse.delete(previousAnchorId);
     }
   }
 
@@ -502,10 +642,12 @@ function applyAliasToCache(alias: AliasRecord): void {
   applyAliasRecord(alias);
 
   // statSync mtime may round to the same ms after appendFileSync; bumping to
-  // the current size keeps loadAliasCacheIfChanged from doing a redundant
-  // rebuild on the next read.
+  // the current full signature keeps loadAliasCacheIfChanged from doing a
+  // redundant rebuild on the next read.
   try {
-    aliasCacheLastSize = statSync(aliasLogPath()).size;
+    const path = aliasLogPath();
+    const stat = statSync(path);
+    aliasCacheLastSignature = `${path}:${stat.size}:${stat.mtimeMs}`;
   } catch {
     // best-effort
   }
@@ -514,12 +656,15 @@ function applyAliasToCache(alias: AliasRecord): void {
 function loadAliasCacheIfChanged(): void {
   const path = aliasLogPath();
   let currentSize = 0;
+  let currentSignature = `${path}:missing`;
   try {
-    currentSize = statSync(path).size;
+    const stat = statSync(path);
+    currentSize = stat.size;
+    currentSignature = `${path}:${stat.size}:${stat.mtimeMs}`;
   } catch {
     // missing file → treat as size 0
   }
-  if (currentSize === aliasCacheLastSize) return;
+  if (currentSignature === aliasCacheLastSignature) return;
   aliasCache.forward.clear();
   aliasCache.reverse.clear();
   if (currentSize > 0) {
@@ -532,7 +677,7 @@ function loadAliasCacheIfChanged(): void {
       }
     }
   }
-  aliasCacheLastSize = currentSize;
+  aliasCacheLastSignature = currentSignature;
 }
 
 function pickNewestSession(entry: InternalReverseEntry): string | undefined {
@@ -602,17 +747,6 @@ export function listSessionAliases(sessionId: string): AliasRecord[] {
   );
 }
 
-function openTrigger(
-  records: SessionEventLogRecord[],
-): { triggerId: string; ts: string } | undefined {
-  let open: { triggerId: string; ts: string } | undefined;
-  for (const record of records) {
-    if (record.type === "trigger_start") open = { triggerId: record.triggerId, ts: record.ts };
-    if (record.type === "trigger_end" && record.triggerId === open?.triggerId) open = undefined;
-  }
-  return open;
-}
-
 interface SessionOpenSummary {
   triggerId: string;
   startedAt: string;
@@ -626,17 +760,13 @@ interface SessionTerminalSummary {
   reason?: string;
 }
 
-function sessionSummary(sessionId: string):
-  | {
-      oversized?: false;
-      skippedMalformed: number;
-      open?: SessionOpenSummary;
-      latestTerminal?: SessionTerminalSummary;
-      lastEventTs?: string;
-    }
-  | { oversized: true; skippedMalformed: number } {
+function sessionSummary(sessionId: string): {
+  skippedMalformed: number;
+  open?: SessionOpenSummary;
+  latestTerminal?: SessionTerminalSummary;
+  lastEventTs?: string;
+} {
   const read = readSessionRecords(sessionId);
-  if (read.oversized) return { oversized: true, skippedMalformed: read.skippedMalformed };
 
   let open: SessionOpenSummary | undefined;
   let latestTerminal: SessionTerminalSummary | undefined;
@@ -687,7 +817,6 @@ export function listAnchorSessionStates(
 
   const rows = listAnchors().map(({ anchorId, entry }): AnchorSessionState => {
     let skippedMalformed = 0;
-    let oversized = false;
     let bestOpen: (SessionOpenSummary & { sessionId: string }) | undefined;
     let latestTerminal: (SessionTerminalSummary & { sessionId: string }) | undefined;
     let lastEventTs: string | undefined;
@@ -702,10 +831,6 @@ export function listAnchorSessionStates(
         continue;
       }
       skippedMalformed += summary.skippedMalformed;
-      if (summary.oversized) {
-        oversized = true;
-        continue;
-      }
       if (summary.lastEventTs && (!lastEventTs || summary.lastEventTs > lastEventTs)) {
         lastEventTs = summary.lastEventTs;
       }
@@ -720,7 +845,7 @@ export function listAnchorSessionStates(
       }
     }
 
-    if (oversized || readErrors.length > 0) {
+    if (readErrors.length > 0) {
       return {
         anchorId,
         status: "unknown",
@@ -732,13 +857,7 @@ export function listAnchorSessionStates(
         sessionIds: entry.sessionIds,
         subsessionIds: entry.subsessionIds,
         skippedMalformed,
-        oversized,
-        reason: [
-          oversized ? "one or more session logs exceeded the configured size cap" : null,
-          ...readErrors,
-        ]
-          .filter(Boolean)
-          .join("; "),
+        reason: readErrors.join("; "),
         lastEventTs: bestOpen?.lastEventTs ?? latestTerminal?.ts ?? lastEventTs,
       };
     }
@@ -759,7 +878,6 @@ export function listAnchorSessionStates(
           sessionIds: entry.sessionIds,
           subsessionIds: entry.subsessionIds,
           skippedMalformed,
-          oversized: false,
           reason: "invalid trigger timestamp in session log",
         };
       }
@@ -778,7 +896,6 @@ export function listAnchorSessionStates(
         sessionIds: entry.sessionIds,
         subsessionIds: entry.subsessionIds,
         skippedMalformed,
-        oversized: false,
       };
     }
 
@@ -797,7 +914,6 @@ export function listAnchorSessionStates(
         sessionIds: entry.sessionIds,
         subsessionIds: entry.subsessionIds,
         skippedMalformed,
-        oversized: false,
         reason: "invalid terminal timestamp in session log",
       };
     }
@@ -815,7 +931,6 @@ export function listAnchorSessionStates(
       sessionIds: entry.sessionIds,
       subsessionIds: entry.subsessionIds,
       skippedMalformed,
-      oversized: false,
       reason: latestTerminal?.reason,
     };
   });
@@ -843,6 +958,22 @@ export function listAnchorSessionStates(
  * wins — the same supersede-by-newest semantics readTriggerSlice uses inside
  * a single session.
  */
+/**
+ * Stream the session's records and return the currently-open trigger (latest
+ * `trigger_start` with no matching `trigger_end`), or undefined. Avoids
+ * materializing the full record array — this is the disclaimer/anchor hot
+ * path, run once per MCP tool call.
+ */
+function streamOpenTrigger(sessionId: string): { triggerId: string; ts: string } | undefined {
+  let open: { triggerId: string; ts: string } | undefined;
+  for (const record of streamSessionRecords(sessionId)) {
+    if (record.type === "trigger_start") open = { triggerId: record.triggerId, ts: record.ts };
+    else if (record.type === "trigger_end" && record.triggerId === open?.triggerId)
+      open = undefined;
+  }
+  return open;
+}
+
 export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult {
   const anchorId =
     resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
@@ -852,14 +983,36 @@ export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult
   const reverse = reverseLookupAnchor(anchorId);
   let best: { sessionId: string; triggerId: string; ts: string } | undefined;
   for (const sessionId of reverse.sessionIds) {
-    const read = readSessionRecords(sessionId);
-    if (read.oversized) return { ok: false, reason: "oversized" };
-    const open = openTrigger(read.records);
+    const open = streamOpenTrigger(sessionId);
     if (!open) continue;
     if (!best || open.ts > best.ts) best = { sessionId, ...open };
   }
   if (!best) return { ok: false, reason: "none" };
   return { ok: true, anchorId, sessionId: best.sessionId, triggerId: best.triggerId };
+}
+
+export function findAnchorContext(requestSessionId: string): AnchorContextResult {
+  const anchorId =
+    resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
+    resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
+  if (!anchorId) return { ok: false, reason: "none" };
+
+  const active = findActiveTrigger(requestSessionId);
+  if (active.ok) {
+    return {
+      ok: true,
+      anchorId,
+      sessionId: active.sessionId,
+      triggerId: active.triggerId,
+      triggerSessionId: active.sessionId,
+    };
+  }
+
+  return {
+    ok: true,
+    anchorId,
+    sessionId: currentSessionForAnchor(anchorId) ?? requestSessionId,
+  };
 }
 
 export function currentSessionForAnchor(anchorId: string): string | undefined {

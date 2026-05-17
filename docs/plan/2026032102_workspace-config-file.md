@@ -1,5 +1,13 @@
 # Workspace Config File
 
+> **Superseded (2026-05-16):** The `repos` block introduced by this plan has been
+> removed entirely. Per-repo config no longer exists; all MCP upstreams are enabled
+> for every directory under `/workspace/repos/`. Channel→repo routing is handled
+> by `SLACK_DEFAULT_REPO` plus per-channel override files under
+> `/workspace/memory/thor/repo-by-slack-channel/`. `WorkspaceConfig` still carries
+> `owners`, `mitmproxy`, and `mitmproxy_passthrough`. See current
+> `packages/common/src/workspace-config.ts`.
+
 Replace env-var-based repo/channel configuration with a single JSON config file (`/workspace/repos.json`) parsed by a shared zod schema in `@thor/common`.
 
 ## Motivation

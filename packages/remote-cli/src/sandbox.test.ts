@@ -4,7 +4,6 @@ import { realpathSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { normalize as normalizePosix } from "node:path/posix";
-import type { WorkspaceConfig } from "@thor/common";
 
 interface FakeSandbox {
   id: string;
@@ -123,15 +122,7 @@ describe("/exec/sandbox", () => {
 
     configureGitExec({ dirty: false, headSha: HEAD_SHA });
 
-    const config = Object.assign(
-      () =>
-        ({
-          repos: {},
-        }) as WorkspaceConfig,
-      { invalidate: () => {} },
-    );
-
-    const remoteCli = createRemoteCliApp({ getConfig: config });
+    const remoteCli = createRemoteCliApp({});
     closeRemoteCli = remoteCli.close;
 
     server = createServer(remoteCli.app);

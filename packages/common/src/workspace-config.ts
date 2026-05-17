@@ -3,14 +3,8 @@ import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.js";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
 import { createLogger, logWarn } from "./logger.js";
-import { PROXY_NAMES } from "./proxies.js";
 
 // --- Schema ---
-
-const RepoConfigSchema = z.object({
-  channels: z.array(z.string()).optional(),
-  proxies: z.array(z.string()).optional(),
-});
 
 const OwnerConfigSchema = z.object({
   github_app_installation_id: z.number().int().positive(),
@@ -52,7 +46,6 @@ const MitmproxyPassthroughHostSchema = z.string().refine((value) => {
 
 export const WorkspaceConfigSchema = z
   .object({
-    repos: z.record(z.string(), RepoConfigSchema),
     owners: z.record(z.string(), OwnerConfigSchema).optional(),
     mitmproxy: z.array(MitmproxyRuleSchema).optional(),
     mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
@@ -60,7 +53,6 @@ export const WorkspaceConfigSchema = z
   .strict();
 
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
-export type RepoConfig = z.infer<typeof RepoConfigSchema>;
 export type OwnerConfig = z.infer<typeof OwnerConfigSchema>;
 
 export interface ProxyUpstream {
@@ -85,28 +77,7 @@ export type ValidationResult =
   | { ok: true; data: WorkspaceConfig }
   | { ok: false; issues: ValidationIssue[] };
 
-/**
- * Validate an already-parsed config object. Aggregates all issues
- * (schema, duplicate channels, unknown proxies) before returning.
- */
 export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
-  if (
-    parsed &&
-    typeof parsed === "object" &&
-    Object.prototype.hasOwnProperty.call(parsed, "proxies")
-  ) {
-    return {
-      ok: false,
-      issues: [
-        {
-          path: "proxies",
-          message:
-            'Top-level "proxies" has moved to code (packages/common/src/proxies.ts). Remove it from config.json.',
-        },
-      ],
-    };
-  }
-
   const result = WorkspaceConfigSchema.safeParse(parsed);
   if (!result.success) {
     return {
@@ -117,47 +88,17 @@ export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
       })),
     };
   }
-
-  const issues: ValidationIssue[] = [];
-
-  const seen = new Map<string, string>(); // channel → repo
-  for (const [repo, config] of Object.entries(result.data.repos)) {
-    for (const channel of config.channels ?? []) {
-      const existing = seen.get(channel);
-      if (existing) {
-        issues.push({
-          path: `repos.${repo}.channels`,
-          message: `Duplicate channel ID "${channel}" — already mapped to repo "${existing}"`,
-        });
-      } else {
-        seen.set(channel, repo);
-      }
-    }
-  }
-
-  const proxyNames = new Set<string>(PROXY_NAMES);
-  for (const [repo, repoConfig] of Object.entries(result.data.repos)) {
-    for (const proxyRef of repoConfig.proxies ?? []) {
-      if (!proxyNames.has(proxyRef)) {
-        issues.push({
-          path: `repos.${repo}.proxies`,
-          message: `Unknown proxy "${proxyRef}". Available proxies: ${PROXY_NAMES.join(", ")}`,
-        });
-      }
-    }
-  }
-
-  if (issues.length > 0) return { ok: false, issues };
   return { ok: true, data: result.data };
 }
 
 // --- Loader ---
 
 const REPOS_PREFIX = "/workspace/repos";
+export const SLACK_CHANNEL_REPO_MEMORY_ROOT = "/workspace/memory/thor/repo-by-slack-channel";
 
 /**
  * Load and validate workspace config from a JSON file.
- * Throws on: missing file, invalid JSON, schema violation, duplicate channel IDs.
+ * Throws on: missing file, invalid JSON, schema violation.
  */
 export function loadWorkspaceConfig(path: string): WorkspaceConfig {
   let raw: string;
@@ -225,32 +166,6 @@ export function createConfigLoader(path: string): ConfigLoader {
 // --- Helpers ---
 
 /**
- * Union of all channel IDs across all repos.
- */
-export function getAllowedChannelIds(config: WorkspaceConfig): Set<string> {
-  const ids = new Set<string>();
-  for (const repo of Object.values(config.repos)) {
-    for (const ch of repo.channels ?? []) {
-      ids.add(ch);
-    }
-  }
-  return ids;
-}
-
-/**
- * Map from channel ID → repo name.
- */
-export function getChannelRepoMap(config: WorkspaceConfig): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const [repo, repoConfig] of Object.entries(config.repos)) {
-    for (const ch of repoConfig.channels ?? []) {
-      map.set(ch, repo);
-    }
-  }
-  return map;
-}
-
-/**
  * Interpolate ${ENV_VAR} references in a string.
  */
 export function interpolateEnv(value: string): string {
@@ -292,6 +207,75 @@ export function resolveRepoDirectory(repoName: string): string | undefined {
   }
 }
 
+function isFilenameOnly(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value !== "." &&
+    value !== ".." &&
+    !value.includes("/") &&
+    !value.includes("\\")
+  );
+}
+
+export function resolveSafeRepoDirectory(
+  repoName: string,
+  resolveRepoDirectoryFn: (repoName: string) => string | undefined = resolveRepoDirectory,
+): { directory?: string; reason?: string } {
+  if (!isFilenameOnly(repoName)) return { reason: "repo name must be a repo name only" };
+  const directory = resolveRepoDirectoryFn(repoName);
+  if (!directory) return { reason: `repo directory not found for ${repoName}` };
+  if (!isAllowedDirectory(directory)) {
+    return { reason: `repo directory for ${repoName} is outside ${WORKSPACE_REPOS_ROOT}` };
+  }
+  return { directory };
+}
+
+export function resolveSlackChannelRepoDirectory(
+  channelId: string,
+  defaultRepoName: string,
+  memoryRoot = SLACK_CHANNEL_REPO_MEMORY_ROOT,
+  resolveRepoDirectoryFn: (repoName: string) => string | undefined = resolveRepoDirectory,
+): {
+  directory?: string;
+  repoName?: string;
+  source?: "override" | "default";
+  fallbackReason?: string;
+  reason?: string;
+} {
+  let overrideRepo: string | undefined;
+  let invalidReason: string | undefined;
+
+  if (!isFilenameOnly(channelId)) {
+    invalidReason = "invalid channel id";
+  } else {
+    try {
+      overrideRepo =
+        readFileSync(join(memoryRoot, `${channelId}.txt`), "utf-8").trim() || undefined;
+    } catch (err) {
+      if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) {
+        invalidReason = err instanceof Error ? err.message : String(err);
+      }
+    }
+  }
+
+  if (overrideRepo) {
+    const r = resolveSafeRepoDirectory(overrideRepo, resolveRepoDirectoryFn);
+    if (r.directory) {
+      return { directory: r.directory, repoName: overrideRepo, source: "override" };
+    }
+    invalidReason = r.reason;
+  }
+
+  const fb = resolveSafeRepoDirectory(defaultRepoName, resolveRepoDirectoryFn);
+  if (!fb.directory) return { reason: fb.reason };
+  return {
+    directory: fb.directory,
+    repoName: defaultRepoName,
+    source: "default",
+    fallbackReason: invalidReason,
+  };
+}
+
 /**
  * Extract repo name from a cwd path under /workspace/repos/.
  * Returns undefined if path is not under the expected prefix.
@@ -303,17 +287,6 @@ export function extractRepoFromCwd(cwd: string): string | undefined {
   // Take the first path segment as the repo name
   const slash = rest.indexOf("/");
   return slash === -1 ? rest : rest.slice(0, slash);
-}
-
-/**
- * Get the list of upstream names allowed for a repo.
- * Returns undefined if the repo is not in config.
- * Returns empty array if repo exists but has no proxies field.
- */
-export function getRepoUpstreams(config: WorkspaceConfig, repoName: string): string[] | undefined {
-  const repo = config.repos[repoName];
-  if (!repo) return undefined;
-  return repo.proxies ?? [];
 }
 
 /**

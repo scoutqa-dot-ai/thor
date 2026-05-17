@@ -9,21 +9,37 @@
 #   - Both services running (either `pnpm dev` or `docker compose up`)
 #
 # Usage:
-#   ./scripts/test-e2e.sh
-#   RUNNER_URL=http://localhost:3000 REMOTE_CLI_URL=http://localhost:3004 ./scripts/test-e2e.sh
+#   REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
+#   REMOTE_CLI_GITHUB_REPO=owner/repo \
+#     ./scripts/test-e2e.sh
+#   RUNNER_URL=http://localhost:3000 REMOTE_CLI_URL=http://localhost:3004 \
+#   REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
+#   REMOTE_CLI_GITHUB_REPO=owner/repo \
+#     ./scripts/test-e2e.sh
 #
+# The repo's owner must be present in /workspace/config.json's `owners` map for
+# `git clone` to pass policy and resolve a GitHub App installation.
 set -euo pipefail
+
+repo_name_from_clone_url() {
+  local url="$1"
+  local repo="${url##*/}"
+  repo="${repo%.git}"
+  echo "$repo"
+}
+
+: "${REMOTE_CLI_GIT_REPO_URL:?REMOTE_CLI_GIT_REPO_URL is required}"
+: "${REMOTE_CLI_GITHUB_REPO:?REMOTE_CLI_GITHUB_REPO is required}"
 
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 REMOTE_CLI_URL="${REMOTE_CLI_URL:-http://localhost:3004}"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
 HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
 THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
-REMOTE_CLI_GIT_REPO_URL="${REMOTE_CLI_GIT_REPO_URL:-https://github.com/scoutqa-dot-ai/thor}"
-REMOTE_CLI_GITHUB_REPO="${REMOTE_CLI_GITHUB_REPO:-scoutqa-dot-ai/thor}"
-REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-scoutqa-dot-ai-thor-e2e}"
+REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-$(repo_name_from_clone_url "$REMOTE_CLI_GIT_REPO_URL")}"
 REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
 HOST_REMOTE_CLI_GIT_REPO_DIR="${HOST_REMOTE_CLI_GIT_REPO_DIR:-${HOST_WORKSPACE}/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
+HOST_REMOTE_CLI_GIT_REPO_MARKER="${HOST_REMOTE_CLI_GIT_REPO_DIR}/.thor-e2e-clone"
 REMOTE_CLI_AUTH_TS="${REMOTE_CLI_AUTH_TS:-$(date +%s)}"
 REMOTE_CLI_WORKTREE_BRANCH="${REMOTE_CLI_WORKTREE_BRANCH:-e2e-remote-cli-${REMOTE_CLI_AUTH_TS}}"
 REMOTE_CLI_WORKTREE_DIR="${REMOTE_CLI_WORKTREE_DIR:-/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
@@ -142,19 +158,42 @@ fi
 echo ""
 echo "=== Remote-CLI Git/GH Auth ==="
 
-[[ -n "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+if [[ -e "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]]; then
+  if [[ -f "$HOST_REMOTE_CLI_GIT_REPO_MARKER" ]]; then
+    rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+  else
+    echo "  ✗ refusing to remove existing repo without e2e marker: $HOST_REMOTE_CLI_GIT_REPO_DIR"
+    echo "    → choose a disposable REMOTE_CLI_GIT_REPO_URL or remove the directory manually"
+    echo ""
+    echo "FAIL — clone target is not safe to replace"
+    exit 1
+  fi
+fi
 [[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
 mkdir -p "$(dirname "$HOST_REMOTE_CLI_GIT_REPO_DIR")" "$(dirname "$HOST_REMOTE_CLI_WORKTREE_DIR")"
 
-echo "  Cloning $REMOTE_CLI_GIT_REPO_URL inside $remote_cli_container..."
-clone_output=$(docker exec "$remote_cli_container" \
-  git clone "$REMOTE_CLI_GIT_REPO_URL" "$REMOTE_CLI_GIT_REPO_DIR" 2>&1 || true)
-clone_origin=$(docker exec "$remote_cli_container" \
-  git -C "$REMOTE_CLI_GIT_REPO_DIR" remote get-url origin 2>/dev/null || echo "")
+echo "  Cloning $REMOTE_CLI_GIT_REPO_URL through /exec/git..."
+clone_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"clone\",\"$REMOTE_CLI_GIT_REPO_URL\"],\"cwd\":\"/workspace/repos\"}" \
+  2>/dev/null || echo '{}')
+clone_exit=$(json_field "$clone_raw" "exitCode")
+clone_output=$(json_field "$clone_raw" "stderr")
+clone_origin_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+  -H 'Content-Type: application/json' \
+  -d "{\"args\":[\"remote\",\"get-url\",\"origin\"],\"cwd\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+  2>/dev/null || echo '{}')
+clone_origin=$(json_field "$clone_origin_raw" "stdout")
 
+assert '[[ "$clone_exit" == "0" ]]' \
+  "remote-cli /exec/git cloned the GitHub repo" \
+  "response: ${clone_raw:0:300}"
 assert '[[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" ]]' \
-  "docker exec in remote-cli cloned the GitHub repo" \
+  "cloned repo exists on the shared host workspace" \
   "output: ${clone_output:0:300}"
+if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" ]]; then
+  touch "$HOST_REMOTE_CLI_GIT_REPO_MARKER"
+fi
 assert '[[ "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]' \
   "cloned repo origin matches expected URL" \
   "origin='$clone_origin'"
@@ -249,60 +288,47 @@ fi
 echo ""
 echo "=== Approval Flow ==="
 
-# 4a. Discover an approval-required tool from an upstream
+# 4a. Discover an approval-required tool from a connected upstream.
+# Per-repo proxy ACLs are gone — every repo under /workspace/repos can use every
+# connected upstream. We just need (a) a connected upstream that has an
+# approval-required tool in our test map and (b) any repo that exists on disk.
 APPROVAL_UPSTREAM=""
 APPROVAL_TOOL=""
 APPROVAL_DIR=""
-CONFIG_FILE="${HOST_WORKSPACE}/config.json"
 APPROVAL_DISCOVERY_DEBUG=""
 approval_health=$(curl -sf "$REMOTE_CLI_URL/health" 2>/dev/null || echo '{}')
 
-if [[ ! -f "$CONFIG_FILE" ]]; then
-  APPROVAL_DISCOVERY_DEBUG="workspace config not found at $CONFIG_FILE"
+if [[ "$approval_health" != *'"status":"ok"'* ]]; then
+  APPROVAL_DISCOVERY_DEBUG="remote-cli health unavailable at $REMOTE_CLI_URL"
 else
-  repo_upstream_pairs=$(CONFIG_FILE="$CONFIG_FILE" node -e "
-    const fs = require('fs');
-    const health = JSON.parse(fs.readFileSync(0, 'utf8'));
-    const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_FILE, 'utf8'));
-    const connected = new Set(
-      Object.entries(health.mcp?.instances || {})
-        .filter(([, info]) => info && info.connected)
-        .map(([name]) => name)
-    );
-    for (const [repo, rcfg] of Object.entries(cfg.repos || {})) {
-      for (const upstream of (rcfg.proxies || [])) {
-        if (connected.has(upstream)) {
-          console.log(repo + ':' + upstream);
-        }
-      }
+  connected_upstreams=$(node -e "
+    const health = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+    for (const [name, info] of Object.entries(health.mcp?.instances || {})) {
+      if (info && info.connected) console.log(name);
     }
   " <<<"$approval_health" 2>/dev/null || echo "")
 
-  if [[ "$approval_health" != *'"status":"ok"'* ]]; then
-    APPROVAL_DISCOVERY_DEBUG="remote-cli health unavailable at $REMOTE_CLI_URL"
-  elif [[ -z "$repo_upstream_pairs" ]]; then
-    APPROVAL_DISCOVERY_DEBUG="No configured repo has a connected MCP upstream. Check $CONFIG_FILE and $REMOTE_CLI_URL/health."
+  approval_repo="${SLACK_DEFAULT_REPO:-}"
+  if [[ -z "$approval_repo" || ! -d "${HOST_WORKSPACE}/repos/$approval_repo" ]]; then
+    approval_repo=$(ls -1 "${HOST_WORKSPACE}/repos" 2>/dev/null | head -n 1)
+  fi
+
+  if [[ -z "$connected_upstreams" ]]; then
+    APPROVAL_DISCOVERY_DEBUG="No MCP upstream is connected. Check $REMOTE_CLI_URL/health."
+  elif [[ -z "$approval_repo" || ! -d "${HOST_WORKSPACE}/repos/$approval_repo" ]]; then
+    APPROVAL_DISCOVERY_DEBUG="No repo found under ${HOST_WORKSPACE}/repos."
   else
-    while IFS= read -r pair; do
-      [[ -n "$pair" ]] || continue
-      repo_name="${pair%%:*}"
-      upstream_name="${pair##*:}"
-      test_dir="/workspace/repos/$repo_name"
-      host_dir="${HOST_WORKSPACE}/repos/$repo_name"
+    while IFS= read -r upstream_name; do
+      [[ -n "$upstream_name" ]] || continue
       found_tool="$(approval_tool_for_upstream "$upstream_name")"
-      # Repo directory must exist on host (mounted into container)
-      if [[ ! -d "$host_dir" ]]; then
-        APPROVAL_DISCOVERY_DEBUG="${APPROVAL_DISCOVERY_DEBUG:+$APPROVAL_DISCOVERY_DEBUG; }missing host repo dir: $host_dir"
-        continue
-      fi
       if [[ -n "$found_tool" ]]; then
         APPROVAL_UPSTREAM="$upstream_name"
         APPROVAL_TOOL="$found_tool"
-        APPROVAL_DIR="$test_dir"
+        APPROVAL_DIR="/workspace/repos/$approval_repo"
         break
       fi
       APPROVAL_DISCOVERY_DEBUG="${APPROVAL_DISCOVERY_DEBUG:+$APPROVAL_DISCOVERY_DEBUG; }upstream $upstream_name has no approval-required tool in e2e map"
-    done <<<"$repo_upstream_pairs"
+    done <<<"$connected_upstreams"
   fi
 fi
 
@@ -316,7 +342,7 @@ else
   trigger_context_raw=$(curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
     -H 'Content-Type: application/json' \
     -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-    -d '{"correlationKey":"e2e-approval-flow","promptPreview":"e2e approval disclaimer context"}' \
+    -d '{"correlationKey":"e2e-approval-flow"}' \
     2>/dev/null || echo '{}')
   E2E_THOR_SESSION_ID=$(json_field "$trigger_context_raw" "sessionId")
   E2E_THOR_TRIGGER_ID=$(json_field "$trigger_context_raw" "triggerId")
@@ -497,7 +523,9 @@ echo "  $passed passed, $failed failed"
 echo ""
 
 [[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
-[[ -n "$HOST_REMOTE_CLI_GIT_REPO_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+if [[ -f "$HOST_REMOTE_CLI_GIT_REPO_MARKER" ]]; then
+  rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+fi
 
 if [[ $failed -gt 0 ]]; then
   echo "FAIL"

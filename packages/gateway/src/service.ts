@@ -96,6 +96,7 @@ export interface BatchDispatchInput {
   onAccepted?: () => void;
   onRejected?: (reason: string) => void;
   channelRepos?: Map<string, string>;
+  slackDirectoryForChannel?: (channel: string) => { directory?: string; reason?: string };
 }
 
 export type BatchDispatchPlan =
@@ -455,8 +456,10 @@ function collectBatchDirectory<T>(
 function resolveSlackBatchDirectory(
   events: SlackThreadEvent[],
   channelRepos?: Map<string, string>,
+  slackDirectoryForChannel?: (channel: string) => { directory?: string; reason?: string },
 ): { directory?: string; reason?: string } {
   return collectBatchDirectory("Slack", events, (event) => {
+    if (slackDirectoryForChannel) return slackDirectoryForChannel(event.channel);
     const repo = channelRepos?.get(event.channel);
     if (!repo) return { reason: `channel ${event.channel} has no repo mapping` };
     const directory = resolveRepoDirectory(repo);
@@ -485,8 +488,10 @@ function resolveCronBatchDirectory(events: CronPayload[]): { directory?: string;
 function resolveApprovalBatchDirectory(
   events: ApprovalOutcomeEventPayload[],
   channelRepos?: Map<string, string>,
+  slackDirectoryForChannel?: (channel: string) => { directory?: string; reason?: string },
 ): { directory?: string; reason?: string } {
   return collectBatchDirectory("Approval", events, (event) => {
+    if (slackDirectoryForChannel) return slackDirectoryForChannel(event.channel);
     const repo = channelRepos?.get(event.channel);
     if (!repo) return { reason: `channel ${event.channel} has no repo mapping` };
     const directory = resolveRepoDirectory(repo);
@@ -613,7 +618,11 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   const parts: DispatchPart[] = [];
 
   if (input.slackEvents.length > 0) {
-    const slackDirectory = resolveSlackBatchDirectory(input.slackEvents, input.channelRepos);
+    const slackDirectory = resolveSlackBatchDirectory(
+      input.slackEvents,
+      input.channelRepos,
+      input.slackDirectoryForChannel,
+    );
     if (slackDirectory.reason) {
       return { kind: "drop", logPrefix, reason: slackDirectory.reason };
     }
@@ -656,6 +665,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     const approvalDirectory = resolveApprovalBatchDirectory(
       input.approvalOutcomes,
       input.channelRepos,
+      input.slackDirectoryForChannel,
     );
     if (approvalDirectory.reason) {
       return { kind: "drop", logPrefix, reason: approvalDirectory.reason };

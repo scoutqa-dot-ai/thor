@@ -33,7 +33,7 @@ flowchart LR
 
 | Integration      | Path                                | Auth                    | Notes                                              |
 | ---------------- | ----------------------------------- | ----------------------- | -------------------------------------------------- |
-| Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`  | PAT / local git config  | Repo-scoped worktree edits                         |
+| Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`  | GitHub App token        | Repo-scoped worktree edits                         |
 | Atlassian MCP    | `remote-cli /exec/mcp`              | `ATLASSIAN_AUTH` header | Read + approved writes                             |
 | PostHog MCP      | `remote-cli /exec/mcp`              | API key                 | Read + approved writes                             |
 | Grafana MCP      | `remote-cli /exec/mcp`              | Service account token   | Logs and observability                             |

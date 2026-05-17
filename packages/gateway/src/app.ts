@@ -1,19 +1,20 @@
 import express, { type Express, type Request, type Response } from "express";
 import {
   appendJsonlWorklog,
+  buildSlackCorrelationKeys,
   createLogger,
   errorToMetadata,
   getWorkspaceWorktreesRoot,
   hasSessionForCorrelationKey,
   logError,
   logInfo,
+  matchesInternalSecret,
   resolveExistingDirectoryWithinRoot,
   resolveCorrelationKeys,
-  getAllowedChannelIds,
-  getChannelRepoMap,
+  resolveSafeRepoDirectory,
+  resolveSlackChannelRepoDirectory,
   truncate,
   resolveRepoDirectory,
-  type ConfigLoader,
   type InboundWebhookHistoryEntry,
 } from "@thor/common";
 import { z } from "zod/v4";
@@ -37,7 +38,7 @@ import { createSlackClient, type SlackDeps } from "./slack-api.js";
 import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
-  getSlackCorrelationKey,
+  getSlackCorrelationKeys,
   isForwardableSlackMessage,
   isSupportedSlackMessageSubtype,
   parseSlackTs,
@@ -446,8 +447,6 @@ export interface GatewayAppConfig extends RunnerDeps {
   longDelayMs?: number;
   /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
   cronSecret?: string;
-  /** Dynamic workspace config loader — re-reads config.json on each request. */
-  getConfig?: ConfigLoader;
   /** Path to opencode auth.json for Codex usage check. */
   openaiAuthPath?: string;
   /** GitHub webhook HMAC secret. */
@@ -462,6 +461,10 @@ export interface GatewayAppConfig extends RunnerDeps {
   internalExec?: InternalExecClient;
   /** GitHub mention debounce delay in ms. Default: 3000. */
   githubMentionDelayMs?: number;
+  /** Required default repo directory name for Slack channels without a valid override. */
+  slackDefaultRepo?: string;
+  /** Test override for Slack channel repo memory root. */
+  slackChannelRepoMemoryRoot?: string;
 }
 
 const InteractivityBodySchema = z.object({
@@ -637,11 +640,11 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     resolutionExitCode: resolved.exitCode,
   };
 
-  const rawCorrelationKey = `slack:thread:${threadTs}`;
-  const outcomeCorrelationKey = resolveCorrelationKeys([rawCorrelationKey]);
-  if (outcomeCorrelationKey !== rawCorrelationKey) {
+  const rawCorrelationKeys = buildSlackCorrelationKeys(channel, threadTs);
+  const outcomeCorrelationKey = resolveCorrelationKeys(rawCorrelationKeys);
+  if (outcomeCorrelationKey !== rawCorrelationKeys[0]) {
     logInfo(log, "corr_key_resolved", {
-      rawKey: rawCorrelationKey,
+      rawKey: rawCorrelationKeys[0],
       correlationKey: outcomeCorrelationKey,
     });
   }
@@ -922,16 +925,33 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     return { status: "push_wake_triggered" };
   };
 
-  /** Read allowed channels dynamically from config on each call. */
-  const isChannelAllowed = (channel: string): boolean => {
-    if (!config.getConfig) return true; // no config = allow all
-    return getAllowedChannelIds(config.getConfig()).has(channel);
-  };
-  /** Read channel→repo map dynamically from config on each call. */
-  const getChannelRepos = (): Map<string, string> | undefined => {
-    if (!config.getConfig) return undefined;
-    return getChannelRepoMap(config.getConfig());
-  };
+  const slackDefaultRepo = config.slackDefaultRepo;
+  let resolveSlackDirectory:
+    | ((channel: string) => { directory?: string; reason?: string })
+    | undefined;
+  if (slackDefaultRepo !== undefined) {
+    const defaultRepo = resolveSafeRepoDirectory(slackDefaultRepo);
+    if (!defaultRepo.directory) {
+      throw new Error(`Invalid SLACK_DEFAULT_REPO: ${defaultRepo.reason}`);
+    }
+    resolveSlackDirectory = (channel) => {
+      const resolved = resolveSlackChannelRepoDirectory(
+        channel,
+        slackDefaultRepo,
+        config.slackChannelRepoMemoryRoot,
+      );
+      if (resolved.fallbackReason) {
+        logInfo(log, "slack_repo_override_fallback", {
+          channel,
+          selectedRepo: resolved.repoName,
+          selectedSource: resolved.source,
+          ...(resolved.source === "default" ? { defaultRepo: slackDefaultRepo } : {}),
+          reason: resolved.fallbackReason,
+        });
+      }
+      return resolved.directory ? { directory: resolved.directory } : { reason: resolved.reason };
+    };
+  }
 
   const runnerDeps: RunnerDeps = {
     runnerUrl: config.runnerUrl,
@@ -996,7 +1016,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           interrupt: hasInterrupt,
           onAccepted: ack,
           onRejected: reject,
-          channelRepos: getChannelRepos(),
+          slackDirectoryForChannel: resolveSlackDirectory,
         });
 
         if (plan.kind === "reroute") {
@@ -1221,26 +1241,15 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    // Block non-allowlisted channels
-    if (
-      "channel" in event &&
-      typeof event.channel === "string" &&
-      !isChannelAllowed(event.channel)
-    ) {
-      logInfo(log, "event_ignored_channel_not_allowed", { eventId, channel: event.channel });
-      res.status(200).json({ ok: true, ignored: true });
-      return;
-    }
-
     // app_mention — always forward
     if (event.type === "app_mention") {
       void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
         logError(log, "reaction_failed", err, { eventId }),
       );
-      const rawKey = getSlackCorrelationKey(event);
-      const correlationKey = resolveCorrelationKeys([rawKey]);
-      if (correlationKey !== rawKey) {
-        logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
+      const rawKeys = getSlackCorrelationKeys(event);
+      const correlationKey = resolveCorrelationKeys(rawKeys);
+      if (correlationKey !== rawKeys[0]) {
+        logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
       }
       logInfo(log, "event_accepted", {
         eventId,
@@ -1280,15 +1289,15 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // Message continuations. Supported subtypes are user-authored messages;
     // unsupported/system subtypes remain ignored below.
     if (event.type === "message" && isForwardableSlackMessage(event)) {
-      const rawKey = getSlackCorrelationKey(event);
-      const correlationKey = resolveCorrelationKeys([rawKey]);
-      if (correlationKey !== rawKey) {
-        logInfo(log, "corr_key_resolved", { rawKey, correlationKey });
+      const rawKeys = getSlackCorrelationKeys(event);
+      const correlationKey = resolveCorrelationKeys(rawKeys);
+      if (correlationKey !== rawKeys[0]) {
+        logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
       }
 
       // Only forward if Thor is engaged in this thread via the JSONL alias index.
       // Users must @mention to start new conversations.
-      const engaged = hasSessionForCorrelationKey(rawKey);
+      const engaged = hasSessionForCorrelationKey(rawKeys);
       if (!engaged) {
         logInfo(log, "event_ignored_not_engaged", {
           eventId,
@@ -1760,7 +1769,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     }
 
     const auth = req.header("authorization");
-    if (auth !== `Bearer ${config.cronSecret}`) {
+    const bearerPrefix = "Bearer ";
+    const providedSecret = auth?.startsWith(bearerPrefix)
+      ? auth.slice(bearerPrefix.length)
+      : undefined;
+    if (!matchesInternalSecret(config.cronSecret, providedSecret)) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }

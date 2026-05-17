@@ -186,5 +186,5 @@ if (!response.ok) {
   console.error(`slack-upload: ${response.error || "files.completeUploadExternal failed"}`);
   process.exit(1);
 }
-process.stdout.write(`${JSON.stringify(response)}\n`);
+process.stdout.write('{"ok":true}\n');
 ' "$complete_json"

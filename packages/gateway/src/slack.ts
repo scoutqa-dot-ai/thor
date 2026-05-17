@@ -169,7 +169,17 @@ export function getSlackThreadTs(event: SlackThreadEvent): string {
 }
 
 export function getSlackCorrelationKey(event: SlackThreadEvent): string {
-  return `slack:thread:${getSlackThreadTs(event)}`;
+  return `slack:thread:${event.channel}/${getSlackThreadTs(event)}`;
+}
+
+/**
+ * Returns both the new `slack:thread:<channel>/<ts>` key and the legacy
+ * `slack:thread:<ts>` key. Callers pass the array to `resolveCorrelationKeys`
+ * so existing threads bound under the legacy alias still match.
+ */
+export function getSlackCorrelationKeys(event: SlackThreadEvent): string[] {
+  const ts = getSlackThreadTs(event);
+  return [`slack:thread:${event.channel}/${ts}`, `slack:thread:${ts}`];
 }
 
 export function isSupportedSlackMessageSubtype(

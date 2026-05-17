@@ -45,7 +45,7 @@ describe("slack helpers", () => {
     ).toBe(false);
   });
 
-  it("builds a thread-based correlation key", () => {
+  it("builds a thread-based correlation key with channel", () => {
     expect(
       getSlackCorrelationKey({
         type: "app_mention",
@@ -55,7 +55,7 @@ describe("slack helpers", () => {
         thread_ts: "1710000000.000",
         channel: "C123",
       }),
-    ).toBe("slack:thread:1710000000.000");
+    ).toBe("slack:thread:C123/1710000000.000");
   });
 
   it("preserves file_share metadata and unknown Slack fields", () => {

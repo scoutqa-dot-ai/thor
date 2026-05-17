@@ -15,7 +15,6 @@ services:
       - "127.0.0.1:3004:3004"
     environment:
       - NODE_ENV=production
-      - GITHUB_PAT=${GITHUB_PAT:-}
       - GITHUB_APP_ID=${GITHUB_APP_ID:?set GITHUB_APP_ID}
       - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:?set GITHUB_APP_SLUG}
       - GITHUB_APP_BOT_ID=${GITHUB_APP_BOT_ID:?set GITHUB_APP_BOT_ID}
@@ -185,7 +184,7 @@ services:
       - OPENCODE_URL=http://opencode:4096
       - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
       - THOR_E2E_TEST_HELPERS=${THOR_E2E_TEST_HELPERS:-}
-      - SESSION_LOG_MAX_BYTES=${SESSION_LOG_MAX_BYTES:-}
+      - SLACK_TEAM_ID=${SLACK_TEAM_ID:-}
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:
@@ -204,6 +203,7 @@ services:
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:?set SLACK_BOT_TOKEN}
       - SLACK_BOT_USER_ID=${SLACK_BOT_USER_ID:?set SLACK_BOT_USER_ID}
+      - SLACK_DEFAULT_REPO=${SLACK_DEFAULT_REPO:?set SLACK_DEFAULT_REPO}
       - CRON_SECRET=${CRON_SECRET:?set CRON_SECRET}
       - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:?set GITHUB_APP_SLUG}
       - GITHUB_APP_BOT_ID=${GITHUB_APP_BOT_ID:?set GITHUB_APP_BOT_ID}
@@ -250,6 +250,7 @@ services:
       - "127.0.0.1:3005:3005"
     environment:
       - NODE_ENV=production
+      - SLACK_TEAM_ID=${SLACK_TEAM_ID:-}
     volumes:
       - ./docker-volumes/workspace:/workspace
     healthcheck:

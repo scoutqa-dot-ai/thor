@@ -2,14 +2,14 @@ export {
   WorkspaceConfigSchema,
   loadWorkspaceConfig,
   validateWorkspaceConfig,
-  getAllowedChannelIds,
-  getChannelRepoMap,
+  resolveSafeRepoDirectory,
+  resolveSlackChannelRepoDirectory,
   resolveRepoDirectory,
   isAllowedDirectory,
   createConfigLoader,
   WORKSPACE_CONFIG_PATH,
+  SLACK_CHANNEL_REPO_MEMORY_ROOT,
   extractRepoFromCwd,
-  getRepoUpstreams,
   getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
@@ -36,6 +36,7 @@ export {
   envString,
   envInt,
   envCsv,
+  envBaseUrl,
   getRunnerBaseUrl,
   matchesInternalSecret,
 } from "./env.js";
@@ -54,7 +55,6 @@ export {
 } from "./service-env.js";
 export type {
   WorkspaceConfig,
-  RepoConfig,
   ProxyConfig,
   ProxyUpstream,
   ConfigLoader,
@@ -72,6 +72,7 @@ export {
   appendAlias,
   readTriggerSlice,
   findActiveTrigger,
+  findAnchorContext,
   resolveAlias,
   reverseLookupAnchor,
   listAnchors,
@@ -81,21 +82,47 @@ export {
   mintAnchor,
   mintTriggerId,
   sessionLogPath,
+  iterateJsonlFileLinesSync,
   isUuidV7,
   UUID_V7_RE,
-  MAX_SESSION_FILE_BYTES,
 } from "./event-log.js";
 export type {
   SessionEventLogRecord,
   AliasRecord,
   TriggerSlice,
   ActiveTriggerResult,
+  AnchorContextResult,
   ReverseAnchorEntry,
   AnchorSessionState,
   AnchorSessionStatus,
   ListAnchorSessionStatesOptions,
 } from "./event-log.js";
+export {
+  OpencodeEventSchema,
+  ViewerPartSchema,
+  ViewerToolPartSchema,
+  ViewerTextPartSchema,
+  ViewerReasoningPartSchema,
+  ViewerStepFinishPartSchema,
+  ViewerCompactionPartSchema,
+  isOmittedMarker,
+  parseOpencodeEvent,
+  projectOpencodeEvent,
+} from "./opencode-event.js";
+export type {
+  OmittedMarker,
+  OpencodeEvent,
+  ViewerPart,
+  ViewerToolPart,
+  ViewerTextPart,
+  ViewerReasoningPart,
+  ViewerStepFinishPart,
+  ViewerCompactionPart,
+  ViewerPayloadOrOmitted,
+  ParsedOpencodeEvent,
+} from "./opencode-event.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
+export { formatTokens, formatDuration, formatAge, formatBytes, formatCostUsd } from "./format.js";
 export type { Logger } from "./logger.js";
 export { errorToMetadata } from "./errors.js";
 export type { ErrorMetadataOptions } from "./errors.js";
@@ -115,6 +142,7 @@ export {
   ensureAnchorForCorrelationKey,
   appendCorrelationAlias,
   appendCorrelationAliasForAnchor,
+  buildSlackCorrelationKeys,
   computeGitCorrelationKey,
   computeSlackCorrelationKey,
   resolveAnchorForCorrelationKey,
@@ -131,9 +159,10 @@ export type { GitHubAppBotIdentity, GitHubAppBotIdentityInput } from "./github-i
 export {
   buildThorDisclaimer,
   buildThorDisclaimerForSession,
+  buildThorAnchorUrl,
   buildThorTriggerUrl,
   findActiveTriggerOrThrow,
-  formatThorDisclaimerFooter,
+  formatThorContextFooter,
 } from "./disclaimer.js";
 export type { ActiveTriggerSnapshot, ThorDisclaimerContext } from "./disclaimer.js";
 export {

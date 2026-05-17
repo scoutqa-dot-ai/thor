@@ -4,7 +4,7 @@ import { join, dirname, resolve, sep } from "node:path";
 import { rm, unlink, mkdir, stat } from "node:fs/promises";
 import { Daytona, type FileUpload, type Sandbox } from "@daytonaio/sdk";
 import { execCommand } from "./exec.js";
-import { loadDaytonaEnv, withKeyLock } from "@thor/common";
+import { loadDaytonaEnv, withKeyLock, formatBytes } from "@thor/common";
 
 export interface ExecStreamCallbacks {
   onStdout: (chunk: string) => void;
@@ -200,9 +200,8 @@ export async function overlayDirtyFiles(sandboxId: string, cwd: string): Promise
   for (const f of uploads) {
     const fileStat = await stat(join(cwd, f)).catch(() => null);
     if (fileStat && fileStat.size > FILE_SIZE_LIMIT) {
-      const sizeMB = Math.round(fileStat.size / 1024 / 1024);
       throw new SandboxError(
-        `File "${f}" is ${sizeMB} MB, exceeding the 100 MB sync limit. ` +
+        `File "${f}" is ${formatBytes(fileStat.size)}, exceeding the 100 MB sync limit. ` +
           `Commit it first (git add "${f}" && git commit), add it to .gitignore, ` +
           `or remove it from the worktree.`,
         `overlay rejected: ${f} is ${fileStat.size} bytes (limit ${FILE_SIZE_LIMIT})`,
@@ -284,9 +283,8 @@ export async function pullSandboxChanges(
       for (const line of sizeCheck.result.split("\n")) {
         const match = line.match(/^(\d+)\s+(.+)$/);
         if (match && Number(match[1]) > FILE_SIZE_LIMIT) {
-          const sizeMB = Math.round(Number(match[1]) / 1024 / 1024);
           throw new SandboxError(
-            `Sandbox file "${match[2]}" is ${sizeMB} MB, exceeding the 100 MB sync limit. ` +
+            `Sandbox file "${match[2]}" is ${formatBytes(Number(match[1]))}, exceeding the 100 MB sync limit. ` +
               `Add it to .gitignore or delete it before the command exits.`,
             `pull rejected: ${match[2]} is ${match[1]} bytes (limit ${FILE_SIZE_LIMIT})`,
           );

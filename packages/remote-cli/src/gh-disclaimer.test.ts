@@ -8,7 +8,7 @@ import { normalize as normalizePosix } from "node:path/posix";
 import {
   appendAlias,
   appendSessionEvent,
-  formatThorDisclaimerFooter,
+  formatThorContextFooter,
   resolveAlias,
 } from "@thor/common";
 
@@ -48,12 +48,11 @@ const anchorSuperseded = "00000000-0000-7000-8000-0000000003a2";
 const anchorChild = "00000000-0000-7000-8000-0000000003a3";
 
 function bindSessionToAnchor(sessionId: string, anchorId: string): void {
-  const result = appendAlias({
+  appendAlias({
     aliasType: "opencode.session",
     aliasValue: sessionId,
     anchorId,
   });
-  if (!result.ok) throw result.error;
 }
 
 async function withServer<T>(fn: (url: string) => Promise<T>): Promise<T> {
@@ -155,9 +154,7 @@ describe("gh disclaimer injection", () => {
 
   it("does not register git branch aliases for dry-run push, worktree add, or gh pr create", async () => {
     bindSessionToAnchor("parent", anchorParent);
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
-      ok: true,
-    });
+    appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
     await withServer(async (url) => {
       const dryRun = await postGit(
@@ -213,9 +210,7 @@ describe("gh disclaimer injection", () => {
 
   it("injects into issue comment bodies", async () => {
     bindSessionToAnchor("parent", anchorParent);
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
-      ok: true,
-    });
+    appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
     await withServer(async (url) => {
       const { response } = await postGh(
@@ -230,7 +225,7 @@ describe("gh disclaimer injection", () => {
         "42",
         "--body",
         `note
-${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
       ]);
       expect(
         resolveAlias({
@@ -243,9 +238,7 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/
 
   it("injects into issue create bodies and binds the created issue alias with GitHub repo basename", async () => {
     bindSessionToAnchor("parent", anchorParent);
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
-      ok: true,
-    });
+    appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
     await withServer(async (url) => {
       const { response } = await postGh(
@@ -260,7 +253,7 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/
         "--title",
         "Bug",
         "--body",
-        `Broken\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+        `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
       ]);
       expect(
         resolveAlias({
@@ -271,7 +264,7 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/
     });
   });
 
-  it("fails closed when the session has no active trigger", async () => {
+  it("fails closed when the session has no anchor context", async () => {
     await withServer(async (url) => {
       const missing = await postGh(url, ["pr", "comment", "123", "--body", "note"], "missing");
       expect(missing.response.status).toBe(400);
@@ -280,14 +273,26 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/
     });
   });
 
+  it("injects anchor footers when the session has no active trigger", async () => {
+    bindSessionToAnchor("idle", anchorParent);
+
+    await withServer(async (url) => {
+      const { response } = await postGh(url, ["pr", "comment", "123", "--body", "note"], "idle");
+      expect(response.status).toBe(200);
+      expect(execCalls[0].args).toEqual([
+        "pr",
+        "comment",
+        "123",
+        "--body",
+        `note\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
+      ]);
+    });
+  });
+
   it("uses the latest trigger when a previous orphaned trigger was superseded", async () => {
     bindSessionToAnchor("superseded", anchorSuperseded);
-    expect(appendSessionEvent("superseded", { type: "trigger_start", triggerId })).toEqual({
-      ok: true,
-    });
-    expect(
-      appendSessionEvent("superseded", { type: "trigger_start", triggerId: secondTriggerId }),
-    ).toEqual({ ok: true });
+    appendSessionEvent("superseded", { type: "trigger_start", triggerId });
+    appendSessionEvent("superseded", { type: "trigger_start", triggerId: secondTriggerId });
 
     await withServer(async (url) => {
       const { response } = await postGh(
@@ -301,23 +306,19 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/
         "comment",
         "123",
         "--body",
-        `note\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorSuperseded}/${secondTriggerId}`)}`,
+        `note\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorSuperseded}/${secondTriggerId}`)}`,
       ]);
     });
   });
 
   it("uses the owning parent session in child-session viewer URLs", async () => {
     bindSessionToAnchor("parent", anchorChild);
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
-      ok: true,
+    appendSessionEvent("parent", { type: "trigger_start", triggerId });
+    appendAlias({
+      aliasType: "opencode.subsession",
+      aliasValue: "child",
+      anchorId: anchorChild,
     });
-    expect(
-      appendAlias({
-        aliasType: "opencode.subsession",
-        aliasValue: "child",
-        anchorId: anchorChild,
-      }),
-    ).toEqual({ ok: true });
 
     await withServer(async (url) => {
       const { response } = await postGh(
@@ -333,16 +334,14 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/
         "--title",
         "x",
         "--body",
-        `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorChild}/${triggerId}`)}`,
+        `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorChild}/${triggerId}`)}`,
       ]);
     });
   });
 
   it("injects into PR review-comment reply bodies", async () => {
     bindSessionToAnchor("parent", anchorParent);
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
-      ok: true,
-    });
+    appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
     await withServer(async (url) => {
       const { response } = await postGh(
@@ -359,16 +358,14 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/
       );
       expect(response.status).toBe(200);
       expect(execCalls[0].args.at(-1)).toBe(
-        `body=Done\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+        `body=Done\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
       );
     });
   });
 
   it("denies gh body-file content creation shapes", async () => {
     bindSessionToAnchor("parent", anchorParent);
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
-      ok: true,
-    });
+    appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
     await withServer(async (url) => {
       const pr = await postGh(url, ["pr", "create", "--title", "x", "-F", "body.md"], "parent");
@@ -396,9 +393,7 @@ ${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${anchorParent}/
 
   it("fails closed for duplicate mutable body fields", async () => {
     bindSessionToAnchor("parent", anchorParent);
-    expect(appendSessionEvent("parent", { type: "trigger_start", triggerId })).toEqual({
-      ok: true,
-    });
+    appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
     await withServer(async (url) => {
       const comment = await postGh(

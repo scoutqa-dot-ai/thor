@@ -5,12 +5,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import {
-  appendAlias,
-  appendSessionEvent,
-  formatThorDisclaimerFooter,
-  type WorkspaceConfig,
-} from "@thor/common";
+import { appendAlias, appendSessionEvent, formatThorContextFooter } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.js";
 import type { UpstreamConnection } from "./upstream.js";
@@ -52,16 +47,9 @@ describe("remote-cli MCP endpoints", () => {
   let connectedUpstreams: string[];
   let closeRemoteCli: () => Promise<void>;
 
-  const config: WorkspaceConfig = {
-    repos: {
-      acme: {
-        proxies: ["atlassian"],
-      },
-    },
-  };
-
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
+    vi.stubEnv("POSTHOG_API_KEY", "test-posthog-key");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
     vi.stubEnv("WORKLOG_DIR", worklogDir);
     vi.stubEnv("RUNNER_BASE_URL", "https://thor.example.com/");
@@ -71,12 +59,8 @@ describe("remote-cli MCP endpoints", () => {
     createJiraIssueDelay = undefined;
     createJiraIssueFailure = undefined;
     connectedUpstreams = [];
-    const getConfig = Object.assign(() => config, {
-      invalidate: () => {},
-    });
 
     const remoteCli = createRemoteCliApp({
-      getConfig,
       mcp: {
         approvalsDir,
         isProduction: true,
@@ -152,7 +136,11 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(upstreams.status).toBe(200);
     expect(JSON.parse(upstreamBody.stdout)).toEqual({
-      upstreams: [{ name: "atlassian", toolCount: 0, connected: false }],
+      upstreams: [
+        { name: "atlassian", toolCount: 0, connected: false },
+        { name: "grafana", toolCount: 0, connected: false },
+        { name: "posthog", toolCount: 0, connected: false },
+      ],
     });
 
     const listedTools = await postJson("/exec/mcp", {
@@ -190,19 +178,14 @@ describe("remote-cli MCP endpoints", () => {
     };
 
     expect(health.status).toBe(200);
-    expect(healthBody.mcp.configured).toBe(1);
+    expect(healthBody.mcp.configured).toBe(3);
     expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 3 });
   });
 
-  it("warms only upstreams enabled by repo config", async () => {
+  it("warms every registered upstream", async () => {
     await closeRemoteCli();
 
-    const getConfig = Object.assign(() => config, {
-      invalidate: () => {},
-    });
-
     const remoteCli = createRemoteCliApp({
-      getConfig,
       mcp: {
         approvalsDir,
         isProduction: true,
@@ -223,7 +206,7 @@ describe("remote-cli MCP endpoints", () => {
     closeRemoteCli = remoteCli.close;
     await remoteCli.warmUp();
 
-    expect(connectedUpstreams).toEqual(["atlassian"]);
+    expect(connectedUpstreams.sort()).toEqual(["atlassian", "grafana", "posthog"]);
   });
 
   it("rejects worktree session directories for MCP authz", async () => {
@@ -274,16 +257,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("rejects invalid approval args before persisting an action", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
 
     const pending = await postJson(
       "/exec/mcp",
@@ -316,16 +295,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("creates approvals with Jira disclaimers, exposes them via approval commands, and returns 401 for resolve without the internal secret", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -361,7 +336,7 @@ describe("remote-cli MCP endpoints", () => {
     };
     const upstreamArgs = {
       ...cleanArgs,
-      description: `body\n${formatThorDisclaimerFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
+      description: `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
     };
     expect(approvalOutput).toMatchObject({
       type: "approval_required",
@@ -435,16 +410,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("blocks Jira approvals when contentFormat is not markdown", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -476,16 +447,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("deduplicates concurrent same-decision approval resolves in one process", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -547,16 +514,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("rejects concurrent same-decision approval resolves from different reviewers", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -611,16 +574,12 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("keeps approvals pending when approved tool execution fails and returns a clear error for corrupt approved records", async () => {
-    expect(
-      appendAlias({
-        aliasType: "opencode.session",
-        aliasValue: "parent-session",
-        anchorId: activeAnchorId,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId }),
-    ).toEqual({ ok: true });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
 
     const pending = await postJson(
       "/exec/mcp",

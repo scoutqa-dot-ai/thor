@@ -17,7 +17,7 @@ const ApprovalActionSchema = z
         trigger: z
           .object({
             anchorId: z.string().min(1),
-            triggerId: z.string().min(1),
+            triggerId: z.string().min(1).optional(),
           })
           .optional(),
       })

@@ -1,12 +1,4 @@
-import {
-  createLogger,
-  logError,
-  logInfo,
-  createConfigLoader,
-  getAllowedChannelIds,
-  loadGatewayEnv,
-  WORKSPACE_CONFIG_PATH,
-} from "@thor/common";
+import { createLogger, logError, logInfo, loadGatewayEnv } from "@thor/common";
 import { createGatewayApp } from "./app.js";
 import { buildMentionLogins } from "./github.js";
 
@@ -14,7 +6,6 @@ const log = createLogger("gateway");
 
 const config = loadGatewayEnv();
 const githubMentionLogins = buildMentionLogins(config.githubAppSlug);
-const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
 
 if (!config.slackBotToken.trim()) {
   logError(log, "missing_env", "SLACK_BOT_TOKEN is required");
@@ -27,13 +18,13 @@ const { app } = createGatewayApp({
   slackBotToken: config.slackBotToken,
   slackApiBaseUrl: config.slackApiBaseUrl,
   slackBotUserId: config.slackBotUserId,
+  slackDefaultRepo: config.slackDefaultRepo,
   remoteCliHost: config.remoteCliHost,
   remoteCliPort: config.remoteCliPort,
   internalSecret: config.thorInternalSecret,
   timestampToleranceSeconds: config.slackTimestampToleranceSeconds,
   queueDir: config.queueDir,
   cronSecret: config.cronSecret || undefined,
-  getConfig,
   openaiAuthPath: config.openaiAuthPath || undefined,
   githubWebhookSecret: config.githubWebhookSecret,
   githubMentionLogins,
@@ -42,16 +33,9 @@ const { app } = createGatewayApp({
 });
 
 app.listen(config.port, () => {
-  let configSummary: Record<string, unknown> = {};
-  try {
-    const config = getConfig();
-    configSummary = {
-      allowedChannels: [...getAllowedChannelIds(config)],
-      repos: Object.keys(config.repos),
-    };
-  } catch {
-    configSummary = { config: "not available yet" };
-  }
+  const configSummary: Record<string, unknown> = {
+    slackDefaultRepo: config.slackDefaultRepo,
+  };
   logInfo(log, "gateway_started", {
     port: config.port,
     runnerUrl: config.runnerUrl,

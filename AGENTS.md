@@ -37,6 +37,13 @@ Instructions for AI agents working on this repository.
 
 9. **OpenCode harness boundaries** — Thor-side wrappers and tools should not re-enforce timeouts, output caps/truncation, or output transformations already handled by the OpenCode harness. Add Thor-side enforcement only when Thor has its own explicit product/API contract or safety boundary (for example, endpoint-specific JSON formatting or a documented internal output limit).
 
+10. **Agent-facing prompts and skills** — Write in terms of what the agent can do, and describe only state the agent can actually observe or act on. Concretely:
+    - Describe supported command/argument shapes positively, listing the forms that work.
+    - Keep server-side env vars, config keys, internal service or component names, and other implementation details the agent cannot reach from inside its container out of agent-facing docs. When a policy is enforced elsewhere, let the denial response from that boundary be the signal, and refer to it generically (e.g. "server-side policy").
+    - Document project-specific constraints, redirects, and surprises; leave standard tool/library behavior to the tool's own help.
+    - Frame the listed surface as "constraints documented here" and leave unlisted shapes to be confirmed by the denial response, so policy can tighten without a skill rewrite. Reserve absolute claims like "any arguments accepted" for surfaces guaranteed to stay that way.
+    - State each rule in one place — keep overview bullets and per-section detail from restating the same constraint.
+
 ## Repository Structure
 
 ```
@@ -69,6 +76,7 @@ thor/
 - **Runtime**: Node.js 22+
 - **Formatting**: Default TypeScript/ESLint conventions. No custom config until needed.
 - **OpenCode version alignment**: When bumping `@opencode-ai/sdk`, also bump the OpenCode server/package version in the Dockerfile in the same change so the client and server stay aligned.
+- **OpenCode event schema/viewer drift**: Before changing OpenCode event persistence, projection, parser schemas, unknown-event fallback rendering, or `unrecognized_opencode_event` handling, read `docs/plan/2026051601_opencode-event-view-schema.md`.
 - **No frameworks unless justified** — Express for HTTP, raw TypeScript for everything else. Every added dependency should have a reason in the plan.
 
 ## Context for New Sessions

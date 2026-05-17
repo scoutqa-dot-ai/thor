@@ -38,8 +38,17 @@ export function envCsv(env: EnvSource, name: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Read a base URL env var with any trailing slashes stripped, so callers can
+ * safely build URLs as `${base}/path`. Operators sometimes paste URLs with a
+ * trailing `/`; normalize at the boundary instead of relying on every caller.
+ */
+export function envBaseUrl(env: EnvSource, name: string, defaultValue?: string): string {
+  return envString(env, name, defaultValue).replace(/\/+$/, "");
+}
+
 export function getRunnerBaseUrl(env: EnvSource = process.env): string {
-  return envString(env, "RUNNER_BASE_URL");
+  return envBaseUrl(env, "RUNNER_BASE_URL");
 }
 
 export function matchesInternalSecret(
@@ -47,6 +56,8 @@ export function matchesInternalSecret(
   providedSecret: string | undefined,
 ): boolean {
   if (!expectedSecret || !providedSecret) return false;
-  if (expectedSecret.length !== providedSecret.length) return false;
-  return timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret));
+  const expected = Buffer.from(expectedSecret, "utf8");
+  const provided = Buffer.from(providedSecret, "utf8");
+  if (expected.length !== provided.length) return false;
+  return timingSafeEqual(expected, provided);
 }

@@ -1,30 +1,10 @@
-import {
-  extractRepoFromCwd,
-  getProxyConfig,
-  getRepoUpstreams,
-  type WorkspaceConfig,
-} from "@thor/common";
+import { extractRepoFromCwd, getProxyConfig, PROXY_NAMES } from "@thor/common";
 
-export function buildToolInstructions(
-  config: WorkspaceConfig,
-  directory: string,
-): string | undefined {
-  const repo = extractRepoFromCwd(directory);
-  if (!repo) return undefined;
-
-  const repoConfig = config.repos[repo];
-  if (!repoConfig) return undefined;
-
-  const hasSlackChannels = (repoConfig.channels?.length ?? 0) > 0;
-
-  const allowed = getRepoUpstreams(config, repo);
-  if (!allowed) return undefined;
-
-  const hasAtlassian = allowed.includes("atlassian");
+export function buildToolInstructions(directory: string): string | undefined {
+  if (!extractRepoFromCwd(directory)) return undefined;
 
   const mcpSections: string[] = [];
-
-  for (const upstreamName of allowed) {
+  for (const upstreamName of PROXY_NAMES) {
     const proxyDef = getProxyConfig(upstreamName);
     if (!proxyDef) continue;
 
@@ -56,29 +36,24 @@ export function buildToolInstructions(
     );
   }
 
-  if (hasAtlassian) {
-    blocks.push(
-      [
-        "[Jira attachment uploads]",
-        "No MCP tool exists for Jira attachments. POST a multipart `file` field via `curl`/`fetch` to:",
-        "- `https://<site>.atlassian.net/rest/api/3/issue/<KEY>/attachments`",
-        "- `https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/issue/<KEY>/attachments`",
-        "The proxy injects auth and the required XSRF header only for those POST endpoint shapes.",
-        "Other Jira writes still go through MCP.",
-      ].join("\n"),
-    );
-  }
+  blocks.push(
+    [
+      "[Jira attachment uploads]",
+      "No MCP tool exists for Jira attachments. POST a multipart `file` field via `curl`/`fetch` to:",
+      "- `https://<site>.atlassian.net/rest/api/3/issue/<KEY>/attachments`",
+      "- `https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/issue/<KEY>/attachments`",
+      "The proxy injects auth and the required XSRF header only for those POST endpoint shapes.",
+      "Other Jira writes still go through MCP.",
+    ].join("\n"),
+  );
 
-  if (hasSlackChannels) {
-    blocks.push(
-      [
-        "[Slack capability]",
-        "Use `slack-post-message` for Slack message writes.",
-        "Load Slack skill for details about using `curl`/`fetch` with `reactions.add`, `conversations.replies` etc.",
-      ].join("\n"),
-    );
-  }
+  blocks.push(
+    [
+      "[Slack capability]",
+      "Use `slack-post-message` for Slack message writes.",
+      "Load Slack skill for details about using `curl`/`fetch` with `reactions.add`, `conversations.replies` etc.",
+    ].join("\n"),
+  );
 
-  if (blocks.length === 0) return undefined;
   return blocks.join("\n\n");
 }

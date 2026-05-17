@@ -6,6 +6,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +17,7 @@ import {
   appendAlias,
   appendSessionEvent,
   findActiveTrigger,
+  listAnchors,
   listAnchorSessionStates,
   listSessionAliases,
   mintAnchor,
@@ -51,47 +53,235 @@ const anchorDashF = "00000000-0000-7000-8000-0000000000b6";
 
 describe("session event log", () => {
   const originalWorklogDir = process.env.WORKLOG_DIR;
-  const originalMax = process.env.SESSION_LOG_MAX_BYTES;
   let testDir = "";
 
   beforeEach(() => {
     testDir = mkdtempSync(join(tmpdir(), "thor-event-log-"));
     process.env.WORKLOG_DIR = testDir;
-    delete process.env.SESSION_LOG_MAX_BYTES;
   });
 
   afterEach(() => {
     rmSync(testDir, { recursive: true, force: true });
     if (originalWorklogDir === undefined) delete process.env.WORKLOG_DIR;
     else process.env.WORKLOG_DIR = originalWorklogDir;
-    if (originalMax === undefined) delete process.env.SESSION_LOG_MAX_BYTES;
-    else process.env.SESSION_LOG_MAX_BYTES = originalMax;
   });
 
   it("appends capped records with visible success", () => {
-    const result = appendSessionEvent("s1", {
+    appendSessionEvent("s1", {
       type: "opencode_event",
       event: { huge: "x".repeat(8000) },
     });
-    expect(result.ok).toBe(true);
     expect(statSync(sessionLogPath("s1")).size).toBeLessThan(4096);
   });
 
+  it("never truncates text or reasoning opencode_event records, even when oversized", () => {
+    // Long assistant text / reasoning chains can legitimately exceed the
+    // 4 KB per-record cap. They must persist in full so the debugging UI
+    // sees the whole body.
+    const longText = "lorem ipsum ".repeat(2000); // ~24 KB
+    appendSessionEvent("longtext", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "prt_long_text", type: "text", text: longText },
+        },
+      },
+    });
+    appendSessionEvent("longtext", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "prt_long_reasoning", type: "reasoning", text: longText },
+        },
+      },
+    });
+
+    const lines = readFileSync(sessionLogPath("longtext"), "utf8").trim().split("\n");
+    const parsed = lines.map((line) => JSON.parse(line));
+    const text = parsed.find((r) => r.event?.properties?.part?.type === "text");
+    const reasoning = parsed.find((r) => r.event?.properties?.part?.type === "reasoning");
+    expect(text.event.properties.part.text).toBe(longText);
+    expect(text._truncated).toBeUndefined();
+    expect(reasoning.event.properties.part.text).toBe(longText);
+    expect(reasoning._truncated).toBeUndefined();
+  });
+
+  it("preserves the render skeleton when projecting oversized tool opencode_event", () => {
+    // Oversized tool output: the fixed projection keeps tool name, callID,
+    // status, part id, and replaces payload leaves with omitted markers so the
+    // viewer can still thread the call together.
+    const largeOutput = "z".repeat(10_000);
+    appendSessionEvent("projected-tool", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "ses_test",
+          time: 1_700_000_000_000,
+          part: {
+            id: "prt_tool_big",
+            messageID: "msg_test",
+            type: "tool",
+            tool: "read",
+            callID: "call_test",
+            state: {
+              status: "completed",
+              title: "Reads /etc/passwd",
+              input: { path: "/etc/passwd" },
+              output: largeOutput,
+            },
+          },
+        },
+      },
+    });
+
+    const line = readFileSync(sessionLogPath("projected-tool"), "utf8").trim();
+    const record = JSON.parse(line);
+    expect(record._truncated).toBe(true);
+    expect(record.event.type).toBe("message.part.updated");
+    expect(record.event.properties.sessionID).toBe("ses_test");
+    expect(record.event.properties.part).toMatchObject({
+      id: "prt_tool_big",
+      type: "tool",
+      tool: "read",
+      callID: "call_test",
+      state: {
+        status: "completed",
+        title: "Reads /etc/passwd",
+        input: { _omitted: true, bytes: expect.any(Number) },
+      },
+    });
+    expect(record.event.properties.part.state.output).toEqual({
+      _omitted: true,
+      bytes: expect.any(Number),
+    });
+    expect(record.event.properties.part.state.output.bytes).toBeGreaterThan(9000);
+  });
+
+  it("strategically projects unknown opencode_event shapes instead of blanking them", () => {
+    // Unknown top-level event.type still carries the same fixed skeleton.
+    appendSessionEvent("unknown-event", {
+      type: "opencode_event",
+      event: {
+        id: "evt_future",
+        type: "totally.new.event.kind",
+        properties: {
+          sessionID: "ses_future",
+          time: 1_700_000_000_000,
+          part: {
+            id: "prt_future",
+            type: "future-part",
+            tool: "future-tool",
+            callID: "call_future",
+            state: {
+              status: "completed",
+              output: "x".repeat(8000),
+            },
+            vendorPayload: "not part of the fallback skeleton",
+          },
+        },
+      },
+    });
+
+    const line = readFileSync(sessionLogPath("unknown-event"), "utf8").trim();
+    const record = JSON.parse(line);
+    expect(record.event).toMatchObject({
+      id: "evt_future",
+      type: "totally.new.event.kind",
+      properties: {
+        sessionID: "ses_future",
+        time: 1_700_000_000_000,
+        part: {
+          id: "prt_future",
+          type: "future-part",
+          tool: "future-tool",
+          callID: "call_future",
+          state: {
+            status: "completed",
+            output: { _omitted: true, bytes: expect.any(Number) },
+          },
+        },
+      },
+    });
+    expect(record.event.properties.part.vendorPayload).toBeUndefined();
+  });
+
+  it("drops non-skeleton future fields instead of needing projection retries", () => {
+    const medium = "x".repeat(240);
+    appendSessionEvent("fixed-projection", {
+      type: "opencode_event",
+      event: {
+        id: "evt_fixed",
+        type: "future.verbose.event",
+        properties: {
+          sessionID: "ses_fixed",
+          time: 1_700_000_000_000,
+          path: medium,
+          file: medium,
+          source: medium,
+          part: {
+            id: "prt_fixed",
+            type: "future-part",
+            tool: "future-tool",
+            callID: "call_fixed",
+            reason: medium,
+            text: medium,
+            prompt: medium,
+            description: medium,
+            agent: medium,
+            command: medium,
+            mime: medium,
+            filename: medium,
+            url: medium,
+            hash: medium,
+            name: medium,
+            tail_start_id: medium,
+            state: {
+              status: "completed",
+              title: medium,
+              error: { name: medium, message: medium },
+            },
+            error: { name: medium, message: medium },
+          },
+        },
+      },
+    });
+
+    const line = readFileSync(sessionLogPath("fixed-projection"), "utf8").trim();
+    expect(Buffer.byteLength(line, "utf8")).toBeLessThan(4096);
+    const record = JSON.parse(line);
+    expect(record.event).toMatchObject({
+      id: "evt_fixed",
+      type: "future.verbose.event",
+      properties: {
+        sessionID: "ses_fixed",
+        part: {
+          id: "prt_fixed",
+          type: "future-part",
+          tool: "future-tool",
+          callID: "call_fixed",
+          state: { status: "completed" },
+        },
+      },
+    });
+    expect(record.event.properties.part.prompt).toBeUndefined();
+    expect(record.event.properties.part.reason).toBeUndefined();
+    expect(record.event.properties.path).toBeUndefined();
+  });
+
   it("preserves required trigger_end fields when truncating oversized errors", () => {
-    expect(
-      appendSessionEvent("truncated-end", {
-        type: "trigger_start",
-        triggerId: triggerErr,
-      }),
-    ).toEqual({ ok: true });
-    expect(
-      appendSessionEvent("truncated-end", {
-        type: "trigger_end",
-        triggerId: triggerErr,
-        status: "error",
-        error: "x".repeat(20_000),
-      }),
-    ).toEqual({ ok: true });
+    appendSessionEvent("truncated-end", {
+      type: "trigger_start",
+      triggerId: triggerErr,
+    });
+    appendSessionEvent("truncated-end", {
+      type: "trigger_end",
+      triggerId: triggerErr,
+      status: "error",
+      error: "x".repeat(20_000),
+    });
 
     expect(readTriggerSlice("truncated-end", triggerErr)).toMatchObject({
       status: "error",
@@ -135,31 +325,105 @@ describe("session event log", () => {
   });
 
   it("resolves aliases newest-wins and lists session aliases", () => {
-    expect(
-      appendAlias({ aliasType: "opencode.session", aliasValue: "s1", anchorId: anchorA }).ok,
-    ).toBe(true);
-    expect(
-      appendAlias({ aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorA }).ok,
-    ).toBe(true);
-    expect(
-      appendAlias({ aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorB }).ok,
-    ).toBe(true);
+    appendAlias({ aliasType: "opencode.session", aliasValue: "s1", anchorId: anchorA });
+    appendAlias({ aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorA });
+    appendAlias({ aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorB });
     expect(resolveAlias({ aliasType: "slack.thread_id", aliasValue: "1.2" })).toBe(anchorB);
 
     // Session-scoped alias audit only fires when callers explicitly write the
     // alias record into the session log; the global alias is the routing source
     // of truth. listSessionAliases reflects whatever the session itself recorded.
-    expect(
-      appendSessionEvent("s1", {
-        type: "alias",
-        aliasType: "slack.thread_id",
-        aliasValue: "1.2",
-        anchorId: anchorA,
-      }),
-    ).toEqual({ ok: true });
+    appendSessionEvent("s1", {
+      type: "alias",
+      aliasType: "slack.thread_id",
+      aliasValue: "1.2",
+      anchorId: anchorA,
+    });
     expect(listSessionAliases("s1")).toMatchObject([
       { aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorA },
     ]);
+  });
+
+  it("invalidates alias cache when the worklog directory changes", () => {
+    appendAlias({
+      ts: "2026-05-14T12:00:00.000Z",
+      aliasType: "slack.thread_id",
+      aliasValue: "same-size",
+      anchorId: anchorA,
+    });
+    expect(resolveAlias({ aliasType: "slack.thread_id", aliasValue: "same-size" })).toBe(anchorA);
+
+    const oldAliasLog = readFileSync(join(testDir, "aliases.jsonl"), "utf8");
+    const nextDir = mkdtempSync(join(tmpdir(), "thor-event-log-next-"));
+    try {
+      const nextAliasLog =
+        JSON.stringify({
+          ts: "2026-05-14T12:00:00.000Z",
+          aliasType: "slack.thread_id",
+          aliasValue: "same-size",
+          anchorId: anchorB,
+        }) + "\n";
+      expect(Buffer.byteLength(nextAliasLog, "utf8")).toBe(Buffer.byteLength(oldAliasLog, "utf8"));
+
+      process.env.WORKLOG_DIR = nextDir;
+      writeFileSync(join(nextDir, "aliases.jsonl"), nextAliasLog);
+
+      expect(resolveAlias({ aliasType: "slack.thread_id", aliasValue: "same-size" })).toBe(anchorB);
+      expect(resolveAlias({ aliasType: "opencode.session", aliasValue: "s1" })).toBeUndefined();
+    } finally {
+      process.env.WORKLOG_DIR = testDir;
+      rmSync(nextDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not enumerate anchors after their last alias moves away", () => {
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "moved-session",
+      anchorId: anchorDashE,
+    });
+    expect(listAnchors().map((row) => row.anchorId)).toContain(anchorDashE);
+
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "moved-session",
+      anchorId: anchorDashF,
+    });
+
+    expect(listAnchors().map((row) => row.anchorId)).not.toContain(anchorDashE);
+    expect(listAnchorSessionStates().map((row) => row.anchorId)).not.toContain(anchorDashE);
+    expect(reverseLookupAnchor(anchorDashF)).toMatchObject({
+      sessionIds: ["moved-session"],
+      currentSessionId: "moved-session",
+    });
+  });
+
+  it("invalidates session record cache when the worklog directory changes", () => {
+    const fixedTime = new Date("2026-05-14T12:00:00.000Z");
+    writeSession("same-session", [
+      { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA },
+    ]);
+    utimesSync(sessionLogPath("same-session"), fixedTime, fixedTime);
+    const oldStat = statSync(sessionLogPath("same-session"));
+    expect(readTriggerSlice("same-session", triggerA)).toMatchObject({ status: "in_flight" });
+
+    const nextDir = mkdtempSync(join(tmpdir(), "thor-event-log-next-"));
+    try {
+      process.env.WORKLOG_DIR = nextDir;
+      writeSession("same-session", [
+        { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerB },
+      ]);
+      utimesSync(sessionLogPath("same-session"), fixedTime, fixedTime);
+      const nextStat = statSync(sessionLogPath("same-session"));
+      expect(nextStat.size).toBe(oldStat.size);
+      expect(nextStat.mtimeMs).toBe(oldStat.mtimeMs);
+
+      expect(readTriggerSlice("same-session", triggerB)).toMatchObject({ status: "in_flight" });
+      expect(readTriggerSlice("same-session", triggerA)).toMatchObject({ notFound: true });
+    } finally {
+      process.env.WORKLOG_DIR = testDir;
+      rmSync(nextDir, { recursive: true, force: true });
+    }
   });
 
   it("finds active triggers via anchor reverse-lookup", () => {
@@ -259,13 +523,6 @@ describe("session event log", () => {
     });
   });
 
-  it("fails active-trigger lookup closed on oversized files", () => {
-    appendAlias({ aliasType: "opencode.session", aliasValue: "big", anchorId: anchorA });
-    mkdirSync(join(testDir, "sessions"), { recursive: true });
-    writeFileSync(sessionLogPath("big"), "x".repeat(53 * 1024 * 1024));
-    expect(findActiveTrigger("big")).toEqual({ ok: false, reason: "oversized" });
-  });
-
   it("fails active-trigger lookup closed when no anchor binding exists", () => {
     // Session log has an open trigger but no opencode.session binding → none.
     appendSessionEvent("orphan", { type: "trigger_start", triggerId: triggerOversized });
@@ -338,23 +595,19 @@ describe("session event log", () => {
     });
   });
 
-  it("surfaces malformed and oversized session diagnostics in anchor session states", () => {
+  it("surfaces malformed session diagnostics in anchor session states", () => {
     appendAlias({ aliasType: "opencode.session", aliasValue: "bad-lines", anchorId: anchorDashE });
     writeSession(
       "bad-lines",
       [{ ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: triggerA }],
       "not-json\n",
     );
-    let row = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") })[0];
+    const row = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") })[0];
     expect(row).toMatchObject({
       anchorId: anchorDashE,
       status: "in_progress",
       skippedMalformed: 1,
     });
-
-    writeFileSync(sessionLogPath("bad-lines"), "x".repeat(53 * 1024 * 1024));
-    row = listAnchorSessionStates({ now: new Date("2026-05-14T12:01:00.000Z") })[0];
-    expect(row).toMatchObject({ anchorId: anchorDashE, status: "unknown", oversized: true });
   });
 
   it("marks only anchors with unsafe session aliases unknown and preserves other rows", () => {
@@ -380,7 +633,6 @@ describe("session event log", () => {
     });
     expect(rows.find((r) => r.anchorId === anchorDashF)).toMatchObject({
       status: "unknown",
-      oversized: false,
     });
     expect(rows.find((r) => r.anchorId === anchorDashF)?.reason).toContain("Invalid session id");
   });
@@ -430,11 +682,12 @@ describe("session event log", () => {
   });
 
   it("rejects writes with a non-UUIDv7 trigger id", () => {
-    const result = appendSessionEvent("bad", {
-      type: "trigger_start",
-      triggerId: "00000000-0000-4000-8000-000000000001", // v4 — should fail
-    });
-    expect(result.ok).toBe(false);
+    expect(() =>
+      appendSessionEvent("bad", {
+        type: "trigger_start",
+        triggerId: "00000000-0000-4000-8000-000000000001", // v4 — should fail
+      }),
+    ).toThrow();
   });
 
   it("multi-process appends produce zero corrupt JSONL lines", async () => {

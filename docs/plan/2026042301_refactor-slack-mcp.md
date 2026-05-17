@@ -1,5 +1,9 @@
 # refactor slack-mcp — 2026-04-23-01
 
+> **Note (2026-05-16):** One migration step references removing `"slack"` from
+> `repos.*.proxies`. The entire `repos` block has since been removed from
+> `WorkspaceConfigSchema`, so that step is now moot.
+
 **Goal**: remove `packages/slack-mcp` as a package and runtime service without
 losing any current Slack capability.
 
