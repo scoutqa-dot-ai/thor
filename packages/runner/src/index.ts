@@ -422,7 +422,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
   const TriggerRequestSchema = z.object({
     prompt: z.string(),
-    model: z.string().optional(),
     /** Correlation key for session continuity. Same key = same OpenCode session. */
     correlationKey: z.string().optional(),
     /** Direct session ID to resume (bypasses correlation key lookup). */
@@ -622,7 +621,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       return;
     }
 
-    let { prompt, model, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
+    let { prompt, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
     let inflightTriggerId: string | undefined;
 
     try {
@@ -812,12 +811,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       }
 
       const parts: TextPartInput[] = [{ type: "text", text: prompt }];
-      const modelConfig = model
-        ? {
-            providerID: model.split("/")[0],
-            modelID: model.split("/").slice(1).join("/"),
-          }
-        : undefined;
 
       // Subscribe to event bus BEFORE sending the prompt
       const subscription = await eventBuses.subscribe([sessionId]);
@@ -829,10 +822,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       const promptStart = Date.now();
       const asyncResult = await client.session.promptAsync({
         path: { id: sessionId },
-        body: {
-          parts,
-          ...(modelConfig ? { model: modelConfig } : {}),
-        },
+        body: { parts },
       });
 
       if (asyncResult.error) {
