@@ -106,6 +106,7 @@ export type {
   UnknownOpencodeEventView,
 } from "./opencode-event-view.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
+export { formatTokens, formatDuration, formatAge, formatBytes, formatCostUsd } from "./format.js";
 export type { Logger } from "./logger.js";
 export { errorToMetadata } from "./errors.js";
 export type { ErrorMetadataOptions } from "./errors.js";

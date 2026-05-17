@@ -46,6 +46,11 @@ import {
   withKeyLock,
   isOmittedMarker,
   iterateJsonlFileLinesSync,
+  formatTokens,
+  formatDuration,
+  formatAge,
+  formatBytes,
+  formatCostUsd,
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -1301,45 +1306,6 @@ function safeMultilineSnippet(value: unknown): string {
 }
 
 /**
- * Compact token formatter: under 1k stays as-is, otherwise truncate (don't
- * round) to one decimal place with a K/M suffix.
- *   5_983     → "5.9K"
- *   583_930   → "583.9K"
- *   4_962_304 → "4.9M"
- */
-function formatTokens(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(Math.floor(n / 100) / 10).toFixed(1)}K`;
-  return `${(Math.floor(n / 100_000) / 10).toFixed(1)}M`;
-}
-
-function formatDuration(ms: unknown): string | undefined {
-  if (typeof ms !== "number" || !Number.isFinite(ms)) return undefined;
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = seconds / 60;
-  if (minutes < 60) return `${minutes.toFixed(1)}m`;
-  const hours = minutes / 60;
-  if (hours < 24) return `${hours.toFixed(1)}h`;
-  return `${(hours / 24).toFixed(1)}d`;
-}
-
-function formatAge(ts: string | undefined): string | undefined {
-  if (!ts) return undefined;
-  const ms = Date.now() - Date.parse(ts);
-  if (!Number.isFinite(ms) || ms < 0) return undefined;
-  return formatDuration(ms);
-}
-
-function formatBytes(n: number): string {
-  if (!Number.isFinite(n) || n < 0) return "?";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/**
  * Render an inline "(<label> omitted, N KB)" badge when `value` is a
  * `{ _omitted: true, bytes: N }` marker produced by capRecord's projection
  * step. Returns the empty string otherwise so callers can concatenate.
@@ -1997,12 +1963,6 @@ function estimateCostUsd(tokens: TokenCounts, modelId: string | undefined): numb
       tokens.cacheRead * cacheRead) /
     1_000_000
   );
-}
-
-function formatCostUsd(value: number): string {
-  if (value >= 1) return `$${value.toFixed(2)}`;
-  if (value >= 0.01) return `$${value.toFixed(3)}`;
-  return `$${value.toFixed(4)}`;
 }
 
 type AgentLedger = {
