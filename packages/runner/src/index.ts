@@ -51,6 +51,14 @@ import {
   formatAge,
   formatBytes,
   formatCostUsd,
+  parseOpencodeEvent,
+} from "@thor/common";
+import type {
+  OpencodeEvent,
+  ViewerPart,
+  ViewerToolPart,
+  ViewerPayloadOrOmitted,
+  ParsedOpencodeEvent,
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
@@ -1255,43 +1263,24 @@ const KNOWN_BINS: Record<string, number> = {
   wc: 1,
 };
 
-type ViewerEvent = { type?: unknown; properties?: Record<string, unknown>; _truncated?: unknown };
-type ViewerToolPart = {
-  id?: unknown;
-  type?: unknown;
-  tool?: unknown;
-  callID?: unknown;
-  cost?: unknown;
-  tokens?: unknown;
-  reason?: unknown;
-  state?: {
-    status?: unknown;
-    title?: unknown;
-    input?: unknown;
-    output?: unknown;
-    error?: unknown;
-    time?: { start?: unknown; end?: unknown };
-  };
-  text?: unknown;
-};
-
-function coerceText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return "";
-}
-
-function safeSnippet(value: unknown): string {
+function safeSnippet(value: string | undefined): string {
   // Debugging UI: no redaction, no length cap. Newlines/tabs are collapsed
-  // to spaces for one-line rendering surfaces — use safeMultilineSnippet when
-  // newlines should be preserved.
-  return coerceText(value)
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/\s{2,}/g, " ");
+  // to spaces for one-line rendering surfaces.
+  if (!value) return "";
+  return value.replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ");
 }
 
-function safeMultilineSnippet(value: unknown): string {
-  return coerceText(value);
+/**
+ * Narrow a `ViewerPayloadOrOmitted` to a plain JSON object — null/array/
+ * primitive/OmittedMarker collapse to undefined so callers can read fields
+ * without re-guarding.
+ */
+function payloadObject(
+  value: ViewerPayloadOrOmitted | undefined,
+): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value) || isOmittedMarker(value))
+    return undefined;
+  return value as Record<string, unknown>;
 }
 
 /**
@@ -1338,7 +1327,7 @@ function renderToolInput(toolName: string, input: unknown): string {
   if (primary && isRecord(input)) {
     const val = input[primary.field];
     if (typeof val === "string" && val) {
-      const safe = escapeHtml(safeMultilineSnippet(val));
+      const safe = escapeHtml(val);
       return primary.mode === "inline" ? ` <code>${safe}</code>` : `<pre>${safe}</pre>`;
     }
   }
@@ -1348,73 +1337,23 @@ function renderToolInput(toolName: string, input: unknown): string {
   } catch {
     json = String(input);
   }
-  return `<details><summary>input</summary><pre>${escapeHtml(safeMultilineSnippet(json))}</pre></details>`;
+  return `<details><summary>input</summary><pre>${escapeHtml(json)}</pre></details>`;
 }
 
-function eventProperties(record: SessionEventLogRecord): Record<string, unknown> | undefined {
-  if (record.type !== "opencode_event" || !record.event || typeof record.event !== "object")
-    return undefined;
-  const event = record.event as ViewerEvent;
-  return event.properties;
+function viewEvent(record: SessionEventLogRecord): ParsedOpencodeEvent | undefined {
+  if (record.type !== "opencode_event") return undefined;
+  return parseOpencodeEvent(record.event);
 }
 
-function eventPart(record: SessionEventLogRecord): ViewerToolPart | undefined {
-  const props = eventProperties(record);
-  const part = props?.part;
-  return part && typeof part === "object" ? (part as ViewerToolPart) : undefined;
+function eventPart(record: SessionEventLogRecord): ViewerPart | undefined {
+  const parsed = viewEvent(record);
+  if (parsed?.kind !== "ok") return undefined;
+  return parsed.event.type === "message.part.updated" ? parsed.event.properties.part : undefined;
 }
 
-function eventType(record: SessionEventLogRecord): string | undefined {
-  if (record.type !== "opencode_event" || !record.event || typeof record.event !== "object")
-    return undefined;
-  const type = (record.event as ViewerEvent).type;
-  return typeof type === "string" ? type : undefined;
-}
-
-function renderUnknownOpencodeEvent(record: SessionEventLogRecord): string {
-  const type = eventType(record) ?? "unknown";
-  const props = eventProperties(record);
-  const part = eventPart(record);
-  const status = typeof part?.state?.status === "string" ? part.state.status : "pending";
-  const bits = [`<b>unknown event</b> <span>${escapeHtml(type)}</span>`];
-  if (typeof props?.sessionID === "string") {
-    bits.push(`<code>${escapeHtml(safeSnippet(props.sessionID))}</code>`);
-  }
-  if (typeof part?.type === "string") {
-    bits.push(`<span>part ${escapeHtml(part.type)}</span>`);
-  }
-  if (typeof part?.tool === "string") {
-    bits.push(`<span>tool ${escapeHtml(part.tool)}</span>`);
-  }
-  if (typeof part?.state?.status === "string") {
-    bits.push(`<span>${escapeHtml(part.state.status)}</span>`);
-  }
-
-  const omitted = [
-    renderOmittedNote(props?.input, "input"),
-    renderOmittedNote(props?.output, "output"),
-    renderOmittedNote(props?.raw, "raw"),
-    renderOmittedNote(props?.metadata, "metadata"),
-    renderOmittedNote(props?.snapshot, "snapshot"),
-    renderOmittedNote(part?.state?.input, "input"),
-    renderOmittedNote(part?.state?.output, "output"),
-    renderOmittedNote(
-      part?.state && "raw" in part.state ? (part.state as { raw?: unknown }).raw : undefined,
-      "raw",
-    ),
-    renderOmittedNote(
-      part?.state && "metadata" in part.state
-        ? (part.state as { metadata?: unknown }).metadata
-        : undefined,
-      "metadata",
-    ),
-  ].join("");
-
-  return `<li class="row unknown" data-status="${escapeHtml(status)}">${bits.join(" ")}${omitted}</li>`;
-}
-
-function shouldRenderUnknownEvent(type: string | undefined): boolean {
-  return !!type && type !== "session.status" && type !== "session.idle";
+function renderUnrecognizedEvent(ts: string, rawType: string | undefined): string {
+  const type = rawType ?? "unknown";
+  return `<li class="row unknown" data-status="pending"><b>unknown event</b> <span>${escapeHtml(type)}</span> <span class="ts">${escapeHtml(ts)}</span></li>`;
 }
 
 function sourceFrom(correlationKey: string | undefined): string {
@@ -1571,9 +1510,8 @@ function decodeSourceLine(
   return undefined;
 }
 
-function partId(part: ViewerToolPart | undefined): string | undefined {
-  if (!part) return undefined;
-  return typeof part.id === "string" ? part.id : undefined;
+function partId(part: ViewerPart | undefined): string | undefined {
+  return part?.id;
 }
 
 function getStateTitle(part: ViewerToolPart): string | undefined {
@@ -1581,14 +1519,9 @@ function getStateTitle(part: ViewerToolPart): string | undefined {
   // worktrees"). Fall back to `state.input.description` for tools whose
   // caller supplied it (most notably `task`) so the row carries a label even
   // when `state.title` is absent.
-  const title = part.state?.title;
-  if (typeof title === "string" && title) return title;
-  const input = part.state?.input;
-  if (input && typeof input === "object") {
-    const desc = (input as { description?: unknown }).description;
-    if (typeof desc === "string" && desc) return desc;
-  }
-  return undefined;
+  if (part.state.title) return part.state.title;
+  const input = payloadObject(part.state.input);
+  return input ? safeStr(input.description) : undefined;
 }
 
 function renderDiffLines(patchText: string): string {
@@ -1597,7 +1530,7 @@ function renderDiffLines(patchText: string): string {
   const out = patchText
     .split("\n")
     .map((line) => {
-      const safe = escapeHtml(safeMultilineSnippet(line));
+      const safe = escapeHtml(line);
       if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
         return `<span class="diff-meta">${safe}</span>`;
       }
@@ -1611,11 +1544,11 @@ function renderDiffLines(patchText: string): string {
 
 function renderApplyPatch(part: ViewerToolPart, durationStr: string | undefined): string {
   const title = getStateTitle(part);
-  const rawInput = part.state?.input;
+  const rawInput = part.state.input;
   const inputOmitted = renderOmittedNote(rawInput, "patch");
-  const input = !inputOmitted && isRecord(rawInput) ? rawInput : undefined;
+  const input = payloadObject(rawInput);
   const patchText = input ? safeStr(input.patchText) : undefined;
-  const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
+  const status = part.state.status;
   // Status text is suppressed — the colored bullet on the row carries it.
   const hdr = `<b>apply_patch</b>${durationStr ? ` <span>${escapeHtml(durationStr)}</span>` : ""}${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title))}</span>` : ""}${inputOmitted}`;
   if (!patchText) return `<li class="row" data-status="${escapeHtml(status)}">${hdr}</li>`;
@@ -1645,6 +1578,147 @@ function partTimeWindow(part: ViewerToolPart): { start: number; end?: number } |
     start: time.start,
     end: typeof time.end === "number" && Number.isFinite(time.end) ? time.end : undefined,
   };
+}
+
+/**
+ * Yield each record paired with its parsed event and (for message.part.updated)
+ * the dedup-by-id resolved latest-state part. Records that should not render
+ * (non-opencode_event records, trigger_*, and intermediate updates of a
+ * streaming part) are skipped — what comes out is exactly the surface the
+ * renderer needs to dispatch on.
+ */
+function* iterateParsedParts(records: SessionEventLogRecord[]): Generator<{
+  rec: SessionEventLogRecord;
+  parsed: ParsedOpencodeEvent;
+  resolved: ViewerPart | undefined;
+}> {
+  const latestById = new Map<string, ViewerPart>();
+  const firstIdxById = new Map<string, number>();
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i]!;
+    if (rec.type !== "opencode_event") continue;
+    const parsed = parseOpencodeEvent(rec.event);
+    if (parsed.kind !== "ok" || parsed.event.type !== "message.part.updated") continue;
+    const part = parsed.event.properties.part;
+    if (!part.id) continue;
+    latestById.set(part.id, part);
+    if (!firstIdxById.has(part.id)) firstIdxById.set(part.id, i);
+  }
+
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i]!;
+    if (rec.type !== "opencode_event") continue;
+    const parsed = parseOpencodeEvent(rec.event);
+    if (parsed.kind !== "ok" || parsed.event.type !== "message.part.updated") {
+      yield { rec, parsed, resolved: undefined };
+      continue;
+    }
+    const part = parsed.event.properties.part;
+    if (part.id && firstIdxById.get(part.id) !== i) continue;
+    const resolved = part.id ? (latestById.get(part.id) ?? part) : part;
+    yield { rec, parsed, resolved };
+  }
+}
+
+/** Bump stat counters on the ledger for tool/error/step-finish parts. */
+function consumePartStats(part: ViewerPart, ledger: AgentLedger): void {
+  if (part.type === "tool") {
+    ledger.toolParts++;
+    if (part.state.status === "error") ledger.errorRows++;
+    return;
+  }
+  if (part.type === "step-finish") {
+    const tokenTotal = numericTokenTotal(part.tokens);
+    if (tokenTotal !== undefined) {
+      ledger.totalTokens += tokenTotal;
+      ledger.hasTokens = true;
+    }
+    const breakdown = extractTokenCounts(part.tokens);
+    if (breakdown) addTokenCounts(ledger.tokens, breakdown);
+  }
+}
+
+/**
+ * Render a single part to HTML. Empty string for silent parts (step-start,
+ * snapshot, patch, agent, file, subtask, retry, empty reasoning). step-finish
+ * renders as a step-boundary divider.
+ */
+function renderPart(part: ViewerPart, ledger: AgentLedger, ctx: SubAgentCtx): string {
+  if (part.type === "tool") {
+    const duration = partDuration(part);
+    if (part.tool === "apply_patch") return renderApplyPatch(part, duration);
+    if (part.tool === "task") return renderTaskCard(part, duration, ctx, ledger);
+    const status = part.state.status;
+    const name = viewerToolDisplayName(part);
+    const title = getStateTitle(part);
+    const input = renderToolInput(name, part.state.input);
+    return `<li class="row" data-status="${escapeHtml(status)}"><b>tool</b> <span>${escapeHtml(name)}</span>${duration ? ` <span>${duration}</span>` : ""}${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title))}</span>` : ""}${status === "error" ? ` <span class="err">${escapeHtml(safeSnippet(part.state.error))}</span>` : ""}${input}</li>`;
+  }
+  if (part.type === "text") {
+    return `<li class="row" data-status="completed"><b>text</b><div class="text-body">${escapeHtml(part.text)}</div></li>`;
+  }
+  if (part.type === "reasoning") {
+    if (!part.text.trim()) return "";
+    return `<li class="row" data-status="completed"><b>reasoning</b><div class="text-body">${escapeHtml(part.text)}</div></li>`;
+  }
+  if (part.type === "step-finish") {
+    return `<li class="row step-boundary" data-status="completed"><hr></li>`;
+  }
+  if (part.type === "compaction") {
+    return `<li class="row" data-status="completed"><b>context compacted</b>${part.auto ? " <span>auto</span>" : ""}</li>`;
+  }
+  return "";
+}
+
+function renderSessionErrorRow(event: Extract<OpencodeEvent, { type: "session.error" }>): string {
+  const error = event.properties.error;
+  const msg =
+    error && typeof error === "object" && !isOmittedMarker(error) && !Array.isArray(error)
+      ? (((error as { data?: { message?: string } }).data?.message ??
+          (error as { message?: string }).message ??
+          (error as { name?: string }).name) as string | undefined)
+      : typeof error === "string"
+        ? error
+        : undefined;
+  return `<li class="row err" data-status="error"><b>session error</b> ${escapeHtml(safeSnippet(msg ?? "Unknown error"))}</li>`;
+}
+
+/**
+ * Shared rendering loop. Walks records, dispatches event types, accumulates
+ * stats into `ledger`, returns the rendered rows. Used by both the main
+ * timeline and the subagent inline renderer — callers wrap the result in
+ * their preferred container.
+ */
+function renderActivity(
+  records: SessionEventLogRecord[],
+  ledger: AgentLedger,
+  ctx: SubAgentCtx,
+): string[] {
+  const rows: string[] = [];
+  for (const { rec, parsed, resolved } of iterateParsedParts(records)) {
+    if (parsed.kind === "truncated") {
+      rows.push(
+        `<li class="row truncated" data-status="pending"><b>truncated event</b> <span class="ts">${escapeHtml(rec.ts)}</span></li>`,
+      );
+      continue;
+    }
+    if (parsed.kind === "unrecognized") {
+      rows.push(renderUnrecognizedEvent(rec.ts, parsed.rawType));
+      continue;
+    }
+    const event = parsed.event;
+    if (event.type === "session.idle" || event.type === "session.status") continue;
+    if (event.type === "session.error") {
+      ledger.errorRows++;
+      rows.push(renderSessionErrorRow(event));
+      continue;
+    }
+    if (!resolved) continue; // recognized telemetry-only events
+    consumePartStats(resolved, ledger);
+    const row = renderPart(resolved, ledger, ctx);
+    if (row) rows.push(row);
+  }
+  return rows;
 }
 
 /**
@@ -1711,17 +1785,6 @@ function renderInlineSubagent(
   }
   if (!records.length) return undefined;
 
-  const latestById = new Map<string, ViewerToolPart>();
-  const firstIdxById = new Map<string, number>();
-  records.forEach((rec, i) => {
-    if (rec.type !== "opencode_event") return;
-    const p = eventPart(rec);
-    const id = partId(p);
-    if (!id || !p) return;
-    latestById.set(id, p);
-    if (!firstIdxById.has(id)) firstIdxById.set(id, i);
-  });
-
   const nextCtx: SubAgentCtx = {
     visited: new Set([...ctx.visited, sessionId]),
   };
@@ -1730,65 +1793,8 @@ function renderInlineSubagent(
   // (OpenCode tags the spawn with the child's model). Records inside the
   // subagent's own session don't carry it on step-finish parts, and any
   // modelID seen there would be a *grandchild's* model (another task tool).
-  const ledger: AgentLedger = {
-    label,
-    sessionId,
-    modelIds: new Set(modelId ? [modelId] : []),
-    tokens: emptyTokenCounts(),
-    children: [],
-  };
-
-  const rows: string[] = [];
-  for (let i = 0; i < records.length; i++) {
-    const rec = records[i]!;
-    if (rec.type !== "opencode_event") continue;
-    const ev = rec.event as ViewerEvent | undefined;
-    if (ev && ev._truncated === true) continue;
-    const raw = eventPart(rec);
-    const id = partId(raw);
-    if (id && firstIdxById.get(id) !== i) continue;
-    const p = id ? (latestById.get(id) ?? raw) : raw;
-    if (!p) {
-      if (shouldRenderUnknownEvent(eventType(rec))) {
-        rows.push(renderUnknownOpencodeEvent(rec));
-      }
-      continue;
-    }
-    if (p.type === "step-finish") {
-      const breakdown = extractTokenCounts(p.tokens);
-      if (breakdown) addTokenCounts(ledger.tokens, breakdown);
-      continue;
-    }
-    if (p.type === "tool") {
-      const toolName = typeof p.tool === "string" ? p.tool : "";
-      if (toolName === "task") {
-        rows.push(renderTaskCard(p, partDuration(p), nextCtx, ledger));
-        // renderTaskCard reads partTimeWindow(p) internally for its own
-        // subagent expansion call.
-        continue;
-      }
-      const status = typeof p.state?.status === "string" ? p.state.status : "unknown";
-      const name = viewerToolDisplayName(p);
-      const title = getStateTitle(p);
-      const input = renderToolInput(name, p.state?.input);
-      rows.push(
-        `<li class="row" data-status="${escapeHtml(status)}"><b>tool</b> <span>${escapeHtml(name)}</span>${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title))}</span>` : ""}${input}</li>`,
-      );
-    } else if (p.type === "text") {
-      const text = typeof p.text === "string" ? p.text : "";
-      rows.push(
-        `<li class="row" data-status="completed"><b>text</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
-      );
-    } else if (p.type === "reasoning") {
-      const text = typeof p.text === "string" ? p.text : "";
-      if (!text.trim()) continue;
-      rows.push(
-        `<li class="row" data-status="completed"><b>reasoning</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
-      );
-    } else if (shouldRenderUnknownEvent(eventType(rec))) {
-      rows.push(renderUnknownOpencodeEvent(rec));
-    }
-  }
+  const ledger = emptyLedger(label, sessionId, modelId ? [modelId] : []);
+  const rows = renderActivity(records, ledger, nextCtx);
   const html = rows.length
     ? `<details><summary>subagent activity (${rows.length} row${rows.length === 1 ? "" : "s"})</summary><ul class="events sub-events">${rows.join("")}</ul></details>`
     : undefined;
@@ -1803,18 +1809,16 @@ function renderTaskCard(
   ctx: SubAgentCtx,
   parentLedger: AgentLedger,
 ): string {
-  const rawInput = part.state?.input;
+  const rawInput = part.state.input;
   const inputOmitted = renderOmittedNote(rawInput, "input");
-  const input = !inputOmitted && isRecord(rawInput) ? rawInput : undefined;
+  const input = payloadObject(rawInput);
   const subagent = input ? safeStr(input.subagent_type) : undefined;
   const description = input ? safeStr(input.description) : undefined;
   const prompt = input ? safeStr(input.prompt) : undefined;
-  const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
-  const rawMetadata = isRecord(part.state)
-    ? (part.state as Record<string, unknown>).metadata
-    : undefined;
+  const status = part.state.status;
+  const rawMetadata = part.state.metadata;
   const metadataOmitted = renderOmittedNote(rawMetadata, "metadata");
-  const metadata = !metadataOmitted && isRecord(rawMetadata) ? rawMetadata : undefined;
+  const metadata = payloadObject(rawMetadata);
   const subSession = metadata ? safeStr(metadata.sessionId) : undefined;
   const hdr = `🤖 <b>task</b>${subagent ? ` · ${escapeHtml(subagent)}` : ""}${durationStr ? ` · ${escapeHtml(durationStr)}` : ""}${inputOmitted}${metadataOmitted}`;
   const desc = description ? `<div>${escapeHtml(safeSnippet(description))}</div>` : "";
@@ -1822,7 +1826,7 @@ function renderTaskCard(
     ? `<div class="task-sub">subagent session <code>${escapeHtml(safeSnippet(subSession))}</code></div>`
     : "";
   const promptBlock = prompt
-    ? `<details><summary>prompt</summary><pre>${escapeHtml(safeMultilineSnippet(prompt))}</pre></details>`
+    ? `<details><summary>prompt</summary><pre>${escapeHtml(prompt)}</pre></details>`
     : "";
   // Task `state.output` is the model-facing summary of the subagent run.
   // We deliberately do not render it here — the subagent activity expansion
@@ -1960,7 +1964,34 @@ type AgentLedger = {
   modelIds: Set<string>;
   tokens: TokenCounts;
   children: AgentLedger[];
+  /** Bumped per rendered tool part. */
+  toolParts: number;
+  /** Bumped per error-status tool part and per session.error event. */
+  errorRows: number;
+  /** Sum of `step-finish` numeric token totals (single-number summary). */
+  totalTokens: number;
+  /** True once any step-finish has carried token counts. Drives footer
+   *  visibility for model/cost so empty triggers don't surface defaults. */
+  hasTokens: boolean;
 };
+
+function emptyLedger(
+  label: string,
+  sessionId: string,
+  modelIds: Iterable<string> = [],
+): AgentLedger {
+  return {
+    label,
+    sessionId,
+    modelIds: new Set(modelIds),
+    tokens: emptyTokenCounts(),
+    children: [],
+    toolParts: 0,
+    errorRows: 0,
+    totalTokens: 0,
+    hasTokens: false,
+  };
+}
 
 function emptyTokenCounts(): TokenCounts {
   return { input: 0, output: 0, reasoning: 0, cacheRead: 0 };
@@ -2059,7 +2090,7 @@ function shortUuid(value: string): string {
 }
 
 function renderPage(title: string, body: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.row.truncated{color:#94a3b8;font-style:italic}.row.truncated .ts{color:#cbd5e1;font-size:0.85em;margin-left:4px}.omitted{color:#94a3b8;font-style:italic;font-size:0.9em}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events,.step>ul{list-style:none;padding-left:0}.events>li,.step>ul>li{margin:6px 0}.row{position:relative;padding-left:18px}.row::before{content:"";position:absolute;left:2px;top:0.55em;width:8px;height:8px;border-radius:50%;background:#94a3b8}.row[data-status="completed"]::before{background:#22c55e}.row[data-status="running"]::before{background:#facc15}.row[data-status="pending"]::before{background:#cbd5e1}.row[data-status="error"]::before{background:#ef4444}.row[data-status="aborted"]::before{background:#f97316}.tool-title{color:#475569;font-style:italic;margin-left:6px}.text-body{white-space:pre-wrap;margin:4px 0 0;color:#0f172a;font-size:0.95em}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.sub-events{margin:6px 0 0;padding-left:12px;border-left:2px solid #c7d2fe}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.totals-table{border-collapse:collapse;font-size:0.9em;margin:8px 0;width:100%}.totals-table th,.totals-table td{padding:4px 8px;text-align:right;border-bottom:1px solid #e2e8f0}.totals-table thead th{color:#64748b;font-weight:600;text-align:right;border-bottom:1px solid #cbd5e1}.totals-table thead th:first-child,.totals-table tbody th{text-align:left}.totals-table tbody th{font-weight:500;color:#0f172a}.totals-table .ledger-sid{color:#64748b;font-size:0.85em;margin-left:4px}.totals-table tr.totals-total th,.totals-table tr.totals-total td{font-weight:700;border-top:2px solid #cbd5e1;border-bottom:none;padding-top:6px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}.step{list-style:none;margin:16px 0}.step>.step-hdr{color:#1e293b;font-weight:600;padding:6px 0;border-bottom:1px solid #e2e8f0}.step>ol{margin-top:6px;padding-left:24px}details{margin:4px 0}summary{cursor:pointer}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}</main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.row.truncated{color:#94a3b8;font-style:italic}.row.truncated .ts{color:#cbd5e1;font-size:0.85em;margin-left:4px}.omitted{color:#94a3b8;font-style:italic;font-size:0.9em}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events{list-style:none;padding-left:0}.events>li{margin:6px 0}.row.step-boundary{padding-left:0}.row.step-boundary::before{display:none}.row.step-boundary hr{border:none;border-top:1px dashed #cbd5e1;margin:8px 0}.row{position:relative;padding-left:18px}.row::before{content:"";position:absolute;left:2px;top:0.55em;width:8px;height:8px;border-radius:50%;background:#94a3b8}.row[data-status="completed"]::before{background:#22c55e}.row[data-status="running"]::before{background:#facc15}.row[data-status="pending"]::before{background:#cbd5e1}.row[data-status="error"]::before{background:#ef4444}.row[data-status="aborted"]::before{background:#f97316}.tool-title{color:#475569;font-style:italic;margin-left:6px}.text-body{white-space:pre-wrap;margin:4px 0 0;color:#0f172a;font-size:0.95em}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.sub-events{margin:6px 0 0;padding-left:12px;border-left:2px solid #c7d2fe}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.totals-table{border-collapse:collapse;font-size:0.9em;margin:8px 0;width:100%}.totals-table th,.totals-table td{padding:4px 8px;text-align:right;border-bottom:1px solid #e2e8f0}.totals-table thead th{color:#64748b;font-weight:600;text-align:right;border-bottom:1px solid #cbd5e1}.totals-table thead th:first-child,.totals-table tbody th{text-align:left}.totals-table tbody th{font-weight:500;color:#0f172a}.totals-table .ledger-sid{color:#64748b;font-size:0.85em;margin-left:4px}.totals-table tr.totals-total th,.totals-table tr.totals-total td{font-weight:700;border-top:2px solid #cbd5e1;border-bottom:none;padding-top:6px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}details{margin:4px 0}summary{cursor:pointer}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}</main></body></html>`;
 }
 
 function renderSlicePage(
@@ -2085,158 +2116,19 @@ function renderSlicePage(
     ? extractCorrelationKeyPrompt(slice.records, correlationKey)
     : undefined;
 
-  // Dedup pre-pass: for parts that stream multiple updates under the same id,
-  // we want one row per id with the latest state.
-  const latestPartById = new Map<string, ViewerToolPart>();
-  const firstIndexById = new Map<string, number>();
-  slice.records.forEach((record, idx) => {
-    if (record.type !== "opencode_event") return;
-    const part = eventPart(record);
-    const id = partId(part);
-    if (!id) return;
-    latestPartById.set(id, part!);
-    if (!firstIndexById.has(id)) firstIndexById.set(id, idx);
-  });
-
-  type Step = { rows: string[] };
-  let toolParts = 0;
-  let totalTokens = 0;
-  let hasTokens = false;
-  const rootLedger: AgentLedger = {
-    label: "main",
-    sessionId: ownerSessionId,
-    // TODO(model-attribution): the main agent's model isn't recorded anywhere
-    // in the on-disk JSONL today — OpenCode emits it on `message.updated`
-    // events which Thor's runner doesn't subscribe to, and `step-finish` parts
-    // don't carry it. We hardcode `gpt-5.4` (Thor's current default main-agent
-    // model) so the totals/cost stay useful; switch to the real value once
-    // the runner persists `message.updated` events or we call `sessions.get`
-    // at render time.
-    modelIds: new Set(["gpt-5.4"]),
-    tokens: emptyTokenCounts(),
-    children: [],
-  };
+  // TODO(model-attribution): the main agent's model isn't recorded anywhere
+  // in the on-disk JSONL today — OpenCode emits it on `message.updated`
+  // events which Thor's runner doesn't subscribe to, and `step-finish` parts
+  // don't carry it. We hardcode `gpt-5.4` (Thor's current default main-agent
+  // model) so the totals/cost stay useful; switch to the real value once
+  // the runner persists `message.updated` events or we call `sessions.get`
+  // at render time.
+  const rootLedger = emptyLedger("main", ownerSessionId, ["gpt-5.4"]);
   const tokenTotals = rootLedger.tokens;
   const modelIds = rootLedger.modelIds;
-  let errorRows = 0;
-  const steps: Step[] = [];
-  let current: Step = { rows: [] };
   const subAgentCtx: SubAgentCtx = { visited: new Set([ownerSessionId]) };
-  for (let idx = 0; idx < slice.records.length; idx++) {
-    const record = slice.records[idx]!;
-    // trigger_start / trigger_end rows are intentionally not rendered — the
-    // status pill, duration, and totals footer convey the same information
-    // without two stand-alone "[1] trigger started …" / "[N] trigger ended …"
-    // bullets that bracket every step.
-    if (record.type === "trigger_start" || record.type === "trigger_end") continue;
-    if (record.type !== "opencode_event") continue;
-    if (
-      record.event &&
-      typeof record.event === "object" &&
-      (record.event as ViewerEvent)._truncated === true
-    ) {
-      // Truncated events carry no payload, only the outer record `ts` — render
-      // a muted row at the right chronological position so the gap is visible
-      // rather than silently swallowed by a footer count.
-      const ts = typeof record.ts === "string" ? record.ts : "";
-      current.rows.push(
-        `<li class="row truncated" data-status="pending"><b>truncated event</b>${ts ? ` <span class="ts">${escapeHtml(ts)}</span>` : ""}</li>`,
-      );
-      continue;
-    }
-    const type = eventType(record);
-    const rawPart = eventPart(record);
-    const id = partId(rawPart);
-    if (id && firstIndexById.get(id) !== idx) continue;
-    const part = id ? (latestPartById.get(id) ?? rawPart) : rawPart;
-    // Note: we deliberately do NOT collect `state.metadata.model.modelID` from
-    // parts in the main session — the only place that field actually appears
-    // in the corpus is on `task` tool parts, where it represents the
-    // *subagent's* model (the model the child runs as), not the main agent's.
-    // Folding it into the main ledger here would mislabel the main row.
-    // Subagent ledgers receive that modelID via `renderTaskCard` instead.
-    if (part?.type === "tool") {
-      toolParts++;
-      const status = typeof part.state?.status === "string" ? part.state.status : "unknown";
-      if (status === "error") errorRows++;
-      const duration =
-        typeof part.state?.time?.start === "number" && typeof part.state.time.end === "number"
-          ? formatDuration(part.state.time.end - part.state.time.start)
-          : undefined;
-      const toolName = typeof part.tool === "string" ? part.tool : "";
-
-      if (toolName === "apply_patch") {
-        current.rows.push(renderApplyPatch(part, duration));
-        continue;
-      }
-      if (toolName === "task") {
-        current.rows.push(renderTaskCard(part, duration, subAgentCtx, rootLedger));
-        continue;
-      }
-      const name = viewerToolDisplayName(part);
-      const title = getStateTitle(part);
-      const input = renderToolInput(name, part.state?.input);
-      current.rows.push(
-        `<li class="row" data-status="${escapeHtml(status)}"><b>tool</b> <span>${escapeHtml(name)}</span>${duration ? ` <span>${duration}</span>` : ""}${title ? ` <span class="tool-title">${escapeHtml(safeSnippet(title))}</span>` : ""}${status === "error" ? ` <span class="err">${escapeHtml(safeSnippet(part.state?.error))}</span>` : ""}${input}</li>`,
-      );
-      continue;
-    }
-    if (part?.type === "text") {
-      const text = typeof part.text === "string" ? part.text : "";
-      current.rows.push(
-        `<li class="row" data-status="completed"><b>text</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
-      );
-      continue;
-    }
-    if (part?.type === "reasoning") {
-      const text = typeof part.text === "string" ? part.text : "";
-      if (!text.trim()) continue;
-      current.rows.push(
-        `<li class="row" data-status="completed"><b>reasoning</b><div class="text-body">${escapeHtml(safeMultilineSnippet(text))}</div></li>`,
-      );
-      continue;
-    }
-    if (part?.type === "step-finish") {
-      const tokenTotal = numericTokenTotal(part.tokens);
-      if (tokenTotal !== undefined) {
-        totalTokens += tokenTotal;
-        hasTokens = true;
-      }
-      const breakdown = extractTokenCounts(part.tokens);
-      if (breakdown) {
-        tokenTotals.input += breakdown.input;
-        tokenTotals.output += breakdown.output;
-        tokenTotals.reasoning += breakdown.reasoning;
-        tokenTotals.cacheRead += breakdown.cacheRead;
-      }
-      steps.push(current);
-      current = { rows: [] };
-      continue;
-    }
-    if (type === "session.error") {
-      errorRows++;
-      const event = record.event as ViewerEvent;
-      const error = event.properties?.error;
-      const msg =
-        error && typeof error === "object"
-          ? ((error as { data?: { message?: string }; message?: string; name?: string }).data
-              ?.message ??
-            (error as { message?: string; name?: string }).message ??
-            (error as { name?: string }).name)
-          : undefined;
-      current.rows.push(
-        `<li class="row err" data-status="error"><b>session error</b> ${escapeHtml(safeSnippet(msg ?? "Unknown error"))}</li>`,
-      );
-      continue;
-    }
-    if (shouldRenderUnknownEvent(type)) {
-      current.rows.push(renderUnknownOpencodeEvent(record));
-      continue;
-    }
-    // session.status (busy heartbeat) and session.idle are intentionally
-    // dropped — the pill conveys liveness; row-by-row heartbeats are noise.
-  }
-  if (current.rows.length > 0) steps.push(current);
+  const rows = renderActivity(slice.records, rootLedger, subAgentCtx);
+  const { toolParts, errorRows, totalTokens, hasTokens } = rootLedger;
 
   const aliases = anchor.externalKeys
     .map(
@@ -2314,19 +2206,9 @@ function renderSlicePage(
   // full source label that the in-page source line already shows.
   const pageTitle = `${sourceFrom(correlationKey)} · ${shortUuid(triggerId)} · Thor`;
 
-  let activityHtml: string;
-  if (steps.length <= 1) {
-    const flat = steps.flatMap((step) => step.rows);
-    activityHtml = flat.length
-      ? `<ul class="events">${flat.join("")}</ul>`
-      : "<p>No meaningful events recorded.</p>";
-  } else {
-    const stepBlocks = steps.map((step, i) => {
-      const heading = `Step ${i + 1}`;
-      return `<li class="step"><div class="step-hdr">${escapeHtml(heading)}</div><ul>${step.rows.join("")}</ul></li>`;
-    });
-    activityHtml = `<ul class="events">${stepBlocks.join("")}</ul>`;
-  }
+  const activityHtml = rows.length
+    ? `<ul class="events">${rows.join("")}</ul>`
+    : "<p>No meaningful events recorded.</p>";
 
   // The prompt body now lives as the first activity row (the
   // `[correlation-key: …]` text part). No need for a separate preview block

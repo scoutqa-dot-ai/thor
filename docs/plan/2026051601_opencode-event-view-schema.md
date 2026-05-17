@@ -21,7 +21,7 @@ After this change:
 
 In scope:
 
-- `packages/common/src/opencode-event-view.ts` defines `projectOpencodeEvent` and omitted-marker helpers without a Zod schema.
+- `packages/common/src/opencode-event.ts` defines the shared OpenCode event schema/parser, `projectOpencodeEvent`, and omitted-marker helpers.
 - `capRecord` uses the projector only after the normal 4 KB check and the text/reasoning carve-out.
 - Behavior tests cover under-cap pass-through, text/reasoning bypass, oversized tool projection, future-event skeleton preservation, and the generic fallback for records the projector cannot handle.
 
@@ -49,19 +49,30 @@ Out of scope:
 - Replace any `input`, `output`, `raw`, `metadata`, or `snapshot` on properties, part, or state with `{ _omitted: true, bytes: N }`.
 - Drop all non-skeleton vendor or future fields.
 
+## Future OpenCode Shape Process
+
+Thor treats the schema as the set of OpenCode event shapes the viewer currently understands, not as a write-blocking contract. When OpenCode emits a new or changed shape:
+
+1. The writer still appends the `opencode_event`. Under-cap records are stored whole. Oversized records are projected to the fixed skeleton described above, preserving the raw event `type` and compact routing/render fields where present.
+2. `parseOpencodeEvent` classifies unsupported shapes as `unrecognized`.
+3. The runner viewer renders unrecognized shapes in fallback mode: an `unknown event` row with the raw event type and timestamp only. This keeps the trigger page usable while avoiding speculative rendering.
+4. `appendSessionEvent` emits an `unrecognized_opencode_event` warning once per raw event type per process. Admin/log monitoring should treat that warning as the drift signal.
+5. A maintainer inspects representative stored JSONL, updates `packages/common/src/opencode-event.ts` with the new schema shape, updates runner rendering/tests if the event should be visible, and redeploys.
+6. After redeploy, matching records parse through the known path and render properly. No JSONL rewrite is required; previously oversized records can only render fields preserved by the projection skeleton.
+
 ## Phases
 
 ### Phase 1 — Projection in `@thor/common`
 
-- Add `packages/common/src/opencode-event-view.ts` with `projectOpencodeEvent` and `isOmittedMarker`.
+- Add `packages/common/src/opencode-event.ts` with the shared event schema/parser, `projectOpencodeEvent`, and `isOmittedMarker`.
 - Wire `projectOpencodeEvent` into `capRecord` ahead of the existing generic fallback.
-- Update tests in `packages/common/src/event-log.test.ts` and `packages/common/src/opencode-event-view.test.ts`.
+- Update tests in `packages/common/src/event-log.test.ts` and `packages/common/src/opencode-event.test.ts`.
 
-Exit criteria: targeted `@thor/common` tests pass for projection and event-log behavior.
+Exit criteria: targeted `@thor/common` tests pass for projection, parser, and event-log behavior.
 
 ### Phase 2 — Verification
 
-- Run targeted tests for `event-log` and `opencode-event-view`.
+- Run targeted tests for `event-log` and `opencode-event`.
 - Run workspace typecheck.
 - Run full test suite before handoff when time permits.
 
@@ -69,15 +80,16 @@ Exit criteria: local verification passes, with any skipped or blocked checks cal
 
 ## Decision Log
 
-| Decision                                          | Rationale                                                                                                                                                                             |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Hybrid projection only on overflow**            | Keeps under-cap records full-fidelity for debugging while preserving useful viewer context for oversized records.                                                                     |
-| **No Zod schema for this projection**             | The writer only needs a compact persistence skeleton, not a full OpenCode SDK/view schema. A deterministic projector is easier to reason about and avoids threshold/retry complexity. |
-| **No projected-record size ceiling**              | The 4 KB limit is a soft target for OpenCode events. The projection schema has a bounded key set, so the skeleton is naturally constrained without an explicit byte cap.              |
-| **Always mark known payload leaves**              | `input`, `output`, `raw`, `metadata`, and `snapshot` are the observed large leaves. Always replacing them avoids size retries and makes the projected shape predictable.              |
-| **Drop non-skeleton fields silently**             | The purpose of the projected record is preserving renderer context, not retaining every SDK/vendor field. Under-cap records still keep full fidelity.                                 |
-| **Text/reasoning carve-out stays in `capRecord`** | Long assistant prose is user-visible debugging content and should remain whole; projection is for non-text oversized events.                                                          |
-| **Allow truncation marker on base records**       | `capRecord` stamps `_truncated: true` before schema validation; the base event-log schema must preserve that marker for projected and generic capped records.                         |
+| Decision                                          | Rationale                                                                                                                                                                           |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Hybrid projection only on overflow**            | Keeps under-cap records full-fidelity for debugging while preserving useful viewer context for oversized records.                                                                   |
+| **Shared schema/parser for known viewer shapes**  | The reader and writer share one OpenCode module. The schema defines what the viewer currently understands; unsupported shapes remain writable and render through the fallback path. |
+| **No projected-record size ceiling**              | The 4 KB limit is a soft target for OpenCode events. The projection schema has a bounded key set, so the skeleton is naturally constrained without an explicit byte cap.            |
+| **Always mark known payload leaves**              | `input`, `output`, `raw`, `metadata`, and `snapshot` are the observed large leaves. Always replacing them avoids size retries and makes the projected shape predictable.            |
+| **Drop non-skeleton fields silently**             | The purpose of the projected record is preserving renderer context, not retaining every SDK/vendor field. Under-cap records still keep full fidelity.                               |
+| **Text/reasoning carve-out stays in `capRecord`** | Long assistant prose is user-visible debugging content and should remain whole; projection is for non-text oversized events.                                                        |
+| **Allow truncation marker on base records**       | `capRecord` stamps `_truncated: true` before schema validation; the base event-log schema must preserve that marker for projected and generic capped records.                       |
+| **Fallback first for unknown OpenCode shapes**    | New event shapes render as unknown rows and emit warning logs until maintainers update the schema/render path and redeploy.                                                         |
 
 ## Risks
 

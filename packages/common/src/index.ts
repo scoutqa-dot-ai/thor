@@ -97,14 +97,30 @@ export type {
   AnchorSessionStatus,
   ListAnchorSessionStatesOptions,
 } from "./event-log.js";
-export { projectOpencodeEvent, isOmittedMarker } from "./opencode-event-view.js";
+export {
+  OpencodeEventSchema,
+  ViewerPartSchema,
+  ViewerToolPartSchema,
+  ViewerTextPartSchema,
+  ViewerReasoningPartSchema,
+  ViewerStepFinishPartSchema,
+  ViewerCompactionPartSchema,
+  isOmittedMarker,
+  parseOpencodeEvent,
+  projectOpencodeEvent,
+} from "./opencode-event.js";
 export type {
-  OpencodeEventView,
-  OpencodeEventPart,
   OmittedMarker,
-  ProjectedOpencodeEvent,
-  UnknownOpencodeEventView,
-} from "./opencode-event-view.js";
+  OpencodeEvent,
+  ViewerPart,
+  ViewerToolPart,
+  ViewerTextPart,
+  ViewerReasoningPart,
+  ViewerStepFinishPart,
+  ViewerCompactionPart,
+  ViewerPayloadOrOmitted,
+  ParsedOpencodeEvent,
+} from "./opencode-event.js";
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
 export { formatTokens, formatDuration, formatAge, formatBytes, formatCostUsd } from "./format.js";
 export type { Logger } from "./logger.js";

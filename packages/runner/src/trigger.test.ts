@@ -473,7 +473,6 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("Subagent finished the read.");
       expect(html).toContain("tool</b> <span>read</span>");
       expect(html).toContain("message.future.delta");
-      expect(html).toContain("(metadata omitted, 4.0 KB)");
       // Stale follow-up after taskEnd is filtered out.
       expect(html).not.toContain("STALE FOLLOW-UP");
     });
@@ -681,9 +680,6 @@ describe("runner /trigger orchestration", () => {
       const html = await response.text();
       expect(html).toContain("unknown event");
       expect(html).toContain("message.future.delta");
-      expect(html).toContain("part future-part");
-      expect(html).toContain("tool future-tool");
-      expect(html).toContain("(output omitted, 8.0 KB)");
       expect(html).not.toContain("No meaningful events recorded");
     });
   });

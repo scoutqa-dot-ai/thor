@@ -13,7 +13,7 @@ import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { getWorklogDir } from "./worklog.js";
 import { createLogger, logWarn, truncate } from "./logger.js";
-import { projectOpencodeEvent } from "./opencode-event-view.js";
+import { parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.js";
 
 const log = createLogger("event-log");
 const SLOW_READ_THRESHOLD_MS = 50;
@@ -371,6 +371,10 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   return candidate as T & { _truncated?: true };
 }
 
+/** Bounds the warn volume when OpenCode adds a new event type — log each
+ * unrecognized `type` value at most once per process. */
+const seenUnrecognizedOpencodeEventTypes = new Set<string>();
+
 export function appendSessionEvent(sessionId: string, record: Record<string, unknown>): void {
   const full = capRecord({
     schemaVersion: 1,
@@ -378,6 +382,16 @@ export function appendSessionEvent(sessionId: string, record: Record<string, unk
     ...record,
   });
   const parsed = SessionEventLogRecordSchema.parse(full);
+  if (parsed.type === "opencode_event") {
+    const probe = parseOpencodeEvent(parsed.event);
+    if (probe.kind === "unrecognized") {
+      const key = probe.rawType ?? "<no type>";
+      if (!seenUnrecognizedOpencodeEventTypes.has(key)) {
+        seenUnrecognizedOpencodeEventTypes.add(key);
+        logWarn(log, "unrecognized_opencode_event", { rawType: probe.rawType });
+      }
+    }
+  }
   appendJsonlFileOrThrow(sessionLogPath(sessionId), parsed);
   sessionRecordsCache.delete(sessionId);
 }
