@@ -676,7 +676,9 @@ describe("planBatchDispatch", () => {
     expect(slackDirectoryForChannel).toHaveBeenCalledTimes(1);
     expect(plan.options.prompt).toContain("[Slack routing]");
     expect(plan.options.prompt).toContain("routed to repo `thor` via override file");
-    expect(plan.options.prompt).toContain("repo selector only, not channel instructions");
+    expect(plan.options.prompt).toContain(
+      "replace the contents of `/workspace/memory/thor/repo-by-slack-channel/C123.txt`",
+    );
   });
 });
 
