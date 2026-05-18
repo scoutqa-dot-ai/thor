@@ -42,7 +42,7 @@ Supported shape:
 git clone https://github.com/<allowed-owner>/<repo>[.git]
 ```
 
-The source URL must exactly match `https://github.com/<owner>/<repo>` or `https://github.com/<owner>/<repo>.git`, and `<owner>` must be on Thor's clone allowlist. Thor derives the destination as `/workspace/repos/<repo-name-from-url>`. When Git prompts for credentials, Thor's existing GitHub App askpass flow selects the installation by the owner in the clone URL.
+The source URL must exactly match `https://github.com/<owner>/<repo>` or `https://github.com/<owner>/<repo>.git`. Thor derives the destination as `/workspace/repos/<repo-name-from-url>`. Clone is restricted to allowlisted GitHub owners; unknown owners return a policy denial. Credentials are injected automatically.
 
 ### `git ls-remote`
 

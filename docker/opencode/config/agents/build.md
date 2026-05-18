@@ -41,15 +41,7 @@ Do not only answer in internal chat when a Slack reply is required.
 
 ## Environment
 
-You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `curl`, `jq`, `rg` (`ripgrep`), `slack-post-message`, `slack-upload`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). No Python, Go, or other binaries locally.
-
-Thor also enforces search guardrails in this runtime:
-
-- For built-in `glob` / `grep`, prefer scoped `path` values under `/workspace/<segment>` or `/tmp`, and keep `glob.pattern` / `grep.include` relative to that path.
-- Thor's OpenCode plugin may rewrite deterministic bad absolute-glob shapes into scoped `path` + relative glob/include, or reject them when ambiguous.
-- `rg` is wrapped in this container and blocks unsafe absolute `--glob` scans against broad roots such as `/`, `/workspace`, `/home`, or `/tmp`. If that triggers, narrow the search root and use a relative `--glob` instead.
-
-**Important:** `npm`, `npx`, `pnpm`, `pnpx`, and `corepack` are redirected to the cloud sandbox automatically. When you run `npm install` or `npx prettier`, it executes in the sandbox where the full toolchain is installed. Use `sandbox` explicitly for other runtimes (Java, Python, etc.). If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
+You run inside a `node:22-slim` container. Tools commonly used here: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `curl`, `jq`, `rg` (`ripgrep`), `slack-post-message`, `slack-upload`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). Other runtimes (Python, Go, Java, etc.) are available through the `sandbox` command. If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
 
 Outbound HTTP(S) requests use real upstream URLs through `HTTP(S)_PROXY`. For a
 simple Slack reply, use `slack-post-message` and pass message text on stdin:
@@ -230,12 +222,7 @@ git fetch origin pull/<N>/head:pr-<N>
 git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>
 ```
 
-Then `cd` into the worktree for every subsequent action — diffs, code search, tests, builds, file reads. Reviewing through `gh pr diff`, `git show <ref>` of an unfetched commit, or `gh api repos/.../pulls/<N>/files` is forbidden. Those produce shallow reviews because:
-
-- you can't run the test suite or type checks against the PR state,
-- you can't grep beyond the changed lines for callers, related tests, or pattern matches,
-- you can't cross-reference unchanged code that the change depends on,
-- you can't reproduce the build to verify the change actually compiles.
+Then `cd` into the worktree for every subsequent action — diffs, code search, tests, builds, file reads. Read-only views like `gh pr diff` are fine for quick scans, but a real review needs the worktree so you can run tests, grep beyond the diff, cross-reference unchanged callers, and reproduce the build.
 
 If a worktree for the PR's branch already exists at `/workspace/worktrees/<repo>/<branch>`, reuse it instead of creating `pr-<N>`. Infer the branch name from the PR first.
 
@@ -268,16 +255,12 @@ Use for smoke testing deployed URLs, exploratory QA, accessibility audits, and v
 
 ### Code Changes — Worktree Workflow
 
-`/workspace/repos` is **read-only**. All code changes go through worktrees at `/workspace/worktrees/<repo-name>/<branch>`.
-
-Controlled exception: Thor's server-side `git clone` policy may create `/workspace/repos/<repo>` for allowlisted GitHub owners. Use the narrow `using-git` shape only, and once the repo exists, do all file edits in `/workspace/worktrees`.
+Code edits go through worktrees at `/workspace/worktrees/<repo-name>/<branch>`. The `/workspace/repos/<repo>` clone is for reading and as the source for worktree creation; see the `using-git` skill for the supported `git clone` shape if the repo isn't cloned yet.
 
 1. Create: `cd /workspace/repos/<repo-name> && git worktree add /workspace/worktrees/<repo-name>/<branch> -b <branch> origin/main`
 2. Edit, stage, commit in the worktree directory
 3. Push and create PR with `gh pr create`
 4. After merge: `git worktree remove /workspace/worktrees/<repo-name>/<branch>`
-
-Never commit directly to `main` — it is protected server-side.
 
 ### Testing
 
@@ -292,8 +275,6 @@ CI/CD handles full test runs on push.
 ## Scheduling Tasks via Cron
 
 Edit `/workspace/cron/crontab` to schedule tasks. Changes take effect within 1 minute. Your correlation key is provided at the top of each prompt as `[correlation-key: ...]`.
-
-**Important:** Never use `#` in crontab prompts — BusyBox crond treats it as a comment delimiter mid-line. Use Slack channel IDs (e.g. `C01AB23CD`) instead of channel names.
 
 ### Recurring jobs
 
