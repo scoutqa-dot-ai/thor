@@ -189,8 +189,41 @@ describe("remote-cli slack-post-message endpoint", () => {
       },
       "Use Slack mrkdwn instead: `*bold*` (not `**bold**`)",
     );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "Name | Status\n--- | ---\nThor | Ready\n",
+      },
+      "must not include markdown table separators",
+    );
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows literal double stars and table-looking text inside code spans or fences", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, channel: "C123", ts: "1777940312.444444" }),
+    );
+
+    const inlineCode = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin: "Use `**literal**` in this example and keep `Name | Status` literal.\n",
+      },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(inlineCode.status).toBe(200);
+
+    const fencedCode = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin:
+          "```\n**literal**\nName | Status\n--- | ---\nThor | Ready\n```\nOutside text stays plain.\n",
+      },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(fencedCode.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("accepts blocks files only from allowed roots", async () => {

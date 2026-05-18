@@ -14,7 +14,7 @@ const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
 const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
 const BLOCKS_FILE_ALLOWED_ROOTS = ["/tmp", "/workspace"] as const;
-const MARKDOWN_TABLE_SEPARATOR_LINE = /^\s*\|(?:\s*:?-{3,}:?\s*\|){2,}\s*$/m;
+const MARKDOWN_TABLE_SEPARATOR_LINE = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
 const COMMONMARK_DOUBLE_STAR = /\*\*/;
 const SLACK_MRKDWN_STEERING =
   "Use Slack mrkdwn instead: `*bold*` (not `**bold**`), `_italic_`, bullets, and code spans/fences as needed.";
@@ -95,12 +95,39 @@ function hasUsableThorSession(sessionId: string): boolean {
   return subsessionAnchor ? currentSessionForAnchor(subsessionAnchor) !== undefined : false;
 }
 
+function stripCodeSegments(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const stripped: string[] = [];
+  let inFence = false;
+
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      stripped.push("");
+      continue;
+    }
+    if (inFence) {
+      stripped.push("");
+      continue;
+    }
+    stripped.push(line.replace(/`[^`]*`/g, ""));
+  }
+
+  return stripped.join("\n");
+}
+
 function containsMarkdownTableSeparator(text: string): boolean {
-  return MARKDOWN_TABLE_SEPARATOR_LINE.test(text);
+  const lines = stripCodeSegments(text).split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    if (!MARKDOWN_TABLE_SEPARATOR_LINE.test(lines[i] ?? "")) continue;
+    const previous = lines[i - 1]?.trim() ?? "";
+    if (previous.includes("|")) return true;
+  }
+  return false;
 }
 
 function containsCommonMarkDoubleStar(text: string): boolean {
-  return COMMONMARK_DOUBLE_STAR.test(text);
+  return COMMONMARK_DOUBLE_STAR.test(stripCodeSegments(text));
 }
 
 export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: string } {
