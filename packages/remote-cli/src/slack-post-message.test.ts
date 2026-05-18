@@ -196,6 +196,13 @@ describe("remote-cli slack-post-message endpoint", () => {
       },
       "must not include markdown table separators",
     );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "| **Name** | Status |\n|---|---|\n| Thor | Ready |\n",
+      },
+      "use --blocks-file with Slack blocks/table output instead",
+    );
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -223,6 +230,19 @@ describe("remote-cli slack-post-message endpoint", () => {
       { "x-thor-session-id": "session-1" },
     );
     expect(fencedCode.status).toBe(200);
+
+    const balancedFenceLine = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin: "```literal```\nOutside has **bad emphasis**\n",
+      },
+      { "x-thor-session-id": "session-validation" },
+    );
+    expect(balancedFenceLine.status).toBe(400);
+    expect(((await balancedFenceLine.json()) as { stderr: string }).stderr).toContain(
+      "must not include CommonMark double-star emphasis",
+    );
+
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

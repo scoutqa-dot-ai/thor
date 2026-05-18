@@ -101,8 +101,10 @@ function stripCodeSegments(text: string): string {
   let inFence = false;
 
   for (const line of lines) {
-    if (/^\s*```/.test(line)) {
-      inFence = !inFence;
+    const fenceCount = line.match(/^\s*```/g) ? 1 : 0;
+    if (fenceCount > 0) {
+      const isBalancedFenceLine = /^\s*```[^`]*```\s*$/.test(line);
+      if (!isBalancedFenceLine) inFence = !inFence;
       stripped.push("");
       continue;
     }
@@ -203,14 +205,14 @@ export async function handleSlackPostMessage(
   if (typeof request.stdin !== "string") return result("stdin body is required\n");
   const text = request.stdin;
   if (text.trim().length === 0) return result("mrkdwn stdin must not be empty\n");
-  if (containsCommonMarkDoubleStar(text)) {
-    return result(
-      `mrkdwn stdin must not include CommonMark double-star emphasis. ${SLACK_MRKDWN_STEERING}\n`,
-    );
-  }
   if (containsMarkdownTableSeparator(text)) {
     return result(
       `mrkdwn stdin must not include markdown table separators; use --blocks-file with Slack blocks/table output instead. ${SLACK_MRKDWN_STEERING}\n`,
+    );
+  }
+  if (containsCommonMarkDoubleStar(text)) {
+    return result(
+      `mrkdwn stdin must not include CommonMark double-star emphasis. ${SLACK_MRKDWN_STEERING}\n`,
     );
   }
   if (Buffer.byteLength(text, "utf8") > MAX_MRKDWN_BYTES) {
