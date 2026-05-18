@@ -50,9 +50,8 @@ Out of scope:
 - Update README Deployment Configuration to document `users`:
   - A minimal JSON snippet (one entry with `slack`+`github`, one with `email`+`name` only).
   - "Config hot-reloads — no restart needed."
-  - **Verify your entry**: after editing `config.json`, watch for `config_loaded { users: N }` (a new log event the loader emits on success). Then trigger Thor from your own Slack handle and look for `attribution_applied { outcome: "applied" }` carrying your `slack` id. If you see `skipped_no_user_record { slack: "U..." }` instead, the Slack id in your entry doesn't match the id Thor extracted from the event.
+  - **Verify your entry**: after editing `config.json`, trigger Thor from your own Slack handle and look for `attribution_applied { outcome: "applied" }` carrying your `slack` id. If you see `skipped_no_user_record { slack: "U..." }` instead, the Slack id in your entry doesn't match the id Thor extracted from the event. (No new "config loaded" log: `createConfigLoader` re-reads on every call, so emitting per-load would spam the log without telling the operator anything they can't see from `attribution_applied` on the next trigger.)
   - Link back to `docs/feat/users-directory-provenance.md` so a future operator wondering "where did this 200-entry list come from?" has the trail.
-- `createConfigLoader` (`workspace-config.ts:143-164`) emits `config_loaded { users: N, ok: true }` on every successful load and on every successful reload. Trivial addition, single source of truth for "is my config live?"
 
 Exit: `pnpm -r test` green.
 
@@ -62,7 +61,7 @@ Exit: `pnpm -r test` green.
 - **Extraction timing is the catch.** Today the runner extracts `event.user` / `sender.login` at `packages/runner/src/index.ts:1416,1443` for viewer labels — that runs at view-render time, *after* `trigger_start` is written. For this plan they need to be extracted in the inbound trigger route, **before** `appendSessionEvent` writes the `trigger_start` record. Plan-time work: factor the existing extraction into a `decodeTriggerActor(promptPayload, source)` helper used in both places (runner trigger route + viewer label render). Source of truth is the raw inbound prompt payload the gateway forwards.
 - Add `findTriggerActor(sessionId): { slack?: string; github?: string } | undefined` in `packages/common/src/event-log.ts`, anchor-aware so it works for sub-sessions too:
   1. Resolve `sessionId` → anchor via the same alias path `findAnchorContext` already uses (`event-log.ts:994-1016`).
-  2. Find the active trigger on that anchor (same logic as `findAnchorContext`). If none active, fall back to the most-recent `trigger_start` on the anchor regardless of `trigger_end` — long-running sub-sessions can outlive their parent trigger; attribution should still land.
+  2. Find the active trigger on that anchor (same logic as `findAnchorContext`). If none active, fall back to the most-recent `trigger_start` on the anchor regardless of `trigger_end` — long-running sub-sessions can outlive their parent trigger; attribution should still land. **Known mis-attribution risk:** if trigger A ends, trigger B starts on the same anchor, and a sub-session of A then writes a commit, that commit is attributed to B's triggerer. Accepted for v1 — attribution is cosmetic, the alternative (no attribution) is worse, and the fact that "most recent on this anchor" gets the credit is at worst surprising, never a safety issue. Re-evaluate if multi-trigger overlap on one anchor becomes common.
   3. Return the `triggerSlackId` / `triggerGithubLogin` recorded on that trigger's `trigger_start`, or `undefined` when neither was extracted.
   Implementation is a synchronous read over the same event-log structure remote-cli already consumes; no new transport, no new I/O.
 - Race note: a very fast first `/exec/git` call could arrive before the runner finishes writing `trigger_start`. That falls through to `skipped_no_trigger` and the commit proceeds unattributed — acceptable, not a bug.
@@ -92,7 +91,7 @@ attribution_applied {
           | "skipped_no_user_record"        // actor known, no UserRecord matches
           | "skipped_missing_identity_field"// resolved user lacks the field this surface needs
           | "skipped_unsupported_arg_shape" // e.g. git commit -F
-          | "skipped_amend"                 // git commit --amend
+          | "skipped_already_attributed"    // -m value already contains the exact trailer
           | "api_rejected",
   reason?:  string,                         // sub-reason for skipped_missing_identity_field / api_rejected
                                             // e.g. "lookup_timeout", "lookup_no_match", "upstream_disconnected"
@@ -103,11 +102,23 @@ attribution_applied {
 }
 ```
 
-**`/exec/git` handler.** Before `execCommand("git", effectiveArgs, ...)` at `index.ts:583`: if subcommand is `commit` and a user resolves, append the `Co-authored-by: <name> <email>` trailer **into the message body**, not as a `--trailer` flag. The existing `validateCommit` policy (`packages/remote-cli/src/policy-git.ts:585-604`) only allows `-m`/`-F`; `--trailer` would be rejected by Thor's own gate. Implementation: reuse the `rewriteSingleValueFlag` pattern that `withGhDisclaimer` uses (`index.ts:212-246`) to append two newlines and the trailer to the value of the last `-m`. Skipping cases:
+**`/exec/git` handler.** Before `execCommand("git", effectiveArgs, ...)` at `index.ts:583`: if subcommand is `commit` and a user resolves, append the `Co-authored-by: <name> <email>` line **directly into the last `-m` value as plain text** — no `--trailer` flag, no reliance on `git interpret-trailers`. `validateCommit` (`policy-git.ts:585-604`) already accepts only `-m`/`-F`/`--message`/`--file`; subcommands like `commit --amend`, `revert`, `cherry-pick` never reach this handler because the policy rejects them upstream, so no separate skip outcome for them is needed.
+
+Argument-rewrite helper: generalize the existing `rewriteSingleValueFlag` (`index.ts:212-246`) — currently it errors on multiple matches because every `gh` body surface it serves expects exactly one. Add a `match: "single" | "last"` option (default `"single"` to keep `withGhDisclaimer` byte-identical) and use `"last"` for the commit-trailer rewrite. One helper, two call sites, no duplicated arg-scanning logic.
+
+Trailer text shape: append `\n\n` (or `\n` if the value already ends with a blank line) followed by `Co-authored-by: <name> <email>`. GitHub's UI recognizes raw `Co-authored-by:` lines in commit bodies for co-author avatars — no `interpret-trailers` round-trip is required for the user-visible outcome.
+
+Skipping cases:
   - `-F <path>` (commit message from file) → `skipped_unsupported_arg_shape`. Reading sandbox-side files from the host adds complexity not worth it for v1.
-  - Any other subcommand (`commit --amend`, `revert`, `cherry-pick`, etc.) → not touched. `commit --amend` is technically a commit too — keep the policy: only stamp on plain `git commit`, recognise `--amend` and skip with `skipped_amend`.
-  - De-dupe note: appending the trailer to the `-m` value relies on `git commit` accepting RFC-2822 trailers via `interpret-trailers` semantics. Native de-dup is **not guaranteed without `trailer.ifExists=addIfDifferent`** — on a re-run, a double trailer is possible but rare. Acceptable for v1; document.
+  - The last `-m` value already ends with the *exact* `Co-authored-by: <name> <email>` line for this resolved user (substring check on the trailing trailer block) → `skipped_already_attributed`, args byte-identical. This is the deterministic de-dup path: on a re-run of the same `git commit` the trailer is appended exactly once.
   - `bin/git` is unchanged.
+
+Pros/cons of the plain-text append vs. routing through git's trailer machinery:
+  - **Pro — no policy widening.** `--trailer` stays denied, the commit surface stays narrow.
+  - **Pro — deterministic output.** No dependency on `trailer.ifExists` / `trailer.ifMissing` config, which differs per-repo and per-user `.gitconfig`.
+  - **Pro — explicit, testable de-dup.** A substring check on the `-m` value is trivial to unit-test; relying on git's trailer interpreter would require a real `git` invocation in tests.
+  - **Con — we own line-break correctness.** If the agent's `-m` value ends without a blank line, we must insert one; if it already ends with a trailer block, we must not insert an extra blank line. Covered by the helper, but it's logic we own.
+  - **Con — no semantic merging.** If the agent itself wrote a `Co-authored-by:` line with a *different* identity, we append a second one instead of replacing it. Acceptable: the agent should not be writing co-author trailers, and if it does, both names landing is the honest record.
 
 **`/exec/gh` handler.** In the `/exec/gh` route at `index.ts:616-626`, after `withGhDisclaimer` runs and `gh pr create` succeeds, run a best-effort assignee follow-up. The body itself is untouched — the disclaimer footer already includes a link to the Thor context for this trigger, so a separate "Triggered by …" line would be duplicative.
 
@@ -129,7 +140,7 @@ Behavior tests (next to existing `gh-disclaimer.test.ts` and `mcp-handler.test.t
   - Resolved user + `-m "msg"` → trailer appended into the `-m` value.
   - Resolved user + repeated `-m` → trailer appended into the last `-m` only.
   - `-F <path>` → passed through, `skipped_unsupported_arg_shape`.
-  - `commit --amend` → passed through, `skipped_amend`.
+  - Re-run with the same `-m` (value already ends with the resolved user's `Co-authored-by:` line) → args byte-identical, `skipped_already_attributed`.
   - No trigger / no resolved user → args byte-identical.
   - Sub-session whose parent trigger has ended → `findTriggerActor` falls back to most-recent `trigger_start`, trailer still appended.
 - `/exec/gh pr create`:
@@ -166,7 +177,7 @@ Exit: green push checks; PR open against `main`.
 | Schema shape | `{ email, name, slack?, github? }` | `email` is the stable identity; both handles optional because not every human is in both systems. |
 | Where attribution is injected | Remote-cli Node handlers (`/exec/git`, `/exec/gh`, MCP gateway) | Wrappers `bin/git`/`bin/gh` run on the host via `execCommand` but the cleanest insertion point is the Node handler one layer up, matching the existing `withGhDisclaimer` + `injectApprovalDisclaimer` patterns. |
 | How the handler knows the trigger actor | Extend `trigger_start` event log + `findTriggerActor(sessionId)` | Session id is already in the HTTP header. The event log is the single source of truth. No new transport, no sandbox-side state. |
-| Squash-merge survival | Not separately addressed | GitHub's squash UI drops trailers from non-primary commits. The PR assignee survives squash, and the Thor disclaimer footer (already in PR bodies) carries the context link back to the trigger. A dedicated "Triggered by …" body line was considered and rejected as duplicative. |
+| Squash-merge survival | Not separately addressed | GitHub's squash UI concatenates `Co-authored-by:` trailers from all squashed commits into the squash body, so co-author credit usually survives — but the PR author can edit the squash message and strip them, and per-commit trailer ordering/whitespace can drift. The PR assignee survives squash unconditionally, and the Thor disclaimer footer (already in PR bodies) carries the context link back to the trigger. A dedicated "Triggered by …" body line was considered and rejected as duplicative. |
 | Failure mode | Best effort, never block | Attribution is cosmetic. A missing record must not stop the agent. |
 | MCP mutation timing | After approval | Matches existing disclaimer behaviour; changing this is a bigger trust-model conversation. |
 | Resolved identity does not gate any action | Documented in Scope | Prevents future code from misusing `UserRecord` for permission decisions. |
@@ -175,7 +186,7 @@ Exit: green push checks; PR open against `main`.
 
 - **Stale `users` list.** Operators must remember to add new hires. Visible through `attribution_applied { outcome: "skipped_no_user_record" }` lines in the runner log.
 - **MCP after-approval mutation.** The Jira assignee shown in the approval card does not include the injected assignee. Acceptable trade-off (same as the existing disclaimer); revisit if a reviewer is surprised.
-- **Squash kills trailers.** Accepted. The `Co-authored-by` trailer is dropped on squash-merge for non-primary commits, so on `main` the human shows up only via the PR assignee and the Thor disclaimer footer's context link. Good enough for v1.
+- **Squash drift.** GitHub aggregates `Co-authored-by:` trailers across squashed commits into the squash body, so co-author credit usually survives onto `main` — but the PR author can edit the squash message before merging and drop them. The PR assignee and the Thor disclaimer footer's context link always survive squash; treat the trailer as best-effort on top of those.
 - **PII in `config.json`.** Emails sit in a mounted file that already carries GitHub installation ids and proxy auth headers; trust boundary unchanged. README must note that attribution writes name + email into commits and Jira fields — visible externally on GitHub and Atlassian.
 - **Trigger actor ≠ work owner in handoff cases.** On-call triggers a deploy for a teammate's PR; Slack thread relays a request from someone else. Plan attributes to the triggerer, full stop. Multi-field model is deferred.
 - **GitHub co-author linking depends on commit email.** If a user's GitHub email is set to private and their commit-recognized address is the `users.noreply.github.com` alias, the `Co-authored-by: Name <jira-email>` trailer will show the name but won't link the avatar/profile. The Jira email is still the right choice for the schema (it's the only one that resolves in Jira); GitHub linking is a partial-credit consolation prize.
