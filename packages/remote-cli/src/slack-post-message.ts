@@ -16,6 +16,7 @@ const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
 const BLOCKS_FILE_ALLOWED_ROOTS = ["/tmp", "/workspace"] as const;
 const MARKDOWN_TABLE_SEPARATOR_LINE = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
 const COMMONMARK_DOUBLE_STAR = /\*\*/;
+const RUNAWAY_NEWLINES = /\n{4,}/;
 const SLACK_MRKDWN_STEERING =
   "Use Slack mrkdwn instead: `*bold*` (not `**bold**`), `_italic_`, bullets, and code spans/fences as needed.";
 
@@ -132,6 +133,11 @@ function containsCommonMarkDoubleStar(text: string): boolean {
   return COMMONMARK_DOUBLE_STAR.test(stripCodeSegments(text));
 }
 
+function containsRunawayNewlines(text: string): boolean {
+  const withoutFenced = text.replace(/```[\s\S]*?```/g, "");
+  return RUNAWAY_NEWLINES.test(withoutFenced);
+}
+
 export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: string } {
   if (!Array.isArray(args) || !args.every((arg) => typeof arg === "string")) {
     return { error: "args must be an array of strings" };
@@ -213,6 +219,11 @@ export async function handleSlackPostMessage(
   if (containsCommonMarkDoubleStar(text)) {
     return result(
       `mrkdwn stdin must not include CommonMark double-star emphasis. ${SLACK_MRKDWN_STEERING}\n`,
+    );
+  }
+  if (containsRunawayNewlines(text)) {
+    return result(
+      "mrkdwn stdin must not include runs of 3+ blank lines; Slack only needs one blank line between paragraphs.\n",
     );
   }
   if (Buffer.byteLength(text, "utf8") > MAX_MRKDWN_BYTES) {

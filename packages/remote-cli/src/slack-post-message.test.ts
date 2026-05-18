@@ -203,8 +203,41 @@ describe("remote-cli slack-post-message endpoint", () => {
       },
       "use --blocks-file with Slack blocks/table output instead",
     );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "First paragraph.\n\n\n\nSecond paragraph after runaway gap.\n",
+      },
+      "must not include runs of 3+ blank lines",
+    );
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts single blank-line paragraph breaks and ignores blanks inside fences", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, channel: "C123", ts: "1777940312.555555" }),
+    );
+
+    const paragraphBreak = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin: "First paragraph.\n\nSecond paragraph.\n",
+      },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(paragraphBreak.status).toBe(200);
+
+    const fencedBlanks = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin: "Header\n```\nline1\n\n\n\nline2\n```\nFooter\n",
+      },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(fencedBlanks.status).toBe(200);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("allows literal double stars and table-looking text inside code spans or fences", async () => {
