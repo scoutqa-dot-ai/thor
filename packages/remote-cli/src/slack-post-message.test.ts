@@ -161,6 +161,13 @@ describe("remote-cli slack-post-message endpoint", () => {
       "--thread-ts requires a value",
     );
     await expectFailure({ args: ["--channel", "C123"], stdin: "   \n" }, "must not be empty");
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "| Name | Status |\n|---|---|\n| Thor | Ready |\n",
+      },
+      "must not include markdown table separators",
+    );
 
     expect(fetchMock).not.toHaveBeenCalled();
   });

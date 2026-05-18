@@ -14,6 +14,7 @@ const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
 const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
 const BLOCKS_FILE_ALLOWED_ROOTS = ["/tmp", "/workspace"] as const;
+const MARKDOWN_TABLE_SEPARATOR_LINE = /^\s*\|(?:\s*:?-{3,}:?\s*\|){2,}\s*$/m;
 
 export interface SlackPostMessageDeps {
   fetch?: typeof fetch;
@@ -91,6 +92,10 @@ function hasUsableThorSession(sessionId: string): boolean {
   return subsessionAnchor ? currentSessionForAnchor(subsessionAnchor) !== undefined : false;
 }
 
+function containsMarkdownTableSeparator(text: string): boolean {
+  return MARKDOWN_TABLE_SEPARATOR_LINE.test(text);
+}
+
 export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: string } {
   if (!Array.isArray(args) || !args.every((arg) => typeof arg === "string")) {
     return { error: "args must be an array of strings" };
@@ -164,6 +169,11 @@ export async function handleSlackPostMessage(
   if (typeof request.stdin !== "string") return result("stdin body is required\n");
   const text = request.stdin;
   if (text.trim().length === 0) return result("mrkdwn stdin must not be empty\n");
+  if (containsMarkdownTableSeparator(text)) {
+    return result(
+      "mrkdwn stdin must not include markdown table separators; use --blocks-file with Slack blocks/table output instead\n",
+    );
+  }
   if (Buffer.byteLength(text, "utf8") > MAX_MRKDWN_BYTES) {
     return result(`mrkdwn stdin exceeds ${MAX_MRKDWN_BYTES} bytes\n`);
   }
