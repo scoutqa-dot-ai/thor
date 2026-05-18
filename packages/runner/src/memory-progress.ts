@@ -1,5 +1,4 @@
 import {
-  MEMORY_DIR,
   isBareMemoryDirectoryPath,
   isMemoryPath,
   normalizeMemoryPath,
