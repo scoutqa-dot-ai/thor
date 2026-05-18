@@ -1,0 +1,25 @@
+packages/common/src/memory-paths.test.ts
+  b5b8cde3a9a7c5e4 20,28-29,44
+packages/common/src/memory-paths.ts
+  b5b8cde3a9a7c5e4 29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8aa7707b34dbaaad571c2d29d635d9e77f9f77d9",
+  "prompts": {
+    "b5b8cde3a9a7c5e4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "697752c9-d80d-4466-b1e4-151b9caf8b81",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 29,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}
