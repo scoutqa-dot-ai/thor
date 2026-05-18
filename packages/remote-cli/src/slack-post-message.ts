@@ -7,8 +7,11 @@ import {
   resolveAlias,
   type ExecResult,
 } from "@thor/common";
+import MarkdownIt from "markdown-it";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+
+const markdownParser = new MarkdownIt("commonmark");
 
 const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
@@ -98,25 +101,20 @@ function hasUsableThorSession(sessionId: string): boolean {
 
 function stripCodeSegments(text: string): string {
   const lines = text.split(/\r?\n/);
-  const stripped: string[] = [];
-  let inFence = false;
-
-  for (const line of lines) {
-    const fenceCount = line.match(/^\s*```/g) ? 1 : 0;
-    if (fenceCount > 0) {
-      const isBalancedFenceLine = /^\s*```[^`]*```\s*$/.test(line);
-      if (!isBalancedFenceLine) inFence = !inFence;
-      stripped.push("");
-      continue;
+  const blockCodeLines = new Set<number>();
+  const tokens = markdownParser.parse(text, {});
+  for (const token of tokens) {
+    if ((token.type === "fence" || token.type === "code_block") && token.map) {
+      const [start, end] = token.map;
+      for (let i = start; i < end; i++) blockCodeLines.add(i);
     }
-    if (inFence) {
-      stripped.push("");
-      continue;
-    }
-    stripped.push(line.replace(/`[^`]*`/g, ""));
   }
-
-  return stripped.join("\n");
+  return lines
+    .map((line, index) => {
+      if (blockCodeLines.has(index)) return "";
+      return line.replace(/`+[^`\n]*`+/g, "");
+    })
+    .join("\n");
 }
 
 function containsMarkdownTableSeparator(text: string): boolean {
