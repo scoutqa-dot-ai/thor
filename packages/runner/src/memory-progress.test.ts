@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { getMemoryProgressEvents } from "./memory-progress.js";
 
@@ -106,5 +107,23 @@ describe("getMemoryProgressEvents", () => {
         source: "tool",
       },
     ]);
+  });
+
+  it("suppresses dotted directory names when stat reports a directory", () => {
+    const dottedDir = "/workspace/memory/thor-test.my.repo";
+    fs.mkdirSync(dottedDir, { recursive: true });
+    try {
+      expect(
+        getMemoryProgressEvents({
+          tool: "read",
+          status: "completed",
+          input: {
+            filePath: dottedDir,
+          },
+        }),
+      ).toEqual([]);
+    } finally {
+      fs.rmSync(dottedDir, { recursive: true, force: true });
+    }
   });
 });

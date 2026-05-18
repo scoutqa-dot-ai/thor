@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import path from "node:path";
 
 import type { ProgressEvent } from "@thor/common";
@@ -26,8 +27,12 @@ function isBareMemoryDirectoryPath(memoryPath: string): boolean {
   if (!isMemoryPath(normalizedPath)) return false;
   if (normalizedPath === MEMORY_DIR) return true;
 
-  const base = path.posix.basename(normalizedPath.replace(/\/+$/, ""));
-  return !base.includes(".");
+  try {
+    return fs.statSync(normalizedPath).isDirectory();
+  } catch {
+    const base = path.posix.basename(normalizedPath.replace(/\/+$/, ""));
+    return !base.includes(".");
+  }
 }
 
 function extractMemoryPaths(input: unknown): string[] {

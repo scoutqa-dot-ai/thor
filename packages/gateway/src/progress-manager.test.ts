@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import type { WebClient } from "@slack/web-api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProgressEvent } from "@thor/common";
@@ -318,73 +319,92 @@ describe("ProgressManager", () => {
 
   it("excludes bare directory reads from memory tracking", async () => {
     const deps = mockSlackDeps();
+    const dottedDir = "/workspace/memory/thor-test.my.repo";
+    fs.mkdirSync(dottedDir, { recursive: true });
 
-    await handleProgressEvent(
-      "C123",
-      "1710000000.001",
-      {
-        type: "memory",
-        action: "read",
-        path: "/workspace/memory",
-        source: "tool",
-      },
-      deps,
-      "",
-    );
-    await handleProgressEvent(
-      "C123",
-      "1710000000.001",
-      {
-        type: "memory",
-        action: "read",
-        path: "/workspace/memory/.",
-        source: "tool",
-      },
-      deps,
-      "",
-    );
-    await handleProgressEvent(
-      "C123",
-      "1710000000.001",
-      {
-        type: "memory",
-        action: "read",
-        path: "/workspace/memory/thor",
-        source: "tool",
-      },
-      deps,
-      "",
-    );
-    await handleProgressEvent(
-      "C123",
-      "1710000000.001",
-      {
-        type: "memory",
-        action: "read",
-        path: "/workspace/memory/thor/.",
-        source: "tool",
-      },
-      deps,
-      "",
-    );
-    await handleProgressEvent(
-      "C123",
-      "1710000000.001",
-      {
-        type: "memory",
-        action: "read",
-        path: "/workspace/memory/thor/notes.md",
-        source: "tool",
-      },
-      deps,
-      "",
-    );
-    await sendTools(deps, 3);
+    try {
+      await handleProgressEvent(
+        "C123",
+        "1710000000.001",
+        {
+          type: "memory",
+          action: "read",
+          path: "/workspace/memory",
+          source: "tool",
+        },
+        deps,
+        "",
+      );
+      await handleProgressEvent(
+        "C123",
+        "1710000000.001",
+        {
+          type: "memory",
+          action: "read",
+          path: "/workspace/memory/.",
+          source: "tool",
+        },
+        deps,
+        "",
+      );
+      await handleProgressEvent(
+        "C123",
+        "1710000000.001",
+        {
+          type: "memory",
+          action: "read",
+          path: dottedDir,
+          source: "tool",
+        },
+        deps,
+        "",
+      );
+      await handleProgressEvent(
+        "C123",
+        "1710000000.001",
+        {
+          type: "memory",
+          action: "read",
+          path: "/workspace/memory/thor",
+          source: "tool",
+        },
+        deps,
+        "",
+      );
+      await handleProgressEvent(
+        "C123",
+        "1710000000.001",
+        {
+          type: "memory",
+          action: "read",
+          path: "/workspace/memory/thor/.",
+          source: "tool",
+        },
+        deps,
+        "",
+      );
+      await handleProgressEvent(
+        "C123",
+        "1710000000.001",
+        {
+          type: "memory",
+          action: "read",
+          path: "/workspace/memory/thor/notes.md",
+          source: "tool",
+        },
+        deps,
+        "",
+      );
+      await sendTools(deps, 3);
 
-    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
-    expect(postCall.text).toContain("memory: notes.md");
-    expect(postCall.text).not.toContain("memory: .");
-    expect(postCall.text).not.toContain("thor");
+      const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+      expect(postCall.text).toContain("memory: notes.md");
+      expect(postCall.text).not.toContain("memory: .");
+      expect(postCall.text).not.toContain("thor-test.my.repo");
+      expect(postCall.text).not.toContain("thor");
+    } finally {
+      fs.rmSync(dottedDir, { recursive: true, force: true });
+    }
   });
 
   it("does not count memory/delegate events toward tool threshold", async () => {

@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import { createLogger, logInfo, logError, formatDuration } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import path from "node:path";
@@ -75,8 +76,12 @@ function isBareMemoryDirectoryPath(memoryPath: string): boolean {
   if (normalizedPath === "/workspace/memory") return true;
   if (!normalizedPath.startsWith(MEMORY_ROOT_PREFIX)) return false;
 
-  const base = path.posix.basename(normalizedPath.replace(/\/+$/, ""));
-  return !base.includes(".");
+  try {
+    return fs.statSync(normalizedPath).isDirectory();
+  } catch {
+    const base = path.posix.basename(normalizedPath.replace(/\/+$/, ""));
+    return !base.includes(".");
+  }
 }
 
 function shortenMemoryPath(path: string): string {
