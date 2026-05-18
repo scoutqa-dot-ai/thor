@@ -52,6 +52,7 @@ describe("remote-cli MCP endpoints", () => {
   let connectedUpstreams: string[];
   let closeRemoteCli: () => Promise<void>;
   let jiraLookups: string[];
+  let toolLogEntries: Array<{ tool: string; decision: string; args: Record<string, unknown> }>;
 
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
@@ -66,12 +67,15 @@ describe("remote-cli MCP endpoints", () => {
     createJiraIssueFailure = undefined;
     connectedUpstreams = [];
     jiraLookups = [];
+    toolLogEntries = [];
 
     const remoteCli = createRemoteCliApp({
       mcp: {
         approvalsDir,
         isProduction: true,
-        writeToolCallLogFn: () => {},
+        writeToolCallLogFn: (entry) => {
+          toolLogEntries.push(entry as { tool: string; decision: string; args: Record<string, unknown> });
+        },
         configLoader: () => ({
           users: [
             { email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" },
@@ -458,6 +462,77 @@ describe("remote-cli MCP endpoints", () => {
     expect(jiraLookups).toEqual(["alice@example.com"]);
     expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
     expect(toolCalls[1].arguments?.assignee_account_id).toBe("jira-account-1");
+    expect(toolLogEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          tool: "lookupJiraAccountId",
+          decision: "allowed",
+          args: { email: "alice@example.com" },
+        }),
+      ]),
+    );
+  });
+
+  it("keeps Jira issue creation best-effort when config loading fails", async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+    await closeRemoteCli();
+    const remoteCli = createRemoteCliApp({
+      mcp: {
+        approvalsDir,
+        isProduction: true,
+        writeToolCallLogFn: () => {},
+        configLoader: () => {
+          throw new Error("config unavailable");
+        },
+        connectUpstreamFn: async (): Promise<UpstreamConnection> => ({
+          tools,
+          client: {
+            callTool: async ({ name, arguments: args }: { name: string; arguments?: Record<string, unknown> }) => {
+              toolCalls.push({ name, arguments: args });
+              return { content: [{ type: "text", text: name === "createJiraIssue" ? "created" : "jira-account-1" }] };
+            },
+            close: async () => {},
+          } as unknown as UpstreamConnection["client"],
+        }),
+      },
+    });
+    closeRemoteCli = remoteCli.close;
+    server = createServer(remoteCli.app);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    appendAlias({ aliasType: "opencode.session", aliasValue: "parent-session", anchorId: activeAnchorId });
+    appendSessionEvent("parent-session", {
+      type: "trigger_start",
+      triggerId: activeTriggerId,
+      triggerSlackId: "UABCDEF1",
+    });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const actionId = (JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }).actionId;
+
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    expect(resolved.status).toBe(200);
+    expect(toolCalls.map((call) => call.name)).toEqual(["createJiraIssue"]);
+    expect(toolCalls[0].arguments?.assignee_account_id).toBeUndefined();
   });
 
   it("does not overwrite existing Jira assignee account id", async () => {

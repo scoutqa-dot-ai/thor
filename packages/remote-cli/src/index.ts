@@ -262,7 +262,12 @@ function resolveTriggerUser(
   if (!sessionId) return { reason: "skipped_no_trigger" };
   const actor = findTriggerActor(sessionId);
   if (!actor) return { reason: "skipped_no_trigger" };
-  const config = getConfig();
+  let config: ReturnType<ConfigLoader>;
+  try {
+    config = getConfig();
+  } catch (err) {
+    return { actor, reason: "skipped_config_unavailable" };
+  }
   const user =
     (actor.slack ? findUserBySlack(config, actor.slack) : undefined) ??
     (actor.github ? findUserByGithub(config, actor.github) : undefined);
@@ -337,11 +342,11 @@ function withGitAttribution(
 
 function withGhAttribution(args: string[], sessionId: string | undefined, getConfig: ConfigLoader): string[] {
   if (!(args[0] === "pr" && args[1] === "create")) return args;
+  const resolved = resolveTriggerUser(sessionId, getConfig);
   if (hasFlag(args, ["--assignee", "-a"])) {
-    logAttribution("gh-assignee", "skipped_existing_assignee");
+    logAttribution("gh-assignee", "skipped_existing_assignee", attributionFields(resolved.actor, resolved.user));
     return args;
   }
-  const resolved = resolveTriggerUser(sessionId, getConfig);
   if (!resolved.user) {
     logAttribution("gh-assignee", resolved.reason ?? "skipped_no_user_record", attributionFields(resolved.actor));
     return args;

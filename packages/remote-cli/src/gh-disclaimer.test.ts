@@ -171,6 +171,22 @@ describe("gh disclaimer injection", () => {
     }, { configLoader });
   });
 
+  it("keeps git and gh attribution best-effort when config loading fails", async () => {
+    seedActor();
+    const failingConfigLoader = () => {
+      throw new Error("config unavailable");
+    };
+    await withServer(async (url) => {
+      const git = await postGit(url, ["commit", "-m", "Do work"], "parent");
+      expect(git.response.status).toBe(200);
+      expect(execCalls[0].args).toEqual(["commit", "-m", "Do work"]);
+
+      const gh = await postGh(url, ["pr", "create", "--title", "x", "--body", "Body"], "parent");
+      expect(gh.response.status).toBe(200);
+      expect(execCalls[1].args).not.toContain("--assignee");
+    }, { configLoader: failingConfigLoader });
+  });
+
   it("registers git branch aliases only after successful git push", async () => {
     bindSessionToAnchor("parent", anchorParent);
 

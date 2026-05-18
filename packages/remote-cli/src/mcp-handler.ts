@@ -93,7 +93,12 @@ function resolveTriggerUser(sessionId: string | undefined, getConfig: ConfigLoad
   if (!sessionId) return { reason: "skipped_no_trigger" as const };
   const actor = findTriggerActor(sessionId);
   if (!actor) return { reason: "skipped_no_trigger" as const };
-  const config = getConfig();
+  let config: ReturnType<ConfigLoader>;
+  try {
+    config = getConfig();
+  } catch {
+    return { actor, reason: "skipped_config_unavailable" as const };
+  }
   const user =
     (actor.slack ? findUserBySlack(config, actor.slack) : undefined) ??
     (actor.github ? findUserByGithub(config, actor.github) : undefined);
@@ -121,8 +126,8 @@ function accountIdsFromValue(value: unknown): string[] {
   ];
 }
 
-function parseJiraAccountLookupResult(rawResult: unknown): JiraLookupResult {
-  const stdout = unwrapResult(rawResult).trim();
+function parseJiraAccountLookupStdout(stdout: string): JiraLookupResult {
+  stdout = stdout.trim();
   if (!stdout) return { ok: false, reason: "lookup_no_match" };
   let ids: string[];
   try {
@@ -363,19 +368,17 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (!instance.upstream.tools.some((tool) => tool.name === JIRA_ACCOUNT_LOOKUP_TOOL)) {
       return { ok: false, reason: "tool_unavailable" };
     }
-    try {
-      const result = await instance.upstream.client.callTool({
-        name: JIRA_ACCOUNT_LOOKUP_TOOL,
-        arguments: { email },
-      });
-      return parseJiraAccountLookupResult(result);
-    } catch (err) {
-      logWarn(log, "jira_account_lookup_failed", {
-        upstream: instance.name,
-        error: err instanceof Error ? err.message : String(err),
-      });
+    const result = await executeUpstreamCall({
+      instance,
+      toolName: JIRA_ACCOUNT_LOOKUP_TOOL,
+      args: { email },
+      logEvent: "jira_account_lookup",
+      decision: "allowed",
+    });
+    if (result.exitCode !== 0) {
       return { ok: false, reason: "upstream_disconnected" };
     }
+    return parseJiraAccountLookupStdout(result.stdout);
   }
 
   function validateRepoDirectory(directory?: string): McpExecResult | undefined {
@@ -754,11 +757,15 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     sessionId: string | undefined,
     instance: ProxyInstance,
   ): Promise<Record<string, unknown>> {
+    const resolved = resolveTriggerUser(sessionId, getConfig);
     if (args.assignee_account_id !== undefined) {
-      logInfo(log, "attribution_applied", { surface: "jira", outcome: "skipped_existing_assignee" });
+      logInfo(log, "attribution_applied", {
+        surface: "jira",
+        outcome: "skipped_existing_assignee",
+        ...attributionFields(resolved.actor, resolved.user),
+      });
       return args;
     }
-    const resolved = resolveTriggerUser(sessionId, getConfig);
     if (!("user" in resolved) || !resolved.user) {
       logInfo(log, "attribution_applied", {
         surface: "jira",
