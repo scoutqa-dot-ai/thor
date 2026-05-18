@@ -7,13 +7,21 @@ import {
   resolveAlias,
   type ExecResult,
 } from "@thor/common";
+import MarkdownIt from "markdown-it";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+
+const markdownParser = new MarkdownIt("commonmark");
 
 const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
 const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
 const BLOCKS_FILE_ALLOWED_ROOTS = ["/tmp", "/workspace"] as const;
+const MARKDOWN_TABLE_SEPARATOR_LINE = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+const COMMONMARK_DOUBLE_STAR = /\*\*/;
+const LITERAL_BACKSLASH_N = /\\n/;
+const SLACK_MRKDWN_STEERING =
+  "Use Slack mrkdwn instead: `*bold*` (not `**bold**`), `_italic_`, bullets, and code spans/fences as needed.";
 
 export interface SlackPostMessageDeps {
   fetch?: typeof fetch;
@@ -91,6 +99,42 @@ function hasUsableThorSession(sessionId: string): boolean {
   return subsessionAnchor ? currentSessionForAnchor(subsessionAnchor) !== undefined : false;
 }
 
+function stripCodeSegments(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const blockCodeLines = new Set<number>();
+  const tokens = markdownParser.parse(text, {});
+  for (const token of tokens) {
+    if ((token.type === "fence" || token.type === "code_block") && token.map) {
+      const [start, end] = token.map;
+      for (let i = start; i < end; i++) blockCodeLines.add(i);
+    }
+  }
+  return lines
+    .map((line, index) => {
+      if (blockCodeLines.has(index)) return "";
+      return line.replace(/`+[^`\n]*`+/g, "");
+    })
+    .join("\n");
+}
+
+function containsMarkdownTableSeparator(text: string): boolean {
+  const lines = stripCodeSegments(text).split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    if (!MARKDOWN_TABLE_SEPARATOR_LINE.test(lines[i] ?? "")) continue;
+    const previous = lines[i - 1]?.trim() ?? "";
+    if (previous.includes("|")) return true;
+  }
+  return false;
+}
+
+function containsCommonMarkDoubleStar(text: string): boolean {
+  return COMMONMARK_DOUBLE_STAR.test(stripCodeSegments(text));
+}
+
+function containsLiteralBackslashN(text: string): boolean {
+  return LITERAL_BACKSLASH_N.test(stripCodeSegments(text));
+}
+
 export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: string } {
   if (!Array.isArray(args) || !args.every((arg) => typeof arg === "string")) {
     return { error: "args must be an array of strings" };
@@ -164,6 +208,21 @@ export async function handleSlackPostMessage(
   if (typeof request.stdin !== "string") return result("stdin body is required\n");
   const text = request.stdin;
   if (text.trim().length === 0) return result("mrkdwn stdin must not be empty\n");
+  if (containsMarkdownTableSeparator(text)) {
+    return result(
+      `mrkdwn stdin must not include markdown table separators; use --blocks-file with Slack blocks/table output instead. ${SLACK_MRKDWN_STEERING}\n`,
+    );
+  }
+  if (containsCommonMarkDoubleStar(text)) {
+    return result(
+      `mrkdwn stdin must not include CommonMark double-star emphasis. ${SLACK_MRKDWN_STEERING}\n`,
+    );
+  }
+  if (containsLiteralBackslashN(text)) {
+    return result(
+      "mrkdwn stdin must not contain literal `\\n` escape sequences; pipe a heredoc or printf so newlines are real newlines.\n",
+    );
+  }
   if (Buffer.byteLength(text, "utf8") > MAX_MRKDWN_BYTES) {
     return result(`mrkdwn stdin exceeds ${MAX_MRKDWN_BYTES} bytes\n`);
   }

@@ -161,8 +161,131 @@ describe("remote-cli slack-post-message endpoint", () => {
       "--thread-ts requires a value",
     );
     await expectFailure({ args: ["--channel", "C123"], stdin: "   \n" }, "must not be empty");
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "I found the **root cause** and the fix is ready.\n",
+      },
+      "must not include CommonMark double-star emphasis",
+    );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "I found the **root cause** and the fix is ready.\n",
+      },
+      "Use Slack mrkdwn instead: `*bold*` (not `**bold**`)",
+    );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "| Name | Status |\n|---|---|\n| Thor | Ready |\n",
+      },
+      "must not include markdown table separators",
+    );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "| Name | Status |\n|---|---|\n| Thor | Ready |\n",
+      },
+      "Use Slack mrkdwn instead: `*bold*` (not `**bold**`)",
+    );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "Name | Status\n--- | ---\nThor | Ready\n",
+      },
+      "must not include markdown table separators",
+    );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "| **Name** | Status |\n|---|---|\n| Thor | Ready |\n",
+      },
+      "use --blocks-file with Slack blocks/table output instead",
+    );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "First line.\\nSecond line because the agent forgot the heredoc.\n",
+      },
+      "must not contain literal `\\n` escape sequences",
+    );
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts real newlines and literal backslash-n inside code spans or fences", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, channel: "C123", ts: "1777940312.555555" }),
+    );
+
+    const paragraphBreak = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin: "First paragraph.\n\nSecond paragraph.\n",
+      },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(paragraphBreak.status).toBe(200);
+
+    const literalInCodeSpan = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin: "Use the `\\n` escape only inside code, like this: `printf 'a\\nb'`.\n",
+      },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(literalInCodeSpan.status).toBe(200);
+
+    const literalInFence = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin: "Example:\n```\nprintf 'a\\nb\\n'\n```\nPlain text after.\n",
+      },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(literalInFence.status).toBe(200);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("allows literal double stars and table-looking text inside code spans or fences", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: true, channel: "C123", ts: "1777940312.444444" }),
+    );
+
+    const inlineCode = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin: "Use `**literal**` in this example and keep `Name | Status` literal.\n",
+      },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(inlineCode.status).toBe(200);
+
+    const fencedCode = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin:
+          "```\n**literal**\nName | Status\n--- | ---\nThor | Ready\n```\nOutside text stays plain.\n",
+      },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(fencedCode.status).toBe(200);
+
+    const balancedFenceLine = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin: "```literal```\nOutside has **bad emphasis**\n",
+      },
+      { "x-thor-session-id": "session-validation" },
+    );
+    expect(balancedFenceLine.status).toBe(400);
+    expect(((await balancedFenceLine.json()) as { stderr: string }).stderr).toContain(
+      "must not include CommonMark double-star emphasis",
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("accepts blocks files only from allowed roots", async () => {
