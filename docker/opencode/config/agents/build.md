@@ -92,14 +92,14 @@ approval status <action-id>             # check if approved/rejected
 approval list                           # list pending approvals
 ```
 
-| Path                   | Access     | Purpose                                    |
-| ---------------------- | ---------- | ------------------------------------------ |
-| `/workspace/cron`      | read-write | Crontab for scheduled jobs                                                |
-| `/workspace/memory`    | read-write | Persistent agent memory and a few machine-consumed control files          |
-| `/workspace/repos`     | read-only  | Main repo clone — browse code here; server-side `git clone` may add repos |
-| `/workspace/worklog`   | read-only  | Tool call logs and session notes                                          |
-| `/workspace/runs`      | read-write | Per-run scratch dirs for subagent handoffs                                |
-| `/workspace/worktrees` | read-write | Git worktrees for code changes                                            |
+| Path                   | Access                   | Purpose                                                            |
+| ---------------------- | ------------------------ | ------------------------------------------------------------------ |
+| `/workspace/cron`      | read-write               | Crontab for scheduled jobs                                         |
+| `/workspace/memory`    | read-write               | Persistent agent memory and a few machine-consumed control files   |
+| `/workspace/repos`     | read-only; limited-write | Main git repos for reading, you can clone new repo but cannot edit |
+| `/workspace/worklog`   | read-only                | Tool call logs and session notes                                   |
+| `/workspace/runs`      | read-write               | Per-run scratch dirs for subagent handoffs                         |
+| `/workspace/worktrees` | read-write               | Git worktrees for code changes                                     |
 
 ## Subagents
 
@@ -268,7 +268,7 @@ Use for smoke testing deployed URLs, exploratory QA, accessibility audits, and v
 
 ### Code Changes — Worktree Workflow
 
-`/workspace/repos` is **read-only for normal file edits**. All code changes go through worktrees at `/workspace/worktrees/<repo-name>/<branch>`.
+`/workspace/repos` is **read-only**. All code changes go through worktrees at `/workspace/worktrees/<repo-name>/<branch>`.
 
 Controlled exception: Thor's server-side `git clone` policy may create `/workspace/repos/<repo>` for allowlisted GitHub owners. Use the narrow `using-git` shape only, and once the repo exists, do all file edits in `/workspace/worktrees`.
 
@@ -332,10 +332,6 @@ Each repo can influence Thor's behavior in two ways:
 - Root memory: `/workspace/memory/README.md` — injected into every new session. Cross-repo context: critical incidents, team decisions, corrections. Keep short.
 - Per-repo memory: `/workspace/memory/<repo>/README.md` — injected only for sessions in that repo. Repo-specific patterns, decisions, gotchas.
 - Additional memory files: `/workspace/memory/` and `/workspace/memory/<repo>/` — store one topic per file, list and grep as needed.
-
-Some files under `/workspace/memory` are machine-consumed control files, not freeform notes. Do not create, edit, or quote them as general instructions unless the user explicitly asks to change that control surface and you have verified the expected grammar in repo docs/code.
-
-Current example: `/workspace/memory/thor/repo-by-slack-channel/<channel-id>.txt` is read by the gateway to choose the working repo for future Slack events. Its entire content must be a single existing repo directory name such as `thor`; it is a routing selector, not a place for channel runbooks, prompt text, or quoted instructions.
 
 **Reading:** at the start of non-trivial sessions, check for relevant memory files by listing and grepping `/workspace/memory/`. For recovering prior context (Slack threads, past decisions, earlier investigations), search `/workspace/worklog/` first — it is faster and more complete than scanning Slack history. When a prompt says "Previous session was lost" and points at a worklog note, read that note directly as the continuity artifact.
 
