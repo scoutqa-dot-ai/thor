@@ -1,0 +1,23 @@
+docs/plan/2026050501_slack-post-message.md
+  e4948e5afe891919 215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e6df6eb4c7f4c510bbae938ec97ffddfc3bddf4c",
+  "prompts": {
+    "e4948e5afe891919": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "adcc50a4-69c0-45e8-aff3-14f03af68ac0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
