@@ -1,0 +1,27 @@
+docker/opencode/config/agents/build.md
+  e4948e5afe891919 65-66
+docker/opencode/config/skills/slack/SKILL.md
+  e4948e5afe891919 129-130
+docker/opencode/bin/slack-post-message
+  e4948e5afe891919 12-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2cd53c804274b7decfeb53c660c4808e89febcf6",
+  "prompts": {
+    "e4948e5afe891919": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "adcc50a4-69c0-45e8-aff3-14f03af68ac0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 10,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    }
+  }
+}
