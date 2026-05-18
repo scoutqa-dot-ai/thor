@@ -963,7 +963,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             repoName: resolved.repoName,
             source: resolved.source,
             fallbackReason: resolved.fallbackReason,
-            ...(resolved.source === "override" || resolved.fallbackReason ? { overridePath } : {}),
+            overridePath,
           }
         : { reason: resolved.reason };
     };

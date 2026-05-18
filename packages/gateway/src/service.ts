@@ -95,7 +95,6 @@ export interface BatchDispatchInput {
   interrupt?: boolean;
   onAccepted?: () => void;
   onRejected?: (reason: string) => void;
-  channelRepos?: Map<string, string>;
   slackDirectoryForChannel?: (channel: string) => SlackRoutingInfo;
 }
 
@@ -328,25 +327,33 @@ function distillSlackEvent(event: SlackThreadEvent): DistilledSlackEvent {
   return distilled;
 }
 
-function renderSlackRoutingSection(event: DistilledSlackEvent, routing?: SlackRoutingInfo): string {
-  if (!routing?.repoName || !routing.source || !event.channel) return "";
+function renderSlackRoutingSection(event: DistilledSlackEvent, routing: SlackRoutingInfo): string {
+  if (!event.channel) return "";
 
   const lines = ["[Slack routing]"];
   if (routing.source === "override" && routing.overridePath) {
     lines.push(
       `Channel ${event.channel} routed to repo \`${routing.repoName}\` via override file \`${routing.overridePath}\`.`,
     );
+    lines.push(
+      `To route this channel to a different repo, replace the contents of \`${routing.overridePath}\` with that repo's directory name under /workspace/repos.`,
+    );
   } else {
     lines.push(`Channel ${event.channel} routed to default repo \`${routing.repoName}\`.`);
     if (routing.fallbackReason) {
       lines.push(`A channel override was ignored because: ${routing.fallbackReason}.`);
     }
+    if (routing.overridePath) {
+      const verb = routing.fallbackReason ? "fix" : "set";
+      lines.push(
+        `To ${verb} a per-channel override, write directory name of an existing repo under /workspace/repos to \`${routing.overridePath}\`.`,
+      );
+    }
   }
-  lines.push("The override file is a repo selector only, not channel instructions.");
   return lines.join("\n");
 }
 
-function renderSlackPrompt(events: SlackThreadEvent[], routing?: SlackRoutingInfo): string {
+function renderSlackPrompt(events: SlackThreadEvent[], routing: SlackRoutingInfo): string {
   const distilledEvents = events.map(distillSlackEvent);
   const routingSection = renderSlackRoutingSection(distilledEvents[0]!, routing);
   const eventSection = renderHeadedSection(
@@ -484,18 +491,15 @@ function collectBatchDirectory<T>(
 
 function resolveSlackBatchDirectory(
   events: SlackThreadEvent[],
-  channelRepos?: Map<string, string>,
   slackDirectoryForChannel?: (channel: string) => SlackRoutingInfo,
 ): SlackRoutingInfo {
   if (events.length === 0) return {};
 
   const resolveOne = (event: SlackThreadEvent): SlackRoutingInfo => {
-    if (slackDirectoryForChannel) return slackDirectoryForChannel(event.channel);
-    const repo = channelRepos?.get(event.channel);
-    if (!repo) return { reason: `channel ${event.channel} has no repo mapping` };
-    const directory = resolveRepoDirectory(repo);
-    if (!directory) return { reason: `repo directory not found for ${repo}` };
-    return { directory, repoName: repo, source: "default" };
+    if (!slackDirectoryForChannel) {
+      return { reason: `channel ${event.channel} has no repo mapping` };
+    }
+    return slackDirectoryForChannel(event.channel);
   };
 
   const first = resolveOne(events[0]!);
@@ -536,16 +540,13 @@ function resolveCronBatchDirectory(events: CronPayload[]): { directory?: string;
 
 function resolveApprovalBatchDirectory(
   events: ApprovalOutcomeEventPayload[],
-  channelRepos?: Map<string, string>,
   slackDirectoryForChannel?: (channel: string) => SlackRoutingInfo,
 ): { directory?: string; reason?: string } {
   return collectBatchDirectory("Approval", events, (event) => {
-    if (slackDirectoryForChannel) return slackDirectoryForChannel(event.channel);
-    const repo = channelRepos?.get(event.channel);
-    if (!repo) return { reason: `channel ${event.channel} has no repo mapping` };
-    const directory = resolveRepoDirectory(repo);
-    if (!directory) return { reason: `repo directory not found for ${repo}` };
-    return { directory };
+    if (!slackDirectoryForChannel) {
+      return { reason: `channel ${event.channel} has no repo mapping` };
+    }
+    return slackDirectoryForChannel(event.channel);
   });
 }
 
@@ -669,7 +670,6 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   if (input.slackEvents.length > 0) {
     const slackDirectory = resolveSlackBatchDirectory(
       input.slackEvents,
-      input.channelRepos,
       input.slackDirectoryForChannel,
     );
     if (slackDirectory.reason) {
@@ -713,7 +713,6 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   if (input.approvalOutcomes.length > 0) {
     const approvalDirectory = resolveApprovalBatchDirectory(
       input.approvalOutcomes,
-      input.channelRepos,
       input.slackDirectoryForChannel,
     );
     if (approvalDirectory.reason) {
@@ -803,7 +802,7 @@ export async function triggerRunnerSlack(
   slackDeps: SlackDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
-  channelRepos?: Map<string, string>,
+  slackDirectoryForChannel?: (channel: string) => SlackRoutingInfo,
   onRejected?: (reason: string) => void,
   approvalOutcomes?: ApprovalOutcomeEventPayload[],
 ): Promise<TriggerResult> {
@@ -834,7 +833,7 @@ export async function triggerRunnerSlack(
     interrupt,
     onAccepted,
     onRejected: handleRejected,
-    channelRepos,
+    slackDirectoryForChannel,
   });
 }
 
@@ -999,7 +998,7 @@ export async function triggerRunnerApprovalOutcomes(
   slackDeps: SlackDeps,
   interrupt?: boolean,
   onAccepted?: () => void,
-  channelRepos?: Map<string, string>,
+  slackDirectoryForChannel?: (channel: string) => SlackRoutingInfo,
   onRejected?: (reason: string) => void,
 ): Promise<TriggerResult> {
   if (events.length === 0) return { busy: false };
@@ -1027,7 +1026,7 @@ export async function triggerRunnerApprovalOutcomes(
     interrupt,
     onAccepted,
     onRejected: handleRejected,
-    channelRepos,
+    slackDirectoryForChannel,
   });
 }
 
