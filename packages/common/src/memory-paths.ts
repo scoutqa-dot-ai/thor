@@ -6,18 +6,6 @@ export const MEMORY_DIR = "/workspace/memory";
 type StatLike = { isDirectory(): boolean };
 type StatSyncLike = (path: string) => StatLike;
 
-const KNOWN_MEMORY_FILE_EXTENSIONS = new Set([
-  ".md",
-  ".txt",
-  ".json",
-  ".jsonc",
-  ".csv",
-  ".tsv",
-  ".log",
-  ".yaml",
-  ".yml",
-]);
-
 export function normalizeMemoryPath(memoryPath: string): string {
   return path.posix.normalize(memoryPath);
 }
@@ -38,7 +26,6 @@ export function isBareMemoryDirectoryPath(
     const statSync = options?.statSync ?? fs.statSync;
     return statSync(normalizedPath).isDirectory();
   } catch {
-    const extension = path.posix.extname(normalizedPath);
-    return !KNOWN_MEMORY_FILE_EXTENSIONS.has(extension.toLowerCase());
+    return false;
   }
 }
