@@ -1,0 +1,35 @@
+docker/opencode/config/skills/slack/SKILL.md
+  08a9e488b7abbb5b 56-60
+docker/opencode/config/skills/using-git/SKILL.md
+  08a9e488b7abbb5b 45
+docker/opencode/config/skills/metabase/SKILL.md
+  08a9e488b7abbb5b 30
+docker/opencode/config/skills/using-gh/SKILL.md
+  08a9e488b7abbb5b 10-14,16,60,69
+docker/opencode/config/skills/browser/SKILL.md
+  08a9e488b7abbb5b 21
+docker/opencode/config/agents/build.md
+  08a9e488b7abbb5b 225,258
+docker/opencode/config/skills/launchdarkly/SKILL.md
+  08a9e488b7abbb5b 44,105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1b3724ef5a9bc34a2fadf6caf4962d7a0c6aed10",
+  "prompts": {
+    "08a9e488b7abbb5b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3ef91499-0c38-4afa-aca7-a2da58015fac",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 35,
+      "total_deletions": 71,
+      "accepted_lines": 21,
+      "overriden_lines": 1
+    }
+  }
+}
