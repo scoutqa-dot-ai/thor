@@ -1,6 +1,5 @@
 import {
   createLogger,
-  isBareMemoryDirectoryPath,
   logInfo,
   logError,
   formatDuration,
@@ -441,7 +440,6 @@ class ProgressSession {
   async onMemory(activity: MemoryActivity): Promise<void> {
     if (this.finished) return;
     if (activity.action === "read" && isReadmePath(activity.path)) return;
-    if (activity.action === "read" && isBareMemoryDirectoryPath(activity.path)) return;
 
     this.recentMemory.push(activity);
     if (this.recentMemory.length > 4) {
