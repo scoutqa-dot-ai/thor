@@ -195,7 +195,7 @@ For human GitHub comment/review wakes, follow the same-surface rule after the wo
 
 `push` — branch was updated by someone, re-read HEAD to reorient yourself. `sender.login` distinguishes your own pushes from others; `git log <before>..<after>` shows what landed on a fast-forward, but on a divergent reset `<before>` may not be reachable, so use `git log -10` against the new HEAD instead.
 
-`check_suite.completed` — CI finished on a commit you authored on this branch. What you do depends on `conclusion`:
+`check_suite.completed` — gateway wakeups are limited to actionable failed conclusions (`failure`, `timed_out`, `action_required`) for commits you authored on this branch. What you do depends on `conclusion`:
 
 - `success` — stay silent
 - `failure` / `timed_out` / `action_required` — pull the failed jobs with `gh run view <id> --log-failed`, classify the cause, then act:

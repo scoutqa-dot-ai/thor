@@ -64,7 +64,7 @@ Subscribe to:
 - Check suite
 - Push
 
-`check_suite.completed` wakes Thor when CI reaches a terminal result for an existing Thor-authored branch session. GitHub reports check suites per commit per checks app, so repos with multiple CI providers may produce more than one terminal suite.
+`check_suite.completed` wakes Thor only for actionable failed outcomes (`failure`, `timed_out`, `action_required`) on an existing Thor-authored branch session. `success`, `cancelled`, `neutral`, `skipped`, `stale`, and missing/unknown conclusions are ignored at the gateway to reduce OpenCode noise. GitHub reports check suites per commit per checks app, so repos with multiple CI providers may still produce more than one terminal suite.
 
 `pull_request.closed` wakes Thor when a PR for an existing notes-backed branch session is merged or closed without merge. The gateway correlates on `pull_request.head.ref`, requires an existing notes file for the resolved `git:branch:<repo>:<branch>` key, and queues accepted events with `interrupt:false`. Other `pull_request` actions are not supported and are archived as `schema_validation_failed`.
 
@@ -137,6 +137,7 @@ npx smee-client --url https://smee.io/<channel-id> --path /github/webhook --port
 | `empty_review_body`          | Submitted review body was blank                                                                | Include text in the review body                                                                    |
 | `non_mention_comment`        | Comment/review does not mention the app, and (for review events) the PR was not opened by Thor | Mention `@${GITHUB_APP_SLUG}` to act, or open the PR from Thor                                     |
 | `check_suite_branch_missing` | GitHub did not include `check_suite.head_branch`                                               | Expected for fork/detached/tag cases; no action unless same-repo PRs are affected                  |
+| `check_suite_non_actionable` | CI finished with a non-actionable check suite conclusion                                       | Expected for `success`, `cancelled`, `neutral`, `skipped`, `stale`, or missing/unknown conclusions |
 | `correlation_key_unresolved` | CI/PR-close/push branch has no existing Thor notes-backed branch session                       | Confirm Thor previously worked that branch; otherwise the event is ignored                         |
 | `check_suite_gate_failed`    | The git SHA/authorship gate failed before queueing a CI wake                                   | See `metadata.gateReason` in `github-webhook-ignored` worklog                                      |
 | `push_sync_failed`           | Gateway could not complete the rev-parse, fetch, ancestry check, or reset for a push sync      | Inspect `metadata.exitCode` / `metadata.errorMessage`; resolve dirty checkout or remote-cli issues |
