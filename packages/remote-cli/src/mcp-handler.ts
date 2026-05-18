@@ -8,9 +8,6 @@ import {
   ExecResultSchema,
   extractRepoFromCwd,
   findAnchorContext,
-  findTriggerActor,
-  findUserByGithub,
-  findUserBySlack,
   getProxyConfig,
   injectApprovalDisclaimer,
   isProxyName,
@@ -25,7 +22,6 @@ import {
   createConfigLoader,
   type ProxyConfig,
   type ConfigLoader,
-  type UserRecord,
   writeToolCallLog,
 } from "@thor/common";
 import type { ApprovalRequiredEventPayload } from "@thor/common";
@@ -38,6 +34,7 @@ import {
 } from "./policy-mcp.js";
 import { unwrapResult } from "./unwrap-result.js";
 import { connectUpstream, type UpstreamConnection } from "./upstream.js";
+import { attributionFields, resolveTriggerUser } from "./attribution.js";
 
 const log = createLogger("mcp");
 const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
@@ -87,31 +84,6 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | "tim
   } finally {
     if (timer) clearTimeout(timer);
   }
-}
-
-function resolveTriggerUser(sessionId: string | undefined, getConfig: ConfigLoader) {
-  if (!sessionId) return { reason: "skipped_no_trigger" as const };
-  const actor = findTriggerActor(sessionId);
-  if (!actor) return { reason: "skipped_no_trigger" as const };
-  let config: ReturnType<ConfigLoader>;
-  try {
-    config = getConfig();
-  } catch {
-    return { actor, reason: "skipped_config_unavailable" as const };
-  }
-  const user =
-    (actor.slack ? findUserBySlack(config, actor.slack) : undefined) ??
-    (actor.github ? findUserByGithub(config, actor.github) : undefined);
-  if (!user) return { actor, reason: "skipped_no_user_record" as const };
-  return { actor, user };
-}
-
-function attributionFields(actor?: { slack?: string; github?: string }, user?: UserRecord) {
-  return {
-    ...(actor?.slack ? { slack: actor.slack } : {}),
-    ...(actor?.github ? { github: actor.github } : {}),
-    ...(user?.email ? { email: user.email } : {}),
-  };
 }
 
 function accountIdsFromValue(value: unknown): string[] {
@@ -775,7 +747,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       });
       return args;
     }
-    const lookupFn = lookupJiraAccountIdByEmail ?? ((email: string) => lookupJiraAccountIdViaUpstream(instance, email));
+    const lookupFn =
+      lookupJiraAccountIdByEmail ??
+      ((email: string) => lookupJiraAccountIdViaUpstream(instance, email));
     let lookup: JiraLookupResult | "timeout";
     try {
       lookup = await withTimeout(lookupFn(resolved.user.email), 5000);

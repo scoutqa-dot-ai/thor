@@ -4,7 +4,7 @@
 
 Stamp the human who triggered a Thor run onto the artifacts it produces — best effort, never blocks:
 
-1. `Co-authored-by: <name> <email>` trailer on agent-made commits.
+1. `Co-authored-by: Name <email>` trailer on agent-made commits.
 2. `--assignee <github>` on agent-opened PRs (set on `gh pr create` when unset).
 3. `assignee_account_id` on agent-created Jira issues (resolved from user email when unset).
 
@@ -103,15 +103,15 @@ attribution_applied {
 }
 ```
 
-**`/exec/git` handler.** Before `execCommand("git", effectiveArgs, ...)` at `index.ts:583`: if subcommand is `commit` and a user resolves, append the `Co-authored-by: <name> <email>` line **directly into the last `-m` value as plain text** — no `--trailer` flag, no reliance on `git interpret-trailers`. `validateCommit` (`policy-git.ts:585-604`) already accepts only `-m`/`-F`/`--message`/`--file`; subcommands like `commit --amend`, `revert`, `cherry-pick` never reach this handler because the policy rejects them upstream, so no separate skip outcome for them is needed.
+**`/exec/git` handler.** Before `execCommand("git", effectiveArgs, ...)` at `index.ts:583`: if subcommand is `commit` and a user resolves, append the `Co-authored-by: Name <email>` line **directly into the last `-m` value as plain text** — no `--trailer` flag, no reliance on `git interpret-trailers`. `validateCommit` (`policy-git.ts:585-604`) already accepts only `-m`/`-F`/`--message`/`--file`; subcommands like `commit --amend`, `revert`, `cherry-pick` never reach this handler because the policy rejects them upstream, so no separate skip outcome for them is needed.
 
 Argument-rewrite helper: generalize the existing `rewriteSingleValueFlag` (`index.ts:212-246`) — currently it errors on multiple matches because every `gh` body surface it serves expects exactly one. Add a `match: "single" | "last"` option (default `"single"` to keep `withGhDisclaimer` byte-identical) and use `"last"` for the commit-trailer rewrite. One helper, two call sites, no duplicated arg-scanning logic.
 
-Trailer text shape: append `\n\n` (or `\n` if the value already ends with a blank line) followed by `Co-authored-by: <name> <email>`. GitHub's UI recognizes raw `Co-authored-by:` lines in commit bodies for co-author avatars — no `interpret-trailers` round-trip is required for the user-visible outcome.
+Trailer text shape: append `\n\n` (or `\n` if the value already ends with a newline) followed by `Co-authored-by: Name <email>`. GitHub's UI recognizes raw `Co-authored-by:` lines in commit bodies for co-author avatars — no `interpret-trailers` round-trip is required for the user-visible outcome.
 
 Skipping cases:
   - `-F <path>` (commit message from file) → `skipped_unsupported_arg_shape`. Reading sandbox-side files from the host adds complexity not worth it for v1.
-  - The last `-m` value already ends with the *exact* `Co-authored-by: <name> <email>` line for this resolved user (substring check on the trailing trailer block) → `skipped_already_attributed`, args byte-identical. This is the deterministic de-dup path: on a re-run of the same `git commit` the trailer is appended exactly once.
+  - The last `-m` value already ends with the *exact* `Co-authored-by: Name <email>` line for this resolved user (substring check on the trailing trailer block) → `skipped_already_attributed`, args byte-identical. This is the deterministic de-dup path: on a re-run of the same `git commit` the trailer is appended exactly once.
   - `bin/git` is unchanged.
 
 Pros/cons of the plain-text append vs. routing through git's trailer machinery:

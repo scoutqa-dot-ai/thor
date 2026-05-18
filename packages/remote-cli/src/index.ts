@@ -8,9 +8,6 @@ import {
   computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
-  findTriggerActor,
-  findUserByGithub,
-  findUserBySlack,
   getRunnerBaseUrl,
   logError,
   logInfo,
@@ -59,6 +56,7 @@ import {
   validateMetabaseArgs,
   validateScoutqaArgs,
 } from "./policy.js";
+import { attributionFields, resolveTriggerUser } from "./attribution.js";
 
 const log = createLogger("remote-cli");
 
@@ -255,34 +253,6 @@ function hasFlag(args: string[], names: string[]): boolean {
   return args.some((arg) => names.some((name) => arg === name || arg.startsWith(`${name}=`)));
 }
 
-function resolveTriggerUser(
-  sessionId: string | undefined,
-  getConfig: ConfigLoader,
-): { actor?: { slack?: string; github?: string }; user?: UserRecord; reason?: string } {
-  if (!sessionId) return { reason: "skipped_no_trigger" };
-  const actor = findTriggerActor(sessionId);
-  if (!actor) return { reason: "skipped_no_trigger" };
-  let config: ReturnType<ConfigLoader>;
-  try {
-    config = getConfig();
-  } catch (err) {
-    return { actor, reason: "skipped_config_unavailable" };
-  }
-  const user =
-    (actor.slack ? findUserBySlack(config, actor.slack) : undefined) ??
-    (actor.github ? findUserByGithub(config, actor.github) : undefined);
-  if (!user) return { actor, reason: "skipped_no_user_record" };
-  return { actor, user };
-}
-
-function attributionFields(actor?: { slack?: string; github?: string }, user?: UserRecord) {
-  return {
-    ...(actor?.slack ? { slack: actor.slack } : {}),
-    ...(actor?.github ? { github: actor.github } : {}),
-    ...(user?.email ? { email: user.email } : {}),
-  };
-}
-
 function logAttribution(surface: string, outcome: string, extra: Record<string, unknown> = {}) {
   logInfo(log, "attribution_applied", { surface, outcome, ...extra });
 }
@@ -302,11 +272,19 @@ function withGitAttribution(
   if (args[0] !== "commit") return args;
   const resolved = resolveTriggerUser(sessionId, getConfig);
   if (!resolved.user) {
-    logAttribution("git", resolved.reason ?? "skipped_no_user_record", attributionFields(resolved.actor));
+    logAttribution(
+      "git",
+      resolved.reason ?? "skipped_no_user_record",
+      attributionFields(resolved.actor),
+    );
     return args;
   }
   if (hasFlag(args, ["-F", "--file"])) {
-    logAttribution("git", "skipped_unsupported_arg_shape", attributionFields(resolved.actor, resolved.user));
+    logAttribution(
+      "git",
+      "skipped_unsupported_arg_shape",
+      attributionFields(resolved.actor, resolved.user),
+    );
     return args;
   }
   const out = [...args];
@@ -324,14 +302,27 @@ function withGitAttribution(
       valueIndex = undefined;
     }
   }
-  const original = valueIndex !== undefined ? out[valueIndex] : inlineIndex !== undefined ? out[inlineIndex].slice(inlinePrefix!.length) : undefined;
+  let original: string | undefined;
+  if (valueIndex !== undefined) {
+    original = out[valueIndex];
+  } else if (inlineIndex !== undefined && inlinePrefix) {
+    original = out[inlineIndex].slice(inlinePrefix.length);
+  }
   if (original === undefined) {
-    logAttribution("git", "skipped_unsupported_arg_shape", attributionFields(resolved.actor, resolved.user));
+    logAttribution(
+      "git",
+      "skipped_unsupported_arg_shape",
+      attributionFields(resolved.actor, resolved.user),
+    );
     return args;
   }
   const next = appendCoauthorTrailer(original, resolved.user);
   if (next === original) {
-    logAttribution("git", "skipped_already_attributed", attributionFields(resolved.actor, resolved.user));
+    logAttribution(
+      "git",
+      "skipped_already_attributed",
+      attributionFields(resolved.actor, resolved.user),
+    );
     return args;
   }
   if (valueIndex !== undefined) out[valueIndex] = next;
@@ -340,15 +331,27 @@ function withGitAttribution(
   return out;
 }
 
-function withGhAttribution(args: string[], sessionId: string | undefined, getConfig: ConfigLoader): string[] {
+function withGhAttribution(
+  args: string[],
+  sessionId: string | undefined,
+  getConfig: ConfigLoader,
+): string[] {
   if (!(args[0] === "pr" && args[1] === "create")) return args;
   const resolved = resolveTriggerUser(sessionId, getConfig);
   if (hasFlag(args, ["--assignee", "-a"])) {
-    logAttribution("gh-assignee", "skipped_existing_assignee", attributionFields(resolved.actor, resolved.user));
+    logAttribution(
+      "gh-assignee",
+      "skipped_existing_assignee",
+      attributionFields(resolved.actor, resolved.user),
+    );
     return args;
   }
   if (!resolved.user) {
-    logAttribution("gh-assignee", resolved.reason ?? "skipped_no_user_record", attributionFields(resolved.actor));
+    logAttribution(
+      "gh-assignee",
+      resolved.reason ?? "skipped_no_user_record",
+      attributionFields(resolved.actor),
+    );
     return args;
   }
   if (!resolved.user.github) {
