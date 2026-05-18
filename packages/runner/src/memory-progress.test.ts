@@ -71,7 +71,12 @@ describe("getMemoryProgressEvents", () => {
         status: "completed",
         input: {
           filePath: "/workspace/memory",
-          nested: [{ targetPath: "/workspace/memory/thor" }],
+          nested: [
+            { targetPath: "/workspace/memory/." },
+            { targetPath: "/workspace/memory/thor" },
+            { targetPath: "/workspace/memory/thor/." },
+            { targetPath: "/workspace/memory/thor/../thor" },
+          ],
         },
       }),
     ).toEqual([]);

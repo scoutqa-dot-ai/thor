@@ -66,11 +66,16 @@ function isReadmePath(path: string): boolean {
   return base.toLowerCase() === "readme.md";
 }
 
-function isBareMemoryDirectoryPath(memoryPath: string): boolean {
-  if (memoryPath === "/workspace/memory") return true;
-  if (!memoryPath.startsWith(MEMORY_ROOT_PREFIX)) return false;
+function normalizeMemoryPath(memoryPath: string): string {
+  return path.posix.normalize(memoryPath);
+}
 
-  const base = path.posix.basename(memoryPath.replace(/\/+$/, ""));
+function isBareMemoryDirectoryPath(memoryPath: string): boolean {
+  const normalizedPath = normalizeMemoryPath(memoryPath);
+  if (normalizedPath === "/workspace/memory") return true;
+  if (!normalizedPath.startsWith(MEMORY_ROOT_PREFIX)) return false;
+
+  const base = path.posix.basename(normalizedPath.replace(/\/+$/, ""));
   return !base.includes(".");
 }
 

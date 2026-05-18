@@ -17,11 +17,16 @@ function isMemoryPath(path: string): boolean {
   return path === MEMORY_DIR || path.startsWith(`${MEMORY_DIR}/`);
 }
 
-function isBareMemoryDirectoryPath(memoryPath: string): boolean {
-  if (!isMemoryPath(memoryPath)) return false;
-  if (memoryPath === MEMORY_DIR) return true;
+function normalizeMemoryPath(memoryPath: string): string {
+  return path.posix.normalize(memoryPath);
+}
 
-  const base = path.posix.basename(memoryPath.replace(/\/+$/, ""));
+function isBareMemoryDirectoryPath(memoryPath: string): boolean {
+  const normalizedPath = normalizeMemoryPath(memoryPath);
+  if (!isMemoryPath(normalizedPath)) return false;
+  if (normalizedPath === MEMORY_DIR) return true;
+
+  const base = path.posix.basename(normalizedPath.replace(/\/+$/, ""));
   return !base.includes(".");
 }
 
@@ -39,8 +44,9 @@ function extractMemoryPaths(input: unknown): string[] {
 
     const { value, key } = item;
     if (typeof value === "string") {
-      if (/path/i.test(key) && isMemoryPath(value)) {
-        found.add(value);
+      const normalizedValue = normalizeMemoryPath(value);
+      if (/path/i.test(key) && isMemoryPath(normalizedValue)) {
+        found.add(normalizedValue);
       }
       continue;
     }

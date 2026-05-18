@@ -337,7 +337,31 @@ describe("ProgressManager", () => {
       {
         type: "memory",
         action: "read",
+        path: "/workspace/memory/.",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
         path: "/workspace/memory/thor",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/thor/.",
         source: "tool",
       },
       deps,
