@@ -206,15 +206,15 @@ describe("remote-cli slack-post-message endpoint", () => {
     await expectFailure(
       {
         args: ["--channel", "C123"],
-        stdin: "First paragraph.\n\n\n\nSecond paragraph after runaway gap.\n",
+        stdin: "First line.\\nSecond line because the agent forgot the heredoc.\n",
       },
-      "must not include runs of 3+ blank lines",
+      "must not contain literal `\\n` escape sequences",
     );
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("accepts single blank-line paragraph breaks and ignores blanks inside fences", async () => {
+  it("accepts real newlines and literal backslash-n inside code spans or fences", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ ok: true, channel: "C123", ts: "1777940312.555555" }),
     );
@@ -228,16 +228,25 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
     expect(paragraphBreak.status).toBe(200);
 
-    const fencedBlanks = await postSlack(
+    const literalInCodeSpan = await postSlack(
       {
         args: ["--channel", "C123"],
-        stdin: "Header\n```\nline1\n\n\n\nline2\n```\nFooter\n",
+        stdin: "Use the `\\n` escape only inside code, like this: `printf 'a\\nb'`.\n",
       },
       { "x-thor-session-id": "session-1" },
     );
-    expect(fencedBlanks.status).toBe(200);
+    expect(literalInCodeSpan.status).toBe(200);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const literalInFence = await postSlack(
+      {
+        args: ["--channel", "C123"],
+        stdin: "Example:\n```\nprintf 'a\\nb\\n'\n```\nPlain text after.\n",
+      },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(literalInFence.status).toBe(200);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("allows literal double stars and table-looking text inside code spans or fences", async () => {
