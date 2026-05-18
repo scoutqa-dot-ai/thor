@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { ProgressEvent } from "@thor/common";
 
 const MEMORY_DIR = "/workspace/memory";
@@ -13,6 +15,14 @@ function memoryActionForTool(tool: string): "read" | "write" | undefined {
 
 function isMemoryPath(path: string): boolean {
   return path === MEMORY_DIR || path.startsWith(`${MEMORY_DIR}/`);
+}
+
+function isBareMemoryDirectoryPath(memoryPath: string): boolean {
+  if (!isMemoryPath(memoryPath)) return false;
+  if (memoryPath === MEMORY_DIR) return true;
+
+  const base = path.posix.basename(memoryPath.replace(/\/+$/, ""));
+  return !base.includes(".");
 }
 
 function extractMemoryPaths(input: unknown): string[] {
@@ -62,10 +72,12 @@ export function getMemoryProgressEvents(params: {
   const action = memoryActionForTool(params.tool);
   if (!action) return [];
 
-  return extractMemoryPaths(params.input).map((path) => ({
-    type: "memory",
-    action,
-    path,
-    source: "tool",
-  }));
+  return extractMemoryPaths(params.input)
+    .filter((path) => !(action === "read" && isBareMemoryDirectoryPath(path)))
+    .map((path) => ({
+      type: "memory",
+      action,
+      path,
+      source: "tool",
+    }));
 }

@@ -1,5 +1,6 @@
 import { createLogger, logInfo, logError, formatDuration } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
+import path from "node:path";
 import {
   postMessage,
   updateMessage,
@@ -63,6 +64,14 @@ const MEMORY_ROOT_PREFIX = "/workspace/memory/";
 function isReadmePath(path: string): boolean {
   const base = path.split("/").filter(Boolean).pop() ?? "";
   return base.toLowerCase() === "readme.md";
+}
+
+function isBareMemoryDirectoryPath(memoryPath: string): boolean {
+  if (memoryPath === "/workspace/memory") return true;
+  if (!memoryPath.startsWith(MEMORY_ROOT_PREFIX)) return false;
+
+  const base = path.posix.basename(memoryPath.replace(/\/+$/, ""));
+  return !base.includes(".");
 }
 
 function shortenMemoryPath(path: string): string {
@@ -435,6 +444,7 @@ class ProgressSession {
   async onMemory(activity: MemoryActivity): Promise<void> {
     if (this.finished) return;
     if (activity.action === "read" && isReadmePath(activity.path)) return;
+    if (activity.action === "read" && isBareMemoryDirectoryPath(activity.path)) return;
 
     this.recentMemory.push(activity);
     if (this.recentMemory.length > 4) {

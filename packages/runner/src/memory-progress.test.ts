@@ -63,4 +63,43 @@ describe("getMemoryProgressEvents", () => {
       },
     ]);
   });
+
+  it("suppresses bare directory reads under /workspace/memory", () => {
+    expect(
+      getMemoryProgressEvents({
+        tool: "read",
+        status: "completed",
+        input: {
+          filePath: "/workspace/memory",
+          nested: [{ targetPath: "/workspace/memory/thor" }],
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it("keeps file reads under /workspace/memory", () => {
+    expect(
+      getMemoryProgressEvents({
+        tool: "read",
+        status: "completed",
+        input: {
+          filePath: "/workspace/memory/thor/README.md",
+          nested: [{ targetPath: "/workspace/memory/runbooks/investigation-workflow.md" }],
+        },
+      }),
+    ).toEqual([
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/thor/README.md",
+        source: "tool",
+      },
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/runbooks/investigation-workflow.md",
+        source: "tool",
+      },
+    ]);
+  });
 });

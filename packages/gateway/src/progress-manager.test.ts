@@ -316,6 +316,53 @@ describe("ProgressManager", () => {
     expect(postCall.text).not.toContain("README.md");
   });
 
+  it("excludes bare directory reads from memory tracking", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/thor",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/thor/notes.md",
+        source: "tool",
+      },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).toContain("memory: notes.md");
+    expect(postCall.text).not.toContain("memory: .");
+    expect(postCall.text).not.toContain("thor");
+  });
+
   it("does not count memory/delegate events toward tool threshold", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 2);
