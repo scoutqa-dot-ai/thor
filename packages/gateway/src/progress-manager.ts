@@ -61,6 +61,17 @@ function formatToolGroups(groups: ToolGroup[]): string {
 }
 
 const MEMORY_ROOT_PREFIX = "/workspace/memory/";
+const KNOWN_MEMORY_FILE_EXTENSIONS = new Set([
+  ".md",
+  ".txt",
+  ".json",
+  ".jsonc",
+  ".csv",
+  ".tsv",
+  ".log",
+  ".yaml",
+  ".yml",
+]);
 
 function isReadmePath(path: string): boolean {
   const base = path.split("/").filter(Boolean).pop() ?? "";
@@ -79,8 +90,8 @@ function isBareMemoryDirectoryPath(memoryPath: string): boolean {
   try {
     return fs.statSync(normalizedPath).isDirectory();
   } catch {
-    const base = path.posix.basename(normalizedPath.replace(/\/+$/, ""));
-    return !base.includes(".");
+    const extension = path.posix.extname(normalizedPath);
+    return !KNOWN_MEMORY_FILE_EXTENSIONS.has(extension.toLowerCase());
   }
 }
 

@@ -4,6 +4,17 @@ import path from "node:path";
 import type { ProgressEvent } from "@thor/common";
 
 const MEMORY_DIR = "/workspace/memory";
+const KNOWN_MEMORY_FILE_EXTENSIONS = new Set([
+  ".md",
+  ".txt",
+  ".json",
+  ".jsonc",
+  ".csv",
+  ".tsv",
+  ".log",
+  ".yaml",
+  ".yml",
+]);
 
 const READ_MEMORY_TOOLS = new Set(["read"]);
 const WRITE_MEMORY_TOOLS = new Set(["write", "edit", "multi_edit", "multiedit"]);
@@ -30,8 +41,8 @@ function isBareMemoryDirectoryPath(memoryPath: string): boolean {
   try {
     return fs.statSync(normalizedPath).isDirectory();
   } catch {
-    const base = path.posix.basename(normalizedPath.replace(/\/+$/, ""));
-    return !base.includes(".");
+    const extension = path.posix.extname(normalizedPath);
+    return !KNOWN_MEMORY_FILE_EXTENSIONS.has(extension.toLowerCase());
   }
 }
 
