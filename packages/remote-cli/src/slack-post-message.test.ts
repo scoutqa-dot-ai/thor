@@ -164,9 +164,30 @@ describe("remote-cli slack-post-message endpoint", () => {
     await expectFailure(
       {
         args: ["--channel", "C123"],
+        stdin: "I found the **root cause** and the fix is ready.\n",
+      },
+      "must not include CommonMark double-star emphasis",
+    );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "I found the **root cause** and the fix is ready.\n",
+      },
+      "Use Slack mrkdwn instead: `*bold*` (not `**bold**`)",
+    );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
         stdin: "| Name | Status |\n|---|---|\n| Thor | Ready |\n",
       },
       "must not include markdown table separators",
+    );
+    await expectFailure(
+      {
+        args: ["--channel", "C123"],
+        stdin: "| Name | Status |\n|---|---|\n| Thor | Ready |\n",
+      },
+      "Use Slack mrkdwn instead: `*bold*` (not `**bold**`)",
     );
 
     expect(fetchMock).not.toHaveBeenCalled();

@@ -126,6 +126,8 @@ echo 'Root cause looks like a missing env var in the worker deploy. I confirmed 
 Always pass `--channel <id>`. Message text must come from stdin.
 If you need blocks, pass `--blocks-file <path>` to a JSON file that contains a
 top-level blocks array while still supplying stdin text as the fallback body.
+Use Slack mrkdwn style in stdin: `*bold*` not `**bold**`, `_italic_`, bullets,
+and code spans/fences as needed.
 Do not send markdown table separators on stdin; `slack-post-message` rejects them
 so table output should go through blocks instead.
 

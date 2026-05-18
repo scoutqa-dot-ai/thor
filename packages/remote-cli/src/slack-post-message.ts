@@ -15,6 +15,9 @@ const MAX_MRKDWN_BYTES = 40 * 1024;
 const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
 const BLOCKS_FILE_ALLOWED_ROOTS = ["/tmp", "/workspace"] as const;
 const MARKDOWN_TABLE_SEPARATOR_LINE = /^\s*\|(?:\s*:?-{3,}:?\s*\|){2,}\s*$/m;
+const COMMONMARK_DOUBLE_STAR = /\*\*/;
+const SLACK_MRKDWN_STEERING =
+  "Use Slack mrkdwn instead: `*bold*` (not `**bold**`), `_italic_`, bullets, and code spans/fences as needed.";
 
 export interface SlackPostMessageDeps {
   fetch?: typeof fetch;
@@ -96,6 +99,10 @@ function containsMarkdownTableSeparator(text: string): boolean {
   return MARKDOWN_TABLE_SEPARATOR_LINE.test(text);
 }
 
+function containsCommonMarkDoubleStar(text: string): boolean {
+  return COMMONMARK_DOUBLE_STAR.test(text);
+}
+
 export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: string } {
   if (!Array.isArray(args) || !args.every((arg) => typeof arg === "string")) {
     return { error: "args must be an array of strings" };
@@ -169,9 +176,14 @@ export async function handleSlackPostMessage(
   if (typeof request.stdin !== "string") return result("stdin body is required\n");
   const text = request.stdin;
   if (text.trim().length === 0) return result("mrkdwn stdin must not be empty\n");
+  if (containsCommonMarkDoubleStar(text)) {
+    return result(
+      `mrkdwn stdin must not include CommonMark double-star emphasis. ${SLACK_MRKDWN_STEERING}\n`,
+    );
+  }
   if (containsMarkdownTableSeparator(text)) {
     return result(
-      "mrkdwn stdin must not include markdown table separators; use --blocks-file with Slack blocks/table output instead\n",
+      `mrkdwn stdin must not include markdown table separators; use --blocks-file with Slack blocks/table output instead. ${SLACK_MRKDWN_STEERING}\n`,
     );
   }
   if (Buffer.byteLength(text, "utf8") > MAX_MRKDWN_BYTES) {
