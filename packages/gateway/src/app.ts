@@ -927,7 +927,14 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
   const slackDefaultRepo = config.slackDefaultRepo;
   let resolveSlackDirectory:
-    | ((channel: string) => { directory?: string; reason?: string })
+    | ((channel: string) => {
+        directory?: string;
+        reason?: string;
+        repoName?: string;
+        source?: "default" | "override";
+        overridePath?: string;
+        fallbackReason?: string;
+      })
     | undefined;
   if (slackDefaultRepo !== undefined) {
     const defaultRepo = resolveSafeRepoDirectory(slackDefaultRepo);
@@ -940,6 +947,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         slackDefaultRepo,
         config.slackChannelRepoMemoryRoot,
       );
+      const overridePath = `${config.slackChannelRepoMemoryRoot}/${channel}.txt`;
       if (resolved.fallbackReason) {
         logInfo(log, "slack_repo_override_fallback", {
           channel,
@@ -949,7 +957,15 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           reason: resolved.fallbackReason,
         });
       }
-      return resolved.directory ? { directory: resolved.directory } : { reason: resolved.reason };
+      return resolved.directory
+        ? {
+            directory: resolved.directory,
+            repoName: resolved.repoName,
+            source: resolved.source,
+            fallbackReason: resolved.fallbackReason,
+            overridePath,
+          }
+        : { reason: resolved.reason };
     };
   }
 

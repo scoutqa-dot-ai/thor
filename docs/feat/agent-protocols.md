@@ -19,7 +19,6 @@ Every protocol uses the same shared run directory under `/workspace/runs/<run-id
   review_<n>.md      # optional, numbered per review iteration
   findings_<n>.md    # optional, numbered per investigation hop
   verify.sh          # optional
-  fixtures/          # optional
 ```
 
 Run ID format: `<YYYYMMDD>-<slug>` (kebab-case slug). When tied to a Slack thread, the thread ts goes in a `Thread:` header inside the README — keeping it out of the filename so paths stay parseable.

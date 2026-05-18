@@ -36,7 +36,9 @@ ingress -> gateway -> runner -> opencode
    `/workspace/repos` before you start the stack. Gateway routes every Slack
    channel to this repo unless a per-channel override file at
    `/workspace/memory/thor/repo-by-slack-channel/<channel>.txt` names a different
-   existing repo directory.
+   existing repo directory. That override file is operational routing config,
+   not general Thor memory: it must contain exactly one existing repo directory
+   name and nothing else.
 2. Initialize the mitmproxy CA on the host:
 
 ```bash
@@ -207,7 +209,7 @@ Rules match by exact host or suffix first, then by optional `path_prefix` and
 
 ## Operations Notes
 
-- Tell Thor about your team, repos, and channel conventions in the OpenCode UI after the stack is up. That context is stored in persistent memory.
+- Tell Thor about your team, repos, and reusable operating context in the OpenCode UI after the stack is up. That context is stored in persistent memory.
 - Clone source repos from the `remote-cli` container so git credentials and filesystem ownership stay consistent.
 - Repos under `/workspace/repos` are mounted read-only into OpenCode. Thor creates edits in `/workspace/worktrees`.
 - OpenCode and remote-cli share the same `/tmp` volume so temporary artifacts referenced by absolute path, such as `slack-post-message --blocks-file /tmp/...`, are readable by the posting service.

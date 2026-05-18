@@ -26,7 +26,7 @@ Run dir: /workspace/runs/<run-id>
 Role: <plan|review|investigate>
 ```
 
-The run directory is a flexible, safe place to keep task-related files — README, plans, reviews, findings, fixtures. It is not an enforced format. If the target repo has its own conventions in `AGENTS.md` or `CLAUDE.md`, follow those first and treat the run dir as scratch space alongside them.
+The run directory is a flexible, safe place to keep task-related files — README, plans, reviews, findings. It is not an enforced format. If the target repo has its own conventions in `AGENTS.md` or `CLAUDE.md`, follow those first and treat the run dir as scratch space alongside them.
 
 Read the run-dir README if present (it is usually the task source of truth), then act on your role:
 
