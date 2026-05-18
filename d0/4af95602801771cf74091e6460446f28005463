@@ -1,0 +1,23 @@
+docs/plan/2026051801_user-aware-attribution.md
+  f5ac93a685ab6cfe 5,7-9,11,13-19,22-25,27,29-32,36-75,77-89,92-93,95,101-108,112-115,119-123,125-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d04af95602801771cf74091e6460446f28005463",
+  "prompts": {
+    "f5ac93a685ab6cfe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "08fb6f9a-24fd-457f-89f4-cc4a129640a3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 155,
+      "total_deletions": 58,
+      "accepted_lines": 100,
+      "overriden_lines": 0
+    }
+  }
+}
