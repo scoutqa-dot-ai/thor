@@ -136,6 +136,12 @@ export {
   resolveExistingDirectoryWithinRoot,
 } from "./paths.js";
 export {
+  MEMORY_DIR,
+  normalizeMemoryPath,
+  isMemoryPath,
+  isBareMemoryDirectoryPath,
+} from "./memory-paths.js";
+export {
   resolveCorrelationKeys,
   resolveCorrelationLockKey,
   hasSessionForCorrelationKey,

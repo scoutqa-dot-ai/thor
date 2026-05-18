@@ -1,4 +1,9 @@
-import { createLogger, logInfo, logError, formatDuration } from "@thor/common";
+import {
+  createLogger,
+  logInfo,
+  logError,
+  formatDuration,
+} from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import {
   postMessage,
