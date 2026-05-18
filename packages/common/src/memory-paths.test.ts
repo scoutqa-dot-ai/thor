@@ -18,16 +18,36 @@ describe("memory-paths", () => {
   });
 
   it("treats known file extensions as files when stat is unavailable", () => {
-    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/thor/README.md`)).toBe(false);
-    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/runbooks/investigation-workflow.md`)).toBe(
+    const alwaysThrow = () => {
+      throw new Error("missing");
+    };
+
+    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/thor/README.md`, { statSync: alwaysThrow })).toBe(
       false,
     );
+    expect(
+      isBareMemoryDirectoryPath(`${MEMORY_DIR}/runbooks/investigation-workflow.md`, {
+        statSync: alwaysThrow,
+      }),
+    ).toBe(false);
   });
 
-  it("suppresses bare directory-like paths including dotted names", () => {
+  it("suppresses bare directory-like paths via fallback heuristic", () => {
+    const alwaysThrow = () => {
+      throw new Error("missing");
+    };
+
     expect(isBareMemoryDirectoryPath(MEMORY_DIR)).toBe(true);
-    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/.`)).toBe(true);
-    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/thor`)).toBe(true);
-    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/my.repo`)).toBe(true);
+    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/.`, { statSync: alwaysThrow })).toBe(true);
+    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/thor`, { statSync: alwaysThrow })).toBe(true);
+    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/my.repo`, { statSync: alwaysThrow })).toBe(true);
+  });
+
+  it("suppresses dotted directory names when stat reports a directory", () => {
+    const fakeStat = (targetPath: string) => ({
+      isDirectory: () => targetPath === `${MEMORY_DIR}/my.repo`,
+    });
+
+    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/my.repo`, { statSync: fakeStat })).toBe(true);
   });
 });

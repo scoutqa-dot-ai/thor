@@ -108,15 +108,4 @@ describe("getMemoryProgressEvents", () => {
     ]);
   });
 
-  it("suppresses dotted directory names when stat reports a directory", () => {
-    expect(
-      getMemoryProgressEvents({
-        tool: "read",
-        status: "completed",
-        input: {
-          filePath: "/workspace/memory/my.repo",
-        },
-      }),
-    ).toEqual([]);
-  });
 });
