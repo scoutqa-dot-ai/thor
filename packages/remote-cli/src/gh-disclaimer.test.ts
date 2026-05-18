@@ -152,6 +152,14 @@ describe("gh disclaimer injection", () => {
     }, { configLoader });
   });
 
+  it("appends co-author trailer after one blank line when message already ends with newline", async () => {
+    seedActor();
+    await withServer(async (url) => {
+      await postGit(url, ["commit", "-m", "Do work\n"], "parent");
+      expect(execCalls[0].args[2]).toBe("Do work\n\nCo-authored-by: Alice <alice@example.com>");
+    }, { configLoader });
+  });
+
   it("adds a PR assignee when gh pr create has none", async () => {
     seedActor();
     await withServer(async (url) => {

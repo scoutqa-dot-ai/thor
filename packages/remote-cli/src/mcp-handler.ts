@@ -115,6 +115,7 @@ function attributionFields(actor?: { slack?: string; github?: string }, user?: U
 }
 
 function accountIdsFromValue(value: unknown): string[] {
+  if (typeof value === "string" && value.length > 0) return [value];
   if (!value || typeof value !== "object") return [];
   if (Array.isArray(value)) return value.flatMap(accountIdsFromValue);
   const record = value as Record<string, unknown>;
@@ -775,7 +776,18 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return args;
     }
     const lookupFn = lookupJiraAccountIdByEmail ?? ((email: string) => lookupJiraAccountIdViaUpstream(instance, email));
-    const lookup = await withTimeout(lookupFn(resolved.user.email), 5000);
+    let lookup: JiraLookupResult | "timeout";
+    try {
+      lookup = await withTimeout(lookupFn(resolved.user.email), 5000);
+    } catch (err) {
+      logInfo(log, "attribution_applied", {
+        surface: "jira",
+        outcome: "api_rejected",
+        reason: "lookup_error",
+        ...attributionFields(resolved.actor, resolved.user),
+      });
+      return args;
+    }
     if (lookup === "timeout") {
       logInfo(log, "attribution_applied", {
         surface: "jira",

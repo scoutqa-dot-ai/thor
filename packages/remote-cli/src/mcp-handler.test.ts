@@ -52,6 +52,8 @@ describe("remote-cli MCP endpoints", () => {
   let connectedUpstreams: string[];
   let closeRemoteCli: () => Promise<void>;
   let jiraLookups: string[];
+  let jiraLookupResultText: string;
+  let jiraLookupFailure: Error | undefined;
   let toolLogEntries: Array<{ tool: string; decision: string; args: Record<string, unknown> }>;
 
   beforeEach(async () => {
@@ -67,6 +69,8 @@ describe("remote-cli MCP endpoints", () => {
     createJiraIssueFailure = undefined;
     connectedUpstreams = [];
     jiraLookups = [];
+    jiraLookupResultText = JSON.stringify({ accountId: "jira-account-1" });
+    jiraLookupFailure = undefined;
     toolLogEntries = [];
 
     const remoteCli = createRemoteCliApp({
@@ -112,8 +116,9 @@ describe("remote-cli MCP endpoints", () => {
                 }
                 if (name === "lookupJiraAccountId") {
                   jiraLookups.push(String(args?.email));
+                  if (jiraLookupFailure) throw jiraLookupFailure;
                   return {
-                    content: [{ type: "text", text: JSON.stringify({ accountId: "jira-account-1" }) }],
+                    content: [{ type: "text", text: jiraLookupResultText }],
                   };
                 }
                 throw new Error(`Unexpected tool: ${name}`);
@@ -471,6 +476,69 @@ describe("remote-cli MCP endpoints", () => {
         }),
       ]),
     );
+  });
+
+  it("accepts a primitive JSON string from Jira account lookup", async () => {
+    jiraLookupResultText = JSON.stringify("jira-account-string");
+    appendAlias({ aliasType: "opencode.session", aliasValue: "parent-session", anchorId: activeAnchorId });
+    appendSessionEvent("parent-session", {
+      type: "trigger_start",
+      triggerId: activeTriggerId,
+      triggerSlackId: "UABCDEF1",
+    });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const actionId = (JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }).actionId;
+    await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
+    expect(toolCalls[1].arguments?.assignee_account_id).toBe("jira-account-string");
+  });
+
+  it("keeps Jira issue creation best-effort when account lookup throws", async () => {
+    jiraLookupFailure = new Error("lookup exploded");
+    appendAlias({ aliasType: "opencode.session", aliasValue: "parent-session", anchorId: activeAnchorId });
+    appendSessionEvent("parent-session", {
+      type: "trigger_start",
+      triggerId: activeTriggerId,
+      triggerSlackId: "UABCDEF1",
+    });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const actionId = (JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }).actionId;
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    expect(resolved.status).toBe(200);
+    expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
+    expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
   });
 
   it("keeps Jira issue creation best-effort when config loading fails", async () => {

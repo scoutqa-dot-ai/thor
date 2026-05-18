@@ -290,7 +290,7 @@ function logAttribution(surface: string, outcome: string, extra: Record<string, 
 function appendCoauthorTrailer(message: string, user: UserRecord): string {
   const trailer = `Co-authored-by: ${user.name} <${user.email}>`;
   if (message.split(/\r?\n/).some((line) => line.trim() === trailer)) return message;
-  const sep = message.endsWith("\n\n") || message.endsWith("\r\n\r\n") ? "" : "\n\n";
+  const sep = message.endsWith("\n") || message.endsWith("\r\n") ? "\n" : "\n\n";
   return `${message}${sep}${trailer}`;
 }
 
