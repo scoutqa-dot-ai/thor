@@ -8,6 +8,9 @@ import {
   computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
+  findTriggerActor,
+  findUserByGithub,
+  findUserBySlack,
   getRunnerBaseUrl,
   logError,
   logInfo,
@@ -18,6 +21,8 @@ import {
   matchesInternalSecret,
   WORKSPACE_CONFIG_PATH,
   type ExecStreamEvent,
+  type ConfigLoader,
+  type UserRecord,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
 import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
@@ -86,6 +91,7 @@ export interface RemoteCliAppConfig {
   env?: ReturnType<typeof loadRemoteCliEnv>;
   mcp?: McpServiceDeps;
   slackPostMessage?: SlackPostMessageDeps;
+  configLoader?: ConfigLoader;
 }
 
 export interface RemoteCliApp {
@@ -243,6 +249,112 @@ function rewriteSingleValueFlag(
       `${match.inlinePrefix}${out[match.index].slice(match.inlinePrefix.length)}${append}`;
   }
   return out;
+}
+
+function hasFlag(args: string[], names: string[]): boolean {
+  return args.some((arg) => names.some((name) => arg === name || arg.startsWith(`${name}=`)));
+}
+
+function resolveTriggerUser(
+  sessionId: string | undefined,
+  getConfig: ConfigLoader,
+): { actor?: { slack?: string; github?: string }; user?: UserRecord; reason?: string } {
+  if (!sessionId) return { reason: "skipped_no_trigger" };
+  const actor = findTriggerActor(sessionId);
+  if (!actor) return { reason: "skipped_no_trigger" };
+  const config = getConfig();
+  const user =
+    (actor.slack ? findUserBySlack(config, actor.slack) : undefined) ??
+    (actor.github ? findUserByGithub(config, actor.github) : undefined);
+  if (!user) return { actor, reason: "skipped_no_user_record" };
+  return { actor, user };
+}
+
+function attributionFields(actor?: { slack?: string; github?: string }, user?: UserRecord) {
+  return {
+    ...(actor?.slack ? { slack: actor.slack } : {}),
+    ...(actor?.github ? { github: actor.github } : {}),
+    ...(user?.email ? { email: user.email } : {}),
+  };
+}
+
+function logAttribution(surface: string, outcome: string, extra: Record<string, unknown> = {}) {
+  logInfo(log, "attribution_applied", { surface, outcome, ...extra });
+}
+
+function appendCoauthorTrailer(message: string, user: UserRecord): string {
+  const trailer = `Co-authored-by: ${user.name} <${user.email}>`;
+  if (message.split(/\r?\n/).some((line) => line.trim() === trailer)) return message;
+  const sep = message.endsWith("\n\n") || message.endsWith("\r\n\r\n") ? "" : "\n\n";
+  return `${message}${sep}${trailer}`;
+}
+
+function withGitAttribution(
+  args: string[],
+  sessionId: string | undefined,
+  getConfig: ConfigLoader,
+): string[] {
+  if (args[0] !== "commit") return args;
+  const resolved = resolveTriggerUser(sessionId, getConfig);
+  if (!resolved.user) {
+    logAttribution("git", resolved.reason ?? "skipped_no_user_record", attributionFields(resolved.actor));
+    return args;
+  }
+  if (hasFlag(args, ["-F", "--file"])) {
+    logAttribution("git", "skipped_unsupported_arg_shape", attributionFields(resolved.actor, resolved.user));
+    return args;
+  }
+  const out = [...args];
+  let valueIndex: number | undefined;
+  let inlineIndex: number | undefined;
+  let inlinePrefix: string | undefined;
+  for (let i = 0; i < out.length; i++) {
+    if ((out[i] === "-m" || out[i] === "--message") && i + 1 < out.length) {
+      valueIndex = i + 1;
+      inlineIndex = undefined;
+      i += 1;
+    } else if (out[i].startsWith("--message=")) {
+      inlineIndex = i;
+      inlinePrefix = "--message=";
+      valueIndex = undefined;
+    }
+  }
+  const original = valueIndex !== undefined ? out[valueIndex] : inlineIndex !== undefined ? out[inlineIndex].slice(inlinePrefix!.length) : undefined;
+  if (original === undefined) {
+    logAttribution("git", "skipped_unsupported_arg_shape", attributionFields(resolved.actor, resolved.user));
+    return args;
+  }
+  const next = appendCoauthorTrailer(original, resolved.user);
+  if (next === original) {
+    logAttribution("git", "skipped_already_attributed", attributionFields(resolved.actor, resolved.user));
+    return args;
+  }
+  if (valueIndex !== undefined) out[valueIndex] = next;
+  else out[inlineIndex!] = `${inlinePrefix}${next}`;
+  logAttribution("git", "applied", attributionFields(resolved.actor, resolved.user));
+  return out;
+}
+
+function withGhAttribution(args: string[], sessionId: string | undefined, getConfig: ConfigLoader): string[] {
+  if (!(args[0] === "pr" && args[1] === "create")) return args;
+  if (hasFlag(args, ["--assignee", "-a"])) {
+    logAttribution("gh-assignee", "skipped_existing_assignee");
+    return args;
+  }
+  const resolved = resolveTriggerUser(sessionId, getConfig);
+  if (!resolved.user) {
+    logAttribution("gh-assignee", resolved.reason ?? "skipped_no_user_record", attributionFields(resolved.actor));
+    return args;
+  }
+  if (!resolved.user.github) {
+    logAttribution("gh-assignee", "skipped_missing_identity_field", {
+      field: "github",
+      ...attributionFields(resolved.actor, resolved.user),
+    });
+    return args;
+  }
+  logAttribution("gh-assignee", "applied", attributionFields(resolved.actor, resolved.user));
+  return [...args, "--assignee", resolved.user.github];
 }
 
 function isGhHelpRequest(args: string[]): boolean {
@@ -533,7 +645,7 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
   const internalSecret = appEnv.thorInternalSecret;
-  const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
+  const getConfig = config.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const mcpService = createMcpService({
     isProduction: appEnv.isProduction,
     ...config.mcp,
@@ -564,15 +676,14 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         res.status(400).json({ stdout: "", stderr: gitResolution.error, exitCode: 1 });
         return;
       }
-      const effectiveArgs = gitResolution.args;
+      const ids = thorIds(req);
+      const effectiveArgs = withGitAttribution(gitResolution.args, ids.sessionId, getConfig);
       const effectiveCwd = gitResolution.cwd ?? cwd;
       const effectiveCwdError = validateCwd(effectiveCwd);
       if (effectiveCwdError) {
         res.status(400).json({ stdout: "", stderr: effectiveCwdError, exitCode: 1 });
         return;
       }
-      const ids = thorIds(req);
-
       logInfo(log, "exec_git", {
         args,
         ...(JSON.stringify(effectiveArgs) !== JSON.stringify(args) ? { effectiveArgs } : {}),
@@ -613,11 +724,12 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       const ids = thorIds(req);
-      const effectiveArgs = withGhDisclaimer(args, ids.sessionId);
-      if (!Array.isArray(effectiveArgs)) {
-        res.status(400).json({ stdout: "", stderr: effectiveArgs.error, exitCode: 1 });
+      const disclaimerArgs = withGhDisclaimer(args, ids.sessionId);
+      if (!Array.isArray(disclaimerArgs)) {
+        res.status(400).json({ stdout: "", stderr: disclaimerArgs.error, exitCode: 1 });
         return;
       }
+      const effectiveArgs = withGhAttribution(disclaimerArgs, ids.sessionId, getConfig);
 
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
       const result = await execCommand("gh", effectiveArgs, cwd);

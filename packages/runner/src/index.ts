@@ -132,12 +132,14 @@ const inflightTriggers = new Map<string, { sessionId: string; startTime: number 
 function startTrigger(
   sessionId: string,
   triggerId: string,
-  payload: { correlationKey?: string },
+  payload: { correlationKey?: string; triggerSlackId?: string; triggerGithubLogin?: string },
 ): void {
   appendSessionEvent(sessionId, {
     type: "trigger_start",
     triggerId,
     ...(payload.correlationKey ? { correlationKey: payload.correlationKey } : {}),
+    ...(payload.triggerSlackId ? { triggerSlackId: payload.triggerSlackId } : {}),
+    ...(payload.triggerGithubLogin ? { triggerGithubLogin: payload.triggerGithubLogin } : {}),
   });
   inflightTriggers.set(triggerId, { sessionId, startTime: Date.now() });
 }
@@ -622,6 +624,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     }
 
     let { prompt, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
+    const triggerActor = decodeTriggerActor(prompt, correlationKey);
     let inflightTriggerId: string | undefined;
 
     try {
@@ -817,7 +820,11 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       const triggerId = mintTriggerId();
       inflightTriggerId = triggerId;
-      startTrigger(sessionId, triggerId, { correlationKey });
+      startTrigger(sessionId, triggerId, {
+        correlationKey,
+        triggerSlackId: triggerActor?.slack,
+        triggerGithubLogin: triggerActor?.github,
+      });
 
       const promptStart = Date.now();
       const asyncResult = await client.session.promptAsync({
@@ -1413,7 +1420,7 @@ function decodeSlackSource(
   if (payload) {
     const event = isRecord(payload.event) ? payload.event : payload;
     channel = channel ?? safeStr(event.channel);
-    user = safeStr(event.user);
+    user = decodeTriggerActor(promptPreview, correlationKey)?.slack;
     text = safeStr(event.text);
   }
 
@@ -1440,7 +1447,7 @@ function decodeGithubSource(promptPreview: string | undefined): DecodedSource | 
   const payload = tryParseJsonObject(promptPreview);
   if (!payload) return undefined;
   const repo = isRecord(payload.repository) ? safeStr(payload.repository.full_name) : undefined;
-  const sender = isRecord(payload.sender) ? safeStr(payload.sender.login) : undefined;
+  const sender = decodeTriggerActor(promptPreview, "github:")?.github;
 
   if (isRecord(payload.pull_request)) {
     const pr = payload.pull_request;
@@ -1491,6 +1498,25 @@ function decodeGithubSource(promptPreview: string | undefined): DecodedSource | 
 
   if (repo) {
     return { icon: "📦", label: repo, href: `https://github.com/${repo}` };
+  }
+  return undefined;
+}
+
+export function decodeTriggerActor(
+  promptBody: string | undefined,
+  correlationKey: string | undefined,
+): { slack?: string; github?: string } | undefined {
+  if (!promptBody || !correlationKey) return undefined;
+  const payload = tryParseJsonObject(promptBody);
+  if (!payload) return undefined;
+  if (correlationKey.startsWith("slack:thread:")) {
+    const event = isRecord(payload.event) ? payload.event : payload;
+    const slack = safeStr(event.user);
+    return slack ? { slack } : undefined;
+  }
+  if (correlationKey.startsWith("github:") || correlationKey.startsWith("git:branch:")) {
+    const github = isRecord(payload.sender) ? safeStr(payload.sender.login) : undefined;
+    return github ? { github } : undefined;
   }
   return undefined;
 }

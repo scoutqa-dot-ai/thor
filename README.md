@@ -179,6 +179,19 @@ GitHub App installation entries live under `owners.<owner>.github_app_installati
 
 The `git` wrapper resolves installation tokens lazily through `GIT_ASKPASS`, and the `gh` wrapper resolves them before invoking `gh`. `remote-cli` requires GitHub App env vars at startup and does not support static PAT fallback auth.
 
+Human attribution entries live under `users[]`. `email` must be the Jira account email; Thor may write the name/email into `Co-authored-by:` commit trailers and use the email to resolve Jira assignees. Config hot-reloads, so no restart is needed after edits.
+
+```json
+{
+  "users": [
+    { "email": "alice@example.com", "name": "Alice", "slack": "UABCDEF1", "github": "alice" },
+    { "email": "bob@example.com", "name": "Bob" }
+  ]
+}
+```
+
+To verify your entry, trigger Thor from Slack and look for `attribution_applied` with `outcome: "applied"` and your Slack id; `skipped_no_user_record` means the configured Slack id did not match the trigger. See [`docs/feat/users-directory-provenance.md`](docs/feat/users-directory-provenance.md) for registry provenance.
+
 If you have internal APIs that Thor should access with injected credentials,
 define rules in `/workspace/config.json` and keep only secret values in `.env`:
 

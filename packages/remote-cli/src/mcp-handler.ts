@@ -8,6 +8,9 @@ import {
   ExecResultSchema,
   extractRepoFromCwd,
   findAnchorContext,
+  findTriggerActor,
+  findUserByGithub,
+  findUserBySlack,
   getProxyConfig,
   injectApprovalDisclaimer,
   isProxyName,
@@ -18,7 +21,11 @@ import {
   logInfo,
   logWarn,
   PROXY_NAMES,
+  WORKSPACE_CONFIG_PATH,
+  createConfigLoader,
   type ProxyConfig,
+  type ConfigLoader,
+  type UserRecord,
   writeToolCallLog,
 } from "@thor/common";
 import type { ApprovalRequiredEventPayload } from "@thor/common";
@@ -65,6 +72,70 @@ function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   return injectApprovalDisclaimer(action.tool, action.args, footer);
 }
 
+type JiraLookupResult = { ok: true; accountId: string } | { ok: false; reason: string };
+const JIRA_ACCOUNT_LOOKUP_TOOL = "lookupJiraAccountId";
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function resolveTriggerUser(sessionId: string | undefined, getConfig: ConfigLoader) {
+  if (!sessionId) return { reason: "skipped_no_trigger" as const };
+  const actor = findTriggerActor(sessionId);
+  if (!actor) return { reason: "skipped_no_trigger" as const };
+  const config = getConfig();
+  const user =
+    (actor.slack ? findUserBySlack(config, actor.slack) : undefined) ??
+    (actor.github ? findUserByGithub(config, actor.github) : undefined);
+  if (!user) return { actor, reason: "skipped_no_user_record" as const };
+  return { actor, user };
+}
+
+function attributionFields(actor?: { slack?: string; github?: string }, user?: UserRecord) {
+  return {
+    ...(actor?.slack ? { slack: actor.slack } : {}),
+    ...(actor?.github ? { github: actor.github } : {}),
+    ...(user?.email ? { email: user.email } : {}),
+  };
+}
+
+function accountIdsFromValue(value: unknown): string[] {
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) return value.flatMap(accountIdsFromValue);
+  const record = value as Record<string, unknown>;
+  const direct = record.accountId ?? record.account_id ?? record.id;
+  const nested = record.values ?? record.results ?? record.users;
+  return [
+    ...(typeof direct === "string" && direct.length > 0 ? [direct] : []),
+    ...(nested ? accountIdsFromValue(nested) : []),
+  ];
+}
+
+function parseJiraAccountLookupResult(rawResult: unknown): JiraLookupResult {
+  const stdout = unwrapResult(rawResult).trim();
+  if (!stdout) return { ok: false, reason: "lookup_no_match" };
+  let ids: string[];
+  try {
+    ids = accountIdsFromValue(JSON.parse(stdout));
+  } catch {
+    ids = [stdout];
+  }
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (unique.length === 0) return { ok: false, reason: "lookup_no_match" };
+  if (unique.length > 1) return { ok: false, reason: "lookup_multiple_matches" };
+  return { ok: true, accountId: unique[0] };
+}
+
 interface ProxyInstance {
   name: string;
   upstream: UpstreamConnection;
@@ -88,6 +159,8 @@ export interface McpServiceDeps {
   isProduction?: boolean;
   connectUpstreamFn?: typeof connectUpstream;
   writeToolCallLogFn?: typeof writeToolCallLog;
+  configLoader?: ConfigLoader;
+  lookupJiraAccountIdByEmail?: (email: string) => Promise<JiraLookupResult>;
 }
 
 interface ToolInfo {
@@ -153,6 +226,8 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const approvalsDir = deps.approvalsDir ?? DEFAULT_APPROVALS_DIR;
   const connectUpstreamFn = deps.connectUpstreamFn ?? connectUpstream;
   const writeToolCallLogFn = deps.writeToolCallLogFn ?? writeToolCallLog;
+  const getConfig = deps.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
+  const lookupJiraAccountIdByEmail = deps.lookupJiraAccountIdByEmail;
   const instances = new Map<string, ProxyInstance>();
   const connecting = new Map<string, Promise<ProxyInstance>>();
   const approvalStores = new Map<string, ApprovalStore>();
@@ -278,6 +353,28 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return instance;
     } finally {
       connecting.delete(name);
+    }
+  }
+
+  async function lookupJiraAccountIdViaUpstream(
+    instance: ProxyInstance,
+    email: string,
+  ): Promise<JiraLookupResult> {
+    if (!instance.upstream.tools.some((tool) => tool.name === JIRA_ACCOUNT_LOOKUP_TOOL)) {
+      return { ok: false, reason: "upstream_disconnected" };
+    }
+    try {
+      const result = await instance.upstream.client.callTool({
+        name: JIRA_ACCOUNT_LOOKUP_TOOL,
+        arguments: { email },
+      });
+      return parseJiraAccountLookupResult(result);
+    } catch (err) {
+      logWarn(log, "jira_account_lookup_failed", {
+        upstream: instance.name,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { ok: false, reason: "upstream_disconnected" };
     }
   }
 
@@ -623,6 +720,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     let upstreamArgs: Record<string, unknown>;
     try {
       upstreamArgs = buildUpstreamArgs(pendingAction);
+      if (pendingAction.tool === "createJiraIssue") {
+        upstreamArgs = await withJiraAttribution(
+          upstreamArgs,
+          pendingAction.origin?.sessionId,
+          instance,
+        );
+      }
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
@@ -643,6 +747,52 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
     lookup.store.approveLoaded(pendingAction, result, reviewer, reason);
     return result;
+  }
+
+  async function withJiraAttribution(
+    args: Record<string, unknown>,
+    sessionId: string | undefined,
+    instance: ProxyInstance,
+  ): Promise<Record<string, unknown>> {
+    if (args.assignee_account_id !== undefined) {
+      logInfo(log, "attribution_applied", { surface: "jira", outcome: "skipped_existing_assignee" });
+      return args;
+    }
+    const resolved = resolveTriggerUser(sessionId, getConfig);
+    if (!("user" in resolved) || !resolved.user) {
+      logInfo(log, "attribution_applied", {
+        surface: "jira",
+        outcome: resolved.reason ?? "skipped_no_user_record",
+        ...attributionFields(resolved.actor),
+      });
+      return args;
+    }
+    const lookupFn = lookupJiraAccountIdByEmail ?? ((email: string) => lookupJiraAccountIdViaUpstream(instance, email));
+    const lookup = await withTimeout(lookupFn(resolved.user.email), 5000);
+    if (lookup === "timeout") {
+      logInfo(log, "attribution_applied", {
+        surface: "jira",
+        outcome: "api_rejected",
+        reason: "lookup_timeout",
+        ...attributionFields(resolved.actor, resolved.user),
+      });
+      return args;
+    }
+    if (!lookup.ok) {
+      logInfo(log, "attribution_applied", {
+        surface: "jira",
+        outcome: "api_rejected",
+        reason: lookup.reason,
+        ...attributionFields(resolved.actor, resolved.user),
+      });
+      return args;
+    }
+    logInfo(log, "attribution_applied", {
+      surface: "jira",
+      outcome: "applied",
+      ...attributionFields(resolved.actor, resolved.user),
+    });
+    return { ...args, assignee_account_id: lookup.accountId };
   }
 
   return {

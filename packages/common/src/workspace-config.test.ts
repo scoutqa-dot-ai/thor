@@ -9,6 +9,9 @@ import {
   getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
+  findUserBySlack,
+  findUserByGithub,
+  findUserByEmail,
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
 } from "./workspace-config.js";
@@ -93,6 +96,30 @@ describe("loadWorkspaceConfig", () => {
     expect(config.mitmproxy?.[1].host_suffix).toBe(".example.internal");
     expect(config.mitmproxy?.[1].readonly).toBe(true);
     expect(config.mitmproxy_passthrough).toEqual(["api.openai.com", ".openai.com"]);
+  });
+
+  it("loads users and resolves identities case-insensitively where appropriate", () => {
+    const path = writeConfig("config.json", {
+      users: [
+        { email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "Alice-Dev" },
+        { email: "bob@example.com", name: "Bob" },
+      ],
+    });
+    const config = loadWorkspaceConfig(path);
+    expect(findUserBySlack(config, "UABCDEF1")?.email).toBe("alice@example.com");
+    expect(findUserByGithub(config, "alice-dev")?.slack).toBe("UABCDEF1");
+    expect(findUserByEmail(config, "BOB@example.com")?.name).toBe("Bob");
+    expect(findUserBySlack(config, "UNOMATCH")).toBeUndefined();
+  });
+
+  it("rejects duplicate user identities", () => {
+    const path = writeConfig("config.json", {
+      users: [
+        { email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" },
+        { email: "ALICE@example.com", name: "Other", slack: "UZZZZZZ1", github: "other" },
+      ],
+    });
+    expect(() => loadWorkspaceConfig(path)).toThrow("duplicate email");
   });
 
   it("rejects mitmproxy rule without host selector", () => {
@@ -192,6 +219,25 @@ describe("createConfigLoader", () => {
 
     writeFileSync(path, "corrupt{{{");
     expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com"]);
+  });
+
+  it("falls back to last good config when duplicate users are introduced", () => {
+    const path = writeConfig("config.json", {
+      users: [{ email: "alice@example.com", name: "Alice", slack: "UABCDEF1" }],
+    });
+    const getConfig = createConfigLoader(path);
+    expect(getConfig().users?.[0].name).toBe("Alice");
+
+    writeFileSync(
+      path,
+      JSON.stringify({
+        users: [
+          { email: "alice@example.com", name: "Alice", slack: "UABCDEF1" },
+          { email: "bob@example.com", name: "Bob", slack: "UABCDEF1" },
+        ],
+      }),
+    );
+    expect(getConfig().users?.map((u) => u.email)).toEqual(["alice@example.com"]);
   });
 
   it("throws when no file and no previous config", () => {

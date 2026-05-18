@@ -4,6 +4,14 @@
       "github_app_installation_id": 126669985
     }
   },
+  "users": [
+    {
+      "email": "alice@example.com",
+      "name": "Alice Example",
+      "slack": "UABCDEF1",
+      "github": "alice"
+    }
+  ],
   "mitmproxy": [
     {
       "host": "billing.example.com",

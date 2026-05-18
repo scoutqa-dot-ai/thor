@@ -57,6 +57,8 @@ export const TriggerStartRecordSchema = BaseRecordSchema.extend({
   type: z.literal("trigger_start"),
   triggerId: z.string().regex(UUID_V7_RE, { message: "triggerId must be a UUIDv7" }),
   correlationKey: z.string().optional(),
+  triggerSlackId: z.string().optional(),
+  triggerGithubLogin: z.string().optional(),
 });
 
 export const TriggerEndRecordSchema = BaseRecordSchema.extend({
@@ -974,6 +976,47 @@ function streamOpenTrigger(sessionId: string): { triggerId: string; ts: string }
   return open;
 }
 
+function streamLatestTriggerStart(
+  sessionId: string,
+): ({ triggerId: string; ts: string } & Pick<
+  z.infer<typeof TriggerStartRecordSchema>,
+  "triggerSlackId" | "triggerGithubLogin"
+>) | undefined {
+  let latest:
+    | ({ triggerId: string; ts: string } & Pick<
+        z.infer<typeof TriggerStartRecordSchema>,
+        "triggerSlackId" | "triggerGithubLogin"
+      >)
+    | undefined;
+  for (const record of streamSessionRecords(sessionId)) {
+    if (record.type !== "trigger_start") continue;
+    latest = {
+      triggerId: record.triggerId,
+      ts: record.ts,
+      ...(record.triggerSlackId ? { triggerSlackId: record.triggerSlackId } : {}),
+      ...(record.triggerGithubLogin ? { triggerGithubLogin: record.triggerGithubLogin } : {}),
+    };
+  }
+  return latest;
+}
+
+function streamOpenTriggerStart(sessionId: string): ReturnType<typeof streamLatestTriggerStart> {
+  let open: ReturnType<typeof streamLatestTriggerStart>;
+  for (const record of streamSessionRecords(sessionId)) {
+    if (record.type === "trigger_start") {
+      open = {
+        triggerId: record.triggerId,
+        ts: record.ts,
+        ...(record.triggerSlackId ? { triggerSlackId: record.triggerSlackId } : {}),
+        ...(record.triggerGithubLogin ? { triggerGithubLogin: record.triggerGithubLogin } : {}),
+      };
+    } else if (record.type === "trigger_end" && record.triggerId === open?.triggerId) {
+      open = undefined;
+    }
+  }
+  return open;
+}
+
 export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult {
   const anchorId =
     resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
@@ -989,6 +1032,35 @@ export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult
   }
   if (!best) return { ok: false, reason: "none" };
   return { ok: true, anchorId, sessionId: best.sessionId, triggerId: best.triggerId };
+}
+
+export function findTriggerActor(
+  requestSessionId: string,
+): { slack?: string; github?: string } | undefined {
+  const anchorId =
+    resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
+    resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
+  if (!anchorId) return undefined;
+
+  const reverse = reverseLookupAnchor(anchorId);
+  let best: ReturnType<typeof streamLatestTriggerStart> | undefined;
+  for (const sessionId of reverse.sessionIds) {
+    const latest = streamOpenTriggerStart(sessionId);
+    if (!latest) continue;
+    if (!best || latest.ts > best.ts) best = latest;
+  }
+  if (!best) {
+    for (const sessionId of reverse.sessionIds) {
+      const latest = streamLatestTriggerStart(sessionId);
+      if (!latest) continue;
+      if (!best || latest.ts > best.ts) best = latest;
+    }
+  }
+  if (!best?.triggerSlackId && !best?.triggerGithubLogin) return undefined;
+  return {
+    ...(best.triggerSlackId ? { slack: best.triggerSlackId } : {}),
+    ...(best.triggerGithubLogin ? { github: best.triggerGithubLogin } : {}),
+  };
 }
 
 export function findAnchorContext(requestSessionId: string): AnchorContextResult {

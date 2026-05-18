@@ -44,6 +44,8 @@ Instructions for AI agents working on this repository.
     - Frame the listed surface as "constraints documented here" and leave unlisted shapes to be confirmed by the denial response, so policy can tighten without a skill rewrite. Reserve absolute claims like "any arguments accepted" for surfaces guaranteed to stay that way.
     - State each rule in one place — keep overview bullets and per-section detail from restating the same constraint.
 
+11. **Thor-injected attribution** — Thor may stamp `Co-authored-by:` trailers on commits and assignee fields on PRs and Jira issues created by the agent. This happens server-side; the agent may later observe it in `git log`, `gh pr view`, or Jira. Do not strip it, treat it as a user edit, or re-emit it on re-runs.
+
 ## Repository Structure
 
 ```

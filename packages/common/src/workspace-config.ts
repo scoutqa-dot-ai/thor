@@ -44,16 +44,57 @@ const MitmproxyPassthroughHostSchema = z.string().refine((value) => {
   return !value.includes("/") && !value.includes(":") && value.length > 0;
 }, "Passthrough entries must be an exact host or a suffix starting with '.'");
 
-export const WorkspaceConfigSchema = z
+const UserRecordSchema = z
   .object({
-    owners: z.record(z.string(), OwnerConfigSchema).optional(),
-    mitmproxy: z.array(MitmproxyRuleSchema).optional(),
-    mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
+    /** Jira account email; this is also used for visible commit co-author trailers. */
+    email: z.email(),
+    name: z.string().min(1).regex(/^[^\r\n]+$/, "name must be a single line"),
+    slack: z.string().regex(/^U[A-Z0-9]{6,}$/, "slack must be a Slack user id").optional(),
+    github: z
+      .string()
+      .regex(
+        /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/,
+        "github must be a valid GitHub login",
+      )
+      .optional(),
   })
   .strict();
 
+export const WorkspaceConfigSchema = z
+  .object({
+    owners: z.record(z.string(), OwnerConfigSchema).optional(),
+    users: z.array(UserRecordSchema).optional(),
+    mitmproxy: z.array(MitmproxyRuleSchema).optional(),
+    mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const seen = new Map<string, number>();
+    for (const [index, user] of (value.users ?? []).entries()) {
+      const identities = [
+        ["email", user.email.toLowerCase()],
+        ...(user.slack ? [["slack", user.slack.toUpperCase()]] : []),
+        ...(user.github ? [["github", user.github.toLowerCase()]] : []),
+      ] as Array<[string, string]>;
+      for (const [field, normalized] of identities) {
+        const key = `${field}:${normalized}`;
+        const prior = seen.get(key);
+        if (prior !== undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["users", index, field],
+            message: `duplicate ${field} also used by users.${prior}`,
+          });
+        } else {
+          seen.set(key, index);
+        }
+      }
+    }
+  });
+
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type OwnerConfig = z.infer<typeof OwnerConfigSchema>;
+export type UserRecord = z.infer<typeof UserRecordSchema>;
 
 export interface ProxyUpstream {
   url: string;
@@ -190,6 +231,21 @@ export function interpolateHeaders(
     result[key] = interpolateEnv(value);
   }
   return result;
+}
+
+export function findUserBySlack(config: WorkspaceConfig, slack: string): UserRecord | undefined {
+  const normalized = slack.toUpperCase();
+  return config.users?.find((user) => user.slack?.toUpperCase() === normalized);
+}
+
+export function findUserByGithub(config: WorkspaceConfig, github: string): UserRecord | undefined {
+  const normalized = github.toLowerCase();
+  return config.users?.find((user) => user.github?.toLowerCase() === normalized);
+}
+
+export function findUserByEmail(config: WorkspaceConfig, email: string): UserRecord | undefined {
+  const normalized = email.toLowerCase();
+  return config.users?.find((user) => user.email.toLowerCase() === normalized);
 }
 
 /**

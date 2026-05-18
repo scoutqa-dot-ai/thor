@@ -13,6 +13,9 @@ export {
   getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
+  findUserBySlack,
+  findUserByGithub,
+  findUserByEmail,
 } from "./workspace-config.js";
 export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.js";
 export {
@@ -59,6 +62,7 @@ export type {
   ProxyUpstream,
   ConfigLoader,
   OwnerConfig,
+  UserRecord,
   ValidationIssue,
   ValidationResult,
 } from "./workspace-config.js";
@@ -72,6 +76,7 @@ export {
   appendAlias,
   readTriggerSlice,
   findActiveTrigger,
+  findTriggerActor,
   findAnchorContext,
   resolveAlias,
   reverseLookupAnchor,

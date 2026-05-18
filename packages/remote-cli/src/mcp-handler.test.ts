@@ -27,6 +27,11 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "lookupJiraAccountId",
+    description: "Resolve a Jira account id",
+    inputSchema: { type: "object", properties: { email: { type: "string" } } },
+  },
+  {
     name: "hiddenTool",
     description: "Should stay hidden",
     inputSchema: { type: "object" },
@@ -46,6 +51,7 @@ describe("remote-cli MCP endpoints", () => {
   let createJiraIssueFailure: Error | undefined;
   let connectedUpstreams: string[];
   let closeRemoteCli: () => Promise<void>;
+  let jiraLookups: string[];
 
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
@@ -59,12 +65,18 @@ describe("remote-cli MCP endpoints", () => {
     createJiraIssueDelay = undefined;
     createJiraIssueFailure = undefined;
     connectedUpstreams = [];
+    jiraLookups = [];
 
     const remoteCli = createRemoteCliApp({
       mcp: {
         approvalsDir,
         isProduction: true,
         writeToolCallLogFn: () => {},
+        configLoader: () => ({
+          users: [
+            { email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" },
+          ],
+        }),
         connectUpstreamFn: async (name: string): Promise<UpstreamConnection> => {
           connectedUpstreams.push(name);
           return {
@@ -92,6 +104,12 @@ describe("remote-cli MCP endpoints", () => {
                   }
                   return {
                     content: [{ type: "text", text: "created" }],
+                  };
+                }
+                if (name === "lookupJiraAccountId") {
+                  jiraLookups.push(String(args?.email));
+                  return {
+                    content: [{ type: "text", text: JSON.stringify({ accountId: "jira-account-1" }) }],
                   };
                 }
                 throw new Error(`Unexpected tool: ${name}`);
@@ -179,7 +197,7 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(health.status).toBe(200);
     expect(healthBody.mcp.configured).toBe(3);
-    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 3 });
+    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 4 });
   });
 
   it("warms every registered upstream", async () => {
@@ -407,6 +425,70 @@ describe("remote-cli MCP endpoints", () => {
         arguments: upstreamArgs,
       },
     ]);
+  });
+
+  it("injects Jira assignee account id after approval when unset", async () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "parent-session", anchorId: activeAnchorId });
+    appendSessionEvent("parent-session", {
+      type: "trigger_start",
+      triggerId: activeTriggerId,
+      triggerSlackId: "UABCDEF1",
+    });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const actionId = (JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }).actionId;
+
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    expect(resolved.status).toBe(200);
+    expect(jiraLookups).toEqual(["alice@example.com"]);
+    expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
+    expect(toolCalls[1].arguments?.assignee_account_id).toBe("jira-account-1");
+  });
+
+  it("does not overwrite existing Jira assignee account id", async () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "parent-session", anchorId: activeAnchorId });
+    appendSessionEvent("parent-session", {
+      type: "trigger_start",
+      triggerId: activeTriggerId,
+      triggerSlackId: "UABCDEF1",
+    });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","assignee_account_id":"existing"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const actionId = (JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }).actionId;
+
+    await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    expect(jiraLookups).toEqual([]);
+    expect(toolCalls[0].arguments?.assignee_account_id).toBe("existing");
   });
 
   it("blocks Jira approvals when contentFormat is not markdown", async () => {
