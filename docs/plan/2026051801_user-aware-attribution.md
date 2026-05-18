@@ -5,8 +5,10 @@
 Stamp the human who triggered a Thor run onto the artifacts it produces — best effort, never blocks:
 
 1. `Co-authored-by: <name> <email>` trailer on agent-made commits.
-2. `--assignee <github>` on agent-opened PRs, plus a `Triggered by …` line in the PR body so attribution survives squash-merge.
+2. `--assignee <github>` on agent-opened PRs (via a `gh pr edit` follow-up after creation).
 3. `assignee` field on agent-created Jira issues.
+
+The existing Thor disclaimer footer already carries a context link back to the trigger; no separate "Triggered by ..." line in the PR body is needed.
 
 When the lookup yields nothing (unknown user, missing field, upstream rejection), the wrapper proceeds without the attribution step and the action succeeds unchanged.
 
@@ -37,7 +39,7 @@ Out of scope:
 ### Phase 1 — Schema + helpers
 
 - Extend `WorkspaceConfigSchema` with optional `users: UserRecord[]`. `UserRecord = { email: string; name: string; slack?: string; github?: string }`. `email` and `name` required; `slack` and `github` optional. Schema doc comment: `email` must be the user's **Jira account email** — not a `users.noreply.github.com` alias.
-- **Strict per-field validation** — these values land in commit trailers and PR bodies. A stray newline in `name` corrupts the trailer; a malformed `email` produces ugly Jira fields. Enforce:
+- **Strict per-field validation** — these values land in commit trailers. A stray newline in `name` corrupts the trailer; a malformed `email` produces ugly Jira fields. Enforce:
   - `name` — non-empty single-line string (`/^[^\r\n]+$/`).
   - `email` — `z.email()`.
   - `slack` — Slack id shape (`/^U[A-Z0-9]{6,}$/`).
@@ -84,12 +86,12 @@ function resolveTriggerUser(sessionId: string): UserRecord | undefined {
 Each handler calls this and skips its mutation step on `undefined`. One structured log line per mutating call via the existing `createLogger`:
 ```
 attribution_applied {
-  surface:  "git" | "gh-body" | "gh-assignee" | "jira",
+  surface:  "git" | "gh-assignee" | "jira",
   outcome:  "applied"
           | "skipped_no_trigger"            // findTriggerActor returned undefined
           | "skipped_no_user_record"        // actor known, no UserRecord matches
           | "skipped_missing_identity_field"// resolved user lacks the field this surface needs
-          | "skipped_unsupported_arg_shape" // e.g. git commit -F, gh --body-file/--fill
+          | "skipped_unsupported_arg_shape" // e.g. git commit -F
           | "skipped_amend"                 // git commit --amend
           | "api_rejected",
   reason?:  string,                         // sub-reason for skipped_missing_identity_field / api_rejected
@@ -107,9 +109,10 @@ attribution_applied {
   - De-dupe note: appending the trailer to the `-m` value relies on `git commit` accepting RFC-2822 trailers via `interpret-trailers` semantics. Native de-dup is **not guaranteed without `trailer.ifExists=addIfDifferent`** — on a re-run, a double trailer is possible but rare. Acceptable for v1; document.
   - `bin/git` is unchanged.
 
-**`/exec/gh` handler.** Add a sibling `withGhAttribution` called right after `withGhDisclaimer` at `index.ts:616`. When the gh command is `pr create` and a user resolves:
-- Append the `Triggered by {name} (@{github})` line (or `Triggered by {name} <{email}>` when no github) to the body using the same `rewriteSingleValueFlag` mechanism the disclaimer uses for `--body` / `-b`. The disclaimer already appends after the body; the attribution line just appends after the disclaimer. `--body-file` and `--fill` remain pre-existing gaps; for those shapes, skip body injection and proceed to the assignee step.
-- **Do not pass `--assignee` to `gh pr create`.** Empirically, `gh pr create --assignee <bad-user>` fails the whole call. The safe path is unconditional: let `gh pr create` succeed first, parse the PR URL/number from stdout (the `/exec/gh` handler already invokes `registerIssueCorrelationAlias` at `index.ts:625`, which already has access to the PR number), then run `gh pr edit <number> --add-assignee <github>` as a best-effort follow-up. If the follow-up fails, log `api_rejected`; the PR still exists.
+**`/exec/gh` handler.** In the `/exec/gh` route at `index.ts:616-626`, after `withGhDisclaimer` runs and `gh pr create` succeeds, run a best-effort assignee follow-up. The body itself is untouched — the disclaimer footer already includes a link to the Thor context for this trigger, so a separate "Triggered by …" line would be duplicative.
+
+- **Do not pass `--assignee` to `gh pr create`.** Empirically, `gh pr create --assignee <bad-user>` fails the whole call. The safe path is unconditional: let `gh pr create` succeed first, parse the PR URL/number from stdout (the handler already invokes `registerIssueCorrelationAlias` at `index.ts:625`, which already has access to the PR number), then run `gh pr edit <number> --add-assignee <github>` as a follow-up. If the follow-up fails, log `api_rejected`; the PR still exists.
+- When no resolved user, no `github` field, or any of the skip conditions fire: log the appropriate outcome and the PR creation goes through unchanged. No body mutation in any path.
 
 **MCP Jira.** Extend `buildUpstreamArgs` (`mcp-handler.ts:56-66`, called from `resolveApprovalActionOnce` at `:625`) so that for `createJiraIssue` (and the equivalent direct REST shape), if a user resolves with `email`, look up the Jira `accountId` via the upstream `lookupJiraAccountId` MCP tool (already in the Atlassian MCP surface, called via `instance.upstream.callTool`) and inject `assignee` into the upstream args.
 
@@ -130,10 +133,10 @@ Behavior tests (next to existing `gh-disclaimer.test.ts` and `mcp-handler.test.t
   - No trigger / no resolved user → args byte-identical.
   - Sub-session whose parent trigger has ended → `findTriggerActor` falls back to most-recent `trigger_start`, trailer still appended.
 - `/exec/gh pr create`:
-  - Resolved user + `--body` → `Triggered by` appended after disclaimer; `gh pr edit --add-assignee` follow-up runs and succeeds.
+  - Resolved user with `github` → `gh pr create` runs untouched (body unchanged), then `gh pr edit --add-assignee` follow-up runs and succeeds.
   - `gh pr edit --add-assignee` 422 → `api_rejected`, PR still exists.
-  - `--body-file` / `--fill` → body injection skipped, assignee follow-up still runs.
-  - No `github` field → no follow-up call, body line only.
+  - No `github` field → no follow-up call; PR body and creation unchanged.
+  - No resolved user → no follow-up; PR body and creation unchanged.
 - MCP Jira `createJiraIssue`:
   - Resolved user with `email` → `lookupJiraAccountId` called via injected resolver, returned `accountId` lands in upstream payload.
   - Lookup times out (>5s) → assignee dropped, `api_rejected` logged with sub-reason `lookup_timeout`.
@@ -144,9 +147,9 @@ Behavior tests (next to existing `gh-disclaimer.test.ts` and `mcp-handler.test.t
   - Duplicate `slack` / `github` / `email` on first load → `loadWorkspaceConfig` throws with the conflict identified.
   - Duplicate introduced on reload → `lastGood` retained, `config_reload_failed_using_last_good` logged.
 
-**Agent-facing note.** Add one paragraph to `AGENTS.md` (or the relevant agent prompt surface) under a heading like "Thor-injected attribution": Thor stamps `Co-authored-by:` trailers on commits, `Triggered by …` lines on PR bodies, and `assignee` fields on Jira issues created by the agent. This injection happens server-side, post-approval. The agent will see this content on `git log`, `gh pr view`, etc. — do not strip it, do not treat it as a user edit, do not re-emit it on re-runs. AGENTS.md rule 10 still holds: this is a warning about observable state, not an instruction.
+**Agent-facing note.** Add one paragraph to `AGENTS.md` (or the relevant agent prompt surface) under a heading like "Thor-injected attribution": Thor stamps `Co-authored-by:` trailers on commits and `assignee` fields on PRs and Jira issues created by the agent. This injection happens server-side; the trailer goes in before commit, the assignee goes in after PR creation, the Jira assignee goes in post-approval. The agent will see this content on `git log`, `gh pr view`, etc. — do not strip it, do not treat it as a user edit, do not re-emit it on re-runs. AGENTS.md rule 10 still holds: this is a warning about observable state, not an instruction.
 
-Exit: a Slack-triggered run produces a commit with the trailer, a PR with both the body line and the assignee, and a Jira ticket assigned to the user's email — without any change to `bin/git`, `bin/gh`, or anything inside the sandbox.
+Exit: a Slack-triggered run produces a commit with the trailer, a PR assigned to the user's GitHub handle, and a Jira ticket assigned to the user's email — without any change to `bin/git`, `bin/gh`, or anything inside the sandbox.
 
 ### Phase 4 — Seed + ship
 
@@ -163,7 +166,7 @@ Exit: green push checks; PR open against `main`.
 | Schema shape | `{ email, name, slack?, github? }` | `email` is the stable identity; both handles optional because not every human is in both systems. |
 | Where attribution is injected | Remote-cli Node handlers (`/exec/git`, `/exec/gh`, MCP gateway) | Wrappers `bin/git`/`bin/gh` run on the host via `execCommand` but the cleanest insertion point is the Node handler one layer up, matching the existing `withGhDisclaimer` + `injectApprovalDisclaimer` patterns. |
 | How the handler knows the trigger actor | Extend `trigger_start` event log + `findTriggerActor(sessionId)` | Session id is already in the HTTP header. The event log is the single source of truth. No new transport, no sandbox-side state. |
-| Squash-merge survival | PR body `Triggered by` line in addition to the `Co-authored-by` trailer | GitHub's squash UI drops trailers from non-primary commits; the body line survives. |
+| Squash-merge survival | Not separately addressed | GitHub's squash UI drops trailers from non-primary commits. The PR assignee survives squash, and the Thor disclaimer footer (already in PR bodies) carries the context link back to the trigger. A dedicated "Triggered by …" body line was considered and rejected as duplicative. |
 | Failure mode | Best effort, never block | Attribution is cosmetic. A missing record must not stop the agent. |
 | MCP mutation timing | After approval | Matches existing disclaimer behaviour; changing this is a bigger trust-model conversation. |
 | Resolved identity does not gate any action | Documented in Scope | Prevents future code from misusing `UserRecord` for permission decisions. |
@@ -172,8 +175,8 @@ Exit: green push checks; PR open against `main`.
 
 - **Stale `users` list.** Operators must remember to add new hires. Visible through `attribution_applied { outcome: "skipped_no_user_record" }` lines in the runner log.
 - **MCP after-approval mutation.** The Jira assignee shown in the approval card does not include the injected assignee. Acceptable trade-off (same as the existing disclaimer); revisit if a reviewer is surprised.
-- **Squash kills trailers.** Mitigated by the PR body line.
-- **PII in `config.json`.** Emails sit in a mounted file that already carries GitHub installation ids and proxy auth headers; trust boundary unchanged. README must note that attribution writes name + email into commits, PR bodies, and Jira fields — visible externally on GitHub and Atlassian.
+- **Squash kills trailers.** Accepted. The `Co-authored-by` trailer is dropped on squash-merge for non-primary commits, so on `main` the human shows up only via the PR assignee and the Thor disclaimer footer's context link. Good enough for v1.
+- **PII in `config.json`.** Emails sit in a mounted file that already carries GitHub installation ids and proxy auth headers; trust boundary unchanged. README must note that attribution writes name + email into commits and Jira fields — visible externally on GitHub and Atlassian.
 - **Trigger actor ≠ work owner in handoff cases.** On-call triggers a deploy for a teammate's PR; Slack thread relays a request from someone else. Plan attributes to the triggerer, full stop. Multi-field model is deferred.
 - **GitHub co-author linking depends on commit email.** If a user's GitHub email is set to private and their commit-recognized address is the `users.noreply.github.com` alias, the `Co-authored-by: Name <jira-email>` trailer will show the name but won't link the avatar/profile. The Jira email is still the right choice for the schema (it's the only one that resolves in Jira); GitHub linking is a partial-credit consolation prize.
 
