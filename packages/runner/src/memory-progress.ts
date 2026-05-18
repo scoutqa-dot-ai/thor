@@ -1,8 +1,4 @@
-import {
-  isBareMemoryDirectoryPath,
-  isMemoryPath,
-  normalizeMemoryPath,
-} from "@thor/common";
+import { isBareMemoryDirectoryPath, isMemoryPath, normalizeMemoryPath } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 
 const READ_MEMORY_TOOLS = new Set(["read"]);
@@ -52,10 +48,14 @@ function extractMemoryPaths(input: unknown): string[] {
   return [...found];
 }
 
+type StatLike = { isDirectory(): boolean };
+type StatSyncLike = (path: string) => StatLike;
+
 export function getMemoryProgressEvents(params: {
   tool: string;
   status: string;
   input: unknown;
+  statSync?: StatSyncLike;
 }): Extract<ProgressEvent, { type: "memory" }>[] {
   if (params.status !== "completed") return [];
 
@@ -63,7 +63,10 @@ export function getMemoryProgressEvents(params: {
   if (!action) return [];
 
   return extractMemoryPaths(params.input)
-    .filter((path) => !(action === "read" && isBareMemoryDirectoryPath(path)))
+    .filter(
+      (path) =>
+        !(action === "read" && isBareMemoryDirectoryPath(path, { statSync: params.statSync })),
+    )
     .map((path) => ({
       type: "memory",
       action,
