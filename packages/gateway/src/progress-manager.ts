@@ -1,7 +1,11 @@
-import * as fs from "node:fs";
-import { createLogger, logInfo, logError, formatDuration } from "@thor/common";
+import {
+  createLogger,
+  isBareMemoryDirectoryPath,
+  logInfo,
+  logError,
+  formatDuration,
+} from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
-import path from "node:path";
 import {
   postMessage,
   updateMessage,
@@ -61,38 +65,10 @@ function formatToolGroups(groups: ToolGroup[]): string {
 }
 
 const MEMORY_ROOT_PREFIX = "/workspace/memory/";
-const KNOWN_MEMORY_FILE_EXTENSIONS = new Set([
-  ".md",
-  ".txt",
-  ".json",
-  ".jsonc",
-  ".csv",
-  ".tsv",
-  ".log",
-  ".yaml",
-  ".yml",
-]);
 
 function isReadmePath(path: string): boolean {
   const base = path.split("/").filter(Boolean).pop() ?? "";
   return base.toLowerCase() === "readme.md";
-}
-
-function normalizeMemoryPath(memoryPath: string): string {
-  return path.posix.normalize(memoryPath);
-}
-
-function isBareMemoryDirectoryPath(memoryPath: string): boolean {
-  const normalizedPath = normalizeMemoryPath(memoryPath);
-  if (normalizedPath === "/workspace/memory") return true;
-  if (!normalizedPath.startsWith(MEMORY_ROOT_PREFIX)) return false;
-
-  try {
-    return fs.statSync(normalizedPath).isDirectory();
-  } catch {
-    const extension = path.posix.extname(normalizedPath);
-    return !KNOWN_MEMORY_FILE_EXTENSIONS.has(extension.toLowerCase());
-  }
 }
 
 function shortenMemoryPath(path: string): string {
