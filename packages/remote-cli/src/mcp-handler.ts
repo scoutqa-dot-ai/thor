@@ -361,7 +361,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     email: string,
   ): Promise<JiraLookupResult> {
     if (!instance.upstream.tools.some((tool) => tool.name === JIRA_ACCOUNT_LOOKUP_TOOL)) {
-      return { ok: false, reason: "upstream_disconnected" };
+      return { ok: false, reason: "tool_unavailable" };
     }
     try {
       const result = await instance.upstream.client.callTool({

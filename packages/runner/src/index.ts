@@ -1420,7 +1420,7 @@ function decodeSlackSource(
   if (payload) {
     const event = isRecord(payload.event) ? payload.event : payload;
     channel = channel ?? safeStr(event.channel);
-    user = decodeTriggerActor(promptPreview, correlationKey)?.slack;
+    user = safeStr(event.user);
     text = safeStr(event.text);
   }
 
@@ -1447,7 +1447,7 @@ function decodeGithubSource(promptPreview: string | undefined): DecodedSource | 
   const payload = tryParseJsonObject(promptPreview);
   if (!payload) return undefined;
   const repo = isRecord(payload.repository) ? safeStr(payload.repository.full_name) : undefined;
-  const sender = decodeTriggerActor(promptPreview, "github:")?.github;
+  const sender = isRecord(payload.sender) ? safeStr(payload.sender.login) : undefined;
 
   if (isRecord(payload.pull_request)) {
     const pr = payload.pull_request;

@@ -649,6 +649,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   const mcpService = createMcpService({
     isProduction: appEnv.isProduction,
     ...config.mcp,
+    configLoader: config.mcp?.configLoader ?? getConfig,
   });
 
   const app = express();
