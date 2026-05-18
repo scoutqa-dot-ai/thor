@@ -640,6 +640,46 @@ describe("approval outcome prompts", () => {
   });
 });
 
+describe("planBatchDispatch", () => {
+  it("includes Slack routing provenance in the runner prompt", async () => {
+    const { planBatchDispatch } = await import("./service.js");
+    const slackDirectoryForChannel = vi.fn(() => ({
+      directory: "/workspace/repos/thor",
+      repoName: "thor",
+      source: "override" as const,
+      overridePath: "/workspace/memory/thor/repo-by-slack-channel/C123.txt",
+    }));
+
+    const plan = await planBatchDispatch({
+      slackEvents: [
+        {
+          channel: "C123",
+          ts: "1710000000.001",
+          text: "which repo are you using?",
+          user: "U123",
+          type: "message",
+          thread_ts: "1710000000.001",
+        },
+      ],
+      cronEvents: [],
+      githubEvents: [],
+      approvalOutcomes: [],
+      correlationKey: "slack:thread:C123/1710000000.001",
+      deps: { runnerUrl: "http://runner:3000" },
+      slackDeps: noopSlackDeps(),
+      slackDirectoryForChannel,
+    });
+
+    expect(plan.kind).toBe("dispatch");
+    if (plan.kind !== "dispatch") return;
+
+    expect(slackDirectoryForChannel).toHaveBeenCalledTimes(1);
+    expect(plan.options.prompt).toContain("[Slack routing]");
+    expect(plan.options.prompt).toContain("routed to repo `thor` via override file");
+    expect(plan.options.prompt).toContain("repo selector only, not channel instructions");
+  });
+});
+
 describe("triggerRunnerApprovalOutcomes", () => {
   it("returns after acceptance without waiting for the runner body to finish", async () => {
     let closeStream: (() => void) | undefined;

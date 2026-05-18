@@ -2390,8 +2390,9 @@ describe("gateway", () => {
       expect(triggerCall).toBeDefined();
       const triggerBody = JSON.parse(String(triggerCall![1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
-      const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
-      const promptPayload = JSON.parse(promptJson);
+      const promptJson = triggerBody.prompt.split(/Slack event:\n\n/).at(-1);
+      expect(promptJson).toBeDefined();
+      const promptPayload = JSON.parse(promptJson!);
       expect(promptPayload.event_type).toBe("app_mention");
       expect(promptPayload.channel).toBe("C123");
       expect(promptPayload.text).toContain("investigate checkout errors");
@@ -2600,8 +2601,9 @@ describe("gateway", () => {
       expect(triggerCalls).toHaveLength(1);
       const triggerBody = JSON.parse(String(triggerCalls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
-      const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
-      const promptPayloads = JSON.parse(promptJson);
+      const promptJson = triggerBody.prompt.split(/Slack events:\n\n/).at(-1);
+      expect(promptJson).toBeDefined();
+      const promptPayloads = JSON.parse(promptJson!);
       expect(promptPayloads).toHaveLength(3);
       expect(promptPayloads[0].text).toContain("message 1");
       expect(promptPayloads[2].text).toContain("message 3");
