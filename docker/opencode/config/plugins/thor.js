@@ -152,12 +152,12 @@ const splitTopLevelSegments = (command) => {
       double = !double;
       continue;
     }
-    if (!single && char === "$" && command[index + 1] === "(") {
+    if (char === "$" && command[index + 1] === "(") {
       substitutionDepth += 1;
       index += 1;
       continue;
     }
-    if (!single && !double && (char === "<" || char === ">") && command[index + 1] === "(") {
+    if (!double && (char === "<" || char === ">") && command[index + 1] === "(") {
       substitutionDepth += 1;
       index += 1;
       continue;
@@ -298,12 +298,12 @@ const compoundGroupBody = (segment) => {
       double = !double;
       continue;
     }
-    if (!single && char === "$" && trimmed[index + 1] === "(") {
+    if (char === "$" && trimmed[index + 1] === "(") {
       substitutionDepth += 1;
       index += 1;
       continue;
     }
-    if (!single && !double && (char === "<" || char === ">") && trimmed[index + 1] === "(") {
+    if (!double && (char === "<" || char === ">") && trimmed[index + 1] === "(") {
       substitutionDepth += 1;
       index += 1;
       continue;
@@ -379,13 +379,13 @@ const shellWords = (segment) => {
       double = !double;
       continue;
     }
-    if (!single && char === "$" && segment[index + 1] === "(") {
+    if (char === "$" && segment[index + 1] === "(") {
       substitutionDepth += 1;
       current += "$(";
       index += 1;
       continue;
     }
-    if (!single && !double && (char === "<" || char === ">") && segment[index + 1] === "(") {
+    if (!double && (char === "<" || char === ">") && segment[index + 1] === "(") {
       substitutionDepth += 1;
       current += `${char}(`;
       index += 1;
