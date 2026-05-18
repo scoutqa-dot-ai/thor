@@ -5,7 +5,116 @@ import thorPluginExport, {
   allowedSearchRoot,
   applySearchDefinitionGuidance,
   applySearchScopePolicy,
+  findGuardedDynamicShellCommand,
+  hasDynamicShellSubstitution,
 } from "./thor.js";
+
+describe("Thor OpenCode dynamic shell guard", () => {
+  it("finds guarded top-level commands with dynamic substitution", () => {
+    expect(findGuardedDynamicShellCommand('gh pr comment 1 --body "$(cat /tmp/body)"')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand("gh api repos/`whoami`")).toBe("gh");
+    expect(findGuardedDynamicShellCommand('curl -H "X: $(token)" https://example.invalid')).toBe(
+      "curl",
+    );
+    expect(findGuardedDynamicShellCommand('slack-post-message --text "$(cat msg)"')).toBe(
+      "slack-post-message",
+    );
+    expect(findGuardedDynamicShellCommand('BODY=$(cat body) gh pr comment 1 --body "$BODY"')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand('git status && gh pr comment 1 --body "$(cat body)"')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand('sleep 1 & gh pr comment 1 --body "$(cat body)"')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand('echo hi |& curl "$(token)"')).toBe("curl");
+    expect(findGuardedDynamicShellCommand('env -u FOO gh pr comment 1 --body "$(cat body)"')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand('env -C /tmp curl "$(token)"')).toBe("curl");
+    expect(findGuardedDynamicShellCommand('env -S "gh pr comment 1 --body $(cat body)"')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand('env --split-string="curl $(token)"')).toBe("curl");
+    expect(findGuardedDynamicShellCommand('> /tmp/out gh pr comment 1 --body "$(cat body)"')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand('2>/tmp/e curl "$(token)"')).toBe("curl");
+    expect(
+      findGuardedDynamicShellCommand('FOO=bar >/tmp/out slack-post-message --text "$(cat msg)"'),
+    ).toBe("slack-post-message");
+    expect(findGuardedDynamicShellCommand('exec gh pr comment 1 --body "$(cat body)"')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand('time gh pr comment 1 --body "$(cat body)"')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand('time -p curl "$(token)"')).toBe("curl");
+    expect(findGuardedDynamicShellCommand('( gh pr comment 1 --body "$(cat body)" )')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand('{ gh pr comment 1 --body "$(cat body)"; }')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand('{ curl "$(token)"; }')).toBe("curl");
+    expect(findGuardedDynamicShellCommand('( gh pr comment 1 --body "$(cat body)" ) >/tmp/out')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand('{ gh pr comment 1 --body "$(cat body)"; } >/tmp/out')).toBe(
+      "gh",
+    );
+    expect(findGuardedDynamicShellCommand("/usr/bin/curl https://$(hostname)")).toBe("curl");
+  });
+
+  it("allows reviewed literals and nested guarded commands under unguarded commands", () => {
+    expect(hasDynamicShellSubstitution("'$(cat body)'")).toBe(false);
+    expect(hasDynamicShellSubstitution('"$(cat body)"')).toBe(true);
+    expect(findGuardedDynamicShellCommand('echo "$(gh pr view 1)"')).toBeUndefined();
+    expect(
+      findGuardedDynamicShellCommand('echo $(printf x; gh pr comment 1 --body "$(cat body)")'),
+    ).toBeUndefined();
+    expect(findGuardedDynamicShellCommand('echo $(printf x |& curl "$(token)")')).toBeUndefined();
+    expect(findGuardedDynamicShellCommand('env -S \'gh pr comment 1 --body $(cat body)\'')).toBeUndefined();
+    expect(findGuardedDynamicShellCommand('env -S "echo $(gh pr view 1)"')).toBeUndefined();
+    expect(findGuardedDynamicShellCommand("( gh pr comment 1 --body '$(cat body)' )")).toBeUndefined();
+    expect(findGuardedDynamicShellCommand("gh pr comment 1 --body '$(cat body)'")).toBeUndefined();
+    expect(findGuardedDynamicShellCommand("gh pr view 1")).toBeUndefined();
+    expect(findGuardedDynamicShellCommand('slack-post-message --text "done"')).toBeUndefined();
+  });
+
+  it("wires the bash hook to reject guarded dynamic commands only", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const hooks = await ThorPlugin({ directory: "/workspace/repos/thor" });
+
+    await expect(
+      hooks["tool.execute.before"](
+        { tool: "bash", sessionID: "s1", callID: "c1" },
+        { args: { command: 'gh pr comment 1 --body "$(cat body)"' } },
+      ),
+    ).rejects.toThrow(/dynamic shell substitution.*guarded command "gh"/);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "dynamic_shell_substitution_block",
+        tool: "bash",
+        command: "gh",
+        sessionID: "s1",
+        callID: "c1",
+      }),
+    );
+
+    const nonBashOutput = { args: { command: 'gh pr comment 1 --body "$(cat body)"' } };
+    await hooks["tool.execute.before"]({ tool: "not-bash" }, nonBashOutput);
+    expect(nonBashOutput.args).toEqual({ command: 'gh pr comment 1 --body "$(cat body)"' });
+
+    const bashOutput = { args: { command: 'echo "$(gh pr view 1)"' } };
+    await hooks["tool.execute.before"]({ tool: "bash" }, bashOutput);
+    expect(bashOutput.args).toEqual({ command: 'echo "$(gh pr view 1)"' });
+    warn.mockRestore();
+  });
+});
 
 describe("Thor OpenCode search scope policy", () => {
   it("rewrites absolute glob patterns under an allowed fixed prefix", () => {
