@@ -1392,6 +1392,16 @@ function safeStr(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function validTriggerSlackId(value: string | undefined): string | undefined {
+  return value && /^U[A-Z0-9]{6,}$/.test(value) ? value : undefined;
+}
+
+function validTriggerGithubLogin(value: string | undefined): string | undefined {
+  return value && /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(value)
+    ? value
+    : undefined;
+}
+
 function tryParseJsonObject(value: string | undefined): Record<string, unknown> | undefined {
   if (!value) return undefined;
   const idx = value.indexOf("{");
@@ -1511,11 +1521,13 @@ export function decodeTriggerActor(
   if (!payload) return undefined;
   if (correlationKey.startsWith("slack:thread:")) {
     const event = isRecord(payload.event) ? payload.event : payload;
-    const slack = safeStr(event.user);
+    const slack = validTriggerSlackId(safeStr(event.user));
     return slack ? { slack } : undefined;
   }
   if (correlationKey.startsWith("github:") || correlationKey.startsWith("git:branch:")) {
-    const github = isRecord(payload.sender) ? safeStr(payload.sender.login) : undefined;
+    const github = isRecord(payload.sender)
+      ? validTriggerGithubLogin(safeStr(payload.sender.login))
+      : undefined;
     return github ? { github } : undefined;
   }
   return undefined;

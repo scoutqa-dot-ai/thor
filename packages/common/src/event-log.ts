@@ -45,6 +45,12 @@ export function isUuidV7(value: string): boolean {
   return UUID_V7_RE.test(value);
 }
 const AnchorIdSchema = z.string().regex(UUID_V7_RE, { message: "anchorId must be a UUIDv7" });
+const SlackUserIdSchema = z.string().regex(/^U[A-Z0-9]{6,}$/, {
+  message: "triggerSlackId must be a Slack user id",
+});
+const GithubLoginSchema = z.string().regex(/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/, {
+  message: "triggerGithubLogin must be a GitHub login",
+});
 
 const BaseRecordSchema = z.object({
   schemaVersion: z.literal(1),
@@ -57,8 +63,8 @@ export const TriggerStartRecordSchema = BaseRecordSchema.extend({
   type: z.literal("trigger_start"),
   triggerId: z.string().regex(UUID_V7_RE, { message: "triggerId must be a UUIDv7" }),
   correlationKey: z.string().optional(),
-  triggerSlackId: z.string().optional(),
-  triggerGithubLogin: z.string().optional(),
+  triggerSlackId: SlackUserIdSchema.optional(),
+  triggerGithubLogin: GithubLoginSchema.optional(),
 });
 
 export const TriggerEndRecordSchema = BaseRecordSchema.extend({

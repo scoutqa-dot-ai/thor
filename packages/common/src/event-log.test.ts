@@ -704,6 +704,24 @@ describe("session event log", () => {
     ).toThrow();
   });
 
+  it("rejects malformed trigger actor identifiers", () => {
+    expect(() =>
+      appendSessionEvent("bad-slack", {
+        type: "trigger_start",
+        triggerId: triggerA,
+        triggerSlackId: "not-a-slack-id",
+      }),
+    ).toThrow("triggerSlackId");
+
+    expect(() =>
+      appendSessionEvent("bad-github", {
+        type: "trigger_start",
+        triggerId: triggerB,
+        triggerGithubLogin: "-bad",
+      }),
+    ).toThrow("triggerGithubLogin");
+  });
+
   it("multi-process appends produce zero corrupt JSONL lines", async () => {
     const PROCS = 4;
     const RECORDS_PER_PROC = 50;

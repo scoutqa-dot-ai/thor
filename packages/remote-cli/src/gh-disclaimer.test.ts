@@ -160,6 +160,14 @@ describe("gh disclaimer injection", () => {
     }, { configLoader });
   });
 
+  it("preserves CRLF style when appending after a CRLF-terminated message", async () => {
+    seedActor();
+    await withServer(async (url) => {
+      await postGit(url, ["commit", "-m", "Do work\r\n"], "parent");
+      expect(execCalls[0].args[2]).toBe("Do work\r\n\r\nCo-authored-by: Alice <alice@example.com>");
+    }, { configLoader });
+  });
+
   it("adds a PR assignee when gh pr create has none", async () => {
     seedActor();
     await withServer(async (url) => {
