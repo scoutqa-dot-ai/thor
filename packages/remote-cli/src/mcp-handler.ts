@@ -86,32 +86,21 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | "tim
   }
 }
 
-function accountIdsFromValue(value: unknown): string[] {
-  if (typeof value === "string" && value.length > 0) return [value];
-  if (!value || typeof value !== "object") return [];
-  if (Array.isArray(value)) return value.flatMap(accountIdsFromValue);
-  const record = value as Record<string, unknown>;
-  const direct = record.accountId ?? record.account_id ?? record.id;
-  const nested = record.values ?? record.results ?? record.users;
-  return [
-    ...(typeof direct === "string" && direct.length > 0 ? [direct] : []),
-    ...(nested ? accountIdsFromValue(nested) : []),
-  ];
-}
-
 function parseJiraAccountLookupStdout(stdout: string): JiraLookupResult {
   stdout = stdout.trim();
   if (!stdout) return { ok: false, reason: "lookup_no_match" };
-  let ids: string[];
+  let parsed: unknown;
   try {
-    ids = accountIdsFromValue(JSON.parse(stdout));
+    parsed = JSON.parse(stdout);
   } catch {
-    ids = [stdout];
+    return { ok: true, accountId: stdout };
   }
-  const unique = [...new Set(ids.filter(Boolean))];
-  if (unique.length === 0) return { ok: false, reason: "lookup_no_match" };
-  if (unique.length > 1) return { ok: false, reason: "lookup_multiple_matches" };
-  return { ok: true, accountId: unique[0] };
+  if (typeof parsed === "string" && parsed.length > 0) return { ok: true, accountId: parsed };
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const id = (parsed as Record<string, unknown>).accountId;
+    if (typeof id === "string" && id.length > 0) return { ok: true, accountId: id };
+  }
+  return { ok: false, reason: "lookup_no_match" };
 }
 
 interface ProxyInstance {
@@ -138,7 +127,6 @@ export interface McpServiceDeps {
   connectUpstreamFn?: typeof connectUpstream;
   writeToolCallLogFn?: typeof writeToolCallLog;
   configLoader?: ConfigLoader;
-  lookupJiraAccountIdByEmail?: (email: string) => Promise<JiraLookupResult>;
 }
 
 interface ToolInfo {
@@ -205,7 +193,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const connectUpstreamFn = deps.connectUpstreamFn ?? connectUpstream;
   const writeToolCallLogFn = deps.writeToolCallLogFn ?? writeToolCallLog;
   const getConfig = deps.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const lookupJiraAccountIdByEmail = deps.lookupJiraAccountIdByEmail;
   const instances = new Map<string, ProxyInstance>();
   const connecting = new Map<string, Promise<ProxyInstance>>();
   const approvalStores = new Map<string, ApprovalStore>();
@@ -747,13 +734,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       });
       return args;
     }
-    const lookupFn =
-      lookupJiraAccountIdByEmail ??
-      ((email: string) => lookupJiraAccountIdViaUpstream(instance, email));
     let lookup: JiraLookupResult | "timeout";
     try {
-      lookup = await withTimeout(lookupFn(resolved.user.email), 5000);
-    } catch (err) {
+      lookup = await withTimeout(
+        lookupJiraAccountIdViaUpstream(instance, resolved.user.email),
+        5000,
+      );
+    } catch {
       logInfo(log, "attribution_applied", {
         surface: "jira",
         outcome: "api_rejected",

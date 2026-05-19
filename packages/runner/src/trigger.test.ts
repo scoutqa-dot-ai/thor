@@ -350,18 +350,12 @@ function setupBusySession(slackThreadTs: string): string {
 
 describe("runner /trigger orchestration", () => {
   it("decodes trigger actors from the original prompt and correlation key", () => {
-    expect(
-      decodeTriggerActor('{"event":{"user":"UABCDEF1"}}', "slack:thread:C123/177"),
-    ).toEqual({ slack: "UABCDEF1" });
+    expect(decodeTriggerActor('{"event":{"user":"UABCDEF1"}}', "slack:thread:C123/177")).toEqual({
+      slack: "UABCDEF1",
+    });
     expect(
       decodeTriggerActor('{"sender":{"login":"alice"}}', "github:issue:repo:owner/repo#1"),
     ).toEqual({ github: "alice" });
-    expect(
-      decodeTriggerActor('{"event":{"user":"not-a-slack-id"}}', "slack:thread:C123/177"),
-    ).toBeUndefined();
-    expect(
-      decodeTriggerActor('{"sender":{"login":"dependabot[bot]"}}', "github:issue:repo:owner/repo#1"),
-    ).toBeUndefined();
   });
 
   it("serves the trigger viewer with 404 and rendered status", async () => {
@@ -828,26 +822,6 @@ describe("runner /trigger orchestration", () => {
         resumed: true,
         status: "completed",
       });
-    });
-  });
-
-  it("drops malformed trigger actor ids instead of failing trigger_start", async () => {
-    const h = createHarness();
-    const correlationKey = "github:issue:runner-trigger-test:owner/repo#123";
-
-    await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: '{"sender":{"login":"dependabot[bot]"}}',
-        correlationKey,
-      });
-
-      expect(result.response.status).toBe(200);
-      const done = result.events.find((e) => e.type === "done");
-      expect(done).toMatchObject({ sessionId: "session-1", status: "completed" });
-      const logText = readFileSync(`${worklogDir}/sessions/session-1.jsonl`, "utf8");
-      expect(logText).toContain('"type":"trigger_start"');
-      expect(logText).not.toContain("triggerGithubLogin");
-      expect(logText).not.toContain("dependabot[bot]");
     });
   });
 

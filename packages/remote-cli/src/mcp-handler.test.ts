@@ -78,7 +78,9 @@ describe("remote-cli MCP endpoints", () => {
         approvalsDir,
         isProduction: true,
         writeToolCallLogFn: (entry) => {
-          toolLogEntries.push(entry as { tool: string; decision: string; args: Record<string, unknown> });
+          toolLogEntries.push(
+            entry as { tool: string; decision: string; args: Record<string, unknown> },
+          );
         },
         configLoader: () => ({
           users: [
@@ -437,7 +439,11 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("injects Jira assignee account id after approval when unset", async () => {
-    appendAlias({ aliasType: "opencode.session", aliasValue: "parent-session", anchorId: activeAnchorId });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
     appendSessionEvent("parent-session", {
       type: "trigger_start",
       triggerId: activeTriggerId,
@@ -456,7 +462,9 @@ describe("remote-cli MCP endpoints", () => {
       },
       { "x-thor-session-id": "parent-session" },
     );
-    const actionId = (JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }).actionId;
+    const actionId = (
+      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
+    ).actionId;
 
     const resolved = await postJson(
       "/exec/mcp",
@@ -480,7 +488,11 @@ describe("remote-cli MCP endpoints", () => {
 
   it("accepts a primitive JSON string from Jira account lookup", async () => {
     jiraLookupResultText = JSON.stringify("jira-account-string");
-    appendAlias({ aliasType: "opencode.session", aliasValue: "parent-session", anchorId: activeAnchorId });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
     appendSessionEvent("parent-session", {
       type: "trigger_start",
       triggerId: activeTriggerId,
@@ -499,7 +511,9 @@ describe("remote-cli MCP endpoints", () => {
       },
       { "x-thor-session-id": "parent-session" },
     );
-    const actionId = (JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }).actionId;
+    const actionId = (
+      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
+    ).actionId;
     await postJson(
       "/exec/mcp",
       { args: ["resolve", actionId, "approved", "U123"] },
@@ -511,7 +525,11 @@ describe("remote-cli MCP endpoints", () => {
 
   it("keeps Jira issue creation best-effort when account lookup throws", async () => {
     jiraLookupFailure = new Error("lookup exploded");
-    appendAlias({ aliasType: "opencode.session", aliasValue: "parent-session", anchorId: activeAnchorId });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
     appendSessionEvent("parent-session", {
       type: "trigger_start",
       triggerId: activeTriggerId,
@@ -530,7 +548,9 @@ describe("remote-cli MCP endpoints", () => {
       },
       { "x-thor-session-id": "parent-session" },
     );
-    const actionId = (JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }).actionId;
+    const actionId = (
+      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
+    ).actionId;
     const resolved = await postJson(
       "/exec/mcp",
       { args: ["resolve", actionId, "approved", "U123"] },
@@ -541,70 +561,12 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
   });
 
-  it("keeps Jira issue creation best-effort when config loading fails", async () => {
-    await new Promise<void>((resolve, reject) => {
-      server.close((err) => (err ? reject(err) : resolve()));
-    });
-    await closeRemoteCli();
-    const remoteCli = createRemoteCliApp({
-      mcp: {
-        approvalsDir,
-        isProduction: true,
-        writeToolCallLogFn: () => {},
-        configLoader: () => {
-          throw new Error("config unavailable");
-        },
-        connectUpstreamFn: async (): Promise<UpstreamConnection> => ({
-          tools,
-          client: {
-            callTool: async ({ name, arguments: args }: { name: string; arguments?: Record<string, unknown> }) => {
-              toolCalls.push({ name, arguments: args });
-              return { content: [{ type: "text", text: name === "createJiraIssue" ? "created" : "jira-account-1" }] };
-            },
-            close: async () => {},
-          } as unknown as UpstreamConnection["client"],
-        }),
-      },
-    });
-    closeRemoteCli = remoteCli.close;
-    server = createServer(remoteCli.app);
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-
-    appendAlias({ aliasType: "opencode.session", aliasValue: "parent-session", anchorId: activeAnchorId });
-    appendSessionEvent("parent-session", {
-      type: "trigger_start",
-      triggerId: activeTriggerId,
-      triggerSlackId: "UABCDEF1",
-    });
-    const pending = await postJson(
-      "/exec/mcp",
-      {
-        args: [
-          "atlassian",
-          "createJiraIssue",
-          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
-        ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
-      },
-      { "x-thor-session-id": "parent-session" },
-    );
-    const actionId = (JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }).actionId;
-
-    const resolved = await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
-    expect(resolved.status).toBe(200);
-    expect(toolCalls.map((call) => call.name)).toEqual(["createJiraIssue"]);
-    expect(toolCalls[0].arguments?.assignee_account_id).toBeUndefined();
-  });
-
   it("does not overwrite existing Jira assignee account id", async () => {
-    appendAlias({ aliasType: "opencode.session", aliasValue: "parent-session", anchorId: activeAnchorId });
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
     appendSessionEvent("parent-session", {
       type: "trigger_start",
       triggerId: activeTriggerId,
@@ -623,7 +585,9 @@ describe("remote-cli MCP endpoints", () => {
       },
       { "x-thor-session-id": "parent-session" },
     );
-    const actionId = (JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }).actionId;
+    const actionId = (
+      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
+    ).actionId;
 
     await postJson(
       "/exec/mcp",

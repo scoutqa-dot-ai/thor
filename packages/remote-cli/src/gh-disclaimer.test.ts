@@ -55,7 +55,10 @@ function bindSessionToAnchor(sessionId: string, anchorId: string): void {
   });
 }
 
-async function withServer<T>(fn: (url: string) => Promise<T>, config?: RemoteCliAppConfig): Promise<T> {
+async function withServer<T>(
+  fn: (url: string) => Promise<T>,
+  config?: RemoteCliAppConfig,
+): Promise<T> {
   const remoteCli = createRemoteCliApp(config);
   const server: Server = createServer(remoteCli.app);
   server.listen(0, "127.0.0.1");
@@ -141,66 +144,51 @@ describe("gh disclaimer injection", () => {
 
   it("appends a co-author trailer to git commit -m", async () => {
     seedActor();
-    await withServer(async (url) => {
-      const { response } = await postGit(url, ["commit", "-m", "Do work"], "parent");
-      expect(response.status).toBe(200);
-      expect(execCalls[0].args).toEqual([
-        "commit",
-        "-m",
-        "Do work\n\nCo-authored-by: Alice <alice@example.com>",
-      ]);
-    }, { configLoader });
-  });
-
-  it("appends co-author trailer after one blank line when message already ends with newline", async () => {
-    seedActor();
-    await withServer(async (url) => {
-      await postGit(url, ["commit", "-m", "Do work\n"], "parent");
-      expect(execCalls[0].args[2]).toBe("Do work\n\nCo-authored-by: Alice <alice@example.com>");
-    }, { configLoader });
-  });
-
-  it("preserves CRLF style when appending after a CRLF-terminated message", async () => {
-    seedActor();
-    await withServer(async (url) => {
-      await postGit(url, ["commit", "-m", "Do work\r\n"], "parent");
-      expect(execCalls[0].args[2]).toBe("Do work\r\n\r\nCo-authored-by: Alice <alice@example.com>");
-    }, { configLoader });
+    await withServer(
+      async (url) => {
+        const { response } = await postGit(url, ["commit", "-m", "Do work"], "parent");
+        expect(response.status).toBe(200);
+        expect(execCalls[0].args).toEqual([
+          "commit",
+          "-m",
+          "Do work\n\nCo-authored-by: Alice <alice@example.com>",
+        ]);
+      },
+      { configLoader },
+    );
   });
 
   it("adds a PR assignee when gh pr create has none", async () => {
     seedActor();
-    await withServer(async (url) => {
-      const { response } = await postGh(url, ["pr", "create", "--title", "x", "--body", "Body"], "parent");
-      expect(response.status).toBe(200);
-      expect(execCalls[0].args).toContain("--assignee");
-      expect(execCalls[0].args).toContain("alice");
-    }, { configLoader });
+    await withServer(
+      async (url) => {
+        const { response } = await postGh(
+          url,
+          ["pr", "create", "--title", "x", "--body", "Body"],
+          "parent",
+        );
+        expect(response.status).toBe(200);
+        expect(execCalls[0].args).toContain("--assignee");
+        expect(execCalls[0].args).toContain("alice");
+      },
+      { configLoader },
+    );
   });
 
   it("keeps an existing PR assignee", async () => {
     seedActor();
-    await withServer(async (url) => {
-      await postGh(url, ["pr", "create", "--title", "x", "--body", "Body", "--assignee", "bob"], "parent");
-      expect(execCalls[0].args.filter((arg) => arg === "--assignee")).toHaveLength(1);
-      expect(execCalls[0].args).toContain("bob");
-    }, { configLoader });
-  });
-
-  it("keeps git and gh attribution best-effort when config loading fails", async () => {
-    seedActor();
-    const failingConfigLoader = () => {
-      throw new Error("config unavailable");
-    };
-    await withServer(async (url) => {
-      const git = await postGit(url, ["commit", "-m", "Do work"], "parent");
-      expect(git.response.status).toBe(200);
-      expect(execCalls[0].args).toEqual(["commit", "-m", "Do work"]);
-
-      const gh = await postGh(url, ["pr", "create", "--title", "x", "--body", "Body"], "parent");
-      expect(gh.response.status).toBe(200);
-      expect(execCalls[1].args).not.toContain("--assignee");
-    }, { configLoader: failingConfigLoader });
+    await withServer(
+      async (url) => {
+        await postGh(
+          url,
+          ["pr", "create", "--title", "x", "--body", "Body", "--assignee", "bob"],
+          "parent",
+        );
+        expect(execCalls[0].args.filter((arg) => arg === "--assignee")).toHaveLength(1);
+        expect(execCalls[0].args).toContain("bob");
+      },
+      { configLoader },
+    );
   });
 
   it("validates effective git cwd before attempting attribution", async () => {
@@ -208,17 +196,20 @@ describe("gh disclaimer injection", () => {
     const failingConfigLoader = () => {
       throw new Error("config unavailable");
     };
-    await withServer(async (url) => {
-      const { response, body } = await postGit(
-        url,
-        ["-C", "/not/allowed", "commit", "-m", "Do work"],
-        "parent",
-      );
-      expect(response.status).toBe(400);
-      expect(body.exitCode).toBe(1);
-      expect(body.stderr).toContain('"git -C" is not allowed.');
-      expect(execCalls).toEqual([]);
-    }, { configLoader: failingConfigLoader });
+    await withServer(
+      async (url) => {
+        const { response, body } = await postGit(
+          url,
+          ["-C", "/not/allowed", "commit", "-m", "Do work"],
+          "parent",
+        );
+        expect(response.status).toBe(400);
+        expect(body.exitCode).toBe(1);
+        expect(body.stderr).toContain('"git -C" is not allowed.');
+        expect(execCalls).toEqual([]);
+      },
+      { configLoader: failingConfigLoader },
+    );
   });
 
   it("registers git branch aliases only after successful git push", async () => {

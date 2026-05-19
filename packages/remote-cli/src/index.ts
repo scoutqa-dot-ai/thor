@@ -19,7 +19,6 @@ import {
   WORKSPACE_CONFIG_PATH,
   type ExecStreamEvent,
   type ConfigLoader,
-  type UserRecord,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
 import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
@@ -213,38 +212,40 @@ function registerIssueCorrelationAlias(
   logInfo(log, "alias_registered", { sessionId, correlationKey, source: "gh" });
 }
 
-function rewriteSingleValueFlag(
+type FlagMatch = { index: number; valueIndex?: number; inlinePrefix?: string };
+
+function rewriteValueFlag(
   args: string[],
   names: string[],
   append: string,
-  valuePrefix?: string,
-): string[] | { error: string } {
-  const out = [...args];
-  let match: { index: number; valueIndex?: number; inlinePrefix?: string } | undefined;
-  for (let i = 0; i < out.length; i++) {
+  options: { valuePrefix?: string; match: "single" | "last" } = { match: "single" },
+): string[] | { error: "duplicate" | "notFound" } {
+  const { valuePrefix, match: mode } = options;
+  const matches: FlagMatch[] = [];
+  for (let i = 0; i < args.length; i++) {
     for (const name of names) {
-      if (out[i] === name && i + 1 < out.length) {
-        if (valuePrefix && !out[i + 1].startsWith(valuePrefix)) continue;
-        if (match) return { error: "Disclaimer required: multiple mutable gh body fields" };
-        match = { index: i, valueIndex: i + 1 };
+      if (args[i] === name && i + 1 < args.length) {
+        if (valuePrefix && !args[i + 1].startsWith(valuePrefix)) continue;
+        matches.push({ index: i, valueIndex: i + 1 });
         i += 1;
         break;
       }
-      if (out[i].startsWith(`${name}=`)) {
-        const value = out[i].slice(name.length + 1);
+      if (args[i].startsWith(`${name}=`)) {
+        const value = args[i].slice(name.length + 1);
         if (valuePrefix && !value.startsWith(valuePrefix)) continue;
-        if (match) return { error: "Disclaimer required: multiple mutable gh body fields" };
-        match = { index: i, inlinePrefix: `${name}=` };
+        matches.push({ index: i, inlinePrefix: `${name}=` });
         break;
       }
     }
   }
-  if (!match) return { error: "Disclaimer required: could not find a mutable gh body field" };
-  if (match.valueIndex !== undefined) {
-    out[match.valueIndex] = `${out[match.valueIndex]}${append}`;
-  } else if (match.inlinePrefix) {
-    out[match.index] =
-      `${match.inlinePrefix}${out[match.index].slice(match.inlinePrefix.length)}${append}`;
+  if (matches.length === 0) return { error: "notFound" };
+  if (matches.length > 1 && mode === "single") return { error: "duplicate" };
+  const m = mode === "last" ? matches[matches.length - 1] : matches[0];
+  const out = [...args];
+  if (m.valueIndex !== undefined) {
+    out[m.valueIndex] = `${out[m.valueIndex]}${append}`;
+  } else if (m.inlinePrefix) {
+    out[m.index] = `${m.inlinePrefix}${out[m.index].slice(m.inlinePrefix.length)}${append}`;
   }
   return out;
 }
@@ -255,13 +256,6 @@ function hasFlag(args: string[], names: string[]): boolean {
 
 function logAttribution(surface: string, outcome: string, extra: Record<string, unknown> = {}) {
   logInfo(log, "attribution_applied", { surface, outcome, ...extra });
-}
-
-function appendCoauthorTrailer(message: string, user: UserRecord): string {
-  const trailer = `Co-authored-by: ${user.name} <${user.email}>`;
-  if (message.split(/\r?\n/).some((line) => line.trim() === trailer)) return message;
-  const sep = message.endsWith("\r\n") ? "\r\n" : message.endsWith("\n") ? "\n" : "\n\n";
-  return `${message}${sep}${trailer}`;
 }
 
 function withGitAttribution(
@@ -287,28 +281,9 @@ function withGitAttribution(
     );
     return args;
   }
-  const out = [...args];
-  let valueIndex: number | undefined;
-  let inlineIndex: number | undefined;
-  let inlinePrefix: string | undefined;
-  for (let i = 0; i < out.length; i++) {
-    if ((out[i] === "-m" || out[i] === "--message") && i + 1 < out.length) {
-      valueIndex = i + 1;
-      inlineIndex = undefined;
-      i += 1;
-    } else if (out[i].startsWith("--message=")) {
-      inlineIndex = i;
-      inlinePrefix = "--message=";
-      valueIndex = undefined;
-    }
-  }
-  let original: string | undefined;
-  if (valueIndex !== undefined) {
-    original = out[valueIndex];
-  } else if (inlineIndex !== undefined && inlinePrefix) {
-    original = out[inlineIndex].slice(inlinePrefix.length);
-  }
-  if (original === undefined) {
+  const trailer = `\n\nCo-authored-by: ${resolved.user.name} <${resolved.user.email}>`;
+  const rewritten = rewriteValueFlag(args, ["-m", "--message"], trailer, { match: "last" });
+  if ("error" in rewritten) {
     logAttribution(
       "git",
       "skipped_unsupported_arg_shape",
@@ -316,19 +291,8 @@ function withGitAttribution(
     );
     return args;
   }
-  const next = appendCoauthorTrailer(original, resolved.user);
-  if (next === original) {
-    logAttribution(
-      "git",
-      "skipped_already_attributed",
-      attributionFields(resolved.actor, resolved.user),
-    );
-    return args;
-  }
-  if (valueIndex !== undefined) out[valueIndex] = next;
-  else out[inlineIndex!] = `${inlinePrefix}${next}`;
   logAttribution("git", "applied", attributionFields(resolved.actor, resolved.user));
-  return out;
+  return rewritten;
 }
 
 function withGhAttribution(
@@ -389,9 +353,22 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
         err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer",
     };
   }
-  return args[0] === "api"
-    ? rewriteSingleValueFlag(args, ["-f", "--raw-field"], footer, "body=")
-    : rewriteSingleValueFlag(args, ["--body", "-b"], footer);
+  const result =
+    args[0] === "api"
+      ? rewriteValueFlag(args, ["-f", "--raw-field"], footer, {
+          match: "single",
+          valuePrefix: "body=",
+        })
+      : rewriteValueFlag(args, ["--body", "-b"], footer, { match: "single" });
+  if ("error" in result) {
+    return {
+      error:
+        result.error === "duplicate"
+          ? "Disclaimer required: multiple mutable gh body fields"
+          : "Disclaimer required: could not find a mutable gh body field",
+    };
+  }
+  return result;
 }
 
 /**

@@ -20,13 +20,7 @@ export function resolveTriggerUser(
   const actor = findTriggerActor(sessionId);
   if (!actor) return { reason: "skipped_no_trigger" };
 
-  let config: ReturnType<ConfigLoader>;
-  try {
-    config = getConfig();
-  } catch {
-    return { actor, reason: "skipped_config_unavailable" };
-  }
-
+  const config = getConfig();
   const user =
     (actor.slack ? findUserBySlack(config, actor.slack) : undefined) ??
     (actor.github ? findUserByGithub(config, actor.github) : undefined);

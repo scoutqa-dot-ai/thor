@@ -48,15 +48,9 @@ const UserRecordSchema = z
   .object({
     /** Jira account email; this is also used for visible commit co-author trailers. */
     email: z.email(),
-    name: z.string().min(1).regex(/^[^\r\n]+$/, "name must be a single line"),
-    slack: z.string().regex(/^U[A-Z0-9]{6,}$/, "slack must be a Slack user id").optional(),
-    github: z
-      .string()
-      .regex(
-        /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/,
-        "github must be a valid GitHub login",
-      )
-      .optional(),
+    name: z.string().min(1),
+    slack: z.string().min(1).optional(),
+    github: z.string().min(1).optional(),
   })
   .strict();
 
