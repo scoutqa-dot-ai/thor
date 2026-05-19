@@ -29,6 +29,7 @@ When the lookup yields nothing (unknown user, missing field, upstream rejection)
 **Scope clarification — identity is cosmetic, not authorization.** A resolved `UserRecord` never gates an action.
 
 Out of scope:
+
 - Per-user opt-out flags, global kill switch, automated user-registry sync.
 - Multi-field identity model (`triggered_by` / `requested_by` / `acting_agent`).
 - Rewriting `disclaimer.ts` to embed user identity in the footer.
@@ -58,12 +59,12 @@ Exit: `pnpm -r test` green.
 ### Phase 2 — Record the trigger actor on `trigger_start`
 
 - Extend the `TriggerStartRecordSchema` (`packages/common/src/event-log.ts:56-60`) with optional `triggerSlackId?: string` and `triggerGithubLogin?: string`. Additive optional fields — backwards-compatible with existing tests that don't set them.
-- **Extraction timing is the catch.** Today the runner extracts `event.user` / `sender.login` at `packages/runner/src/index.ts:1416,1443` for viewer labels — that runs at view-render time, *after* `trigger_start` is written. For this plan they need to be extracted in the inbound trigger route, **before** `appendSessionEvent` writes the `trigger_start` record. Plan-time work: factor the existing extraction into a `decodeTriggerActor(promptBody, correlationKey)` helper used in both places (runner trigger route + viewer label render). Source of truth is the trigger request's existing `prompt` string together with `correlationKey`; no new trigger field is required.
+- **Extraction timing is the catch.** Today the runner extracts `event.user` / `sender.login` at `packages/runner/src/index.ts:1416,1443` for viewer labels — that runs at view-render time, _after_ `trigger_start` is written. For this plan they need to be extracted in the inbound trigger route, **before** `appendSessionEvent` writes the `trigger_start` record. Plan-time work: factor the existing extraction into a `decodeTriggerActor(promptBody, correlationKey)` helper used in both places (runner trigger route + viewer label render). Source of truth is the trigger request's existing `prompt` string together with `correlationKey`; no new trigger field is required.
 - Add `findTriggerActor(sessionId): { slack?: string; github?: string } | undefined` in `packages/common/src/event-log.ts`, anchor-aware so it works for sub-sessions too:
   1. Resolve `sessionId` → anchor via the same alias path `findAnchorContext` already uses (`event-log.ts:994-1016`).
   2. Find the active trigger on that anchor (same logic as `findAnchorContext`). If none active, fall back to the most-recent `trigger_start` on the anchor regardless of `trigger_end` — long-running sub-sessions can outlive their parent trigger; attribution should still land. **Known mis-attribution risk:** if trigger A ends, trigger B starts on the same anchor, and a sub-session of A then writes a commit, that commit is attributed to B's triggerer. Accepted for v1 — attribution is cosmetic, the alternative (no attribution) is worse, and the fact that "most recent on this anchor" gets the credit is at worst surprising, never a safety issue. Re-evaluate if multi-trigger overlap on one anchor becomes common.
   3. Return the `triggerSlackId` / `triggerGithubLogin` recorded on that trigger's `trigger_start`, or `undefined` when neither was extracted.
-  Implementation is a synchronous read over the same event-log structure remote-cli already consumes; no new transport, no new I/O.
+     Implementation is a synchronous read over the same event-log structure remote-cli already consumes; no new transport, no new I/O.
 - Race note: a very fast first `/exec/git` call could arrive before the runner finishes writing `trigger_start`. That falls through to `skipped_no_trigger` and the commit proceeds unattributed — acceptable, not a bug.
 
 Exit: a Slack-triggered run records `triggerSlackId` in the event log; a GitHub-triggered run records `triggerGithubLogin`; `findTriggerActor` returns them.
@@ -77,12 +78,15 @@ function resolveTriggerUser(sessionId: string): UserRecord | undefined {
   const actor = findTriggerActor(sessionId);
   if (!actor) return undefined;
   const config = getConfig();
-  return (actor.slack && findUserBySlack(config, actor.slack))
-      ?? (actor.github && findUserByGithub(config, actor.github));
+  return (
+    (actor.slack && findUserBySlack(config, actor.slack)) ??
+    (actor.github && findUserByGithub(config, actor.github))
+  );
 }
 ```
 
 Each handler calls this and skips its mutation step on `undefined`. One structured log line per mutating call via the existing `createLogger`:
+
 ```
 attribution_applied {
   surface:  "git" | "gh-assignee" | "jira",
@@ -110,16 +114,18 @@ Argument-rewrite helper: generalize the existing `rewriteSingleValueFlag` (`inde
 Trailer text shape: append `\n\n` (or `\n` if the value already ends with a newline) followed by `Co-authored-by: Name <email>`. GitHub's UI recognizes raw `Co-authored-by:` lines in commit bodies for co-author avatars — no `interpret-trailers` round-trip is required for the user-visible outcome.
 
 Skipping cases:
-  - `-F <path>` (commit message from file) → `skipped_unsupported_arg_shape`. Reading sandbox-side files from the host adds complexity not worth it for v1.
-  - The last `-m` value already ends with the *exact* `Co-authored-by: Name <email>` line for this resolved user (substring check on the trailing trailer block) → `skipped_already_attributed`, args byte-identical. This is the deterministic de-dup path: on a re-run of the same `git commit` the trailer is appended exactly once.
-  - `bin/git` is unchanged.
+
+- `-F <path>` (commit message from file) → `skipped_unsupported_arg_shape`. Reading sandbox-side files from the host adds complexity not worth it for v1.
+- The last `-m` value already ends with the _exact_ `Co-authored-by: Name <email>` line for this resolved user (substring check on the trailing trailer block) → `skipped_already_attributed`, args byte-identical. This is the deterministic de-dup path: on a re-run of the same `git commit` the trailer is appended exactly once.
+- `bin/git` is unchanged.
 
 Pros/cons of the plain-text append vs. routing through git's trailer machinery:
-  - **Pro — no policy widening.** `--trailer` stays denied, the commit surface stays narrow.
-  - **Pro — deterministic output.** No dependency on `trailer.ifExists` / `trailer.ifMissing` config, which differs per-repo and per-user `.gitconfig`.
-  - **Pro — explicit, testable de-dup.** A substring check on the `-m` value is trivial to unit-test; relying on git's trailer interpreter would require a real `git` invocation in tests.
-  - **Con — we own line-break correctness.** If the agent's `-m` value ends without a blank line, we must insert one; if it already ends with a trailer block, we must not insert an extra blank line. Covered by the helper, but it's logic we own.
-  - **Con — no semantic merging.** If the agent itself wrote a `Co-authored-by:` line with a *different* identity, we append a second one instead of replacing it. Acceptable: the agent should not be writing co-author trailers, and if it does, both names landing is the honest record.
+
+- **Pro — no policy widening.** `--trailer` stays denied, the commit surface stays narrow.
+- **Pro — deterministic output.** No dependency on `trailer.ifExists` / `trailer.ifMissing` config, which differs per-repo and per-user `.gitconfig`.
+- **Pro — explicit, testable de-dup.** A substring check on the `-m` value is trivial to unit-test; relying on git's trailer interpreter would require a real `git` invocation in tests.
+- **Con — we own line-break correctness.** If the agent's `-m` value ends without a blank line, we must insert one; if it already ends with a trailer block, we must not insert an extra blank line. Covered by the helper, but it's logic we own.
+- **Con — no semantic merging.** If the agent itself wrote a `Co-authored-by:` line with a _different_ identity, we append a second one instead of replacing it. Acceptable: the agent should not be writing co-author trailers, and if it does, both names landing is the honest record.
 
 **`/exec/gh` handler.** In the `/exec/gh` route at `index.ts:616-626`, extend the existing arg-rewrite pass so that for `gh pr create`, Thor injects `--assignee <github>` **only when** all of the following are true: (a) a user resolves, (b) that user has `github`, and (c) the agent did not already pass `--assignee` / `-a`. The body itself is untouched — the disclaimer footer already includes a link to the Thor context for this trigger, so a separate "Triggered by …" line would be duplicative.
 
@@ -133,6 +139,7 @@ Pros/cons of the plain-text append vs. routing through git's trailer machinery:
 - **Exact lookup contract to code against.** Input should be the resolved `UserRecord.email`; output handling should be explicit: zero matches → `lookup_no_match`, exactly one match with a usable Jira account id → inject `assignee_account_id`, multiple matches → `lookup_multiple_matches`, tool unavailable/disconnected → `upstream_disconnected`.
 
 Real implementation concerns:
+
 - `buildUpstreamArgs` is currently synchronous. Calling an upstream tool makes the Jira attribution step async — `resolveApprovalActionOnce` must await a resolver that can both preserve disclaimer injection and, for Jira only, perform the lookup before the final upstream call.
 - Bound the lookup with a 5s timeout. A slow Atlassian upstream must not stall approval resolution.
 - **Unset-only rule.** If `approvalArgs` already contains `assignee_account_id`, leave it unchanged and log `skipped_existing_assignee`.
@@ -142,6 +149,7 @@ Real implementation concerns:
 **Mutation happens after approval**, matching the existing disclaimer flow — the human approves the agent's payload, Thor stamps attribution before sending upstream. This is the same trust posture Thor already uses for the disclaimer footer; if/when that posture changes, both attributions move together.
 
 Behavior tests (next to existing `gh-disclaimer.test.ts` and `mcp-handler.test.ts`):
+
 - `/exec/git commit`:
   - Resolved user + `-m "msg"` → trailer appended into the `-m` value.
   - Resolved user + repeated `-m` → trailer appended into the last `-m` only.
@@ -178,16 +186,19 @@ Exit: green push checks; PR open against `main`.
 
 ## Decision Log
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| Where users live | Inside existing `/workspace/config.json` under `users` | Already mounted read-only; loader already validates + hot-reloads. |
-| Schema shape | `{ email, name, slack?, github? }` | `email` is the stable identity; both handles optional because not every human is in both systems. |
-| Where attribution is injected | Remote-cli Node handlers (`/exec/git`, `/exec/gh`, MCP gateway) | Wrappers `bin/git`/`bin/gh` run on the host via `execCommand` but the cleanest insertion point is the Node handler one layer up, matching the existing `withGhDisclaimer` + `injectApprovalDisclaimer` patterns. |
-| How the handler knows the trigger actor | Extend `trigger_start` event log + `findTriggerActor(sessionId)` | Session id is already in the HTTP header. The event log is the single source of truth. No new transport, no sandbox-side state. |
-| Squash-merge survival | Not separately addressed | GitHub's squash UI concatenates `Co-authored-by:` trailers from all squashed commits into the squash body, so co-author credit usually survives — but the PR author can edit the squash message and strip them, and per-commit trailer ordering/whitespace can drift. The PR assignee survives squash unconditionally, and the Thor disclaimer footer (already in PR bodies) carries the context link back to the trigger. A dedicated "Triggered by …" body line was considered and rejected as duplicative. |
-| Failure mode | Best effort, never block | Attribution is cosmetic. A missing record must not stop the agent. |
-| MCP mutation timing | After approval | Matches existing disclaimer behaviour; changing this is a bigger trust-model conversation. |
-| Resolved identity does not gate any action | Documented in Scope | Prevents future code from misusing `UserRecord` for permission decisions. |
+| Decision                                   | Choice                                                                | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Where users live                           | Inside existing `/workspace/config.json` under `users`                | Already mounted read-only; loader already validates + hot-reloads.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Schema shape                               | `{ email, name, slack?, github? }`                                    | `email` is the stable identity; both handles optional because not every human is in both systems.                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Where attribution is injected              | Remote-cli Node handlers (`/exec/git`, `/exec/gh`, MCP gateway)       | Wrappers `bin/git`/`bin/gh` run on the host via `execCommand` but the cleanest insertion point is the Node handler one layer up, matching the existing `withGhDisclaimer` + `injectApprovalDisclaimer` patterns.                                                                                                                                                                                                                                                                                              |
+| How the handler knows the trigger actor    | Extend `trigger_start` event log + `findTriggerActor(sessionId)`      | Session id is already in the HTTP header. The event log is the single source of truth. No new transport, no sandbox-side state.                                                                                                                                                                                                                                                                                                                                                                               |
+| Squash-merge survival                      | Not separately addressed                                              | GitHub's squash UI concatenates `Co-authored-by:` trailers from all squashed commits into the squash body, so co-author credit usually survives — but the PR author can edit the squash message and strip them, and per-commit trailer ordering/whitespace can drift. The PR assignee survives squash unconditionally, and the Thor disclaimer footer (already in PR bodies) carries the context link back to the trigger. A dedicated "Triggered by …" body line was considered and rejected as duplicative. |
+| Failure mode                               | Best effort, never block                                              | Attribution is cosmetic. A missing record must not stop the agent.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| MCP mutation timing                        | After approval                                                        | Matches existing disclaimer behaviour; changing this is a bigger trust-model conversation.                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Resolved identity does not gate any action | Documented in Scope                                                   | Prevents future code from misusing `UserRecord` for permission decisions.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Batch trigger actor                        | Use the last trigger user in a batched Slack/GitHub event payload     | Batches represent a merged wake for one correlation key; attribution is cosmetic, and the latest event is the best simple proxy for who most recently asked Thor to act.                                                                                                                                                                                                                                                                                                                                      |
+| User identity field validation             | Treat badly formatted user identity fields as admin/operator error    | `users[]` is admin-maintained config. Thor can document the expected shape, but it should not add complex repair logic for malformed human registry data.                                                                                                                                                                                                                                                                                                                                                     |
+| Duplicate co-author trailers               | Allow additional `Co-authored-by:` trailers instead of de-duplicating | Extra co-author lines are acceptable and honest. Keeping the commit rewrite simple is preferable to adding trailer parsing for a cosmetic attribution path.                                                                                                                                                                                                                                                                                                                                                   |
 
 ## Risks
 
