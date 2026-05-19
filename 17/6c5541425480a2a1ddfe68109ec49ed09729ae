@@ -1,0 +1,23 @@
+docs/plan/2026051801_user-aware-attribution.md
+  1bb6c78a0166e7e2 45,197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "176c5541425480a2a1ddfe68109ec49ed09729ae",
+  "prompts": {
+    "1bb6c78a0166e7e2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e24ee2f3-b2e3-4042-9934-5aa5fc694f58",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "daohoangson@gmail.com",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 75,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
