@@ -96,7 +96,7 @@ attribution_applied {
           | "skipped_existing_assignee"     // gh/Jira request already set the assignee field
           | "api_rejected",
   reason?:  string,                         // sub-reason for skipped_missing_identity_field / api_rejected
-                                            // e.g. "lookup_timeout", "lookup_no_match", "upstream_disconnected"
+                                            // e.g. "lookup_error", "lookup_no_match", "upstream_disconnected"
   field?:   "github" | "email",
   slack?:   string,                         // always present on skip outcomes when the actor had a slack id
   github?:  string,                         // always present on skip outcomes when the actor had a github login
@@ -138,10 +138,9 @@ Pros/cons of the plain-text append vs. routing through git's trailer machinery:
 Real implementation concerns:
 
 - `buildUpstreamArgs` is currently synchronous. Calling an upstream tool makes the Jira attribution step async — `resolveApprovalActionOnce` must await a resolver that can both preserve disclaimer injection and, for Jira only, perform the lookup before the final upstream call.
-- Bound the lookup with a 5s timeout. A slow Atlassian upstream must not stall approval resolution.
 - **Unset-only rule.** If `approvalArgs` already contains `assignee_account_id`, leave it unchanged and log `skipped_existing_assignee`.
 - **Service boundary / DI.** Don't reach into module globals from `buildUpstreamArgs` — pass the Jira lookup resolver in as a dependency (`lookupJiraAccountIdForIssue: (cloudId, email) => Promise<accountId | undefined>`). Makes tests easy, keeps approval replay clean, and gives a single seam to mock when the Atlassian upstream is the disconnected one.
-- Failure modes (all collapse to "drop the assignee, log `api_rejected` with sub-reason"): lookup tool unavailable, zero matches, multiple matches, permission denied, timeout, Atlassian upstream disconnected.
+- Failure modes (all collapse to "drop the assignee, log `api_rejected` with sub-reason"): lookup tool unavailable, zero matches, multiple matches, permission denied, Atlassian upstream disconnected. Wall-clock latency is bounded by the underlying MCP/HTTP client's own timeouts; Thor does not add its own.
 
 **Mutation happens after approval**, matching the existing disclaimer flow — the human approves the agent's payload, Thor stamps attribution before sending upstream. This is the same trust posture Thor already uses for the disclaimer footer; if/when that posture changes, both attributions move together.
 
@@ -162,7 +161,7 @@ Behavior tests (next to existing `gh-disclaimer.test.ts` and `mcp-handler.test.t
 - MCP Jira `createJiraIssue`:
   - Resolved user with `email` + `cloudId` + no existing `assignee_account_id` → `lookupJiraAccountId` called via injected resolver, returned `accountId` lands in upstream payload as `assignee_account_id`.
   - Existing `assignee_account_id` → args unchanged, `skipped_existing_assignee` logged and lookup skipped.
-  - Lookup times out (>5s) → assignee dropped, `api_rejected` logged with sub-reason `lookup_timeout`.
+  - Lookup throws → assignee dropped, `api_rejected` logged with sub-reason `lookup_error`.
   - Lookup returns zero matches → `api_rejected` with `lookup_no_match`.
   - Atlassian upstream disconnected → `api_rejected` with `upstream_disconnected`.
   - Approval replay: the same stored `ApprovalAction` resolved twice produces deterministic args (injected resolver memoizes per action id, or the lookup is repeated and idempotent).

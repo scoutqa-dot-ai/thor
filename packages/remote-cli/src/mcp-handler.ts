@@ -88,20 +88,6 @@ const JiraAccountLookupResultSchema = z
   })
   .passthrough();
 
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | "timeout"> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<"timeout">((resolve) => {
-        timer = setTimeout(() => resolve("timeout"), ms);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 function parseJiraAccountLookupStdout(stdout: string): JiraLookupResult {
   stdout = stdout.trim();
   if (!stdout) return { ok: false, reason: "lookup_no_match" };
@@ -772,26 +758,14 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       });
       return args;
     }
-    let lookup: JiraLookupResult | "timeout";
+    let lookup: JiraLookupResult;
     try {
-      lookup = await withTimeout(
-        lookupJiraAccountIdViaUpstream(instance, cloudId, resolved.user.email),
-        5000,
-      );
+      lookup = await lookupJiraAccountIdViaUpstream(instance, cloudId, resolved.user.email);
     } catch {
       logInfo(log, "attribution_applied", {
         surface: "jira",
         outcome: "api_rejected",
         reason: "lookup_error",
-        ...attributionFields(resolved.actor, resolved.user),
-      });
-      return args;
-    }
-    if (lookup === "timeout") {
-      logInfo(log, "attribution_applied", {
-        surface: "jira",
-        outcome: "api_rejected",
-        reason: "lookup_timeout",
         ...attributionFields(resolved.actor, resolved.user),
       });
       return args;
