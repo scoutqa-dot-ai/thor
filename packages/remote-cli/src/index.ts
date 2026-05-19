@@ -686,13 +686,13 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
       const ids = thorIds(req);
-      const effectiveArgs = withGitAttribution(gitResolution.args, ids.sessionId, getConfig);
       const effectiveCwd = gitResolution.cwd ?? cwd;
       const effectiveCwdError = validateCwd(effectiveCwd);
       if (effectiveCwdError) {
         res.status(400).json({ stdout: "", stderr: effectiveCwdError, exitCode: 1 });
         return;
       }
+      const effectiveArgs = withGitAttribution(gitResolution.args, ids.sessionId, getConfig);
       logInfo(log, "exec_git", {
         args,
         ...(JSON.stringify(effectiveArgs) !== JSON.stringify(args) ? { effectiveArgs } : {}),

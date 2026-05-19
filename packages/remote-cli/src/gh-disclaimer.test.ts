@@ -203,6 +203,24 @@ describe("gh disclaimer injection", () => {
     }, { configLoader: failingConfigLoader });
   });
 
+  it("validates effective git cwd before attempting attribution", async () => {
+    seedActor();
+    const failingConfigLoader = () => {
+      throw new Error("config unavailable");
+    };
+    await withServer(async (url) => {
+      const { response, body } = await postGit(
+        url,
+        ["-C", "/not/allowed", "commit", "-m", "Do work"],
+        "parent",
+      );
+      expect(response.status).toBe(400);
+      expect(body.exitCode).toBe(1);
+      expect(body.stderr).toContain('"git -C" is not allowed.');
+      expect(execCalls).toEqual([]);
+    }, { configLoader: failingConfigLoader });
+  });
+
   it("registers git branch aliases only after successful git push", async () => {
     bindSessionToAnchor("parent", anchorParent);
 
