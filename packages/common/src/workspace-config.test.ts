@@ -48,11 +48,6 @@ describe("loadWorkspaceConfig", () => {
     expect(() => loadWorkspaceConfig(path)).toThrow("Invalid JSON");
   });
 
-  it("rejects unknown top-level fields", () => {
-    const path = writeConfig("config.json", { repos: {} });
-    expect(() => loadWorkspaceConfig(path)).toThrow("Invalid workspace config");
-  });
-
   it("rejects non-positive owner installation IDs with path details", () => {
     const path = writeConfig("config.json", {
       owners: {
@@ -110,16 +105,6 @@ describe("loadWorkspaceConfig", () => {
     expect(findUserByGithub(config, "alice-dev")?.slack).toBe("UABCDEF1");
     expect(findUserByEmail(config, "BOB@example.com")?.name).toBe("Bob");
     expect(findUserBySlack(config, "UNOMATCH")).toBeUndefined();
-  });
-
-  it("rejects duplicate user identities", () => {
-    const path = writeConfig("config.json", {
-      users: [
-        { email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" },
-        { email: "ALICE@example.com", name: "Other", slack: "UZZZZZZ1", github: "other" },
-      ],
-    });
-    expect(() => loadWorkspaceConfig(path)).toThrow("duplicate email");
   });
 
   it("rejects mitmproxy rule without host selector", () => {
@@ -219,25 +204,6 @@ describe("createConfigLoader", () => {
 
     writeFileSync(path, "corrupt{{{");
     expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com"]);
-  });
-
-  it("falls back to last good config when duplicate users are introduced", () => {
-    const path = writeConfig("config.json", {
-      users: [{ email: "alice@example.com", name: "Alice", slack: "UABCDEF1" }],
-    });
-    const getConfig = createConfigLoader(path);
-    expect(getConfig().users?.[0].name).toBe("Alice");
-
-    writeFileSync(
-      path,
-      JSON.stringify({
-        users: [
-          { email: "alice@example.com", name: "Alice", slack: "UABCDEF1" },
-          { email: "bob@example.com", name: "Bob", slack: "UABCDEF1" },
-        ],
-      }),
-    );
-    expect(getConfig().users?.map((u) => u.email)).toEqual(["alice@example.com"]);
   });
 
   it("throws when no file and no previous config", () => {

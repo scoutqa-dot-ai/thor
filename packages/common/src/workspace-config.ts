@@ -24,7 +24,6 @@ const MitmproxyRuleSchema = z
       ),
     readonly: z.boolean().optional().default(false),
   })
-  .strict()
   .superRefine((value, ctx) => {
     const hasHost = typeof value.host === "string";
     const hasHostSuffix = typeof value.host_suffix === "string";
@@ -44,47 +43,20 @@ const MitmproxyPassthroughHostSchema = z.string().refine((value) => {
   return !value.includes("/") && !value.includes(":") && value.length > 0;
 }, "Passthrough entries must be an exact host or a suffix starting with '.'");
 
-const UserRecordSchema = z
-  .object({
-    /** Jira account email; this is also used for visible commit co-author trailers. */
-    email: z.email(),
-    name: z.string().min(1),
-    slack: z.string().min(1).optional(),
-    github: z.string().min(1).optional(),
-  })
-  .strict();
+const UserRecordSchema = z.object({
+  /** Jira account email; this is also used for visible commit co-author trailers. */
+  email: z.email(),
+  name: z.string().min(1),
+  slack: z.string().min(1).optional(),
+  github: z.string().min(1).optional(),
+});
 
-export const WorkspaceConfigSchema = z
-  .object({
-    owners: z.record(z.string(), OwnerConfigSchema).optional(),
-    users: z.array(UserRecordSchema).optional(),
-    mitmproxy: z.array(MitmproxyRuleSchema).optional(),
-    mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    const seen = new Map<string, number>();
-    for (const [index, user] of (value.users ?? []).entries()) {
-      const identities = [
-        ["email", user.email.toLowerCase()],
-        ...(user.slack ? [["slack", user.slack.toUpperCase()]] : []),
-        ...(user.github ? [["github", user.github.toLowerCase()]] : []),
-      ] as Array<[string, string]>;
-      for (const [field, normalized] of identities) {
-        const key = `${field}:${normalized}`;
-        const prior = seen.get(key);
-        if (prior !== undefined) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["users", index, field],
-            message: `duplicate ${field} also used by users.${prior}`,
-          });
-        } else {
-          seen.set(key, index);
-        }
-      }
-    }
-  });
+export const WorkspaceConfigSchema = z.object({
+  owners: z.record(z.string(), OwnerConfigSchema).optional(),
+  users: z.array(UserRecordSchema).optional(),
+  mitmproxy: z.array(MitmproxyRuleSchema).optional(),
+  mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
+});
 
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type OwnerConfig = z.infer<typeof OwnerConfigSchema>;
