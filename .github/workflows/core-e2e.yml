@@ -44,6 +44,7 @@ jobs:
       REMOTE_CLI_GITHUB_REPO: ${{ github.repository }}
       ATTRIBUTION_E2E_SLACK_ID: U_E2E_ATTRIBUTION
       ATTRIBUTION_E2E_NAME: ${{ vars.THOR_E2E_JIRA_NAME || 'Thor E2E Reviewer' }}
+      ATTRIBUTION_E2E_GITHUB: ${{ github.actor }}
       THOR_E2E_JIRA_EMAIL: ${{ vars.THOR_E2E_JIRA_EMAIL || 'thor-e2e-reviewer@example.com' }}
       JIRA_CLOUD_ID: ${{ vars.JIRA_CLOUD_ID }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
@@ -123,7 +124,8 @@ jobs:
               {
                 "email": "${THOR_E2E_JIRA_EMAIL}",
                 "name": "${ATTRIBUTION_E2E_NAME}",
-                "slack": "${ATTRIBUTION_E2E_SLACK_ID}"
+                "slack": "${ATTRIBUTION_E2E_SLACK_ID}",
+                "github": "${ATTRIBUTION_E2E_GITHUB}"
               }
             ]
           }
