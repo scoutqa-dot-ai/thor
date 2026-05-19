@@ -55,14 +55,24 @@ ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
 ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
 ATTRIBUTION_E2E_EMAIL="${ATTRIBUTION_E2E_EMAIL:-thor-e2e-reviewer@example.com}"
 ATTRIBUTION_E2E_GITHUB="${ATTRIBUTION_E2E_GITHUB:-${GITHUB_ACTOR:-thor-e2e-reviewer}}"
+JIRA_ASSIGNEE_E2E="${JIRA_ASSIGNEE_E2E:-}"
+JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
+JIRA_PROJECT_KEY="${JIRA_PROJECT_KEY:-THOR}"
+JIRA_ISSUE_TYPE="${JIRA_ISSUE_TYPE:-Task}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
 export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_EMAIL ATTRIBUTION_E2E_GITHUB
+export JIRA_CLOUD_ID JIRA_PROJECT_KEY JIRA_ISSUE_TYPE
 ATTRIBUTION_E2E_PUSHED_BRANCH=""
 ATTRIBUTION_E2E_PR_NUMBER=""
+JIRA_E2E_ISSUE_KEY=""
 passed=0
 failed=0
 
 cleanup() {
+  if [[ -n "${JIRA_E2E_ISSUE_KEY:-}" && -n "${ATLASSIAN_AUTH:-}" && -n "${JIRA_CLOUD_ID:-}" ]]; then
+    jira_delete_issue "$JIRA_E2E_ISSUE_KEY" >/dev/null 2>&1 || true
+  fi
+
   if [[ -n "${ATTRIBUTION_E2E_PR_NUMBER:-}" && -n "${THOR_INTERNAL_SECRET:-}" ]]; then
     close_payload=$(internal_exec_payload \
       gh \
@@ -164,6 +174,82 @@ internal_exec_payload() {
       cwd: process.argv[2]
     }));
   " "$bin" "$cwd" "$@"
+}
+
+jira_api_base() {
+  local cloud="$JIRA_CLOUD_ID"
+  if [[ "$cloud" == http://* || "$cloud" == https://* ]]; then
+    echo "${cloud%/}/rest/api/3"
+  else
+    echo "https://api.atlassian.com/ex/jira/$cloud/rest/api/3"
+  fi
+}
+
+jira_get_issue() {
+  local issue_key="$1"
+  curl -sS \
+    -H "Authorization: $ATLASSIAN_AUTH" \
+    -H 'Accept: application/json' \
+    "$(jira_api_base)/issue/$issue_key?fields=assignee,summary"
+}
+
+jira_delete_issue() {
+  local issue_key="$1"
+  curl -sS -X DELETE \
+    -H "Authorization: $ATLASSIAN_AUTH" \
+    -H 'Accept: application/json' \
+    "$(jira_api_base)/issue/$issue_key"
+}
+
+find_tool_worklog_entry() {
+  local tool="$1"
+  local decision="$2"
+  local predicate="$3"
+  WORKLOG_DIR="${HOST_WORKSPACE}/worklog" TOOL="$tool" DECISION="$decision" PREDICATE="$predicate" node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const root = process.env.WORKLOG_DIR;
+const tool = process.env.TOOL;
+const decision = process.env.DECISION;
+const predicate = process.env.PREDICATE;
+const files = [];
+
+function walk(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walk(full);
+    else if (entry.isFile() && entry.name.includes(`_tool-call_${tool}.json`)) files.push(full);
+  }
+}
+
+walk(root);
+for (const file of files.sort().reverse()) {
+  try {
+    const entry = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (entry.tool !== tool || entry.decision !== decision) continue;
+    if (predicate === "jira-create-summary" && entry.args?.summary !== process.env.JIRA_E2E_SUMMARY) continue;
+    if (predicate === "jira-lookup-user") {
+      if (entry.args?.cloudId !== process.env.JIRA_CLOUD_ID) continue;
+      if (String(entry.args?.searchString || "").toLowerCase() !== process.env.ATTRIBUTION_E2E_EMAIL.toLowerCase()) continue;
+    }
+    console.log(JSON.stringify(entry));
+    process.exit(0);
+  } catch {}
+}
+process.exit(1);
+NODE
+}
+
+extract_jira_issue_key() {
+  local text="$1"
+  ISSUE_TEXT="$text" PROJECT_KEY="$JIRA_PROJECT_KEY" node <<'NODE' 2>/dev/null || echo ""
+const text = process.env.ISSUE_TEXT || "";
+const project = (process.env.PROJECT_KEY || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const match = text.match(new RegExp("\\b" + project + "-[0-9]+\\b"));
+console.log(match?.[0] || "");
+NODE
 }
 
 assert_attribution_config() {
@@ -685,10 +771,32 @@ elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
+  jira_assignee_live=false
+  if [[ "$JIRA_ASSIGNEE_E2E" == "1" ]]; then
+    assert '[[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" ]]' \
+      "jira attribution e2e: discovered Atlassian createJiraIssue" \
+      "discovered '$APPROVAL_UPSTREAM/$APPROVAL_TOOL'; check ATLASSIAN_AUTH and MCP health"
+    assert '[[ -n "$JIRA_CLOUD_ID" ]]' \
+      "jira attribution e2e: JIRA_CLOUD_ID is set" \
+      "set JIRA_CLOUD_ID to the Jira cloud UUID or site URL"
+    assert '[[ -n "${ATLASSIAN_AUTH:-}" ]]' \
+      "jira attribution e2e: ATLASSIAN_AUTH is available" \
+      "set ATLASSIAN_AUTH so the created issue can be read back from Jira"
+    if [[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" && -n "$JIRA_CLOUD_ID" && -n "${ATLASSIAN_AUTH:-}" ]]; then
+      jira_assignee_live=true
+    fi
+  fi
+
+  trigger_context_body=$(node -e "
+    console.log(JSON.stringify({
+      correlationKey: 'e2e-approval-flow-' + process.env.REMOTE_CLI_AUTH_TS,
+      triggerSlackId: process.env.ATTRIBUTION_E2E_SLACK_ID
+    }));
+  ")
   trigger_context_raw=$(curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
     -H 'Content-Type: application/json' \
     -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-    -d '{"correlationKey":"e2e-approval-flow"}' \
+    -d "$trigger_context_body" \
     2>/dev/null || echo '{}')
   E2E_THOR_SESSION_ID=$(json_field "$trigger_context_raw" "sessionId")
   E2E_THOR_TRIGGER_ID=$(json_field "$trigger_context_raw" "triggerId")
@@ -698,20 +806,35 @@ else
 
   # 4b. remote-cli-level: call the approval-required tool directly
   echo "  Calling tool via remote-cli (expecting approval interception)..."
-  case "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" in
-    atlassian/createJiraIssue)
-      approval_args_json='{"cloudId":"e2e-cloud","projectKey":"THOR","issueTypeName":"Task","summary":"e2e approval summary","description":"e2e approval body"}'
-      ;;
-    atlassian/addCommentToJiraIssue)
-      approval_args_json='{"cloudId":"e2e-cloud","issueIdOrKey":"THOR-1","commentBody":"e2e approval body"}'
-      ;;
-    posthog/create-feature-flag)
-      approval_args_json="{\"key\":\"thor-e2e-approval-${REMOTE_CLI_AUTH_TS}\",\"name\":\"Thor E2E approval ${REMOTE_CLI_AUTH_TS}\",\"description\":\"e2e approval body\",\"active\":false}"
-      ;;
-    *)
-      approval_args_json='{"description":"e2e approval body"}'
-      ;;
-  esac
+  if [[ "$jira_assignee_live" == "true" ]]; then
+    JIRA_E2E_SUMMARY="Thor Jira assignee e2e ${REMOTE_CLI_AUTH_TS}"
+    jira_e2e_description="Jira assignee attribution e2e. Marker: ${REMOTE_CLI_AUTH_TS}"
+    export JIRA_E2E_SUMMARY jira_e2e_description
+    approval_args_json=$(node -e "
+      console.log(JSON.stringify({
+        cloudId: process.env.JIRA_CLOUD_ID,
+        projectKey: process.env.JIRA_PROJECT_KEY,
+        issueTypeName: process.env.JIRA_ISSUE_TYPE,
+        summary: process.env.JIRA_E2E_SUMMARY,
+        description: process.env.jira_e2e_description
+      }));
+    ")
+  else
+    case "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" in
+      atlassian/createJiraIssue)
+        approval_args_json='{"cloudId":"e2e-cloud","projectKey":"THOR","issueTypeName":"Task","summary":"e2e approval summary","description":"e2e approval body"}'
+        ;;
+      atlassian/addCommentToJiraIssue)
+        approval_args_json='{"cloudId":"e2e-cloud","issueIdOrKey":"THOR-1","commentBody":"e2e approval body"}'
+        ;;
+      posthog/create-feature-flag)
+        approval_args_json="{\"key\":\"thor-e2e-approval-${REMOTE_CLI_AUTH_TS}\",\"name\":\"Thor E2E approval ${REMOTE_CLI_AUTH_TS}\",\"description\":\"e2e approval body\",\"active\":false}"
+        ;;
+      *)
+        approval_args_json='{"description":"e2e approval body"}'
+        ;;
+    esac
+  fi
   escaped_approval_args=$(node -e "console.log(JSON.stringify(process.argv[1]))" "$approval_args_json")
   call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
@@ -750,23 +873,79 @@ else
     assert '[[ "$status_val" == "pending" ]]' "remote-cli: approval status is 'pending'" "status='$status_val'"
     assert '[[ "$status_tool" == "$APPROVAL_TOOL" ]]' "remote-cli: approval record has correct tool name" "tool='$status_tool'"
 
-    # 4d. Reject the approval (safe — no side effects on the upstream MCP)
-    echo "  Rejecting approval $action_id..."
-    resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
-      -H 'Content-Type: application/json' \
-      -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-      -d "{\"args\":[\"resolve\",\"$action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
-      2>/dev/null || echo '{}')
-    resolve_exit=$(json_field "$resolve_raw" "exitCode")
-    assert '[[ "$resolve_exit" == "0" ]]' "remote-cli: approval rejection command succeeded" "exitCode='$resolve_exit'"
+    if [[ "$jira_assignee_live" == "true" ]]; then
+      # 4d. Approve the Jira issue creation so the assignee can be verified on Jira.
+      echo "  Approving Jira approval $action_id..."
+      jira_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
+        -H 'Content-Type: application/json' \
+        -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+        -d "{\"args\":[\"resolve\",\"$action_id\",\"approved\",\"e2e-test\",\"e2e test - automated Jira assignee verification\"]}" \
+        2>/dev/null || echo '{}')
+      resolve_exit=$(json_field "$resolve_raw" "exitCode")
+      resolve_stdout=$(json_field "$resolve_raw" "stdout")
+      jira_logs=$(docker logs --since "$jira_log_since" "$remote_cli_container" 2>&1 || true)
+      assert '[[ "$resolve_exit" == "0" ]]' \
+        "jira attribution e2e: approval command succeeded" \
+        "response: ${resolve_raw:0:800}"
+      assert '[[ "$jira_logs" == *"\"surface\":\"jira\",\"outcome\":\"applied\""* ]]' \
+        "jira attribution e2e: Jira attribution was applied" \
+        "logs: ${jira_logs:0:1000}"
 
-    # 4e. Verify final status confirms rejection
+      jira_lookup_entry=$(find_tool_worklog_entry "lookupJiraAccountId" "allowed" "jira-lookup-user" 2>/dev/null || echo "")
+      jira_create_entry=$(find_tool_worklog_entry "createJiraIssue" "approved" "jira-create-summary" 2>/dev/null || echo "")
+      jira_injected_account_id=$(json_field "$jira_create_entry" "args.assignee_account_id")
+      assert '[[ -n "$jira_lookup_entry" ]]' \
+        "jira attribution e2e: lookupJiraAccountId ran for the configured user email" \
+        "expected cloud='$JIRA_CLOUD_ID' email='$ATTRIBUTION_E2E_EMAIL'"
+      assert '[[ -n "$jira_injected_account_id" ]]' \
+        "jira attribution e2e: createJiraIssue received an assignee_account_id" \
+        "worklog entry: ${jira_create_entry:0:800}"
+
+      issue_key=$(extract_jira_issue_key "$resolve_stdout $resolve_raw $jira_create_entry")
+      if [[ -n "$issue_key" ]]; then
+        JIRA_E2E_ISSUE_KEY="$issue_key"
+      fi
+      assert '[[ -n "$issue_key" ]]' \
+        "jira attribution e2e: created issue key was returned" \
+        "response: ${resolve_raw:0:800}"
+
+      if [[ -n "$issue_key" && -n "$jira_injected_account_id" ]]; then
+        jira_issue_raw=$(jira_get_issue "$issue_key" 2>/dev/null || echo '{}')
+        jira_issue_assignee_id=$(echo "$jira_issue_raw" | node -e "
+          const issue = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+          console.log(issue.fields?.assignee?.accountId || '');
+        " 2>/dev/null || echo "")
+        jira_issue_assignee_name=$(echo "$jira_issue_raw" | node -e "
+          const issue = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+          console.log(issue.fields?.assignee?.displayName || issue.fields?.assignee?.emailAddress || '');
+        " 2>/dev/null || echo "")
+        assert '[[ "$jira_issue_assignee_id" == "$jira_injected_account_id" ]]' \
+          "jira attribution e2e: created issue is assigned to the resolved Jira account" \
+          "issue=$issue_key assignee='$jira_issue_assignee_name' accountId='$jira_issue_assignee_id' expected='$jira_injected_account_id'; response: ${jira_issue_raw:0:800}"
+      fi
+    else
+      # 4d. Reject the approval (safe — no side effects on the upstream MCP)
+      echo "  Rejecting approval $action_id..."
+      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
+        -H 'Content-Type: application/json' \
+        -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+        -d "{\"args\":[\"resolve\",\"$action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
+        2>/dev/null || echo '{}')
+      resolve_exit=$(json_field "$resolve_raw" "exitCode")
+      assert '[[ "$resolve_exit" == "0" ]]' "remote-cli: approval rejection command succeeded" "exitCode='$resolve_exit'"
+    fi
+
+    # 4e. Verify final status confirms the approval decision.
     final_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
       -H 'Content-Type: application/json' \
       -d "{\"args\":[\"status\",\"$action_id\"]}" \
       2>/dev/null || echo '{}')
     final_status=$(exec_stdout_field "$final_raw" "status")
-    assert '[[ "$final_status" == "rejected" ]]' "remote-cli: final status confirms 'rejected'" "status='$final_status'"
+    expected_final_status=$([[ "$jira_assignee_live" == "true" ]] && echo "approved" || echo "rejected")
+    assert '[[ "$final_status" == "$expected_final_status" ]]' \
+      "remote-cli: final status confirms '$expected_final_status'" \
+      "status='$final_status'"
   fi
 
 fi
