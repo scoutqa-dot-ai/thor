@@ -49,9 +49,10 @@ REMOTE_CLI_AUTH_TS="${REMOTE_CLI_AUTH_TS:-$(date +%s)}"
 REMOTE_CLI_WORKTREE_BRANCH="${REMOTE_CLI_WORKTREE_BRANCH:-e2e-remote-cli-${REMOTE_CLI_AUTH_TS}}"
 REMOTE_CLI_WORKTREE_DIR="${REMOTE_CLI_WORKTREE_DIR:-/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
 HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
+DEFAULT_ATTRIBUTION_E2E_EMAIL="thor-e2e-reviewer@example.com"
 ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
 ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
-ATTRIBUTION_E2E_EMAIL="${ATTRIBUTION_E2E_EMAIL:-thor-e2e-reviewer@example.com}"
+ATTRIBUTION_E2E_EMAIL="${ATTRIBUTION_E2E_EMAIL:-$DEFAULT_ATTRIBUTION_E2E_EMAIL}"
 JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
 export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_EMAIL
@@ -611,7 +612,7 @@ else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
   jira_assignee_live=false
-  if [[ -n "$JIRA_CLOUD_ID" ]]; then
+  if [[ -n "$JIRA_CLOUD_ID" && "$ATTRIBUTION_E2E_EMAIL" != "$DEFAULT_ATTRIBUTION_E2E_EMAIL" ]]; then
     assert '[[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" ]]' \
       "jira attribution e2e: discovered Atlassian createJiraIssue" \
       "discovered '$APPROVAL_UPSTREAM/$APPROVAL_TOOL'; check ATLASSIAN_AUTH and MCP health"
@@ -621,6 +622,8 @@ else
     if [[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" && -n "${ATLASSIAN_AUTH:-}" ]]; then
       jira_assignee_live=true
     fi
+  elif [[ -n "$JIRA_CLOUD_ID" ]]; then
+    echo "  Skipping Jira assignee e2e: ATTRIBUTION_E2E_EMAIL is the default placeholder"
   fi
 
   trigger_context_body=$(node -e "
