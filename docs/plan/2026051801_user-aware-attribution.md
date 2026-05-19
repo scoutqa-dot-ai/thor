@@ -89,6 +89,7 @@ attribution_applied {
   outcome:  "applied"
           | "skipped_no_trigger"            // findTriggerActor returned undefined
           | "skipped_no_user_record"        // actor known, no UserRecord matches
+          | "skipped_config_unavailable"    // config could not be loaded; attribution remains best-effort
           | "skipped_missing_identity_field"// resolved user lacks the field this surface needs
           | "skipped_unsupported_arg_shape" // e.g. git commit -F
           | "skipped_already_attributed"    // -m value already contains the exact trailer
@@ -173,12 +174,14 @@ Behavior tests (next to existing `gh-disclaimer.test.ts` and `mcp-handler.test.t
 
 Exit: a Slack-triggered run produces a commit with the trailer, a PR assigned to the user's GitHub handle, and a Jira ticket assigned via `assignee_account_id` resolved from the user's email — without any change to `bin/git`, `bin/gh`, or anything inside the sandbox.
 
-### Phase 4 — Seed + ship
+### Phase 4 — Repo cleanup + ship
 
-- Copy `.context/user_registry.json` into the operator's `config.json`. Move the provenance notes (Slack export + GitHub-org reconciliation + manual overrides) to `docs/feat/users-directory-provenance.md`, then delete the `.context/` working files (`users-*.json`, `user_registry.json`, `slack_users.csv`, `test.sh`). Also sweep the untracked `users-200.json` / `users-1631.json` / `stderr.txt` at the repo root left over from extraction runs.
+- Keep user-registry seeding out of git: operators copy the private registry into their mounted `/workspace/config.json`, while this repo commits only sanitized docs and examples.
+- Commit `docs/feat/users-directory-provenance.md` as the durable process note for how the registry is maintained.
+- Delete generated extraction/probe artifacts from the workspace before ship (`users-*.json`, `stderr.txt`, local Jira probes, and any transient root TODO scratch file).
 - Push the branch, let `core-e2e` verify, open the PR.
 
-Exit: green push checks; PR open against `main`.
+Exit: no generated registry artifacts in `git status`; green push checks; PR open against `main`.
 
 ## Decision Log
 
@@ -215,7 +218,7 @@ Exit: green push checks; PR open against `main`.
 - README documents `users`; `.context/` artifacts moved/deleted.
 - Push checks green; PR open against `main`.
 
-## Deferred to TODOS.md
+## Deferred Follow-Ups
 
 - Weekly drift scanner that aggregates `attribution_applied { outcome: "skipped_no_user_record" }`.
 - Multi-field identity model (`triggered_by` / `requested_by` / `acting_agent`).

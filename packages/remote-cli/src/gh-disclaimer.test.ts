@@ -212,6 +212,21 @@ describe("gh disclaimer injection", () => {
     );
   });
 
+  it("passes git commit through when attribution config is unavailable", async () => {
+    seedActor();
+    const failingConfigLoader = () => {
+      throw new Error("config unavailable");
+    };
+    await withServer(
+      async (url) => {
+        const { response } = await postGit(url, ["commit", "-m", "Do work"], "parent");
+        expect(response.status).toBe(200);
+        expect(execCalls[0].args).toEqual(["commit", "-m", "Do work"]);
+      },
+      { configLoader: failingConfigLoader },
+    );
+  });
+
   it("registers git branch aliases only after successful git push", async () => {
     bindSessionToAnchor("parent", anchorParent);
 
