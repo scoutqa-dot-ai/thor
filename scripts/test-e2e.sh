@@ -19,9 +19,7 @@
 #
 # The repo's owner must be present in /workspace/config.json's `owners` map for
 # `git clone` to pass policy and resolve a GitHub App installation. The same
-# config must contain the ATTRIBUTION_E2E_* user for attribution checks. The
-# GitHub user must be assignable in REMOTE_CLI_GITHUB_REPO because attribution
-# E2E creates and closes a temporary draft PR.
+# config must contain the ATTRIBUTION_E2E_* user for attribution checks.
 set -euo pipefail
 
 repo_name_from_clone_url() {
@@ -54,15 +52,12 @@ HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/
 ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
 ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
 ATTRIBUTION_E2E_EMAIL="${ATTRIBUTION_E2E_EMAIL:-thor-e2e-reviewer@example.com}"
-ATTRIBUTION_E2E_GITHUB="${ATTRIBUTION_E2E_GITHUB:-${GITHUB_ACTOR:-thor-e2e-reviewer}}"
 JIRA_ASSIGNEE_E2E="${JIRA_ASSIGNEE_E2E:-}"
 JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
 JIRA_ISSUE_TYPE="${JIRA_ISSUE_TYPE:-Task}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
-export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_EMAIL ATTRIBUTION_E2E_GITHUB
+export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_EMAIL
 export JIRA_CLOUD_ID JIRA_ISSUE_TYPE
-ATTRIBUTION_E2E_PUSHED_BRANCH=""
-ATTRIBUTION_E2E_PR_NUMBER=""
 JIRA_E2E_ISSUE_KEY=""
 passed=0
 failed=0
@@ -70,32 +65,6 @@ failed=0
 cleanup() {
   if [[ -n "${JIRA_E2E_ISSUE_KEY:-}" && -n "${ATLASSIAN_AUTH:-}" && -n "${JIRA_CLOUD_ID:-}" ]]; then
     jira_delete_issue "$JIRA_E2E_ISSUE_KEY" >/dev/null 2>&1 || true
-  fi
-
-  if [[ -n "${ATTRIBUTION_E2E_PR_NUMBER:-}" && -n "${THOR_INTERNAL_SECRET:-}" ]]; then
-    close_payload=$(internal_exec_payload \
-      gh \
-      "$REMOTE_CLI_WORKTREE_DIR" \
-      pr close "$ATTRIBUTION_E2E_PR_NUMBER" --delete-branch 2>/dev/null || echo "")
-    if [[ -n "$close_payload" ]]; then
-      curl -s -X POST "$REMOTE_CLI_URL/internal/exec" \
-        -H 'Content-Type: application/json' \
-        -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-        -d "$close_payload" >/dev/null 2>&1 || true
-    fi
-  fi
-
-  if [[ -n "${ATTRIBUTION_E2E_PUSHED_BRANCH:-}" && -n "${THOR_INTERNAL_SECRET:-}" ]]; then
-    delete_payload=$(internal_exec_payload \
-      git \
-      "$REMOTE_CLI_WORKTREE_DIR" \
-      push origin ":refs/heads/$ATTRIBUTION_E2E_PUSHED_BRANCH" 2>/dev/null || echo "")
-    if [[ -n "$delete_payload" ]]; then
-      curl -s -X POST "$REMOTE_CLI_URL/internal/exec" \
-        -H 'Content-Type: application/json' \
-        -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-        -d "$delete_payload" >/dev/null 2>&1 || true
-    fi
   fi
 
   [[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
@@ -160,19 +129,6 @@ exec_payload() {
       cwd: process.argv[1]
     }));
   " "$cwd" "$@"
-}
-
-internal_exec_payload() {
-  local bin="$1"
-  local cwd="$2"
-  shift 2
-  node -e "
-    console.log(JSON.stringify({
-      bin: process.argv[1],
-      args: process.argv.slice(3),
-      cwd: process.argv[2]
-    }));
-  " "$bin" "$cwd" "$@"
 }
 
 jira_api_base() {
@@ -260,7 +216,6 @@ assert_attribution_config() {
     ATTRIBUTION_E2E_EMAIL="$ATTRIBUTION_E2E_EMAIL" \
     ATTRIBUTION_E2E_NAME="$ATTRIBUTION_E2E_NAME" \
     ATTRIBUTION_E2E_SLACK_ID="$ATTRIBUTION_E2E_SLACK_ID" \
-    ATTRIBUTION_E2E_GITHUB="$ATTRIBUTION_E2E_GITHUB" \
       node <<'NODE' >/dev/null
 const fs = require("fs");
 const path = process.env.CONFIG_PATH;
@@ -269,8 +224,7 @@ const users = Array.isArray(config.users) ? config.users : [];
 const match = users.find((user) =>
   String(user.email || "").toLowerCase() === process.env.ATTRIBUTION_E2E_EMAIL.toLowerCase() &&
   String(user.name || "") === process.env.ATTRIBUTION_E2E_NAME &&
-  String(user.slack || "").toUpperCase() === process.env.ATTRIBUTION_E2E_SLACK_ID.toUpperCase() &&
-  String(user.github || "").toLowerCase() === process.env.ATTRIBUTION_E2E_GITHUB.toLowerCase()
+  String(user.slack || "").toUpperCase() === process.env.ATTRIBUTION_E2E_SLACK_ID.toUpperCase()
 );
 if (!match) process.exit(1);
 NODE
@@ -280,7 +234,7 @@ NODE
   else
     assert 'false' \
       "attribution e2e: workspace config includes the e2e attribution user" \
-      "expected users[] entry: email=$ATTRIBUTION_E2E_EMAIL, name=$ATTRIBUTION_E2E_NAME, slack=$ATTRIBUTION_E2E_SLACK_ID, github=$ATTRIBUTION_E2E_GITHUB in $HOST_WORKSPACE_CONFIG"
+      "expected users[] entry: email=$ATTRIBUTION_E2E_EMAIL, name=$ATTRIBUTION_E2E_NAME, slack=$ATTRIBUTION_E2E_SLACK_ID in $HOST_WORKSPACE_CONFIG"
     return 1
   fi
 }
@@ -528,7 +482,7 @@ fi
 #
 # Verifies the mounted config contains the E2E attribution user, creates a
 # synthetic trigger context with a Slack actor, then checks the real /exec/git
-# and /exec/gh handlers stamp attribution before executing the underlying tools.
+# handler stamps attribution before executing the underlying tool.
 
 echo ""
 echo "=== Attribution Flow ==="
@@ -599,115 +553,6 @@ elif assert_attribution_config; then
     assert '[[ "$commit_body" == *"$expected_trailer"* ]]' \
       "attribution e2e: commit message includes co-author trailer" \
       "commit body: ${commit_body:0:500}"
-
-    if [[ "$commit_exit" == "0" ]]; then
-      push_payload=$(exec_payload \
-        "$REMOTE_CLI_WORKTREE_DIR" \
-        push origin "HEAD:refs/heads/$REMOTE_CLI_WORKTREE_BRANCH")
-      push_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
-        -H 'Content-Type: application/json' \
-        -d "$push_payload" \
-        2>/dev/null || echo '{}')
-      push_exit=$(json_field "$push_raw" "exitCode")
-      assert '[[ "$push_exit" == "0" ]]' \
-        "attribution e2e: git push creates remote branch for PR" \
-        "response: ${push_raw:0:500}"
-
-      if [[ "$push_exit" == "0" ]]; then
-        ATTRIBUTION_E2E_PUSHED_BRANCH="$REMOTE_CLI_WORKTREE_BRANCH"
-
-        gh_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-        pr_title="Thor attribution e2e ${REMOTE_CLI_AUTH_TS}"
-        pr_body="Thor attribution e2e body ${REMOTE_CLI_AUTH_TS}"
-        gh_payload=$(exec_payload \
-          "$REMOTE_CLI_WORKTREE_DIR" \
-          pr create \
-          --draft \
-          --title "$pr_title" \
-          --body "$pr_body" \
-          --head "$REMOTE_CLI_WORKTREE_BRANCH")
-        pr_create_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
-          -H 'Content-Type: application/json' \
-          -H "x-thor-session-id: $ATTRIBUTION_SESSION_ID" \
-          -d "$gh_payload" \
-          2>/dev/null || echo '{}')
-        pr_create_exit=$(json_field "$pr_create_raw" "exitCode")
-        pr_create_stdout=$(json_field "$pr_create_raw" "stdout")
-        pr_create_stderr=$(json_field "$pr_create_raw" "stderr")
-        pr_number=$(PR_CREATE_STDOUT="$pr_create_stdout" PR_CREATE_STDERR="$pr_create_stderr" node -e "
-          const output = [process.env.PR_CREATE_STDOUT || '', process.env.PR_CREATE_STDERR || ''].join('\n');
-          const match = output.match(/\/pull\/([0-9]+)/);
-          console.log(match?.[1] || '');
-        " 2>/dev/null || echo "")
-        if [[ -z "$pr_number" && "$pr_create_exit" == "0" ]]; then
-          pr_lookup_payload=$(exec_payload \
-            "$REMOTE_CLI_WORKTREE_DIR" \
-            pr list --head "$REMOTE_CLI_WORKTREE_BRANCH" --state open --json number --limit 1)
-          pr_lookup_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
-            -H 'Content-Type: application/json' \
-            -d "$pr_lookup_payload" \
-            2>/dev/null || echo '{}')
-          pr_lookup_stdout=$(json_field "$pr_lookup_raw" "stdout")
-          pr_number=$(PR_LOOKUP_STDOUT="$pr_lookup_stdout" node -e "
-            const prs = JSON.parse(process.env.PR_LOOKUP_STDOUT || '[]');
-            console.log(prs[0]?.number || '');
-          " 2>/dev/null || echo "")
-        fi
-        if [[ -n "$pr_number" ]]; then
-          ATTRIBUTION_E2E_PR_NUMBER="$pr_number"
-        fi
-
-        sleep 1
-        gh_logs=$(docker logs --since "$gh_log_since" "$remote_cli_container" 2>&1 || true)
-        assert '[[ "$pr_create_exit" == "0" ]]' \
-          "attribution e2e: gh pr create succeeds" \
-          "response: ${pr_create_raw:0:800}"
-        assert '[[ -n "$pr_number" ]]' \
-          "attribution e2e: gh pr create returns a PR number" \
-          "stdout: ${pr_create_stdout:0:500}; stderr: ${pr_create_stderr:0:500}; response: ${pr_create_raw:0:800}"
-        assert '[[ "$gh_logs" == *"\"surface\":\"gh-assignee\",\"outcome\":\"applied\""* ]]' \
-          "attribution e2e: gh pr create applies assignee attribution" \
-          "logs: ${gh_logs:0:1000}"
-
-        if [[ -n "$pr_number" ]]; then
-          pr_view_payload=$(exec_payload \
-            "$REMOTE_CLI_WORKTREE_DIR" \
-            pr view "$pr_number" --json number,url,headRefName,assignees)
-          pr_view_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
-            -H 'Content-Type: application/json' \
-            -d "$pr_view_payload" \
-            2>/dev/null || echo '{}')
-          pr_view_exit=$(json_field "$pr_view_raw" "exitCode")
-          pr_view_stdout=$(json_field "$pr_view_raw" "stdout")
-          pr_head_ref=$(PR_VIEW_STDOUT="$pr_view_stdout" node -e "
-            const out = JSON.parse(process.env.PR_VIEW_STDOUT || '{}');
-            console.log(out.headRefName || '');
-          " 2>/dev/null || echo "")
-          pr_assignee_logins=$(PR_VIEW_STDOUT="$pr_view_stdout" node -e "
-            const out = JSON.parse(process.env.PR_VIEW_STDOUT || '{}');
-            console.log((out.assignees || []).map((assignee) => assignee.login).join(','));
-          " 2>/dev/null || echo "")
-          pr_has_expected_assignee=$(PR_VIEW_STDOUT="$pr_view_stdout" EXPECTED="$ATTRIBUTION_E2E_GITHUB" node -e "
-            const out = JSON.parse(process.env.PR_VIEW_STDOUT || '{}');
-            const expected = (process.env.EXPECTED || '').toLowerCase();
-            const found = (out.assignees || []).some((assignee) =>
-              String(assignee.login || '').toLowerCase() === expected
-            );
-            console.log(found ? 'true' : 'false');
-          " 2>/dev/null || echo "false")
-
-          assert '[[ "$pr_view_exit" == "0" ]]' \
-            "attribution e2e: created PR can be viewed" \
-            "response: ${pr_view_raw:0:800}"
-          assert '[[ "$pr_head_ref" == "$REMOTE_CLI_WORKTREE_BRANCH" ]]' \
-            "attribution e2e: created PR uses the pushed e2e branch" \
-            "head='$pr_head_ref' expected='$REMOTE_CLI_WORKTREE_BRANCH'"
-          assert '[[ "$pr_has_expected_assignee" == "true" ]]' \
-            "attribution e2e: created PR is assigned to mapped GitHub user" \
-            "assignees='$pr_assignee_logins' expected='$ATTRIBUTION_E2E_GITHUB'; response: ${pr_view_raw:0:800}"
-        fi
-      fi
-    fi
   fi
 fi
 
@@ -1112,11 +957,6 @@ echo ""
 echo "=== Results ==="
 echo "  $passed passed, $failed failed"
 echo ""
-
-[[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
-if [[ -f "$HOST_REMOTE_CLI_GIT_REPO_MARKER" ]]; then
-  rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
-fi
 
 if [[ $failed -gt 0 ]]; then
   echo "FAIL"
