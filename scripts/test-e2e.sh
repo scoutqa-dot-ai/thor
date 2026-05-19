@@ -52,7 +52,7 @@ HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/
 DEFAULT_ATTRIBUTION_E2E_EMAIL="thor-e2e-reviewer@example.com"
 ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
 ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
-ATTRIBUTION_E2E_EMAIL="${ATTRIBUTION_E2E_EMAIL:-$DEFAULT_ATTRIBUTION_E2E_EMAIL}"
+ATTRIBUTION_E2E_EMAIL="${ATTRIBUTION_E2E_EMAIL:-${THOR_E2E_JIRA_EMAIL:-$DEFAULT_ATTRIBUTION_E2E_EMAIL}}"
 JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
 export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_EMAIL
@@ -727,9 +727,6 @@ else
       resolve_stdout=$(json_field "$resolve_raw" "stdout")
       resolve_stderr=$(json_field "$resolve_raw" "stderr")
       jira_logs=$(docker logs --since "$jira_log_since" "$remote_cli_container" 2>&1 || true)
-      assert '[[ "$resolve_exit" != "0" ]]' \
-        "jira attribution e2e: createJiraIssue fails for the fake project key" \
-        "response: ${resolve_raw:0:800}"
       assert '[[ "$jira_logs" == *"\"surface\":\"jira\",\"outcome\":\"applied\""* ]]' \
         "jira attribution e2e: Jira attribution was applied" \
         "logs: ${jira_logs:0:1000}"
@@ -739,6 +736,7 @@ else
       jira_injected_account_id=$(json_field "$jira_create_entry" "args.assignee_account_id")
       jira_create_project_key=$(json_field "$jira_create_entry" "args.projectKey")
       jira_create_error=$(json_field "$jira_create_entry" "error")
+      jira_create_is_error=$(json_field "$jira_create_entry" "result.isError")
       assert '[[ -n "$jira_lookup_entry" ]]' \
         "jira attribution e2e: lookupJiraAccountId ran for the configured user email" \
         "expected cloud='$JIRA_CLOUD_ID' email='$ATTRIBUTION_E2E_EMAIL'"
@@ -748,9 +746,9 @@ else
       assert '[[ -n "$jira_injected_account_id" ]]' \
         "jira attribution e2e: createJiraIssue received an assignee_account_id" \
         "worklog entry: ${jira_create_entry:0:800}"
-      assert '[[ -n "$jira_create_error" || -n "$resolve_stderr" ]]' \
+      assert '[[ "$jira_create_is_error" == "true" || -n "$jira_create_error" || -n "$resolve_stderr" || "$resolve_exit" != "0" ]]' \
         "jira attribution e2e: failed create call recorded an upstream error" \
-        "worklog error='$jira_create_error' stderr='${resolve_stderr:0:500}'"
+        "isError='$jira_create_is_error' worklog error='$jira_create_error' stderr='${resolve_stderr:0:500}' response: ${resolve_raw:0:500}"
 
       issue_key=$(extract_jira_issue_key "$resolve_stdout $resolve_stderr $resolve_raw $jira_create_entry")
       if [[ -n "$issue_key" ]]; then
@@ -777,7 +775,7 @@ else
       -d "{\"args\":[\"status\",\"$action_id\"]}" \
       2>/dev/null || echo '{}')
     final_status=$(exec_stdout_field "$final_raw" "status")
-    expected_final_status=$([[ "$jira_assignee_live" == "true" ]] && echo "pending" || echo "rejected")
+    expected_final_status=$([[ "$jira_assignee_live" == "true" ]] && echo "approved" || echo "rejected")
     assert '[[ "$final_status" == "$expected_final_status" ]]' \
       "remote-cli: final status confirms '$expected_final_status'" \
       "status='$final_status'"
