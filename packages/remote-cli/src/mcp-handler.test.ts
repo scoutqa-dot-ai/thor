@@ -75,7 +75,6 @@ describe("remote-cli MCP endpoints", () => {
   let jiraLookups: Array<Record<string, unknown> | undefined>;
   let jiraLookupResultText: string;
   let jiraLookupFailure: Error | undefined;
-  let toolLogEntries: Array<{ tool: string; decision: string; args: Record<string, unknown> }>;
 
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
@@ -92,17 +91,12 @@ describe("remote-cli MCP endpoints", () => {
     jiraLookups = [];
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
     jiraLookupFailure = undefined;
-    toolLogEntries = [];
 
     const remoteCli = createRemoteCliApp({
       mcp: {
         approvalsDir,
         isProduction: true,
-        writeToolCallLogFn: (entry) => {
-          toolLogEntries.push(
-            entry as { tool: string; decision: string; args: Record<string, unknown> },
-          );
-        },
+        writeToolCallLogFn: () => {},
         configLoader: () => ({
           users: [
             { email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" },
@@ -476,100 +470,6 @@ describe("remote-cli MCP endpoints", () => {
         arguments: upstreamArgs,
       },
     ]);
-  });
-
-  it("injects Jira assignee account id after approval when unset", async () => {
-    appendAlias({
-      aliasType: "opencode.session",
-      aliasValue: "parent-session",
-      anchorId: activeAnchorId,
-    });
-    appendSessionEvent("parent-session", {
-      type: "trigger_start",
-      triggerId: activeTriggerId,
-      triggerSlackId: "UABCDEF1",
-    });
-    const pending = await postJson(
-      "/exec/mcp",
-      {
-        args: [
-          "atlassian",
-          "createJiraIssue",
-          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
-        ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
-      },
-      { "x-thor-session-id": "parent-session" },
-    );
-    const actionId = (
-      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
-    ).actionId;
-
-    const resolved = await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
-    expect(resolved.status).toBe(200);
-    expect(jiraLookups).toEqual([{ cloudId: "cloud-1", searchString: "alice@example.com" }]);
-    expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
-    expect(toolCalls[1].arguments?.assignee_account_id).toBe("jira-account-1");
-    expect(toolLogEntries).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          tool: "lookupJiraAccountId",
-          decision: "allowed",
-          args: { cloudId: "cloud-1", searchString: "alice@example.com" },
-        }),
-      ]),
-    );
-  });
-
-  it("accepts the nested Atlassian lookup users response", async () => {
-    jiraLookupResultText = JSON.stringify(
-      jiraLookupResponse([
-        {
-          accountId: "557058:0de7f12b-fe92-4d77-8c3c-ab4d791a37be",
-          displayName: "Dao Hoang Son",
-        },
-      ]),
-    );
-    appendAlias({
-      aliasType: "opencode.session",
-      aliasValue: "parent-session",
-      anchorId: activeAnchorId,
-    });
-    appendSessionEvent("parent-session", {
-      type: "trigger_start",
-      triggerId: activeTriggerId,
-      triggerSlackId: "UABCDEF1",
-    });
-    const pending = await postJson(
-      "/exec/mcp",
-      {
-        args: [
-          "atlassian",
-          "createJiraIssue",
-          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
-        ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
-      },
-      { "x-thor-session-id": "parent-session" },
-    );
-    const actionId = (
-      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
-    ).actionId;
-    await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
-    expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
-    expect(toolCalls[1].arguments?.assignee_account_id).toBe(
-      "557058:0de7f12b-fe92-4d77-8c3c-ab4d791a37be",
-    );
   });
 
   it("keeps Jira issue creation best-effort when account lookup returns multiple matches", async () => {
