@@ -195,15 +195,11 @@ For human GitHub comment/review wakes, follow the same-surface rule after the wo
 
 `push` — branch was updated by someone, re-read HEAD to reorient yourself. `sender.login` distinguishes your own pushes from others; `git log <before>..<after>` shows what landed on a fast-forward, but on a divergent reset `<before>` may not be reachable, so use `git log -10` against the new HEAD instead.
 
-`check_suite.completed` — gateway wakeups are limited to actionable failed conclusions (`failure`, `timed_out`, `action_required`) for commits you authored on this branch. What you do depends on `conclusion`:
+`check_suite.completed` — gateway only wakes you on actionable failed conclusions (`failure`, `timed_out`, `action_required`) for commits you authored on this branch. Pull the failed jobs with `gh run view <id> --log-failed`, classify the cause, then act:
 
-- `success` — stay silent
-- `failure` / `timed_out` / `action_required` — pull the failed jobs with `gh run view <id> --log-failed`, classify the cause, then act:
-  - **Defect introduced by this branch** (test failure, type error, lint, build break) — notify the requester about your intended fix then dispatch the implement → review loop on the existing worktree and let the next CI run verify. The Log line carries cause + fix sha.
-  - **Clear flake or transient infra** (runner OOM, registry timeout, network) — `gh run rerun <id> --failed` once.
-  - **Cause not localized after one investigation hop** — notify the original requester about the failed jobs, suspected cause, and a link to the run.
-- `cancelled` — usually superseded by a new push or a manual cancel; wait for the next event before acting.
-- `stale` / `skipped` / `neutral` — informational only.
+- **Defect introduced by this branch** (test failure, type error, lint, build break) — notify the requester about your intended fix then dispatch the implement → review loop on the existing worktree and let the next CI run verify. The Log line carries cause + fix sha.
+- **Clear flake or transient infra** (runner OOM, registry timeout, network) — `gh run rerun <id> --failed` once.
+- **Cause not localized after one investigation hop** — notify the original requester about the failed jobs, suspected cause, and a link to the run.
 
 `pull_request.closed` — check `pull_request.merged` then terminate the run: on merge, set `Lifecycle: merged` and `Verdict: MERGED`; on abandon, set `Lifecycle: abandoned` (leave `Verdict:` as the last review value). Stop acting on the run — do not keep pushing to a merged branch unless explicitly asked.
 
