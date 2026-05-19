@@ -140,7 +140,11 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     user: "U1",
     type: "message",
   } as const;
-  const channelRepos = new Map([["C123", "my-repo"]]);
+  const slackDirectoryForChannel = () => ({
+    directory: "/workspace/repos/my-repo",
+    repoName: "my-repo",
+    source: "default" as const,
+  });
 
   it("posts, updates, and deletes progress messages via Slack Web API", async () => {
     const lines = [
@@ -178,7 +182,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       slackDeps,
       false,
       undefined,
-      channelRepos,
+      slackDirectoryForChannel,
     );
     expect(result.busy).toBe(false);
 
@@ -218,7 +222,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       slackDeps,
       false,
       undefined,
-      channelRepos,
+      slackDirectoryForChannel,
     );
 
     await new Promise((r) => setTimeout(r, 50));
@@ -249,7 +253,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       slackDeps,
       false,
       undefined,
-      channelRepos,
+      slackDirectoryForChannel,
     );
     expect(result.busy).toBe(false);
 
@@ -285,7 +289,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       slackDeps,
       false,
       undefined,
-      channelRepos,
+      slackDirectoryForChannel,
     );
 
     await new Promise((r) => setTimeout(r, 50));
@@ -323,7 +327,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       slackDeps,
       false,
       undefined,
-      channelRepos,
+      slackDirectoryForChannel,
     );
 
     await new Promise((r) => setTimeout(r, 50));
@@ -364,7 +368,7 @@ describe("triggerRunnerSlack edge cases", () => {
       slackDeps,
       false,
       undefined,
-      new Map([["C123", "repo"]]),
+      () => ({ directory: "/workspace/repos/my-repo", repoName: "repo", source: "default" }),
       onRejected,
     );
 
@@ -378,15 +382,11 @@ describe("triggerRunnerSlack edge cases", () => {
 
     const { triggerRunnerSlack } = await import("./service.js");
     await expect(
-      triggerRunnerSlack(
-        [slackEvent],
-        "key1",
-        runnerDeps,
-        slackDeps,
-        false,
-        undefined,
-        new Map([["C123", "repo"]]),
-      ),
+      triggerRunnerSlack([slackEvent], "key1", runnerDeps, slackDeps, false, undefined, () => ({
+        directory: "/workspace/repos/my-repo",
+        repoName: "repo",
+        source: "default",
+      })),
     ).rejects.toThrow("Runner returned 500");
   });
 });
@@ -617,7 +617,7 @@ describe("approval outcome prompts", () => {
       noopSlackDeps(),
       false,
       undefined,
-      new Map([["C123", "my-repo"]]),
+      () => ({ directory: "/workspace/repos/my-repo", repoName: "my-repo", source: "default" }),
       undefined,
       [
         {
@@ -637,6 +637,48 @@ describe("approval outcome prompts", () => {
     const body = JSON.parse(req.body);
     expect(body.prompt).toContain("Slack event:");
     expect(body.prompt).toContain("act-1");
+  });
+});
+
+describe("planBatchDispatch", () => {
+  it("includes Slack routing provenance in the runner prompt", async () => {
+    const { planBatchDispatch } = await import("./service.js");
+    const slackDirectoryForChannel = vi.fn(() => ({
+      directory: "/workspace/repos/thor",
+      repoName: "thor",
+      source: "override" as const,
+      overridePath: "/workspace/memory/thor/repo-by-slack-channel/C123.txt",
+    }));
+
+    const plan = await planBatchDispatch({
+      slackEvents: [
+        {
+          channel: "C123",
+          ts: "1710000000.001",
+          text: "which repo are you using?",
+          user: "U123",
+          type: "message",
+          thread_ts: "1710000000.001",
+        },
+      ],
+      cronEvents: [],
+      githubEvents: [],
+      approvalOutcomes: [],
+      correlationKey: "slack:thread:C123/1710000000.001",
+      deps: { runnerUrl: "http://runner:3000" },
+      slackDeps: noopSlackDeps(),
+      slackDirectoryForChannel,
+    });
+
+    expect(plan.kind).toBe("dispatch");
+    if (plan.kind !== "dispatch") return;
+
+    expect(slackDirectoryForChannel).toHaveBeenCalledTimes(1);
+    expect(plan.options.prompt).toContain("[Slack routing]");
+    expect(plan.options.prompt).toContain("routed to repo `thor` via override file");
+    expect(plan.options.prompt).toContain(
+      "replace the contents of `/workspace/memory/thor/repo-by-slack-channel/C123.txt`",
+    );
   });
 });
 
@@ -673,7 +715,7 @@ describe("triggerRunnerApprovalOutcomes", () => {
       noopSlackDeps(),
       false,
       onAccepted,
-      new Map([["C123", "my-repo"]]),
+      () => ({ directory: "/workspace/repos/my-repo", repoName: "my-repo", source: "default" }),
     );
 
     const outcome = await Promise.race([

@@ -1722,7 +1722,7 @@ describe("gateway", () => {
     });
   });
 
-  it("enqueues check_suite events only when the branch has an existing session alias", async () => {
+  it("enqueues actionable check_suite events only when the branch has an existing session alias", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi
       .fn()
@@ -1739,7 +1739,7 @@ describe("gateway", () => {
       await withServer(
         fetchImpl,
         async (baseUrl, _queue, queueDir) => {
-          const body = checkSuiteWebhookBody();
+          const body = checkSuiteWebhookBody({ conclusion: "failure" });
           const response = await fetch(`${baseUrl}/github/webhook`, {
             method: "POST",
             headers: {
@@ -1768,7 +1768,7 @@ describe("gateway", () => {
               check_suite: {
                 head_sha: "abc123def456",
                 head_branch: "feature/refactor",
-                conclusion: "success",
+                conclusion: "failure",
               },
             },
           });
@@ -1802,6 +1802,58 @@ describe("gateway", () => {
       cwd: "/workspace/repos/thor",
     });
   });
+
+  it.each(["success", "cancelled", "neutral", null])(
+    "ignores non-actionable check_suite conclusion %p",
+    async (conclusion) => {
+      const fetchImpl = vi.fn<typeof fetch>();
+      const internalExec = vi.fn();
+
+      await withWorklogDir(async (worklogDir) => {
+        sessionKeys.add("git:branch:thor:feature/refactor");
+
+        await withServer(
+          fetchImpl,
+          async (baseUrl, _queue, queueDir) => {
+            const body = checkSuiteWebhookBody({ conclusion });
+            const response = await fetch(`${baseUrl}/github/webhook`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+                "X-GitHub-Delivery": `delivery-check-suite-non-actionable-${String(conclusion)}`,
+                "X-GitHub-Event": "check_suite",
+              },
+              body,
+            });
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({ ok: true, ignored: true });
+            expect(readQueuedEvents(queueDir)).toHaveLength(0);
+            expect(internalExec).not.toHaveBeenCalled();
+
+            const ignored = readGitHubIgnoredEntries(worklogDir);
+            expect(ignored).toHaveLength(1);
+            expect(ignored[0]).toMatchObject({
+              reason: "check_suite_non_actionable",
+              eventType: "check_suite",
+              metadata: {
+                headSha: "abc123def456",
+                conclusion,
+              },
+            });
+          },
+          {
+            githubWebhookSecret: "github-secret",
+            githubMentionLogins: ["thor", "thor[bot]"],
+            githubAppBotId: 7777,
+            githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+            internalExec,
+          },
+        );
+      });
+    },
+  );
 
   it.each([
     {
@@ -1982,7 +2034,7 @@ describe("gateway", () => {
         await withServer(
           fetchImpl,
           async (baseUrl, _queue, queueDir) => {
-            const body = checkSuiteWebhookBody();
+            const body = checkSuiteWebhookBody({ conclusion: "failure" });
             const response = await fetch(`${baseUrl}/github/webhook`, {
               method: "POST",
               headers: {
@@ -2390,8 +2442,9 @@ describe("gateway", () => {
       expect(triggerCall).toBeDefined();
       const triggerBody = JSON.parse(String(triggerCall![1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
-      const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
-      const promptPayload = JSON.parse(promptJson);
+      const promptJson = triggerBody.prompt.split(/Slack event:\n\n/).at(-1);
+      expect(promptJson).toBeDefined();
+      const promptPayload = JSON.parse(promptJson!);
       expect(promptPayload.event_type).toBe("app_mention");
       expect(promptPayload.channel).toBe("C123");
       expect(promptPayload.text).toContain("investigate checkout errors");
@@ -2600,8 +2653,9 @@ describe("gateway", () => {
       expect(triggerCalls).toHaveLength(1);
       const triggerBody = JSON.parse(String(triggerCalls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
-      const promptJson = triggerBody.prompt.split("\n\n").slice(1).join("\n\n");
-      const promptPayloads = JSON.parse(promptJson);
+      const promptJson = triggerBody.prompt.split(/Slack events:\n\n/).at(-1);
+      expect(promptJson).toBeDefined();
+      const promptPayloads = JSON.parse(promptJson!);
       expect(promptPayloads).toHaveLength(3);
       expect(promptPayloads[0].text).toContain("message 1");
       expect(promptPayloads[2].text).toContain("message 3");

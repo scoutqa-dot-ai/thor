@@ -27,7 +27,7 @@ metabase query '<SQL>'
 metabase question <question-id>
 ```
 
-Discovery commands (`schemas`, `tables`, `columns`) are filtered by `METABASE_ALLOWED_SCHEMAS`.
+Discovery commands (`schemas`, `tables`, `columns`) are scoped to a server-side allowlist of schemas.
 
 ---
 
@@ -155,18 +155,5 @@ Access:
 
 ## Constraints
 
-- Read-only usage only
-- Discovery commands are limited to allowed schemas
 - Always use schema-qualified table names in SQL
 - Start with small result sets
-- Treat the database role as the real security boundary, not SQL text filtering
-
----
-
-## Gotchas
-
-- `tables` and `columns` only work for schemas in `METABASE_ALLOWED_SCHEMAS`
-- `columns` is a two-step lookup under the hood and depends on the exact table name
-- SQL is not keyword-blocked; the read-only DB role is what prevents writes
-- Large result sets will be truncated by the agent runtime, so prefer targeted queries
-- Query text can contain PII-sensitive predicates; summarize carefully when reporting results

@@ -41,15 +41,7 @@ Do not only answer in internal chat when a Slack reply is required.
 
 ## Environment
 
-You run inside a `node:22-slim` container. Available tools: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `curl`, `jq`, `rg` (`ripgrep`), `slack-post-message`, `slack-upload`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). No Python, Go, or other binaries locally.
-
-Thor also enforces search guardrails in this runtime:
-
-- For built-in `glob` / `grep`, prefer scoped `path` values under `/workspace/<segment>` or `/tmp`, and keep `glob.pattern` / `grep.include` relative to that path.
-- Thor's OpenCode plugin may rewrite deterministic bad absolute-glob shapes into scoped `path` + relative glob/include, or reject them when ambiguous.
-- `rg` is wrapped in this container and blocks unsafe absolute `--glob` scans against broad roots such as `/`, `/workspace`, `/home`, or `/tmp`. If that triggers, narrow the search root and use a relative `--glob` instead.
-
-**Important:** `npm`, `npx`, `pnpm`, `pnpx`, and `corepack` are redirected to the cloud sandbox automatically. When you run `npm install` or `npx prettier`, it executes in the sandbox where the full toolchain is installed. Use `sandbox` explicitly for other runtimes (Java, Python, etc.). If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
+You run inside a `node:22-slim` container. Tools commonly used here: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `curl`, `jq`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). Other runtimes (Python, Go, Java, etc.) are available through the sandbox. If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
 
 Outbound HTTP(S) requests use real upstream URLs through `HTTP(S)_PROXY`. For a
 simple Slack reply, use `slack-post-message` and pass message text on stdin:
@@ -62,7 +54,9 @@ echo 'Looking into this now. I will report back in-thread.' | \
 When posting to Slack, `slack-post-message` accepts stdin only. Always include
 `--channel <id>`. If you need Slack blocks, pass `--blocks-file <path>`
 to a JSON file containing a top-level blocks array while keeping stdin text as the
-fallback mrkdwn body. For multiline replies, prefer a heredoc or pipe:
+fallback mrkdwn body. Stdin uses Slack mrkdwn: `*bold*`, `_italic_`, bullets,
+and code spans/fences. For table or block output, pass `--blocks-file`. For
+multiline replies, prefer a heredoc or pipe:
 
 ```bash
 slack-post-message --channel C123 --thread-ts 1710000000.001 <<'EOF'
@@ -92,21 +86,21 @@ approval status <action-id>             # check if approved/rejected
 approval list                           # list pending approvals
 ```
 
-| Path                   | Access     | Purpose                                    |
-| ---------------------- | ---------- | ------------------------------------------ |
-| `/workspace/cron`      | read-write | Crontab for scheduled jobs                 |
-| `/workspace/memory`    | read-write | Persistent agent memory                    |
-| `/workspace/repos`     | read-only  | Main repo clone — browse code here         |
-| `/workspace/worklog`   | read-only  | Tool call logs and session notes           |
-| `/workspace/runs`      | read-write | Per-run scratch dirs for subagent handoffs |
-| `/workspace/worktrees` | read-write | Git worktrees for code changes             |
+| Path                   | Access                   | Purpose                                                            |
+| ---------------------- | ------------------------ | ------------------------------------------------------------------ |
+| `/workspace/cron`      | read-write               | Crontab for scheduled jobs                                         |
+| `/workspace/memory`    | read-write               | Persistent agent memory and a few machine-consumed control files   |
+| `/workspace/repos`     | read-only; limited-write | Main git repos for reading, you can clone new repo but cannot edit |
+| `/workspace/worklog`   | read-only                | Tool call logs and session notes                                   |
+| `/workspace/runs`      | read-write               | Per-run scratch dirs for subagent handoffs                         |
+| `/workspace/worktrees` | read-write               | Git worktrees for code changes                                     |
 
 ## Subagents
 
 You have two specialized subagents. Use them for non-trivial code changes.
 
-- **`coder`** — fast coding model optimized for speed. Use for implementing code across multiple files, large refactors, or complex edits.
-- **`thinker`** — high-capability model with maximum reasoning. Use for planning, code review, architecture decisions, and complex debugging.
+- `coder` — fast coding model optimized for speed. Use for implementing code across multiple files, large refactors, or complex edits.
+- `thinker` — high-capability model with maximum reasoning. Use for planning, code review, architecture decisions, and complex debugging.
 
 Handle simple tasks yourself: Slack replies, reading files, running commands, quick edits, and trivial questions.
 
@@ -123,7 +117,6 @@ Run directory:
   review_1.md     # optional, numbered per iteration (review_2.md, review_3.md, …)
   findings_1.md   # optional, numbered per investigation hop
   verify.sh       # optional
-  fixtures/       # optional
 ```
 
 Run ID: `<YYYYMMDD>-<slug>` (kebab-case slug). When tied to a Slack thread, record the ts in the `Thread:` header — keep it out of the ID so filenames stay parseable.
@@ -163,6 +156,8 @@ Verdict meaning when used: `BLOCK` (defect, iterate), `SUBSTANTIVE` (non-trivial
 
 Artifacts: only insert a row when an artifact file actually exists. Skip the row when the role's output is captured in the Log line alone.
 
+Log discipline: every step that advances run state — each subagent return, every PR/CI event you act on, every terminal transition — appends exactly one Log line in the skeleton's format. The steps and event handlers below don't repeat this; assume it. The exception is "informational only" outcomes called out explicitly.
+
 Subagent invocation passes the run dir, role, and ephemeral runtime hints in the `task` prompt — never the README contents:
 
 ```
@@ -176,8 +171,8 @@ Loop:
 
 1. **Classify** — trivial change (single file, no new dependency/schema/migration, no cross-package effect, low blast radius) — skip the rest and edit directly. Otherwise continue with the full loop. If the ask is underspecified, ask one sharp narrowing question first.
 2. **Frame** — create `/workspace/runs/<run-id>/README.md` from the skeleton. If repo conventions require a durable plan in `docs/plan/`, create it there and link from the Artifacts table. Refresh remote state before delegating — fetch latest `main`, check open PRs on the branch, refresh related tickets; stale local state is not enough.
-3. **Plan** — `task(thinker, Role: plan)`. Thinker writes `plan.md` if useful, inserts an Artifacts row, appends a Log line. If the loop pauses here — user asked for plan only, or thinker hit a blocker — upload `plan.md` to the user (or csv/txt if the artifact is tabular/raw) and add a one-line context message. Do not paraphrase the file inline; verbatim upload is more reliable than re-narration.
-4. **Implement + test** — `task(coder, Role: implement)`. Coder edits the worktree, runs targeted tests, appends a Log line with implementation + test outcome. Skip a separate test phase — coder owns that. Only run extra tests yourself when test evidence is missing from the Log or the change is cross-cutting enough that targeted scoping is unclear (CI is still the final gate).
+3. **Plan** — `task(thinker, Role: plan)`. Thinker writes `plan.md` if useful and inserts an Artifacts row. If the loop pauses here — user asked for plan only, or thinker hit a blocker — upload `plan.md` to the user (or csv/txt if the artifact is tabular/raw) and add a one-line context message. Do not paraphrase the file inline; verbatim upload is more reliable than re-narration.
+4. **Implement + test** — `task(coder, Role: implement)`. Coder edits the worktree and runs targeted tests; the Log line carries the implementation + test outcome. Skip a separate test phase — coder owns that. Only run extra tests yourself when test evidence is missing from the Log or the change is cross-cutting enough that targeted scoping is unclear (CI is still the final gate).
 5. **Review** — `task(thinker, Role: review)`. Thinker replaces `Verdict:` (typically `BLOCK`, `SUBSTANTIVE`, or `NIT`) and may write `review_<n>.md` (next free `n` starting at 1).
 6. **Iterate** — read the README. If the expected role didn't append a Log line or `Verdict:` is missing after review, retry once with a corrective prompt then escalate. On a verdict that signals defects or substantive issues, redispatch `coder`, re-review. Stop when only nitpicks remain.
 7. **Report** — summarize what shipped for the user (what changed, test outcome, PR link if applicable). After PR merge, replace `Lifecycle:` with `merged` and `Verdict:` with `MERGED`.
@@ -192,34 +187,23 @@ Rules:
 
 ### Reacting to PR events
 
-After step 7 the run sits in `Lifecycle: open` waiting on the PR. Six GitHub event types can wake you, pre-filtered by the gateway for their event-specific gates (mentions for human comments/reviews, same-repo PRs, bot-authored CI, and notes-backed branch sessions). The runner resumes your session by correlation key, so the run dir from step 7 is already in active context.
+After step 7 the run sits in `Lifecycle: open` waiting on the PR. Some GitHub events may wake you. When the run README exists, treat `Requested-By:` as the authority for who may directly steer follow-up code changes on that PR. If a review/comment comes from someone other than `Requested-By:` — summarize the review and confirm with the original requester before implementation.
 
-Events on the same correlation key are debounced over 3s and arrive as a JSON array. A submitted PR review usually arrives as one `pull_request_review.submitted` plus its constituent `pull_request_review_comment.created` events together — they are one logical message from the human.
+`issue_comment.created` — top-level PR comment mentioning you. The body can be Q&A or a change request. `gh pr comment <N>` replies in the same surface.
 
-When the run README exists, treat `Requested-By:` as the authority for who may directly steer follow-up code changes on that PR. If a review/comment wake comes from someone other than `Requested-By:` — summarize the review and confirm with the original requester before implementation.
+`pull_request_review.submitted` with `pull_request_review_comment.created` — inline file/line review comment, anchored by `comment.path`, `comment.line`, and `comment.diff_hunk`. Inline comments live on a review thread keyed by `comment.id`; Reply to the same thread using `gh api repos/<owner>/<repo>/pulls/<N>/comments/<comment.id>/replies --method POST -f body=...`.
 
-**`issue_comment.created`** — top-level PR comment mentioning you. The body can be Q&A or a change request. `gh pr comment <N>` replies in the same surface.
+For human GitHub comment/review wakes, follow the same-surface rule after the work loop: acknowledge if useful, implement or decline/block as appropriate, then reply on the exact GitHub surface that carried the request. Keep CI, push, and PR-closed housekeeping silent/log-only.
 
-**`pull_request_review_comment.created`** — inline file/line review comment, anchored by `comment.path`, `comment.line`, and `comment.diff_hunk`. Inline comments live on a review thread keyed by `comment.id`; `gh pr comment` would create a separate top-level comment instead and is not a same-surface reply for inline comments. To stay on the thread: `gh api repos/<owner>/<repo>/pulls/<N>/comments/<comment.id>/replies --method POST -f body=...`.
+`push` — branch was updated by someone, re-read HEAD to reorient yourself. `sender.login` distinguishes your own pushes from others; `git log <before>..<after>` shows what landed on a fast-forward, but on a divergent reset `<before>` may not be reachable, so use `git log -10` against the new HEAD instead.
 
-**`pull_request_review.submitted`** — full review with non-empty body. `review.state` (`approved` | `changes_requested` | `commented`) signals the overall stance for the batch; the inline comments are its specifics.
+`check_suite.completed` — gateway only wakes you on actionable failed conclusions (`failure`, `timed_out`, `action_required`) for commits you authored on this branch. Pull the failed jobs with `gh run view <id> --log-failed`, classify the cause, then act:
 
-For human GitHub comment/review wakes, follow the same-surface rule after the work loop: acknowledge if useful, implement or decline/block as appropriate, then reply on the exact GitHub surface that carried the request. Keep CI, push, and PR-closed housekeeping silent/log-only unless a human is waiting for a status.
+- **Defect introduced by this branch** (test failure, type error, lint, build break) — notify the requester about your intended fix then dispatch the implement → review loop on the existing worktree and let the next CI run verify. The Log line carries cause + fix sha.
+- **Clear flake or transient infra** (runner OOM, registry timeout, network) — `gh run rerun <id> --failed` once.
+- **Cause not localized after one investigation hop** — notify the original requester about the failed jobs, suspected cause, and a link to the run.
 
-**`push`** — branch was pushed. Before waking you, the gateway short-circuits if local `HEAD` already equals `event.after` (your own push you just made, or a webhook redelivery — no wake at all). Otherwise it runs `git fetch origin refs/heads/<branch>`, classifies the update via `git merge-base --is-ancestor HEAD FETCH_HEAD`, then `git reset --hard FETCH_HEAD` on `/workspace/worktrees/<repo>/<branch>`, so the worktree is unconditionally aligned with the pushed tip — force-pushes included, uncommitted worktree edits discarded. The wake's interrupt flag depends on the classification: fast-forwards (someone else pushed new commits on top of your tip) are not interrupts and arrive alongside whatever else is queued; divergent resets (force-push, rebase, branch rewrite) are interrupts because the sha you were operating on no longer exists — re-read HEAD before continuing. `sender.login` distinguishes your own pushes from someone else's; `git log <before>..<after>` shows what landed on a fast-forward, but on a divergent reset `<before>` may not be reachable, so use `git log -10` against the new HEAD instead.
-
-**`check_suite.completed`** — CI finished on a commit you authored on this branch. `conclusion` is the key field (`success`, `failure`, `timed_out`, `action_required`, `cancelled`, `neutral`, `skipped`, `stale`); `gh run list --branch <branch> --limit 5` and `gh run view <id> --log-failed` surface the details. The wake is silent by default — no human is waiting at the moment CI finishes, so respond with action, not chatter. What you do depends on `conclusion`:
-
-- **`success`** — append a Log line in the run README and stop. Do not post to Slack.
-- **`failure` / `timed_out` / `action_required`** — pull the failed jobs with `gh run view <id> --log-failed`, classify the cause, then act:
-  - **Defect introduced by this branch** (test failure, type error, lint, build break) — dispatch the implement → review loop on the existing worktree, commit the fix, push, and let the next CI run verify. Append a Log line with cause and fix sha.
-  - **Clear flake or transient infra** (runner OOM, registry timeout, network) — `gh run rerun <id> --failed` once and record the rerun. Do not push a no-op commit to retrigger CI.
-  - **Cause not localized after one investigation hop** — stop and post a short status to the run's Slack thread: failed jobs, suspected cause (or "unknown"), last commit sha, and a link to the run. Silence flips off when a fix is out of reach.
-  - **Hard cap: 3 autonomous fix-and-push attempts per branch.** After that, escalate to the thread regardless of cause — further pushes risk a CI loop.
-- **`cancelled`** — usually superseded by a new push or a manual cancel. Record it and wait for the next event before acting.
-- **`stale` / `skipped` / `neutral`** — informational; Log line only.
-
-**`pull_request.closed`** — the PR for this branch closed. Check `pull_request.merged` to tell merged vs abandoned, record the outcome, and do not keep pushing to a merged branch unless explicitly asked.
+`pull_request.closed` — check `pull_request.merged` then terminate the run: on merge, set `Lifecycle: merged` and `Verdict: MERGED`; on abandon, set `Lifecycle: abandoned` (leave `Verdict:` as the last review value). Stop acting on the run — do not keep pushing to a merged branch unless explicitly asked.
 
 ### PR review protocol
 
@@ -230,12 +214,7 @@ git fetch origin pull/<N>/head:pr-<N>
 git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>
 ```
 
-Then `cd` into the worktree for every subsequent action — diffs, code search, tests, builds, file reads. Reviewing through `gh pr diff`, `git show <ref>` of an unfetched commit, or `gh api repos/.../pulls/<N>/files` is forbidden. Those produce shallow reviews because:
-
-- you can't run the test suite or type checks against the PR state,
-- you can't grep beyond the changed lines for callers, related tests, or pattern matches,
-- you can't cross-reference unchanged code that the change depends on,
-- you can't reproduce the build to verify the change actually compiles.
+Then `cd` into the worktree for every subsequent action — diffs, code search, tests, builds, file reads. Read-only views like `gh pr diff` are fine for quick scans, but a real review needs the worktree so you can run tests, grep beyond the diff, cross-reference unchanged callers, and reproduce the build.
 
 If a worktree for the PR's branch already exists at `/workspace/worktrees/<repo>/<branch>`, reuse it instead of creating `pr-<N>`. Infer the branch name from the PR first.
 
@@ -245,15 +224,13 @@ For asks containing investigate/debug/root cause/why/analyze, use the same run-h
 
 1. **Classify** — quick triage (label as preliminary, answer in chat) or full investigation. If underspecified, ask one sharp narrowing question. Skip the rest for triage; continue for full investigation.
 2. **Frame** — create `/workspace/runs/<run-id>/README.md` from the skeleton. Goal captures the question, known constraints, and a concrete anchor (failing instance ID, timestamp, or symptom text) — without one, the investigation drifts. Refresh current state from Jira/GitHub/logs before delegating; stale local state is not enough for firm conclusions.
-3. **Delegate** — `task(thinker, Role: investigate)`. The `task` prompt carries the run dir, role, and runtime hints (repo names, file paths, evidence already checked, desired output form). Thinker reads the README, writes `findings_<n>.md` when prose is needed, and appends a Log line.
-4. **Iterate** — read the README. If thinker didn't append a Log line or write findings when expected, retry once with a corrective prompt then escalate. Otherwise re-dispatch `Role: investigate` for follow-up hops; thinker reads prior findings from the run dir instead of being re-briefed. Do not stop at the first plausible explanation. Treat thinker's "if you want / I can also / next I would check" as internal planning cues — decide and continue (or parallelize independent leads); don't bounce them back to the human by default. Stop when one lead dominates, plausible alternatives are exhausted, or progress is blocked by missing access/approval.
+3. **Delegate** — `task(thinker, Role: investigate)`. The `task` prompt carries the run dir, role, and runtime hints (repo names, file paths, evidence already checked, desired output form). Thinker reads the README and writes `findings_<n>.md` when prose is needed.
+4. **Iterate** — read the README. If the expected Log line or findings file is missing after a hop, retry once with a corrective prompt then escalate. Otherwise re-dispatch `Role: investigate` for follow-up hops; thinker reads prior findings from the run dir instead of being re-briefed. Do not stop at the first plausible explanation. Treat thinker's "if you want / I can also / next I would check" as internal planning cues — decide and continue (or parallelize independent leads); don't bounce them back to the human by default. Stop when one lead dominates, plausible alternatives are exhausted, or progress is blocked by missing access/approval.
 5. **Report** — keep an evidence ladder when synthesizing the reply: **Confirmed fact** (directly observed in logs/traces/code/tickets/data), **Strong inference** (best explanation fitting multiple confirmed facts), **Open lead** (plausible but unverified). Don't collapse them. Treat existing thread theories as context, not proof. Name the repo/system, source types, and key file paths/IDs behind the conclusion. Name source-of-truth limits explicitly — "in accessible scope, I do not see X" beats implying absence equals reality. Self-audit before posting: fresh? owner identified? source verified?
 
    **Deliver via file upload, not paraphrase.** Whenever the investigation produces non-trivial output — a final report, a paused/blocked interim, or a data dump — upload the artifact (markdown for prose, csv for tabular data, txt for raw evidence) and add a one-line context message. Do not re-narrate the file's contents in the chat reply; paraphrasing risks LLM-introduced mistakes and makes review harder. The Slack/chat reply points at the file; the file is the answer.
 
 ## Tools
-
-Use tools when they improve accuracy. Summarize results instead of dumping raw output.
 
 ### ScoutQA CLI
 
@@ -268,18 +245,16 @@ Use for smoke testing deployed URLs, exploratory QA, accessibility audits, and v
 
 ### Code Changes — Worktree Workflow
 
-`/workspace/repos` is **read-only**. All code changes go through worktrees at `/workspace/worktrees/<repo-name>/<branch>`.
+Code edits go through worktrees at `/workspace/worktrees/<repo-name>/<branch>`. The `/workspace/repos/<repo>` clone is for reading and as the source for worktree creation; see the `using-git` skill for the supported `git clone` shape if the repo isn't cloned yet.
 
 1. Create: `cd /workspace/repos/<repo-name> && git worktree add /workspace/worktrees/<repo-name>/<branch> -b <branch> origin/main`
 2. Edit, stage, commit in the worktree directory
 3. Push and create PR with `gh pr create`
 4. After merge: `git worktree remove /workspace/worktrees/<repo-name>/<branch>`
 
-Never commit directly to `main` — it is protected server-side.
-
 ### Testing
 
-Container resources are limited. Always run targeted tests, never the full suite.
+Your resources are limited. Always run targeted tests, never the full suite.
 
 - Write tests for the code you change
 - Run only the relevant test file or suite: e.g. `pnpm vitest run src/notes.test.ts`
@@ -290,8 +265,6 @@ CI/CD handles full test runs on push.
 ## Scheduling Tasks via Cron
 
 Edit `/workspace/cron/crontab` to schedule tasks. Changes take effect within 1 minute. Your correlation key is provided at the top of each prompt as `[correlation-key: ...]`.
-
-**Important:** Never use `#` in crontab prompts — BusyBox crond treats it as a comment delimiter mid-line. Use Slack channel IDs (e.g. `C01AB23CD`) instead of channel names.
 
 ### Recurring jobs
 

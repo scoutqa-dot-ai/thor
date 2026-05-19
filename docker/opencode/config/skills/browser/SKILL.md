@@ -18,7 +18,7 @@ Use this skill when:
 
 This skill covers the technical browser orchestration layer: selecting a browser capability, capturing evidence, and verifying that evidence. Product URLs, credentials, selectors, fixture users, and business assertions belong in repo docs, runbooks, or the task prompt.
 
-Run browser tooling in the sandbox when local dependencies are missing or when you need headed display, recording, or installable runtimes. Current sandbox tools include `agent-browser`, Chrome for Testing, `ffmpeg`, `xvfb`, and ImageMagick, but choose by capability first.
+Run browser tooling in the sandbox when local dependencies are missing or when you need headed display, recording, or installable runtimes. Common sandbox tools include `agent-browser`, Chrome for Testing, `ffmpeg`, `xvfb`, and ImageMagick among others — choose by capability first.
 
 ---
 

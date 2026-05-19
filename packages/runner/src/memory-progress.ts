@@ -1,6 +1,5 @@
+import { isBareMemoryDirectoryPath, isMemoryPath, normalizeMemoryPath } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
-
-const MEMORY_DIR = "/workspace/memory";
 
 const READ_MEMORY_TOOLS = new Set(["read"]);
 const WRITE_MEMORY_TOOLS = new Set(["write", "edit", "multi_edit", "multiedit"]);
@@ -9,10 +8,6 @@ function memoryActionForTool(tool: string): "read" | "write" | undefined {
   if (READ_MEMORY_TOOLS.has(tool)) return "read";
   if (WRITE_MEMORY_TOOLS.has(tool)) return "write";
   return undefined;
-}
-
-function isMemoryPath(path: string): boolean {
-  return path === MEMORY_DIR || path.startsWith(`${MEMORY_DIR}/`);
 }
 
 function extractMemoryPaths(input: unknown): string[] {
@@ -29,8 +24,9 @@ function extractMemoryPaths(input: unknown): string[] {
 
     const { value, key } = item;
     if (typeof value === "string") {
-      if (/path/i.test(key) && isMemoryPath(value)) {
-        found.add(value);
+      const normalizedValue = normalizeMemoryPath(value);
+      if (/path/i.test(key) && isMemoryPath(normalizedValue)) {
+        found.add(normalizedValue);
       }
       continue;
     }
@@ -52,20 +48,29 @@ function extractMemoryPaths(input: unknown): string[] {
   return [...found];
 }
 
+type StatLike = { isDirectory(): boolean };
+type StatSyncLike = (path: string) => StatLike;
+
 export function getMemoryProgressEvents(params: {
   tool: string;
   status: string;
   input: unknown;
+  statSync?: StatSyncLike;
 }): Extract<ProgressEvent, { type: "memory" }>[] {
   if (params.status !== "completed") return [];
 
   const action = memoryActionForTool(params.tool);
   if (!action) return [];
 
-  return extractMemoryPaths(params.input).map((path) => ({
-    type: "memory",
-    action,
-    path,
-    source: "tool",
-  }));
+  return extractMemoryPaths(params.input)
+    .filter(
+      (path) =>
+        !(action === "read" && isBareMemoryDirectoryPath(path, { statSync: params.statSync })),
+    )
+    .map((path) => ({
+      type: "memory",
+      action,
+      path,
+      source: "tool",
+    }));
 }

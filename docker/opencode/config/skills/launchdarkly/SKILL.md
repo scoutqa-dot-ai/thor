@@ -37,14 +37,11 @@ ldcli flags --help
 ldcli segments --help
 ```
 
-Do not use `ldcli resources`; it is blocked by policy.
-
 ---
 
 ## Auth and output
 
-- Authentication is server-side only
-- Never pass `--access-token`
+- Don't pass `--access-token`; auth is injected for you
 - `--output json` is auto-appended unless you already pass an explicit output flag
 - Responses are machine-readable JSON; inspect fields directly instead of relying on plaintext formatting
 
@@ -105,16 +102,14 @@ ldcli metrics list --project default
 
 ## Constraints
 
-- Strictly read-only: `toggle`, `update`, `create`, `delete`, and `replace` are denied
+- Surface is read-only inspection of the resources listed above; mutating verbs and unlisted resources return a policy denial
 - Scoped API calls for `flags`, `environments`, `segments`, and `metrics` require `--project <key>`
 - `metrics` supports `list` only
-- `members`, `teams`, `config`, `resources`, `audit-log`, `experiments`, and other admin/discovery resources are blocked
 
 ---
 
 ## Gotchas
 
-- Omitting `--project` on scoped resources returns a policy error from `remote-cli`, not a LaunchDarkly API error
 - `ldcli flags get` exposes environment-specific state under `environments[<env-key>]`
 - `ldcli flags --help` is allowed for discovery, but real resource queries still need explicit scope
 - If the user needs to change LaunchDarkly state, tell them the current integration is read-only
