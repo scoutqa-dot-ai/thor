@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Event, TextPart } from "@opencode-ai/sdk";
-import { createRunnerApp, decodeTriggerActor, type RunnerAppOptions } from "./index.js";
+import { createRunnerApp, type RunnerAppOptions } from "./index.js";
 import {
   appendAlias,
   appendCorrelationAliasForAnchor,
@@ -349,15 +349,6 @@ function setupBusySession(slackThreadTs: string): string {
 }
 
 describe("runner /trigger orchestration", () => {
-  it("decodes trigger actors from the original prompt and correlation key", () => {
-    expect(decodeTriggerActor('{"event":{"user":"UABCDEF1"}}', "slack:thread:C123/177")).toEqual({
-      slack: "UABCDEF1",
-    });
-    expect(
-      decodeTriggerActor('{"sender":{"login":"alice"}}', "github:issue:repo:owner/repo#1"),
-    ).toEqual({ github: "alice" });
-  });
-
   it("serves the trigger viewer with 404 and rendered status", async () => {
     const h = createHarness();
     const triggerId = "00000000-0000-7000-8000-000000000301";
@@ -785,7 +776,11 @@ describe("runner /trigger orchestration", () => {
     const correlationKey = "slack:thread:1710000000.001";
 
     await withServer(h.app, async (url) => {
-      const first = await trigger(url, { prompt: '{"event":{"user":"UABCDEF1"}}', correlationKey });
+      const first = await trigger(url, {
+        prompt: "first",
+        correlationKey,
+        triggerSlackId: "UABCDEF1",
+      });
       const firstStart = first.events.find((e) => e.type === "start");
       const firstDone = first.events.find((e) => e.type === "done");
       expect(firstStart).toMatchObject({ sessionId: "session-1", resumed: false });

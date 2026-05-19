@@ -426,6 +426,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     prompt: z.string(),
     /** Correlation key for session continuity. Same key = same OpenCode session. */
     correlationKey: z.string().optional(),
+    /** Trigger actor captured by gateway from source-specific event payloads. */
+    triggerSlackId: z.string().trim().min(1).optional(),
+    triggerGithubLogin: z.string().trim().min(1).optional(),
     /** Direct session ID to resume (bypasses correlation key lookup). */
     sessionId: z.string().optional(),
     /** If true, abort a busy session before sending the prompt.
@@ -624,7 +627,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     }
 
     let { prompt, correlationKey, sessionId: requestedSessionId, directory } = parsed.data;
-    const triggerActor = decodeTriggerActor(prompt, correlationKey);
     let inflightTriggerId: string | undefined;
 
     try {
@@ -822,8 +824,8 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       inflightTriggerId = triggerId;
       startTrigger(sessionId, triggerId, {
         correlationKey,
-        triggerSlackId: triggerActor?.slack,
-        triggerGithubLogin: triggerActor?.github,
+        triggerSlackId: parsed.data.triggerSlackId,
+        triggerGithubLogin: parsed.data.triggerGithubLogin,
       });
 
       const promptStart = Date.now();
@@ -1498,25 +1500,6 @@ function decodeGithubSource(promptPreview: string | undefined): DecodedSource | 
 
   if (repo) {
     return { icon: "📦", label: repo, href: `https://github.com/${repo}` };
-  }
-  return undefined;
-}
-
-export function decodeTriggerActor(
-  promptBody: string | undefined,
-  correlationKey: string | undefined,
-): { slack?: string; github?: string } | undefined {
-  if (!promptBody || !correlationKey) return undefined;
-  const payload = tryParseJsonObject(promptBody);
-  if (!payload) return undefined;
-  if (correlationKey.startsWith("slack:thread:")) {
-    const event = isRecord(payload.event) ? payload.event : payload;
-    const slack = safeStr(event.user);
-    return slack ? { slack } : undefined;
-  }
-  if (correlationKey.startsWith("github:") || correlationKey.startsWith("git:branch:")) {
-    const github = isRecord(payload.sender) ? safeStr(payload.sender.login) : undefined;
-    return github ? { github } : undefined;
   }
   return undefined;
 }

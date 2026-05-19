@@ -185,6 +185,9 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
       slackDirectoryForChannel,
     );
     expect(result.busy).toBe(false);
+    expect(JSON.parse(String(mockRunnerFetch.mock.calls[0][1]?.body))).toMatchObject({
+      triggerSlackId: "U1",
+    });
 
     await new Promise((r) => setTimeout(r, 50));
 
@@ -475,6 +478,7 @@ describe("triggerRunnerGitHub", () => {
     });
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[1][1]?.body));
     expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
+    expect(triggerBody.triggerGithubLogin).toBe("alice");
     expect(triggerBody.directory).toBe("/workspace/repos/my-repo");
     expect(JSON.parse(triggerBody.prompt)).toEqual(githubEventBase);
     expect(onAccepted).toHaveBeenCalled();
@@ -512,6 +516,7 @@ describe("triggerRunnerGitHub", () => {
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
     expect(triggerBody).toMatchObject({
       correlationKey: "github:issue:thor:scoutqa-dot-ai/thor#42",
+      triggerGithubLogin: "alice",
       directory: "/workspace/repos/my-repo",
       interrupt: true,
     });
@@ -679,6 +684,71 @@ describe("planBatchDispatch", () => {
     expect(plan.options.prompt).toContain(
       "replace the contents of `/workspace/memory/thor/repo-by-slack-channel/C123.txt`",
     );
+  });
+
+  it("passes the explicit Slack actor to the runner", async () => {
+    const { planBatchDispatch } = await import("./service.js");
+    const plan = await planBatchDispatch({
+      slackEvents: [
+        {
+          channel: "C123",
+          ts: "1710000000.001",
+          text: "first",
+          user: "U1111111",
+          type: "message",
+          thread_ts: "1710000000.001",
+        },
+        {
+          channel: "C123",
+          ts: "1710000000.002",
+          text: "second",
+          user: "U2222222",
+          type: "message",
+          thread_ts: "1710000000.001",
+        },
+      ],
+      cronEvents: [],
+      githubEvents: [],
+      approvalOutcomes: [],
+      correlationKey: "slack:thread:C123/1710000000.001",
+      triggerSlackId: "U2222222",
+      deps: { runnerUrl: "http://runner:3000" },
+      slackDeps: noopSlackDeps(),
+      slackDirectoryForChannel: () => ({
+        directory: "/workspace/repos/thor",
+        repoName: "thor",
+        source: "default",
+      }),
+    });
+
+    expect(plan.kind).toBe("dispatch");
+    if (plan.kind !== "dispatch") return;
+    expect(plan.options.triggerSlackId).toBe("U2222222");
+    expect(plan.options.triggerGithubLogin).toBeUndefined();
+  });
+
+  it("passes the explicit GitHub actor to the runner", async () => {
+    const { planBatchDispatch } = await import("./service.js");
+    const later = {
+      ...githubEventBase,
+      sender: { id: 1002, login: "bob", type: "User" },
+    } satisfies GitHubWebhookEvent;
+    const plan = await planBatchDispatch({
+      slackEvents: [],
+      cronEvents: [],
+      githubEvents: [githubEventBase, later],
+      approvalOutcomes: [],
+      correlationKey: "github:issue:thor:scoutqa-dot-ai/thor#42",
+      triggerGithubLogin: "bob",
+      deps: { runnerUrl: "http://runner:3000" },
+      slackDeps: noopSlackDeps(),
+      remoteCliUrl: "http://remote-cli:3004",
+    });
+
+    expect(plan.kind).toBe("dispatch");
+    if (plan.kind !== "dispatch") return;
+    expect(plan.options.triggerGithubLogin).toBe("bob");
+    expect(plan.options.triggerSlackId).toBeUndefined();
   });
 });
 
