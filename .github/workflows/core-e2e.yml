@@ -45,7 +45,7 @@ jobs:
       ATTRIBUTION_E2E_SLACK_ID: U_E2E_ATTRIBUTION
       ATTRIBUTION_E2E_NAME: Thor E2E Reviewer
       ATTRIBUTION_E2E_EMAIL: thor-e2e-reviewer@example.com
-      ATTRIBUTION_E2E_GITHUB: thor-e2e-reviewer
+      ATTRIBUTION_E2E_GITHUB: ${{ github.actor }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
       ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
