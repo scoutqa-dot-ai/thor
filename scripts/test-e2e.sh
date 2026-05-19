@@ -52,7 +52,6 @@ HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/
 ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
 ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
 ATTRIBUTION_E2E_EMAIL="${ATTRIBUTION_E2E_EMAIL:-thor-e2e-reviewer@example.com}"
-JIRA_ASSIGNEE_E2E="${JIRA_ASSIGNEE_E2E:-}"
 JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
 JIRA_ISSUE_TYPE="${JIRA_ISSUE_TYPE:-Task}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
@@ -613,17 +612,14 @@ else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
   jira_assignee_live=false
-  if [[ "$JIRA_ASSIGNEE_E2E" == "1" ]]; then
+  if [[ -n "$JIRA_CLOUD_ID" ]]; then
     assert '[[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" ]]' \
       "jira attribution e2e: discovered Atlassian createJiraIssue" \
       "discovered '$APPROVAL_UPSTREAM/$APPROVAL_TOOL'; check ATLASSIAN_AUTH and MCP health"
-    assert '[[ -n "$JIRA_CLOUD_ID" ]]' \
-      "jira attribution e2e: JIRA_CLOUD_ID is set" \
-      "set JIRA_CLOUD_ID to the Jira cloud UUID or site URL"
     assert '[[ -n "${ATLASSIAN_AUTH:-}" ]]' \
       "jira attribution e2e: ATLASSIAN_AUTH is available" \
       "set ATLASSIAN_AUTH so Jira lookup and create calls can reach Atlassian"
-    if [[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" && -n "$JIRA_CLOUD_ID" && -n "${ATLASSIAN_AUTH:-}" ]]; then
+    if [[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" && -n "${ATLASSIAN_AUTH:-}" ]]; then
       jira_assignee_live=true
     fi
   fi
