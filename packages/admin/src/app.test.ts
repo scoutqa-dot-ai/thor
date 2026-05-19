@@ -19,9 +19,9 @@ describe("admin app sessions dashboard", () => {
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "thor-admin-"));
     process.env.WORKLOG_DIR = dir;
-    writeFileSync(join(dir, "config.json"), "{}\n");
+    writeFileSync(join(dir, "thor.json"), "{}\n");
     const app = createAdminApp({
-      configPath: join(dir, "config.json"),
+      configPath: join(dir, "thor.json"),
       auditLogPath: join(dir, "audit.jsonl"),
     });
     await new Promise<void>((resolve) => {

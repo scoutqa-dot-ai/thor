@@ -17,7 +17,7 @@
 #   REMOTE_CLI_GITHUB_REPO=owner/repo \
 #     ./scripts/test-e2e.sh
 #
-# The repo's owner must be present in /workspace/config.json's `owners` map for
+# The repo's owner must be present in /workspace/config/thor.json's `owners` map for
 # `git clone` to pass policy and resolve a GitHub App installation. The same
 # config must contain the THOR_E2E_JIRA_EMAIL user for attribution checks.
 set -euo pipefail
@@ -39,7 +39,7 @@ SLACK_API_URL="${SLACK_API_URL:-https://slack.com/api}"
 SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
 SLACK_CHANNEL_ID="${SLACK_E2E_CHANNEL_ID:-${SLACK_CHANNEL_ID:-}}"
 HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
-HOST_WORKSPACE_CONFIG="${HOST_WORKSPACE_CONFIG:-${HOST_WORKSPACE}/config.json}"
+HOST_WORKSPACE_CONFIG="${HOST_WORKSPACE_CONFIG:-${HOST_WORKSPACE}/config/thor.json}"
 THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
 REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-$(repo_name_from_clone_url "$REMOTE_CLI_GIT_REPO_URL")}"
 REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"

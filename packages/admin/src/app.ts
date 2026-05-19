@@ -157,7 +157,7 @@ function readConfigText(path: string): {
 }
 
 function atomicWrite(path: string, data: string): void {
-  const tmp = join(dirname(path), `.config.json.${process.pid}.${Date.now()}.tmp`);
+  const tmp = join(dirname(path), `.thor.json.${process.pid}.${Date.now()}.tmp`);
   writeFileSync(tmp, data, { encoding: "utf-8", mode: 0o644 });
   renameSync(tmp, path);
 }

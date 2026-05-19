@@ -42,5 +42,5 @@ if [ -n "$AUTH_JSON" ]; then
   fi
 fi
 
-echo "$TAG GitHub App auth could not resolve an installation token for this gh command. Configure owners.<owner>.github_app_installation_id in /workspace/config.json." >&2
+echo "$TAG GitHub App auth could not resolve an installation token for this gh command. Configure owners.<owner>.github_app_installation_id in /workspace/config/thor.json." >&2
 exit 1

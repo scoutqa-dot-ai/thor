@@ -134,7 +134,7 @@ export function loadWorkspaceConfig(path: string): WorkspaceConfig {
   return result.data;
 }
 
-export const WORKSPACE_CONFIG_PATH = "/workspace/config.json";
+export const WORKSPACE_CONFIG_PATH = "/workspace/config/thor.json";
 
 // --- Dynamic loader ---
 
@@ -143,7 +143,7 @@ export type ConfigLoader = () => WorkspaceConfig;
 const configLog = createLogger("config-loader");
 
 /**
- * Create a config loader that re-reads config.json on every access.
+ * Create a config loader that re-reads the workspace config on every access.
  * The file is tiny (<1KB) so there's no need for caching — changes
  * take effect immediately.
  */
