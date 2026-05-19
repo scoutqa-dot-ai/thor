@@ -2,7 +2,7 @@ import { deriveGitHubAppBotIdentity } from "./github-identity.js";
 import { envBaseUrl, envCsv, envInt, envOptionalString, envString, type EnvSource } from "./env.js";
 import { WORKSPACE_CONFIG_PATH } from "./workspace-config.js";
 
-export const ADMIN_AUDIT_LOG_PATH = "/workspace/config.audit.log";
+export const ADMIN_AUDIT_LOG_PATH = "/workspace/config/thor.audit.log";
 
 export function loadGatewayEnv(env: EnvSource = process.env) {
   const githubAppSlug = envString(env, "GITHUB_APP_SLUG");

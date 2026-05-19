@@ -165,7 +165,7 @@ Use [`docs/github-app-webhooks.md`](docs/github-app-webhooks.md) for GitHub App 
 
 Gateway and remote-cli derive the GitHub App bot commit identity from `GITHUB_APP_SLUG` and `GITHUB_APP_BOT_ID`: `${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com`. Gateway uses that derived email to accept `check_suite.completed` CI wakes only for Thor-authored commits; no separate author-email env var is required.
 
-Thor uses a shared workspace config file at `/workspace/config/thor.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config/thor.json`. Existing deployments should move `docker-volumes/workspace/config.json` to `docker-volumes/workspace/config/thor.json` before restarting. The admin audit log remains outside that directory at `/workspace/config.audit.log` by default, so historical config snapshots are not included in the OpenCode config-directory mount. Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point, and use [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
+Thor uses a shared workspace config file at `/workspace/config/thor.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config/thor.json`. Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point, and use [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
 
 GitHub App installation entries live under `owners.<owner>.github_app_installation_id` in that config:
 
