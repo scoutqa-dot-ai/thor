@@ -192,39 +192,44 @@ jira_delete_issue() {
     "$(jira_api_base)/issue/$issue_key"
 }
 
-find_tool_worklog_entry() {
+find_jira_tool_worklog_entry() {
   local tool="$1"
-  local decision="$2"
-  local predicate="$3"
-  WORKLOG_DIR="${HOST_WORKSPACE}/worklog" TOOL="$tool" DECISION="$decision" PREDICATE="$predicate" node <<'NODE'
+  WORKLOG_DIR="${HOST_WORKSPACE}/worklog" TOOL="$tool" node <<'NODE'
 const fs = require("fs");
 const path = require("path");
 
 const root = process.env.WORKLOG_DIR;
 const tool = process.env.TOOL;
-const decision = process.env.DECISION;
-const predicate = process.env.PREDICATE;
-const files = [];
 
-function walk(dir) {
-  if (!fs.existsSync(dir)) return;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(full);
-    else if (entry.isFile() && entry.name.includes(`_tool-call_${tool}.json`)) files.push(full);
+function matchesJiraE2E(entry) {
+  if (entry.tool !== tool) return false;
+  if (tool === "lookupJiraAccountId") {
+    return (
+      entry.decision === "allowed" &&
+      entry.args?.cloudId === process.env.JIRA_CLOUD_ID &&
+      String(entry.args?.searchString || "").toLowerCase() ===
+        process.env.ATTRIBUTION_E2E_EMAIL.toLowerCase()
+    );
   }
+  if (tool === "createJiraIssue") {
+    return entry.decision === "approved" && entry.args?.summary === process.env.JIRA_E2E_SUMMARY;
+  }
+  return false;
 }
 
-walk(root);
-for (const file of files.sort().reverse()) {
+const files = fs.existsSync(root)
+  ? fs
+      .readdirSync(root, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(`_tool-call_${tool}.json`))
+      .map((entry) => path.join(entry.parentPath, entry.name))
+      .sort()
+      .reverse()
+  : [];
+
+for (const file of files) {
   try {
     const entry = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (entry.tool !== tool || entry.decision !== decision) continue;
-    if (predicate === "jira-create-summary" && entry.args?.summary !== process.env.JIRA_E2E_SUMMARY) continue;
-    if (predicate === "jira-lookup-user") {
-      if (entry.args?.cloudId !== process.env.JIRA_CLOUD_ID) continue;
-      if (String(entry.args?.searchString || "").toLowerCase() !== process.env.ATTRIBUTION_E2E_EMAIL.toLowerCase()) continue;
-    }
+    if (!matchesJiraE2E(entry)) continue;
     console.log(JSON.stringify(entry));
     process.exit(0);
   } catch {}
@@ -886,8 +891,8 @@ else
         "jira attribution e2e: Jira attribution was applied" \
         "logs: ${jira_logs:0:1000}"
 
-      jira_lookup_entry=$(find_tool_worklog_entry "lookupJiraAccountId" "allowed" "jira-lookup-user" 2>/dev/null || echo "")
-      jira_create_entry=$(find_tool_worklog_entry "createJiraIssue" "approved" "jira-create-summary" 2>/dev/null || echo "")
+      jira_lookup_entry=$(find_jira_tool_worklog_entry "lookupJiraAccountId" 2>/dev/null || echo "")
+      jira_create_entry=$(find_jira_tool_worklog_entry "createJiraIssue" 2>/dev/null || echo "")
       jira_injected_account_id=$(json_field "$jira_create_entry" "args.assignee_account_id")
       jira_create_project_key=$(json_field "$jira_create_entry" "args.projectKey")
       jira_create_error=$(json_field "$jira_create_entry" "error")
