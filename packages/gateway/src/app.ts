@@ -13,6 +13,7 @@ import {
   resolveCorrelationKeys,
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
+  SLACK_CHANNEL_REPO_MEMORY_ROOT,
   truncate,
   resolveRepoDirectory,
   type InboundWebhookHistoryEntry,
@@ -964,13 +965,10 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     if (!defaultRepo.directory) {
       throw new Error(`Invalid SLACK_DEFAULT_REPO: ${defaultRepo.reason}`);
     }
+    const memoryRoot = config.slackChannelRepoMemoryRoot ?? SLACK_CHANNEL_REPO_MEMORY_ROOT;
     resolveSlackDirectory = (channel) => {
-      const resolved = resolveSlackChannelRepoDirectory(
-        channel,
-        slackDefaultRepo,
-        config.slackChannelRepoMemoryRoot,
-      );
-      const overridePath = `${config.slackChannelRepoMemoryRoot}/${channel}.txt`;
+      const resolved = resolveSlackChannelRepoDirectory(channel, slackDefaultRepo, memoryRoot);
+      const overridePath = `${memoryRoot}/${channel}.txt`;
       if (resolved.fallbackReason) {
         logInfo(log, "slack_repo_override_fallback", {
           channel,

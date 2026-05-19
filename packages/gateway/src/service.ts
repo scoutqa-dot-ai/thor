@@ -1,6 +1,7 @@
 import {
   createLogger,
   ExecResultSchema,
+  hasSessionForCorrelationKey,
   logInfo,
   logWarn,
   logError,
@@ -357,9 +358,15 @@ function renderSlackRoutingSection(event: DistilledSlackEvent, routing: SlackRou
   return lines.join("\n");
 }
 
-function renderSlackPrompt(events: SlackThreadEvent[], routing: SlackRoutingInfo): string {
+function renderSlackPrompt(
+  events: SlackThreadEvent[],
+  routing: SlackRoutingInfo,
+  correlationKey: string,
+): string {
   const distilledEvents = events.map(distillSlackEvent);
-  const routingSection = renderSlackRoutingSection(distilledEvents[0]!, routing);
+  const routingSection = hasSessionForCorrelationKey(correlationKey)
+    ? ""
+    : renderSlackRoutingSection(distilledEvents[0]!, routing);
   const eventSection = renderHeadedSection(
     "Slack",
     events,
@@ -701,7 +708,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     if (slackDirectory.reason) {
       return { kind: "drop", logPrefix, reason: slackDirectory.reason };
     }
-    const prompt = renderSlackPrompt(input.slackEvents, slackDirectory);
+    const prompt = renderSlackPrompt(input.slackEvents, slackDirectory, input.correlationKey);
     parts.push({
       directory: slackDirectory.directory!,
       singlePrompt: prompt,
