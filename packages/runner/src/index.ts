@@ -52,9 +52,15 @@ import {
   formatBytes,
   formatCostUsd,
   parseOpencodeEvent,
+  createConfigLoader,
+  findUserByGithub,
+  findUserBySlack,
+  WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 import type {
+  ConfigLoader,
   OpencodeEvent,
+  UserRecord,
   ViewerPart,
   ViewerToolPart,
   ViewerPayloadOrOmitted,
@@ -91,6 +97,7 @@ export interface RunnerAppOptions {
   createClient?: (opts: { baseUrl: string; directory: string }) => OpencodeClient;
   isOpencodeReachable?: () => Promise<boolean>;
   ensureOpencodeAvailable?: () => Promise<void>;
+  workspaceConfigLoader?: ConfigLoader;
 }
 
 /** Read a file, returns trimmed content or undefined. */
@@ -121,6 +128,51 @@ function getToolInstructions(directory: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+const defaultWorkspaceConfigLoader = createConfigLoader(WORKSPACE_CONFIG_PATH);
+
+function formatTriggeringUser(user: UserRecord): string {
+  const handles = [
+    user.slack ? `slack: ${user.slack}` : undefined,
+    user.github ? `github: ${user.github}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return `${user.name} <${user.email}>${handles ? ` (${handles})` : ""}`;
+}
+
+function buildTriggeringUserPromptBlock(
+  loader: ConfigLoader,
+  actor: { triggerSlackId?: string; triggerGithubLogin?: string },
+): string | undefined {
+  if (!actor.triggerSlackId && !actor.triggerGithubLogin) return undefined;
+
+  let user: UserRecord | undefined;
+  try {
+    const workspaceConfig = loader();
+    user = actor.triggerSlackId
+      ? findUserBySlack(workspaceConfig, actor.triggerSlackId)
+      : undefined;
+    user ??= actor.triggerGithubLogin
+      ? findUserByGithub(workspaceConfig, actor.triggerGithubLogin)
+      : undefined;
+  } catch {
+    // Best-effort prompt context; do not fail a run because config is temporarily unreadable.
+  }
+
+  const actorId = [
+    actor.triggerSlackId ? `slack: ${actor.triggerSlackId}` : undefined,
+    actor.triggerGithubLogin ? `github: ${actor.triggerGithubLogin}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  return [
+    "[Triggering user]",
+    user ? `Run triggered by ${formatTriggeringUser(user)}.` : `Run triggered by ${actorId}.`,
+    `User directory: ${WORKSPACE_CONFIG_PATH} users[] (re-read it if you need more user details later).`,
+  ].join("\n");
 }
 
 /**
@@ -268,6 +320,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   const createClient = options.createClient ?? createOpencodeClient;
   const checkOpencodeReachable = options.isOpencodeReachable ?? isOpencodeReachable;
   const waitForOpencode = options.ensureOpencodeAvailable ?? ensureOpencodeAvailable;
+  const workspaceConfigLoader = options.workspaceConfigLoader ?? defaultWorkspaceConfigLoader;
 
   function routeParam(value: string | string[] | undefined): string {
     return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
@@ -813,6 +866,14 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         if (toolInstructions) {
           prompt = `${toolInstructions}\n\n${prompt}`;
           logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });
+        }
+
+        const triggeringUserBlock = buildTriggeringUserPromptBlock(workspaceConfigLoader, {
+          triggerSlackId: parsed.data.triggerSlackId,
+          triggerGithubLogin: parsed.data.triggerGithubLogin,
+        });
+        if (triggeringUserBlock) {
+          prompt = `${triggeringUserBlock}\n\n${prompt}`;
         }
       }
 
