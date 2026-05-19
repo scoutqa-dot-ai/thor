@@ -256,10 +256,6 @@ pnpm test:opencode-e2e # separate explicit OpenCode/LLM smoke path
 pnpm typecheck
 ```
 
-`pnpm test:e2e` is deterministic and never calls `/trigger`. The clone repo env vars are required because the test exercises `remote-cli`'s `/exec/git clone` policy; the repo's owner must be present in `/workspace/config.json`'s `owners` map. The same `docker-volumes/workspace/config.json` must also include the E2E attribution user from `THOR_E2E_JIRA_EMAIL`, `ATTRIBUTION_E2E_NAME`, `ATTRIBUTION_E2E_SLACK_ID`, and `ATTRIBUTION_E2E_GITHUB` so the script can verify `/exec/git` commit trailers and `/exec/gh pr create` assignee injection without rewriting config. The `gh pr create` step expects the underlying call to fail (the e2e GitHub App is not configured for PR writes); it asserts on the injected `--assignee` arg seen in the remote-cli log. Set `JIRA_CLOUD_ID` with `ATLASSIAN_AUTH` and a Jira-resolvable `THOR_E2E_JIRA_EMAIL` to also approve a Jira create call that is expected to fail for the hard-coded fake project key and issue type after Thor injects `assignee_account_id`.
-
-`pnpm test:create-jira-approval-e2e` requires live Slack/OpenCode credentials, a connected Atlassian MCP upstream, and a writable Slack test channel via `SLACK_E2E_CHANNEL_ID` (or `SLACK_CHANNEL_ID`). It intentionally leaves approvals pending for human inspection.
-
 ## Project Structure
 
 ```text

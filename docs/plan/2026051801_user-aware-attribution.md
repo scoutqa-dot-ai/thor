@@ -166,8 +166,6 @@ Behavior tests (next to existing `gh-disclaimer.test.ts` and `mcp-handler.test.t
   - Atlassian upstream disconnected → `api_rejected` with `upstream_disconnected`.
   - Approval replay: the same stored `ApprovalAction` resolved twice produces deterministic args (injected resolver memoizes per action id, or the lookup is repeated and idempotent).
 
-**Agent-facing note.** Add one paragraph to `AGENTS.md` (or the relevant agent prompt surface) under a heading like "Thor-injected attribution": Thor stamps `Co-authored-by:` trailers on commits and assignee fields on PRs and Jira issues created by the agent. This injection happens server-side; the trailer goes in before commit, the PR assignee is added during `gh pr create` when unset, and the Jira assignee goes in post-approval via `assignee_account_id` lookup when unset. The agent will see this content on `git log`, `gh pr view`, etc. — do not strip it, do not treat it as a user edit, do not re-emit it on re-runs. AGENTS.md rule 10 still holds: this is a warning about observable state, not an instruction.
-
 Exit: a Slack-triggered run produces a commit with the trailer, a PR assigned to the user's GitHub handle, and a Jira ticket assigned via `assignee_account_id` resolved from the user's email — without any change to `bin/git`, `bin/gh`, or anything inside the sandbox.
 
 ### Phase 4 — Repo cleanup + ship
