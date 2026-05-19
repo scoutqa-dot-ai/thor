@@ -3,9 +3,15 @@ import type { RunnerDeps } from "./service.js";
 import type { SlackDeps } from "./slack-api.js";
 import type { GitHubWebhookEvent } from "./github.js";
 
+const mockHasSessionForCorrelationKey = vi.fn<(key: string | string[]) => boolean>(() => false);
+
 vi.mock("@thor/common", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  return { ...actual, resolveRepoDirectory: () => "/workspace/repos/my-repo" };
+  return {
+    ...actual,
+    resolveRepoDirectory: () => "/workspace/repos/my-repo",
+    hasSessionForCorrelationKey: (key: string | string[]) => mockHasSessionForCorrelationKey(key),
+  };
 });
 
 function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
@@ -641,44 +647,60 @@ describe("approval outcome prompts", () => {
 });
 
 describe("planBatchDispatch", () => {
-  it("includes Slack routing provenance in the runner prompt", async () => {
-    const { planBatchDispatch } = await import("./service.js");
-    const slackDirectoryForChannel = vi.fn(() => ({
-      directory: "/workspace/repos/thor",
-      repoName: "thor",
-      source: "override" as const,
-      overridePath: "/workspace/memory/thor/repo-by-slack-channel/C123.txt",
-    }));
+  const slackEvents = [
+    {
+      channel: "C123",
+      ts: "1710000000.001",
+      text: "which repo are you using?",
+      user: "U123",
+      type: "message" as const,
+      thread_ts: "1710000000.001",
+    },
+  ];
+  const slackDirectoryForChannel = () => ({
+    directory: "/workspace/repos/thor",
+    repoName: "thor",
+    source: "override" as const,
+    overridePath: "/workspace/memory/thor/repo-by-slack-channel/C123.txt",
+  });
 
-    const plan = await planBatchDispatch({
-      slackEvents: [
-        {
-          channel: "C123",
-          ts: "1710000000.001",
-          text: "which repo are you using?",
-          user: "U123",
-          type: "message",
-          thread_ts: "1710000000.001",
-        },
-      ],
-      cronEvents: [],
-      githubEvents: [],
-      approvalOutcomes: [],
-      correlationKey: "slack:thread:C123/1710000000.001",
-      deps: { runnerUrl: "http://runner:3000" },
-      slackDeps: noopSlackDeps(),
-      slackDirectoryForChannel,
-    });
+  function planSlackDispatch() {
+    return import("./service.js").then(({ planBatchDispatch }) =>
+      planBatchDispatch({
+        slackEvents,
+        cronEvents: [],
+        githubEvents: [],
+        approvalOutcomes: [],
+        correlationKey: "slack:thread:C123/1710000000.001",
+        deps: { runnerUrl: "http://runner:3000" },
+        slackDeps: noopSlackDeps(),
+        slackDirectoryForChannel,
+      }),
+    );
+  }
+
+  it("includes Slack routing provenance when starting a new session", async () => {
+    mockHasSessionForCorrelationKey.mockReturnValue(false);
+    const plan = await planSlackDispatch();
 
     expect(plan.kind).toBe("dispatch");
     if (plan.kind !== "dispatch") return;
 
-    expect(slackDirectoryForChannel).toHaveBeenCalledTimes(1);
     expect(plan.options.prompt).toContain("[Slack routing]");
     expect(plan.options.prompt).toContain("routed to repo `thor` via override file");
     expect(plan.options.prompt).toContain(
       "replace the contents of `/workspace/memory/thor/repo-by-slack-channel/C123.txt`",
     );
+  });
+
+  it("omits Slack routing provenance when the session already exists", async () => {
+    mockHasSessionForCorrelationKey.mockReturnValue(true);
+    const plan = await planSlackDispatch();
+
+    expect(plan.kind).toBe("dispatch");
+    if (plan.kind !== "dispatch") return;
+
+    expect(plan.options.prompt).not.toContain("[Slack routing]");
   });
 });
 
