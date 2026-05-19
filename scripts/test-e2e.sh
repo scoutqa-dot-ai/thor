@@ -52,10 +52,11 @@ HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/
 DEFAULT_THOR_E2E_JIRA_EMAIL="thor-e2e-reviewer@example.com"
 ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
 ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
+ATTRIBUTION_E2E_GITHUB="${ATTRIBUTION_E2E_GITHUB:-thor-e2e-reviewer}"
 THOR_E2E_JIRA_EMAIL="${THOR_E2E_JIRA_EMAIL:-$DEFAULT_THOR_E2E_JIRA_EMAIL}"
 JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
-export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME THOR_E2E_JIRA_EMAIL
+export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_GITHUB THOR_E2E_JIRA_EMAIL
 export JIRA_CLOUD_ID
 JIRA_E2E_ISSUE_KEY=""
 passed=0
@@ -215,6 +216,7 @@ assert_attribution_config() {
     THOR_E2E_JIRA_EMAIL="$THOR_E2E_JIRA_EMAIL" \
     ATTRIBUTION_E2E_NAME="$ATTRIBUTION_E2E_NAME" \
     ATTRIBUTION_E2E_SLACK_ID="$ATTRIBUTION_E2E_SLACK_ID" \
+    ATTRIBUTION_E2E_GITHUB="$ATTRIBUTION_E2E_GITHUB" \
       node <<'NODE' >/dev/null
 const fs = require("fs");
 const path = process.env.CONFIG_PATH;
@@ -223,7 +225,8 @@ const users = Array.isArray(config.users) ? config.users : [];
 const match = users.find((user) =>
   String(user.email || "").toLowerCase() === process.env.THOR_E2E_JIRA_EMAIL.toLowerCase() &&
   String(user.name || "") === process.env.ATTRIBUTION_E2E_NAME &&
-  String(user.slack || "").toUpperCase() === process.env.ATTRIBUTION_E2E_SLACK_ID.toUpperCase()
+  String(user.slack || "").toUpperCase() === process.env.ATTRIBUTION_E2E_SLACK_ID.toUpperCase() &&
+  String(user.github || "").toLowerCase() === process.env.ATTRIBUTION_E2E_GITHUB.toLowerCase()
 );
 if (!match) process.exit(1);
 NODE
@@ -233,7 +236,7 @@ NODE
   else
     assert 'false' \
       "attribution e2e: workspace config includes the e2e attribution user" \
-      "expected users[] entry: email=$THOR_E2E_JIRA_EMAIL, name=$ATTRIBUTION_E2E_NAME, slack=$ATTRIBUTION_E2E_SLACK_ID in $HOST_WORKSPACE_CONFIG"
+      "expected users[] entry: email=$THOR_E2E_JIRA_EMAIL, name=$ATTRIBUTION_E2E_NAME, slack=$ATTRIBUTION_E2E_SLACK_ID, github=$ATTRIBUTION_E2E_GITHUB in $HOST_WORKSPACE_CONFIG"
     return 1
   fi
 }
@@ -552,6 +555,37 @@ elif assert_attribution_config; then
     assert '[[ "$commit_body" == *"$expected_trailer"* ]]' \
       "attribution e2e: commit message includes co-author trailer" \
       "commit body: ${commit_body:0:500}"
+
+    # gh pr create: the e2e GitHub App lacks PR write permission, so the
+    # underlying gh call is expected to fail. We only verify that Thor's
+    # /exec/gh handler injected --assignee <github> from the user config
+    # before invoking gh, by inspecting the remote-cli exec_gh log line.
+    gh_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    pr_title="Thor attribution e2e ${REMOTE_CLI_AUTH_TS}"
+    pr_body="Thor attribution e2e marker ${REMOTE_CLI_AUTH_TS}"
+    export pr_title pr_body
+    pr_create_payload=$(node -e "
+      console.log(JSON.stringify({
+        args: ['pr', 'create', '--title', process.env.pr_title, '--body', process.env.pr_body],
+        cwd: process.env.REMOTE_CLI_WORKTREE_DIR
+      }));
+    ")
+    pr_create_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+      -H 'Content-Type: application/json' \
+      -H "x-thor-session-id: $ATTRIBUTION_SESSION_ID" \
+      -d "$pr_create_payload" \
+      2>/dev/null || echo '{}')
+    pr_create_exit=$(json_field "$pr_create_raw" "exitCode")
+    gh_logs=$(docker logs --since "$gh_log_since" "$remote_cli_container" 2>&1 || true)
+    assert '[[ "$pr_create_exit" != "0" ]]' \
+      "attribution e2e: gh pr create fails (GitHub App lacks write permission)" \
+      "exitCode='$pr_create_exit' response: ${pr_create_raw:0:500}"
+    assert '[[ "$gh_logs" == *"\"surface\":\"gh-assignee\",\"outcome\":\"applied\""* ]]' \
+      "attribution e2e: gh pr create attribution was applied" \
+      "logs: ${gh_logs:0:1000}"
+    assert '[[ "$gh_logs" == *"\"event\":\"exec_gh\""*"\"--assignee\""*"\"${ATTRIBUTION_E2E_GITHUB}\""* ]]' \
+      "attribution e2e: gh pr create invocation includes --assignee with the configured github login" \
+      "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in exec_gh args; logs: ${gh_logs:0:1500}"
   fi
 fi
 

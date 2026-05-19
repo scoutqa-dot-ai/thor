@@ -190,23 +190,6 @@ describe("gh disclaimer injection", () => {
     );
   });
 
-  it("adds a PR assignee when gh pr create has none", async () => {
-    seedActor();
-    await withServer(
-      async (url) => {
-        const { response } = await postGh(
-          url,
-          ["pr", "create", "--title", "x", "--body", "Body"],
-          "parent",
-        );
-        expect(response.status).toBe(200);
-        expect(execCalls[0].args).toContain("--assignee");
-        expect(execCalls[0].args).toContain("alice");
-      },
-      { configLoader },
-    );
-  });
-
   it("keeps an existing PR assignee", async () => {
     seedActor();
     await withServer(
