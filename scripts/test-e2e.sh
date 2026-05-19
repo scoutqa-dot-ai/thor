@@ -19,7 +19,7 @@
 #
 # The repo's owner must be present in /workspace/config.json's `owners` map for
 # `git clone` to pass policy and resolve a GitHub App installation. The same
-# config must contain the ATTRIBUTION_E2E_* user for attribution checks.
+# config must contain the THOR_E2E_JIRA_EMAIL user for attribution checks.
 set -euo pipefail
 
 repo_name_from_clone_url() {
@@ -49,13 +49,13 @@ REMOTE_CLI_AUTH_TS="${REMOTE_CLI_AUTH_TS:-$(date +%s)}"
 REMOTE_CLI_WORKTREE_BRANCH="${REMOTE_CLI_WORKTREE_BRANCH:-e2e-remote-cli-${REMOTE_CLI_AUTH_TS}}"
 REMOTE_CLI_WORKTREE_DIR="${REMOTE_CLI_WORKTREE_DIR:-/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
 HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
-DEFAULT_ATTRIBUTION_E2E_EMAIL="thor-e2e-reviewer@example.com"
+DEFAULT_THOR_E2E_JIRA_EMAIL="thor-e2e-reviewer@example.com"
 ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
 ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
-ATTRIBUTION_E2E_EMAIL="${ATTRIBUTION_E2E_EMAIL:-${THOR_E2E_JIRA_EMAIL:-$DEFAULT_ATTRIBUTION_E2E_EMAIL}}"
+THOR_E2E_JIRA_EMAIL="${THOR_E2E_JIRA_EMAIL:-$DEFAULT_THOR_E2E_JIRA_EMAIL}"
 JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
-export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_EMAIL
+export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME THOR_E2E_JIRA_EMAIL
 export JIRA_CLOUD_ID
 JIRA_E2E_ISSUE_KEY=""
 passed=0
@@ -163,7 +163,7 @@ function matchesJiraE2E(entry) {
       entry.decision === "allowed" &&
       entry.args?.cloudId === process.env.JIRA_CLOUD_ID &&
       String(entry.args?.searchString || "").toLowerCase() ===
-        process.env.ATTRIBUTION_E2E_EMAIL.toLowerCase()
+        process.env.THOR_E2E_JIRA_EMAIL.toLowerCase()
     );
   }
   if (tool === "createJiraIssue") {
@@ -212,7 +212,7 @@ assert_attribution_config() {
   fi
 
   if CONFIG_PATH="$HOST_WORKSPACE_CONFIG" \
-    ATTRIBUTION_E2E_EMAIL="$ATTRIBUTION_E2E_EMAIL" \
+    THOR_E2E_JIRA_EMAIL="$THOR_E2E_JIRA_EMAIL" \
     ATTRIBUTION_E2E_NAME="$ATTRIBUTION_E2E_NAME" \
     ATTRIBUTION_E2E_SLACK_ID="$ATTRIBUTION_E2E_SLACK_ID" \
       node <<'NODE' >/dev/null
@@ -221,7 +221,7 @@ const path = process.env.CONFIG_PATH;
 const config = JSON.parse(fs.readFileSync(path, "utf8"));
 const users = Array.isArray(config.users) ? config.users : [];
 const match = users.find((user) =>
-  String(user.email || "").toLowerCase() === process.env.ATTRIBUTION_E2E_EMAIL.toLowerCase() &&
+  String(user.email || "").toLowerCase() === process.env.THOR_E2E_JIRA_EMAIL.toLowerCase() &&
   String(user.name || "") === process.env.ATTRIBUTION_E2E_NAME &&
   String(user.slack || "").toUpperCase() === process.env.ATTRIBUTION_E2E_SLACK_ID.toUpperCase()
 );
@@ -233,7 +233,7 @@ NODE
   else
     assert 'false' \
       "attribution e2e: workspace config includes the e2e attribution user" \
-      "expected users[] entry: email=$ATTRIBUTION_E2E_EMAIL, name=$ATTRIBUTION_E2E_NAME, slack=$ATTRIBUTION_E2E_SLACK_ID in $HOST_WORKSPACE_CONFIG"
+      "expected users[] entry: email=$THOR_E2E_JIRA_EMAIL, name=$ATTRIBUTION_E2E_NAME, slack=$ATTRIBUTION_E2E_SLACK_ID in $HOST_WORKSPACE_CONFIG"
     return 1
   fi
 }
@@ -546,7 +546,7 @@ elif assert_attribution_config; then
       -d "$commit_payload" \
       2>/dev/null || echo '{}')
     commit_exit=$(json_field "$commit_raw" "exitCode")
-    expected_trailer="Co-authored-by: ${ATTRIBUTION_E2E_NAME} <${ATTRIBUTION_E2E_EMAIL}>"
+    expected_trailer="Co-authored-by: ${ATTRIBUTION_E2E_NAME} <${THOR_E2E_JIRA_EMAIL}>"
     commit_body=$(docker exec "$remote_cli_container" /usr/bin/git -C "$REMOTE_CLI_WORKTREE_DIR" log -1 --format=%B 2>/dev/null || echo "")
     assert '[[ "$commit_exit" == "0" ]]' "attribution e2e: git commit succeeds" "response: ${commit_raw:0:300}"
     assert '[[ "$commit_body" == *"$expected_trailer"* ]]' \
@@ -612,7 +612,7 @@ else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
   jira_assignee_live=false
-  if [[ -n "$JIRA_CLOUD_ID" && "$ATTRIBUTION_E2E_EMAIL" != "$DEFAULT_ATTRIBUTION_E2E_EMAIL" ]]; then
+  if [[ -n "$JIRA_CLOUD_ID" && "$THOR_E2E_JIRA_EMAIL" != "$DEFAULT_THOR_E2E_JIRA_EMAIL" ]]; then
     assert '[[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" ]]' \
       "jira attribution e2e: discovered Atlassian createJiraIssue" \
       "discovered '$APPROVAL_UPSTREAM/$APPROVAL_TOOL'; check ATLASSIAN_AUTH and MCP health"
@@ -623,7 +623,7 @@ else
       jira_assignee_live=true
     fi
   elif [[ -n "$JIRA_CLOUD_ID" ]]; then
-    echo "  Skipping Jira assignee e2e: ATTRIBUTION_E2E_EMAIL is the default placeholder"
+    echo "  Skipping Jira assignee e2e: THOR_E2E_JIRA_EMAIL is the default placeholder"
   fi
 
   trigger_context_body=$(node -e "
@@ -739,7 +739,7 @@ else
       jira_create_is_error=$(json_field "$jira_create_entry" "result.isError")
       assert '[[ -n "$jira_lookup_entry" ]]' \
         "jira attribution e2e: lookupJiraAccountId ran for the configured user email" \
-        "expected cloud='$JIRA_CLOUD_ID' email='$ATTRIBUTION_E2E_EMAIL'"
+        "expected cloud='$JIRA_CLOUD_ID' email='$THOR_E2E_JIRA_EMAIL'"
       assert '[[ "$jira_create_project_key" == "THORE2E" ]]' \
         "jira attribution e2e: createJiraIssue used the fake project key" \
         "projectKey='$jira_create_project_key' expected='THORE2E'; worklog entry: ${jira_create_entry:0:800}"
