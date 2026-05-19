@@ -46,7 +46,6 @@ jobs:
       ATTRIBUTION_E2E_NAME: ${{ vars.THOR_E2E_JIRA_NAME || 'Thor E2E Reviewer' }}
       ATTRIBUTION_E2E_EMAIL: ${{ vars.THOR_E2E_JIRA_EMAIL || 'thor-e2e-reviewer@example.com' }}
       JIRA_CLOUD_ID: ${{ vars.JIRA_CLOUD_ID }}
-      JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE || 'Task' }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
       ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}

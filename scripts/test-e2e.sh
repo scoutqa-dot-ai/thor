@@ -53,10 +53,9 @@ ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
 ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
 ATTRIBUTION_E2E_EMAIL="${ATTRIBUTION_E2E_EMAIL:-thor-e2e-reviewer@example.com}"
 JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
-JIRA_ISSUE_TYPE="${JIRA_ISSUE_TYPE:-Task}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
 export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_EMAIL
-export JIRA_CLOUD_ID JIRA_ISSUE_TYPE
+export JIRA_CLOUD_ID
 JIRA_E2E_ISSUE_KEY=""
 passed=0
 failed=0
@@ -651,7 +650,7 @@ else
       console.log(JSON.stringify({
         cloudId: process.env.JIRA_CLOUD_ID,
         projectKey: 'THORE2E',
-        issueTypeName: process.env.JIRA_ISSUE_TYPE,
+        issueTypeName: 'ThorE2EFakeIssueType',
         summary: process.env.JIRA_E2E_SUMMARY,
         description: process.env.jira_e2e_description
       }));
