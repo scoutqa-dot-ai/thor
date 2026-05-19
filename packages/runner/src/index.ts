@@ -132,12 +132,14 @@ const inflightTriggers = new Map<string, { sessionId: string; startTime: number 
 function startTrigger(
   sessionId: string,
   triggerId: string,
-  payload: { correlationKey?: string },
+  payload: { correlationKey?: string; triggerSlackId?: string; triggerGithubLogin?: string },
 ): void {
   appendSessionEvent(sessionId, {
     type: "trigger_start",
     triggerId,
     ...(payload.correlationKey ? { correlationKey: payload.correlationKey } : {}),
+    ...(payload.triggerSlackId ? { triggerSlackId: payload.triggerSlackId } : {}),
+    ...(payload.triggerGithubLogin ? { triggerGithubLogin: payload.triggerGithubLogin } : {}),
   });
   inflightTriggers.set(triggerId, { sessionId, startTime: Date.now() });
 }
@@ -251,6 +253,8 @@ function anchorIsKnown(anchor: ReverseAnchorEntry): boolean {
 const E2eTriggerContextSchema = z.object({
   sessionId: z.string().trim().min(1).optional(),
   correlationKey: z.string().trim().min(1).optional(),
+  triggerSlackId: z.string().trim().min(1).optional(),
+  triggerGithubLogin: z.string().trim().min(1).optional(),
 });
 
 // --- Express app ---
@@ -318,6 +322,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           type: "trigger_start",
           triggerId,
           ...(parsed.data.correlationKey ? { correlationKey: parsed.data.correlationKey } : {}),
+          ...(parsed.data.triggerSlackId ? { triggerSlackId: parsed.data.triggerSlackId } : {}),
+          ...(parsed.data.triggerGithubLogin
+            ? { triggerGithubLogin: parsed.data.triggerGithubLogin }
+            : {}),
         });
         res.json({ sessionId, triggerId, anchorId });
       },
@@ -424,6 +432,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     prompt: z.string(),
     /** Correlation key for session continuity. Same key = same OpenCode session. */
     correlationKey: z.string().optional(),
+    /** Trigger actor captured by gateway from source-specific event payloads. */
+    triggerSlackId: z.string().trim().min(1).optional(),
+    triggerGithubLogin: z.string().trim().min(1).optional(),
     /** Direct session ID to resume (bypasses correlation key lookup). */
     sessionId: z.string().optional(),
     /** If true, abort a busy session before sending the prompt.
@@ -817,7 +828,11 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       const triggerId = mintTriggerId();
       inflightTriggerId = triggerId;
-      startTrigger(sessionId, triggerId, { correlationKey });
+      startTrigger(sessionId, triggerId, {
+        correlationKey,
+        triggerSlackId: parsed.data.triggerSlackId,
+        triggerGithubLogin: parsed.data.triggerGithubLogin,
+      });
 
       const promptStart = Date.now();
       const asyncResult = await client.session.promptAsync({

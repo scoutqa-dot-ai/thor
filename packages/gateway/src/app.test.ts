@@ -2442,6 +2442,7 @@ describe("gateway", () => {
       expect(triggerCall).toBeDefined();
       const triggerBody = JSON.parse(String(triggerCall![1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
+      expect(triggerBody.triggerSlackId).toBe("U123");
       const promptJson = triggerBody.prompt.split(/Slack event:\n\n/).at(-1);
       expect(promptJson).toBeDefined();
       const promptPayload = JSON.parse(promptJson!);
@@ -2534,6 +2535,7 @@ describe("gateway", () => {
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
+      expect(triggerBody.triggerSlackId).toBe("U123");
       expect(triggerBody.interrupt).toBe(false);
     });
   });
@@ -2622,7 +2624,7 @@ describe("gateway", () => {
           team_id: "T123",
           event: {
             type: "app_mention",
-            user: "U123",
+            user: `U12${i + 1}`,
             text: `<@U999> ${text}`,
             ts: "1710000000.001",
             channel: "C123",
@@ -2653,6 +2655,7 @@ describe("gateway", () => {
       expect(triggerCalls).toHaveLength(1);
       const triggerBody = JSON.parse(String(triggerCalls[0][1]?.body));
       expect(triggerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
+      expect(triggerBody.triggerSlackId).toBe("U123");
       const promptJson = triggerBody.prompt.split(/Slack events:\n\n/).at(-1);
       expect(promptJson).toBeDefined();
       const promptPayloads = JSON.parse(promptJson!);

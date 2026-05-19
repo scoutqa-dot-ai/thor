@@ -18,7 +18,8 @@
 #     ./scripts/test-e2e.sh
 #
 # The repo's owner must be present in /workspace/config.json's `owners` map for
-# `git clone` to pass policy and resolve a GitHub App installation.
+# `git clone` to pass policy and resolve a GitHub App installation. The same
+# config must contain the THOR_E2E_JIRA_EMAIL user for attribution checks.
 set -euo pipefail
 
 repo_name_from_clone_url() {
@@ -38,6 +39,7 @@ SLACK_API_URL="${SLACK_API_URL:-https://slack.com/api}"
 SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
 SLACK_CHANNEL_ID="${SLACK_E2E_CHANNEL_ID:-${SLACK_CHANNEL_ID:-}}"
 HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
+HOST_WORKSPACE_CONFIG="${HOST_WORKSPACE_CONFIG:-${HOST_WORKSPACE}/config.json}"
 THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
 REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-$(repo_name_from_clone_url "$REMOTE_CLI_GIT_REPO_URL")}"
 REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
@@ -47,8 +49,31 @@ REMOTE_CLI_AUTH_TS="${REMOTE_CLI_AUTH_TS:-$(date +%s)}"
 REMOTE_CLI_WORKTREE_BRANCH="${REMOTE_CLI_WORKTREE_BRANCH:-e2e-remote-cli-${REMOTE_CLI_AUTH_TS}}"
 REMOTE_CLI_WORKTREE_DIR="${REMOTE_CLI_WORKTREE_DIR:-/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
 HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
+DEFAULT_THOR_E2E_JIRA_EMAIL="thor-e2e-reviewer@example.com"
+ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
+ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
+ATTRIBUTION_E2E_GITHUB="${ATTRIBUTION_E2E_GITHUB:-thor-e2e-reviewer}"
+THOR_E2E_JIRA_EMAIL="${THOR_E2E_JIRA_EMAIL:-$DEFAULT_THOR_E2E_JIRA_EMAIL}"
+JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
+export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
+export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_GITHUB THOR_E2E_JIRA_EMAIL
+export JIRA_CLOUD_ID
+JIRA_E2E_ISSUE_KEY=""
 passed=0
 failed=0
+
+cleanup() {
+  if [[ -n "${JIRA_E2E_ISSUE_KEY:-}" && -n "${ATLASSIAN_AUTH:-}" && -n "${JIRA_CLOUD_ID:-}" ]]; then
+    jira_delete_issue "$JIRA_E2E_ISSUE_KEY" >/dev/null 2>&1 || true
+  fi
+
+  [[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
+  if [[ -f "$HOST_REMOTE_CLI_GIT_REPO_MARKER" ]]; then
+    rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+  fi
+}
+
+trap cleanup EXIT
 
 assert() {
   local condition="$1"
@@ -89,6 +114,131 @@ exec_stdout_field() {
     const v = stdout[\"$field\"];
     console.log(v === undefined ? '' : typeof v === 'boolean' ? String(v) : String(v));
   " 2>/dev/null || echo ""
+}
+
+json_string() {
+  node -e "console.log(JSON.stringify(process.argv[1]))" "$1"
+}
+
+exec_payload() {
+  local cwd="$1"
+  shift
+  node -e "
+    console.log(JSON.stringify({
+      args: process.argv.slice(2),
+      cwd: process.argv[1]
+    }));
+  " "$cwd" "$@"
+}
+
+jira_api_base() {
+  local cloud="$JIRA_CLOUD_ID"
+  if [[ "$cloud" == http://* || "$cloud" == https://* ]]; then
+    echo "${cloud%/}/rest/api/3"
+  else
+    echo "https://api.atlassian.com/ex/jira/$cloud/rest/api/3"
+  fi
+}
+
+jira_delete_issue() {
+  local issue_key="$1"
+  curl -sS -X DELETE \
+    -H "Authorization: $ATLASSIAN_AUTH" \
+    -H 'Accept: application/json' \
+    "$(jira_api_base)/issue/$issue_key"
+}
+
+find_jira_tool_worklog_entry() {
+  local tool="$1"
+  WORKLOG_DIR="${HOST_WORKSPACE}/worklog" TOOL="$tool" node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const root = process.env.WORKLOG_DIR;
+const tool = process.env.TOOL;
+
+function matchesJiraE2E(entry) {
+  if (entry.tool !== tool) return false;
+  if (tool === "lookupJiraAccountId") {
+    return (
+      entry.decision === "allowed" &&
+      entry.args?.cloudId === process.env.JIRA_CLOUD_ID &&
+      String(entry.args?.searchString || "").toLowerCase() ===
+        process.env.THOR_E2E_JIRA_EMAIL.toLowerCase()
+    );
+  }
+  if (tool === "createJiraIssue") {
+    return entry.decision === "approved" && entry.args?.summary === process.env.JIRA_E2E_SUMMARY;
+  }
+  return false;
+}
+
+const files = fs.existsSync(root)
+  ? fs
+      .readdirSync(root, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(`_tool-call_${tool}.json`))
+      .map((entry) => path.join(entry.parentPath, entry.name))
+      .sort()
+      .reverse()
+  : [];
+
+for (const file of files) {
+  try {
+    const entry = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!matchesJiraE2E(entry)) continue;
+    console.log(JSON.stringify(entry));
+    process.exit(0);
+  } catch {}
+}
+process.exit(1);
+NODE
+}
+
+extract_jira_issue_key() {
+  local text="$1"
+  ISSUE_TEXT="$text" node <<'NODE' 2>/dev/null || echo ""
+const text = process.env.ISSUE_TEXT || "";
+const project = "THORE2E";
+const match = text.match(new RegExp("\\b" + project + "-[0-9]+\\b"));
+console.log(match?.[0] || "");
+NODE
+}
+
+assert_attribution_config() {
+  if [[ ! -f "$HOST_WORKSPACE_CONFIG" ]]; then
+    assert 'false' \
+      "attribution e2e: workspace config exists" \
+      "expected config at $HOST_WORKSPACE_CONFIG"
+    return 1
+  fi
+
+  if CONFIG_PATH="$HOST_WORKSPACE_CONFIG" \
+    THOR_E2E_JIRA_EMAIL="$THOR_E2E_JIRA_EMAIL" \
+    ATTRIBUTION_E2E_NAME="$ATTRIBUTION_E2E_NAME" \
+    ATTRIBUTION_E2E_SLACK_ID="$ATTRIBUTION_E2E_SLACK_ID" \
+    ATTRIBUTION_E2E_GITHUB="$ATTRIBUTION_E2E_GITHUB" \
+      node <<'NODE' >/dev/null
+const fs = require("fs");
+const path = process.env.CONFIG_PATH;
+const config = JSON.parse(fs.readFileSync(path, "utf8"));
+const users = Array.isArray(config.users) ? config.users : [];
+const match = users.find((user) =>
+  String(user.email || "").toLowerCase() === process.env.THOR_E2E_JIRA_EMAIL.toLowerCase() &&
+  String(user.name || "") === process.env.ATTRIBUTION_E2E_NAME &&
+  String(user.slack || "").toUpperCase() === process.env.ATTRIBUTION_E2E_SLACK_ID.toUpperCase() &&
+  String(user.github || "").toLowerCase() === process.env.ATTRIBUTION_E2E_GITHUB.toLowerCase()
+);
+if (!match) process.exit(1);
+NODE
+  then
+    assert 'true' \
+      "attribution e2e: workspace config includes the e2e attribution user"
+  else
+    assert 'false' \
+      "attribution e2e: workspace config includes the e2e attribution user" \
+      "expected users[] entry: email=$THOR_E2E_JIRA_EMAIL, name=$ATTRIBUTION_E2E_NAME, slack=$ATTRIBUTION_E2E_SLACK_ID, github=$ATTRIBUTION_E2E_GITHUB in $HOST_WORKSPACE_CONFIG"
+    return 1
+  fi
 }
 
 resolve_remote_cli_container() {
@@ -330,7 +480,116 @@ if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" && "$clone_origin" == "$REMOTE_CLI
     "worktree list: ${worktree_list:0:300}"
 fi
 
-# ── 5. Approval Flow ────────────────────────────────────────────────────────
+# ── 5. Attribution Flow ─────────────────────────────────────────────────────
+#
+# Verifies the mounted config contains the E2E attribution user, creates a
+# synthetic trigger context with a Slack actor, then checks the real /exec/git
+# handler stamps attribution before executing the underlying tool.
+
+echo ""
+echo "=== Attribution Flow ==="
+
+if [[ ! -d "$HOST_REMOTE_CLI_WORKTREE_DIR" ]]; then
+  assert 'false' \
+    "attribution e2e: disposable worktree exists" \
+    "expected path: $HOST_REMOTE_CLI_WORKTREE_DIR"
+elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
+  assert 'false' \
+    "attribution e2e: THOR_INTERNAL_SECRET is available" \
+    "Set THOR_INTERNAL_SECRET or ensure docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET returns a value"
+elif assert_attribution_config; then
+  attribution_trigger_body=$(node -e "
+    console.log(JSON.stringify({
+      correlationKey: 'e2e-attribution-flow',
+      triggerSlackId: process.env.ATTRIBUTION_E2E_SLACK_ID
+    }));
+  ")
+  attribution_context_raw=$(curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
+    -H 'Content-Type: application/json' \
+    -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+    -d "$attribution_trigger_body" \
+    2>/dev/null || echo '{}')
+  ATTRIBUTION_SESSION_ID=$(json_field "$attribution_context_raw" "sessionId")
+  assert '[[ -n "$ATTRIBUTION_SESSION_ID" ]]' \
+    "attribution e2e: runner created actor-bearing trigger context" \
+    "response: ${attribution_context_raw:0:300}; set THOR_E2E_TEST_HELPERS=1 for the runner service"
+
+  docker exec "$remote_cli_container" /usr/bin/git -C "$REMOTE_CLI_WORKTREE_DIR" config user.name "Thor E2E Bot" >/dev/null 2>&1 || true
+  docker exec "$remote_cli_container" /usr/bin/git -C "$REMOTE_CLI_WORKTREE_DIR" config user.email "thor-e2e-bot@example.com" >/dev/null 2>&1 || true
+
+  if [[ -n "$ATTRIBUTION_SESSION_ID" ]]; then
+    attribution_file="thor-e2e-attribution-${REMOTE_CLI_AUTH_TS}.txt"
+    printf "attribution e2e %s\n" "$REMOTE_CLI_AUTH_TS" >"$HOST_REMOTE_CLI_WORKTREE_DIR/$attribution_file"
+    export attribution_file REMOTE_CLI_WORKTREE_DIR
+
+    add_payload=$(node -e "
+      console.log(JSON.stringify({
+        args: ['add', process.env.attribution_file],
+        cwd: process.env.REMOTE_CLI_WORKTREE_DIR
+      }));
+    ")
+    add_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+      -H 'Content-Type: application/json' \
+      -d "$add_payload" \
+      2>/dev/null || echo '{}')
+    add_exit=$(json_field "$add_raw" "exitCode")
+    assert '[[ "$add_exit" == "0" ]]' "attribution e2e: git add succeeds" "response: ${add_raw:0:300}"
+
+    commit_message="e2e attribution commit ${REMOTE_CLI_AUTH_TS}"
+    export commit_message
+    commit_payload=$(node -e "
+      console.log(JSON.stringify({
+        args: ['commit', '-m', process.env.commit_message],
+        cwd: process.env.REMOTE_CLI_WORKTREE_DIR
+      }));
+    ")
+    commit_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+      -H 'Content-Type: application/json' \
+      -H "x-thor-session-id: $ATTRIBUTION_SESSION_ID" \
+      -d "$commit_payload" \
+      2>/dev/null || echo '{}')
+    commit_exit=$(json_field "$commit_raw" "exitCode")
+    expected_trailer="Co-authored-by: ${ATTRIBUTION_E2E_NAME} <${THOR_E2E_JIRA_EMAIL}>"
+    commit_body=$(docker exec "$remote_cli_container" /usr/bin/git -C "$REMOTE_CLI_WORKTREE_DIR" log -1 --format=%B 2>/dev/null || echo "")
+    assert '[[ "$commit_exit" == "0" ]]' "attribution e2e: git commit succeeds" "response: ${commit_raw:0:300}"
+    assert '[[ "$commit_body" == *"$expected_trailer"* ]]' \
+      "attribution e2e: commit message includes co-author trailer" \
+      "commit body: ${commit_body:0:500}"
+
+    # gh pr create: the e2e GitHub App lacks PR write permission, so the
+    # underlying gh call is expected to fail. We only verify that Thor's
+    # /exec/gh handler injected --assignee <github> from the user config
+    # before invoking gh, by inspecting the remote-cli exec_gh log line.
+    gh_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    pr_title="Thor attribution e2e ${REMOTE_CLI_AUTH_TS}"
+    pr_body="Thor attribution e2e marker ${REMOTE_CLI_AUTH_TS}"
+    export pr_title pr_body
+    pr_create_payload=$(node -e "
+      console.log(JSON.stringify({
+        args: ['pr', 'create', '--title', process.env.pr_title, '--body', process.env.pr_body],
+        cwd: process.env.REMOTE_CLI_WORKTREE_DIR
+      }));
+    ")
+    pr_create_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+      -H 'Content-Type: application/json' \
+      -H "x-thor-session-id: $ATTRIBUTION_SESSION_ID" \
+      -d "$pr_create_payload" \
+      2>/dev/null || echo '{}')
+    pr_create_exit=$(json_field "$pr_create_raw" "exitCode")
+    gh_logs=$(docker logs --since "$gh_log_since" "$remote_cli_container" 2>&1 || true)
+    assert '[[ "$pr_create_exit" != "0" ]]' \
+      "attribution e2e: gh pr create fails (GitHub App lacks write permission)" \
+      "exitCode='$pr_create_exit' response: ${pr_create_raw:0:500}"
+    assert '[[ "$gh_logs" == *"\"surface\":\"gh-assignee\",\"outcome\":\"applied\""* ]]' \
+      "attribution e2e: gh pr create attribution was applied" \
+      "logs: ${gh_logs:0:1000}"
+    assert '[[ "$gh_logs" == *"\"event\":\"exec_gh\""*"\"--assignee\""*"\"${ATTRIBUTION_E2E_GITHUB}\""* ]]' \
+      "attribution e2e: gh pr create invocation includes --assignee with the configured github login" \
+      "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in exec_gh args; logs: ${gh_logs:0:1500}"
+  fi
+fi
+
+# ── 6. Approval Flow ────────────────────────────────────────────────────────
 
 echo ""
 echo "=== Approval Flow ==="
@@ -386,10 +645,31 @@ elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
+  jira_assignee_live=false
+  if [[ -n "$JIRA_CLOUD_ID" && "$THOR_E2E_JIRA_EMAIL" != "$DEFAULT_THOR_E2E_JIRA_EMAIL" ]]; then
+    assert '[[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" ]]' \
+      "jira attribution e2e: discovered Atlassian createJiraIssue" \
+      "discovered '$APPROVAL_UPSTREAM/$APPROVAL_TOOL'; check ATLASSIAN_AUTH and MCP health"
+    assert '[[ -n "${ATLASSIAN_AUTH:-}" ]]' \
+      "jira attribution e2e: ATLASSIAN_AUTH is available" \
+      "set ATLASSIAN_AUTH so Jira lookup and create calls can reach Atlassian"
+    if [[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" && -n "${ATLASSIAN_AUTH:-}" ]]; then
+      jira_assignee_live=true
+    fi
+  elif [[ -n "$JIRA_CLOUD_ID" ]]; then
+    echo "  Skipping Jira assignee e2e: THOR_E2E_JIRA_EMAIL is the default placeholder"
+  fi
+
+  trigger_context_body=$(node -e "
+    console.log(JSON.stringify({
+      correlationKey: 'e2e-approval-flow-' + process.env.REMOTE_CLI_AUTH_TS,
+      triggerSlackId: process.env.ATTRIBUTION_E2E_SLACK_ID
+    }));
+  ")
   trigger_context_raw=$(curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
     -H 'Content-Type: application/json' \
     -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-    -d '{"correlationKey":"e2e-approval-flow"}' \
+    -d "$trigger_context_body" \
     2>/dev/null || echo '{}')
   E2E_THOR_SESSION_ID=$(json_field "$trigger_context_raw" "sessionId")
   E2E_THOR_TRIGGER_ID=$(json_field "$trigger_context_raw" "triggerId")
@@ -399,20 +679,35 @@ else
 
   # 4b. remote-cli-level: call the approval-required tool directly
   echo "  Calling tool via remote-cli (expecting approval interception)..."
-  case "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" in
-    atlassian/createJiraIssue)
-      approval_args_json='{"cloudId":"e2e-cloud","projectKey":"THOR","issueTypeName":"Task","summary":"e2e approval summary","description":"e2e approval body"}'
-      ;;
-    atlassian/addCommentToJiraIssue)
-      approval_args_json='{"cloudId":"e2e-cloud","issueIdOrKey":"THOR-1","commentBody":"e2e approval body"}'
-      ;;
-    posthog/create-feature-flag)
-      approval_args_json="{\"key\":\"thor-e2e-approval-${REMOTE_CLI_AUTH_TS}\",\"name\":\"Thor E2E approval ${REMOTE_CLI_AUTH_TS}\",\"description\":\"e2e approval body\",\"active\":false}"
-      ;;
-    *)
-      approval_args_json='{"description":"e2e approval body"}'
-      ;;
-  esac
+  if [[ "$jira_assignee_live" == "true" ]]; then
+    JIRA_E2E_SUMMARY="Thor Jira assignee e2e ${REMOTE_CLI_AUTH_TS}"
+    jira_e2e_description="Jira assignee attribution e2e. Marker: ${REMOTE_CLI_AUTH_TS}"
+    export JIRA_E2E_SUMMARY jira_e2e_description
+    approval_args_json=$(node -e "
+      console.log(JSON.stringify({
+        cloudId: process.env.JIRA_CLOUD_ID,
+        projectKey: 'THORE2E',
+        issueTypeName: 'ThorE2EFakeIssueType',
+        summary: process.env.JIRA_E2E_SUMMARY,
+        description: process.env.jira_e2e_description
+      }));
+    ")
+  else
+    case "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" in
+      atlassian/createJiraIssue)
+        approval_args_json='{"cloudId":"e2e-cloud","projectKey":"THOR","issueTypeName":"Task","summary":"e2e approval summary","description":"e2e approval body"}'
+        ;;
+      atlassian/addCommentToJiraIssue)
+        approval_args_json='{"cloudId":"e2e-cloud","issueIdOrKey":"THOR-1","commentBody":"e2e approval body"}'
+        ;;
+      posthog/create-feature-flag)
+        approval_args_json="{\"key\":\"thor-e2e-approval-${REMOTE_CLI_AUTH_TS}\",\"name\":\"Thor E2E approval ${REMOTE_CLI_AUTH_TS}\",\"description\":\"e2e approval body\",\"active\":false}"
+        ;;
+      *)
+        approval_args_json='{"description":"e2e approval body"}'
+        ;;
+    esac
+  fi
   escaped_approval_args=$(node -e "console.log(JSON.stringify(process.argv[1]))" "$approval_args_json")
   call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
@@ -451,28 +746,78 @@ else
     assert '[[ "$status_val" == "pending" ]]' "remote-cli: approval status is 'pending'" "status='$status_val'"
     assert '[[ "$status_tool" == "$APPROVAL_TOOL" ]]' "remote-cli: approval record has correct tool name" "tool='$status_tool'"
 
-    # 4d. Reject the approval (safe — no side effects on the upstream MCP)
-    echo "  Rejecting approval $action_id..."
-    resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
-      -H 'Content-Type: application/json' \
-      -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-      -d "{\"args\":[\"resolve\",\"$action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
-      2>/dev/null || echo '{}')
-    resolve_exit=$(json_field "$resolve_raw" "exitCode")
-    assert '[[ "$resolve_exit" == "0" ]]' "remote-cli: approval rejection command succeeded" "exitCode='$resolve_exit'"
+    if [[ "$jira_assignee_live" == "true" ]]; then
+      # 4d. Approve a Jira issue creation with a fake project key. The upstream
+      # create should fail, but only after Thor has performed lookup and sent
+      # the create payload with assignee_account_id.
+      echo "  Approving Jira approval $action_id..."
+      jira_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
+        -H 'Content-Type: application/json' \
+        -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+        -d "{\"args\":[\"resolve\",\"$action_id\",\"approved\",\"e2e-test\",\"e2e test - automated Jira assignee verification\"]}" \
+        2>/dev/null || echo '{}')
+      resolve_exit=$(json_field "$resolve_raw" "exitCode")
+      resolve_stdout=$(json_field "$resolve_raw" "stdout")
+      resolve_stderr=$(json_field "$resolve_raw" "stderr")
+      jira_logs=$(docker logs --since "$jira_log_since" "$remote_cli_container" 2>&1 || true)
+      assert '[[ "$jira_logs" == *"\"surface\":\"jira\",\"outcome\":\"applied\""* ]]' \
+        "jira attribution e2e: Jira attribution was applied" \
+        "logs: ${jira_logs:0:1000}"
 
-    # 4e. Verify final status confirms rejection
+      jira_lookup_entry=$(find_jira_tool_worklog_entry "lookupJiraAccountId" 2>/dev/null || echo "")
+      jira_create_entry=$(find_jira_tool_worklog_entry "createJiraIssue" 2>/dev/null || echo "")
+      jira_injected_account_id=$(json_field "$jira_create_entry" "args.assignee_account_id")
+      jira_create_project_key=$(json_field "$jira_create_entry" "args.projectKey")
+      jira_create_error=$(json_field "$jira_create_entry" "error")
+      jira_create_is_error=$(json_field "$jira_create_entry" "result.isError")
+      assert '[[ -n "$jira_lookup_entry" ]]' \
+        "jira attribution e2e: lookupJiraAccountId ran for the configured user email" \
+        "expected cloud='$JIRA_CLOUD_ID' email='$THOR_E2E_JIRA_EMAIL'"
+      assert '[[ "$jira_create_project_key" == "THORE2E" ]]' \
+        "jira attribution e2e: createJiraIssue used the fake project key" \
+        "projectKey='$jira_create_project_key' expected='THORE2E'; worklog entry: ${jira_create_entry:0:800}"
+      assert '[[ -n "$jira_injected_account_id" ]]' \
+        "jira attribution e2e: createJiraIssue received an assignee_account_id" \
+        "worklog entry: ${jira_create_entry:0:800}"
+      assert '[[ "$jira_create_is_error" == "true" || -n "$jira_create_error" || -n "$resolve_stderr" || "$resolve_exit" != "0" ]]' \
+        "jira attribution e2e: failed create call recorded an upstream error" \
+        "isError='$jira_create_is_error' worklog error='$jira_create_error' stderr='${resolve_stderr:0:500}' response: ${resolve_raw:0:500}"
+
+      issue_key=$(extract_jira_issue_key "$resolve_stdout $resolve_stderr $resolve_raw $jira_create_entry")
+      if [[ -n "$issue_key" ]]; then
+        JIRA_E2E_ISSUE_KEY="$issue_key"
+      fi
+      assert '[[ -z "$issue_key" ]]' \
+        "jira attribution e2e: fake project key did not create a Jira issue" \
+        "unexpected issue key='$issue_key'; cleanup will attempt deletion"
+    else
+      # 4d. Reject the approval (safe — no side effects on the upstream MCP)
+      echo "  Rejecting approval $action_id..."
+      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
+        -H 'Content-Type: application/json' \
+        -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+        -d "{\"args\":[\"resolve\",\"$action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
+        2>/dev/null || echo '{}')
+      resolve_exit=$(json_field "$resolve_raw" "exitCode")
+      assert '[[ "$resolve_exit" == "0" ]]' "remote-cli: approval rejection command succeeded" "exitCode='$resolve_exit'"
+    fi
+
+    # 4e. Verify final status confirms the approval decision.
     final_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
       -H 'Content-Type: application/json' \
       -d "{\"args\":[\"status\",\"$action_id\"]}" \
       2>/dev/null || echo '{}')
     final_status=$(exec_stdout_field "$final_raw" "status")
-    assert '[[ "$final_status" == "rejected" ]]' "remote-cli: final status confirms 'rejected'" "status='$final_status'"
+    expected_final_status=$([[ "$jira_assignee_live" == "true" ]] && echo "approved" || echo "rejected")
+    assert '[[ "$final_status" == "$expected_final_status" ]]' \
+      "remote-cli: final status confirms '$expected_final_status'" \
+      "status='$final_status'"
   fi
 
 fi
 
-# ── 6. Git/GH policy enforcement ─────────────────────────────────────────────
+# ── 7. Git/GH policy enforcement ─────────────────────────────────────────────
 #
 # Validates that remote-cli blocks disallowed git/gh commands at the policy
 # layer. These are direct HTTP calls — no LLM round-trip needed.
@@ -562,7 +907,7 @@ status_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
 status_exit=$(json_field "$status_raw" "exitCode")
 assert '[[ "$status_exit" == "0" ]]' "git status (allowed) succeeds" "exitCode='$status_exit'"
 
-# 7. slack-upload should complete a real Slack external upload flow
+# 8. slack-upload should complete a real Slack external upload flow
 echo ""
 echo "=== Slack upload wrapper ==="
 
@@ -642,11 +987,6 @@ echo ""
 echo "=== Results ==="
 echo "  $passed passed, $failed failed"
 echo ""
-
-[[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
-if [[ -f "$HOST_REMOTE_CLI_GIT_REPO_MARKER" ]]; then
-  rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
-fi
 
 if [[ $failed -gt 0 ]]; then
   echo "FAIL"

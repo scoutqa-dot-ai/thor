@@ -58,6 +58,8 @@ export interface ProgressRelayTarget {
 export interface RunnerTriggerOptions {
   prompt: string;
   correlationKey: string;
+  triggerSlackId?: string;
+  triggerGithubLogin?: string;
   directory: string;
   deps: RunnerDeps;
   interrupt?: boolean;
@@ -93,6 +95,8 @@ export interface BatchDispatchInput {
   remoteCliUrl?: string;
   internalSecret?: string;
   internalExec?: InternalExecClient;
+  triggerSlackId?: string;
+  triggerGithubLogin?: string;
   interrupt?: boolean;
   onAccepted?: () => void;
   onRejected?: (reason: string) => void;
@@ -415,6 +419,26 @@ function getBatchSources(input: BatchDispatchInput): BatchSource[] {
   return sources;
 }
 
+function triggerActorFromSlackEvents(
+  events: SlackThreadEvent[],
+): Pick<RunnerTriggerOptions, "triggerSlackId"> {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const user = events[i]?.user;
+    if (user) return { triggerSlackId: user };
+  }
+  return {};
+}
+
+function triggerActorFromGitHubEvents(
+  events: GitHubWebhookEvent[],
+): Pick<RunnerTriggerOptions, "triggerGithubLogin"> {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const login = events[i]?.sender.login;
+    if (login) return { triggerGithubLogin: login };
+  }
+  return {};
+}
+
 export function getBatchLogPrefix(sources: BatchSource[]): BatchLogPrefix {
   return sources.length === 1 ? sources[0] : "mixed";
 }
@@ -566,6 +590,8 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
       correlationKey: options.correlationKey,
       interrupt: options.interrupt,
       directory: options.directory,
+      ...(options.triggerSlackId ? { triggerSlackId: options.triggerSlackId } : {}),
+      ...(options.triggerGithubLogin ? { triggerGithubLogin: options.triggerGithubLogin } : {}),
     }),
   });
 
@@ -763,6 +789,8 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     options: {
       prompt,
       correlationKey: input.correlationKey,
+      ...(input.triggerSlackId ? { triggerSlackId: input.triggerSlackId } : {}),
+      ...(input.triggerGithubLogin ? { triggerGithubLogin: input.triggerGithubLogin } : {}),
       directory: directories[0],
       deps: input.deps,
       interrupt: input.interrupt,
@@ -835,6 +863,7 @@ export async function triggerRunnerSlack(
     githubEvents: [],
     approvalOutcomes: approvalOutcomes ?? [],
     correlationKey,
+    ...triggerActorFromSlackEvents(events),
     deps,
     slackDeps,
     interrupt,
@@ -983,6 +1012,7 @@ export async function triggerRunnerGitHub(
     githubEvents: events,
     approvalOutcomes: [],
     correlationKey,
+    ...triggerActorFromGitHubEvents(events),
     deps,
     slackDeps: NOOP_SLACK_DEPS,
     remoteCliUrl,

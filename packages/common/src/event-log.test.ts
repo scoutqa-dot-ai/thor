@@ -17,6 +17,7 @@ import {
   appendAlias,
   appendSessionEvent,
   findActiveTrigger,
+  findTriggerActor,
   listAnchors,
   listAnchorSessionStates,
   listSessionAliases,
@@ -72,6 +73,19 @@ describe("session event log", () => {
       event: { huge: "x".repeat(8000) },
     });
     expect(statSync(sessionLogPath("s1")).size).toBeLessThan(4096);
+  });
+
+  it("finds trigger actors through session and subsession aliases after trigger end", () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "parent", anchorId: anchorA });
+    appendAlias({ aliasType: "opencode.subsession", aliasValue: "child", anchorId: anchorA });
+    appendSessionEvent("parent", {
+      type: "trigger_start",
+      triggerId: triggerA,
+      triggerSlackId: "UABCDEF1",
+    });
+    appendSessionEvent("parent", { type: "trigger_end", triggerId: triggerA, status: "completed" });
+
+    expect(findTriggerActor("child")).toEqual({ slack: "UABCDEF1" });
   });
 
   it("never truncates text or reasoning opencode_event records, even when oversized", () => {

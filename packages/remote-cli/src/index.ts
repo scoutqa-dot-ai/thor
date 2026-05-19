@@ -18,6 +18,7 @@ import {
   matchesInternalSecret,
   WORKSPACE_CONFIG_PATH,
   type ExecStreamEvent,
+  type ConfigLoader,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
 import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
@@ -54,6 +55,7 @@ import {
   validateMetabaseArgs,
   validateScoutqaArgs,
 } from "./policy.js";
+import { attributionFields, resolveTriggerUser } from "./attribution.js";
 
 const log = createLogger("remote-cli");
 
@@ -86,6 +88,7 @@ export interface RemoteCliAppConfig {
   env?: ReturnType<typeof loadRemoteCliEnv>;
   mcp?: McpServiceDeps;
   slackPostMessage?: SlackPostMessageDeps;
+  configLoader?: ConfigLoader;
 }
 
 export interface RemoteCliApp {
@@ -209,40 +212,144 @@ function registerIssueCorrelationAlias(
   logInfo(log, "alias_registered", { sessionId, correlationKey, source: "gh" });
 }
 
-function rewriteSingleValueFlag(
+type FlagMatch = { index: number; valueIndex?: number; inlinePrefix?: string };
+
+function rewriteValueFlag(
   args: string[],
   names: string[],
-  append: string,
-  valuePrefix?: string,
-): string[] | { error: string } {
-  const out = [...args];
-  let match: { index: number; valueIndex?: number; inlinePrefix?: string } | undefined;
-  for (let i = 0; i < out.length; i++) {
+  append: string | ((value: string) => string),
+  options: { valuePrefix?: string; match: "single" | "last" } = { match: "single" },
+): string[] | { error: "duplicate" | "notFound" } {
+  const { valuePrefix, match: mode } = options;
+  const matches: FlagMatch[] = [];
+  for (let i = 0; i < args.length; i++) {
     for (const name of names) {
-      if (out[i] === name && i + 1 < out.length) {
-        if (valuePrefix && !out[i + 1].startsWith(valuePrefix)) continue;
-        if (match) return { error: "Disclaimer required: multiple mutable gh body fields" };
-        match = { index: i, valueIndex: i + 1 };
+      if (args[i] === name && i + 1 < args.length) {
+        if (valuePrefix && !args[i + 1].startsWith(valuePrefix)) continue;
+        matches.push({ index: i, valueIndex: i + 1 });
         i += 1;
         break;
       }
-      if (out[i].startsWith(`${name}=`)) {
-        const value = out[i].slice(name.length + 1);
+      if (args[i].startsWith(`${name}=`)) {
+        const value = args[i].slice(name.length + 1);
         if (valuePrefix && !value.startsWith(valuePrefix)) continue;
-        if (match) return { error: "Disclaimer required: multiple mutable gh body fields" };
-        match = { index: i, inlinePrefix: `${name}=` };
+        matches.push({ index: i, inlinePrefix: `${name}=` });
         break;
       }
     }
   }
-  if (!match) return { error: "Disclaimer required: could not find a mutable gh body field" };
-  if (match.valueIndex !== undefined) {
-    out[match.valueIndex] = `${out[match.valueIndex]}${append}`;
-  } else if (match.inlinePrefix) {
-    out[match.index] =
-      `${match.inlinePrefix}${out[match.index].slice(match.inlinePrefix.length)}${append}`;
+  if (matches.length === 0) return { error: "notFound" };
+  if (matches.length > 1 && mode === "single") return { error: "duplicate" };
+  const m = mode === "last" ? matches[matches.length - 1] : matches[0];
+  const out = [...args];
+  const rewrite = (value: string) =>
+    typeof append === "function" ? append(value) : `${value}${append}`;
+  if (m.valueIndex !== undefined) {
+    out[m.valueIndex] = rewrite(out[m.valueIndex]);
+  } else if (m.inlinePrefix) {
+    out[m.index] = `${m.inlinePrefix}${rewrite(out[m.index].slice(m.inlinePrefix.length))}`;
   }
   return out;
+}
+
+function hasFlag(args: string[], names: string[]): boolean {
+  return args.some((arg) => names.some((name) => arg === name || arg.startsWith(`${name}=`)));
+}
+
+function logAttribution(surface: string, outcome: string, extra: Record<string, unknown> = {}) {
+  logInfo(log, "attribution_applied", { surface, outcome, ...extra });
+}
+
+function withGitAttribution(
+  args: string[],
+  sessionId: string | undefined,
+  getConfig: ConfigLoader,
+): string[] {
+  if (args[0] !== "commit") return args;
+  const resolved = resolveTriggerUser(sessionId, getConfig);
+  if (!resolved.user) {
+    logAttribution(
+      "git",
+      resolved.reason ?? "skipped_no_user_record",
+      attributionFields(resolved.actor),
+    );
+    return args;
+  }
+  if (hasFlag(args, ["-F", "--file"])) {
+    logAttribution(
+      "git",
+      "skipped_unsupported_arg_shape",
+      attributionFields(resolved.actor, resolved.user),
+    );
+    return args;
+  }
+  const trailerLine = `Co-authored-by: ${resolved.user.name} <${resolved.user.email}>`;
+  const attributionEmail = resolved.user.email.toLowerCase();
+  let alreadyAttributed = false;
+  const rewritten = rewriteValueFlag(
+    args,
+    ["-m", "--message"],
+    (message) => {
+      if (message.toLowerCase().includes(attributionEmail)) {
+        alreadyAttributed = true;
+        return message;
+      }
+      return `${message}${message.endsWith("\n") ? "\n" : "\n\n"}${trailerLine}`;
+    },
+    { match: "last" },
+  );
+  if ("error" in rewritten) {
+    logAttribution(
+      "git",
+      "skipped_unsupported_arg_shape",
+      attributionFields(resolved.actor, resolved.user),
+    );
+    return args;
+  }
+  if (alreadyAttributed) {
+    logAttribution(
+      "git",
+      "skipped_already_attributed",
+      attributionFields(resolved.actor, resolved.user),
+    );
+    return args;
+  }
+  logAttribution("git", "applied", attributionFields(resolved.actor, resolved.user));
+  return rewritten;
+}
+
+function withGhAttribution(
+  args: string[],
+  sessionId: string | undefined,
+  getConfig: ConfigLoader,
+): string[] {
+  if (!(args[0] === "pr" && args[1] === "create")) return args;
+  const resolved = resolveTriggerUser(sessionId, getConfig);
+  if (hasFlag(args, ["--assignee", "-a"])) {
+    logAttribution(
+      "gh-assignee",
+      "skipped_existing_assignee",
+      attributionFields(resolved.actor, resolved.user),
+    );
+    return args;
+  }
+  if (!resolved.user) {
+    logAttribution(
+      "gh-assignee",
+      resolved.reason ?? "skipped_no_user_record",
+      attributionFields(resolved.actor),
+    );
+    return args;
+  }
+  if (!resolved.user.github) {
+    logAttribution("gh-assignee", "skipped_missing_identity_field", {
+      field: "github",
+      ...attributionFields(resolved.actor, resolved.user),
+    });
+    return args;
+  }
+  logAttribution("gh-assignee", "applied", attributionFields(resolved.actor, resolved.user));
+  return [...args, "--assignee", resolved.user.github];
 }
 
 function isGhHelpRequest(args: string[]): boolean {
@@ -269,9 +376,22 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
         err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer",
     };
   }
-  return args[0] === "api"
-    ? rewriteSingleValueFlag(args, ["-f", "--raw-field"], footer, "body=")
-    : rewriteSingleValueFlag(args, ["--body", "-b"], footer);
+  const result =
+    args[0] === "api"
+      ? rewriteValueFlag(args, ["-f", "--raw-field"], footer, {
+          match: "single",
+          valuePrefix: "body=",
+        })
+      : rewriteValueFlag(args, ["--body", "-b"], footer, { match: "single" });
+  if ("error" in result) {
+    return {
+      error:
+        result.error === "duplicate"
+          ? "Disclaimer required: multiple mutable gh body fields"
+          : "Disclaimer required: could not find a mutable gh body field",
+    };
+  }
+  return result;
 }
 
 /**
@@ -533,10 +653,11 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
   const internalSecret = appEnv.thorInternalSecret;
-  const getConfig = createConfigLoader(WORKSPACE_CONFIG_PATH);
+  const getConfig = config.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const mcpService = createMcpService({
     isProduction: appEnv.isProduction,
     ...config.mcp,
+    configLoader: config.mcp?.configLoader ?? getConfig,
   });
 
   const app = express();
@@ -564,15 +685,14 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         res.status(400).json({ stdout: "", stderr: gitResolution.error, exitCode: 1 });
         return;
       }
-      const effectiveArgs = gitResolution.args;
+      const ids = thorIds(req);
       const effectiveCwd = gitResolution.cwd ?? cwd;
       const effectiveCwdError = validateCwd(effectiveCwd);
       if (effectiveCwdError) {
         res.status(400).json({ stdout: "", stderr: effectiveCwdError, exitCode: 1 });
         return;
       }
-      const ids = thorIds(req);
-
+      const effectiveArgs = withGitAttribution(gitResolution.args, ids.sessionId, getConfig);
       logInfo(log, "exec_git", {
         args,
         ...(JSON.stringify(effectiveArgs) !== JSON.stringify(args) ? { effectiveArgs } : {}),
@@ -613,11 +733,12 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       const ids = thorIds(req);
-      const effectiveArgs = withGhDisclaimer(args, ids.sessionId);
-      if (!Array.isArray(effectiveArgs)) {
-        res.status(400).json({ stdout: "", stderr: effectiveArgs.error, exitCode: 1 });
+      const disclaimerArgs = withGhDisclaimer(args, ids.sessionId);
+      if (!Array.isArray(disclaimerArgs)) {
+        res.status(400).json({ stdout: "", stderr: disclaimerArgs.error, exitCode: 1 });
         return;
       }
+      const effectiveArgs = withGhAttribution(disclaimerArgs, ids.sessionId, getConfig);
 
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
       const result = await execCommand("gh", effectiveArgs, cwd);

@@ -24,7 +24,6 @@ const MitmproxyRuleSchema = z
       ),
     readonly: z.boolean().optional().default(false),
   })
-  .strict()
   .superRefine((value, ctx) => {
     const hasHost = typeof value.host === "string";
     const hasHostSuffix = typeof value.host_suffix === "string";
@@ -44,16 +43,24 @@ const MitmproxyPassthroughHostSchema = z.string().refine((value) => {
   return !value.includes("/") && !value.includes(":") && value.length > 0;
 }, "Passthrough entries must be an exact host or a suffix starting with '.'");
 
-export const WorkspaceConfigSchema = z
-  .object({
-    owners: z.record(z.string(), OwnerConfigSchema).optional(),
-    mitmproxy: z.array(MitmproxyRuleSchema).optional(),
-    mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
-  })
-  .strict();
+const UserRecordSchema = z.object({
+  /** Jira account email; this is also used for visible commit co-author trailers. */
+  email: z.email(),
+  name: z.string().min(1),
+  slack: z.string().min(1).optional(),
+  github: z.string().min(1).optional(),
+});
+
+export const WorkspaceConfigSchema = z.object({
+  owners: z.record(z.string(), OwnerConfigSchema).optional(),
+  users: z.array(UserRecordSchema).optional(),
+  mitmproxy: z.array(MitmproxyRuleSchema).optional(),
+  mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
+});
 
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type OwnerConfig = z.infer<typeof OwnerConfigSchema>;
+export type UserRecord = z.infer<typeof UserRecordSchema>;
 
 export interface ProxyUpstream {
   url: string;
@@ -190,6 +197,21 @@ export function interpolateHeaders(
     result[key] = interpolateEnv(value);
   }
   return result;
+}
+
+export function findUserBySlack(config: WorkspaceConfig, slack: string): UserRecord | undefined {
+  const normalized = slack.toUpperCase();
+  return config.users?.find((user) => user.slack?.toUpperCase() === normalized);
+}
+
+export function findUserByGithub(config: WorkspaceConfig, github: string): UserRecord | undefined {
+  const normalized = github.toLowerCase();
+  return config.users?.find((user) => user.github?.toLowerCase() === normalized);
+}
+
+export function findUserByEmail(config: WorkspaceConfig, email: string): UserRecord | undefined {
+  const normalized = email.toLowerCase();
+  return config.users?.find((user) => user.email.toLowerCase() === normalized);
 }
 
 /**

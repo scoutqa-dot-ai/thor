@@ -37,7 +37,7 @@ vi.mock("./exec.js", () => ({
   execCommandStream: vi.fn(),
 }));
 
-import { createRemoteCliApp } from "./index.js";
+import { createRemoteCliApp, type RemoteCliAppConfig } from "./index.js";
 
 const worklogRoot = "/tmp/thor-remote-cli-gh-test";
 const cwd = "/workspace/worktrees/acme/feat/test";
@@ -55,8 +55,11 @@ function bindSessionToAnchor(sessionId: string, anchorId: string): void {
   });
 }
 
-async function withServer<T>(fn: (url: string) => Promise<T>): Promise<T> {
-  const remoteCli = createRemoteCliApp();
+async function withServer<T>(
+  fn: (url: string) => Promise<T>,
+  config?: RemoteCliAppConfig,
+): Promise<T> {
+  const remoteCli = createRemoteCliApp(config);
   const server: Server = createServer(remoteCli.app);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -126,6 +129,98 @@ afterEach(() => {
 });
 
 describe("gh disclaimer injection", () => {
+  function seedActor(sessionId = "parent") {
+    bindSessionToAnchor(sessionId, anchorParent);
+    appendSessionEvent(sessionId, {
+      type: "trigger_start",
+      triggerId,
+      triggerSlackId: "UABCDEF1",
+    });
+  }
+
+  const configLoader = () => ({
+    users: [{ email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" }],
+  });
+
+  it("appends a co-author trailer to only the last git commit -m value", async () => {
+    seedActor();
+    await withServer(
+      async (url) => {
+        const { response } = await postGit(
+          url,
+          ["commit", "-m", "Subject", "-m", "Body"],
+          "parent",
+        );
+        expect(response.status).toBe(200);
+        expect(execCalls[0].args).toEqual([
+          "commit",
+          "-m",
+          "Subject",
+          "-m",
+          "Body\n\nCo-authored-by: Alice <alice@example.com>",
+        ]);
+      },
+      { configLoader },
+    );
+  });
+
+  it("does not duplicate an existing matching co-author trailer", async () => {
+    seedActor();
+    await withServer(
+      async (url) => {
+        const message = "Do work\n\nCo-authored-by: Alice <alice@example.com>";
+        const { response } = await postGit(url, ["commit", "-m", message], "parent");
+        expect(response.status).toBe(200);
+        expect(execCalls[0].args).toEqual(["commit", "-m", message]);
+      },
+      { configLoader },
+    );
+  });
+
+  it("does not add a co-author trailer when the message already contains the user email", async () => {
+    seedActor();
+    await withServer(
+      async (url) => {
+        const message = "Do work\n\nReviewed-by: Alice Example <ALICE@EXAMPLE.COM>";
+        const { response } = await postGit(url, ["commit", "-m", message], "parent");
+        expect(response.status).toBe(200);
+        expect(execCalls[0].args).toEqual(["commit", "-m", message]);
+      },
+      { configLoader },
+    );
+  });
+
+  it("keeps an existing PR assignee", async () => {
+    seedActor();
+    await withServer(
+      async (url) => {
+        await postGh(
+          url,
+          ["pr", "create", "--title", "x", "--body", "Body", "--assignee", "bob"],
+          "parent",
+        );
+        expect(execCalls[0].args.filter((arg) => arg === "--assignee")).toHaveLength(1);
+        expect(execCalls[0].args).toContain("bob");
+      },
+      { configLoader },
+    );
+  });
+
+  it("passes git commit through when attribution config is unavailable", async () => {
+    seedActor();
+    const failingConfigLoader = () => {
+      throw new Error("config unavailable");
+    };
+    await withServer(
+      async (url) => {
+        const { response } = await postGit(url, ["commit", "-m", "Do work"], "parent");
+        expect(response.status).toBe(200);
+        expect(execCalls[0].args).toEqual(["commit", "-m", "Do work"]);
+      },
+      { configLoader: failingConfigLoader },
+    );
+  });
+
   it("registers git branch aliases only after successful git push", async () => {
     bindSessionToAnchor("parent", anchorParent);
 

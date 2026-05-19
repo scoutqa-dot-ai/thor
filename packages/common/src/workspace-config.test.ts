@@ -9,6 +9,9 @@ import {
   getInstallationIdForOwner,
   interpolateEnv,
   interpolateHeaders,
+  findUserBySlack,
+  findUserByGithub,
+  findUserByEmail,
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
 } from "./workspace-config.js";
@@ -43,11 +46,6 @@ describe("loadWorkspaceConfig", () => {
     const path = join(tempDir, "bad.json");
     writeFileSync(path, "not json {{{");
     expect(() => loadWorkspaceConfig(path)).toThrow("Invalid JSON");
-  });
-
-  it("rejects unknown top-level fields", () => {
-    const path = writeConfig("config.json", { repos: {} });
-    expect(() => loadWorkspaceConfig(path)).toThrow("Invalid workspace config");
   });
 
   it("rejects non-positive owner installation IDs with path details", () => {
@@ -93,6 +91,20 @@ describe("loadWorkspaceConfig", () => {
     expect(config.mitmproxy?.[1].host_suffix).toBe(".example.internal");
     expect(config.mitmproxy?.[1].readonly).toBe(true);
     expect(config.mitmproxy_passthrough).toEqual(["api.openai.com", ".openai.com"]);
+  });
+
+  it("loads users and resolves identities case-insensitively where appropriate", () => {
+    const path = writeConfig("config.json", {
+      users: [
+        { email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "Alice-Dev" },
+        { email: "bob@example.com", name: "Bob" },
+      ],
+    });
+    const config = loadWorkspaceConfig(path);
+    expect(findUserBySlack(config, "UABCDEF1")?.email).toBe("alice@example.com");
+    expect(findUserByGithub(config, "alice-dev")?.slack).toBe("UABCDEF1");
+    expect(findUserByEmail(config, "BOB@example.com")?.name).toBe("Bob");
+    expect(findUserBySlack(config, "UNOMATCH")).toBeUndefined();
   });
 
   it("rejects mitmproxy rule without host selector", () => {

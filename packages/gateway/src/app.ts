@@ -110,6 +110,26 @@ function isGitHubEvent(e: QueuedEvent): e is GitHubQueuedEvent {
   return e.source === "github";
 }
 
+function latestQueuedTriggerActor(events: QueuedEvent[]): {
+  triggerSlackId?: string;
+  triggerGithubLogin?: string;
+} {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (!event) continue;
+    if (isSlackEvent(event)) {
+      const user = event.payload.user;
+      if (user) return { triggerSlackId: user };
+      continue;
+    }
+    if (isGitHubEvent(event)) {
+      const login = event.payload.sender.login;
+      if (login) return { triggerGithubLogin: login };
+    }
+  }
+  return {};
+}
+
 function summarizeResolutionOutput(
   stdout: string,
   stderr: string,
@@ -1030,6 +1050,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           remoteCliUrl,
           internalSecret: config.internalSecret,
           internalExec,
+          ...latestQueuedTriggerActor(events),
           interrupt: hasInterrupt,
           onAccepted: ack,
           onRejected: reject,

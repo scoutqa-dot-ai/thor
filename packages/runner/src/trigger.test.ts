@@ -776,7 +776,11 @@ describe("runner /trigger orchestration", () => {
     const correlationKey = "slack:thread:1710000000.001";
 
     await withServer(h.app, async (url) => {
-      const first = await trigger(url, { prompt: "first", correlationKey });
+      const first = await trigger(url, {
+        prompt: "first",
+        correlationKey,
+        triggerSlackId: "UABCDEF1",
+      });
       const firstStart = first.events.find((e) => e.type === "start");
       const firstDone = first.events.find((e) => e.type === "done");
       expect(firstStart).toMatchObject({ sessionId: "session-1", resumed: false });
@@ -787,6 +791,7 @@ describe("runner /trigger orchestration", () => {
       });
       const logText = readFileSync(`${worklogDir}/sessions/session-1.jsonl`, "utf8");
       expect(logText).toContain('"type":"trigger_start"');
+      expect(logText).toContain('"triggerSlackId":"UABCDEF1"');
       expect(logText).toContain('"type":"trigger_end"');
       const aliases = readFileSync(`${worklogDir}/aliases.jsonl`, "utf8")
         .trim()
@@ -1265,7 +1270,11 @@ describe("runner /trigger orchestration", () => {
             "content-type": "application/json",
             "x-thor-internal-secret": process.env.THOR_INTERNAL_SECRET!,
           },
-          body: JSON.stringify({ correlationKey: "slack:thread:1710000200.002" }),
+          body: JSON.stringify({
+            correlationKey: "slack:thread:1710000200.002",
+            triggerSlackId: "UABCDEF1",
+            triggerGithubLogin: "alice",
+          }),
         });
         expect(okResp.status).toBe(200);
         const data = (await okResp.json()) as {
@@ -1282,6 +1291,8 @@ describe("runner /trigger orchestration", () => {
         );
         const text = readFileSync(sessionLogPath(data.sessionId), "utf8");
         expect(text).toContain(`"triggerId":"${data.triggerId}"`);
+        expect(text).toContain('"triggerSlackId":"UABCDEF1"');
+        expect(text).toContain('"triggerGithubLogin":"alice"');
       });
     } finally {
       delete process.env.THOR_E2E_TEST_HELPERS;

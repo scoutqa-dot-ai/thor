@@ -181,6 +181,19 @@ GitHub App installation entries live under `owners.<owner>.github_app_installati
 
 The `git` wrapper resolves installation tokens lazily through `GIT_ASKPASS`, and the `gh` wrapper resolves them before invoking `gh`. `remote-cli` requires GitHub App env vars at startup and does not support static PAT fallback auth.
 
+Human attribution entries live under `users[]`. `email` must be the Jira account email; Thor may write the name/email into `Co-authored-by:` commit trailers and use the email to resolve Jira assignees. Config hot-reloads, so no restart is needed after edits.
+
+```json
+{
+  "users": [
+    { "email": "alice@example.com", "name": "Alice", "slack": "UABCDEF1", "github": "alice" },
+    { "email": "bob@example.com", "name": "Bob" }
+  ]
+}
+```
+
+To verify your entry, trigger Thor from Slack and look for `attribution_applied` with `outcome: "applied"` and your Slack id; `skipped_no_user_record` means the configured Slack id did not match the trigger. See [`docs/feat/users-directory-provenance.md`](docs/feat/users-directory-provenance.md) for registry provenance.
+
 If you have internal APIs that Thor should access with injected credentials,
 define rules in `/workspace/config.json` and keep only secret values in `.env`:
 
@@ -242,10 +255,6 @@ pnpm test:create-jira-approval-e2e # live Slack/OpenCode approval-card e2e for A
 pnpm test:opencode-e2e # separate explicit OpenCode/LLM smoke path
 pnpm typecheck
 ```
-
-`pnpm test:e2e` is deterministic and never calls `/trigger`. The clone repo env vars are required because the test exercises `remote-cli`'s `/exec/git clone` policy; the repo's owner must be present in `/workspace/config.json`'s `owners` map.
-
-`pnpm test:create-jira-approval-e2e` requires live Slack/OpenCode credentials, a connected Atlassian MCP upstream, and a writable Slack test channel via `SLACK_E2E_CHANNEL_ID` (or `SLACK_CHANNEL_ID`). It intentionally leaves approvals pending for human inspection.
 
 ## Project Structure
 
