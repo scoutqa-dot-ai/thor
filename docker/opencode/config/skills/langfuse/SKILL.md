@@ -164,8 +164,6 @@ Access:
 
 ## Constraints
 
-- Read-only usage only (no mutations)
-- Always include `--from-timestamp` when listing traces
 - Avoid large payloads:
   - Use `--limit`
   - Use `--fields`

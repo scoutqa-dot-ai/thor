@@ -112,10 +112,5 @@ sandbox bash -c 'nvm use 20 && npm test'
 
 - Each worktree gets its own isolated sandbox — switching worktrees creates a separate sandbox
 - Code is synced to `/workspace/sandbox` inside the sandbox — paths in error output will show this prefix
-- First run is slower (sandbox creation + full code sync)
 - Subsequent runs reuse the sandbox and sync only new commits
-- Sandbox stops automatically after 15 minutes of inactivity
 - Multiple `sandbox` commands on the same worktree can run in parallel
-- `npm`, `npx`, `pnpm`, `pnpx`, and `corepack` are automatically redirected to the sandbox — no need to prefix with `sandbox`
-- `git` is blocked inside the sandbox — git state is not synced back, so use `git` directly instead
-- Pull only happens on successful exec (exit code 0) — failed commands do not sync partial artifacts back

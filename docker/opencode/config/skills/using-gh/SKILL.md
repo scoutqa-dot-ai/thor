@@ -7,25 +7,13 @@ description: "GitHub CLI surface allowed by Thor's remote-cli server policy. App
 
 All `gh` commands go through Thor's remote-cli which enforces:
 
-- **Append-only writes.** Create PRs/issues, post PR/issue comments, submit `--comment`/`--request-changes` reviews. Never approve, merge, edit, or delete.
-- **Repo-targeting flags are blocked.** `--repo`/`-R` is not part of the supported surface — `cd` into the intended worktree or repo and rerun the command. For cross-repo API reads, use explicit REST endpoints such as `repos/<owner>/<repo>/...`.
-- **`gh api` is a tiny explicit subset.** REST implicit GET reads are allowed with output shaping. GraphQL (`gh api graphql`) is blocked. One append-only POST shape is allowed for PR review-comment replies.
-- **PR approval is a human gate.** `gh pr review --approve` is denied.
-- **`gh pr checkout` is denied** because it would mutate the current worktree branch — use the fetch + worktree-add pattern in "Reviewing a PR" below.
-- **`gh pr diff <N>` is allowed** as a read-only shortcut, but a fetched worktree gives a deeper review surface (run tests, grep, build). Prefer the worktree pattern when actually reviewing.
+- **Append-only writes.** Create PRs/issues, post PR/issue comments, submit `--comment`/`--request-changes` reviews. Approval, merge, edit, and delete are human gates.
+- **`cd` into the target worktree** before running write commands — repo-targeting flags aren't part of the supported surface. For cross-repo API reads, use explicit REST endpoints such as `repos/<owner>/<repo>/...`.
+- **Non-interactive bodies only.** Pass `--body`/`-b` directly; editor, web, and body-file flags aren't supported on the write surface.
+- **`gh api` is a small explicit subset.** REST implicit GET reads are allowed with output shaping. One append-only POST shape is allowed for PR review-comment replies. GraphQL and arbitrary `--method` use are out of scope.
+- **PR review through the worktree.** `gh pr diff` is fine for a quick scan; a fetched worktree gives the deeper surface (tests, grep, build). See `using-git` for the fetch + worktree-add pattern.
 
-## Reviewing a PR
-
-When asked to review or critique a PR, the first action is always to check out the branch to a worktree:
-
-```
-git fetch origin pull/<N>/head:pr-<N>
-git worktree add /workspace/worktrees/<repo>/pr-<N> pr-<N>
-```
-
-Then `cd` into the worktree for every subsequent action — diffs, code search, tests, builds, file reads. Reviewing through `gh pr diff`, `git show <ref>` of an unfetched commit, or `gh api repos/.../pulls/<N>/files` produces shallow reviews because you can't run tests, can't grep beyond the diff, and can't reproduce the build.
-
-For the same reason, `gh pr checkout <N>` is also denied — it would mutate the current worktree's branch state. Use the fetch + worktree-add pattern instead.
+Anything not listed below — or any unsupported flag combination — returns a policy denial; treat that as the authoritative signal.
 
 ## Structured commands
 
@@ -35,41 +23,41 @@ Read-only PR file/patch view. `gh pr diff <N> [--patch] [--name-only]` is allowe
 
 ### `gh pr create`
 
-Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`-H`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable). Blocked: `--editor`, `--web`, `--repo`/`-R`, `--fill`, `-F`/`--body-file` (no mutable body value for Thor to inject the trigger viewer link into — pass an explicit `--body`).
+Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`-H`, `--draft`, `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable), `--reviewer`/`-r` (repeatable).
 
-`--head` must equal the branch implied by cwd (`/workspace/worktrees/<repo>/<branch>`) — the explicit form of the default that `gh pr create` would pick anyway. To PR from a different branch, `cd` into that worktree first. Cross-fork (`<owner>:<branch>`) and protected branches (`main`/`master`) fall out as side effects.
+`--head` must equal the branch implied by cwd (`/workspace/worktrees/<repo>/<branch>`) — the explicit form of the default that `gh pr create` would pick anyway. To PR from a different branch, `cd` into that worktree first.
 
 ### `gh issue create`
 
-Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable). Blocked: `--editor`, `--web`, `--repo`/`-R`, `-F`/`--body-file`, assignee/project/milestone mutation, and any missing explicit body. Successful creates receive Thor's traceability footer and bind the created `github:issue:` session for later issue comments.
+Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable). Successful creates receive Thor's traceability footer and bind the created `github:issue:` session for later issue comments.
 
 ### `gh pr comment`
 
-Required: numeric PR selector plus `--body`/`-b`. Blocked: non-numeric selectors, edit/delete modes, `--editor`, `-F`/`--body-file`, and `--repo`/`-R`. Use this for PR conversation-level replies, not inline review-thread replies.
+Required: numeric PR selector plus `--body`/`-b`. Use this for PR conversation-level replies, not inline review-thread replies.
 
 ### `gh issue comment`
 
-Required: numeric issue selector plus `--body`/`-b`. Blocked: non-numeric selectors, edit/delete modes, `--editor`, `-F`/`--body-file`, and `--repo`/`-R`. For PR conversation comments, prefer `gh pr comment`; both comment paths receive Thor's traceability footer.
+Required: numeric issue selector plus `--body`/`-b`. For PR conversation comments, prefer `gh pr comment`; both comment paths receive Thor's traceability footer.
 
 ### `gh pr review`
 
-Required: `--body`/`-b` and exactly one of `--comment`/`-c` or `--request-changes`/`-r`. Optional positional selector: numeric PR number only. `--approve`/`-a` is denied. Blocked: non-numeric selectors, interactive/file flags, and `--repo`/`-R`.
+Required: `--body`/`-b` and exactly one of `--comment`/`-c` or `--request-changes`/`-r`. Optional positional selector: numeric PR number only.
 
 ### `gh run rerun`
 
-Required: numeric run ID. Optional: `--failed` (rerun only failed jobs), `--debug`. Blocked: `--job`, `--repo`/`-R`.
+Required: numeric run ID. Optional: `--failed` (rerun only failed jobs), `--debug`.
 
 ### `gh run download`
 
-Required: numeric run ID. Optional: `--dir`/`-D <path>`, `--name`/`-n <artifact>` (repeatable), `--pattern`/`-p <glob>` (repeatable). Blocked: `--repo`/`-R`.
+Required: numeric run ID. Optional: `--dir`/`-D <path>`, `--name`/`-n <artifact>` (repeatable), `--pattern`/`-p <glob>` (repeatable).
 
 ### `gh workflow run`
 
-Required: workflow selector (workflow file name or numeric ID, positional, no flag-leading values). Optional: `--ref <branch>`, and repeatable workflow inputs via `-f key=value` (raw string) or `-F key=value` (typed: number, boolean, null, or `@file` to load from disk). Blocked: `--repo`/`-R`.
+Required: workflow selector (workflow file name or numeric ID, positional, no flag-leading values). Optional: `--ref <branch>`, and repeatable workflow inputs via `-f key=value` (raw string) or `-F key=value` (typed: number, boolean, null, or `@file` to load from disk).
 
 ### `gh api`
 
-REST read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages). `gh api graphql` is blocked entirely.
+REST read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages).
 
 Append-only review-comment reply path: the current-repo placeholder endpoint is allowed, as is the explicit endpoint when `<owner>/<repo>` matches the GitHub.com repo resolved from the current cwd's `origin` remote:
 
@@ -78,9 +66,7 @@ gh api repos/{owner}/{repo}/pulls/<pull-number>/comments/<comment-id>/replies --
 gh api repos/<owner>/<repo>/pulls/<pull-number>/comments/<comment-id>/replies --method POST -f body=<text>
 ```
 
-Use this reply path for inline PR review-thread replies; `gh pr comment` creates a top-level PR conversation comment instead.
-
-`<pull-number>` and `<comment-id>` must be numeric, `body` must be non-empty, and `-f`/`--raw-field` is the only accepted body source. Explicit endpoints require an origin remote on `github.com` with the same owner/repo because `--hostname` is blocked. Cross-repo or wrong-host explicit write endpoints, `-F`/`--field`, `--input`, headers, previews, GraphQL, edit/delete endpoints, and arbitrary `--method` use remain blocked.
+Use this reply path for inline PR review-thread replies; `gh pr comment` creates a top-level PR conversation comment instead. `<pull-number>` and `<comment-id>` must be numeric, `body` must be non-empty, and `-f`/`--raw-field` is the accepted body source. Explicit endpoints must target the same `<owner>/<repo>` as the current cwd's `origin` remote on github.com.
 
 ## Read-only (passthrough) commands
 

@@ -63,4 +63,55 @@ describe("getMemoryProgressEvents", () => {
       },
     ]);
   });
+
+  it("suppresses bare directory reads under /workspace/memory", () => {
+    const directories = new Set(["/workspace/memory", "/workspace/memory/thor"]);
+    const fakeStat = (target: string) => ({ isDirectory: () => directories.has(target) });
+
+    expect(
+      getMemoryProgressEvents({
+        tool: "read",
+        status: "completed",
+        statSync: fakeStat,
+        input: {
+          filePath: "/workspace/memory",
+          nested: [
+            { targetPath: "/workspace/memory/." },
+            { targetPath: "/workspace/memory/thor" },
+            { targetPath: "/workspace/memory/thor/." },
+            { targetPath: "/workspace/memory/thor/../thor" },
+          ],
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it("keeps file reads under /workspace/memory", () => {
+    const fakeStat = () => ({ isDirectory: () => false });
+
+    expect(
+      getMemoryProgressEvents({
+        tool: "read",
+        status: "completed",
+        statSync: fakeStat,
+        input: {
+          filePath: "/workspace/memory/thor/README.md",
+          nested: [{ targetPath: "/workspace/memory/runbooks/investigation-workflow.md" }],
+        },
+      }),
+    ).toEqual([
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/thor/README.md",
+        source: "tool",
+      },
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/runbooks/investigation-workflow.md",
+        source: "tool",
+      },
+    ]);
+  });
 });

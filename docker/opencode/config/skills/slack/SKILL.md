@@ -53,11 +53,11 @@ Do not use fixed paths like `/tmp/report.txt` or relative paths like
 
 ## Allowed Slack endpoints
 
-The proxy injects Slack auth only for the narrow endpoint set used by this
-skill: `reactions.add`, `conversations.replies`,
-`conversations.history`, `files.info`, Slack's external upload endpoints, and
-supported `files.slack.com` file URLs. Do not call Slack update/delete methods
-or reaction update/remove methods through this path.
+The proxy supports the read/post/upload/react endpoints used by the workflows
+below (`conversations.replies`, `conversations.history`, `files.info`,
+`reactions.add`, the message-post and external-upload paths, and supported
+`files.slack.com` file URLs). Other Slack methods — including update/delete
+and reaction update/remove — return a proxy denial.
 
 ## Core workflow
 
@@ -126,6 +126,8 @@ echo 'Root cause looks like a missing env var in the worker deploy. I confirmed 
 Always pass `--channel <id>`. Message text must come from stdin.
 If you need blocks, pass `--blocks-file <path>` to a JSON file that contains a
 top-level blocks array while still supplying stdin text as the fallback body.
+Stdin uses Slack mrkdwn: `*bold*`, `_italic_`, bullets, and code spans/fences.
+For table or block output, pass `--blocks-file`.
 
 For any multiline reply, use a heredoc or pipe. This is the default when the
 message has paragraph breaks, bullets, code spans, or uncertain shell quoting.
@@ -192,8 +194,6 @@ Common failures to report as-is:
 
 - Tool inputs use Slack IDs such as `C...` and `F...`, not channel names.
 - `thread_ts` should be the parent message timestamp for the thread.
-- `reactions.add` is the only reaction mutation supported through the proxy; do
-  not call reaction update/remove methods.
 - Do not send multiline Slack text as an inline shell string. Default to a
   heredoc or pipe into `slack-post-message`.
 - Do not use literal `\n` inside single-quoted `text=...` arguments.
