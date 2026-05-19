@@ -45,6 +45,24 @@ const worklogDir = "/tmp/thor-remote-cli-mcp-test/worklog";
 const activeTriggerId = "00000000-0000-7000-8000-000000000101";
 const activeAnchorId = "00000000-0000-7000-8000-0000000004a1";
 
+function jiraLookupResponse(users: Array<{ accountId: string; displayName?: string }>) {
+  return {
+    data: {
+      users: {
+        users,
+        total: users.length,
+        header: `Showing ${users.length} of ${users.length} matching users`,
+      },
+      groups: {
+        header: "Showing 0 of 0 matching groups",
+        total: 0,
+        groups: [],
+      },
+    },
+    statusCode: 200,
+  };
+}
+
 describe("remote-cli MCP endpoints", () => {
   let approvalsDir: string;
   let server: Server;
@@ -72,7 +90,7 @@ describe("remote-cli MCP endpoints", () => {
     createJiraIssueFailure = undefined;
     connectedUpstreams = [];
     jiraLookups = [];
-    jiraLookupResultText = JSON.stringify({ accountId: "jira-account-1" });
+    jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
     jiraLookupFailure = undefined;
     toolLogEntries = [];
 
@@ -508,8 +526,15 @@ describe("remote-cli MCP endpoints", () => {
     );
   });
 
-  it("accepts a primitive JSON string from Jira account lookup", async () => {
-    jiraLookupResultText = JSON.stringify("jira-account-string");
+  it("accepts the nested Atlassian lookup users response", async () => {
+    jiraLookupResultText = JSON.stringify(
+      jiraLookupResponse([
+        {
+          accountId: "557058:0de7f12b-fe92-4d77-8c3c-ab4d791a37be",
+          displayName: "Dao Hoang Son",
+        },
+      ]),
+    );
     appendAlias({
       aliasType: "opencode.session",
       aliasValue: "parent-session",
@@ -542,14 +567,15 @@ describe("remote-cli MCP endpoints", () => {
       { "x-thor-internal-secret": "resolve-secret" },
     );
     expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
-    expect(toolCalls[1].arguments?.assignee_account_id).toBe("jira-account-string");
+    expect(toolCalls[1].arguments?.assignee_account_id).toBe(
+      "557058:0de7f12b-fe92-4d77-8c3c-ab4d791a37be",
+    );
   });
 
   it("keeps Jira issue creation best-effort when account lookup returns multiple matches", async () => {
-    jiraLookupResultText = JSON.stringify([
-      { accountId: "jira-account-1" },
-      { accountId: "jira-account-2" },
-    ]);
+    jiraLookupResultText = JSON.stringify(
+      jiraLookupResponse([{ accountId: "jira-account-1" }, { accountId: "jira-account-2" }]),
+    );
     appendAlias({
       aliasType: "opencode.session",
       aliasValue: "parent-session",

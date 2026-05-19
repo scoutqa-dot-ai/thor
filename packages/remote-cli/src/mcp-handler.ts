@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import {
   appendCorrelationAlias,
   approvalToolRequiresDisclaimer,
@@ -71,6 +73,20 @@ function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
 
 type JiraLookupResult = { ok: true; accountId: string } | { ok: false; reason: string };
 const JIRA_ACCOUNT_LOOKUP_TOOL = "lookupJiraAccountId";
+const JiraAccountLookupUserSchema = z.object({ accountId: z.string().min(1) }).passthrough();
+const JiraAccountLookupResultSchema = z
+  .object({
+    data: z
+      .object({
+        users: z
+          .object({
+            users: z.array(JiraAccountLookupUserSchema),
+          })
+          .passthrough(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | "timeout"> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -93,25 +109,24 @@ function parseJiraAccountLookupStdout(stdout: string): JiraLookupResult {
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    return { ok: true, accountId: stdout };
+    logWarn(log, "jira_account_lookup_parse_failed", {
+      reason: "invalid_json",
+      raw: stdout,
+    });
+    return { ok: false, reason: "lookup_parse_failed" };
   }
-  const ids = jiraAccountIdsFromLookupResult(parsed);
+  const result = JiraAccountLookupResultSchema.safeParse(parsed);
+  if (!result.success) {
+    logWarn(log, "jira_account_lookup_parse_failed", {
+      reason: "schema_mismatch",
+      raw: parsed,
+    });
+    return { ok: false, reason: "lookup_parse_failed" };
+  }
+  const ids = [...new Set(result.data.data.users.users.map((user) => user.accountId))];
   if (ids.length === 0) return { ok: false, reason: "lookup_no_match" };
   if (ids.length > 1) return { ok: false, reason: "lookup_multiple_matches" };
   return { ok: true, accountId: ids[0] };
-}
-
-function jiraAccountIdsFromLookupResult(value: unknown): string[] {
-  if (typeof value === "string") return value.length > 0 ? [value] : [];
-  const values = Array.isArray(value) ? value : [value];
-  const ids = values
-    .map((entry) =>
-      entry && typeof entry === "object" ? (entry as Record<string, unknown>).accountId : undefined,
-    )
-    .filter(
-      (accountId): accountId is string => typeof accountId === "string" && accountId.length > 0,
-    );
-  return [...new Set(ids)];
 }
 
 interface ProxyInstance {
