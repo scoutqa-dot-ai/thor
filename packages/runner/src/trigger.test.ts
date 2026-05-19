@@ -1270,7 +1270,11 @@ describe("runner /trigger orchestration", () => {
             "content-type": "application/json",
             "x-thor-internal-secret": process.env.THOR_INTERNAL_SECRET!,
           },
-          body: JSON.stringify({ correlationKey: "slack:thread:1710000200.002" }),
+          body: JSON.stringify({
+            correlationKey: "slack:thread:1710000200.002",
+            triggerSlackId: "UABCDEF1",
+            triggerGithubLogin: "alice",
+          }),
         });
         expect(okResp.status).toBe(200);
         const data = (await okResp.json()) as {
@@ -1287,6 +1291,8 @@ describe("runner /trigger orchestration", () => {
         );
         const text = readFileSync(sessionLogPath(data.sessionId), "utf8");
         expect(text).toContain(`"triggerId":"${data.triggerId}"`);
+        expect(text).toContain('"triggerSlackId":"UABCDEF1"');
+        expect(text).toContain('"triggerGithubLogin":"alice"');
       });
     } finally {
       delete process.env.THOR_E2E_TEST_HELPERS;

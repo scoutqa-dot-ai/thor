@@ -253,6 +253,8 @@ function anchorIsKnown(anchor: ReverseAnchorEntry): boolean {
 const E2eTriggerContextSchema = z.object({
   sessionId: z.string().trim().min(1).optional(),
   correlationKey: z.string().trim().min(1).optional(),
+  triggerSlackId: z.string().trim().min(1).optional(),
+  triggerGithubLogin: z.string().trim().min(1).optional(),
 });
 
 // --- Express app ---
@@ -320,6 +322,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           type: "trigger_start",
           triggerId,
           ...(parsed.data.correlationKey ? { correlationKey: parsed.data.correlationKey } : {}),
+          ...(parsed.data.triggerSlackId ? { triggerSlackId: parsed.data.triggerSlackId } : {}),
+          ...(parsed.data.triggerGithubLogin
+            ? { triggerGithubLogin: parsed.data.triggerGithubLogin }
+            : {}),
         });
         res.json({ sessionId, triggerId, anchorId });
       },

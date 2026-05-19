@@ -42,6 +42,10 @@ jobs:
       GITHUB_WEBHOOK_SECRET: ci-fake
       REMOTE_CLI_GIT_REPO_URL: https://github.com/${{ github.repository }}
       REMOTE_CLI_GITHUB_REPO: ${{ github.repository }}
+      ATTRIBUTION_E2E_SLACK_ID: U_E2E_ATTRIBUTION
+      ATTRIBUTION_E2E_NAME: Thor E2E Reviewer
+      ATTRIBUTION_E2E_EMAIL: thor-e2e-reviewer@example.com
+      ATTRIBUTION_E2E_GITHUB: thor-e2e-reviewer
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
       ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
@@ -114,7 +118,15 @@ jobs:
               "${{ github.repository_owner }}": {
                 "github_app_installation_id": ${THOR_GITHUB_APP_INSTALLATION_ID}
               }
-            }
+            },
+            "users": [
+              {
+                "email": "${ATTRIBUTION_E2E_EMAIL}",
+                "name": "${ATTRIBUTION_E2E_NAME}",
+                "slack": "${ATTRIBUTION_E2E_SLACK_ID}",
+                "github": "${ATTRIBUTION_E2E_GITHUB}"
+              }
+            ]
           }
           EOF
 

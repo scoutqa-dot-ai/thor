@@ -18,7 +18,8 @@
 #     ./scripts/test-e2e.sh
 #
 # The repo's owner must be present in /workspace/config.json's `owners` map for
-# `git clone` to pass policy and resolve a GitHub App installation.
+# `git clone` to pass policy and resolve a GitHub App installation. The same
+# config must contain the ATTRIBUTION_E2E_* user for attribution checks.
 set -euo pipefail
 
 repo_name_from_clone_url() {
@@ -38,6 +39,7 @@ SLACK_API_URL="${SLACK_API_URL:-https://slack.com/api}"
 SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
 SLACK_CHANNEL_ID="${SLACK_E2E_CHANNEL_ID:-${SLACK_CHANNEL_ID:-}}"
 HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
+HOST_WORKSPACE_CONFIG="${HOST_WORKSPACE_CONFIG:-${HOST_WORKSPACE}/config.json}"
 THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
 REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-$(repo_name_from_clone_url "$REMOTE_CLI_GIT_REPO_URL")}"
 REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
@@ -47,8 +49,23 @@ REMOTE_CLI_AUTH_TS="${REMOTE_CLI_AUTH_TS:-$(date +%s)}"
 REMOTE_CLI_WORKTREE_BRANCH="${REMOTE_CLI_WORKTREE_BRANCH:-e2e-remote-cli-${REMOTE_CLI_AUTH_TS}}"
 REMOTE_CLI_WORKTREE_DIR="${REMOTE_CLI_WORKTREE_DIR:-/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
 HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
+ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
+ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
+ATTRIBUTION_E2E_EMAIL="${ATTRIBUTION_E2E_EMAIL:-thor-e2e-reviewer@example.com}"
+ATTRIBUTION_E2E_GITHUB="${ATTRIBUTION_E2E_GITHUB:-thor-e2e-reviewer}"
+export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
+export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_EMAIL ATTRIBUTION_E2E_GITHUB
 passed=0
 failed=0
+
+cleanup() {
+  [[ -n "$HOST_REMOTE_CLI_WORKTREE_DIR" ]] && rm -rf "$HOST_REMOTE_CLI_WORKTREE_DIR"
+  if [[ -f "$HOST_REMOTE_CLI_GIT_REPO_MARKER" ]]; then
+    rm -rf "$HOST_REMOTE_CLI_GIT_REPO_DIR"
+  fi
+}
+
+trap cleanup EXIT
 
 assert() {
   local condition="$1"
@@ -89,6 +106,47 @@ exec_stdout_field() {
     const v = stdout[\"$field\"];
     console.log(v === undefined ? '' : typeof v === 'boolean' ? String(v) : String(v));
   " 2>/dev/null || echo ""
+}
+
+json_string() {
+  node -e "console.log(JSON.stringify(process.argv[1]))" "$1"
+}
+
+assert_attribution_config() {
+  if [[ ! -f "$HOST_WORKSPACE_CONFIG" ]]; then
+    assert 'false' \
+      "attribution e2e: workspace config exists" \
+      "expected config at $HOST_WORKSPACE_CONFIG"
+    return 1
+  fi
+
+  if CONFIG_PATH="$HOST_WORKSPACE_CONFIG" \
+    ATTRIBUTION_E2E_EMAIL="$ATTRIBUTION_E2E_EMAIL" \
+    ATTRIBUTION_E2E_NAME="$ATTRIBUTION_E2E_NAME" \
+    ATTRIBUTION_E2E_SLACK_ID="$ATTRIBUTION_E2E_SLACK_ID" \
+    ATTRIBUTION_E2E_GITHUB="$ATTRIBUTION_E2E_GITHUB" \
+      node <<'NODE' >/dev/null
+const fs = require("fs");
+const path = process.env.CONFIG_PATH;
+const config = JSON.parse(fs.readFileSync(path, "utf8"));
+const users = Array.isArray(config.users) ? config.users : [];
+const match = users.find((user) =>
+  String(user.email || "").toLowerCase() === process.env.ATTRIBUTION_E2E_EMAIL.toLowerCase() &&
+  String(user.name || "") === process.env.ATTRIBUTION_E2E_NAME &&
+  String(user.slack || "").toUpperCase() === process.env.ATTRIBUTION_E2E_SLACK_ID.toUpperCase() &&
+  String(user.github || "").toLowerCase() === process.env.ATTRIBUTION_E2E_GITHUB.toLowerCase()
+);
+if (!match) process.exit(1);
+NODE
+  then
+    assert 'true' \
+      "attribution e2e: workspace config includes the e2e attribution user"
+  else
+    assert 'false' \
+      "attribution e2e: workspace config includes the e2e attribution user" \
+      "expected users[] entry: email=$ATTRIBUTION_E2E_EMAIL, name=$ATTRIBUTION_E2E_NAME, slack=$ATTRIBUTION_E2E_SLACK_ID, github=$ATTRIBUTION_E2E_GITHUB in $HOST_WORKSPACE_CONFIG"
+    return 1
+  fi
 }
 
 resolve_remote_cli_container() {
@@ -330,7 +388,171 @@ if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" && "$clone_origin" == "$REMOTE_CLI
     "worktree list: ${worktree_list:0:300}"
 fi
 
-# ── 5. Approval Flow ────────────────────────────────────────────────────────
+# ── 5. Attribution Flow ─────────────────────────────────────────────────────
+#
+# Verifies the mounted config contains the E2E attribution user, creates a
+# synthetic trigger context with a Slack actor, then checks the real /exec/git
+# and /exec/gh handlers stamp attribution before executing the underlying tools.
+
+echo ""
+echo "=== Attribution Flow ==="
+
+if [[ ! -d "$HOST_REMOTE_CLI_WORKTREE_DIR" ]]; then
+  assert 'false' \
+    "attribution e2e: disposable worktree exists" \
+    "expected path: $HOST_REMOTE_CLI_WORKTREE_DIR"
+elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
+  assert 'false' \
+    "attribution e2e: THOR_INTERNAL_SECRET is available" \
+    "Set THOR_INTERNAL_SECRET or ensure docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET returns a value"
+elif assert_attribution_config; then
+  attribution_trigger_body=$(node -e "
+    console.log(JSON.stringify({
+      correlationKey: 'e2e-attribution-flow',
+      triggerSlackId: process.env.ATTRIBUTION_E2E_SLACK_ID
+    }));
+  ")
+  attribution_context_raw=$(curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
+    -H 'Content-Type: application/json' \
+    -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+    -d "$attribution_trigger_body" \
+    2>/dev/null || echo '{}')
+  ATTRIBUTION_SESSION_ID=$(json_field "$attribution_context_raw" "sessionId")
+  assert '[[ -n "$ATTRIBUTION_SESSION_ID" ]]' \
+    "attribution e2e: runner created actor-bearing trigger context" \
+    "response: ${attribution_context_raw:0:300}; set THOR_E2E_TEST_HELPERS=1 for the runner service"
+
+  docker exec "$remote_cli_container" /usr/bin/git -C "$REMOTE_CLI_WORKTREE_DIR" config user.name "Thor E2E Bot" >/dev/null 2>&1 || true
+  docker exec "$remote_cli_container" /usr/bin/git -C "$REMOTE_CLI_WORKTREE_DIR" config user.email "thor-e2e-bot@example.com" >/dev/null 2>&1 || true
+
+  if [[ -n "$ATTRIBUTION_SESSION_ID" ]]; then
+    attribution_file="thor-e2e-attribution-${REMOTE_CLI_AUTH_TS}.txt"
+    printf "attribution e2e %s\n" "$REMOTE_CLI_AUTH_TS" >"$HOST_REMOTE_CLI_WORKTREE_DIR/$attribution_file"
+    export attribution_file REMOTE_CLI_WORKTREE_DIR
+
+    add_payload=$(node -e "
+      console.log(JSON.stringify({
+        args: ['add', process.env.attribution_file],
+        cwd: process.env.REMOTE_CLI_WORKTREE_DIR
+      }));
+    ")
+    add_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+      -H 'Content-Type: application/json' \
+      -d "$add_payload" \
+      2>/dev/null || echo '{}')
+    add_exit=$(json_field "$add_raw" "exitCode")
+    assert '[[ "$add_exit" == "0" ]]' "attribution e2e: git add succeeds" "response: ${add_raw:0:300}"
+
+    commit_message="e2e attribution commit ${REMOTE_CLI_AUTH_TS}"
+    export commit_message
+    commit_payload=$(node -e "
+      console.log(JSON.stringify({
+        args: ['commit', '-m', process.env.commit_message],
+        cwd: process.env.REMOTE_CLI_WORKTREE_DIR
+      }));
+    ")
+    commit_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+      -H 'Content-Type: application/json' \
+      -H "x-thor-session-id: $ATTRIBUTION_SESSION_ID" \
+      -d "$commit_payload" \
+      2>/dev/null || echo '{}')
+    commit_exit=$(json_field "$commit_raw" "exitCode")
+    expected_trailer="Co-authored-by: ${ATTRIBUTION_E2E_NAME} <${ATTRIBUTION_E2E_EMAIL}>"
+    commit_body=$(docker exec "$remote_cli_container" /usr/bin/git -C "$REMOTE_CLI_WORKTREE_DIR" log -1 --format=%B 2>/dev/null || echo "")
+    trailer_count=$(COMMIT_BODY="$commit_body" EXPECTED_TRAILER="$expected_trailer" node -e "
+      const body = process.env.COMMIT_BODY || '';
+      const trailer = process.env.EXPECTED_TRAILER || '';
+      console.log(body.split(trailer).length - 1);
+    ")
+    assert '[[ "$commit_exit" == "0" ]]' "attribution e2e: git commit succeeds" "response: ${commit_raw:0:300}"
+    assert '[[ "$commit_body" == *"$expected_trailer"* ]]' \
+      "attribution e2e: commit message includes co-author trailer" \
+      "commit body: ${commit_body:0:500}"
+    assert '[[ "$trailer_count" == "1" ]]' \
+      "attribution e2e: commit message includes co-author trailer exactly once" \
+      "count=$trailer_count body: ${commit_body:0:500}"
+
+    dedup_file="thor-e2e-attribution-dedup-${REMOTE_CLI_AUTH_TS}.txt"
+    printf "attribution dedup e2e %s\n" "$REMOTE_CLI_AUTH_TS" >"$HOST_REMOTE_CLI_WORKTREE_DIR/$dedup_file"
+    export dedup_file
+    dedup_add_payload=$(node -e "
+      console.log(JSON.stringify({
+        args: ['add', process.env.dedup_file],
+        cwd: process.env.REMOTE_CLI_WORKTREE_DIR
+      }));
+    ")
+    curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+      -H 'Content-Type: application/json' \
+      -d "$dedup_add_payload" >/dev/null 2>&1 || true
+
+    existing_credit="Reviewed-by: ${ATTRIBUTION_E2E_NAME} <${ATTRIBUTION_E2E_EMAIL}>"
+    dedup_message="e2e email-attributed commit ${REMOTE_CLI_AUTH_TS}
+
+${existing_credit}"
+    export dedup_message existing_credit
+    dedup_commit_payload=$(node -e "
+      console.log(JSON.stringify({
+        args: ['commit', '-m', process.env.dedup_message],
+        cwd: process.env.REMOTE_CLI_WORKTREE_DIR
+      }));
+    ")
+    dedup_commit_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
+      -H 'Content-Type: application/json' \
+      -H "x-thor-session-id: $ATTRIBUTION_SESSION_ID" \
+      -d "$dedup_commit_payload" \
+      2>/dev/null || echo '{}')
+    dedup_commit_exit=$(json_field "$dedup_commit_raw" "exitCode")
+    dedup_commit_body=$(docker exec "$remote_cli_container" /usr/bin/git -C "$REMOTE_CLI_WORKTREE_DIR" log -1 --format=%B 2>/dev/null || echo "")
+    dedup_trailer_count=$(COMMIT_BODY="$dedup_commit_body" EXPECTED_TRAILER="$expected_trailer" node -e "
+      const body = process.env.COMMIT_BODY || '';
+      const trailer = process.env.EXPECTED_TRAILER || '';
+      console.log(body.split(trailer).length - 1);
+    ")
+    assert '[[ "$dedup_commit_exit" == "0" ]]' \
+      "attribution e2e: email-attributed git commit succeeds" \
+      "response: ${dedup_commit_raw:0:300}"
+    assert '[[ "$dedup_commit_body" == *"$existing_credit"* ]]' \
+      "attribution e2e: email-attributed commit keeps existing credit" \
+      "body: ${dedup_commit_body:0:500}"
+    assert '[[ "$dedup_trailer_count" == "0" ]]' \
+      "attribution e2e: email-attributed commit is not stamped again" \
+      "count=$dedup_trailer_count body: ${dedup_commit_body:0:500}"
+
+    gh_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    pr_title="Thor attribution e2e ${REMOTE_CLI_AUTH_TS}"
+    pr_body="Thor attribution e2e body ${REMOTE_CLI_AUTH_TS}"
+    export pr_title pr_body
+    gh_payload=$(node -e "
+      console.log(JSON.stringify({
+        args: [
+          'pr',
+          'create',
+          '--title',
+          process.env.pr_title,
+          '--body',
+          process.env.pr_body,
+          '--head',
+          process.env.REMOTE_CLI_WORKTREE_BRANCH
+        ],
+        cwd: process.env.REMOTE_CLI_WORKTREE_DIR
+      }));
+    ")
+    curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+      -H 'Content-Type: application/json' \
+      -H "x-thor-session-id: $ATTRIBUTION_SESSION_ID" \
+      -d "$gh_payload" >/dev/null 2>&1 || true
+    sleep 1
+    gh_logs=$(docker logs --since "$gh_log_since" "$remote_cli_container" 2>&1 || true)
+    assert '[[ "$gh_logs" == *"\"surface\":\"gh-assignee\",\"outcome\":\"applied\""* ]]' \
+      "attribution e2e: gh pr create applies assignee attribution" \
+      "logs: ${gh_logs:0:1000}"
+    assert '[[ "$gh_logs" == *"\"--assignee\",\"$ATTRIBUTION_E2E_GITHUB\""* ]]' \
+      "attribution e2e: gh pr create executes with mapped assignee" \
+      "logs: ${gh_logs:0:1000}"
+  fi
+fi
+
+# ── 6. Approval Flow ────────────────────────────────────────────────────────
 
 echo ""
 echo "=== Approval Flow ==="
@@ -472,7 +694,7 @@ else
 
 fi
 
-# ── 6. Git/GH policy enforcement ─────────────────────────────────────────────
+# ── 7. Git/GH policy enforcement ─────────────────────────────────────────────
 #
 # Validates that remote-cli blocks disallowed git/gh commands at the policy
 # layer. These are direct HTTP calls — no LLM round-trip needed.
@@ -562,7 +784,7 @@ status_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
 status_exit=$(json_field "$status_raw" "exitCode")
 assert '[[ "$status_exit" == "0" ]]' "git status (allowed) succeeds" "exitCode='$status_exit'"
 
-# 7. slack-upload should complete a real Slack external upload flow
+# 8. slack-upload should complete a real Slack external upload flow
 echo ""
 echo "=== Slack upload wrapper ==="
 

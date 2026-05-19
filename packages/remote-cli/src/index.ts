@@ -217,7 +217,7 @@ type FlagMatch = { index: number; valueIndex?: number; inlinePrefix?: string };
 function rewriteValueFlag(
   args: string[],
   names: string[],
-  append: string,
+  append: string | ((value: string) => string),
   options: { valuePrefix?: string; match: "single" | "last" } = { match: "single" },
 ): string[] | { error: "duplicate" | "notFound" } {
   const { valuePrefix, match: mode } = options;
@@ -242,10 +242,12 @@ function rewriteValueFlag(
   if (matches.length > 1 && mode === "single") return { error: "duplicate" };
   const m = mode === "last" ? matches[matches.length - 1] : matches[0];
   const out = [...args];
+  const rewrite = (value: string) =>
+    typeof append === "function" ? append(value) : `${value}${append}`;
   if (m.valueIndex !== undefined) {
-    out[m.valueIndex] = `${out[m.valueIndex]}${append}`;
+    out[m.valueIndex] = rewrite(out[m.valueIndex]);
   } else if (m.inlinePrefix) {
-    out[m.index] = `${m.inlinePrefix}${out[m.index].slice(m.inlinePrefix.length)}${append}`;
+    out[m.index] = `${m.inlinePrefix}${rewrite(out[m.index].slice(m.inlinePrefix.length))}`;
   }
   return out;
 }
@@ -281,12 +283,33 @@ function withGitAttribution(
     );
     return args;
   }
-  const trailer = `\n\nCo-authored-by: ${resolved.user.name} <${resolved.user.email}>`;
-  const rewritten = rewriteValueFlag(args, ["-m", "--message"], trailer, { match: "last" });
+  const trailerLine = `Co-authored-by: ${resolved.user.name} <${resolved.user.email}>`;
+  const attributionEmail = resolved.user.email.toLowerCase();
+  let alreadyAttributed = false;
+  const rewritten = rewriteValueFlag(
+    args,
+    ["-m", "--message"],
+    (message) => {
+      if (message.toLowerCase().includes(attributionEmail)) {
+        alreadyAttributed = true;
+        return message;
+      }
+      return `${message}${message.endsWith("\n") ? "\n" : "\n\n"}${trailerLine}`;
+    },
+    { match: "last" },
+  );
   if ("error" in rewritten) {
     logAttribution(
       "git",
       "skipped_unsupported_arg_shape",
+      attributionFields(resolved.actor, resolved.user),
+    );
+    return args;
+  }
+  if (alreadyAttributed) {
+    logAttribution(
+      "git",
+      "skipped_already_attributed",
       attributionFields(resolved.actor, resolved.user),
     );
     return args;

@@ -95,12 +95,23 @@ function parseJiraAccountLookupStdout(stdout: string): JiraLookupResult {
   } catch {
     return { ok: true, accountId: stdout };
   }
-  if (typeof parsed === "string" && parsed.length > 0) return { ok: true, accountId: parsed };
-  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    const id = (parsed as Record<string, unknown>).accountId;
-    if (typeof id === "string" && id.length > 0) return { ok: true, accountId: id };
-  }
-  return { ok: false, reason: "lookup_no_match" };
+  const ids = jiraAccountIdsFromLookupResult(parsed);
+  if (ids.length === 0) return { ok: false, reason: "lookup_no_match" };
+  if (ids.length > 1) return { ok: false, reason: "lookup_multiple_matches" };
+  return { ok: true, accountId: ids[0] };
+}
+
+function jiraAccountIdsFromLookupResult(value: unknown): string[] {
+  if (typeof value === "string") return value.length > 0 ? [value] : [];
+  const values = Array.isArray(value) ? value : [value];
+  const ids = values
+    .map((entry) =>
+      entry && typeof entry === "object" ? (entry as Record<string, unknown>).accountId : undefined,
+    )
+    .filter(
+      (accountId): accountId is string => typeof accountId === "string" && accountId.length > 0,
+    );
+  return [...new Set(ids)];
 }
 
 interface ProxyInstance {
@@ -323,6 +334,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   async function lookupJiraAccountIdViaUpstream(
     instance: ProxyInstance,
+    cloudId: string,
     email: string,
   ): Promise<JiraLookupResult> {
     if (!instance.upstream.tools.some((tool) => tool.name === JIRA_ACCOUNT_LOOKUP_TOOL)) {
@@ -331,7 +343,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     const result = await executeUpstreamCall({
       instance,
       toolName: JIRA_ACCOUNT_LOOKUP_TOOL,
-      args: { email },
+      args: { cloudId, searchString: email },
       logEvent: "jira_account_lookup",
       decision: "allowed",
     });
@@ -734,10 +746,21 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       });
       return args;
     }
+    const cloudId =
+      typeof args.cloudId === "string" && args.cloudId.length > 0 ? args.cloudId : undefined;
+    if (!cloudId) {
+      logInfo(log, "attribution_applied", {
+        surface: "jira",
+        outcome: "api_rejected",
+        reason: "lookup_missing_cloud_id",
+        ...attributionFields(resolved.actor, resolved.user),
+      });
+      return args;
+    }
     let lookup: JiraLookupResult | "timeout";
     try {
       lookup = await withTimeout(
-        lookupJiraAccountIdViaUpstream(instance, resolved.user.email),
+        lookupJiraAccountIdViaUpstream(instance, cloudId, resolved.user.email),
         5000,
       );
     } catch {

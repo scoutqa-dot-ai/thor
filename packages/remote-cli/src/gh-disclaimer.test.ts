@@ -158,6 +158,54 @@ describe("gh disclaimer injection", () => {
     );
   });
 
+  it("appends a co-author trailer to only the last git commit -m value", async () => {
+    seedActor();
+    await withServer(
+      async (url) => {
+        const { response } = await postGit(
+          url,
+          ["commit", "-m", "Subject", "-m", "Body"],
+          "parent",
+        );
+        expect(response.status).toBe(200);
+        expect(execCalls[0].args).toEqual([
+          "commit",
+          "-m",
+          "Subject",
+          "-m",
+          "Body\n\nCo-authored-by: Alice <alice@example.com>",
+        ]);
+      },
+      { configLoader },
+    );
+  });
+
+  it("does not duplicate an existing matching co-author trailer", async () => {
+    seedActor();
+    await withServer(
+      async (url) => {
+        const message = "Do work\n\nCo-authored-by: Alice <alice@example.com>";
+        const { response } = await postGit(url, ["commit", "-m", message], "parent");
+        expect(response.status).toBe(200);
+        expect(execCalls[0].args).toEqual(["commit", "-m", message]);
+      },
+      { configLoader },
+    );
+  });
+
+  it("does not add a co-author trailer when the message already contains the user email", async () => {
+    seedActor();
+    await withServer(
+      async (url) => {
+        const message = "Do work\n\nReviewed-by: Alice Example <ALICE@EXAMPLE.COM>";
+        const { response } = await postGit(url, ["commit", "-m", message], "parent");
+        expect(response.status).toBe(200);
+        expect(execCalls[0].args).toEqual(["commit", "-m", message]);
+      },
+      { configLoader },
+    );
+  });
+
   it("adds a PR assignee when gh pr create has none", async () => {
     seedActor();
     await withServer(
