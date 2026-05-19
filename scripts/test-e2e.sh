@@ -57,12 +57,10 @@ ATTRIBUTION_E2E_EMAIL="${ATTRIBUTION_E2E_EMAIL:-thor-e2e-reviewer@example.com}"
 ATTRIBUTION_E2E_GITHUB="${ATTRIBUTION_E2E_GITHUB:-${GITHUB_ACTOR:-thor-e2e-reviewer}}"
 JIRA_ASSIGNEE_E2E="${JIRA_ASSIGNEE_E2E:-}"
 JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
-JIRA_PROJECT_KEY="${JIRA_PROJECT_KEY:-THOR}"
-JIRA_FAKE_PROJECT_KEY="${JIRA_FAKE_PROJECT_KEY:-ZZZTHORE2E}"
 JIRA_ISSUE_TYPE="${JIRA_ISSUE_TYPE:-Task}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
 export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_EMAIL ATTRIBUTION_E2E_GITHUB
-export JIRA_CLOUD_ID JIRA_PROJECT_KEY JIRA_FAKE_PROJECT_KEY JIRA_ISSUE_TYPE
+export JIRA_CLOUD_ID JIRA_ISSUE_TYPE
 ATTRIBUTION_E2E_PUSHED_BRANCH=""
 ATTRIBUTION_E2E_PR_NUMBER=""
 JIRA_E2E_ISSUE_KEY=""
@@ -237,9 +235,9 @@ NODE
 
 extract_jira_issue_key() {
   local text="$1"
-  ISSUE_TEXT="$text" PROJECT_KEY="${JIRA_FAKE_PROJECT_KEY:-$JIRA_PROJECT_KEY}" node <<'NODE' 2>/dev/null || echo ""
+  ISSUE_TEXT="$text" node <<'NODE' 2>/dev/null || echo ""
 const text = process.env.ISSUE_TEXT || "";
-const project = (process.env.PROJECT_KEY || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const project = "THORE2E";
 const match = text.match(new RegExp("\\b" + project + "-[0-9]+\\b"));
 console.log(match?.[0] || "");
 NODE
@@ -806,7 +804,7 @@ else
     approval_args_json=$(node -e "
       console.log(JSON.stringify({
         cloudId: process.env.JIRA_CLOUD_ID,
-        projectKey: process.env.JIRA_FAKE_PROJECT_KEY,
+        projectKey: 'THORE2E',
         issueTypeName: process.env.JIRA_ISSUE_TYPE,
         summary: process.env.JIRA_E2E_SUMMARY,
         description: process.env.jira_e2e_description
@@ -896,9 +894,9 @@ else
       assert '[[ -n "$jira_lookup_entry" ]]' \
         "jira attribution e2e: lookupJiraAccountId ran for the configured user email" \
         "expected cloud='$JIRA_CLOUD_ID' email='$ATTRIBUTION_E2E_EMAIL'"
-      assert '[[ "$jira_create_project_key" == "$JIRA_FAKE_PROJECT_KEY" ]]' \
+      assert '[[ "$jira_create_project_key" == "THORE2E" ]]' \
         "jira attribution e2e: createJiraIssue used the fake project key" \
-        "projectKey='$jira_create_project_key' expected='$JIRA_FAKE_PROJECT_KEY'; worklog entry: ${jira_create_entry:0:800}"
+        "projectKey='$jira_create_project_key' expected='THORE2E'; worklog entry: ${jira_create_entry:0:800}"
       assert '[[ -n "$jira_injected_account_id" ]]' \
         "jira attribution e2e: createJiraIssue received an assignee_account_id" \
         "worklog entry: ${jira_create_entry:0:800}"

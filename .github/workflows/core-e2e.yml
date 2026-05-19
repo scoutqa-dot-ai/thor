@@ -48,7 +48,6 @@ jobs:
       ATTRIBUTION_E2E_GITHUB: ${{ github.actor }}
       JIRA_ASSIGNEE_E2E: "1"
       JIRA_CLOUD_ID: ${{ vars.JIRA_CLOUD_ID }}
-      JIRA_FAKE_PROJECT_KEY: THORE2E
       JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE || 'Task' }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
