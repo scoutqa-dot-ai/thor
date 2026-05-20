@@ -1014,7 +1014,9 @@ describe("validateGhArgs", () => {
           "alice",
         ]),
       ).toBeNull();
-      expect(validateGhArgs(["issue", "create", "-t", "Bug", "-b", "Broken", "-a", "alice"])).toBeNull();
+      expect(
+        validateGhArgs(["issue", "create", "-t", "Bug", "-b", "Broken", "-a", "alice"]),
+      ).toBeNull();
     });
 
     it("allows append-only pr and issue comments", () => {
