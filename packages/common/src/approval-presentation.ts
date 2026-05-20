@@ -78,9 +78,6 @@ export function buildApprovalButtonValue(input: {
   if (threadTs) {
     return `v3:${actionId}:${encodeURIComponent(upstreamName ?? "")}:${threadTs}`;
   }
-  if (upstreamName) {
-    return `v2:${actionId}:${upstreamName}`;
-  }
   return actionId;
 }
 
@@ -108,16 +105,6 @@ export function parseApprovalButtonValue(value: string): ApprovalButtonRoute | u
       actionId,
       upstreamName: upstreamName || undefined,
       threadTs,
-    };
-  }
-
-  if (parts[0] === "v2" && parts.length >= 3) {
-    const actionId = parts[1];
-    const upstreamName = parts.slice(2).join(":");
-    if (!actionId || !upstreamName) return undefined;
-    return {
-      actionId,
-      upstreamName,
     };
   }
 
@@ -383,7 +370,8 @@ function trimValue(value: unknown, step: TrimStep, depth: number): unknown {
   if (depth >= step.maxDepth) return summarizeValue(value);
   if (Array.isArray(value)) {
     const kept = value.slice(0, step.maxArrayItems).map((item) => trimValue(item, step, depth + 1));
-    if (value.length > step.maxArrayItems) kept.push(`[+${value.length - step.maxArrayItems} more items]`);
+    if (value.length > step.maxArrayItems)
+      kept.push(`[+${value.length - step.maxArrayItems} more items]`);
     return kept;
   }
   const entries = Object.entries(value);

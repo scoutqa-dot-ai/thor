@@ -2980,20 +2980,8 @@ describe("gateway", () => {
     });
   });
 
-  it("resolves approval actions through remote-cli for legacy v2 button values", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            stdout: JSON.stringify({ status: "approved", tool: "deploy", upstream: "slack" }),
-            stderr: "",
-            exitCode: 0,
-          }),
-        ),
-      )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  it("ignores legacy v2 approval button values", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
 
     await withServer(
       fetchImpl,
@@ -3033,25 +3021,7 @@ describe("gateway", () => {
       },
     );
 
-    const execCall = fetchImpl.mock.calls.find(
-      ([url]) => typeof url === "string" && url === "http://remote-cli.internal:3010/exec/mcp",
-    );
-    expect(execCall?.[1]).toMatchObject({
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-thor-internal-secret": "resolve-secret",
-      },
-      body: JSON.stringify({ args: ["resolve", "act-1", "approved", "U123"] }),
-    });
-
-    const runnerCall = fetchImpl.mock.calls.find(
-      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
-    );
-    expect(runnerCall).toBeDefined();
-    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
-    expect(runnerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
-    expect(runnerBody.interrupt).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("resolves approval outcome correlation keys through registered aliases", async () => {
@@ -3284,19 +3254,8 @@ describe("gateway", () => {
     expect(runnerBody.prompt).not.toContain("upstream unavailable");
   });
 
-  it("fails closed for v2 approval buttons when thread context is missing", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            stdout: JSON.stringify({ status: "approved", tool: "deploy", upstream: "slack" }),
-            stderr: "",
-            exitCode: 0,
-          }),
-        ),
-      )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  it("ignores v2 approval buttons even when thread context is missing", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
 
     await withServer(
       fetchImpl,
@@ -3336,9 +3295,6 @@ describe("gateway", () => {
       },
     );
 
-    const runnerCall = fetchImpl.mock.calls.find(
-      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
-    );
-    expect(runnerCall).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

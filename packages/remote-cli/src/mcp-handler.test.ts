@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -92,11 +92,21 @@ describe("remote-cli MCP endpoints", () => {
     jiraLookups = [];
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
     jiraLookupFailure = undefined;
-    slackFetch = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1710000000.100" })),
-    );
-    appendAlias({ aliasType: "opencode.session", aliasValue: "parent-session", anchorId: activeAnchorId });
-    appendAlias({ aliasType: "slack.thread", aliasValue: "C123/1710000000.001", anchorId: activeAnchorId });
+    slackFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1710000000.100" })),
+      );
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendAlias({
+      aliasType: "slack.thread",
+      aliasValue: "C123/1710000000.001",
+      anchorId: activeAnchorId,
+    });
 
     const remoteCli = createRemoteCliApp({
       env: {
@@ -519,8 +529,44 @@ describe("remote-cli MCP endpoints", () => {
     expect(slackFetch).not.toHaveBeenCalled();
   });
 
+  it("fails closed when an approval origin only has a legacy Slack thread alias", async () => {
+    const legacyAnchorId = "00000000-0000-7000-8000-0000000004a3";
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "legacy-thread-session",
+      anchorId: legacyAnchorId,
+    });
+    appendAlias({
+      aliasType: "slack.thread_id",
+      aliasValue: "1710000000.001",
+      anchorId: legacyAnchorId,
+    });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "legacy-thread-session" },
+    );
+    const pendingBody = (await pending.json()) as { stderr: string; exitCode: number };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody.exitCode).toBe(1);
+    expect(pendingBody.stderr).toContain("is not bound to a Slack thread alias");
+    expect(slackFetch).not.toHaveBeenCalled();
+  });
+
   it("fails closed when posting the approval card to Slack fails", async () => {
-    slackFetch.mockResolvedValueOnce(new Response(JSON.stringify({ ok: false, error: "channel_not_found" })));
+    slackFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: false, error: "channel_not_found" })),
+    );
     appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
 
     const pending = await postJson(
@@ -536,12 +582,40 @@ describe("remote-cli MCP endpoints", () => {
       },
       { "x-thor-session-id": "parent-session" },
     );
-    const pendingBody = (await pending.json()) as { stdout: string; stderr: string; exitCode: number };
+    const pendingBody = (await pending.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
 
     expect(pending.status).toBe(200);
     expect(pendingBody.exitCode).toBe(1);
     expect(pendingBody.stdout).toBe("");
     expect(pendingBody.stderr).toContain("Slack API error: channel_not_found");
+
+    const dateDir = readdirSync(join(approvalsDir, "atlassian"))[0]!;
+    const actionFile = readdirSync(join(approvalsDir, "atlassian", dateDir))[0]!;
+    const storedAction = JSON.parse(
+      readFileSync(join(approvalsDir, "atlassian", dateDir, actionFile), "utf-8"),
+    ) as { id: string; status: string; reason?: string };
+    expect(storedAction).toMatchObject({
+      status: "rejected",
+      reason: "Slack API error: channel_not_found",
+    });
+
+    const resolveRejectedZombie = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", storedAction.id, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolveRejectedZombieBody = (await resolveRejectedZombie.json()) as {
+      stderr: string;
+      exitCode: number;
+    };
+    expect(resolveRejectedZombieBody.exitCode).toBe(1);
+    expect(resolveRejectedZombieBody.stderr).toContain(
+      "is already rejected; cannot resolve as approved",
+    );
 
     const list = await postJson("/exec/approval", { args: ["list"] });
     const listBody = (await list.json()) as { stdout: string };

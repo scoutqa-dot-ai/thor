@@ -13,7 +13,7 @@ describe("approval formatting", () => {
     const args = { repo: "acme/api", branch: "feature/full-json", dryRun: false };
     const argsJson = formatApprovalArgs(args);
 
-    const blocks = buildInlineApprovalBlocks("create_pr", argsJson, "v2:abc:github");
+    const blocks = buildInlineApprovalBlocks("create_pr", argsJson, "v3:abc:github:1710000000.001");
     expect(blocks[1]).toMatchObject({
       type: "section",
       expand: true,
@@ -223,11 +223,8 @@ describe("approval button routing", () => {
     });
   });
 
-  it("parses legacy v2 payloads for compatibility", () => {
-    expect(parseApprovalButtonValue("v2:act-1:atlassian")).toEqual({
-      actionId: "act-1",
-      upstreamName: "atlassian",
-    });
+  it("rejects legacy v2 payloads", () => {
+    expect(parseApprovalButtonValue("v2:act-1:atlassian")).toBeUndefined();
   });
 
   it("returns undefined for malformed v3 upstream encoding", () => {

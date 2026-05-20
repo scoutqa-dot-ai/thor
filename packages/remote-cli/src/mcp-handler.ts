@@ -606,6 +606,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
           threadTs: slackTarget.threadTs,
         },
       );
+      instance.approvalStore.update(action);
       const slackPost = await postSlackApprovalMessage({
         action,
         upstreamName: instance.name,
@@ -613,6 +614,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         threadTs: slackTarget.threadTs,
       });
       if ("error" in slackPost) {
+        instance.approvalStore.rejectLoaded(action, "system", slackPost.error);
         return fail(`Approval required for "${toolInfo.name}": ${slackPost.error}`);
       }
       action.notification = {
