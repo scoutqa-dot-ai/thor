@@ -80,7 +80,7 @@ describe("getInstallationIdFromWorkspace", () => {
 
   beforeEach(() => {
     configDir = mkdtempSync(join(tmpdir(), "thor-workspace-config-"));
-    mockedWorkspace.configPath = join(configDir, "config.json");
+    mockedWorkspace.configPath = join(configDir, "thor.json");
   });
 
   afterEach(() => {
@@ -123,7 +123,7 @@ describe("getInstallationToken", () => {
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "thor-gh-auth-"));
     configDir = mkdtempSync(join(tmpdir(), "thor-workspace-config-"));
-    mockedWorkspace.configPath = join(configDir, "config.json");
+    mockedWorkspace.configPath = join(configDir, "thor.json");
     process.env.GITHUB_APP_DIR = tempDir;
     process.env.GITHUB_APP_ID = "123";
     process.env.GITHUB_APP_PRIVATE_KEY_FILE = join(tempDir, "private-key.pem");

@@ -323,7 +323,7 @@ function withGhAttribution(
   sessionId: string | undefined,
   getConfig: ConfigLoader,
 ): string[] {
-  if (!(args[0] === "pr" && args[1] === "create")) return args;
+  if (!((args[0] === "pr" || args[0] === "issue") && args[1] === "create")) return args;
   const resolved = resolveTriggerUser(sessionId, getConfig);
   if (hasFlag(args, ["--assignee", "-a"])) {
     logAttribution(
@@ -659,11 +659,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     isProduction: appEnv.isProduction,
     ...config.mcp,
     configLoader: config.mcp?.configLoader ?? getConfig,
-    slack:
-      config.mcp?.slack ?? {
-        botToken: envConfig?.slackBotToken,
-        apiBaseUrl: envConfig?.slackApiBaseUrl,
-      },
+    slack: config.mcp?.slack ?? {
+      botToken: envConfig?.slackBotToken,
+      apiBaseUrl: envConfig?.slackApiBaseUrl,
+    },
   });
 
   const app = express();
