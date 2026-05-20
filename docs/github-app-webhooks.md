@@ -22,7 +22,7 @@ Notes:
 
 ## 2) Workspace config: installation IDs
 
-Thor resolves installation IDs from `owners.<name>.github_app_installation_id` in `/workspace/config.json`:
+Thor resolves installation IDs from `owners.<name>.github_app_installation_id` in `/workspace/config/thor.json`:
 
 ```json
 {
