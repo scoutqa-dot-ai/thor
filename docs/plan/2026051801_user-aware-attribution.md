@@ -5,7 +5,7 @@
 Stamp the human who triggered a Thor run onto the artifacts it produces — best effort, never blocks:
 
 1. `Co-authored-by: Name <email>` trailer on agent-made commits.
-2. `--assignee <github>` on agent-opened PRs (set on `gh pr create` when unset).
+2. `--assignee <github>` on agent-opened PRs/issues (set on `gh pr create` / `gh issue create` when unset).
 3. `assignee_account_id` on agent-created Jira issues (resolved from user email when unset).
 
 The existing Thor disclaimer footer already carries a context link back to the trigger; no separate "Triggered by ..." line in the PR body is needed.
@@ -33,7 +33,7 @@ Out of scope:
 - Per-user opt-out flags, global kill switch, automated user-registry sync.
 - Multi-field identity model (`triggered_by` / `requested_by` / `acting_agent`).
 - Rewriting `disclaimer.ts` to embed user identity in the footer.
-- Attribution on `gh pr edit`, `gh issue create`, and other mutating surfaces beyond `gh pr create` + `git commit` + MCP `createJiraIssue`. Known gap; revisit if it bites.
+- Attribution on `gh pr edit` and other mutating surfaces beyond `gh pr create` / `gh issue create` + `git commit` + MCP `createJiraIssue`. Known gap; revisit if it bites.
 
 ## Phases
 
@@ -124,11 +124,11 @@ Pros/cons of the plain-text append vs. routing through git's trailer machinery:
 - **Con — we own line-break correctness.** If the agent's `-m` value ends without a blank line, we must insert one; if it already ends with a trailer block, we must not insert an extra blank line. Covered by the helper, but it's logic we own.
 - **Con — no semantic merging.** If the agent itself wrote a `Co-authored-by:` line with a _different_ identity, we append a second one instead of replacing it. Acceptable: the agent should not be writing co-author trailers, and if it does, both names landing is the honest record.
 
-**`/exec/gh` handler.** In the `/exec/gh` route at `index.ts:616-626`, extend the existing arg-rewrite pass so that for `gh pr create`, Thor injects `--assignee <github>` **only when** all of the following are true: (a) a user resolves, (b) that user has `github`, and (c) the agent did not already pass `--assignee` / `-a`. The body itself is untouched — the disclaimer footer already includes a link to the Thor context for this trigger, so a separate "Triggered by …" line would be duplicative.
+**`/exec/gh` handler.** In the `/exec/gh` route, extend the existing arg-rewrite pass so that for `gh pr create` and `gh issue create`, Thor injects `--assignee <github>` **only when** all of the following are true: (a) a user resolves, (b) that user has `github`, and (c) the agent did not already pass `--assignee` / `-a`. The body itself is untouched — the disclaimer footer already includes a link to the Thor context for this trigger, so a separate "Triggered by …" line would be duplicative.
 
 - If `--assignee` / `-a` is already present, leave the args byte-identical and log `skipped_existing_assignee`.
 - When no resolved user or no `github` field, log the appropriate skip outcome and leave PR creation unchanged.
-- v1 scope is limited to `gh pr create`; no post-create `gh pr edit` follow-up is needed.
+- v1 scope is limited to `gh pr create` / `gh issue create`; no post-create `gh pr edit` or `gh issue edit` follow-up is needed.
 
 **MCP Jira.** Extend the approval-resolution path so that for `createJiraIssue`, if a user resolves with `email` and the agent did not already provide `assignee_account_id`, Thor calls `lookupJiraAccountId` and injects the returned value into `assignee_account_id` before `createJiraIssue` is sent.
 
@@ -158,6 +158,8 @@ Behavior tests (next to existing `gh-disclaimer.test.ts` and `mcp-handler.test.t
   - Existing `--assignee` / `-a` flag → args unchanged, `skipped_existing_assignee` logged.
   - No `github` field → no assignee injection; PR body and creation unchanged.
   - No resolved user → no assignee injection; PR body and creation unchanged.
+- `/exec/gh issue create`:
+  - Same assignee injection and skip behavior as `gh pr create` while preserving the traceability footer.
 - MCP Jira `createJiraIssue`:
   - Resolved user with `email` + `cloudId` + no existing `assignee_account_id` → `lookupJiraAccountId` called via injected resolver, returned `accountId` lands in upstream payload as `assignee_account_id`.
   - Existing `assignee_account_id` → args unchanged, `skipped_existing_assignee` logged and lookup skipped.
@@ -173,7 +175,7 @@ Exit: a Slack-triggered run produces a commit with the trailer, a PR assigned to
 - Keep user-registry seeding out of git: operators copy the private registry into their mounted `/workspace/config/thor.json`, while this repo commits only sanitized docs and examples.
 - Commit `docs/feat/users-directory-provenance.md` as the durable process note for how the registry is maintained.
 - Delete generated extraction/probe artifacts from the workspace before ship (`users-*.json`, `stderr.txt`, local Jira probes, and any transient root TODO scratch file).
-- Extend deterministic `pnpm test:e2e` to use the single mounted E2E `thor.json`, create an actor-bearing trigger context, and verify `/exec/git` plus approved Jira create-call attribution through the running services. Keep `gh pr create` assignee injection in unit coverage so e2e does not need write access to GitHub.
+- Extend deterministic `pnpm test:e2e` to use the single mounted E2E `thor.json`, create an actor-bearing trigger context, and verify `/exec/git`, `gh pr create` / `gh issue create`, plus approved Jira create-call attribution through the running services. The GitHub create checks assert on logged arg rewriting rather than relying on successful GitHub writes.
 - Push the branch, let `core-e2e` verify, open the PR.
 
 Exit: no generated registry artifacts in `git status`; green push checks; PR open against `main`.
@@ -194,7 +196,7 @@ Exit: no generated registry artifacts in `git status`; green push checks; PR ope
 | User identity field validation             | Keep validation minimal for internal config                                           | `users[]` is admin-maintained config. Trust configured Slack/GitHub/name fields beyond required string presence; downstream services can reject bad handles if operators misconfigure them. Duplicate-identity rejection at schema load was prototyped and dropped as over-engineered: lookups are deterministic (first match wins), `attribution_applied` logs surface which record was selected, and the failure cost is cosmetic mis-attribution rather than a safety issue.                                                                                                                                                                               |
 | Duplicate co-author trailers               | Skip when the last `-m` already contains the resolved user's email                    | The email is the stable attribution key. Matching it case-insensitively avoids adding duplicate Thor trailers when the agent or a rerun already credited the same user in another trailer/body format, while still allowing different co-author identities to coexist.                                                                                                                                                                                                                                                                                                                                                                                        |
 | Trigger actor extraction owner             | Gateway extracts and passes `triggerSlackId` / `triggerGithubLogin`                   | Gateway knows event source and batch order; runner should not reverse-parse prompt JSON or carry Slack/GitHub payload semantics, and dispatch planning should not infer a fallback actor from source arrays. Reusing the existing trigger fields keeps schema churn low while preserving "last user available" attribution.                                                                                                                                                                                                                                                                                                                                   |
-| Attribution E2E shape                      | Deterministic service E2E for git commit, `gh pr create`, and failed live Jira create | The deterministic path proves remote-cli mutates real `/exec` and MCP calls using event-log actor context and the single mounted E2E config. The `gh pr create` step expects the underlying call to fail because the e2e GitHub App is not configured for PR writes, and asserts on the `--assignee` arg injected into the logged `exec_gh` invocation. Jira assignee E2E approves `createJiraIssue` with a fake project key and issue type, verifies `lookupJiraAccountId` and the outgoing `assignee_account_id`, then expects the create call to fail before an issue is created. `lookupJiraAccountId` remains hidden from the agent-facing proxy policy. |
+| Attribution E2E shape                      | Deterministic service E2E for git commit, `gh pr create`, `gh issue create`, and failed live Jira create | The deterministic path proves remote-cli mutates real `/exec` and MCP calls using event-log actor context and the single mounted E2E config. The `gh pr create` step expects the underlying call to fail because the e2e GitHub App is not configured for PR writes, and asserts on the `--assignee` arg injected into the logged `exec_gh` invocation. The `gh issue create` step uses a unique missing label so GitHub rejects the call before creating an issue, then asserts on logged `--assignee` injection and the traced body footer. Jira assignee E2E approves `createJiraIssue` with a fake project key and issue type, verifies `lookupJiraAccountId` and the outgoing `assignee_account_id`, then expects the create call to fail before an issue is created. `lookupJiraAccountId` remains hidden from the agent-facing proxy policy. |
 
 ## Risks
 
@@ -211,7 +213,7 @@ Exit: no generated registry artifacts in `git status`; green push checks; PR ope
 - `trigger_start` records the actor; `findTriggerActor(sessionId)` returns it.
 - `/exec/git`, `/exec/gh`, and the MCP Jira path each inject attribution when a user resolves and pass through silently otherwise.
 - Every mutating call emits an `attribution_applied` log line.
-- `pnpm test:e2e` covers git trailer stamping and live Jira assignee injection on a create call that fails with a fake project key and issue type; `gh pr create` assignee injection and email-based duplicate suppression stay in unit coverage.
+- `pnpm test:e2e` covers git trailer stamping, `gh pr create` / `gh issue create` assignee injection, issue traced-body rewriting, and live Jira assignee injection on a create call that fails with a fake project key and issue type; email-based duplicate suppression stays in unit coverage.
 - README documents `users`; `.context/` artifacts moved/deleted.
 - Push checks green; PR open against `main`.
 
