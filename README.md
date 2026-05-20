@@ -48,9 +48,9 @@ ingress -> gateway -> runner -> opencode
 This keeps the private key on the host and only exposes the public trust bundle
 inside `opencode`.
 
-3. Create `/workspace/config.json` with GitHub App installation IDs for each
+3. Create `/workspace/config/thor.json` with GitHub App installation IDs for each
    GitHub owner you need Thor to access, plus any mitmproxy rules. On the host,
-   this file lives at `docker-volumes/workspace/config.json`. See
+   this file lives at `docker-volumes/workspace/config/thor.json`. See
    [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json).
    MCP upstream access is enabled for every repo automatically — no per-repo
    config required.
@@ -97,7 +97,7 @@ opencode -> HTTP(S)_PROXY -> mitmproxy -> upstream
   credentials).
 
 Custom credential rules and passthrough hosts live in
-`/workspace/config.json` under `mitmproxy[]` and `mitmproxy_passthrough[]`.
+`/workspace/config/thor.json` under `mitmproxy[]` and `mitmproxy_passthrough[]`.
 Keep secrets in `.env` only, then reference them in config via `${ENV_VAR}`.
 Rules can match either an exact `host` or a `host_suffix`, and can optionally
 add `path_prefix` and/or `path_suffix` when one domain needs different headers
@@ -165,7 +165,7 @@ Use [`docs/github-app-webhooks.md`](docs/github-app-webhooks.md) for GitHub App 
 
 Gateway and remote-cli derive the GitHub App bot commit identity from `GITHUB_APP_SLUG` and `GITHUB_APP_BOT_ID`: `${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com`. Gateway uses that derived email to accept `check_suite.completed` CI wakes only for Thor-authored commits; no separate author-email env var is required.
 
-Thor uses a shared workspace config file at `/workspace/config.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config.json`. Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point, and use [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
+Thor uses a shared workspace config file at `/workspace/config/thor.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config/thor.json`. Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point, and use [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
 
 GitHub App installation entries live under `owners.<owner>.github_app_installation_id` in that config:
 
@@ -195,7 +195,7 @@ Human attribution entries live under `users[]`. `email` must be the Jira account
 To verify your entry, trigger Thor from Slack and look for `attribution_applied` with `outcome: "applied"` and your Slack id; `skipped_no_user_record` means the configured Slack id did not match the trigger. See [`docs/feat/users-directory-provenance.md`](docs/feat/users-directory-provenance.md) for registry provenance.
 
 If you have internal APIs that Thor should access with injected credentials,
-define rules in `/workspace/config.json` and keep only secret values in `.env`:
+define rules in `/workspace/config/thor.json` and keep only secret values in `.env`:
 
 ```json
 {

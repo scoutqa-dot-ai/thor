@@ -42,7 +42,7 @@ def _response(status: int, text: str) -> Any:
 
 
 class ThorMitmAddon:
-    def __init__(self, config_path: str = "/workspace/config.json"):
+    def __init__(self, config_path: str = "/workspace/config/thor.json"):
         self._store = RuleStore(config_path=config_path)
 
     def http_connect(self, flow: Any) -> None:
