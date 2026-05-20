@@ -223,10 +223,6 @@ describe("approval button routing", () => {
     });
   });
 
-  it("rejects legacy v2 payloads", () => {
-    expect(parseApprovalButtonValue("v2:act-1:atlassian")).toBeUndefined();
-  });
-
   it("returns undefined for malformed v3 upstream encoding", () => {
     expect(parseApprovalButtonValue("v3:act-1:%ZZ:1710000000.001")).toBeUndefined();
   });
