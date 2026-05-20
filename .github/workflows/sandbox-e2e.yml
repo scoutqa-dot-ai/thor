@@ -32,6 +32,10 @@ jobs:
       GITHUB_APP_SLUG: thor-ci
       GITHUB_APP_BOT_ID: "1"
       GITHUB_WEBHOOK_SECRET: ci-fake
+      # Compose requires these for interpolation. Sandbox e2e does not exercise
+      # cron/internal auth, so fixed fake values are sufficient.
+      CRON_SECRET: ci-fake
+      THOR_INTERNAL_SECRET: ci-fake
       # Required by remote-cli for disclaimer URLs; sandbox e2e does not create
       # GitHub/Jira content, so a local fake satisfies compose/startup checks.
       RUNNER_BASE_URL: http://localhost:3000
@@ -113,10 +117,35 @@ jobs:
           api="https://app.daytona.io/api/snapshots"
           auth=(-H "Authorization: Bearer $DAYTONA_API_KEY")
 
+          daytona_get() {
+            local target="$1"
+            local body_file status
+            body_file="$(mktemp)"
+            status="$(curl -sS -o "$body_file" -w '%{http_code}' "${auth[@]}" "$api/$target")"
+            printf '%s\n' "$status"
+            cat "$body_file"
+            rm -f "$body_file"
+          }
+
+          json_field() {
+            local filter="$1"
+            jq -er "$filter" 2>/dev/null || true
+          }
+
           # Delete any stale snapshot with this name (may be in error state).
           # DELETE endpoint requires UUID, so resolve name -> id first.
           echo "Looking up existing snapshot $snapshot_name..."
-          existing_id=$(curl -sS "${auth[@]}" "$api/$snapshot_name" | jq -r '.id // empty')
+          lookup_response="$(daytona_get "$snapshot_name")"
+          lookup_status="$(printf '%s\n' "$lookup_response" | sed -n '1p')"
+          lookup_body="$(printf '%s\n' "$lookup_response" | sed '1d')"
+          existing_id=""
+          if [[ "$lookup_status" == "200" ]]; then
+            existing_id="$(printf '%s' "$lookup_body" | json_field '.id // empty')"
+          elif [[ "$lookup_status" != "404" ]]; then
+            echo "snapshot lookup returned HTTP $lookup_status; response body:" >&2
+            printf '%s\n' "$lookup_body" >&2
+            exit 1
+          fi
           if [[ -n "$existing_id" ]]; then
             echo "Deleting existing snapshot (id=$existing_id)..."
             curl -sS -X DELETE "${auth[@]}" "$api/$existing_id"
@@ -137,23 +166,44 @@ jobs:
           fi
 
           echo "Creating snapshot $snapshot_name from $image_name"
-          curl -sS --fail-with-body -X POST "${auth[@]}" \
+          create_response="$(curl -sS --fail-with-body -X POST "${auth[@]}" \
             -H "Content-Type: application/json" \
             -d "$(jq -n --arg name "$snapshot_name" --arg image "$image_name" \
                  '{name: $name, imageName: $image}')" \
-            "$api"
-          echo
+            "$api")"
+          printf '%s\n' "$create_response"
+          snapshot_id="$(printf '%s' "$create_response" | json_field '.id')"
+          if [[ -z "$snapshot_id" ]]; then
+            echo "snapshot create response did not contain an id" >&2
+            exit 1
+          fi
 
           # Poll until active (or timeout).
           echo "Waiting for snapshot to become active..."
+          state=""
           for attempt in $(seq 1 60); do
-            state=$(curl -sS "${auth[@]}" "$api/$snapshot_name" | jq -r '.state')
+            poll_response="$(daytona_get "$snapshot_id")"
+            poll_status="$(printf '%s\n' "$poll_response" | sed -n '1p')"
+            poll_body="$(printf '%s\n' "$poll_response" | sed '1d')"
+            if [[ "$poll_status" != "200" ]]; then
+              echo "  attempt $attempt: GET snapshot id -> HTTP $poll_status"
+              sleep 10
+              continue
+            fi
+
+            state="$(printf '%s' "$poll_body" | json_field '.state')"
+            if [[ -z "$state" ]]; then
+              echo "  attempt $attempt: snapshot response was not valid JSON or had no state"
+              printf '%s\n' "$poll_body"
+              sleep 10
+              continue
+            fi
             echo "  attempt $attempt: state=$state"
             case "$state" in
               active) break ;;
               error|build_failed)
                 echo "snapshot entered terminal failure state: $state" >&2
-                curl -sS "${auth[@]}" "$api/$snapshot_name" | jq .
+                printf '%s\n' "$poll_body" | jq . || printf '%s\n' "$poll_body"
                 exit 1
                 ;;
             esac
@@ -186,13 +236,7 @@ jobs:
           # data service requires env_file: .env — create an empty one.
           : > .env
 
-          export CRON_SECRET="$(openssl rand -hex 32)"
-          export THOR_INTERNAL_SECRET="$(openssl rand -hex 32)"
-          {
-            echo "CRON_SECRET=$CRON_SECRET"
-            echo "THOR_INTERNAL_SECRET=$THOR_INTERNAL_SECRET"
-            echo "DAYTONA_SNAPSHOT=$DAYTONA_SNAPSHOT"
-          } >> "$GITHUB_ENV"
+          echo "DAYTONA_SNAPSHOT=$DAYTONA_SNAPSHOT" >> "$GITHUB_ENV"
 
           cat > docker-volumes/workspace/config/thor.json <<EOF
           {
@@ -211,8 +255,8 @@ jobs:
 
       - name: Compose status (on failure)
         if: failure()
-        run: docker compose ps
+        run: docker compose ps || true
 
       - name: Compose logs (on failure)
         if: failure()
-        run: docker compose logs --no-color --timestamps
+        run: docker compose logs --no-color --timestamps || true
