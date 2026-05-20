@@ -17,7 +17,7 @@
 #   REMOTE_CLI_GITHUB_REPO=owner/repo \
 #     ./scripts/test-e2e.sh
 #
-# The repo's owner must be present in /workspace/config.json's `owners` map for
+# The repo's owner must be present in /workspace/config/thor.json's `owners` map for
 # `git clone` to pass policy and resolve a GitHub App installation. The same
 # config must contain the THOR_E2E_JIRA_EMAIL user for attribution checks.
 set -euo pipefail
@@ -39,7 +39,7 @@ SLACK_API_URL="${SLACK_API_URL:-https://slack.com/api}"
 SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
 SLACK_CHANNEL_ID="${SLACK_E2E_CHANNEL_ID:-${SLACK_CHANNEL_ID:-}}"
 HOST_WORKSPACE="${HOST_WORKSPACE:-./docker-volumes/workspace}"
-HOST_WORKSPACE_CONFIG="${HOST_WORKSPACE_CONFIG:-${HOST_WORKSPACE}/config.json}"
+HOST_WORKSPACE_CONFIG="${HOST_WORKSPACE_CONFIG:-${HOST_WORKSPACE}/config/thor.json}"
 THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
 REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-$(repo_name_from_clone_url "$REMOTE_CLI_GIT_REPO_URL")}"
 REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
@@ -586,6 +586,49 @@ elif assert_attribution_config; then
     assert '[[ "$gh_logs" == *"\"event\":\"exec_gh\""*"\"--assignee\""*"\"${ATTRIBUTION_E2E_GITHUB}\""* ]]' \
       "attribution e2e: gh pr create invocation includes --assignee with the configured github login" \
       "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in exec_gh args; logs: ${gh_logs:0:1500}"
+
+    # gh issue create: use a unique missing label so the underlying gh call is
+    # expected to fail before creating an issue, while still proving Thor
+    # injected --assignee <github> and preserved disclaimer body rewriting.
+    issue_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    issue_title="Thor issue attribution e2e ${REMOTE_CLI_AUTH_TS}"
+    issue_body="Thor issue attribution e2e marker ${REMOTE_CLI_AUTH_TS}"
+    issue_missing_label="thor-e2e-missing-label-${REMOTE_CLI_AUTH_TS}"
+    export issue_title issue_body issue_missing_label
+    issue_create_payload=$(node -e "
+      console.log(JSON.stringify({
+        args: [
+          'issue',
+          'create',
+          '--title',
+          process.env.issue_title,
+          '--body',
+          process.env.issue_body,
+          '--label',
+          process.env.issue_missing_label
+        ],
+        cwd: process.env.REMOTE_CLI_WORKTREE_DIR
+      }));
+    ")
+    issue_create_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/gh" \
+      -H 'Content-Type: application/json' \
+      -H "x-thor-session-id: $ATTRIBUTION_SESSION_ID" \
+      -d "$issue_create_payload" \
+      2>/dev/null || echo '{}')
+    issue_create_exit=$(json_field "$issue_create_raw" "exitCode")
+    issue_logs=$(docker logs --since "$issue_log_since" "$remote_cli_container" 2>&1 || true)
+    assert '[[ "$issue_create_exit" != "0" ]]' \
+      "attribution e2e: gh issue create fails before creating an issue" \
+      "exitCode='$issue_create_exit' response: ${issue_create_raw:0:500}"
+    assert '[[ "$issue_logs" == *"\"surface\":\"gh-assignee\",\"outcome\":\"applied\""* ]]' \
+      "attribution e2e: gh issue create attribution was applied" \
+      "logs: ${issue_logs:0:1000}"
+    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh\""*"\"issue\""*"\"create\""*"\"--assignee\""*"\"${ATTRIBUTION_E2E_GITHUB}\""* ]]' \
+      "attribution e2e: gh issue create invocation includes --assignee with the configured github login" \
+      "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in issue create exec_gh args; logs: ${issue_logs:0:1500}"
+    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh\""*"$issue_body"*"View Thor context"* ]]' \
+      "attribution e2e: gh issue create invocation keeps the traced body footer" \
+      "expected original body marker and Thor context footer in exec_gh args; logs: ${issue_logs:0:1500}"
   fi
 fi
 

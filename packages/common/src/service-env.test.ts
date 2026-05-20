@@ -1,7 +1,7 @@
-import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { WORKSPACE_CONFIG_PATH } from "./workspace-config.js";
 import {
+  ADMIN_AUDIT_LOG_PATH,
   loadAdminEnv,
   loadDaytonaEnv,
   loadGatewayEnv,
@@ -135,11 +135,16 @@ describe("service env", () => {
     );
   });
 
-  it("loads admin defaults and derived audit log path", () => {
+  it("keeps the default admin audit log outside the agent-mounted config directory", () => {
     expect(loadAdminEnv({})).toEqual({
       port: 3005,
       configPath: WORKSPACE_CONFIG_PATH,
-      auditLogPath: join(dirname(WORKSPACE_CONFIG_PATH), "config.audit.log"),
+      auditLogPath: ADMIN_AUDIT_LOG_PATH,
+    });
+    expect(loadAdminEnv({ CONFIG_PATH: "/workspace/config/custom.json" })).toEqual({
+      port: 3005,
+      configPath: "/workspace/config/custom.json",
+      auditLogPath: ADMIN_AUDIT_LOG_PATH,
     });
   });
 });

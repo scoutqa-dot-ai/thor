@@ -374,6 +374,7 @@ function validateGhIssueCreateArgs(args: string[]): string | null {
     { name: "title", kind: "value", aliases: ["-t", "--title"] },
     { name: "body", kind: "value", aliases: ["-b", "--body"] },
     { name: "label", kind: "value", aliases: ["-l", "--label"] },
+    { name: "assignee", kind: "value", aliases: ["-a", "--assignee"] },
   ]);
   if (!parsed || parsed.positionals.length > 0) {
     return denyMessage("gh issue create");

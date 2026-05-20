@@ -1002,6 +1002,21 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toBeNull();
       expect(validateGhArgs(["issue", "create", "-t", "Bug", "-b", "Broken"])).toBeNull();
       expect(validateGhArgs(["issue", "create", "--title=Bug", "--body=Broken"])).toBeNull();
+      expect(
+        validateGhArgs([
+          "issue",
+          "create",
+          "--title",
+          "Bug",
+          "--body",
+          "Broken",
+          "--assignee",
+          "alice",
+        ]),
+      ).toBeNull();
+      expect(
+        validateGhArgs(["issue", "create", "-t", "Bug", "-b", "Broken", "-a", "alice"]),
+      ).toBeNull();
     });
 
     it("allows append-only pr and issue comments", () => {
@@ -1361,7 +1376,6 @@ describe("validateGhArgs", () => {
         ["issue", "create", "--body", "y"],
         ["requires exactly one explicit --title value", "provide exactly one --title value"],
       );
-      expectGhDenied(["issue", "create", "--title", "x", "--body", "y", "--assignee", "alice"]);
       expectGhDenied(["issue", "create", "--title", "x", "--body-file", "body.md"]);
       expectGhDenied(["issue", "create", "--title", "x", "--body", "y", "--repo", "org/repo"]);
     });
