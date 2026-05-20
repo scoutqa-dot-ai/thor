@@ -118,8 +118,8 @@ importers:
   packages/remote-cli:
     dependencies:
       '@daytonaio/sdk':
-        specifier: ^0.171.0
-        version: 0.171.0(ws@8.20.0)
+        specifier: ^0.172.0
+        version: 0.172.0(ws@8.20.0)
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.29.0(zod@4.4.3)
@@ -350,14 +350,14 @@ packages:
     resolution: {integrity: sha512-iY8yvjE0y651BixKNPgmv1WrQc+GZ142sb0z4gYnChDDY2YqI4P/jsSopBWrKfAt7LOJAkOXt7rC/hms+WclQQ==}
     engines: {node: '>=18.0.0'}
 
-  '@daytona/api-client@0.171.0':
-    resolution: {integrity: sha512-yApfPoni676I6+FB+Q3X+UyL5umsaqYHdNFxKpQgMguglogBnCrPIEbUbWbMZWFEKqN2WDkJ7HOKfP+RQXm5Xg==}
+  '@daytona/api-client@0.172.0':
+    resolution: {integrity: sha512-5IABhJRm2hfWQZWRVHxlZ3rPlC8Nm3fVzK+7q9pwHO2u+DObEgoe3dXlF0g2vRhH15y4J0pxy4aiq1+pVLO2fQ==}
 
-  '@daytona/toolbox-api-client@0.171.0':
-    resolution: {integrity: sha512-uxJxTQdMSFOjHi5BCtLr9SpTPBHabIj2OdVWa4MDWc8iXsXI/N6YnjpK7CzrEQP7724mLxUoqqUdu2rjQjjAQA==}
+  '@daytona/toolbox-api-client@0.172.0':
+    resolution: {integrity: sha512-m2iXbNCFTPWjYFbF/jj+iVqSzYUUBCTQyghsyDF9J/HYFUEeOUpzVwrFgwg34hdTJR73crreZFE+77r5C3TnFw==}
 
-  '@daytonaio/sdk@0.171.0':
-    resolution: {integrity: sha512-k+HauFkfOTnpupHNJty8pkKS8ChfxEpWLF+zc7VvePiotjJf6Is1KVpgUkPG1NOdWbExdtTRVXIKchI6+16PVg==}
+  '@daytonaio/sdk@0.172.0':
+    resolution: {integrity: sha512-/hQrcB0bpx1XrBeM+KMKR6NossteaSUadLZMgO/Z8IMcPYUZmEiLNdZpJiJsc3WYaQnbSPJOZ4OoNoXpRQa8lg==}
 
   '@esbuild/aix-ppc64@0.27.7':
     resolution: {integrity: sha512-EKX3Qwmhz1eMdEJokhALr0YiD0lhQNwDqkPYyPhiSwKrh7/4KRjQc04sZ8db+5DVVnZ1LmbNDI1uAMPEUBnQPg==}
@@ -1450,9 +1450,6 @@ packages:
   atomic-sleep@1.0.0:
     resolution: {integrity: sha512-kNOjDqAh7px0XWNI+4QbzoiR/nTkHAWNud2uvnJquD1/x5a7EQZMJT0AczqK0Qn67oY/TTQ1LbUKajZpp3I9tQ==}
     engines: {node: '>=8.0.0'}
-
-  axios@1.15.0:
-    resolution: {integrity: sha512-wWyJDlAatxk30ZJer+GeCWS209sA42X+N5jU2jy6oHTp7ufw8uzUTVFBX9+wTfAlhiJXGS0Bq7X6efruWjuK9Q==}
 
   axios@1.16.1:
     resolution: {integrity: sha512-caYkukvroVPO8KrzuJEb50Hm07KwfBZPEC3VeFHTsqWHvKTsy54hjJz9BS/cdaypROE2rH6xvm9mHX4fgWkr3A==}
@@ -3094,24 +3091,26 @@ snapshots:
 
   '@aws/lambda-invoke-store@0.2.4': {}
 
-  '@daytona/api-client@0.171.0':
+  '@daytona/api-client@0.172.0':
     dependencies:
-      axios: 1.15.0
+      axios: 1.16.1
     transitivePeerDependencies:
       - debug
+      - supports-color
 
-  '@daytona/toolbox-api-client@0.171.0':
+  '@daytona/toolbox-api-client@0.172.0':
     dependencies:
-      axios: 1.15.0
+      axios: 1.16.1
     transitivePeerDependencies:
       - debug
+      - supports-color
 
-  '@daytonaio/sdk@0.171.0(ws@8.20.0)':
+  '@daytonaio/sdk@0.172.0(ws@8.20.0)':
     dependencies:
       '@aws-sdk/client-s3': 3.1031.0
       '@aws-sdk/lib-storage': 3.1031.0(@aws-sdk/client-s3@3.1031.0)
-      '@daytona/api-client': 0.171.0
-      '@daytona/toolbox-api-client': 0.171.0
+      '@daytona/api-client': 0.172.0
+      '@daytona/toolbox-api-client': 0.172.0
       '@iarna/toml': 2.2.5
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/exporter-trace-otlp-http': 0.207.0(@opentelemetry/api@1.9.1)
@@ -3121,7 +3120,7 @@ snapshots:
       '@opentelemetry/sdk-node': 0.207.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-trace-base': 2.6.1(@opentelemetry/api@1.9.1)
       '@opentelemetry/semantic-conventions': 1.40.0
-      axios: 1.15.0
+      axios: 1.16.1
       busboy: 1.6.0
       dotenv: 17.4.2
       expand-tilde: 2.0.2
@@ -4235,14 +4234,6 @@ snapshots:
   asynckit@0.4.0: {}
 
   atomic-sleep@1.0.0: {}
-
-  axios@1.15.0:
-    dependencies:
-      follow-redirects: 1.16.0
-      form-data: 4.0.5
-      proxy-from-env: 2.1.0
-    transitivePeerDependencies:
-      - debug
 
   axios@1.16.1:
     dependencies:
