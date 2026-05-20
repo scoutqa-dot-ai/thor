@@ -318,6 +318,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           aliasValue: sessionId,
           anchorId,
         });
+        if (parsed.data.correlationKey) {
+          appendCorrelationAliasForAnchor(anchorId, parsed.data.correlationKey);
+        }
         appendSessionEvent(sessionId, {
           type: "trigger_start",
           triggerId,
