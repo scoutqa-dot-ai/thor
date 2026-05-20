@@ -205,7 +205,7 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     expect(updateTexts.some((t) => t.includes("agents: research-agent"))).toBe(true);
   });
 
-  it("posts approval_required events with v3 button payload format", async () => {
+  it("ignores approval_required progress events because remote-cli posts approval cards directly", async () => {
     const lines = [
       JSON.stringify({
         type: "approval_required",
@@ -236,13 +236,8 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(postMessage).toHaveBeenCalled();
-    const arg = postMessage.mock.calls[0][0] as {
-      blocks: Array<{ elements?: Array<{ action_id: string; value: string }> }>;
-    };
-    const approveButton = arg.blocks[3].elements?.find((el) => el.action_id === "approval_approve");
-    expect(approveButton?.value).toBe("v3:act-1:atlassian:1710000000.001");
-    expect(JSON.stringify(arg.blocks)).toContain("Create Jira issue: Approval card");
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("skips invalid NDJSON lines without crashing", async () => {

@@ -196,3 +196,22 @@ export type {
   ProgressApprovalRequired,
   ProgressEvent,
 } from "./progress-events.js";
+export {
+  buildApprovalButtonValue,
+  extractApprovalFailureCategory,
+  parseApprovalButtonValue,
+  parseSlackThreadAlias,
+  resolveSlackThreadTargetFromAnchor,
+  formatApprovalArgs,
+  buildApprovalPresentation,
+  buildApprovalSlackMessage,
+  buildInlineApprovalBlocks,
+  buildApprovalPresentationBlocks,
+} from "./approval-presentation.js";
+export type {
+  SlackBlock,
+  SlackThreadTarget,
+  ApprovalButtonRoute,
+  ApprovalPresentation,
+  ApprovalSlackMessage,
+} from "./approval-presentation.js";

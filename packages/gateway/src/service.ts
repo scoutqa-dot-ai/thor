@@ -9,7 +9,7 @@ import {
   ProgressEventSchema,
   resolveRepoDirectory,
 } from "@thor/common";
-import type { ExecResult, ProgressApprovalRequired, ProgressEvent } from "@thor/common";
+import type { ExecResult, ProgressEvent } from "@thor/common";
 import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
 import type { CronPayload } from "./cron.js";
 import {
@@ -20,16 +20,9 @@ import {
   type GitHubWebhookEvent,
   type IssueCommentEvent,
 } from "./github.js";
-import {
-  buildApprovalButtonValue,
-  buildApprovalPresentation,
-  buildApprovalPresentationBlocks,
-  buildInlineApprovalBlocks,
-  extractApprovalFailureCategory,
-  formatApprovalArgs,
-} from "./approval.js";
+import { extractApprovalFailureCategory } from "./approval.js";
 import type { WebClient } from "@slack/web-api";
-import { addReaction, updateMessage, postMessage, type SlackDeps } from "./slack-api.js";
+import { addReaction, updateMessage, type SlackDeps } from "./slack-api.js";
 import { handleProgressEvent } from "./progress-manager.js";
 
 /** SlackDeps stub for triggers that never post to Slack (cron, github). */
@@ -901,10 +894,7 @@ async function consumeNdjsonStream(
         ts: Date.now(),
       });
 
-      if (event.type === "approval_required") {
-        await forwardApprovalNotification(channel, threadTs, event, slackDeps);
-        continue;
-      }
+      if (event.type === "approval_required") continue;
       await forwardProgressEvent(channel, threadTs, event, slackDeps, triggerTs);
     } catch (err) {
       logWarn(log, "ndjson_parse_skip", {
@@ -1139,45 +1129,6 @@ export function createInternalExecClient(input: {
 
 function renderGitHubPrompt(events: GitHubWebhookEvent[]): string {
   return JSON.stringify(events.length === 1 ? events[0] : events);
-}
-
-async function forwardApprovalNotification(
-  channel: string,
-  threadTs: string,
-  event: ProgressApprovalRequired,
-  deps: SlackDeps,
-): Promise<void> {
-  try {
-    const buttonValue = buildApprovalButtonValue({
-      actionId: event.actionId,
-      upstreamName: event.proxyName,
-      threadTs,
-    });
-    const presentation = buildApprovalPresentation(event.tool, event.args);
-
-    if (presentation) {
-      await postMessage(
-        channel,
-        presentation.title,
-        threadTs,
-        deps,
-        buildApprovalPresentationBlocks(presentation, buttonValue),
-      );
-      return;
-    }
-
-    const argsJson = formatApprovalArgs(event.args);
-
-    await postMessage(
-      channel,
-      `Approval required for \`${event.tool}\``,
-      threadTs,
-      deps,
-      buildInlineApprovalBlocks(event.tool, argsJson, buttonValue),
-    );
-  } catch (err) {
-    logError(log, "approval_forward_error", err instanceof Error ? err.message : String(err));
-  }
 }
 
 const APPROVAL_RESOLVE_MAX_ATTEMPTS = 3;

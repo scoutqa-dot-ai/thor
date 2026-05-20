@@ -1,0 +1,410 @@
+import {
+  AddCommentToJiraIssueApprovalArgsSchema,
+  CreateFeatureFlagApprovalArgsSchema,
+  CreateJiraIssueApprovalArgsSchema,
+  type ApprovalToolName,
+} from "./approval-events.js";
+import { reverseLookupAnchor } from "./event-log.js";
+
+const SLACK_SECTION_TEXT_LIMIT = 3000;
+const INLINE_CODE_BLOCK_OVERHEAD = "```json\n\n```".length;
+const MAX_INLINE_JSON_CHARS = SLACK_SECTION_TEXT_LIMIT - INLINE_CODE_BLOCK_OVERHEAD;
+const TRIM_STEPS = [
+  { maxDepth: 6, maxObjectEntries: 50, maxArrayItems: 25, maxStringLength: 500 },
+  { maxDepth: 5, maxObjectEntries: 25, maxArrayItems: 12, maxStringLength: 240 },
+  { maxDepth: 4, maxObjectEntries: 15, maxArrayItems: 8, maxStringLength: 120 },
+  { maxDepth: 3, maxObjectEntries: 10, maxArrayItems: 5, maxStringLength: 80 },
+  { maxDepth: 2, maxObjectEntries: 6, maxArrayItems: 3, maxStringLength: 40 },
+] as const;
+const MIN_TRIM_STEP = {
+  maxDepth: 1,
+  maxObjectEntries: 3,
+  maxArrayItems: 2,
+  maxStringLength: 16,
+} as const;
+
+type TrimStep = {
+  maxDepth: number;
+  maxObjectEntries: number;
+  maxArrayItems: number;
+  maxStringLength: number;
+};
+
+export type SlackTextObject =
+  | { type: "mrkdwn"; text: string }
+  | { type: "plain_text"; text: string };
+
+export type SlackBlock =
+  | { type: "divider" }
+  | { type: "section"; text: SlackTextObject; expand?: true }
+  | {
+      type: "actions";
+      elements: Array<{
+        type: "button";
+        text: { type: "plain_text"; text: string };
+        style?: "primary" | "danger";
+        action_id: "approval_approve" | "approval_reject";
+        value: string;
+      }>;
+    };
+
+export interface ApprovalButtonRoute {
+  actionId: string;
+  upstreamName?: string;
+  threadTs?: string;
+}
+
+export interface ApprovalPresentation {
+  title: string;
+  markdown: string;
+}
+
+export interface ApprovalSlackMessage {
+  text: string;
+  blocks: SlackBlock[];
+}
+
+export interface SlackThreadTarget {
+  channel: string;
+  threadTs: string;
+}
+
+export function buildApprovalButtonValue(input: {
+  actionId: string;
+  upstreamName?: string;
+  threadTs?: string;
+}): string {
+  const { actionId, upstreamName, threadTs } = input;
+  if (threadTs) {
+    return `v3:${actionId}:${encodeURIComponent(upstreamName ?? "")}:${threadTs}`;
+  }
+  if (upstreamName) {
+    return `v2:${actionId}:${upstreamName}`;
+  }
+  return actionId;
+}
+
+export function extractApprovalFailureCategory(stderr: string): string | undefined {
+  return (
+    stderr.match(/^Error calling "[^"]+"/m)?.[0] ?? stderr.match(/^Unknown upstream "[^"]+"/m)?.[0]
+  );
+}
+
+export function parseApprovalButtonValue(value: string): ApprovalButtonRoute | undefined {
+  const parts = value.split(":");
+
+  if (parts[0] === "v3" && parts.length >= 4) {
+    const actionId = parts[1];
+    const upstreamRaw = parts[2] ?? "";
+    const threadTs = parts.slice(3).join(":");
+    if (!actionId || !threadTs) return undefined;
+    let upstreamName: string;
+    try {
+      upstreamName = decodeURIComponent(upstreamRaw);
+    } catch {
+      return undefined;
+    }
+    return {
+      actionId,
+      upstreamName: upstreamName || undefined,
+      threadTs,
+    };
+  }
+
+  if (parts[0] === "v2" && parts.length >= 3) {
+    const actionId = parts[1];
+    const upstreamName = parts.slice(2).join(":");
+    if (!actionId || !upstreamName) return undefined;
+    return {
+      actionId,
+      upstreamName,
+    };
+  }
+
+  return undefined;
+}
+
+export function parseSlackThreadAlias(aliasValue: string): SlackThreadTarget | undefined {
+  const separator = aliasValue.indexOf("/");
+  if (separator <= 0 || separator === aliasValue.length - 1) return undefined;
+  const channel = aliasValue.slice(0, separator);
+  const threadTs = aliasValue.slice(separator + 1);
+  if (!channel || !threadTs) return undefined;
+  return { channel, threadTs };
+}
+
+export function resolveSlackThreadTargetFromAnchor(
+  anchorId: string,
+): SlackThreadTarget | { error: string } {
+  const reverse = reverseLookupAnchor(anchorId);
+  const slackAliases = reverse.externalKeys
+    .filter((key) => key.aliasType === "slack.thread")
+    .map((key) => key.aliasValue);
+  const uniqueAliases = [...new Set(slackAliases)];
+
+  if (uniqueAliases.length === 0) {
+    return { error: `anchor ${anchorId} is not bound to a Slack thread alias` };
+  }
+  if (uniqueAliases.length > 1) {
+    return {
+      error: `anchor ${anchorId} resolves to multiple Slack thread aliases: ${uniqueAliases.join(", ")}`,
+    };
+  }
+
+  const parsed = parseSlackThreadAlias(uniqueAliases[0]!);
+  if (!parsed) {
+    return { error: `anchor ${anchorId} has malformed Slack thread alias: ${uniqueAliases[0]}` };
+  }
+  return parsed;
+}
+
+export function formatApprovalArgs(args: Record<string, unknown>): string {
+  const full = JSON.stringify(args, null, 2);
+  if (full.length <= MAX_INLINE_JSON_CHARS) {
+    return full;
+  }
+
+  for (const step of TRIM_STEPS) {
+    const candidate = JSON.stringify(trimValue(args, step, 0), null, 2);
+    if (candidate.length <= MAX_INLINE_JSON_CHARS) {
+      return candidate;
+    }
+  }
+
+  const finalCandidate = JSON.stringify(trimValue(args, MIN_TRIM_STEP, 0), null, 2);
+  if (finalCandidate.length <= MAX_INLINE_JSON_CHARS) {
+    return finalCandidate;
+  }
+
+  return JSON.stringify(buildOversizeSummary(args), null, 2);
+}
+
+export function buildApprovalPresentation(
+  tool: ApprovalToolName,
+  args: Record<string, unknown>,
+): ApprovalPresentation | undefined {
+  try {
+    switch (tool) {
+      case "createJiraIssue":
+        return buildCreateJiraIssuePresentation(args);
+      case "addCommentToJiraIssue":
+        return buildAddJiraCommentPresentation(args);
+      case "create-feature-flag":
+        return buildCreateFeatureFlagPresentation(args);
+      default:
+        return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+export function buildApprovalSlackMessage(input: {
+  actionId: string;
+  tool: ApprovalToolName;
+  args: Record<string, unknown>;
+  upstreamName?: string;
+  threadTs: string;
+}): ApprovalSlackMessage {
+  const buttonValue = buildApprovalButtonValue({
+    actionId: input.actionId,
+    upstreamName: input.upstreamName,
+    threadTs: input.threadTs,
+  });
+  const presentation = buildApprovalPresentation(input.tool, input.args);
+
+  if (presentation) {
+    return {
+      text: presentation.title,
+      blocks: buildApprovalPresentationBlocks(presentation, buttonValue),
+    };
+  }
+
+  const argsJson = formatApprovalArgs(input.args);
+  return {
+    text: `Approval required for \`${input.tool}\``,
+    blocks: buildInlineApprovalBlocks(input.tool, argsJson, buttonValue),
+  };
+}
+
+function buildActionBlocks(buttonValue: string): SlackBlock[] {
+  return [
+    { type: "divider" },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Approve" },
+          style: "primary",
+          action_id: "approval_approve",
+          value: buttonValue,
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Reject" },
+          style: "danger",
+          action_id: "approval_reject",
+          value: buttonValue,
+        },
+      ],
+    },
+  ];
+}
+
+export function buildInlineApprovalBlocks(
+  tool: string,
+  argsJson: string,
+  buttonValue: string,
+): SlackBlock[] {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `:lock: *Approval required* — \`${tool}\``,
+      },
+    },
+    {
+      type: "section",
+      expand: true,
+      text: {
+        type: "mrkdwn",
+        text: `\`\`\`json\n${argsJson}\n\`\`\``,
+      },
+    },
+    ...buildActionBlocks(buttonValue),
+  ];
+}
+
+export function buildApprovalPresentationBlocks(
+  presentation: ApprovalPresentation,
+  buttonValue: string,
+): SlackBlock[] {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `:lock: *${trimForSlack(presentation.title, 280)}*`,
+      },
+    },
+    {
+      type: "section",
+      expand: true,
+      text: {
+        type: "mrkdwn",
+        text: trimForSlack(presentation.markdown, SLACK_SECTION_TEXT_LIMIT),
+      },
+    },
+    ...buildActionBlocks(buttonValue),
+  ];
+}
+
+function buildCreateJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = CreateJiraIssueApprovalArgsSchema.parse(args);
+  return {
+    title: `Create Jira issue: ${renderValue(parsed.summary) ?? "Untitled Jira issue"}`,
+    markdown: joinMarkdown([
+      bullet("Project", parsed.projectKey),
+      bullet("Issue type", parsed.issueTypeName),
+      bullet("Summary", parsed.summary),
+      section("Description", parsed.description),
+    ]),
+  };
+}
+
+function buildAddJiraCommentPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = AddCommentToJiraIssueApprovalArgsSchema.parse(args);
+  return {
+    title: `Comment on Jira issue: ${renderValue(parsed.issueIdOrKey) ?? "unknown issue"}`,
+    markdown: joinMarkdown([renderValue(parsed.commentBody)]),
+  };
+}
+
+function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = CreateFeatureFlagApprovalArgsSchema.parse(args);
+  const titleTarget = renderValue(parsed.name ?? parsed.key) ?? "feature flag";
+  return {
+    title: `Create feature flag: ${titleTarget}`,
+    markdown: joinMarkdown([
+      bullet("Key", parsed.key),
+      bullet("Name", parsed.name),
+      section("Description", parsed.description),
+      bullet("Active", parsed.active),
+      bullet("Rollout", parsed.rolloutPercentage),
+      bullet("Filters", parsed.filters),
+    ]),
+  };
+}
+
+function renderValue(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? escapeMrkdwnText(trimmed) : undefined;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return escapeMrkdwnText(JSON.stringify(value));
+}
+
+function bullet(label: string, value: unknown): string | undefined {
+  const rendered = renderValue(value);
+  return rendered ? `*${escapeMrkdwnText(label)}:* ${rendered}` : undefined;
+}
+
+function section(label: string, value: unknown): string | undefined {
+  const rendered = renderValue(value);
+  return rendered ? `*${escapeMrkdwnText(label)}:*\n${rendered}` : undefined;
+}
+
+function joinMarkdown(parts: Array<string | undefined>): string {
+  return parts.filter((part): part is string => Boolean(part)).join("\n\n");
+}
+
+function escapeMrkdwnText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function trimForSlack(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  const overflow = value.length - maxChars;
+  const suffix = `…[+${overflow} chars]`;
+  return `${value.slice(0, Math.max(0, maxChars - suffix.length))}${suffix}`;
+}
+
+function trimValue(value: unknown, step: TrimStep, depth: number): unknown {
+  if (typeof value === "string") {
+    if (value.length <= step.maxStringLength) return value;
+    const overflow = value.length - step.maxStringLength;
+    return `${value.slice(0, step.maxStringLength)}…[+${overflow} chars]`;
+  }
+  if (typeof value !== "object" || value === null) return value;
+  if (depth >= step.maxDepth) return summarizeValue(value);
+  if (Array.isArray(value)) {
+    const kept = value.slice(0, step.maxArrayItems).map((item) => trimValue(item, step, depth + 1));
+    if (value.length > step.maxArrayItems) kept.push(`[+${value.length - step.maxArrayItems} more items]`);
+    return kept;
+  }
+  const entries = Object.entries(value);
+  const keptEntries = entries
+    .slice(0, step.maxObjectEntries)
+    .map(([key, item]) => [key, trimValue(item, step, depth + 1)]);
+  if (entries.length > step.maxObjectEntries) {
+    keptEntries.push(["_trimmed", `[+${entries.length - step.maxObjectEntries} more keys]`]);
+  }
+  return Object.fromEntries(keptEntries);
+}
+
+function summarizeValue(value: unknown): string {
+  if (Array.isArray(value)) return `[array(${value.length})]`;
+  if (typeof value === "object" && value !== null) return `[object(${Object.keys(value).length})]`;
+  return String(value);
+}
+
+function buildOversizeSummary(args: Record<string, unknown>) {
+  return {
+    _summary: "approval args too large for Slack",
+    _keys: Object.keys(args).slice(0, 20),
+  };
+}

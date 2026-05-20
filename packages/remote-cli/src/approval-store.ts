@@ -29,6 +29,15 @@ const ApprovalActionSchema = z
     result: ExecResultSchema.optional(),
     error: z.string().optional(),
     reason: z.string().optional(),
+    notification: z
+      .object({
+        provider: z.literal("slack"),
+        channel: z.string().min(1),
+        threadTs: z.string().min(1),
+        messageTs: z.string().min(1).optional(),
+        postedAt: z.string().min(1).optional(),
+      })
+      .optional(),
   })
   .superRefine((action, ctx) => {
     if (action.status === "approved" && !action.result) {
@@ -53,20 +62,31 @@ export class ApprovalStore {
     tool: string,
     args: Record<string, unknown>,
     origin?: ApprovalAction["origin"],
+    notification?: ApprovalAction["notification"],
+  ): ApprovalAction {
+    const action = this.buildPending(tool, args, origin, notification);
+    this.write(action);
+    return action;
+  }
+
+  buildPending(
+    tool: string,
+    args: Record<string, unknown>,
+    origin?: ApprovalAction["origin"],
+    notification?: ApprovalAction["notification"],
   ): ApprovalAction {
     const now = new Date();
-    const action: ApprovalAction = {
+    return {
       id: randomUUID(),
       upstream: this.upstream,
       status: "pending",
       tool,
       args,
       ...(origin && (origin.sessionId || origin.trigger) && { origin }),
+      ...(notification && { notification }),
       createdAt: now.toISOString(),
       dateSegment: now.toISOString().slice(0, 10),
     };
-    this.write(action);
-    return action;
   }
 
   get(id: string): ApprovalAction | undefined {

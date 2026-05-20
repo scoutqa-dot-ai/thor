@@ -13,7 +13,8 @@ import { resolve } from "node:path";
 
 const markdownParser = new MarkdownIt("commonmark");
 
-const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
+const DEFAULT_SLACK_API_BASE_URL = "https://slack.com/api";
+const SLACK_POST_MESSAGE_PATH = "/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
 const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
 const BLOCKS_FILE_ALLOWED_ROOTS = ["/tmp", "/workspace"] as const;
@@ -25,9 +26,21 @@ const SLACK_MRKDWN_STEERING =
 
 export interface SlackPostMessageDeps {
   fetch?: typeof fetch;
-  env?: { SLACK_BOT_TOKEN?: string };
+  env?: { SLACK_BOT_TOKEN?: string; SLACK_API_BASE_URL?: string };
   appendAlias?: typeof appendCorrelationAlias;
   logAliasError?: (error: Error, meta: { sessionId: string; correlationKey: string }) => void;
+}
+
+export interface SlackPostApiRequest {
+  channel: string;
+  text: string;
+  threadTs?: string;
+  blocks?: unknown;
+}
+
+function slackPostMessageUrl(apiBaseUrl?: string): string {
+  const base = (apiBaseUrl && apiBaseUrl.trim()) || DEFAULT_SLACK_API_BASE_URL;
+  return `${base.replace(/\/$/, "")}${SLACK_POST_MESSAGE_PATH}`;
 }
 
 export interface SlackPostMessageRequest {
@@ -229,7 +242,6 @@ export async function handleSlackPostMessage(
 
   if (!deps.env?.SLACK_BOT_TOKEN) return result("SLACK_BOT_TOKEN is not set\n");
 
-  const fetchImpl = deps.fetch ?? fetch;
   const payload: Record<string, unknown> = {
     channel: parsed.channel,
     text,
@@ -280,35 +292,18 @@ export async function handleSlackPostMessage(
     payload.blocks = blocks;
   }
 
-  let slackJson: unknown;
-  try {
-    const response = await fetchImpl(SLACK_POST_MESSAGE_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${deps.env.SLACK_BOT_TOKEN}`,
-        "Content-Type": "application/json; charset=utf-8",
-      },
-      body: JSON.stringify(payload),
-    });
-    slackJson = await response.json();
-  } catch (err) {
-    return result(`Slack post failed: ${err instanceof Error ? err.message : String(err)}\n`);
-  }
+  const slackResponse = await postSlackMessageApi(
+    {
+      channel: parsed.channel,
+      text,
+      ...(parsed.threadTs ? { threadTs: parsed.threadTs } : {}),
+      ...(payload.blocks ? { blocks: payload.blocks } : {}),
+    },
+    { fetch: deps.fetch, env: deps.env },
+  );
+  if ("error" in slackResponse) return result(`Slack post failed: ${slackResponse.error}\n`);
 
-  if (!slackJson || typeof slackJson !== "object" || (slackJson as { ok?: unknown }).ok !== true) {
-    const error =
-      slackJson &&
-      typeof slackJson === "object" &&
-      typeof (slackJson as { error?: unknown }).error === "string"
-        ? (slackJson as { error: string }).error
-        : "unknown_error";
-    return result(`Slack API error: ${error}\n`);
-  }
-
-  const responseTs = (slackJson as { ts?: unknown }).ts;
-  if (typeof responseTs !== "string" || responseTs.length === 0) {
-    return result("Slack API response missing ts\n");
-  }
+  const responseTs = slackResponse.ts;
 
   const aliasTs = parsed.threadTs ?? responseTs;
   const correlationKey = buildSlackCorrelationKeys(parsed.channel, aliasTs)[0];
@@ -324,4 +319,56 @@ export async function handleSlackPostMessage(
 
   void started;
   return { stdout: '{"ok":true}\n', stderr: "", exitCode: 0 };
+}
+
+export async function postSlackMessageApi(
+  request: SlackPostApiRequest,
+  deps: Pick<SlackPostMessageDeps, "fetch" | "env"> = {},
+): Promise<{ ts: string; channel: string } | { error: string }> {
+  if (!deps.env?.SLACK_BOT_TOKEN) return { error: "SLACK_BOT_TOKEN is not set" };
+
+  const fetchImpl = deps.fetch ?? fetch;
+  const payload: Record<string, unknown> = {
+    channel: request.channel,
+    text: request.text,
+    mrkdwn: true,
+    ...(request.threadTs ? { thread_ts: request.threadTs } : {}),
+    ...(request.blocks ? { blocks: request.blocks } : {}),
+  };
+
+  let slackJson: unknown;
+  try {
+    const response = await fetchImpl(slackPostMessageUrl(deps.env.SLACK_API_BASE_URL), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${deps.env.SLACK_BOT_TOKEN}`,
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify(payload),
+    });
+    slackJson = await response.json();
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+
+  if (!slackJson || typeof slackJson !== "object" || (slackJson as { ok?: unknown }).ok !== true) {
+    const error =
+      slackJson &&
+      typeof slackJson === "object" &&
+      typeof (slackJson as { error?: unknown }).error === "string"
+        ? (slackJson as { error: string }).error
+        : "unknown_error";
+    return { error: `Slack API error: ${error}` };
+  }
+
+  const responseTs = (slackJson as { ts?: unknown }).ts;
+  const responseChannel = (slackJson as { channel?: unknown }).channel;
+  if (typeof responseTs !== "string" || responseTs.length === 0) {
+    return { error: "Slack API response missing ts" };
+  }
+
+  return {
+    ts: responseTs,
+    channel: typeof responseChannel === "string" && responseChannel.length > 0 ? responseChannel : request.channel,
+  };
 }

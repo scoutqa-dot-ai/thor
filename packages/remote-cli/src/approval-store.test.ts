@@ -24,6 +24,37 @@ describe("ApprovalStore", () => {
     expect(store.get(created.id)).toEqual(created);
   });
 
+  it("builds a pending action with optional notification metadata before persisting", () => {
+    const pending = store.buildPending(
+      "merge_pull_request",
+      { pr: 42 },
+      { sessionId: "s1" },
+      { provider: "slack", channel: "C123", threadTs: "1710000000.001" },
+    );
+
+    expect(store.get(pending.id)).toBeUndefined();
+    store.update({
+      ...pending,
+      notification: {
+        provider: "slack",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        messageTs: "1710000000.100",
+        postedAt: new Date().toISOString(),
+      },
+    });
+
+    expect(store.get(pending.id)).toMatchObject({
+      id: pending.id,
+      notification: {
+        provider: "slack",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        messageTs: "1710000000.100",
+      },
+    });
+  });
+
   it("rejects a pending action once", () => {
     const action = store.create("merge_pull_request", { pr: 42 });
 
