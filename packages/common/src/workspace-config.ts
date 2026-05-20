@@ -144,8 +144,8 @@ const configLog = createLogger("config-loader");
 
 /**
  * Create a config loader that re-reads the workspace config on every access.
- * The file is tiny (<1KB) so there's no need for caching — changes
- * take effect immediately.
+ * The config is small and reloaded infrequently, so there's no need for
+ * caching — changes take effect immediately.
  */
 export function createConfigLoader(path: string): ConfigLoader {
   let lastGood: WorkspaceConfig | null = null;
