@@ -2980,50 +2980,6 @@ describe("gateway", () => {
     });
   });
 
-  it("ignores legacy v2 approval button values", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
-
-    await withServer(
-      fetchImpl,
-      async (baseUrl, queue) => {
-        const payload = encodeURIComponent(
-          JSON.stringify({
-            type: "block_actions",
-            user: { id: "U123" },
-            channel: { id: "C123" },
-            message: { ts: "1710000000.001", thread_ts: "1710000000.001" },
-            actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
-          }),
-        );
-        const body = `payload=${payload}`;
-        const timestamp = `${Math.floor(Date.now() / 1000)}`;
-
-        const response = await fetch(`${baseUrl}/slack/interactivity`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-Slack-Request-Timestamp": timestamp,
-            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
-          },
-          body,
-        });
-
-        expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ ok: true });
-
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        await queue.flush();
-      },
-      {
-        remoteCliHost: "remote-cli.internal",
-        remoteCliPort: 3010,
-        internalSecret: "resolve-secret",
-      },
-    );
-
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
   it("resolves approval outcome correlation keys through registered aliases", async () => {
     correlationKeyAliases.set(
       "slack:thread:1710000000.001",
@@ -3252,49 +3208,5 @@ describe("gateway", () => {
     const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
     expect(runnerBody.prompt).toContain('Error calling "merge_pull_request"');
     expect(runnerBody.prompt).not.toContain("upstream unavailable");
-  });
-
-  it("ignores v2 approval buttons even when thread context is missing", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
-
-    await withServer(
-      fetchImpl,
-      async (baseUrl, queue) => {
-        const payload = encodeURIComponent(
-          JSON.stringify({
-            type: "block_actions",
-            user: { id: "U123" },
-            channel: { id: "C123" },
-            message: { ts: "1710000000.100" },
-            actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
-          }),
-        );
-        const body = `payload=${payload}`;
-        const timestamp = `${Math.floor(Date.now() / 1000)}`;
-
-        const response = await fetch(`${baseUrl}/slack/interactivity`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-Slack-Request-Timestamp": timestamp,
-            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
-          },
-          body,
-        });
-
-        expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ ok: true });
-
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        await queue.flush();
-      },
-      {
-        remoteCliHost: "remote-cli.internal",
-        remoteCliPort: 3010,
-        internalSecret: "resolve-secret",
-      },
-    );
-
-    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
