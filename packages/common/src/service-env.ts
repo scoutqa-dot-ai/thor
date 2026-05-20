@@ -1,7 +1,8 @@
-import { dirname, join } from "node:path";
 import { deriveGitHubAppBotIdentity } from "./github-identity.js";
 import { envBaseUrl, envCsv, envInt, envOptionalString, envString, type EnvSource } from "./env.js";
 import { WORKSPACE_CONFIG_PATH } from "./workspace-config.js";
+
+export const ADMIN_AUDIT_LOG_PATH = "/workspace/config/thor.audit.log";
 
 export function loadGatewayEnv(env: EnvSource = process.env) {
   const githubAppSlug = envString(env, "GITHUB_APP_SLUG");
@@ -89,7 +90,7 @@ export function loadAdminEnv(env: EnvSource = process.env) {
   return {
     port: envInt(env, "PORT", 3005),
     configPath,
-    auditLogPath: envString(env, "AUDIT_LOG_PATH", join(dirname(configPath), "config.audit.log")),
+    auditLogPath: envString(env, "AUDIT_LOG_PATH", ADMIN_AUDIT_LOG_PATH),
   };
 }
 
