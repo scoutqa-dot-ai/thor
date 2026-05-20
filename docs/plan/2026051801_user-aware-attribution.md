@@ -5,7 +5,7 @@
 Stamp the human who triggered a Thor run onto the artifacts it produces — best effort, never blocks:
 
 1. `Co-authored-by: Name <email>` trailer on agent-made commits.
-2. `--assignee <github>` on agent-opened PRs (set on `gh pr create` when unset).
+2. `--assignee <github>` on agent-opened PRs/issues (set on `gh pr create` / `gh issue create` when unset).
 3. `assignee_account_id` on agent-created Jira issues (resolved from user email when unset).
 
 The existing Thor disclaimer footer already carries a context link back to the trigger; no separate "Triggered by ..." line in the PR body is needed.
@@ -33,7 +33,7 @@ Out of scope:
 - Per-user opt-out flags, global kill switch, automated user-registry sync.
 - Multi-field identity model (`triggered_by` / `requested_by` / `acting_agent`).
 - Rewriting `disclaimer.ts` to embed user identity in the footer.
-- Attribution on `gh pr edit`, `gh issue create`, and other mutating surfaces beyond `gh pr create` + `git commit` + MCP `createJiraIssue`. Known gap; revisit if it bites.
+- Attribution on `gh pr edit` and other mutating surfaces beyond `gh pr create` / `gh issue create` + `git commit` + MCP `createJiraIssue`. Known gap; revisit if it bites.
 
 ## Phases
 
@@ -124,11 +124,11 @@ Pros/cons of the plain-text append vs. routing through git's trailer machinery:
 - **Con — we own line-break correctness.** If the agent's `-m` value ends without a blank line, we must insert one; if it already ends with a trailer block, we must not insert an extra blank line. Covered by the helper, but it's logic we own.
 - **Con — no semantic merging.** If the agent itself wrote a `Co-authored-by:` line with a _different_ identity, we append a second one instead of replacing it. Acceptable: the agent should not be writing co-author trailers, and if it does, both names landing is the honest record.
 
-**`/exec/gh` handler.** In the `/exec/gh` route at `index.ts:616-626`, extend the existing arg-rewrite pass so that for `gh pr create`, Thor injects `--assignee <github>` **only when** all of the following are true: (a) a user resolves, (b) that user has `github`, and (c) the agent did not already pass `--assignee` / `-a`. The body itself is untouched — the disclaimer footer already includes a link to the Thor context for this trigger, so a separate "Triggered by …" line would be duplicative.
+**`/exec/gh` handler.** In the `/exec/gh` route at `index.ts:616-626`, extend the existing arg-rewrite pass so that for `gh pr create` and `gh issue create`, Thor injects `--assignee <github>` **only when** all of the following are true: (a) a user resolves, (b) that user has `github`, and (c) the agent did not already pass `--assignee` / `-a`. The body itself is untouched — the disclaimer footer already includes a link to the Thor context for this trigger, so a separate "Triggered by …" line would be duplicative.
 
 - If `--assignee` / `-a` is already present, leave the args byte-identical and log `skipped_existing_assignee`.
 - When no resolved user or no `github` field, log the appropriate skip outcome and leave PR creation unchanged.
-- v1 scope is limited to `gh pr create`; no post-create `gh pr edit` follow-up is needed.
+- v1 scope is limited to `gh pr create` / `gh issue create`; no post-create `gh pr edit` or `gh issue edit` follow-up is needed.
 
 **MCP Jira.** Extend the approval-resolution path so that for `createJiraIssue`, if a user resolves with `email` and the agent did not already provide `assignee_account_id`, Thor calls `lookupJiraAccountId` and injects the returned value into `assignee_account_id` before `createJiraIssue` is sent.
 
@@ -158,6 +158,8 @@ Behavior tests (next to existing `gh-disclaimer.test.ts` and `mcp-handler.test.t
   - Existing `--assignee` / `-a` flag → args unchanged, `skipped_existing_assignee` logged.
   - No `github` field → no assignee injection; PR body and creation unchanged.
   - No resolved user → no assignee injection; PR body and creation unchanged.
+- `/exec/gh issue create`:
+  - Same assignee injection and skip behavior as `gh pr create` while preserving the traceability footer.
 - MCP Jira `createJiraIssue`:
   - Resolved user with `email` + `cloudId` + no existing `assignee_account_id` → `lookupJiraAccountId` called via injected resolver, returned `accountId` lands in upstream payload as `assignee_account_id`.
   - Existing `assignee_account_id` → args unchanged, `skipped_existing_assignee` logged and lookup skipped.

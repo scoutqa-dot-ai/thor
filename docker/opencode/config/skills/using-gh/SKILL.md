@@ -29,7 +29,7 @@ Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`
 
 ### `gh issue create`
 
-Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable). Successful creates receive Thor's traceability footer and bind the created `github:issue:` session for later issue comments.
+Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Successful creates receive Thor's traceability footer, best-effort trigger-user assignee attribution when unset, and bind the created `github:issue:` session for later issue comments.
 
 ### `gh pr comment`
 
