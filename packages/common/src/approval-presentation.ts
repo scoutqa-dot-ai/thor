@@ -398,7 +398,7 @@ function trimValue(value: unknown, step: TrimStep, depth: number): unknown {
 
 function summarizeValue(value: unknown): string {
   if (Array.isArray(value)) return `[array(${value.length})]`;
-  if (typeof value === "object" && value !== null) return `[object(${Object.keys(value).length})]`;
+  if (typeof value === "object" && value) return `[object(${Object.keys(value).length})]`;
   return String(value);
 }
 
