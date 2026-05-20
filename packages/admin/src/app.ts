@@ -1,6 +1,5 @@
 import express, { type Express, type Request, type Response } from "express";
 import { readFileSync, writeFileSync, renameSync, statSync, appendFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import {
   createLogger,
   logError,
@@ -157,8 +156,8 @@ function readConfigText(path: string): {
 }
 
 function atomicWrite(path: string, data: string): void {
-  const tmp = join(dirname(path), `.thor.json.${process.pid}.${Date.now()}.tmp`);
-  writeFileSync(tmp, data, { encoding: "utf-8", mode: 0o644 });
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, data);
   renameSync(tmp, path);
 }
 
