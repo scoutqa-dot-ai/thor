@@ -42,7 +42,6 @@ import {
   SessionEventLogRecordSchema,
   loadRunnerEnv,
   matchesInternalSecret,
-  ProgressApprovalRequiredSchema,
   withKeyLock,
   isOmittedMarker,
   iterateJsonlFileLinesSync,
@@ -1065,14 +1064,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   emitToolProgress(toolPart, status);
                   emitMemoryEventsFromToolPart(toolPart, emit);
 
-                  // Detect approval-required tool results and emit approval event.
-                  if (status === "completed") {
-                    const completed = toolPart.state as ToolStateCompleted;
-                    const approval = parseApprovalResult(completed.output);
-                    if (approval) {
-                      emit(approval);
-                    }
-                  }
                 }
                 lastMessageId = toolPart.messageID;
               } else if (part.type === "step-finish") {
@@ -1209,19 +1200,6 @@ function eventSessionId(event: Event): string | undefined {
 
 function isSessionEvent(event: Event, sessionId: string): boolean {
   return eventSessionId(event) === sessionId;
-}
-
-function parseApprovalResult(output: string): ProgressEvent | undefined {
-  let parsedOutput: unknown;
-  try {
-    parsedOutput = JSON.parse(output);
-  } catch {
-    return undefined;
-  }
-
-  const parsed = ProgressApprovalRequiredSchema.safeParse(parsedOutput);
-  if (!parsed.success) return undefined;
-  return parsed.data;
 }
 
 function escapeHtml(value: string): string {

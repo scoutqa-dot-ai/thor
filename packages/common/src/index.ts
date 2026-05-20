@@ -183,7 +183,6 @@ export {
   ProgressDelegateSchema,
   ProgressDoneSchema,
   ProgressErrorSchema,
-  ProgressApprovalRequiredSchema,
   ProgressEventSchema,
 } from "./progress-events.js";
 export type {
@@ -193,7 +192,6 @@ export type {
   ProgressDelegate,
   ProgressDone,
   ProgressError,
-  ProgressApprovalRequired,
   ProgressEvent,
 } from "./progress-events.js";
 export {

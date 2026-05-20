@@ -894,7 +894,6 @@ async function consumeNdjsonStream(
         ts: Date.now(),
       });
 
-      if (event.type === "approval_required") continue;
       await forwardProgressEvent(channel, threadTs, event, slackDeps, triggerTs);
     } catch (err) {
       logWarn(log, "ndjson_parse_skip", {

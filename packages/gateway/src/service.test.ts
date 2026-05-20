@@ -205,41 +205,6 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     expect(updateTexts.some((t) => t.includes("agents: research-agent"))).toBe(true);
   });
 
-  it("ignores approval_required progress events because remote-cli posts approval cards directly", async () => {
-    const lines = [
-      JSON.stringify({
-        type: "approval_required",
-        actionId: "act-1",
-        tool: "createJiraIssue",
-        args: {
-          cloudId: "cloud-1",
-          projectKey: "ENG",
-          issueTypeName: "Task",
-          summary: "Approval card",
-          description: "Review me",
-        },
-        proxyName: "atlassian",
-      }),
-    ];
-    mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
-
-    const { triggerRunnerSlack } = await import("./service.js");
-    await triggerRunnerSlack(
-      [slackEvent],
-      "key1",
-      runnerDeps,
-      slackDeps,
-      false,
-      undefined,
-      slackDirectoryForChannel,
-    );
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(postMessage).not.toHaveBeenCalled();
-    expect(update).not.toHaveBeenCalled();
-  });
-
   it("skips invalid NDJSON lines without crashing", async () => {
     const lines = [
       "not valid json",
