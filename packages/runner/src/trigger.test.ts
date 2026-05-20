@@ -1053,6 +1053,65 @@ describe("runner /trigger orchestration", () => {
     expect(h.prompts).toHaveLength(1);
   });
 
+  it("keeps observing a resumed interrupted session after stale idle until approval output", async () => {
+    const outputArgs = {
+      cloudId: "cloud-1",
+      projectKey: "THOR",
+      issueTypeName: "Task",
+      summary: "Approval after stale idle",
+      description: "body",
+    };
+    const wrapperArgs = { upstream: "atlassian", tool: "createJiraIssue", arguments: "{}" };
+    const h = createHarness({
+      existingSessions: new Set(["busy-session"]),
+      busySessions: new Set(["busy-session"]),
+      promptEvents: (sessionId) => [
+        idleEvent(sessionId),
+        toolEvent(
+          sessionId,
+          "mcp",
+          "completed",
+          wrapperArgs,
+          { start: 1000, end: 1200 },
+          JSON.stringify({
+            type: "approval_required",
+            actionId: "approval-after-stale-idle",
+            proxyName: "atlassian",
+            tool: "createJiraIssue",
+            args: outputArgs,
+          }),
+        ),
+        idleEvent(sessionId),
+      ],
+    });
+    setupBusySession("1710000000.012");
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "now",
+        correlationKey: "slack:thread:1710000000.012",
+        interrupt: true,
+      });
+      const approvals = result.events.filter((e) => e.type === "approval_required");
+
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0]).toMatchObject({
+        actionId: "approval-after-stale-idle",
+        tool: "createJiraIssue",
+        proxyName: "atlassian",
+        args: outputArgs,
+      });
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        sessionId: "busy-session",
+        resumed: true,
+        status: "completed",
+      });
+    });
+
+    expect(h.aborts).toEqual(["busy-session"]);
+    expect(h.prompts).toHaveLength(1);
+  });
+
   it("returns busy without prompting when a resumed session is busy and interrupt is false", async () => {
     const h = createHarness({
       existingSessions: new Set(["busy-session"]),

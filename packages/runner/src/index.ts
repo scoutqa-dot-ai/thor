@@ -898,6 +898,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       let latestSessionErrorSeq: number | undefined;
       let latestSessionErrorAt: number | undefined;
       let finished = false;
+      let sawParentMessagePart = false;
 
       // Track child session IDs for progress forwarding.
       const childSessionIds = new Set<string>();
@@ -992,6 +993,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             }
 
             if (event.type === "message.part.updated") {
+              sawParentMessagePart = true;
               const part = event.properties.part;
               seq++;
 
@@ -1093,6 +1095,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                 errorDetail: JSON.stringify(errorProps.error),
               });
             } else if (event.type === "session.idle") {
+              if (!sawParentMessagePart) {
+                logInfo(log, "stale_session_idle_ignored", { sessionId });
+                continue;
+              }
               terminalError = latestSessionError;
               finished = true;
               break;
