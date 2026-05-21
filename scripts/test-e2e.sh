@@ -723,8 +723,8 @@ else
   # 4b. remote-cli-level: call the approval-required tool directly
   echo "  Calling tool via remote-cli (expecting approval interception)..."
   if [[ "$jira_assignee_live" == "true" ]]; then
-    JIRA_E2E_SUMMARY="Thor Jira assignee e2e ${REMOTE_CLI_AUTH_TS}"
-    jira_e2e_description="Jira assignee attribution e2e. Marker: ${REMOTE_CLI_AUTH_TS}"
+    JIRA_E2E_SUMMARY="Thor Jira reporter e2e ${REMOTE_CLI_AUTH_TS}"
+    jira_e2e_description="Jira reporter attribution e2e. Marker: ${REMOTE_CLI_AUTH_TS}"
     export JIRA_E2E_SUMMARY jira_e2e_description
     approval_args_json=$(node -e "
       console.log(JSON.stringify({
@@ -792,13 +792,13 @@ else
     if [[ "$jira_assignee_live" == "true" ]]; then
       # 4d. Approve a Jira issue creation with a fake project key. The upstream
       # create should fail, but only after Thor has performed lookup and sent
-      # the create payload with assignee_account_id.
+      # the create payload with additional_fields.reporter.
       echo "  Approving Jira approval $action_id..."
       jira_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
       resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
         -H 'Content-Type: application/json' \
         -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-        -d "{\"args\":[\"resolve\",\"$action_id\",\"approved\",\"e2e-test\",\"e2e test - automated Jira assignee verification\"]}" \
+        -d "{\"args\":[\"resolve\",\"$action_id\",\"approved\",\"e2e-test\",\"e2e test - automated Jira reporter verification\"]}" \
         2>/dev/null || echo '{}')
       resolve_exit=$(json_field "$resolve_raw" "exitCode")
       resolve_stdout=$(json_field "$resolve_raw" "stdout")
@@ -810,7 +810,7 @@ else
 
       jira_lookup_entry=$(find_jira_tool_worklog_entry "lookupJiraAccountId" 2>/dev/null || echo "")
       jira_create_entry=$(find_jira_tool_worklog_entry "createJiraIssue" 2>/dev/null || echo "")
-      jira_injected_account_id=$(json_field "$jira_create_entry" "args.assignee_account_id")
+      jira_injected_reporter_id=$(json_field "$jira_create_entry" "args.additional_fields.reporter.id")
       jira_create_project_key=$(json_field "$jira_create_entry" "args.projectKey")
       jira_create_error=$(json_field "$jira_create_entry" "error")
       jira_create_is_error=$(json_field "$jira_create_entry" "result.isError")
@@ -820,8 +820,8 @@ else
       assert '[[ "$jira_create_project_key" == "THORE2E" ]]' \
         "jira attribution e2e: createJiraIssue used the fake project key" \
         "projectKey='$jira_create_project_key' expected='THORE2E'; worklog entry: ${jira_create_entry:0:800}"
-      assert '[[ -n "$jira_injected_account_id" ]]' \
-        "jira attribution e2e: createJiraIssue received an assignee_account_id" \
+      assert '[[ -n "$jira_injected_reporter_id" ]]' \
+        "jira attribution e2e: createJiraIssue received additional_fields.reporter.id" \
         "worklog entry: ${jira_create_entry:0:800}"
       assert '[[ "$jira_create_is_error" == "true" || -n "$jira_create_error" || -n "$resolve_stderr" || "$resolve_exit" != "0" ]]' \
         "jira attribution e2e: failed create call recorded an upstream error" \
