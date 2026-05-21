@@ -43,6 +43,7 @@ const tools: Tool[] = [
 
 const worklogDir = "/tmp/thor-remote-cli-mcp-test/worklog";
 const activeTriggerId = "00000000-0000-7000-8000-000000000101";
+const githubTriggerId = "00000000-0000-7000-8000-000000000102";
 const activeAnchorId = "00000000-0000-7000-8000-0000000004a1";
 const activeSlackCorrelationKey = "slack:thread:C123/1710000000.001";
 
@@ -588,6 +589,56 @@ describe("remote-cli MCP endpoints", () => {
     });
   });
 
+  it("falls back to the newest Slack trigger when the latest trigger is GitHub", async () => {
+    appendActiveTrigger({ ts: "2026-05-21T00:00:01.000Z" });
+    appendSessionEvent("parent-session", {
+      type: "trigger_end",
+      triggerId: activeTriggerId,
+      status: "completed",
+      ts: "2026-05-21T00:00:02.000Z",
+    });
+    appendSessionEvent("parent-session", {
+      type: "trigger_start",
+      triggerId: githubTriggerId,
+      correlationKey: "github:issue:acme:acme/repo#42",
+      triggerGithubLogin: "octocat",
+      ts: "2026-05-21T00:00:03.000Z",
+    });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string; exitCode: number };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody.exitCode).toBe(0);
+    expect(JSON.parse(pendingBody.stdout)).toMatchObject({
+      type: "approval_required",
+      proxyName: "atlassian",
+      tool: "createJiraIssue",
+    });
+
+    expect(slackFetch).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(slackFetch.mock.calls[0]?.[1]?.body)) as {
+      channel: string;
+      thread_ts?: string;
+    };
+    expect(payload).toMatchObject({
+      channel: "C123",
+      thread_ts: "1710000000.001",
+    });
+  });
+
   it("fails closed when an approval origin cannot resolve to a Slack thread", async () => {
     appendAlias({
       aliasType: "opencode.session",
@@ -611,7 +662,7 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(pending.status).toBe(200);
     expect(pendingBody.exitCode).toBe(1);
-    expect(pendingBody.stderr).toContain("has no trigger correlation key");
+    expect(pendingBody.stderr).toContain("has no Slack trigger correlation key");
     expect(slackFetch).not.toHaveBeenCalled();
   });
 

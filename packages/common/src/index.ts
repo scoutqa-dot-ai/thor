@@ -78,6 +78,7 @@ export {
   findActiveTrigger,
   findTriggerActor,
   findTriggerCorrelationKey,
+  findSlackTriggerCorrelationKey,
   findAnchorContext,
   resolveAlias,
   reverseLookupAnchor,

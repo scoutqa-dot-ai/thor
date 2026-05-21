@@ -242,7 +242,7 @@ sequenceDiagram
     participant Slack
 
     Agent->>RC: MCP call (e.g. createJiraIssue, args)
-    RC->>RC: resolve session -> trigger correlation key<br/>must be slack:thread:&lt;channel&gt;/&lt;threadTs&gt;
+    RC->>RC: resolve session -> newest Slack trigger on anchor<br/>must be slack:thread:&lt;channel&gt;/&lt;threadTs&gt;
     RC->>Store: build + persist pending action
     Note right of Store: pending action persisted to<br/>/workspace/data/approvals
     RC->>Slack: chat.postMessage + approval blocks<br/>(Approve / Reject buttons)
@@ -255,7 +255,7 @@ sequenceDiagram
 ### 5.2 The hand-offs
 
 1. **remote-cli validates approval eligibility** (`packages/remote-cli/src/mcp-handler.ts`). For tools classified `approve`, it first validates the approval payload. For tools requiring a disclaimer (`createJiraIssue`, `addCommentToJiraIssue`, `create-feature-flag`), `validateDisclaimerCompatibleArgs` rejects the call when `args.contentFormat` is set to anything other than `"markdown"`.
-2. **remote-cli resolves Slack routing from trigger context.** The MCP call must include `x-thor-session-id`; that session must resolve to an anchor; the best trigger on that anchor must have a `correlationKey`; and that key must be the current Slack form `slack:thread:<channel>/<threadTs>`. The channel/thread are used for the approval card destination.
+2. **remote-cli resolves Slack routing from trigger context.** The MCP call must include `x-thor-session-id`; that session must resolve to an anchor; and the newest Slack trigger on that anchor must have the current Slack correlation-key form `slack:thread:<channel>/<threadTs>`. Non-Slack triggers on the same anchor, such as GitHub follow-ups, do not hide an older usable Slack trigger. The channel/thread are used for the approval card destination.
 3. **remote-cli persists the pending action.** It stores the clean input args plus `origin.sessionId`, `{anchorId, triggerId}`, and notification target metadata under `/workspace/data/approvals`.
 4. **remote-cli posts the Slack card.** `buildApprovalSlackMessage()` formats a concise approval card and `postSlackMessageApi()` sends `chat.postMessage` using the `remote-cli` service's `SLACK_BOT_TOKEN`. The button value is `v3:<actionId>:<urlEncodedUpstream>:<threadTs>`.
 5. **remote-cli records Slack notification metadata.** After Slack returns a message `ts`, the approval action is updated with `notification.messageTs` and `postedAt`.
@@ -268,7 +268,7 @@ These things must hold for remote-cli to create a usable pending approval:
 
 - **The MCP call carries `x-thor-session-id`.** Without it, remote-cli cannot bind the approval to a trigger.
 - **The session has anchor context.** `opencode.session` or `opencode.subsession` must resolve to an anchor in the JSONL alias index.
-- **The trigger has a Slack-thread correlation key.** GitHub-only, cron-only, and other non-Slack triggers do not provide a Slack destination for the approval card.
+- **The anchor has a channel-aware Slack trigger.** GitHub-only, cron-only, and other non-Slack-only anchors do not provide a Slack destination for the approval card.
 - **The Slack key is the channel-aware form.** `slack:thread:<channel>/<threadTs>` is required. Legacy `slack:thread:<threadTs>` keys cannot tell remote-cli which channel to post to.
 - **remote-cli can post to Slack.** `SLACK_BOT_TOKEN` must be configured in remote-cli and Slack must accept `chat.postMessage` for the target channel/thread.
 

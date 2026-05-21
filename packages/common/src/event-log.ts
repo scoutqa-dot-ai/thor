@@ -955,15 +955,18 @@ export function listAnchorSessionStates(
  * Scan a session's trigger_start records in one pass. Returns the currently
  * open trigger (latest trigger_start with no matching trigger_end) and the
  * latest trigger_start overall regardless of end. Used by both
- * findActiveTrigger (open-only) and findTriggerActor (open with latest as
- * fallback for ended triggers).
+ * findActiveTrigger (open-only) and trigger-context lookups (open with latest
+ * as fallback for ended triggers).
  */
 type ScannedTrigger = { triggerId: string; ts: string } & Pick<
   z.infer<typeof TriggerStartRecordSchema>,
   "correlationKey" | "triggerSlackId" | "triggerGithubLogin"
 >;
 
-function scanTriggers(sessionId: string): { open?: ScannedTrigger; latest?: ScannedTrigger } {
+function scanTriggers(
+  sessionId: string,
+  accepts: (trigger: ScannedTrigger) => boolean = () => true,
+): { open?: ScannedTrigger; latest?: ScannedTrigger } {
   let open: ScannedTrigger | undefined;
   let latest: ScannedTrigger | undefined;
   for (const record of streamSessionRecords(sessionId)) {
@@ -975,8 +978,10 @@ function scanTriggers(sessionId: string): { open?: ScannedTrigger; latest?: Scan
         ...(record.triggerSlackId ? { triggerSlackId: record.triggerSlackId } : {}),
         ...(record.triggerGithubLogin ? { triggerGithubLogin: record.triggerGithubLogin } : {}),
       };
-      open = t;
-      latest = t;
+      if (accepts(t)) {
+        open = t;
+        latest = t;
+      }
     } else if (record.type === "trigger_end" && record.triggerId === open?.triggerId) {
       open = undefined;
     }
@@ -1001,7 +1006,10 @@ export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult
   return { ok: true, anchorId, sessionId: best.sessionId, triggerId: best.triggerId };
 }
 
-function findBestTriggerForSession(requestSessionId: string): ScannedTrigger | undefined {
+function findBestTriggerForSession(
+  requestSessionId: string,
+  accepts?: (trigger: ScannedTrigger) => boolean,
+): ScannedTrigger | undefined {
   const anchorId =
     resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
     resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
@@ -1013,7 +1021,7 @@ function findBestTriggerForSession(requestSessionId: string): ScannedTrigger | u
   let bestOpen: ScannedTrigger | undefined;
   let bestLatest: ScannedTrigger | undefined;
   for (const sessionId of reverse.sessionIds) {
-    const { open, latest } = scanTriggers(sessionId);
+    const { open, latest } = scanTriggers(sessionId, accepts);
     if (open && (!bestOpen || open.ts > bestOpen.ts)) bestOpen = open;
     if (latest && (!bestLatest || latest.ts > bestLatest.ts)) bestLatest = latest;
   }
@@ -1033,6 +1041,12 @@ export function findTriggerActor(
 
 export function findTriggerCorrelationKey(requestSessionId: string): string | undefined {
   return findBestTriggerForSession(requestSessionId)?.correlationKey;
+}
+
+export function findSlackTriggerCorrelationKey(requestSessionId: string): string | undefined {
+  return findBestTriggerForSession(requestSessionId, (trigger) =>
+    Boolean(trigger.correlationKey?.startsWith("slack:thread:")),
+  )?.correlationKey;
 }
 
 export function findAnchorContext(requestSessionId: string): AnchorContextResult {

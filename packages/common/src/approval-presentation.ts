@@ -4,7 +4,7 @@ import {
   CreateJiraIssueApprovalArgsSchema,
   type ApprovalToolName,
 } from "./approval-events.js";
-import { findTriggerCorrelationKey } from "./event-log.js";
+import { findSlackTriggerCorrelationKey } from "./event-log.js";
 
 const SLACK_SECTION_TEXT_LIMIT = 3000;
 const SLACK_THREAD_CORRELATION_PREFIX = "slack:thread:";
@@ -124,14 +124,9 @@ function parseSlackThreadAlias(aliasValue: string): SlackThreadTarget | undefine
 export function resolveSlackThreadTargetFromTrigger(
   sessionId: string,
 ): SlackThreadTarget | { error: string } {
-  const correlationKey = findTriggerCorrelationKey(sessionId);
+  const correlationKey = findSlackTriggerCorrelationKey(sessionId);
   if (!correlationKey) {
-    return { error: `session ${sessionId} has no trigger correlation key` };
-  }
-  if (!correlationKey.startsWith(SLACK_THREAD_CORRELATION_PREFIX)) {
-    return {
-      error: `session ${sessionId} was not triggered from a Slack thread: ${correlationKey}`,
-    };
+    return { error: `session ${sessionId} has no Slack trigger correlation key` };
   }
 
   const aliasValue = correlationKey.slice(SLACK_THREAD_CORRELATION_PREFIX.length);

@@ -17,7 +17,9 @@ import {
   appendAlias,
   appendSessionEvent,
   findActiveTrigger,
+  findSlackTriggerCorrelationKey,
   findTriggerActor,
+  findTriggerCorrelationKey,
   listAnchors,
   listAnchorSessionStates,
   listSessionAliases,
@@ -86,6 +88,31 @@ describe("session event log", () => {
     appendSessionEvent("parent", { type: "trigger_end", triggerId: triggerA, status: "completed" });
 
     expect(findTriggerActor("child")).toEqual({ slack: "UABCDEF1" });
+  });
+
+  it("finds the newest Slack trigger when a newer non-Slack trigger shares the anchor", () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "parent", anchorId: anchorA });
+    appendSessionEvent("parent", {
+      type: "trigger_start",
+      triggerId: triggerA,
+      correlationKey: "slack:thread:C123/1710000000.001",
+      ts: "2026-05-21T00:00:01.000Z",
+    });
+    appendSessionEvent("parent", {
+      type: "trigger_end",
+      triggerId: triggerA,
+      status: "completed",
+      ts: "2026-05-21T00:00:02.000Z",
+    });
+    appendSessionEvent("parent", {
+      type: "trigger_start",
+      triggerId: triggerB,
+      correlationKey: "github:issue:thor:owner/repo#42",
+      ts: "2026-05-21T00:00:03.000Z",
+    });
+
+    expect(findTriggerCorrelationKey("parent")).toBe("github:issue:thor:owner/repo#42");
+    expect(findSlackTriggerCorrelationKey("parent")).toBe("slack:thread:C123/1710000000.001");
   });
 
   it("never truncates text or reasoning opencode_event records, even when oversized", () => {
