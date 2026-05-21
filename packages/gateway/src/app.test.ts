@@ -1547,7 +1547,7 @@ describe("gateway", () => {
     });
   });
 
-  it("enqueues actionable check_suite events only when the branch has an existing session alias", async () => {
+  it("enqueues check_suite events when the branch has an existing session alias", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi
       .fn()
@@ -1628,8 +1628,99 @@ describe("gateway", () => {
     });
   });
 
-  it.each(["success", "cancelled", "neutral", null])(
-    "ignores non-actionable check_suite conclusion %p",
+  it.each([
+    "success",
+    "neutral",
+    "skipped",
+    "cancelled",
+    "stale",
+    "failure",
+    "timed_out",
+    "action_required",
+    "startup_failure",
+  ])("enqueues terminal check_suite conclusion %p with interrupt false", async (conclusion) => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
+      .mockResolvedValueOnce({
+        stdout: "49699333+thor[bot]@users.noreply.github.com\n",
+        stderr: "",
+        exitCode: 0,
+      });
+
+    await withWorklogDir(async (worklogDir) => {
+      sessionKeys.add("git:branch:thor:feature/refactor");
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody({ conclusion });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": `delivery-check-suite-${String(conclusion)}`,
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true });
+
+          const queued = readQueuedEvents(queueDir);
+          expect(queued).toHaveLength(1);
+          expect(queued[0]).toMatchObject({
+            id: `delivery-check-suite-${String(conclusion)}`,
+            source: "github",
+            correlationKey: "git:branch:thor:feature/refactor",
+            delayMs: 0,
+            interrupt: false,
+            payload: {
+              event_type: "check_suite",
+              action: "completed",
+              check_suite: {
+                head_sha: "abc123def456",
+                head_branch: "feature/refactor",
+                conclusion,
+              },
+            },
+          });
+
+          const ingested = readGitHubIngestedEntries(worklogDir);
+          expect(ingested).toHaveLength(1);
+          expect(ingested[0]).toMatchObject({
+            reason: "accepted",
+            eventType: "check_suite",
+            metadata: { correlationKey: "git:branch:thor:feature/refactor" },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+          githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+          internalExec,
+        },
+      );
+    });
+
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "git",
+      args: ["cat-file", "-e", "abc123def456"],
+      cwd: "/workspace/repos/thor",
+    });
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "git",
+      args: ["log", "-1", "--format=%ae", "abc123def456"],
+      cwd: "/workspace/repos/thor",
+    });
+  });
+
+  it.each([null, "", "   "])(
+    "ignores check_suite when conclusion is missing %p",
     async (conclusion) => {
       const fetchImpl = vi.fn<typeof fetch>();
       const internalExec = vi.fn();
@@ -1646,7 +1737,7 @@ describe("gateway", () => {
               headers: {
                 "Content-Type": "application/json",
                 "X-Hub-Signature-256": signGitHub(body, "github-secret"),
-                "X-GitHub-Delivery": `delivery-check-suite-non-actionable-${String(conclusion)}`,
+                "X-GitHub-Delivery": `delivery-check-suite-missing-${String(conclusion)}`,
                 "X-GitHub-Event": "check_suite",
               },
               body,
@@ -1660,7 +1751,7 @@ describe("gateway", () => {
             const ignored = readGitHubIgnoredEntries(worklogDir);
             expect(ignored).toHaveLength(1);
             expect(ignored[0]).toMatchObject({
-              reason: "check_suite_non_actionable",
+              reason: "check_suite_conclusion_missing",
               eventType: "check_suite",
               metadata: {
                 headSha: "abc123def456",

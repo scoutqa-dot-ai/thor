@@ -64,7 +64,7 @@ Subscribe to:
 - Check suite
 - Push
 
-`check_suite.completed` wakes Thor only for actionable failed outcomes (`failure`, `timed_out`, `action_required`) on an existing Thor-authored branch session. `success`, `cancelled`, `neutral`, `skipped`, `stale`, and missing/unknown conclusions are ignored at the gateway to reduce OpenCode noise. GitHub reports check suites per commit per checks app, so repos with multiple CI providers may still produce more than one terminal suite.
+`check_suite.completed` wakes Thor for any non-empty terminal `conclusion` on an existing Thor-authored branch session after the existing-session and git-authorship gates pass. Success-like outcomes are typically silent/log-only in the agent layer; failure-like outcomes trigger investigation or rerun handling. Missing/blank conclusions are ignored as malformed/incomplete terminal events. GitHub reports check suites per commit per checks app, so repos with multiple CI providers may still produce more than one terminal suite.
 
 `pull_request.closed` wakes Thor when a PR for an existing notes-backed branch session is merged or closed without merge. The gateway correlates on `pull_request.head.ref`, requires an existing notes file for the resolved `git:branch:<repo>:<branch>` key, and queues accepted events with `interrupt:false`. Other `pull_request` actions are not supported and are archived as `schema_validation_failed`.
 
@@ -128,20 +128,20 @@ npx smee-client --url https://smee.io/<channel-id> --path /github/webhook --port
 
 ## 9) Troubleshooting (`github_event_ignored`)
 
-| Reason                       | What it means                                                                                  | How to fix                                                                                         |
-| ---------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `signature_invalid`          | HMAC verification failed or signature header missing                                           | Verify `GITHUB_WEBHOOK_SECRET`; ensure JSON payload is unmodified in transit                       |
-| `event_unsupported`          | Event is outside Thor allowlist                                                                | Ensure subscription list is correct                                                                |
-| `repo_not_mapped`            | Repo basename has no matching local clone                                                      | Clone under `/workspace/repos/<basename>`; keep basename aligned                                   |
-| `self_sender`                | Sender's numeric user ID matches `GITHUB_APP_BOT_ID`                                           | Self-loop guard — expected when Thor comments/reviews                                              |
-| `empty_review_body`          | Submitted review body was blank                                                                | Include text in the review body                                                                    |
-| `non_mention_comment`        | Comment/review does not mention the app, and (for review events) the PR was not opened by Thor | Mention `@${GITHUB_APP_SLUG}` to act, or open the PR from Thor                                     |
-| `check_suite_branch_missing` | GitHub did not include `check_suite.head_branch`                                               | Expected for fork/detached/tag cases; no action unless same-repo PRs are affected                  |
-| `check_suite_non_actionable` | CI finished with a non-actionable check suite conclusion                                       | Expected for `success`, `cancelled`, `neutral`, `skipped`, `stale`, or missing/unknown conclusions |
-| `correlation_key_unresolved` | CI/PR-close/push branch has no existing Thor notes-backed branch session                       | Confirm Thor previously worked that branch; otherwise the event is ignored                         |
-| `check_suite_gate_failed`    | The git SHA/authorship gate failed before queueing a CI wake                                   | See `metadata.gateReason` in `github-webhook-ignored` worklog                                      |
-| `push_sync_failed`           | Gateway could not complete the rev-parse, fetch, ancestry check, or reset for a push sync      | Inspect `metadata.exitCode` / `metadata.errorMessage`; resolve dirty checkout or remote-cli issues |
-| `push_delete_cleanup_failed` | Gateway could not check status or remove a clean deleted-branch worktree                       | Inspect `metadata.exitCode`; clean up manually if safe                                             |
+| Reason                           | What it means                                                                                  | How to fix                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `signature_invalid`              | HMAC verification failed or signature header missing                                           | Verify `GITHUB_WEBHOOK_SECRET`; ensure JSON payload is unmodified in transit                        |
+| `event_unsupported`              | Event is outside Thor allowlist                                                                | Ensure subscription list is correct                                                                 |
+| `repo_not_mapped`                | Repo basename has no matching local clone                                                      | Clone under `/workspace/repos/<basename>`; keep basename aligned                                    |
+| `self_sender`                    | Sender's numeric user ID matches `GITHUB_APP_BOT_ID`                                           | Self-loop guard — expected when Thor comments/reviews                                               |
+| `empty_review_body`              | Submitted review body was blank                                                                | Include text in the review body                                                                     |
+| `non_mention_comment`            | Comment/review does not mention the app, and (for review events) the PR was not opened by Thor | Mention `@${GITHUB_APP_SLUG}` to act, or open the PR from Thor                                      |
+| `check_suite_branch_missing`     | GitHub did not include `check_suite.head_branch`                                               | Expected for fork/detached/tag cases; no action unless same-repo PRs are affected                   |
+| `check_suite_conclusion_missing` | CI finished without a usable `check_suite.conclusion` value                                    | Expected for malformed/incomplete terminal events; replay only if the source payload was incomplete |
+| `correlation_key_unresolved`     | CI/PR-close/push branch has no existing Thor notes-backed branch session                       | Confirm Thor previously worked that branch; otherwise the event is ignored                          |
+| `check_suite_gate_failed`        | The git SHA/authorship gate failed before queueing a CI wake                                   | See `metadata.gateReason` in `github-webhook-ignored` worklog                                       |
+| `push_sync_failed`               | Gateway could not complete the rev-parse, fetch, ancestry check, or reset for a push sync      | Inspect `metadata.exitCode` / `metadata.errorMessage`; resolve dirty checkout or remote-cli issues  |
+| `push_delete_cleanup_failed`     | Gateway could not check status or remove a clean deleted-branch worktree                       | Inspect `metadata.exitCode`; clean up manually if safe                                              |
 
 `check_suite_gate_failed` includes `metadata.gateReason`:
 

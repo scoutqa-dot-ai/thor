@@ -387,10 +387,8 @@ type GitHubIgnoreReason =
   | "non_mention_comment"
   | "check_suite_branch_missing"
   | "correlation_key_unresolved"
-  | "check_suite_non_actionable"
+  | "check_suite_conclusion_missing"
   | "check_suite_gate_failed";
-
-const ACTIONABLE_CHECK_SUITE_CONCLUSIONS = new Set(["failure", "timed_out", "action_required"]);
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
@@ -1687,11 +1685,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       }
 
       const conclusion = parsed.data.check_suite.conclusion?.trim() ?? "";
-      if (!ACTIONABLE_CHECK_SUITE_CONCLUSIONS.has(conclusion)) {
+      if (!conclusion) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
         history.action = parsed.data.action;
-        history.reason = "check_suite_non_actionable";
+        history.reason = "check_suite_conclusion_missing";
         history.metadata = {
           repoFullName,
           localRepo,
@@ -1705,7 +1703,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           repoFullName,
           eventType: eventTypeHeader,
           action: parsed.data.action,
-          reason: "check_suite_non_actionable",
+          reason: "check_suite_conclusion_missing",
         });
         res.status(200).json({ ok: true, ignored: true });
         return;

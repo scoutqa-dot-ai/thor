@@ -210,6 +210,39 @@ describe("remote-cli MCP endpoints", () => {
     vi.unstubAllEnvs();
   });
 
+  async function approveJiraCreate(argsJson: string, triggerSlackId = "UABCDEF1") {
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", {
+      type: "trigger_start",
+      triggerId: activeTriggerId,
+      ...(triggerSlackId ? { triggerSlackId } : {}),
+    });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "createJiraIssue", argsJson],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const actionId = (
+      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
+    ).actionId;
+
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    expect(resolved.status).toBe(200);
+    return (await resolved.json()) as { stdout: string; stderr: string; exitCode: number };
+  }
+
   it("lists allowed upstreams and visible tools, then calls an allowed tool", async () => {
     const upstreams = await postJson("/exec/mcp", {
       args: [],
@@ -679,106 +712,86 @@ describe("remote-cli MCP endpoints", () => {
     expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
   });
 
+  it("injects Jira reporter during approved issue creation", async () => {
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+    );
+
+    expect(jiraLookups).toEqual([{ cloudId: "cloud-1", searchString: "alice@example.com" }]);
+    expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
+    expect(toolCalls[1].arguments).toMatchObject({
+      description: `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
+      additional_fields: { reporter: { id: "jira-account-1" } },
+    });
+    expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
+  });
+
+  it("merges Jira reporter into existing additional fields", async () => {
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","additional_fields":{"labels":["thor"],"priority":{"name":"High"}}}',
+    );
+
+    expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
+    expect(toolCalls[1].arguments?.additional_fields).toEqual({
+      labels: ["thor"],
+      priority: { name: "High" },
+      reporter: { id: "jira-account-1" },
+    });
+  });
+
+  it("does not overwrite existing Jira reporter", async () => {
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","additional_fields":{"reporter":{"id":"existing"},"labels":["thor"]}}',
+    );
+
+    expect(jiraLookups).toEqual([]);
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].arguments?.additional_fields).toEqual({
+      reporter: { id: "existing" },
+      labels: ["thor"],
+    });
+  });
+
+  it("does not clobber malformed Jira additional fields", async () => {
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","additional_fields":"bad-shape"}',
+    );
+
+    expect(jiraLookups).toEqual([]);
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].arguments?.additional_fields).toBe("bad-shape");
+  });
+
   it("keeps Jira issue creation best-effort when account lookup returns multiple matches", async () => {
     jiraLookupResultText = JSON.stringify(
       jiraLookupResponse([{ accountId: "jira-account-1" }, { accountId: "jira-account-2" }]),
     );
-    appendAlias({
-      aliasType: "opencode.session",
-      aliasValue: "parent-session",
-      anchorId: activeAnchorId,
-    });
-    appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
-    const pending = await postJson(
-      "/exec/mcp",
-      {
-        args: [
-          "atlassian",
-          "createJiraIssue",
-          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
-        ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
-      },
-      { "x-thor-session-id": "parent-session" },
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
     );
-    const actionId = (
-      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
-    ).actionId;
-    await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
+
     expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
-    expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
+    expect(toolCalls[1].arguments?.additional_fields).toBeUndefined();
   });
 
   it("keeps Jira issue creation best-effort when account lookup throws", async () => {
     jiraLookupFailure = new Error("lookup exploded");
-    appendAlias({
-      aliasType: "opencode.session",
-      aliasValue: "parent-session",
-      anchorId: activeAnchorId,
-    });
-    appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
-    const pending = await postJson(
-      "/exec/mcp",
-      {
-        args: [
-          "atlassian",
-          "createJiraIssue",
-          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
-        ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
-      },
-      { "x-thor-session-id": "parent-session" },
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
     );
-    const actionId = (
-      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
-    ).actionId;
-    const resolved = await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
-    expect(resolved.status).toBe(200);
+
     expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
-    expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
+    expect(toolCalls[1].arguments?.additional_fields).toBeUndefined();
   });
 
-  it("does not overwrite existing Jira assignee account id", async () => {
-    appendAlias({
-      aliasType: "opencode.session",
-      aliasValue: "parent-session",
-      anchorId: activeAnchorId,
-    });
-    appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
-    const pending = await postJson(
-      "/exec/mcp",
-      {
-        args: [
-          "atlassian",
-          "createJiraIssue",
-          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","assignee_account_id":"existing"}',
-        ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
-      },
-      { "x-thor-session-id": "parent-session" },
+  it("keeps Jira issue creation best-effort when cloudId is missing", async () => {
+    await approveJiraCreate(
+      '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
     );
-    const actionId = (
-      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
-    ).actionId;
 
-    await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
     expect(jiraLookups).toEqual([]);
-    expect(toolCalls[0].arguments?.assignee_account_id).toBe("existing");
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].arguments?.additional_fields).toBeUndefined();
   });
 
   it("blocks Jira approvals when contentFormat is not markdown", async () => {
