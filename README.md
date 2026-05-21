@@ -51,7 +51,7 @@ inside `opencode`.
 3. Create `/workspace/config/thor.json` with GitHub App installation IDs for each
    GitHub owner you need Thor to access, plus any mitmproxy rules. On the host,
    this file lives at `docker-volumes/workspace/config/thor.json`. See
-   [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json).
+   [`docs/examples/thor.json`](docs/examples/thor.json).
    MCP upstream access is enabled for every repo automatically — no per-repo
    config required.
 
@@ -165,7 +165,7 @@ Use [`docs/github-app-webhooks.md`](docs/github-app-webhooks.md) for GitHub App 
 
 Gateway and remote-cli derive the GitHub App bot commit identity from `GITHUB_APP_SLUG` and `GITHUB_APP_BOT_ID`: `${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com`. Gateway uses that derived email to accept `check_suite.completed` CI wakes only for Thor-authored commits; no separate author-email env var is required.
 
-Thor uses a shared workspace config file at `/workspace/config/thor.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config/thor.json`. Use [`docs/examples/workspace-config.example.json`](docs/examples/workspace-config.example.json) as the starting point, and use [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
+Thor uses a shared workspace config file at `/workspace/config/thor.json` inside the containers. On the host, that file lives at `docker-volumes/workspace/config/thor.json`. Use [`docs/examples/thor.json`](docs/examples/thor.json) as the starting point, and use [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
 
 GitHub App installation entries live under `owners.<owner>.github_app_installation_id` in that config:
 
