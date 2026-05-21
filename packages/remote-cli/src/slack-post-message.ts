@@ -304,9 +304,10 @@ export async function handleSlackPostMessage(
   if ("error" in slackResponse) return result(`Slack post failed: ${slackResponse.error}\n`);
 
   const responseTs = slackResponse.ts;
+  const responseChannel = slackResponse.channel;
 
   const aliasTs = parsed.threadTs ?? responseTs;
-  const correlationKey = buildSlackCorrelationKeys(parsed.channel, aliasTs)[0];
+  const correlationKey = buildSlackCorrelationKeys(responseChannel, aliasTs)[0];
   const appendAlias = deps.appendAlias ?? appendCorrelationAlias;
   try {
     appendAlias(sessionId, correlationKey);
