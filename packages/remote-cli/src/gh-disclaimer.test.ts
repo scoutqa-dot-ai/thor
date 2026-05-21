@@ -240,9 +240,9 @@ describe("gh disclaimer injection", () => {
           ["issue", "create", "--title", "x", "--body", "Body", "-a", "bob"],
           "parent",
         );
-        expect(execCalls[0].args.filter((arg) => arg === "-a" || arg === "--assignee")).toHaveLength(
-          1,
-        );
+        expect(
+          execCalls[0].args.filter((arg) => arg === "-a" || arg === "--assignee"),
+        ).toHaveLength(1);
         expect(execCalls[0].args).toContain("bob");
         expect(execCalls[0].args).not.toContain("alice");
       },

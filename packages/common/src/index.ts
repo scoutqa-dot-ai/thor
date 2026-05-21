@@ -77,6 +77,8 @@ export {
   readTriggerSlice,
   findActiveTrigger,
   findTriggerActor,
+  findTriggerCorrelationKey,
+  findSlackTriggerCorrelationKey,
   findAnchorContext,
   resolveAlias,
   reverseLookupAnchor,
@@ -183,7 +185,6 @@ export {
   ProgressDelegateSchema,
   ProgressDoneSchema,
   ProgressErrorSchema,
-  ProgressApprovalRequiredSchema,
   ProgressEventSchema,
 } from "./progress-events.js";
 export type {
@@ -193,6 +194,23 @@ export type {
   ProgressDelegate,
   ProgressDone,
   ProgressError,
-  ProgressApprovalRequired,
   ProgressEvent,
 } from "./progress-events.js";
+export {
+  buildApprovalButtonValue,
+  extractApprovalFailureCategory,
+  parseApprovalButtonValue,
+  resolveSlackThreadTargetFromTrigger,
+  formatApprovalArgs,
+  buildApprovalPresentation,
+  buildApprovalSlackMessage,
+  buildInlineApprovalBlocks,
+  buildApprovalPresentationBlocks,
+} from "./approval-presentation.js";
+export type {
+  SlackBlock,
+  SlackThreadTarget,
+  ApprovalButtonRoute,
+  ApprovalPresentation,
+  ApprovalSlackMessage,
+} from "./approval-presentation.js";

@@ -4,11 +4,13 @@ import {
   buildSlackCorrelationKeys,
   createLogger,
   errorToMetadata,
+  extractApprovalFailureCategory,
   getWorkspaceWorktreesRoot,
   hasSessionForCorrelationKey,
   logError,
   logInfo,
   matchesInternalSecret,
+  parseApprovalButtonValue,
   resolveExistingDirectoryWithinRoot,
   resolveCorrelationKeys,
   resolveSafeRepoDirectory,
@@ -16,6 +18,7 @@ import {
   SLACK_CHANNEL_REPO_MEMORY_ROOT,
   truncate,
   resolveRepoDirectory,
+  type ApprovalButtonRoute,
   type InboundWebhookHistoryEntry,
 } from "@thor/common";
 import { z } from "zod/v4";
@@ -52,11 +55,6 @@ import {
   type SlackThreadEvent,
 } from "./slack.js";
 import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.js";
-import {
-  extractApprovalFailureCategory,
-  parseApprovalButtonValue,
-  type ApprovalButtonRoute,
-} from "./approval.js";
 import {
   buildCorrelationKey,
   buildIssueCorrelationKey,
@@ -389,10 +387,8 @@ type GitHubIgnoreReason =
   | "non_mention_comment"
   | "check_suite_branch_missing"
   | "correlation_key_unresolved"
-  | "check_suite_non_actionable"
+  | "check_suite_conclusion_missing"
   | "check_suite_gate_failed";
-
-const ACTIONABLE_CHECK_SUITE_CONCLUSIONS = new Set(["failure", "timed_out", "action_required"]);
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
@@ -471,8 +467,6 @@ export interface GatewayAppConfig extends RunnerDeps {
   longDelayMs?: number;
   /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
   cronSecret?: string;
-  /** Path to opencode auth.json for Codex usage check. */
-  openaiAuthPath?: string;
   /** GitHub webhook HMAC secret. */
   githubWebhookSecret?: string;
   /** Allowlisted mention logins used for GitHub mention detection. */
@@ -1165,7 +1159,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       runnerUrl: config.runnerUrl,
       remoteCliHost,
       remoteCliPort: config.remoteCliPort ?? 3004,
-      openaiAuthPath: config.openaiAuthPath,
       fetchImpl: config.fetchImpl,
       queueSnapshot: queue.snapshotPending(),
     });
@@ -1692,11 +1685,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       }
 
       const conclusion = parsed.data.check_suite.conclusion?.trim() ?? "";
-      if (!ACTIONABLE_CHECK_SUITE_CONCLUSIONS.has(conclusion)) {
+      if (!conclusion) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
         history.action = parsed.data.action;
-        history.reason = "check_suite_non_actionable";
+        history.reason = "check_suite_conclusion_missing";
         history.metadata = {
           repoFullName,
           localRepo,
@@ -1710,7 +1703,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           repoFullName,
           eventType: eventTypeHeader,
           action: parsed.data.action,
-          reason: "check_suite_non_actionable",
+          reason: "check_suite_conclusion_missing",
         });
         res.status(200).json({ ok: true, ignored: true });
         return;

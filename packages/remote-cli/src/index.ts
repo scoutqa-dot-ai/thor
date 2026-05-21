@@ -652,12 +652,17 @@ async function ensureSandbox(cwd: string, currentSha: string) {
 
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
+  const envConfig = config.env;
   const internalSecret = appEnv.thorInternalSecret;
   const getConfig = config.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const mcpService = createMcpService({
     isProduction: appEnv.isProduction,
     ...config.mcp,
     configLoader: config.mcp?.configLoader ?? getConfig,
+    slack: config.mcp?.slack ?? {
+      botToken: envConfig?.slackBotToken,
+      apiBaseUrl: envConfig?.slackApiBaseUrl,
+    },
   });
 
   const app = express();
@@ -810,7 +815,12 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         {
           env:
             config.slackPostMessage?.env ??
-            (config.env ? { SLACK_BOT_TOKEN: config.env.slackBotToken } : undefined),
+            (envConfig
+              ? {
+                  SLACK_BOT_TOKEN: envConfig.slackBotToken,
+                  SLACK_API_BASE_URL: envConfig.slackApiBaseUrl,
+                }
+              : undefined),
           ...config.slackPostMessage,
           logAliasError: (error, meta) => {
             logError(log, "slack_post_message_alias_error", error.message, meta);

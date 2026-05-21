@@ -863,53 +863,6 @@ describe("runner /trigger orchestration", () => {
     expect(h.prompts[1]).toContain("second");
   });
 
-  it("emits approval_required events only from typed output args", async () => {
-    const outputArgs = {
-      cloudId: "cloud-1",
-      projectKey: "THOR",
-      issueTypeName: "Task",
-      summary: "Persisted summary",
-      description: "persisted body with disclaimer",
-    };
-    const wrapperArgs = { upstream: "atlassian", tool: "createJiraIssue", arguments: "{}" };
-    const h = createHarness({
-      promptEvents: (sessionId) => [
-        toolEvent(
-          sessionId,
-          "mcp",
-          "completed",
-          wrapperArgs,
-          { start: 1000, end: 1200 },
-          JSON.stringify({
-            type: "approval_required",
-            actionId: "approval-with-output-args",
-            proxyName: "atlassian",
-            tool: "createJiraIssue",
-            args: outputArgs,
-          }),
-        ),
-        toolEvent(sessionId, "mcp", "completed", wrapperArgs, { start: 1300, end: 1500 }, "{}"),
-        idleEvent(sessionId),
-      ],
-    });
-
-    await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: "approval",
-        correlationKey: "slack:thread:1710000000.071",
-      });
-      const approvals = result.events.filter((e) => e.type === "approval_required");
-
-      expect(approvals).toHaveLength(1);
-      expect(approvals[0]).toMatchObject({
-        actionId: "approval-with-output-args",
-        tool: "createJiraIssue",
-        proxyName: "atlassian",
-        args: outputArgs,
-      });
-    });
-  });
-
   it("serializes direct no-session triggers for the same fresh known correlation key", async () => {
     const h = createHarness();
     const correlationKey = "slack:thread:1710000000.050";
@@ -1084,6 +1037,48 @@ describe("runner /trigger orchestration", () => {
         prompt: "now",
         correlationKey: "slack:thread:1710000000.004",
         interrupt: true,
+      });
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        sessionId: "busy-session",
+        resumed: true,
+        status: "completed",
+      });
+    });
+
+    expect(h.aborts).toEqual(["busy-session"]);
+    expect(h.prompts).toHaveLength(1);
+  });
+
+  it("keeps observing a resumed interrupted session after stale idle until later tool output", async () => {
+    const h = createHarness({
+      existingSessions: new Set(["busy-session"]),
+      busySessions: new Set(["busy-session"]),
+      promptEvents: (sessionId) => [
+        idleEvent(sessionId),
+        toolEvent(
+          sessionId,
+          "bash",
+          "completed",
+          { command: "git status" },
+          { start: 1000, end: 1200 },
+          "{}",
+        ),
+        idleEvent(sessionId),
+      ],
+    });
+    setupBusySession("1710000000.012");
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "now",
+        correlationKey: "slack:thread:1710000000.012",
+        interrupt: true,
+      });
+
+      expect(result.events.find((e) => e.type === "tool")).toMatchObject({
+        type: "tool",
+        tool: "git status",
+        status: "completed",
       });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         sessionId: "busy-session",

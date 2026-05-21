@@ -17,15 +17,40 @@ afterEach(() => {
 });
 
 describe("ApprovalStore", () => {
-  it("creates and retrieves an approval action", () => {
-    const created = store.create("merge_pull_request", { pr: 42 });
+  it("builds a pending action with optional notification metadata before persisting", () => {
+    const pending = store.buildPending(
+      "merge_pull_request",
+      { pr: 42 },
+      { sessionId: "s1" },
+      { provider: "slack", channel: "C123", threadTs: "1710000000.001" },
+    );
 
-    expect(created.upstream).toBe("github");
-    expect(store.get(created.id)).toEqual(created);
+    expect(store.get(pending.id)).toBeUndefined();
+    store.update({
+      ...pending,
+      notification: {
+        provider: "slack",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        messageTs: "1710000000.100",
+        postedAt: new Date().toISOString(),
+      },
+    });
+
+    expect(store.get(pending.id)).toMatchObject({
+      id: pending.id,
+      notification: {
+        provider: "slack",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        messageTs: "1710000000.100",
+      },
+    });
   });
 
   it("rejects a pending action once", () => {
-    const action = store.create("merge_pull_request", { pr: 42 });
+    const action = store.buildPending("merge_pull_request", { pr: 42 });
+    store.update(action);
 
     const rejected = store.reject(action.id, "U12345");
 
@@ -35,7 +60,8 @@ describe("ApprovalStore", () => {
   });
 
   it("stores approved actions with an explicit exec result", () => {
-    const action = store.create("merge_pull_request", { pr: 42 });
+    const action = store.buildPending("merge_pull_request", { pr: 42 });
+    store.update(action);
     action.error = "temporary failure";
 
     const resolved = store.approveLoaded(
@@ -53,7 +79,8 @@ describe("ApprovalStore", () => {
   });
 
   it("fails fast on approved actions with invalid stored result shapes", () => {
-    const action = store.create("merge_pull_request", { pr: 42 });
+    const action = store.buildPending("merge_pull_request", { pr: 42 });
+    store.update(action);
     const dir = join(tempDir, action.dateSegment);
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -65,9 +92,11 @@ describe("ApprovalStore", () => {
   });
 
   it("lists pending actions for the current upstream only", () => {
-    const pending = store.create("new_tool", {});
+    const pending = store.buildPending("new_tool", {});
+    store.update(pending);
     store.approveLoaded(pending, { stdout: "ok", stderr: "", exitCode: 0 }, "U1");
-    store.create("legacy_tool", {});
+    const legacy = store.buildPending("legacy_tool", {});
+    store.update(legacy);
 
     const unresolved = store.listPending();
 

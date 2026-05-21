@@ -205,46 +205,6 @@ describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
     expect(updateTexts.some((t) => t.includes("agents: research-agent"))).toBe(true);
   });
 
-  it("posts approval_required events with v3 button payload format", async () => {
-    const lines = [
-      JSON.stringify({
-        type: "approval_required",
-        actionId: "act-1",
-        tool: "createJiraIssue",
-        args: {
-          cloudId: "cloud-1",
-          projectKey: "ENG",
-          issueTypeName: "Task",
-          summary: "Approval card",
-          description: "Review me",
-        },
-        proxyName: "atlassian",
-      }),
-    ];
-    mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
-
-    const { triggerRunnerSlack } = await import("./service.js");
-    await triggerRunnerSlack(
-      [slackEvent],
-      "key1",
-      runnerDeps,
-      slackDeps,
-      false,
-      undefined,
-      slackDirectoryForChannel,
-    );
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(postMessage).toHaveBeenCalled();
-    const arg = postMessage.mock.calls[0][0] as {
-      blocks: Array<{ elements?: Array<{ action_id: string; value: string }> }>;
-    };
-    const approveButton = arg.blocks[3].elements?.find((el) => el.action_id === "approval_approve");
-    expect(approveButton?.value).toBe("v3:act-1:atlassian:1710000000.001");
-    expect(JSON.stringify(arg.blocks)).toContain("Create Jira issue: Approval card");
-  });
-
   it("skips invalid NDJSON lines without crashing", async () => {
     const lines = [
       "not valid json",

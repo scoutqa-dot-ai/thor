@@ -31,28 +31,28 @@ flowchart LR
 
 ## Integration Strategy
 
-| Integration      | Path                                | Auth                    | Notes                                              |
-| ---------------- | ----------------------------------- | ----------------------- | -------------------------------------------------- |
-| Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`  | GitHub App token        | Repo-scoped worktree edits                         |
-| Atlassian MCP    | `remote-cli /exec/mcp`              | `ATLASSIAN_AUTH` header | Read + approved writes                             |
-| PostHog MCP      | `remote-cli /exec/mcp`              | API key                 | Read + approved writes                             |
-| Grafana MCP      | `remote-cli /exec/mcp`              | Service account token   | Logs and observability                             |
-| Slack Web API    | `gateway` + OpenCode over mitmproxy | Bot token               | Mentions, progress, approvals, thread reads/writes |
-| Langfuse         | `remote-cli /exec/langfuse`         | API key pair            | Read-only trace queries                            |
-| LaunchDarkly     | `remote-cli /exec/ldcli`            | Access token            | Read-only feature flag inspection                  |
-| Metabase         | `remote-cli /exec/metabase`         | API key                 | Read-only warehouse access                         |
+| Integration      | Path                                               | Auth                    | Notes                                                   |
+| ---------------- | -------------------------------------------------- | ----------------------- | ------------------------------------------------------- |
+| Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`                 | GitHub App token        | Repo-scoped worktree edits                              |
+| Atlassian MCP    | `remote-cli /exec/mcp`                             | `ATLASSIAN_AUTH` header | Read + approved writes                                  |
+| PostHog MCP      | `remote-cli /exec/mcp`                             | API key                 | Read + approved writes                                  |
+| Grafana MCP      | `remote-cli /exec/mcp`                             | Service account token   | Logs and observability                                  |
+| Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token               | Mentions, progress, approval cards, thread reads/writes |
+| Langfuse         | `remote-cli /exec/langfuse`                        | API key pair            | Read-only trace queries                                 |
+| LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token            | Read-only feature flag inspection                       |
+| Metabase         | `remote-cli /exec/metabase`                        | API key                 | Read-only warehouse access                              |
 
 ## MCP Policy Layer
 
 `remote-cli` now owns the MCP policy boundary.
 
 - Allow-listed tools execute immediately.
-- Approved tools create an approval record and return an action ID.
+- Approved tools create an approval record, post an approval card to the triggering Slack thread, and return an action ID.
 - Hidden tools are never listed to the agent.
 - Approval status is available through `POST /exec/approval`.
 - Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution and `POST /internal/exec`.
 
-Approval records are persisted under `/workspace/data/approvals`. Tool activity is audit-logged under `/workspace/worklog`.
+Approval records are persisted under `/workspace/data/approvals`. Approval creation fails closed when remote-cli cannot resolve or post to the triggering Slack thread. Tool activity is audit-logged under `/workspace/worklog`.
 
 ## Triggers
 

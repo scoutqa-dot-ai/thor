@@ -58,9 +58,7 @@ describe("loadWorkspaceConfig", () => {
   });
 
   it("loads the tracked workspace config example", () => {
-    const config = loadWorkspaceConfig(
-      join(process.cwd(), "docs/examples/workspace-config.example.json"),
-    );
+    const config = loadWorkspaceConfig(join(process.cwd(), "docs/examples/thor.json"));
     expect(config.owners).toEqual({
       "scoutqa-dot-ai": { github_app_installation_id: 126669985 },
     });

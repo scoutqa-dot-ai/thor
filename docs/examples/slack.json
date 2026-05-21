@@ -1,0 +1,70 @@
+{
+  "display_information": {
+    "name": "Thor"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Thor",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "redirect_urls": ["https://thor.scoutqa.cc/slack/redirect"],
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "bookmarks:read",
+        "canvases:read",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "files:read",
+        "files:write",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "links:read",
+        "lists:read",
+        "metadata.message:read",
+        "mpim:history",
+        "mpim:read",
+        "reactions:read",
+        "reactions:write",
+        "remote_files:read",
+        "search:read.files",
+        "search:read.im",
+        "search:read.mpim",
+        "search:read.private",
+        "search:read.public",
+        "search:read.users",
+        "users:read.email",
+        "users:read",
+        "users.profile:read"
+      ]
+    },
+    "pkce_enabled": false
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://thor.scoutqa.cc/slack/events",
+      "bot_events": [
+        "app_mention",
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "message.mpim",
+        "reaction_added",
+        "reaction_removed"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://thor.scoutqa.cc/slack/interactivity"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false,
+    "is_mcp_enabled": false
+  }
+}

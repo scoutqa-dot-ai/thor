@@ -6,14 +6,14 @@ import {
   buildInlineApprovalBlocks,
   formatApprovalArgs,
   parseApprovalButtonValue,
-} from "./approval.js";
+} from "@thor/common";
 
 describe("approval formatting", () => {
   it("keeps full pretty JSON inline when within the Slack block limit", () => {
     const args = { repo: "acme/api", branch: "feature/full-json", dryRun: false };
     const argsJson = formatApprovalArgs(args);
 
-    const blocks = buildInlineApprovalBlocks("create_pr", argsJson, "v2:abc:github");
+    const blocks = buildInlineApprovalBlocks("create_pr", argsJson, "v3:abc:github:1710000000.001");
     expect(blocks[1]).toMatchObject({
       type: "section",
       expand: true,
@@ -157,6 +157,19 @@ describe("approval presentation", () => {
     });
   });
 
+  it("falls back to non-empty markdown when rendered fields trim to empty", () => {
+    expect(
+      buildApprovalPresentation("addCommentToJiraIssue", {
+        cloudId: "cloud-1",
+        issueIdOrKey: "ENG-42",
+        commentBody: "   ",
+      }),
+    ).toEqual({
+      title: "Comment on Jira issue: ENG-42",
+      markdown: "No arguments provided.",
+    });
+  });
+
   it("renders presentation markdown blocks with the shared approval actions", () => {
     const blocks = buildApprovalPresentationBlocks(
       { title: "Create feature flag: beta", markdown: "*Key:* beta" },
@@ -220,13 +233,6 @@ describe("approval button routing", () => {
       actionId: "act-1",
       upstreamName: "github",
       threadTs: "1710000000.001",
-    });
-  });
-
-  it("parses legacy v2 payloads for compatibility", () => {
-    expect(parseApprovalButtonValue("v2:act-1:atlassian")).toEqual({
-      actionId: "act-1",
-      upstreamName: "atlassian",
     });
   });
 

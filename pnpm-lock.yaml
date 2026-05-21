@@ -118,8 +118,8 @@ importers:
   packages/remote-cli:
     dependencies:
       '@daytonaio/sdk':
-        specifier: ^0.172.0
-        version: 0.172.0(ws@8.20.0)
+        specifier: ^0.173.0
+        version: 0.173.0(ws@8.20.0)
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.29.0(zod@4.4.3)
@@ -158,8 +158,8 @@ importers:
   packages/runner:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.14.50
-        version: 1.14.50
+        specifier: ^1.15.7
+        version: 1.15.7
       '@thor/common':
         specifier: workspace:*
         version: link:../common
@@ -350,14 +350,14 @@ packages:
     resolution: {integrity: sha512-iY8yvjE0y651BixKNPgmv1WrQc+GZ142sb0z4gYnChDDY2YqI4P/jsSopBWrKfAt7LOJAkOXt7rC/hms+WclQQ==}
     engines: {node: '>=18.0.0'}
 
-  '@daytona/api-client@0.172.0':
-    resolution: {integrity: sha512-5IABhJRm2hfWQZWRVHxlZ3rPlC8Nm3fVzK+7q9pwHO2u+DObEgoe3dXlF0g2vRhH15y4J0pxy4aiq1+pVLO2fQ==}
+  '@daytona/api-client@0.173.0':
+    resolution: {integrity: sha512-QY36eKumXGuPoI36jNidTarIyWfGX/WBGSZkyPtwrqUDmNHxQ9Re9KPBWMYo2NBZaO2tTPxM/bSCwnmJV/BjiQ==}
 
-  '@daytona/toolbox-api-client@0.172.0':
-    resolution: {integrity: sha512-m2iXbNCFTPWjYFbF/jj+iVqSzYUUBCTQyghsyDF9J/HYFUEeOUpzVwrFgwg34hdTJR73crreZFE+77r5C3TnFw==}
+  '@daytona/toolbox-api-client@0.173.0':
+    resolution: {integrity: sha512-+JQZpJnZYYI0bjiX9KDJibepI73+Y4DNiowYsiBnGErA+hSdz44hDhoDrtZsdXSzyn/4yJpH+qH++uq1kKMN2g==}
 
-  '@daytonaio/sdk@0.172.0':
-    resolution: {integrity: sha512-/hQrcB0bpx1XrBeM+KMKR6NossteaSUadLZMgO/Z8IMcPYUZmEiLNdZpJiJsc3WYaQnbSPJOZ4OoNoXpRQa8lg==}
+  '@daytonaio/sdk@0.173.0':
+    resolution: {integrity: sha512-/eaP3YMhyhkZrmjEYT1pgTWyN0soBqi98+xSEa7lFhI0jc8E83eGv8yOS7DrzDIkc7cZqTmWKHOqn4dZmcfw1A==}
 
   '@esbuild/aix-ppc64@0.27.7':
     resolution: {integrity: sha512-EKX3Qwmhz1eMdEJokhALr0YiD0lhQNwDqkPYyPhiSwKrh7/4KRjQc04sZ8db+5DVVnZ1LmbNDI1uAMPEUBnQPg==}
@@ -575,8 +575,8 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@opencode-ai/sdk@1.14.50':
-    resolution: {integrity: sha512-IrTKTFviR4Tj+u0BI8h8XgXIvEpxwkkHqBj6E0aEc4DBErpS3qh2Lkp1xt0OdtCYiLE3wZ1bAIiHOiO66H/7TA==}
+  '@opencode-ai/sdk@1.15.7':
+    resolution: {integrity: sha512-fNwx2coNzA8VAv4hazG9REGdBuUtV1UYjK3hxMo8+/9SZakOgdjihH1xzoTESJA0e0d0JJIKBCJ7FZVF2WVSXg==}
 
   '@opentelemetry/api-logs@0.207.0':
     resolution: {integrity: sha512-lAb0jQRVyleQQGiuuvCOTDVspc14nx6XJjP4FspJ1sNARo3Regq4ZZbrc3rN4b1TYSuUCvgH+UXUPug4SLOqEQ==}
@@ -3092,26 +3092,26 @@ snapshots:
 
   '@aws/lambda-invoke-store@0.2.4': {}
 
-  '@daytona/api-client@0.172.0':
+  '@daytona/api-client@0.173.0':
     dependencies:
       axios: 1.16.1
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/toolbox-api-client@0.172.0':
+  '@daytona/toolbox-api-client@0.173.0':
     dependencies:
       axios: 1.16.1
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytonaio/sdk@0.172.0(ws@8.20.0)':
+  '@daytonaio/sdk@0.173.0(ws@8.20.0)':
     dependencies:
       '@aws-sdk/client-s3': 3.1031.0
       '@aws-sdk/lib-storage': 3.1031.0(@aws-sdk/client-s3@3.1031.0)
-      '@daytona/api-client': 0.172.0
-      '@daytona/toolbox-api-client': 0.172.0
+      '@daytona/api-client': 0.173.0
+      '@daytona/toolbox-api-client': 0.173.0
       '@iarna/toml': 2.2.5
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/exporter-trace-otlp-http': 0.207.0(@opentelemetry/api@1.9.1)
@@ -3287,7 +3287,7 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
-  '@opencode-ai/sdk@1.14.50':
+  '@opencode-ai/sdk@1.15.7':
     dependencies:
       cross-spawn: 7.0.6
 
