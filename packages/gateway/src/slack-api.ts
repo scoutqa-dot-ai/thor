@@ -1,6 +1,6 @@
 import type { KnownBlock } from "@slack/types";
 import { WebClient } from "@slack/web-api";
-import { createLogger, logWarn } from "@thor/common";
+import { createLogger, logError, logWarn } from "@thor/common";
 
 const log = createLogger("gateway-slack-api");
 
@@ -13,6 +13,11 @@ export type SlackBlock = KnownBlock;
 
 export interface SlackDeps {
   client: WebClient;
+}
+
+export interface SlackChannelPrivacyInput {
+  channel: string;
+  channel_type?: string;
 }
 
 export function createSlackClient(token: string, slackApiUrl?: string): WebClient {
@@ -76,4 +81,29 @@ export async function addReaction(
     }
     throw error;
   }
+}
+
+export async function isSlackEventChannelPrivate(
+  event: SlackChannelPrivacyInput,
+  deps: SlackDeps,
+): Promise<boolean> {
+  if (event.channel_type === "group") return true;
+  if (["channel", "im", "mpim"].includes(event.channel_type ?? "")) return false;
+
+  try {
+    const result = await deps.client.conversations.info({ channel: event.channel });
+    const channel = result.channel as
+      | { is_private?: boolean; is_im?: boolean; is_mpim?: boolean }
+      | undefined;
+    if (channel?.is_im === true || channel?.is_mpim === true) return false;
+    if (channel?.is_private === false) return false;
+    return true;
+  } catch (error) {
+    logError(log, "slack_channel_privacy_lookup_failed", error, { channel: event.channel });
+    return true;
+  }
+}
+
+export function isSlackPrivateChannelAllowed(channel: string, allowlist: string[]): boolean {
+  return allowlist.includes(channel);
 }

@@ -37,7 +37,13 @@ import {
   type InternalExecClient,
   type RunnerDeps,
 } from "./service.js";
-import { createSlackClient, type SlackDeps } from "./slack-api.js";
+import {
+  createSlackClient,
+  isSlackEventChannelPrivate,
+  isSlackPrivateChannelAllowed,
+  type SlackChannelPrivacyInput,
+  type SlackDeps,
+} from "./slack-api.js";
 import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
@@ -59,11 +65,6 @@ import {
   parseApprovalButtonValue,
   type ApprovalButtonRoute,
 } from "./approval.js";
-import {
-  isSlackEventChannelPrivate,
-  isSlackPrivateChannelAllowed,
-  type SlackChannelPrivacyInput,
-} from "./slack-channel-allowlist.js";
 import {
   buildCorrelationKey,
   buildIssueCorrelationKey,

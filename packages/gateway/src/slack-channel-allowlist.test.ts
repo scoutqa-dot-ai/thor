@@ -1,6 +1,6 @@
 import type { WebClient } from "@slack/web-api";
 import { describe, expect, it, vi } from "vitest";
-import { isSlackEventChannelPrivate } from "./slack-channel-allowlist.js";
+import { isSlackEventChannelPrivate } from "./slack-api.js";
 
 function depsWithInfo(info = vi.fn()) {
   return {
