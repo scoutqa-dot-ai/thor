@@ -57,7 +57,7 @@ THOR_E2E_JIRA_EMAIL="${THOR_E2E_JIRA_EMAIL:-$DEFAULT_THOR_E2E_JIRA_EMAIL}"
 JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
 export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_GITHUB THOR_E2E_JIRA_EMAIL
-export JIRA_CLOUD_ID
+export JIRA_CLOUD_ID SLACK_CHANNEL_ID
 JIRA_E2E_ISSUE_KEY=""
 passed=0
 failed=0
@@ -688,7 +688,34 @@ elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
-  jira_assignee_live=false
+  APPROVAL_THREAD_TS=""
+  approval_thread_seeded=false
+  if [[ -n "$SLACK_BOT_TOKEN" && -n "$SLACK_CHANNEL_ID" ]]; then
+    approval_seed_json=$(node -e "
+      const marker = process.argv[1] || '';
+      console.log(JSON.stringify({
+        channel: process.env.SLACK_CHANNEL_ID,
+        text: 'Thor approval e2e seed ' + marker
+      }));
+    " "$REMOTE_CLI_AUTH_TS")
+    approval_seed_raw=$(slack_post_json "chat.postMessage" "$approval_seed_json")
+    approval_seed_ok=$(json_field "$approval_seed_raw" "ok")
+    APPROVAL_THREAD_TS=$(json_field "$approval_seed_raw" "ts")
+    assert '[[ "$approval_seed_ok" == "true" && -n "$APPROVAL_THREAD_TS" ]]' \
+      "approval flow: seeded Slack thread" \
+      "response: ${approval_seed_raw:0:500}"
+    if [[ "$approval_seed_ok" == "true" && -n "$APPROVAL_THREAD_TS" ]]; then
+      approval_thread_seeded=true
+    fi
+    export APPROVAL_THREAD_TS
+  else
+    assert 'false' "approval flow: seeded Slack thread" "Set SLACK_BOT_TOKEN and SLACK_E2E_CHANNEL_ID/SLACK_CHANNEL_ID for direct approval-card delivery e2e"
+  fi
+
+  if [[ "$approval_thread_seeded" != "true" ]]; then
+    echo "  Skipping remaining approval flow after Slack thread seed failure."
+  else
+  jira_reporter_live=false
   if [[ -n "$JIRA_CLOUD_ID" && "$THOR_E2E_JIRA_EMAIL" != "$DEFAULT_THOR_E2E_JIRA_EMAIL" ]]; then
     assert '[[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" ]]' \
       "jira attribution e2e: discovered Atlassian createJiraIssue" \
@@ -697,7 +724,7 @@ else
       "jira attribution e2e: ATLASSIAN_AUTH is available" \
       "set ATLASSIAN_AUTH so Jira lookup and create calls can reach Atlassian"
     if [[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" && -n "${ATLASSIAN_AUTH:-}" ]]; then
-      jira_assignee_live=true
+      jira_reporter_live=true
     fi
   elif [[ -n "$JIRA_CLOUD_ID" ]]; then
     echo "  Skipping Jira assignee e2e: THOR_E2E_JIRA_EMAIL is the default placeholder"
@@ -705,7 +732,7 @@ else
 
   trigger_context_body=$(node -e "
     console.log(JSON.stringify({
-      correlationKey: 'e2e-approval-flow-' + process.env.REMOTE_CLI_AUTH_TS,
+      correlationKey: 'slack:thread:' + process.env.SLACK_CHANNEL_ID + '/' + process.env.APPROVAL_THREAD_TS,
       triggerSlackId: process.env.ATTRIBUTION_E2E_SLACK_ID
     }));
   ")
@@ -722,9 +749,9 @@ else
 
   # 4b. remote-cli-level: call the approval-required tool directly
   echo "  Calling tool via remote-cli (expecting approval interception)..."
-  if [[ "$jira_assignee_live" == "true" ]]; then
-    JIRA_E2E_SUMMARY="Thor Jira assignee e2e ${REMOTE_CLI_AUTH_TS}"
-    jira_e2e_description="Jira assignee attribution e2e. Marker: ${REMOTE_CLI_AUTH_TS}"
+  if [[ "$jira_reporter_live" == "true" ]]; then
+    JIRA_E2E_SUMMARY="Thor Jira reporter e2e ${REMOTE_CLI_AUTH_TS}"
+    jira_e2e_description="Jira reporter attribution e2e. Marker: ${REMOTE_CLI_AUTH_TS}"
     export JIRA_E2E_SUMMARY jira_e2e_description
     approval_args_json=$(node -e "
       console.log(JSON.stringify({
@@ -789,16 +816,16 @@ else
     assert '[[ "$status_val" == "pending" ]]' "remote-cli: approval status is 'pending'" "status='$status_val'"
     assert '[[ "$status_tool" == "$APPROVAL_TOOL" ]]' "remote-cli: approval record has correct tool name" "tool='$status_tool'"
 
-    if [[ "$jira_assignee_live" == "true" ]]; then
+    if [[ "$jira_reporter_live" == "true" ]]; then
       # 4d. Approve a Jira issue creation with a fake project key. The upstream
       # create should fail, but only after Thor has performed lookup and sent
-      # the create payload with assignee_account_id.
+      # the create payload with additional_fields.reporter.
       echo "  Approving Jira approval $action_id..."
       jira_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
       resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
         -H 'Content-Type: application/json' \
         -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-        -d "{\"args\":[\"resolve\",\"$action_id\",\"approved\",\"e2e-test\",\"e2e test - automated Jira assignee verification\"]}" \
+        -d "{\"args\":[\"resolve\",\"$action_id\",\"approved\",\"e2e-test\",\"e2e test - automated Jira reporter verification\"]}" \
         2>/dev/null || echo '{}')
       resolve_exit=$(json_field "$resolve_raw" "exitCode")
       resolve_stdout=$(json_field "$resolve_raw" "stdout")
@@ -810,7 +837,7 @@ else
 
       jira_lookup_entry=$(find_jira_tool_worklog_entry "lookupJiraAccountId" 2>/dev/null || echo "")
       jira_create_entry=$(find_jira_tool_worklog_entry "createJiraIssue" 2>/dev/null || echo "")
-      jira_injected_account_id=$(json_field "$jira_create_entry" "args.assignee_account_id")
+      jira_injected_reporter_id=$(json_field "$jira_create_entry" "args.additional_fields.reporter.id")
       jira_create_project_key=$(json_field "$jira_create_entry" "args.projectKey")
       jira_create_error=$(json_field "$jira_create_entry" "error")
       jira_create_is_error=$(json_field "$jira_create_entry" "result.isError")
@@ -820,8 +847,8 @@ else
       assert '[[ "$jira_create_project_key" == "THORE2E" ]]' \
         "jira attribution e2e: createJiraIssue used the fake project key" \
         "projectKey='$jira_create_project_key' expected='THORE2E'; worklog entry: ${jira_create_entry:0:800}"
-      assert '[[ -n "$jira_injected_account_id" ]]' \
-        "jira attribution e2e: createJiraIssue received an assignee_account_id" \
+      assert '[[ -n "$jira_injected_reporter_id" ]]' \
+        "jira attribution e2e: createJiraIssue received additional_fields.reporter.id" \
         "worklog entry: ${jira_create_entry:0:800}"
       assert '[[ "$jira_create_is_error" == "true" || -n "$jira_create_error" || -n "$resolve_stderr" || "$resolve_exit" != "0" ]]' \
         "jira attribution e2e: failed create call recorded an upstream error" \
@@ -852,10 +879,12 @@ else
       -d "{\"args\":[\"status\",\"$action_id\"]}" \
       2>/dev/null || echo '{}')
     final_status=$(exec_stdout_field "$final_raw" "status")
-    expected_final_status=$([[ "$jira_assignee_live" == "true" ]] && echo "approved" || echo "rejected")
+    expected_final_status=$([[ "$jira_reporter_live" == "true" ]] && echo "approved" || echo "rejected")
     assert '[[ "$final_status" == "$expected_final_status" ]]' \
       "remote-cli: final status confirms '$expected_final_status'" \
       "status='$final_status'"
+  fi
+
   fi
 
 fi

@@ -84,6 +84,7 @@ describe("service env", () => {
     ).toMatchObject({
       port: 3004,
       slackBotToken: "xoxb-test",
+      slackApiBaseUrl: "https://slack.com/api",
       gitIdentityName: "thor-app[bot]",
       gitIdentityEmail: "12345+thor-app[bot]@users.noreply.github.com",
     });

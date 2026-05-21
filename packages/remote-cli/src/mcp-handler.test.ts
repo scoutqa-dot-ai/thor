@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -43,7 +43,9 @@ const tools: Tool[] = [
 
 const worklogDir = "/tmp/thor-remote-cli-mcp-test/worklog";
 const activeTriggerId = "00000000-0000-7000-8000-000000000101";
+const githubTriggerId = "00000000-0000-7000-8000-000000000102";
 const activeAnchorId = "00000000-0000-7000-8000-0000000004a1";
+const activeSlackCorrelationKey = "slack:thread:C123/1710000000.001";
 
 function jiraLookupResponse(users: Array<{ accountId: string; displayName?: string }>) {
   return {
@@ -63,6 +65,15 @@ function jiraLookupResponse(users: Array<{ accountId: string; displayName?: stri
   };
 }
 
+function appendActiveTrigger(extra: Record<string, unknown> = {}) {
+  appendSessionEvent("parent-session", {
+    type: "trigger_start",
+    triggerId: activeTriggerId,
+    correlationKey: activeSlackCorrelationKey,
+    ...extra,
+  });
+}
+
 describe("remote-cli MCP endpoints", () => {
   let approvalsDir: string;
   let server: Server;
@@ -75,6 +86,7 @@ describe("remote-cli MCP endpoints", () => {
   let jiraLookups: Array<Record<string, unknown> | undefined>;
   let jiraLookupResultText: string;
   let jiraLookupFailure: Error | undefined;
+  let slackFetch: ReturnType<typeof vi.fn<typeof fetch>>;
 
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
@@ -91,11 +103,40 @@ describe("remote-cli MCP endpoints", () => {
     jiraLookups = [];
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
     jiraLookupFailure = undefined;
+    slackFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1710000000.100" })),
+      );
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendAlias({
+      aliasType: "slack.thread",
+      aliasValue: "C123/1710000000.001",
+      anchorId: activeAnchorId,
+    });
 
     const remoteCli = createRemoteCliApp({
+      env: {
+        port: 3004,
+        nodeEnv: "test",
+        slackBotToken: "xoxb-test",
+        slackApiBaseUrl: "https://slack.test/api",
+        thorInternalSecret: "resolve-secret",
+        githubAppId: "app-id",
+        githubAppSlug: "thor-github-app",
+        githubAppBotId: "12345",
+        githubAppPrivateKeyFile: "/tmp/private-key.pem",
+        gitIdentityName: "thor[bot]",
+        gitIdentityEmail: "thor@example.com",
+      },
       mcp: {
         approvalsDir,
         isProduction: true,
+        fetchImpl: slackFetch,
         writeToolCallLogFn: () => {},
         configLoader: () => ({
           users: [
@@ -169,6 +210,40 @@ describe("remote-cli MCP endpoints", () => {
     rmSync("/tmp/thor-remote-cli-mcp-test", { recursive: true, force: true });
     vi.unstubAllEnvs();
   });
+
+  async function approveJiraCreate(argsJson: string, triggerSlackId = "UABCDEF1") {
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendSessionEvent("parent-session", {
+      type: "trigger_start",
+      triggerId: activeTriggerId,
+      correlationKey: activeSlackCorrelationKey,
+      ...(triggerSlackId ? { triggerSlackId } : {}),
+    });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "createJiraIssue", argsJson],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const actionId = (
+      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
+    ).actionId;
+
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    expect(resolved.status).toBe(200);
+    return (await resolved.json()) as { stdout: string; stderr: string; exitCode: number };
+  }
 
   it("lists allowed upstreams and visible tools, then calls an allowed tool", async () => {
     const upstreams = await postJson("/exec/mcp", {
@@ -320,12 +395,7 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("rejects invalid approval args before persisting an action", async () => {
-    appendAlias({
-      aliasType: "opencode.session",
-      aliasValue: "parent-session",
-      anchorId: activeAnchorId,
-    });
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
 
     const pending = await postJson(
       "/exec/mcp",
@@ -358,12 +428,7 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("creates approvals with Jira disclaimers, exposes them via approval commands, and returns 401 for resolve without the internal secret", async () => {
-    appendAlias({
-      aliasType: "opencode.session",
-      aliasValue: "parent-session",
-      anchorId: activeAnchorId,
-    });
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -425,7 +490,17 @@ describe("remote-cli MCP endpoints", () => {
         sessionId: "parent-session",
         trigger: { anchorId: activeAnchorId, triggerId: activeTriggerId },
       },
+      notification: {
+        provider: "slack",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        messageTs: "1710000000.100",
+      },
     });
+    expect(slackFetch).toHaveBeenCalledWith(
+      "https://slack.test/api/chat.postMessage",
+      expect.objectContaining({ method: "POST" }),
+    );
 
     const list = await postJson("/exec/approval", { args: ["list"] });
     const listBody = (await list.json()) as { stdout: string };
@@ -472,118 +547,303 @@ describe("remote-cli MCP endpoints", () => {
     ]);
   });
 
+  it("posts approval cards to the trigger Slack thread when the anchor has other Slack aliases", async () => {
+    appendActiveTrigger();
+    appendAlias({
+      aliasType: "slack.thread",
+      aliasValue: "C999/1710000000.999",
+      anchorId: activeAnchorId,
+    });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string; exitCode: number };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody.exitCode).toBe(0);
+    expect(JSON.parse(pendingBody.stdout)).toMatchObject({
+      type: "approval_required",
+      proxyName: "atlassian",
+      tool: "createJiraIssue",
+    });
+
+    expect(slackFetch).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(slackFetch.mock.calls[0]?.[1]?.body)) as {
+      channel: string;
+      thread_ts?: string;
+    };
+    expect(payload).toMatchObject({
+      channel: "C123",
+      thread_ts: "1710000000.001",
+    });
+  });
+
+  it("falls back to the newest Slack trigger when the latest trigger is GitHub", async () => {
+    appendActiveTrigger({ ts: "2026-05-21T00:00:01.000Z" });
+    appendSessionEvent("parent-session", {
+      type: "trigger_end",
+      triggerId: activeTriggerId,
+      status: "completed",
+      ts: "2026-05-21T00:00:02.000Z",
+    });
+    appendSessionEvent("parent-session", {
+      type: "trigger_start",
+      triggerId: githubTriggerId,
+      correlationKey: "github:issue:acme:acme/repo#42",
+      triggerGithubLogin: "octocat",
+      ts: "2026-05-21T00:00:03.000Z",
+    });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string; exitCode: number };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody.exitCode).toBe(0);
+    expect(JSON.parse(pendingBody.stdout)).toMatchObject({
+      type: "approval_required",
+      proxyName: "atlassian",
+      tool: "createJiraIssue",
+    });
+
+    expect(slackFetch).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(slackFetch.mock.calls[0]?.[1]?.body)) as {
+      channel: string;
+      thread_ts?: string;
+    };
+    expect(payload).toMatchObject({
+      channel: "C123",
+      thread_ts: "1710000000.001",
+    });
+  });
+
+  it("fails closed when an approval origin cannot resolve to a Slack thread", async () => {
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "session-without-slack-thread",
+      anchorId: "00000000-0000-7000-8000-0000000004a2",
+    });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "session-without-slack-thread" },
+    );
+    const pendingBody = (await pending.json()) as { stderr: string; exitCode: number };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody.exitCode).toBe(1);
+    expect(pendingBody.stderr).toContain("has no Slack trigger correlation key");
+    expect(slackFetch).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an approval origin only has a legacy Slack thread alias", async () => {
+    const legacyAnchorId = "00000000-0000-7000-8000-0000000004a3";
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "legacy-thread-session",
+      anchorId: legacyAnchorId,
+    });
+    appendAlias({
+      aliasType: "slack.thread_id",
+      aliasValue: "1710000000.001",
+      anchorId: legacyAnchorId,
+    });
+    appendSessionEvent("legacy-thread-session", {
+      type: "trigger_start",
+      triggerId: activeTriggerId,
+      correlationKey: "slack:thread:1710000000.001",
+    });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "legacy-thread-session" },
+    );
+    const pendingBody = (await pending.json()) as { stderr: string; exitCode: number };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody.exitCode).toBe(1);
+    expect(pendingBody.stderr).toContain("unsupported Slack thread correlation key");
+    expect(slackFetch).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when posting the approval card to Slack fails", async () => {
+    slackFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: false, error: "channel_not_found" })),
+    );
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody.exitCode).toBe(1);
+    expect(pendingBody.stdout).toBe("");
+    expect(pendingBody.stderr).toContain("Slack API error: channel_not_found");
+
+    const dateDir = readdirSync(join(approvalsDir, "atlassian"))[0]!;
+    const actionFile = readdirSync(join(approvalsDir, "atlassian", dateDir))[0]!;
+    const storedAction = JSON.parse(
+      readFileSync(join(approvalsDir, "atlassian", dateDir, actionFile), "utf-8"),
+    ) as { id: string; status: string; reason?: string };
+    expect(storedAction).toMatchObject({
+      status: "rejected",
+      reason: "Slack API error: channel_not_found",
+    });
+
+    const resolveRejectedZombie = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", storedAction.id, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolveRejectedZombieBody = (await resolveRejectedZombie.json()) as {
+      stderr: string;
+      exitCode: number;
+    };
+    expect(resolveRejectedZombieBody.exitCode).toBe(1);
+    expect(resolveRejectedZombieBody.stderr).toContain(
+      "is already rejected; cannot resolve as approved",
+    );
+
+    const list = await postJson("/exec/approval", { args: ["list"] });
+    const listBody = (await list.json()) as { stdout: string };
+    expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
+  });
+
+  it("injects Jira reporter during approved issue creation", async () => {
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+    );
+
+    expect(jiraLookups).toEqual([{ cloudId: "cloud-1", searchString: "alice@example.com" }]);
+    expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
+    expect(toolCalls[1].arguments).toMatchObject({
+      description: `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
+      additional_fields: { reporter: { id: "jira-account-1" } },
+    });
+    expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
+  });
+
+  it("merges Jira reporter into existing additional fields", async () => {
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","additional_fields":{"labels":["thor"],"priority":{"name":"High"}}}',
+    );
+
+    expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
+    expect(toolCalls[1].arguments?.additional_fields).toEqual({
+      labels: ["thor"],
+      priority: { name: "High" },
+      reporter: { id: "jira-account-1" },
+    });
+  });
+
+  it("does not overwrite existing Jira reporter", async () => {
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","additional_fields":{"reporter":{"id":"existing"},"labels":["thor"]}}',
+    );
+
+    expect(jiraLookups).toEqual([]);
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].arguments?.additional_fields).toEqual({
+      reporter: { id: "existing" },
+      labels: ["thor"],
+    });
+  });
+
+  it("does not clobber malformed Jira additional fields", async () => {
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","additional_fields":"bad-shape"}',
+    );
+
+    expect(jiraLookups).toEqual([]);
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].arguments?.additional_fields).toBe("bad-shape");
+  });
+
   it("keeps Jira issue creation best-effort when account lookup returns multiple matches", async () => {
     jiraLookupResultText = JSON.stringify(
       jiraLookupResponse([{ accountId: "jira-account-1" }, { accountId: "jira-account-2" }]),
     );
-    appendAlias({
-      aliasType: "opencode.session",
-      aliasValue: "parent-session",
-      anchorId: activeAnchorId,
-    });
-    appendSessionEvent("parent-session", {
-      type: "trigger_start",
-      triggerId: activeTriggerId,
-      triggerSlackId: "UABCDEF1",
-    });
-    const pending = await postJson(
-      "/exec/mcp",
-      {
-        args: [
-          "atlassian",
-          "createJiraIssue",
-          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
-        ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
-      },
-      { "x-thor-session-id": "parent-session" },
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
     );
-    const actionId = (
-      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
-    ).actionId;
-    await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
+
     expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
-    expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
+    expect(toolCalls[1].arguments?.additional_fields).toBeUndefined();
   });
 
   it("keeps Jira issue creation best-effort when account lookup throws", async () => {
     jiraLookupFailure = new Error("lookup exploded");
-    appendAlias({
-      aliasType: "opencode.session",
-      aliasValue: "parent-session",
-      anchorId: activeAnchorId,
-    });
-    appendSessionEvent("parent-session", {
-      type: "trigger_start",
-      triggerId: activeTriggerId,
-      triggerSlackId: "UABCDEF1",
-    });
-    const pending = await postJson(
-      "/exec/mcp",
-      {
-        args: [
-          "atlassian",
-          "createJiraIssue",
-          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
-        ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
-      },
-      { "x-thor-session-id": "parent-session" },
+    await approveJiraCreate(
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
     );
-    const actionId = (
-      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
-    ).actionId;
-    const resolved = await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
-    expect(resolved.status).toBe(200);
+
     expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
-    expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
+    expect(toolCalls[1].arguments?.additional_fields).toBeUndefined();
   });
 
-  it("does not overwrite existing Jira assignee account id", async () => {
-    appendAlias({
-      aliasType: "opencode.session",
-      aliasValue: "parent-session",
-      anchorId: activeAnchorId,
-    });
-    appendSessionEvent("parent-session", {
-      type: "trigger_start",
-      triggerId: activeTriggerId,
-      triggerSlackId: "UABCDEF1",
-    });
-    const pending = await postJson(
-      "/exec/mcp",
-      {
-        args: [
-          "atlassian",
-          "createJiraIssue",
-          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","assignee_account_id":"existing"}',
-        ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
-      },
-      { "x-thor-session-id": "parent-session" },
+  it("keeps Jira issue creation best-effort when cloudId is missing", async () => {
+    await approveJiraCreate(
+      '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
     );
-    const actionId = (
-      JSON.parse(((await pending.json()) as { stdout: string }).stdout) as { actionId: string }
-    ).actionId;
 
-    await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
     expect(jiraLookups).toEqual([]);
-    expect(toolCalls[0].arguments?.assignee_account_id).toBe("existing");
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0].arguments?.additional_fields).toBeUndefined();
   });
 
   it("blocks Jira approvals when contentFormat is not markdown", async () => {
@@ -592,7 +852,7 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -629,7 +889,7 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -696,7 +956,7 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -756,7 +1016,7 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
 
     const pending = await postJson(
       "/exec/mcp",

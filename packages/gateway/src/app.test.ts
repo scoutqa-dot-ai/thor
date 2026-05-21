@@ -1551,7 +1551,7 @@ describe("gateway", () => {
     });
   });
 
-  it("enqueues actionable check_suite events only when the branch has an existing session alias", async () => {
+  it("enqueues check_suite events when the branch has an existing session alias", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi
       .fn()
@@ -1632,8 +1632,99 @@ describe("gateway", () => {
     });
   });
 
-  it.each(["success", "cancelled", "neutral", null])(
-    "ignores non-actionable check_suite conclusion %p",
+  it.each([
+    "success",
+    "neutral",
+    "skipped",
+    "cancelled",
+    "stale",
+    "failure",
+    "timed_out",
+    "action_required",
+    "startup_failure",
+  ])("enqueues terminal check_suite conclusion %p with interrupt false", async (conclusion) => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
+      .mockResolvedValueOnce({
+        stdout: "49699333+thor[bot]@users.noreply.github.com\n",
+        stderr: "",
+        exitCode: 0,
+      });
+
+    await withWorklogDir(async (worklogDir) => {
+      sessionKeys.add("git:branch:thor:feature/refactor");
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody({ conclusion });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": `delivery-check-suite-${String(conclusion)}`,
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true });
+
+          const queued = readQueuedEvents(queueDir);
+          expect(queued).toHaveLength(1);
+          expect(queued[0]).toMatchObject({
+            id: `delivery-check-suite-${String(conclusion)}`,
+            source: "github",
+            correlationKey: "git:branch:thor:feature/refactor",
+            delayMs: 0,
+            interrupt: false,
+            payload: {
+              event_type: "check_suite",
+              action: "completed",
+              check_suite: {
+                head_sha: "abc123def456",
+                head_branch: "feature/refactor",
+                conclusion,
+              },
+            },
+          });
+
+          const ingested = readGitHubIngestedEntries(worklogDir);
+          expect(ingested).toHaveLength(1);
+          expect(ingested[0]).toMatchObject({
+            reason: "accepted",
+            eventType: "check_suite",
+            metadata: { correlationKey: "git:branch:thor:feature/refactor" },
+          });
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+          githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+          internalExec,
+        },
+      );
+    });
+
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "git",
+      args: ["cat-file", "-e", "abc123def456"],
+      cwd: "/workspace/repos/thor",
+    });
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "git",
+      args: ["log", "-1", "--format=%ae", "abc123def456"],
+      cwd: "/workspace/repos/thor",
+    });
+  });
+
+  it.each([null, "", "   "])(
+    "ignores check_suite when conclusion is missing %p",
     async (conclusion) => {
       const fetchImpl = vi.fn<typeof fetch>();
       const internalExec = vi.fn();
@@ -1650,7 +1741,7 @@ describe("gateway", () => {
               headers: {
                 "Content-Type": "application/json",
                 "X-Hub-Signature-256": signGitHub(body, "github-secret"),
-                "X-GitHub-Delivery": `delivery-check-suite-non-actionable-${String(conclusion)}`,
+                "X-GitHub-Delivery": `delivery-check-suite-missing-${String(conclusion)}`,
                 "X-GitHub-Event": "check_suite",
               },
               body,
@@ -1664,7 +1755,7 @@ describe("gateway", () => {
             const ignored = readGitHubIgnoredEntries(worklogDir);
             expect(ignored).toHaveLength(1);
             expect(ignored[0]).toMatchObject({
-              reason: "check_suite_non_actionable",
+              reason: "check_suite_conclusion_missing",
               eventType: "check_suite",
               metadata: {
                 headSha: "abc123def456",
@@ -2992,80 +3083,6 @@ describe("gateway", () => {
     });
   });
 
-  it("resolves approval actions through remote-cli for legacy v2 button values", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            stdout: JSON.stringify({ status: "approved", tool: "deploy", upstream: "slack" }),
-            stderr: "",
-            exitCode: 0,
-          }),
-        ),
-      )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-
-    await withServer(
-      fetchImpl,
-      async (baseUrl, queue) => {
-        const payload = encodeURIComponent(
-          JSON.stringify({
-            type: "block_actions",
-            user: { id: "U123" },
-            channel: { id: "C123" },
-            message: { ts: "1710000000.001", thread_ts: "1710000000.001" },
-            actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
-          }),
-        );
-        const body = `payload=${payload}`;
-        const timestamp = `${Math.floor(Date.now() / 1000)}`;
-
-        const response = await fetch(`${baseUrl}/slack/interactivity`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-Slack-Request-Timestamp": timestamp,
-            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
-          },
-          body,
-        });
-
-        expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ ok: true });
-
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        await queue.flush();
-      },
-      {
-        remoteCliHost: "remote-cli.internal",
-        remoteCliPort: 3010,
-        internalSecret: "resolve-secret",
-      },
-    );
-
-    const execCall = fetchImpl.mock.calls.find(
-      ([url]) => typeof url === "string" && url === "http://remote-cli.internal:3010/exec/mcp",
-    );
-    expect(execCall?.[1]).toMatchObject({
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-thor-internal-secret": "resolve-secret",
-      },
-      body: JSON.stringify({ args: ["resolve", "act-1", "approved", "U123"] }),
-    });
-
-    const runnerCall = fetchImpl.mock.calls.find(
-      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
-    );
-    expect(runnerCall).toBeDefined();
-    const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
-    expect(runnerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
-    expect(runnerBody.interrupt).toBe(false);
-  });
-
   it("resolves approval outcome correlation keys through registered aliases", async () => {
     correlationKeyAliases.set(
       "slack:thread:1710000000.001",
@@ -3294,63 +3311,5 @@ describe("gateway", () => {
     const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
     expect(runnerBody.prompt).toContain('Error calling "merge_pull_request"');
     expect(runnerBody.prompt).not.toContain("upstream unavailable");
-  });
-
-  it("fails closed for v2 approval buttons when thread context is missing", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            stdout: JSON.stringify({ status: "approved", tool: "deploy", upstream: "slack" }),
-            stderr: "",
-            exitCode: 0,
-          }),
-        ),
-      )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-
-    await withServer(
-      fetchImpl,
-      async (baseUrl, queue) => {
-        const payload = encodeURIComponent(
-          JSON.stringify({
-            type: "block_actions",
-            user: { id: "U123" },
-            channel: { id: "C123" },
-            message: { ts: "1710000000.100" },
-            actions: [{ action_id: "approval_approve", value: "v2:act-1:slack" }],
-          }),
-        );
-        const body = `payload=${payload}`;
-        const timestamp = `${Math.floor(Date.now() / 1000)}`;
-
-        const response = await fetch(`${baseUrl}/slack/interactivity`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-Slack-Request-Timestamp": timestamp,
-            "X-Slack-Signature": sign(body, "signing-secret", timestamp),
-          },
-          body,
-        });
-
-        expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ ok: true });
-
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        await queue.flush();
-      },
-      {
-        remoteCliHost: "remote-cli.internal",
-        remoteCliPort: 3010,
-        internalSecret: "resolve-secret",
-      },
-    );
-
-    const runnerCall = fetchImpl.mock.calls.find(
-      ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
-    );
-    expect(runnerCall).toBeUndefined();
   });
 });

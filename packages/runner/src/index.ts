@@ -42,7 +42,6 @@ import {
   SessionEventLogRecordSchema,
   loadRunnerEnv,
   matchesInternalSecret,
-  ProgressApprovalRequiredSchema,
   withKeyLock,
   isOmittedMarker,
   iterateJsonlFileLinesSync,
@@ -181,7 +180,7 @@ function buildTriggeringUserPromptBlock(
  */
 const inflightTriggers = new Map<string, { sessionId: string; startTime: number }>();
 
-function startTrigger(
+function appendTriggerStartEvent(
   sessionId: string,
   triggerId: string,
   payload: { correlationKey?: string; triggerSlackId?: string; triggerGithubLogin?: string },
@@ -193,7 +192,42 @@ function startTrigger(
     ...(payload.triggerSlackId ? { triggerSlackId: payload.triggerSlackId } : {}),
     ...(payload.triggerGithubLogin ? { triggerGithubLogin: payload.triggerGithubLogin } : {}),
   });
+}
+
+function startTrigger(
+  sessionId: string,
+  triggerId: string,
+  payload: { correlationKey?: string; triggerSlackId?: string; triggerGithubLogin?: string },
+): void {
+  appendTriggerStartEvent(sessionId, triggerId, payload);
   inflightTriggers.set(triggerId, { sessionId, startTime: Date.now() });
+}
+
+/**
+ * Idempotently bind an OpenCode session id (and optional correlationKey) to an
+ * anchor. Shared by the production /trigger session resolver and the e2e
+ * trigger-context seeder so both produce the same alias-table shape.
+ */
+function bindSessionToAnchor(args: {
+  anchorId: string;
+  sessionId: string;
+  correlationKey?: string;
+}): void {
+  if (
+    resolveAlias({ aliasType: "opencode.session", aliasValue: args.sessionId }) !== args.anchorId
+  ) {
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: args.sessionId,
+      anchorId: args.anchorId,
+    });
+  }
+  if (
+    args.correlationKey &&
+    resolveAnchorForCorrelationKey(args.correlationKey) !== args.anchorId
+  ) {
+    appendCorrelationAliasForAnchor(args.anchorId, args.correlationKey);
+  }
 }
 
 function endTrigger(
@@ -366,20 +400,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         const sessionId = parsed.data.sessionId ?? `e2e-${randomUUID()}`;
         const triggerId = mintTriggerId();
         const anchorId = mintAnchor();
-        appendAlias({
-          aliasType: "opencode.session",
-          aliasValue: sessionId,
+        bindSessionToAnchor({
           anchorId,
+          sessionId,
+          correlationKey: parsed.data.correlationKey,
         });
-        appendSessionEvent(sessionId, {
-          type: "trigger_start",
-          triggerId,
-          ...(parsed.data.correlationKey ? { correlationKey: parsed.data.correlationKey } : {}),
-          ...(parsed.data.triggerSlackId ? { triggerSlackId: parsed.data.triggerSlackId } : {}),
-          ...(parsed.data.triggerGithubLogin
-            ? { triggerGithubLogin: parsed.data.triggerGithubLogin }
-            : {}),
-        });
+        appendTriggerStartEvent(sessionId, triggerId, parsed.data);
         res.json({ sessionId, triggerId, anchorId });
       },
     );
@@ -776,13 +802,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
         // session_stale recreate appends a fresh opencode.session alongside
         // the old; original Slack/git aliases keep pointing at the same anchor.
-        if (resolveAlias({ aliasType: "opencode.session", aliasValue: id }) !== anchorId) {
-          appendAlias({ aliasType: "opencode.session", aliasValue: id, anchorId });
-        }
-
-        if (correlationKey && resolveAnchorForCorrelationKey(correlationKey) !== anchorId) {
-          appendCorrelationAliasForAnchor(anchorId, correlationKey);
-        }
+        bindSessionToAnchor({ anchorId, sessionId: id, correlationKey });
 
         return { sessionId: id, resumed: didResume, anchorId };
       };
@@ -959,6 +979,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       let latestSessionErrorSeq: number | undefined;
       let latestSessionErrorAt: number | undefined;
       let finished = false;
+      let sawParentMessagePart = false;
 
       // Track child session IDs for progress forwarding.
       const childSessionIds = new Set<string>();
@@ -1053,6 +1074,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             }
 
             if (event.type === "message.part.updated") {
+              sawParentMessagePart = true;
               const part = event.properties.part;
               seq++;
 
@@ -1120,15 +1142,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   collectedToolCalls.push({ tool: displayName, state: status });
                   emitToolProgress(toolPart, status);
                   emitMemoryEventsFromToolPart(toolPart, emit);
-
-                  // Detect approval-required tool results and emit approval event.
-                  if (status === "completed") {
-                    const completed = toolPart.state as ToolStateCompleted;
-                    const approval = parseApprovalResult(completed.output);
-                    if (approval) {
-                      emit(approval);
-                    }
-                  }
                 }
                 lastMessageId = toolPart.messageID;
               } else if (part.type === "step-finish") {
@@ -1154,6 +1167,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                 errorDetail: JSON.stringify(errorProps.error),
               });
             } else if (event.type === "session.idle") {
+              if (!sawParentMessagePart) {
+                logInfo(log, "stale_session_idle_ignored", { sessionId });
+                continue;
+              }
               terminalError = latestSessionError;
               finished = true;
               break;
@@ -1261,19 +1278,6 @@ function eventSessionId(event: Event): string | undefined {
 
 function isSessionEvent(event: Event, sessionId: string): boolean {
   return eventSessionId(event) === sessionId;
-}
-
-function parseApprovalResult(output: string): ProgressEvent | undefined {
-  let parsedOutput: unknown;
-  try {
-    parsedOutput = JSON.parse(output);
-  } catch {
-    return undefined;
-  }
-
-  const parsed = ProgressApprovalRequiredSchema.safeParse(parsedOutput);
-  if (!parsed.success) return undefined;
-  return parsed.data;
 }
 
 function escapeHtml(value: string): string {
