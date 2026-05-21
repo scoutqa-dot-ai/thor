@@ -157,6 +157,19 @@ describe("approval presentation", () => {
     });
   });
 
+  it("falls back to non-empty markdown when rendered fields trim to empty", () => {
+    expect(
+      buildApprovalPresentation("addCommentToJiraIssue", {
+        cloudId: "cloud-1",
+        issueIdOrKey: "ENG-42",
+        commentBody: "   ",
+      }),
+    ).toEqual({
+      title: "Comment on Jira issue: ENG-42",
+      markdown: "No arguments provided.",
+    });
+  });
+
   it("renders presentation markdown blocks with the shared approval actions", () => {
     const blocks = buildApprovalPresentationBlocks(
       { title: "Create feature flag: beta", markdown: "*Key:* beta" },

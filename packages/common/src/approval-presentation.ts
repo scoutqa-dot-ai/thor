@@ -370,7 +370,8 @@ function section(label: string, value: unknown): string | undefined {
 }
 
 function joinMarkdown(parts: Array<string | undefined>): string {
-  return parts.filter((part): part is string => Boolean(part)).join("\n\n");
+  const rendered = parts.filter((part): part is string => Boolean(part));
+  return rendered.length > 0 ? rendered.join("\n\n") : "No arguments provided.";
 }
 
 function escapeMrkdwnText(value: string): string {
