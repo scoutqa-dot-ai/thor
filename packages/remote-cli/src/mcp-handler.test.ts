@@ -44,6 +44,7 @@ const tools: Tool[] = [
 const worklogDir = "/tmp/thor-remote-cli-mcp-test/worklog";
 const activeTriggerId = "00000000-0000-7000-8000-000000000101";
 const activeAnchorId = "00000000-0000-7000-8000-0000000004a1";
+const activeSlackCorrelationKey = "slack:thread:C123/1710000000.001";
 
 function jiraLookupResponse(users: Array<{ accountId: string; displayName?: string }>) {
   return {
@@ -61,6 +62,15 @@ function jiraLookupResponse(users: Array<{ accountId: string; displayName?: stri
     },
     statusCode: 200,
   };
+}
+
+function appendActiveTrigger(extra: Record<string, unknown> = {}) {
+  appendSessionEvent("parent-session", {
+    type: "trigger_start",
+    triggerId: activeTriggerId,
+    correlationKey: activeSlackCorrelationKey,
+    ...extra,
+  });
 }
 
 describe("remote-cli MCP endpoints", () => {
@@ -350,7 +360,7 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("rejects invalid approval args before persisting an action", async () => {
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
 
     const pending = await postJson(
       "/exec/mcp",
@@ -383,7 +393,7 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("creates approvals with Jira disclaimers, exposes them via approval commands, and returns 401 for resolve without the internal secret", async () => {
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -502,6 +512,48 @@ describe("remote-cli MCP endpoints", () => {
     ]);
   });
 
+  it("posts approval cards to the trigger Slack thread when the anchor has other Slack aliases", async () => {
+    appendActiveTrigger();
+    appendAlias({
+      aliasType: "slack.thread",
+      aliasValue: "C999/1710000000.999",
+      anchorId: activeAnchorId,
+    });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string; exitCode: number };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody.exitCode).toBe(0);
+    expect(JSON.parse(pendingBody.stdout)).toMatchObject({
+      type: "approval_required",
+      proxyName: "atlassian",
+      tool: "createJiraIssue",
+    });
+
+    expect(slackFetch).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(slackFetch.mock.calls[0]?.[1]?.body)) as {
+      channel: string;
+      thread_ts?: string;
+    };
+    expect(payload).toMatchObject({
+      channel: "C123",
+      thread_ts: "1710000000.001",
+    });
+  });
+
   it("fails closed when an approval origin cannot resolve to a Slack thread", async () => {
     appendAlias({
       aliasType: "opencode.session",
@@ -525,7 +577,7 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(pending.status).toBe(200);
     expect(pendingBody.exitCode).toBe(1);
-    expect(pendingBody.stderr).toContain("is not bound to a Slack thread alias");
+    expect(pendingBody.stderr).toContain("has no trigger correlation key");
     expect(slackFetch).not.toHaveBeenCalled();
   });
 
@@ -540,6 +592,11 @@ describe("remote-cli MCP endpoints", () => {
       aliasType: "slack.thread_id",
       aliasValue: "1710000000.001",
       anchorId: legacyAnchorId,
+    });
+    appendSessionEvent("legacy-thread-session", {
+      type: "trigger_start",
+      triggerId: activeTriggerId,
+      correlationKey: "slack:thread:1710000000.001",
     });
 
     const pending = await postJson(
@@ -559,7 +616,7 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(pending.status).toBe(200);
     expect(pendingBody.exitCode).toBe(1);
-    expect(pendingBody.stderr).toContain("is not bound to a Slack thread alias");
+    expect(pendingBody.stderr).toContain("unsupported Slack thread correlation key");
     expect(slackFetch).not.toHaveBeenCalled();
   });
 
@@ -567,7 +624,7 @@ describe("remote-cli MCP endpoints", () => {
     slackFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ ok: false, error: "channel_not_found" })),
     );
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
 
     const pending = await postJson(
       "/exec/mcp",
@@ -631,11 +688,7 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendSessionEvent("parent-session", {
-      type: "trigger_start",
-      triggerId: activeTriggerId,
-      triggerSlackId: "UABCDEF1",
-    });
+    appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -668,11 +721,7 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendSessionEvent("parent-session", {
-      type: "trigger_start",
-      triggerId: activeTriggerId,
-      triggerSlackId: "UABCDEF1",
-    });
+    appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -705,11 +754,7 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendSessionEvent("parent-session", {
-      type: "trigger_start",
-      triggerId: activeTriggerId,
-      triggerSlackId: "UABCDEF1",
-    });
+    appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -742,7 +787,7 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -779,7 +824,7 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -846,7 +891,7 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -906,7 +951,7 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendSessionEvent("parent-session", { type: "trigger_start", triggerId: activeTriggerId });
+    appendActiveTrigger();
 
     const pending = await postJson(
       "/exec/mcp",

@@ -21,7 +21,7 @@ import {
   logInfo,
   logWarn,
   PROXY_NAMES,
-  resolveSlackThreadTargetFromAnchor,
+  resolveSlackThreadTargetFromTrigger,
   WORKSPACE_CONFIG_PATH,
   createConfigLoader,
   type ProxyConfig,
@@ -586,7 +586,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
           `Approval required for "${toolInfo.name}": no Thor anchor for session ${context.sessionId} (${anchorContext.reason})`,
         );
       }
-      const slackTarget = resolveSlackThreadTargetFromAnchor(anchorContext.anchorId);
+      const slackTarget = resolveSlackThreadTargetFromTrigger(context.sessionId);
       if ("error" in slackTarget) {
         return fail(`Approval required for "${toolInfo.name}": ${slackTarget.error}`);
       }

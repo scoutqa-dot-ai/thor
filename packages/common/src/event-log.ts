@@ -960,7 +960,7 @@ export function listAnchorSessionStates(
  */
 type ScannedTrigger = { triggerId: string; ts: string } & Pick<
   z.infer<typeof TriggerStartRecordSchema>,
-  "triggerSlackId" | "triggerGithubLogin"
+  "correlationKey" | "triggerSlackId" | "triggerGithubLogin"
 >;
 
 function scanTriggers(sessionId: string): { open?: ScannedTrigger; latest?: ScannedTrigger } {
@@ -971,6 +971,7 @@ function scanTriggers(sessionId: string): { open?: ScannedTrigger; latest?: Scan
       const t: ScannedTrigger = {
         triggerId: record.triggerId,
         ts: record.ts,
+        ...(record.correlationKey ? { correlationKey: record.correlationKey } : {}),
         ...(record.triggerSlackId ? { triggerSlackId: record.triggerSlackId } : {}),
         ...(record.triggerGithubLogin ? { triggerGithubLogin: record.triggerGithubLogin } : {}),
       };
@@ -1000,9 +1001,7 @@ export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult
   return { ok: true, anchorId, sessionId: best.sessionId, triggerId: best.triggerId };
 }
 
-export function findTriggerActor(
-  requestSessionId: string,
-): { slack?: string; github?: string } | undefined {
+function findBestTriggerForSession(requestSessionId: string): ScannedTrigger | undefined {
   const anchorId =
     resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
     resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
@@ -1018,12 +1017,22 @@ export function findTriggerActor(
     if (open && (!bestOpen || open.ts > bestOpen.ts)) bestOpen = open;
     if (latest && (!bestLatest || latest.ts > bestLatest.ts)) bestLatest = latest;
   }
-  const best = bestOpen ?? bestLatest;
+  return bestOpen ?? bestLatest;
+}
+
+export function findTriggerActor(
+  requestSessionId: string,
+): { slack?: string; github?: string } | undefined {
+  const best = findBestTriggerForSession(requestSessionId);
   if (!best?.triggerSlackId && !best?.triggerGithubLogin) return undefined;
   return {
     ...(best.triggerSlackId ? { slack: best.triggerSlackId } : {}),
     ...(best.triggerGithubLogin ? { github: best.triggerGithubLogin } : {}),
   };
+}
+
+export function findTriggerCorrelationKey(requestSessionId: string): string | undefined {
+  return findBestTriggerForSession(requestSessionId)?.correlationKey;
 }
 
 export function findAnchorContext(requestSessionId: string): AnchorContextResult {

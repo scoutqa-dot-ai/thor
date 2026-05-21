@@ -4,9 +4,10 @@ import {
   CreateJiraIssueApprovalArgsSchema,
   type ApprovalToolName,
 } from "./approval-events.js";
-import { reverseLookupAnchor } from "./event-log.js";
+import { findTriggerCorrelationKey, reverseLookupAnchor } from "./event-log.js";
 
 const SLACK_SECTION_TEXT_LIMIT = 3000;
+const SLACK_THREAD_CORRELATION_PREFIX = "slack:thread:";
 const INLINE_CODE_BLOCK_OVERHEAD = "```json\n\n```".length;
 const MAX_INLINE_JSON_CHARS = SLACK_SECTION_TEXT_LIMIT - INLINE_CODE_BLOCK_OVERHEAD;
 const TRIM_STEPS = [
@@ -141,6 +142,29 @@ export function resolveSlackThreadTargetFromAnchor(
   const parsed = parseSlackThreadAlias(uniqueAliases[0]!);
   if (!parsed) {
     return { error: `anchor ${anchorId} has malformed Slack thread alias: ${uniqueAliases[0]}` };
+  }
+  return parsed;
+}
+
+export function resolveSlackThreadTargetFromTrigger(
+  sessionId: string,
+): SlackThreadTarget | { error: string } {
+  const correlationKey = findTriggerCorrelationKey(sessionId);
+  if (!correlationKey) {
+    return { error: `session ${sessionId} has no trigger correlation key` };
+  }
+  if (!correlationKey.startsWith(SLACK_THREAD_CORRELATION_PREFIX)) {
+    return {
+      error: `session ${sessionId} was not triggered from a Slack thread: ${correlationKey}`,
+    };
+  }
+
+  const aliasValue = correlationKey.slice(SLACK_THREAD_CORRELATION_PREFIX.length);
+  const parsed = parseSlackThreadAlias(aliasValue);
+  if (!parsed) {
+    return {
+      error: `session ${sessionId} has unsupported Slack thread correlation key: ${correlationKey}`,
+    };
   }
   return parsed;
 }
