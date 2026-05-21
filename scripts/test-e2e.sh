@@ -689,6 +689,7 @@ else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
   APPROVAL_THREAD_TS=""
+  approval_thread_seeded=false
   if [[ -n "$SLACK_BOT_TOKEN" && -n "$SLACK_CHANNEL_ID" ]]; then
     approval_seed_json=$(node -e "
       console.log(JSON.stringify({
@@ -702,10 +703,17 @@ else
     assert '[[ "$approval_seed_ok" == "true" && -n "$APPROVAL_THREAD_TS" ]]' \
       "approval flow: seeded Slack thread" \
       "response: ${approval_seed_raw:0:500}"
+    if [[ "$approval_seed_ok" == "true" && -n "$APPROVAL_THREAD_TS" ]]; then
+      approval_thread_seeded=true
+    fi
     export APPROVAL_THREAD_TS
   else
     assert 'false' "approval flow: seeded Slack thread" "Set SLACK_BOT_TOKEN and SLACK_E2E_CHANNEL_ID/SLACK_CHANNEL_ID for direct approval-card delivery e2e"
   fi
+
+  if [[ "$approval_thread_seeded" != "true" ]]; then
+    echo "  Skipping remaining approval flow after Slack thread seed failure."
+  else
 
   jira_assignee_live=false
   if [[ -n "$JIRA_CLOUD_ID" && "$THOR_E2E_JIRA_EMAIL" != "$DEFAULT_THOR_E2E_JIRA_EMAIL" ]]; then
@@ -875,6 +883,8 @@ else
     assert '[[ "$final_status" == "$expected_final_status" ]]' \
       "remote-cli: final status confirms '$expected_final_status'" \
       "status='$final_status'"
+  fi
+
   fi
 
 fi
