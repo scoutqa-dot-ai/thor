@@ -39,10 +39,10 @@ import {
 } from "./service.js";
 import {
   createSlackClient,
-  isSlackEventChannelPrivate,
+  isSlackEventInPrivateChannelScope,
   isSlackPrivateChannelAllowed,
-  type SlackChannelPrivacyInput,
   type SlackDeps,
+  type SlackPrivateChannelGateInput,
 } from "./slack-api.js";
 import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
@@ -1007,11 +1007,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   };
 
   const shouldIgnoreForPrivateChannel = async (
-    event: SlackChannelPrivacyInput,
+    event: SlackPrivateChannelGateInput,
     eventId: string,
     history: WebhookHistoryState,
   ): Promise<boolean> => {
-    const isPrivate = await isSlackEventChannelPrivate(event, slackDeps);
+    const isPrivate = await isSlackEventInPrivateChannelScope(event, slackDeps);
     if (!isPrivate) return false;
 
     let allowlist: string[] = [];

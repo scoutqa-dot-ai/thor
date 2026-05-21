@@ -15,9 +15,11 @@ export interface SlackDeps {
   client: WebClient;
 }
 
-export interface SlackChannelPrivacyInput {
+export type SlackChannelType = "channel" | "im" | "group" | "mpim";
+
+export interface SlackPrivateChannelGateInput {
   channel: string;
-  channel_type?: string;
+  channel_type?: SlackChannelType;
 }
 
 export function createSlackClient(token: string, slackApiUrl?: string): WebClient {
@@ -83,8 +85,8 @@ export async function addReaction(
   }
 }
 
-export async function isSlackEventChannelPrivate(
-  event: SlackChannelPrivacyInput,
+export async function isSlackEventInPrivateChannelScope(
+  event: SlackPrivateChannelGateInput,
   deps: SlackDeps,
 ): Promise<boolean> {
   if (event.channel_type === "group") return true;
