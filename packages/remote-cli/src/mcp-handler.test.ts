@@ -219,6 +219,7 @@ describe("remote-cli MCP endpoints", () => {
     appendSessionEvent("parent-session", {
       type: "trigger_start",
       triggerId: activeTriggerId,
+      correlationKey: activeSlackCorrelationKey,
       ...(triggerSlackId ? { triggerSlackId } : {}),
     });
     const pending = await postJson(
