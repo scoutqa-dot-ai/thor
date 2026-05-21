@@ -1,6 +1,7 @@
 import {
   createLogger,
   ExecResultSchema,
+  extractApprovalFailureCategory,
   hasSessionForCorrelationKey,
   logInfo,
   logWarn,
@@ -20,7 +21,6 @@ import {
   type GitHubWebhookEvent,
   type IssueCommentEvent,
 } from "./github.js";
-import { extractApprovalFailureCategory } from "./approval.js";
 import type { WebClient } from "@slack/web-api";
 import { addReaction, updateMessage, type SlackDeps } from "./slack-api.js";
 import { handleProgressEvent } from "./progress-manager.js";

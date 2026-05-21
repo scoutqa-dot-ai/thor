@@ -6,7 +6,7 @@ import {
   buildInlineApprovalBlocks,
   formatApprovalArgs,
   parseApprovalButtonValue,
-} from "./approval.js";
+} from "@thor/common";
 
 describe("approval formatting", () => {
   it("keeps full pretty JSON inline when within the Slack block limit", () => {

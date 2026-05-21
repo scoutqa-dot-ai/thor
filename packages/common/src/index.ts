@@ -199,8 +199,6 @@ export {
   buildApprovalButtonValue,
   extractApprovalFailureCategory,
   parseApprovalButtonValue,
-  parseSlackThreadAlias,
-  resolveSlackThreadTargetFromAnchor,
   resolveSlackThreadTargetFromTrigger,
   formatApprovalArgs,
   buildApprovalPresentation,

@@ -4,7 +4,7 @@ import {
   CreateJiraIssueApprovalArgsSchema,
   type ApprovalToolName,
 } from "./approval-events.js";
-import { findTriggerCorrelationKey, reverseLookupAnchor } from "./event-log.js";
+import { findTriggerCorrelationKey } from "./event-log.js";
 
 const SLACK_SECTION_TEXT_LIMIT = 3000;
 const SLACK_THREAD_CORRELATION_PREFIX = "slack:thread:";
@@ -112,38 +112,13 @@ export function parseApprovalButtonValue(value: string): ApprovalButtonRoute | u
   return undefined;
 }
 
-export function parseSlackThreadAlias(aliasValue: string): SlackThreadTarget | undefined {
+function parseSlackThreadAlias(aliasValue: string): SlackThreadTarget | undefined {
   const separator = aliasValue.indexOf("/");
   if (separator <= 0 || separator === aliasValue.length - 1) return undefined;
   const channel = aliasValue.slice(0, separator);
   const threadTs = aliasValue.slice(separator + 1);
   if (!channel || !threadTs) return undefined;
   return { channel, threadTs };
-}
-
-export function resolveSlackThreadTargetFromAnchor(
-  anchorId: string,
-): SlackThreadTarget | { error: string } {
-  const reverse = reverseLookupAnchor(anchorId);
-  const slackAliases = reverse.externalKeys
-    .filter((key) => key.aliasType === "slack.thread")
-    .map((key) => key.aliasValue);
-  const uniqueAliases = [...new Set(slackAliases)];
-
-  if (uniqueAliases.length === 0) {
-    return { error: `anchor ${anchorId} is not bound to a Slack thread alias` };
-  }
-  if (uniqueAliases.length > 1) {
-    return {
-      error: `anchor ${anchorId} resolves to multiple Slack thread aliases: ${uniqueAliases.join(", ")}`,
-    };
-  }
-
-  const parsed = parseSlackThreadAlias(uniqueAliases[0]!);
-  if (!parsed) {
-    return { error: `anchor ${anchorId} has malformed Slack thread alias: ${uniqueAliases[0]}` };
-  }
-  return parsed;
 }
 
 export function resolveSlackThreadTargetFromTrigger(
