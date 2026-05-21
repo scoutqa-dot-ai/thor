@@ -12,7 +12,7 @@ ingress -> gateway -> runner -> opencode
 
 - `gateway` accepts Slack, GitHub webhook, and cron events, batches them, and forwards them to the runner.
 - `runner` manages OpenCode session continuity and streams progress back out.
-- `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, langfuse, metabase, MCP tool calls, and approval status/resolution.
+- `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, langfuse, metabase, MCP tool calls, direct Slack approval-card posting, and approval status/resolution.
 
 ## Services
 
@@ -148,7 +148,7 @@ Thor ships with generic defaults. A new deployment typically needs:
 | `RUNNER_BASE_URL`                   | Yes      | `remote-cli`                         | Public base URL for Thor trigger viewer links in PR/Jira content                                                                                     |
 | `THOR_INTERNAL_SECRET`              | Yes      | `remote-cli`, `gateway`              | Secret-gates gateway↔remote-cli internal APIs                                                                                                        |
 | `THOR_E2E_TEST_HELPERS`             | No       | `runner`                             | Enables secret-gated deterministic runner e2e helpers                                                                                                |
-| `SLACK_BOT_TOKEN`                   | Yes      | `remote-cli`, `gateway`, `mitmproxy` | Slack bot token for controlled `slack-post-message`, gateway Slack calls, and mitmproxy default injection                                            |
+| `SLACK_BOT_TOKEN`                   | Yes      | `remote-cli`, `gateway`, `mitmproxy` | Slack bot token for remote-cli approval cards, controlled `slack-post-message`, gateway Slack calls, and mitmproxy default injection                 |
 | `SLACK_BOT_USER_ID`                 | Yes      | `gateway`                            | Bot user ID used to ignore our own messages                                                                                                          |
 | `SLACK_DEFAULT_REPO`                | Yes      | `gateway`                            | Existing `/workspace/repos/<repo>` directory name used for every Slack channel unless a per-channel override file selects a different repo directory |
 | `SLACK_SIGNING_SECRET`              | Yes      | `gateway`                            | Slack webhook verification                                                                                                                           |
@@ -236,7 +236,8 @@ Rules match by exact host or suffix first, then by optional `path_prefix` and
   routes additionally require one of `THOR_ADMIN_EMAILS`, while `/runner/`
   viewer routes remain available to any allowed-domain user. Static OpenCode
   assets (`/assets/`, `/oc-theme-preload.js`) bypass Vouch for performance.
-- `remote-cli` enforces MCP allow/approve policy server-side and stores approvals under `/workspace/data/approvals`.
+- `remote-cli` enforces MCP allow/approve policy server-side, stores approvals under `/workspace/data/approvals`, and posts approval cards directly to the triggering Slack thread.
+- Approval-gated MCP calls fail closed before a usable pending approval is created when remote-cli cannot resolve a channel-aware Slack trigger thread or cannot post the Slack card.
 - Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution and `POST /internal/exec`.
 - `git` uses GitHub App installation tokens through `GIT_ASKPASS` when the target owner can be resolved from the command or repo remote.
 - `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.
