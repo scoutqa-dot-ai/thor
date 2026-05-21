@@ -471,8 +471,6 @@ export interface GatewayAppConfig extends RunnerDeps {
   longDelayMs?: number;
   /** Shared secret for cron endpoint auth. If unset, auth is skipped. */
   cronSecret?: string;
-  /** Path to opencode auth.json for Codex usage check. */
-  openaiAuthPath?: string;
   /** GitHub webhook HMAC secret. */
   githubWebhookSecret?: string;
   /** Allowlisted mention logins used for GitHub mention detection. */
@@ -1165,7 +1163,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       runnerUrl: config.runnerUrl,
       remoteCliHost,
       remoteCliPort: config.remoteCliPort ?? 3004,
-      openaiAuthPath: config.openaiAuthPath,
       fetchImpl: config.fetchImpl,
       queueSnapshot: queue.snapshotPending(),
     });

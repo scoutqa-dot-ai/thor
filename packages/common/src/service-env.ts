@@ -32,7 +32,6 @@ export function loadGatewayEnv(env: EnvSource = process.env) {
     remoteCliHost: envString(env, "REMOTE_CLI_HOST", "remote-cli"),
     remoteCliPort: envInt(env, "REMOTE_CLI_PORT", 3004),
     thorInternalSecret: envString(env, "THOR_INTERNAL_SECRET"),
-    openaiAuthPath: envOptionalString(env, "OPENAI_AUTH_PATH") ?? "",
     githubAppSlug,
     githubAppBotId,
     githubAppBotEmail: githubAppBotIdentity.email,
