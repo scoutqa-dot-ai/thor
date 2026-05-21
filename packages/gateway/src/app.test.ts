@@ -2341,6 +2341,37 @@ describe("gateway", () => {
     );
   });
 
+  it("fails closed with a 200 response when allowlist config load fails for a private channel", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir, slack) => {
+        const body = slackEventBody("EvPrivateConfigError", {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> secret task",
+          ts: "1710000000.1025",
+          channel: "GPRIVATE",
+          channel_type: "group",
+        });
+
+        const response = await postSignedSlackEvent(baseUrl, body);
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, ignored: true });
+        expect(slack.reactionsAdd).not.toHaveBeenCalled();
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+      },
+      {
+        workspaceConfigLoader: () => {
+          throw new Error("config unavailable");
+        },
+      },
+    );
+  });
+
   it("falls back to conversations.info for missing channel_type", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()

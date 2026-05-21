@@ -1014,8 +1014,21 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     const isPrivate = await isSlackEventChannelPrivate(event, slackDeps);
     if (!isPrivate) return false;
 
-    const workspaceConfig = config.workspaceConfigLoader?.();
-    const allowlist = workspaceConfig ? getSlackPrivateChannelAllowlist(workspaceConfig) : [];
+    let allowlist: string[] = [];
+    try {
+      const workspaceConfig = config.workspaceConfigLoader?.();
+      allowlist = workspaceConfig ? getSlackPrivateChannelAllowlist(workspaceConfig) : [];
+    } catch (error) {
+      history.metadata = {
+        ...(history.metadata ?? {}),
+        channel: event.channel,
+        workspaceConfigLoadFailed: true,
+      };
+      logError(log, "private_channel_allowlist_config_load_failed", error, {
+        eventId,
+        channel: event.channel,
+      });
+    }
     if (isSlackPrivateChannelAllowed(event.channel, allowlist)) return false;
 
     history.reason = "private_channel_not_allowlisted";
