@@ -688,7 +688,7 @@ elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
-  jira_assignee_live=false
+  jira_reporter_live=false
   if [[ -n "$JIRA_CLOUD_ID" && "$THOR_E2E_JIRA_EMAIL" != "$DEFAULT_THOR_E2E_JIRA_EMAIL" ]]; then
     assert '[[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" ]]' \
       "jira attribution e2e: discovered Atlassian createJiraIssue" \
@@ -697,7 +697,7 @@ else
       "jira attribution e2e: ATLASSIAN_AUTH is available" \
       "set ATLASSIAN_AUTH so Jira lookup and create calls can reach Atlassian"
     if [[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" && -n "${ATLASSIAN_AUTH:-}" ]]; then
-      jira_assignee_live=true
+      jira_reporter_live=true
     fi
   elif [[ -n "$JIRA_CLOUD_ID" ]]; then
     echo "  Skipping Jira assignee e2e: THOR_E2E_JIRA_EMAIL is the default placeholder"
@@ -722,7 +722,7 @@ else
 
   # 4b. remote-cli-level: call the approval-required tool directly
   echo "  Calling tool via remote-cli (expecting approval interception)..."
-  if [[ "$jira_assignee_live" == "true" ]]; then
+  if [[ "$jira_reporter_live" == "true" ]]; then
     JIRA_E2E_SUMMARY="Thor Jira reporter e2e ${REMOTE_CLI_AUTH_TS}"
     jira_e2e_description="Jira reporter attribution e2e. Marker: ${REMOTE_CLI_AUTH_TS}"
     export JIRA_E2E_SUMMARY jira_e2e_description
@@ -789,7 +789,7 @@ else
     assert '[[ "$status_val" == "pending" ]]' "remote-cli: approval status is 'pending'" "status='$status_val'"
     assert '[[ "$status_tool" == "$APPROVAL_TOOL" ]]' "remote-cli: approval record has correct tool name" "tool='$status_tool'"
 
-    if [[ "$jira_assignee_live" == "true" ]]; then
+    if [[ "$jira_reporter_live" == "true" ]]; then
       # 4d. Approve a Jira issue creation with a fake project key. The upstream
       # create should fail, but only after Thor has performed lookup and sent
       # the create payload with additional_fields.reporter.
@@ -852,7 +852,7 @@ else
       -d "{\"args\":[\"status\",\"$action_id\"]}" \
       2>/dev/null || echo '{}')
     final_status=$(exec_stdout_field "$final_raw" "status")
-    expected_final_status=$([[ "$jira_assignee_live" == "true" ]] && echo "approved" || echo "rejected")
+    expected_final_status=$([[ "$jira_reporter_live" == "true" ]] && echo "approved" || echo "rejected")
     assert '[[ "$final_status" == "$expected_final_status" ]]' \
       "remote-cli: final status confirms '$expected_final_status'" \
       "status='$final_status'"

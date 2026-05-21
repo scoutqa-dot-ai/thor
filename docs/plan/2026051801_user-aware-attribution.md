@@ -97,7 +97,7 @@ attribution_applied {
           | "skipped_existing_reporter"     // Jira request already set the reporter field
           | "api_rejected",
   reason?:  string,                         // sub-reason for skipped_missing_identity_field / api_rejected
-                                            // e.g. "lookup_error", "lookup_no_match", "upstream_disconnected"
+                                            // e.g. "lookup_error", "lookup_no_match", "tool_unavailable", "upstream_disconnected"
   field?:   "github" | "email",
   slack?:   string,                         // always present on skip outcomes when the actor had a slack id
   github?:  string,                         // always present on skip outcomes when the actor had a github login
@@ -134,7 +134,7 @@ Pros/cons of the plain-text append vs. routing through git's trailer machinery:
 **MCP Jira.** Extend the approval-resolution path so that for `createJiraIssue`, if a user resolves with `email` and the agent did not already provide `additional_fields.reporter`, Thor calls `lookupJiraAccountId` and injects the returned value into `additional_fields.reporter` before `createJiraIssue` is sent. Existing `additional_fields` entries are shallow-merged; malformed non-object `additional_fields` values are passed through unchanged rather than clobbered.
 
 - **Prerequisite — expose the lookup tool on the actual Atlassian MCP upstream surface remote-cli can call internally.** Older repo docs list `lookupJiraAccountId` (`docs/plan/2026032001_atlassian-mcp.md:46`), but this tool must stay hidden from the agent-facing proxy policy. Before implementation, confirm the exact tool name + input/output schema on the live Atlassian upstream and make it callable from remote-cli's internal MCP path. If the tool truly is unavailable, this phase is blocked and needs a replacement lookup path before coding starts.
-- **Exact lookup contract to code against.** Confirmed against the live Atlassian MCP upstream: `lookupJiraAccountId` input is an object requiring `{ cloudId, searchString }`, with `cloudId` described as a UUID or site URL. Thor sends `{ cloudId: approvalArgs.cloudId, searchString: resolved UserRecord.email }`. Output handling should be explicit: zero matches → `lookup_no_match`, exactly one match with a usable Jira account id → inject `{ reporter: { id: accountId } }` into `additional_fields`, multiple matches → `lookup_multiple_matches`, tool unavailable/disconnected → `upstream_disconnected`.
+- **Exact lookup contract to code against.** Confirmed against the live Atlassian MCP upstream: `lookupJiraAccountId` input is an object requiring `{ cloudId, searchString }`, with `cloudId` described as a UUID or site URL. Thor sends `{ cloudId: approvalArgs.cloudId, searchString: resolved UserRecord.email }`. Output handling should be explicit: zero matches → `lookup_no_match`, exactly one match with a usable Jira account id → inject `{ reporter: { id: accountId } }` into `additional_fields`, multiple matches → `lookup_multiple_matches`, lookup tool unavailable → `tool_unavailable`, upstream call failure/disconnect → `upstream_disconnected`.
 
 Real implementation concerns:
 
