@@ -176,6 +176,10 @@ function stringify(value: unknown): string {
   return JSON.stringify(value, null, 2) + "\n";
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function fuzzyMatch(input: string, candidates: string[]): string[] {
   const lower = input.toLowerCase();
   return candidates.filter(
@@ -731,10 +735,15 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     instance: ProxyInstance,
   ): Promise<Record<string, unknown>> {
     const resolved = resolveTriggerUser(sessionId, getConfig);
-    if (args.assignee_account_id !== undefined) {
+    const additionalFields = args.additional_fields;
+    const additionalFieldsRecord = isPlainRecord(additionalFields) ? additionalFields : undefined;
+    if (
+      args.reporter !== undefined ||
+      additionalFieldsRecord?.reporter !== undefined
+    ) {
       logInfo(log, "attribution_applied", {
         surface: "jira",
-        outcome: "skipped_existing_assignee",
+        outcome: "skipped_existing_reporter",
         ...attributionFields(resolved.actor, resolved.user),
       });
       return args;
@@ -744,6 +753,15 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         surface: "jira",
         outcome: resolved.reason ?? "skipped_no_user_record",
         ...attributionFields(resolved.actor),
+      });
+      return args;
+    }
+    if (additionalFields !== undefined && !additionalFieldsRecord) {
+      logInfo(log, "attribution_applied", {
+        surface: "jira",
+        outcome: "api_rejected",
+        reason: "lookup_invalid_additional_fields",
+        ...attributionFields(resolved.actor, resolved.user),
       });
       return args;
     }
@@ -784,7 +802,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       outcome: "applied",
       ...attributionFields(resolved.actor, resolved.user),
     });
-    return { ...args, assignee_account_id: lookup.accountId };
+    return {
+      ...args,
+      additional_fields: {
+        ...(additionalFieldsRecord ?? {}),
+        reporter: { id: lookup.accountId },
+      },
+    };
   }
 
   return {
