@@ -180,7 +180,7 @@ function buildTriggeringUserPromptBlock(
  */
 const inflightTriggers = new Map<string, { sessionId: string; startTime: number }>();
 
-function startTrigger(
+function appendTriggerStartEvent(
   sessionId: string,
   triggerId: string,
   payload: { correlationKey?: string; triggerSlackId?: string; triggerGithubLogin?: string },
@@ -192,7 +192,42 @@ function startTrigger(
     ...(payload.triggerSlackId ? { triggerSlackId: payload.triggerSlackId } : {}),
     ...(payload.triggerGithubLogin ? { triggerGithubLogin: payload.triggerGithubLogin } : {}),
   });
+}
+
+function startTrigger(
+  sessionId: string,
+  triggerId: string,
+  payload: { correlationKey?: string; triggerSlackId?: string; triggerGithubLogin?: string },
+): void {
+  appendTriggerStartEvent(sessionId, triggerId, payload);
   inflightTriggers.set(triggerId, { sessionId, startTime: Date.now() });
+}
+
+/**
+ * Idempotently bind an OpenCode session id (and optional correlationKey) to an
+ * anchor. Shared by the production /trigger session resolver and the e2e
+ * trigger-context seeder so both produce the same alias-table shape.
+ */
+function bindSessionToAnchor(args: {
+  anchorId: string;
+  sessionId: string;
+  correlationKey?: string;
+}): void {
+  if (
+    resolveAlias({ aliasType: "opencode.session", aliasValue: args.sessionId }) !== args.anchorId
+  ) {
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: args.sessionId,
+      anchorId: args.anchorId,
+    });
+  }
+  if (
+    args.correlationKey &&
+    resolveAnchorForCorrelationKey(args.correlationKey) !== args.anchorId
+  ) {
+    appendCorrelationAliasForAnchor(args.anchorId, args.correlationKey);
+  }
 }
 
 function endTrigger(
@@ -365,23 +400,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         const sessionId = parsed.data.sessionId ?? `e2e-${randomUUID()}`;
         const triggerId = mintTriggerId();
         const anchorId = mintAnchor();
-        appendAlias({
-          aliasType: "opencode.session",
-          aliasValue: sessionId,
+        bindSessionToAnchor({
           anchorId,
+          sessionId,
+          correlationKey: parsed.data.correlationKey,
         });
-        if (parsed.data.correlationKey) {
-          appendCorrelationAliasForAnchor(anchorId, parsed.data.correlationKey);
-        }
-        appendSessionEvent(sessionId, {
-          type: "trigger_start",
-          triggerId,
-          ...(parsed.data.correlationKey ? { correlationKey: parsed.data.correlationKey } : {}),
-          ...(parsed.data.triggerSlackId ? { triggerSlackId: parsed.data.triggerSlackId } : {}),
-          ...(parsed.data.triggerGithubLogin
-            ? { triggerGithubLogin: parsed.data.triggerGithubLogin }
-            : {}),
-        });
+        appendTriggerStartEvent(sessionId, triggerId, parsed.data);
         res.json({ sessionId, triggerId, anchorId });
       },
     );
@@ -778,13 +802,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
         // session_stale recreate appends a fresh opencode.session alongside
         // the old; original Slack/git aliases keep pointing at the same anchor.
-        if (resolveAlias({ aliasType: "opencode.session", aliasValue: id }) !== anchorId) {
-          appendAlias({ aliasType: "opencode.session", aliasValue: id, anchorId });
-        }
-
-        if (correlationKey && resolveAnchorForCorrelationKey(correlationKey) !== anchorId) {
-          appendCorrelationAliasForAnchor(anchorId, correlationKey);
-        }
+        bindSessionToAnchor({ anchorId, sessionId: id, correlationKey });
 
         return { sessionId: id, resumed: didResume, anchorId };
       };
