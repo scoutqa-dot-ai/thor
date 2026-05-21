@@ -47,6 +47,18 @@ describe("Slack private-channel detection", () => {
     await expect(isSlackEventInPrivateChannelScope({ channel: "G123" }, deps)).resolves.toBe(true);
   });
 
+  it("times out slow privacy lookups and treats them as private", async () => {
+    vi.useFakeTimers();
+    try {
+      const deps = depsWithInfo(vi.fn().mockImplementation(() => new Promise(() => {})));
+      const resultPromise = isSlackEventInPrivateChannelScope({ channel: "G123" }, deps);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await expect(resultPromise).resolves.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("treats incomplete lookup responses as private", async () => {
     const missingChannelDeps = depsWithInfo(vi.fn().mockResolvedValue({ ok: true }));
     await expect(

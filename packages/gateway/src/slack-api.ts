@@ -8,6 +8,7 @@ const log = createLogger("gateway-slack-api");
  * well under 1s; we set this to 10s so a hung request cannot stall the NDJSON
  * progress consumer indefinitely. */
 const SLACK_API_TIMEOUT_MS = 10_000;
+const SLACK_PRIVACY_LOOKUP_TIMEOUT_MS = 1_500;
 
 export type SlackBlock = KnownBlock;
 
@@ -93,7 +94,12 @@ export async function isSlackEventInPrivateChannelScope(
   if (["channel", "im", "mpim"].includes(event.channel_type ?? "")) return false;
 
   try {
-    const result = await deps.client.conversations.info({ channel: event.channel });
+    const result = await Promise.race([
+      deps.client.conversations.info({ channel: event.channel }),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("slack privacy lookup timed out")), SLACK_PRIVACY_LOOKUP_TIMEOUT_MS);
+      }),
+    ]);
     const channel = result.channel as
       | { is_private?: boolean; is_im?: boolean; is_mpim?: boolean }
       | undefined;
