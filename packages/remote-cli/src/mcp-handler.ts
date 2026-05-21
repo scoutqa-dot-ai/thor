@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   appendCorrelationAlias,
   approvalToolRequiresDisclaimer,
+  buildApprovalSlackMessage,
   validateDisclaimerCompatibleArgs,
   buildThorDisclaimer,
   computeSlackCorrelationKey,
@@ -20,6 +21,7 @@ import {
   logInfo,
   logWarn,
   PROXY_NAMES,
+  resolveSlackThreadTargetFromTrigger,
   WORKSPACE_CONFIG_PATH,
   createConfigLoader,
   type ProxyConfig,
@@ -37,27 +39,13 @@ import {
 import { unwrapResult } from "./unwrap-result.js";
 import { connectUpstream, type UpstreamConnection } from "./upstream.js";
 import { attributionFields, resolveTriggerUser } from "./attribution.js";
+import { postSlackMessageApi } from "./slack-post-message.js";
 
 const log = createLogger("mcp");
 const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
-
-function resolveDisclaimerTrigger(
-  tool: string,
-  sessionId: string | undefined,
-): { anchorId: string; triggerId?: string } | undefined {
-  if (!approvalToolRequiresDisclaimer(tool)) return undefined;
-  if (!sessionId) throw new Error("Disclaimer required: missing Thor session id");
-  const context = findAnchorContext(sessionId);
-  if (!context.ok) {
-    throw new Error(
-      `Disclaimer required: no Thor anchor for session ${sessionId} (${context.reason})`,
-    );
-  }
-  return { anchorId: context.anchorId, triggerId: context.triggerId };
-}
 
 function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   if (!approvalToolRequiresDisclaimer(action.tool)) return action.args;
@@ -139,6 +127,8 @@ export interface McpServiceDeps {
   connectUpstreamFn?: typeof connectUpstream;
   writeToolCallLogFn?: typeof writeToolCallLog;
   configLoader?: ConfigLoader;
+  fetchImpl?: typeof fetch;
+  slack?: { botToken?: string; apiBaseUrl?: string };
 }
 
 interface ToolInfo {
@@ -209,6 +199,8 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const connectUpstreamFn = deps.connectUpstreamFn ?? connectUpstream;
   const writeToolCallLogFn = deps.writeToolCallLogFn ?? writeToolCallLog;
   const getConfig = deps.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
+  const fetchImpl = deps.fetchImpl;
+  const slackConfig = deps.slack;
   const instances = new Map<string, ProxyInstance>();
   const connecting = new Map<string, Promise<ProxyInstance>>();
   const approvalStores = new Map<string, ApprovalStore>();
@@ -235,6 +227,37 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     const store = new ApprovalStore(`${approvalsDir}/${name}`, name);
     approvalStores.set(name, store);
     return store;
+  }
+
+  async function postSlackApprovalMessage(input: {
+    action: ApprovalAction;
+    upstreamName: string;
+    channel: string;
+    threadTs: string;
+  }): Promise<{ ts: string } | { error: string }> {
+    const slackMessage = buildApprovalSlackMessage({
+      actionId: input.action.id,
+      tool: input.action.tool as ApprovalRequiredEventPayload["tool"],
+      args: input.action.args,
+      upstreamName: input.upstreamName,
+      threadTs: input.threadTs,
+    });
+    const result = await postSlackMessageApi(
+      {
+        channel: input.channel,
+        threadTs: input.threadTs,
+        text: slackMessage.text,
+        blocks: slackMessage.blocks,
+      },
+      {
+        fetch: fetchImpl,
+        env: {
+          SLACK_BOT_TOKEN: slackConfig?.botToken,
+          SLACK_API_BASE_URL: slackConfig?.apiBaseUrl,
+        },
+      },
+    );
+    return "error" in result ? result : { ts: result.ts };
   }
 
   async function connectInstance(name: string, proxyDef: ProxyConfig): Promise<ProxyInstance> {
@@ -558,16 +581,53 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       const approvalArgs = approvalRequired.data.args;
       const formatError = validateDisclaimerCompatibleArgs(toolInfo.name, approvalArgs);
       if (formatError) return fail(formatError);
-      let trigger: { anchorId: string; triggerId?: string } | undefined;
-      try {
-        trigger = resolveDisclaimerTrigger(toolInfo.name, context.sessionId);
-      } catch (err) {
-        return fail(err instanceof Error ? err.message : String(err));
+      if (!context.sessionId) {
+        return fail(`Approval required for "${toolInfo.name}": missing Thor session id`);
       }
-      const action = instance.approvalStore.create(toolInfo.name, approvalArgs, {
-        sessionId: context.sessionId,
-        trigger,
+      const anchorContext = findAnchorContext(context.sessionId);
+      if (!anchorContext.ok) {
+        return fail(
+          `Approval required for "${toolInfo.name}": no Thor anchor for session ${context.sessionId} (${anchorContext.reason})`,
+        );
+      }
+      const slackTarget = resolveSlackThreadTargetFromTrigger(context.sessionId);
+      if ("error" in slackTarget) {
+        return fail(`Approval required for "${toolInfo.name}": ${slackTarget.error}`);
+      }
+      const action = instance.approvalStore.buildPending(
+        toolInfo.name,
+        approvalArgs,
+        {
+          sessionId: context.sessionId,
+          trigger: {
+            anchorId: anchorContext.anchorId,
+            ...(anchorContext.triggerId ? { triggerId: anchorContext.triggerId } : {}),
+          },
+        },
+        {
+          provider: "slack",
+          channel: slackTarget.channel,
+          threadTs: slackTarget.threadTs,
+        },
+      );
+      const slackPost = await postSlackApprovalMessage({
+        action,
+        upstreamName: instance.name,
+        channel: slackTarget.channel,
+        threadTs: slackTarget.threadTs,
       });
+      if ("error" in slackPost) {
+        instance.approvalStore.rejectLoaded(action, "system", slackPost.error);
+        return fail(`Approval required for "${toolInfo.name}": ${slackPost.error}`);
+      }
+      action.notification = {
+        provider: "slack",
+        channel: slackTarget.channel,
+        threadTs: slackTarget.threadTs,
+        messageTs: slackPost.ts,
+        postedAt: new Date().toISOString(),
+      };
+      instance.approvalStore.update(action);
       logInfo(log, "tool_call_pending_approval", {
         upstream: instance.name,
         tool: toolInfo.name,
@@ -737,10 +797,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     const resolved = resolveTriggerUser(sessionId, getConfig);
     const additionalFields = args.additional_fields;
     const additionalFieldsRecord = isPlainRecord(additionalFields) ? additionalFields : undefined;
-    if (
-      args.reporter !== undefined ||
-      additionalFieldsRecord?.reporter !== undefined
-    ) {
+    if (args.reporter !== undefined || additionalFieldsRecord?.reporter !== undefined) {
       logInfo(log, "attribution_applied", {
         surface: "jira",
         outcome: "skipped_existing_reporter",

@@ -57,7 +57,7 @@ THOR_E2E_JIRA_EMAIL="${THOR_E2E_JIRA_EMAIL:-$DEFAULT_THOR_E2E_JIRA_EMAIL}"
 JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
 export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_GITHUB THOR_E2E_JIRA_EMAIL
-export JIRA_CLOUD_ID
+export JIRA_CLOUD_ID SLACK_CHANNEL_ID
 JIRA_E2E_ISSUE_KEY=""
 passed=0
 failed=0
@@ -688,6 +688,33 @@ elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
+  APPROVAL_THREAD_TS=""
+  approval_thread_seeded=false
+  if [[ -n "$SLACK_BOT_TOKEN" && -n "$SLACK_CHANNEL_ID" ]]; then
+    approval_seed_json=$(node -e "
+      const marker = process.argv[1] || '';
+      console.log(JSON.stringify({
+        channel: process.env.SLACK_CHANNEL_ID,
+        text: 'Thor approval e2e seed ' + marker
+      }));
+    " "$REMOTE_CLI_AUTH_TS")
+    approval_seed_raw=$(slack_post_json "chat.postMessage" "$approval_seed_json")
+    approval_seed_ok=$(json_field "$approval_seed_raw" "ok")
+    APPROVAL_THREAD_TS=$(json_field "$approval_seed_raw" "ts")
+    assert '[[ "$approval_seed_ok" == "true" && -n "$APPROVAL_THREAD_TS" ]]' \
+      "approval flow: seeded Slack thread" \
+      "response: ${approval_seed_raw:0:500}"
+    if [[ "$approval_seed_ok" == "true" && -n "$APPROVAL_THREAD_TS" ]]; then
+      approval_thread_seeded=true
+    fi
+    export APPROVAL_THREAD_TS
+  else
+    assert 'false' "approval flow: seeded Slack thread" "Set SLACK_BOT_TOKEN and SLACK_E2E_CHANNEL_ID/SLACK_CHANNEL_ID for direct approval-card delivery e2e"
+  fi
+
+  if [[ "$approval_thread_seeded" != "true" ]]; then
+    echo "  Skipping remaining approval flow after Slack thread seed failure."
+  else
   jira_reporter_live=false
   if [[ -n "$JIRA_CLOUD_ID" && "$THOR_E2E_JIRA_EMAIL" != "$DEFAULT_THOR_E2E_JIRA_EMAIL" ]]; then
     assert '[[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" ]]' \
@@ -705,7 +732,7 @@ else
 
   trigger_context_body=$(node -e "
     console.log(JSON.stringify({
-      correlationKey: 'e2e-approval-flow-' + process.env.REMOTE_CLI_AUTH_TS,
+      correlationKey: 'slack:thread:' + process.env.SLACK_CHANNEL_ID + '/' + process.env.APPROVAL_THREAD_TS,
       triggerSlackId: process.env.ATTRIBUTION_E2E_SLACK_ID
     }));
   ")
@@ -856,6 +883,8 @@ else
     assert '[[ "$final_status" == "$expected_final_status" ]]' \
       "remote-cli: final status confirms '$expected_final_status'" \
       "status='$final_status'"
+  fi
+
   fi
 
 fi

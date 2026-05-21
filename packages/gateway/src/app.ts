@@ -4,11 +4,13 @@ import {
   buildSlackCorrelationKeys,
   createLogger,
   errorToMetadata,
+  extractApprovalFailureCategory,
   getWorkspaceWorktreesRoot,
   hasSessionForCorrelationKey,
   logError,
   logInfo,
   matchesInternalSecret,
+  parseApprovalButtonValue,
   resolveExistingDirectoryWithinRoot,
   resolveCorrelationKeys,
   resolveSafeRepoDirectory,
@@ -16,6 +18,7 @@ import {
   SLACK_CHANNEL_REPO_MEMORY_ROOT,
   truncate,
   resolveRepoDirectory,
+  type ApprovalButtonRoute,
   type InboundWebhookHistoryEntry,
 } from "@thor/common";
 import { z } from "zod/v4";
@@ -52,11 +55,6 @@ import {
   type SlackThreadEvent,
 } from "./slack.js";
 import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.js";
-import {
-  extractApprovalFailureCategory,
-  parseApprovalButtonValue,
-  type ApprovalButtonRoute,
-} from "./approval.js";
 import {
   buildCorrelationKey,
   buildIssueCorrelationKey,
