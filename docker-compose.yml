@@ -191,13 +191,11 @@ services:
       - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:?set GITHUB_APP_SLUG}
       - GITHUB_APP_BOT_ID=${GITHUB_APP_BOT_ID:?set GITHUB_APP_BOT_ID}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:?set GITHUB_WEBHOOK_SECRET}
-      - OPENAI_AUTH_PATH=/opencode/auth.json
       - REMOTE_CLI_HOST=remote-cli
       - REMOTE_CLI_PORT=3004
       - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
     volumes:
       - ./docker-volumes/workspace:/workspace
-      - ./docker-volumes/opencode:/opencode:ro
     depends_on:
       runner:
         condition: service_started

@@ -25,7 +25,6 @@ const { app } = createGatewayApp({
   timestampToleranceSeconds: config.slackTimestampToleranceSeconds,
   queueDir: config.queueDir,
   cronSecret: config.cronSecret || undefined,
-  openaiAuthPath: config.openaiAuthPath || undefined,
   githubWebhookSecret: config.githubWebhookSecret,
   githubMentionLogins,
   githubAppBotId: config.githubAppBotId,
