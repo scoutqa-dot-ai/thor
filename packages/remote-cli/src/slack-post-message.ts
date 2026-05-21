@@ -370,6 +370,9 @@ export async function postSlackMessageApi(
 
   return {
     ts: responseTs,
-    channel: typeof responseChannel === "string" && responseChannel.length > 0 ? responseChannel : request.channel,
+    channel:
+      typeof responseChannel === "string" && responseChannel.length > 0
+        ? responseChannel
+        : request.channel,
   };
 }
