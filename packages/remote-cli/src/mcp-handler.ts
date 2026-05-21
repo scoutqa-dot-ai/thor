@@ -736,9 +736,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   ): Promise<Record<string, unknown>> {
     const resolved = resolveTriggerUser(sessionId, getConfig);
     const additionalFields = args.additional_fields;
+    const additionalFieldsRecord = isPlainRecord(additionalFields) ? additionalFields : undefined;
     if (
       args.reporter !== undefined ||
-      (isPlainRecord(additionalFields) && additionalFields.reporter !== undefined)
+      additionalFieldsRecord?.reporter !== undefined
     ) {
       logInfo(log, "attribution_applied", {
         surface: "jira",
@@ -755,7 +756,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       });
       return args;
     }
-    if (additionalFields !== undefined && !isPlainRecord(additionalFields)) {
+    if (additionalFields !== undefined && !additionalFieldsRecord) {
       logInfo(log, "attribution_applied", {
         surface: "jira",
         outcome: "api_rejected",
@@ -804,7 +805,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return {
       ...args,
       additional_fields: {
-        ...(additionalFields ?? {}),
+        ...(additionalFieldsRecord ?? {}),
         reporter: { id: lookup.accountId },
       },
     };
