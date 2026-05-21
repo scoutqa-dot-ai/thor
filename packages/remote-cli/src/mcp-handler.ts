@@ -610,7 +610,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
           threadTs: slackTarget.threadTs,
         },
       );
-      instance.approvalStore.update(action);
       const slackPost = await postSlackApprovalMessage({
         action,
         upstreamName: instance.name,

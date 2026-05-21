@@ -58,17 +58,6 @@ export class ApprovalStore {
     private readonly upstream: string,
   ) {}
 
-  create(
-    tool: string,
-    args: Record<string, unknown>,
-    origin?: ApprovalAction["origin"],
-    notification?: ApprovalAction["notification"],
-  ): ApprovalAction {
-    const action = this.buildPending(tool, args, origin, notification);
-    this.write(action);
-    return action;
-  }
-
   buildPending(
     tool: string,
     args: Record<string, unknown>,
