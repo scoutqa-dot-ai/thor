@@ -34,7 +34,18 @@ describe("service env", () => {
     expect(config.runnerUrl).toBe("http://runner:3000");
     expect(config.slackApiBaseUrl).toBe("https://slack.com/api");
     expect(config.slackDefaultRepo).toBe("thor");
+    expect(config.configPath).toBe(WORKSPACE_CONFIG_PATH);
     expect(config.githubAppBotEmail).toBe("12345+thor-app[bot]@users.noreply.github.com");
+    expect(
+      loadGatewayEnv({
+        THOR_INTERNAL_SECRET: "secret",
+        GITHUB_APP_SLUG: "thor-app",
+        GITHUB_APP_BOT_ID: "12345",
+        GITHUB_WEBHOOK_SECRET: "webhook",
+        SLACK_DEFAULT_REPO: "thor",
+        CONFIG_PATH: "/workspace/config/custom.json",
+      }).configPath,
+    ).toBe("/workspace/config/custom.json");
     expect(() =>
       loadGatewayEnv({
         THOR_INTERNAL_SECRET: "secret",

@@ -14,6 +14,7 @@ import {
   findUserByEmail,
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
+  getSlackPrivateChannelAllowlist,
 } from "./workspace-config.js";
 
 let tempDir: string;
@@ -103,6 +104,31 @@ describe("loadWorkspaceConfig", () => {
     expect(findUserByGithub(config, "alice-dev")?.slack).toBe("UABCDEF1");
     expect(findUserByEmail(config, "BOB@example.com")?.name).toBe("Bob");
     expect(findUserBySlack(config, "UNOMATCH")).toBeUndefined();
+  });
+
+  it("accepts Slack private channel allowlist and exposes it through the helper", () => {
+    const path = writeConfig("config.json", {
+      slack: { private_channel_allowlist: ["G123", "G456"] },
+    });
+
+    const config = loadWorkspaceConfig(path);
+    expect(getSlackPrivateChannelAllowlist(config)).toEqual(["G123", "G456"]);
+    expect(getSlackPrivateChannelAllowlist({})).toEqual([]);
+  });
+
+  it("rejects invalid Slack private channel allowlist entries", () => {
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("empty-channel.json", { slack: { private_channel_allowlist: [""] } }),
+      ),
+    ).toThrow("slack.private_channel_allowlist.0");
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("duplicate-channel.json", {
+          slack: { private_channel_allowlist: ["G123", "G123"] },
+        }),
+      ),
+    ).toThrow("Slack private channel allowlist must not contain duplicates");
   });
 
   it("rejects mitmproxy rule without host selector", () => {

@@ -16,7 +16,9 @@ import {
   SLACK_CHANNEL_REPO_MEMORY_ROOT,
   truncate,
   resolveRepoDirectory,
+  getSlackPrivateChannelAllowlist,
   type InboundWebhookHistoryEntry,
+  type ConfigLoader,
 } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
@@ -57,6 +59,11 @@ import {
   parseApprovalButtonValue,
   type ApprovalButtonRoute,
 } from "./approval.js";
+import {
+  isSlackEventChannelPrivate,
+  isSlackPrivateChannelAllowed,
+  type SlackChannelPrivacyInput,
+} from "./slack-channel-allowlist.js";
 import {
   buildCorrelationKey,
   buildIssueCorrelationKey,
@@ -487,6 +494,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   slackDefaultRepo?: string;
   /** Test override for Slack channel repo memory root. */
   slackChannelRepoMemoryRoot?: string;
+  /** Dynamic workspace config loader. */
+  workspaceConfigLoader?: ConfigLoader;
 }
 
 const InteractivityBodySchema = z.object({
@@ -995,6 +1004,32 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const slackDeps: SlackDeps = {
     client: config.slackClient ?? createSlackClient(config.slackBotToken, config.slackApiBaseUrl),
   };
+
+  const shouldIgnoreForPrivateChannel = async (
+    event: SlackChannelPrivacyInput,
+    eventId: string,
+    history: WebhookHistoryState,
+  ): Promise<boolean> => {
+    const isPrivate = await isSlackEventChannelPrivate(event, slackDeps);
+    if (!isPrivate) return false;
+
+    const workspaceConfig = config.workspaceConfigLoader?.();
+    const allowlist = workspaceConfig ? getSlackPrivateChannelAllowlist(workspaceConfig) : [];
+    if (isSlackPrivateChannelAllowed(event.channel, allowlist)) return false;
+
+    history.reason = "private_channel_not_allowlisted";
+    history.metadata = {
+      ...(history.metadata ?? {}),
+      channel: event.channel,
+      privateChannelAllowed: false,
+    };
+    logInfo(log, "event_ignored_private_channel_not_allowlisted", {
+      eventId,
+      channel: event.channel,
+    });
+    return true;
+  };
+
   const remoteCliHost = config.remoteCliHost ?? "remote-cli";
   const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;
   const internalExec =
@@ -1278,6 +1313,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     // app_mention — always forward
     if (event.type === "app_mention") {
+      if (await shouldIgnoreForPrivateChannel(event, eventId, history)) {
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
       void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
         logError(log, "reaction_failed", err, { eventId }),
       );
@@ -1324,6 +1364,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // Message continuations. Supported subtypes are user-authored messages;
     // unsupported/system subtypes remain ignored below.
     if (event.type === "message" && isForwardableSlackMessage(event)) {
+      if (await shouldIgnoreForPrivateChannel(event, eventId, history)) {
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
       const rawKeys = getSlackCorrelationKeys(event);
       const correlationKey = resolveCorrelationKeys(rawKeys);
       if (correlationKey !== rawKeys[0]) {

@@ -16,6 +16,7 @@ export {
   findUserBySlack,
   findUserByGithub,
   findUserByEmail,
+  getSlackPrivateChannelAllowlist,
 } from "./workspace-config.js";
 export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.js";
 export {

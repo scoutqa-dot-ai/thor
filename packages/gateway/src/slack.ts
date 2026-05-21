@@ -10,6 +10,7 @@ const SlackAppMentionEventSchema = z
     text: z.string(),
     ts: z.string(),
     channel: z.string(),
+    channel_type: z.enum(["channel", "im", "group", "mpim"]).optional(),
     thread_ts: z.string().optional(),
     bot_id: z.string().optional(),
   })
