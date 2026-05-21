@@ -11,7 +11,9 @@ import {
   mintAnchor,
   resolveAnchorForCorrelationKey,
   sessionLogPath,
+  WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
+import type { WorkspaceConfig } from "@thor/common";
 
 const worklogDir = "/tmp/thor-runner-trigger-test/worklog";
 const originalEnv = vi.hoisted(() => {
@@ -181,6 +183,7 @@ function createHarness(
     onGet?: (sessionId: string) => Promise<void>;
     promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
     throwInSubscribe?: boolean;
+    workspaceConfig?: WorkspaceConfig;
   } = {},
 ) {
   const buses = new FakeEventBuses();
@@ -256,6 +259,7 @@ function createHarness(
       client as unknown as ReturnType<NonNullable<RunnerAppOptions["createClient"]>>,
     ensureOpencodeAvailable: async () => {},
     isOpencodeReachable: async () => true,
+    workspaceConfigLoader: opts.workspaceConfig ? () => opts.workspaceConfig! : () => ({}),
   });
 
   return { app, prompts, aborts, existingSessions, busySessions };
@@ -818,6 +822,45 @@ describe("runner /trigger orchestration", () => {
         status: "completed",
       });
     });
+  });
+
+  it("injects resolved triggering user context only for a new session", async () => {
+    const h = createHarness({
+      workspaceConfig: {
+        users: [
+          {
+            name: "Alice Example",
+            email: "alice@example.com",
+            slack: "UABCDEF1",
+            github: "alice",
+          },
+        ],
+      },
+    });
+    const correlationKey = "slack:thread:1710000000.091";
+
+    await withServer(h.app, async (url) => {
+      await trigger(url, {
+        prompt: "first",
+        correlationKey,
+        triggerSlackId: "UABCDEF1",
+      });
+      await trigger(url, {
+        prompt: "second",
+        correlationKey,
+        triggerSlackId: "UABCDEF1",
+      });
+    });
+
+    expect(h.prompts).toHaveLength(2);
+    expect(h.prompts[0]).toContain("[Triggering user]");
+    expect(h.prompts[0]).toContain("Run triggered by Alice Example <alice@example.com>");
+    expect(h.prompts[0]).toContain("slack: UABCDEF1");
+    expect(h.prompts[0]).toContain("github: alice");
+    expect(h.prompts[0]).toContain(`${WORKSPACE_CONFIG_PATH} users[]`);
+    expect(h.prompts[1]).not.toContain("[Triggering user]");
+    expect(h.prompts[1]).not.toContain("Alice Example");
+    expect(h.prompts[1]).toContain("second");
   });
 
   it("emits approval_required events only from typed output args", async () => {

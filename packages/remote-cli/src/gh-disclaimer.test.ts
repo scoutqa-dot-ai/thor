@@ -206,6 +206,50 @@ describe("gh disclaimer injection", () => {
     );
   });
 
+  it("appends a GitHub assignee to issue create when trigger user resolves", async () => {
+    seedActor();
+    await withServer(
+      async (url) => {
+        const { response } = await postGh(
+          url,
+          ["issue", "create", "--title", "Bug", "--body", "Broken"],
+          "parent",
+        );
+        expect(response.status).toBe(200);
+        expect(execCalls[0].args).toEqual([
+          "issue",
+          "create",
+          "--title",
+          "Bug",
+          "--body",
+          `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+          "--assignee",
+          "alice",
+        ]);
+      },
+      { configLoader },
+    );
+  });
+
+  it("keeps an existing issue assignee", async () => {
+    seedActor();
+    await withServer(
+      async (url) => {
+        await postGh(
+          url,
+          ["issue", "create", "--title", "x", "--body", "Body", "-a", "bob"],
+          "parent",
+        );
+        expect(execCalls[0].args.filter((arg) => arg === "-a" || arg === "--assignee")).toHaveLength(
+          1,
+        );
+        expect(execCalls[0].args).toContain("bob");
+        expect(execCalls[0].args).not.toContain("alice");
+      },
+      { configLoader },
+    );
+  });
+
   it("passes git commit through when attribution config is unavailable", async () => {
     seedActor();
     const failingConfigLoader = () => {

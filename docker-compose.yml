@@ -130,7 +130,7 @@ services:
     volumes:
       - ./docker-volumes/opencode:/home/thor/.local/share/opencode
       - ./docker-volumes/workspace/memory:/workspace/memory
-      - ./docker-volumes/workspace/config.json:/workspace/config.json:ro
+      - ./docker-volumes/workspace/config:/workspace/config:ro
       - ./docker-volumes/workspace/repos:/workspace/repos:ro
       - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
       - ./docker-volumes/workspace/cron:/workspace/cron
