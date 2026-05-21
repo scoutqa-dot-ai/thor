@@ -6,7 +6,7 @@ Stamp the human who triggered a Thor run onto the artifacts it produces — best
 
 1. `Co-authored-by: Name <email>` trailer on agent-made commits.
 2. `--assignee <github>` on agent-opened PRs/issues (set on `gh pr create` / `gh issue create` when unset).
-3. `assignee_account_id` on agent-created Jira issues (resolved from user email when unset).
+3. `additional_fields.reporter` on agent-created Jira issues (resolved from user email when unset).
 
 The existing Thor disclaimer footer already carries a context link back to the trigger; no separate "Triggered by ..." line in the PR body is needed.
 
@@ -93,7 +93,8 @@ attribution_applied {
           | "skipped_missing_identity_field"// resolved user lacks the field this surface needs
           | "skipped_unsupported_arg_shape" // e.g. git commit -F
           | "skipped_already_attributed"    // -m value already contains the email
-          | "skipped_existing_assignee"     // gh/Jira request already set the assignee field
+          | "skipped_existing_assignee"     // gh request already set the assignee field
+          | "skipped_existing_reporter"     // Jira request already set the reporter field
           | "api_rejected",
   reason?:  string,                         // sub-reason for skipped_missing_identity_field / api_rejected
                                             // e.g. "lookup_error", "lookup_no_match", "upstream_disconnected"
@@ -130,17 +131,17 @@ Pros/cons of the plain-text append vs. routing through git's trailer machinery:
 - When no resolved user or no `github` field, log the appropriate skip outcome and leave PR creation unchanged.
 - v1 scope is limited to `gh pr create` / `gh issue create`; no post-create `gh pr edit` or `gh issue edit` follow-up is needed.
 
-**MCP Jira.** Extend the approval-resolution path so that for `createJiraIssue`, if a user resolves with `email` and the agent did not already provide `assignee_account_id`, Thor calls `lookupJiraAccountId` and injects the returned value into `assignee_account_id` before `createJiraIssue` is sent.
+**MCP Jira.** Extend the approval-resolution path so that for `createJiraIssue`, if a user resolves with `email` and the agent did not already provide `additional_fields.reporter`, Thor calls `lookupJiraAccountId` and injects the returned value into `additional_fields.reporter` before `createJiraIssue` is sent. Existing `additional_fields` entries are shallow-merged; malformed non-object `additional_fields` values are passed through unchanged rather than clobbered.
 
 - **Prerequisite — expose the lookup tool on the actual Atlassian MCP upstream surface remote-cli can call internally.** Older repo docs list `lookupJiraAccountId` (`docs/plan/2026032001_atlassian-mcp.md:46`), but this tool must stay hidden from the agent-facing proxy policy. Before implementation, confirm the exact tool name + input/output schema on the live Atlassian upstream and make it callable from remote-cli's internal MCP path. If the tool truly is unavailable, this phase is blocked and needs a replacement lookup path before coding starts.
-- **Exact lookup contract to code against.** Confirmed against the live Atlassian MCP upstream: `lookupJiraAccountId` input is an object requiring `{ cloudId, searchString }`, with `cloudId` described as a UUID or site URL. Thor sends `{ cloudId: approvalArgs.cloudId, searchString: resolved UserRecord.email }`. Output handling should be explicit: zero matches → `lookup_no_match`, exactly one match with a usable Jira account id → inject `assignee_account_id`, multiple matches → `lookup_multiple_matches`, tool unavailable/disconnected → `upstream_disconnected`.
+- **Exact lookup contract to code against.** Confirmed against the live Atlassian MCP upstream: `lookupJiraAccountId` input is an object requiring `{ cloudId, searchString }`, with `cloudId` described as a UUID or site URL. Thor sends `{ cloudId: approvalArgs.cloudId, searchString: resolved UserRecord.email }`. Output handling should be explicit: zero matches → `lookup_no_match`, exactly one match with a usable Jira account id → inject `{ reporter: { id: accountId } }` into `additional_fields`, multiple matches → `lookup_multiple_matches`, tool unavailable/disconnected → `upstream_disconnected`.
 
 Real implementation concerns:
 
 - `buildUpstreamArgs` is currently synchronous. Calling an upstream tool makes the Jira attribution step async — `resolveApprovalActionOnce` must await a resolver that can both preserve disclaimer injection and, for Jira only, perform the lookup before the final upstream call.
-- **Unset-only rule.** If `approvalArgs` already contains `assignee_account_id`, leave it unchanged and log `skipped_existing_assignee`.
+- **Unset-only rule.** If `approvalArgs.additional_fields` already contains `reporter`, leave it unchanged and log `skipped_existing_reporter`.
 - **Service boundary / DI.** Don't reach into module globals from `buildUpstreamArgs` — pass the Jira lookup resolver in as a dependency (`lookupJiraAccountIdForIssue: (cloudId, email) => Promise<accountId | undefined>`). Makes tests easy, keeps approval replay clean, and gives a single seam to mock when the Atlassian upstream is the disconnected one.
-- Failure modes (all collapse to "drop the assignee, log `api_rejected` with sub-reason"): lookup tool unavailable, zero matches, multiple matches, permission denied, Atlassian upstream disconnected. Wall-clock latency is bounded by the underlying MCP/HTTP client's own timeouts; Thor does not add its own.
+- Failure modes (all collapse to "drop the reporter, log `api_rejected` with sub-reason"): lookup tool unavailable, zero matches, multiple matches, permission denied, Atlassian upstream disconnected. Wall-clock latency is bounded by the underlying MCP/HTTP client's own timeouts; Thor does not add its own.
 
 **Mutation happens after approval**, matching the existing disclaimer flow — the human approves the agent's payload, Thor stamps attribution before sending upstream. This is the same trust posture Thor already uses for the disclaimer footer; if/when that posture changes, both attributions move together.
 
@@ -161,14 +162,16 @@ Behavior tests (next to existing `gh-disclaimer.test.ts` and `mcp-handler.test.t
 - `/exec/gh issue create`:
   - Same assignee injection and skip behavior as `gh pr create` while preserving the traceability footer.
 - MCP Jira `createJiraIssue`:
-  - Resolved user with `email` + `cloudId` + no existing `assignee_account_id` → `lookupJiraAccountId` called via injected resolver, returned `accountId` lands in upstream payload as `assignee_account_id`.
-  - Existing `assignee_account_id` → args unchanged, `skipped_existing_assignee` logged and lookup skipped.
-  - Lookup throws → assignee dropped, `api_rejected` logged with sub-reason `lookup_error`.
+  - Resolved user with `email` + `cloudId` + no existing reporter → `lookupJiraAccountId` called via injected resolver, returned `accountId` lands in upstream payload as `additional_fields.reporter.id` while preserving description disclaimer injection.
+  - Existing `additional_fields` entries → preserved while adding `reporter`.
+  - Existing `additional_fields.reporter` → args unchanged, `skipped_existing_reporter` logged and lookup skipped.
+  - Malformed non-object `additional_fields` → args unchanged and lookup skipped.
+  - Lookup throws → reporter dropped, `api_rejected` logged with sub-reason `lookup_error`.
   - Lookup returns zero matches → `api_rejected` with `lookup_no_match`.
   - Atlassian upstream disconnected → `api_rejected` with `upstream_disconnected`.
   - Approval replay: the same stored `ApprovalAction` resolved twice produces deterministic args (injected resolver memoizes per action id, or the lookup is repeated and idempotent).
 
-Exit: a Slack-triggered run produces a commit with the trailer, a PR assigned to the user's GitHub handle, and a Jira ticket assigned via `assignee_account_id` resolved from the user's email — without any change to `bin/git`, `bin/gh`, or anything inside the sandbox.
+Exit: a Slack-triggered run produces a commit with the trailer, a PR assigned to the user's GitHub handle, and a Jira ticket reporter set via `additional_fields.reporter` resolved from the user's email — without any change to `bin/git`, `bin/gh`, or anything inside the sandbox.
 
 ### Phase 4 — Repo cleanup + ship
 
@@ -196,12 +199,12 @@ Exit: no generated registry artifacts in `git status`; green push checks; PR ope
 | User identity field validation             | Keep validation minimal for internal config                                           | `users[]` is admin-maintained config. Trust configured Slack/GitHub/name fields beyond required string presence; downstream services can reject bad handles if operators misconfigure them. Duplicate-identity rejection at schema load was prototyped and dropped as over-engineered: lookups are deterministic (first match wins), `attribution_applied` logs surface which record was selected, and the failure cost is cosmetic mis-attribution rather than a safety issue.                                                                                                                                                                               |
 | Duplicate co-author trailers               | Skip when the last `-m` already contains the resolved user's email                    | The email is the stable attribution key. Matching it case-insensitively avoids adding duplicate Thor trailers when the agent or a rerun already credited the same user in another trailer/body format, while still allowing different co-author identities to coexist.                                                                                                                                                                                                                                                                                                                                                                                        |
 | Trigger actor extraction owner             | Gateway extracts and passes `triggerSlackId` / `triggerGithubLogin`                   | Gateway knows event source and batch order; runner should not reverse-parse prompt JSON or carry Slack/GitHub payload semantics, and dispatch planning should not infer a fallback actor from source arrays. Reusing the existing trigger fields keeps schema churn low while preserving "last user available" attribution.                                                                                                                                                                                                                                                                                                                                   |
-| Attribution E2E shape                      | Deterministic service E2E for git commit, `gh pr create`, `gh issue create`, and failed live Jira create | The deterministic path proves remote-cli mutates real `/exec` and MCP calls using event-log actor context and the single mounted E2E config. The `gh pr create` step expects the underlying call to fail because the e2e GitHub App is not configured for PR writes, and asserts on the `--assignee` arg injected into the logged `exec_gh` invocation. The `gh issue create` step uses a unique missing label so GitHub rejects the call before creating an issue, then asserts on logged `--assignee` injection and the traced body footer. Jira assignee E2E approves `createJiraIssue` with a fake project key and issue type, verifies `lookupJiraAccountId` and the outgoing `assignee_account_id`, then expects the create call to fail before an issue is created. `lookupJiraAccountId` remains hidden from the agent-facing proxy policy. |
+| Attribution E2E shape                      | Deterministic service E2E for git commit, `gh pr create`, `gh issue create`, and failed live Jira create | The deterministic path proves remote-cli mutates real `/exec` and MCP calls using event-log actor context and the single mounted E2E config. The `gh pr create` step expects the underlying call to fail because the e2e GitHub App is not configured for PR writes, and asserts on the `--assignee` arg injected into the logged `exec_gh` invocation. The `gh issue create` step uses a unique missing label so GitHub rejects the call before creating an issue, then asserts on logged `--assignee` injection and the traced body footer. Jira reporter E2E approves `createJiraIssue` with a fake project key and issue type, verifies `lookupJiraAccountId` and the outgoing `additional_fields.reporter`, then expects the create call to fail before an issue is created. `lookupJiraAccountId` remains hidden from the agent-facing proxy policy. |
 
 ## Risks
 
 - **Stale `users` list.** Operators must remember to add new hires. Visible through `attribution_applied { outcome: "skipped_no_user_record" }` lines in the runner log.
-- **MCP after-approval mutation.** The Jira assignee shown in the approval card does not include the injected assignee. Acceptable trade-off (same as the existing disclaimer); revisit if a reviewer is surprised.
+- **MCP after-approval mutation.** The Jira reporter shown in the approval card does not include the injected reporter. Acceptable trade-off (same as the existing disclaimer); revisit if a reviewer is surprised.
 - **Squash drift.** GitHub aggregates `Co-authored-by:` trailers across squashed commits into the squash body, so co-author credit usually survives onto `main` — but the PR author can edit the squash message before merging and drop them. The PR assignee and the Thor disclaimer footer's context link always survive squash; treat the trailer as best-effort on top of those.
 - **PII in `thor.json`.** Emails sit in a mounted file that already carries GitHub installation ids and proxy auth headers; trust boundary unchanged. README must note that attribution writes name + email into commits and Jira fields — visible externally on GitHub and Atlassian.
 - **Trigger actor ≠ work owner in handoff cases.** On-call triggers a deploy for a teammate's PR; Slack thread relays a request from someone else. Plan attributes to the triggerer, full stop. Multi-field model is deferred.
@@ -213,7 +216,7 @@ Exit: no generated registry artifacts in `git status`; green push checks; PR ope
 - `trigger_start` records the actor; `findTriggerActor(sessionId)` returns it.
 - `/exec/git`, `/exec/gh`, and the MCP Jira path each inject attribution when a user resolves and pass through silently otherwise.
 - Every mutating call emits an `attribution_applied` log line.
-- `pnpm test:e2e` covers git trailer stamping, `gh pr create` / `gh issue create` assignee injection, issue traced-body rewriting, and live Jira assignee injection on a create call that fails with a fake project key and issue type; email-based duplicate suppression stays in unit coverage.
+- `pnpm test:e2e` covers git trailer stamping, `gh pr create` / `gh issue create` assignee injection, issue traced-body rewriting, and live Jira reporter injection on a create call that fails with a fake project key and issue type; email-based duplicate suppression stays in unit coverage.
 - README documents `users`; `.context/` artifacts moved/deleted.
 - Push checks green; PR open against `main`.
 
