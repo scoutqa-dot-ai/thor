@@ -62,7 +62,7 @@ Thor is event-driven.
 - Scheduled prompts enter through `gateway /cron`.
 - Approval resolutions re-enter the originating session through the runner.
 
-The runner batches events by correlation key, resumes prior OpenCode sessions when possible, and streams progress back to Slack.
+The runner batches events by correlation key, resumes prior OpenCode sessions when possible, and posts Slack progress directly for current Slack-thread triggers.
 
 ## Security
 

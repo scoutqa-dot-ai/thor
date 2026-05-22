@@ -160,6 +160,12 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.15.7
         version: 1.15.7
+      '@slack/types':
+        specifier: 2.21.0
+        version: 2.21.0
+      '@slack/web-api':
+        specifier: ^7.15.1
+        version: 7.15.2
       '@thor/common':
         specifier: workspace:*
         version: link:../common
