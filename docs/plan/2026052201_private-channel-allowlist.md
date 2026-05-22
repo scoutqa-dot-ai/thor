@@ -39,6 +39,7 @@ Out of scope:
 | 7   | Look up only when `channel_type` is missing or unknown                                | When the event already tells us the type, we trust it. Saves a Slack API call on the common path.                                                            | Always call `conversations.info`. Adds latency and Slack rate-limit pressure. |
 | 8   | Trust `channel_type === "channel"` as definitively public (no lookup)                 | Slack routes `message.channels` with `channel_type: "channel"` and `message.groups` with `channel_type: "group"`. A real private-channel capture (`C0AK4C2SZAT`, see Verification) confirms `message*` events arrive as `group`, never `channel`. Known soft spot: Slack Connect / shared-channel envelopes are not exercised in this sample — revisit if Connect comes into scope. | Force a `conversations.info` lookup on `channel_type: "channel"` too. Rejected: doubles Slack API traffic on the hot public-channel path for a hypothetical leak. |
 | 9   | Accept the lookup fan-out for events that omit `channel_type`                          | Empirically (12-event private-channel sample), `app_mention` and `reaction_added` lack `channel_type` and force a lookup; `message` / `message_changed` keep the fast path. A typical "mention + emoji" interaction is ~3 lookups. `conversations.info` is tier-3 (50/min) — comfortably above expected per-workspace traffic, and the 1.5s timeout caps worst case. | Cache privacy decisions per channel in memory. Rejected for now: extra state, invalidation question on public↔private conversion, and current traffic doesn't justify it. Revisit if rate-limit headroom shrinks. |
+| 10  | Resolve missing-`channel_type` privacy asynchronously, after Slack ack — mirroring GitHub's `pending:branch-resolve:` pattern | The webhook handler currently runs `conversations.info` inline, inside Slack's 3s ack budget. GitHub handles the same shape (lookup needed before dispatch decision) by enqueueing with a `pending:branch-resolve:` correlation key, acking 200 immediately, and resolving in `planBatchDispatch` (`packages/gateway/src/github.ts:291-299`, `packages/gateway/src/app.ts:1812,1847`, `packages/gateway/src/service.ts:650-691`). Reusing the established pattern eliminates ack-budget pressure, removes the class of bug where a slow Slack API blows past the 3s window, and lets the privacy timeout grow toward the GitHub side's 5s `INTERNAL_EXEC_TIMEOUT_MS` (`service.ts:32`) without consequence. Conclusive `channel_type` values still take the synchronous fast path so cheap drops stay cheap and don't accrete onto the queue. | Add a per-channel privacy cache (#9). Still useful eventually, but doesn't address the ack-budget concern. Keep the inline lookup. Rejected: leaks Slack-API health into Slack-ack reliability. |
 
 ## Phases
 
@@ -68,8 +69,30 @@ Exit: `pnpm --filter @thor/gateway test` green.
 
 Exit: README example matches the schema; canonical example file validates against `WorkspaceConfigSchema`.
 
+### Phase 4 — Move missing-`channel_type` lookup off the Slack ack path
+
+Mirror the GitHub `pending:branch-resolve:` pattern (`packages/gateway/src/github.ts:291-299`, `packages/gateway/src/app.ts:1812,1847`, `packages/gateway/src/service.ts:650-691`) for the Slack privacy fallback. Keep the synchronous fast path for events where `channel_type` is conclusive — those still decide drop/accept before the queue.
+
+- **Hybrid gate split** (`packages/gateway/src/app.ts`):
+  - `channel_type === "group"` → run allowlist check inline; drop or enqueue accordingly (no API call, current behavior).
+  - `channel_type ∈ {"channel", "im", "mpim"}` → not private, enqueue (current behavior).
+  - `channel_type` missing → enqueue under a new `pending:slack-privacy:` correlation key, ack 200 immediately, **do not** call `conversations.info` in the webhook handler.
+- **Privacy correlation key** in `packages/gateway/src/slack.ts` (or alongside the existing helpers): `buildPendingSlackPrivacyKey(channel, eventId)` and `isPendingSlackPrivacyKey(key)`, modeled on `buildPendingBranchResolveKey` (`github.ts:293`). Channel id is in the key so the dispatcher can resolve once per channel per batch.
+- **Resolver in `planBatchDispatch`** (`packages/gateway/src/service.ts`): before slack-event dispatch, group pending-privacy events by channel, call `isSlackEventInPrivateChannelScope` once per channel, then apply the allowlist. Dropped events are recorded with `reason: "private_channel_not_allowlisted"` against the original webhook history row via the existing audit-update path. Mirror `resolveGitHubPrHead` in shape (`service.ts:1059-1099`).
+- **Move `addReaction(:eyes:)`** off the webhook handler for the missing-`channel_type` branches. Reactions for events that take the synchronous fast path stay inline; reactions for pending-privacy events post from the dispatcher *after* the gate clears, so we never visibly react to events we're about to drop. The fast-path branches keep current latency.
+- **Timeout relaxation**: with the call no longer competing for the 3s Slack ack budget, raise the privacy lookup timeout from 1.5s toward parity with `INTERNAL_EXEC_TIMEOUT_MS = 5_000` (`service.ts:32`). Fail-closed behavior on timeout/error stays unchanged.
+- **Tests** (`packages/gateway/src/app.test.ts`, `service.test.ts`):
+  - Webhook handler: `channel_type: "group"` non-allowlisted → 200 + `private_channel_not_allowlisted` reason recorded inline (unchanged). Missing `channel_type` → 200 + `correlationKey` starts with `pending:slack-privacy:`. No `conversations.info` call from the handler.
+  - Dispatcher: pending-privacy event → resolver invoked once per channel; allowlisted channel dispatches; non-allowlisted drops with audit reason; lookup timeout drops fail-closed.
+- **Docs**: update README's "private channel allowlist" paragraph to drop the `conversations.info`-in-the-webhook framing in favor of "resolved asynchronously after acknowledgement, like GitHub branch resolution"; update the verification recipe to look for `correlationKey: "pending:slack-privacy:..."` in the webhook history for the missing-`channel_type` events.
+
+Exit: `pnpm --filter @thor/gateway test` green; integration run against a non-allowlisted private channel shows webhook 200 in <100ms and a deferred drop with the correct audit reason; reaction emoji does not appear on dropped events.
+
+Out of scope for Phase 4 (revisit if metrics demand): per-channel privacy cache from Decision #9 — Phase 4 already collapses lookups within a batch, so the marginal value of a TTL cache is smaller.
+
 ## Verification
 
 - After deploying, invite the bot to a private channel that is **not** on the allowlist and post a message that would normally trigger Thor. Confirm the gateway logs the event with `reason: "private_channel_not_allowlisted"` and the runner is not called.
 - Add the channel id to `slack.private_channel_allowlist` in `thor.json`. No restart. Repeat the trigger and confirm normal handling.
 - Repeat the same two steps in a public channel to confirm the gate does not affect public-channel behavior.
+- After Phase 4 ships: @-mention the bot in a non-allowlisted private channel (an `app_mention` event has no `channel_type`, so it takes the async path). Confirm the webhook returns 200 in <100ms, the corresponding queue entry is recorded with a `pending:slack-privacy:` correlation key, the dispatcher records `private_channel_not_allowlisted` against the original webhook history row, and **no** `:eyes:` reaction is posted to the message.
