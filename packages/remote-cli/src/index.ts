@@ -169,13 +169,12 @@ function parseCreatedIssueCorrelationKey(stdout: string, cwd: string): string | 
   return buildIssueCorrelationKey(issue.owner, issue.repo, issue.number);
 }
 
-function registerIssueCorrelationAlias(
+function registerCreatedIssueCorrelationAlias(
   sessionId: string | undefined,
-  args: string[],
   cwd: string,
   stdout: string,
 ): void {
-  if (!sessionId || args[0] !== "issue" || args[1] !== "create") return;
+  if (!sessionId) return;
   const correlationKey = parseCreatedIssueCorrelationKey(stdout, cwd);
   if (!correlationKey) return;
   try {
@@ -726,7 +725,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
       const result = await execCommand("gh", effectiveArgs, cwd);
       if ((result.exitCode ?? 0) === 0) {
-        registerIssueCorrelationAlias(ids.sessionId, effectiveArgs, cwd, result.stdout);
+        if (effectiveArgs[0] === "issue" && effectiveArgs[1] === "create") {
+          registerCreatedIssueCorrelationAlias(ids.sessionId, cwd, result.stdout);
+        }
       }
       res.json(result);
     } catch (err) {
