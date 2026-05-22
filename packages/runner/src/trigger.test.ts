@@ -1214,6 +1214,46 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
+  it("normalizes context usage percent to an integer before emitting", async () => {
+    const h = createHarness({
+      opencodeConfig: {
+        provider: {
+          openai: {
+            models: {
+              "gpt-5.5": { limit: { context: 200_000 } },
+            },
+          },
+        },
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId, {
+          providerID: "openai",
+          modelID: "gpt-5.5",
+          tokens: { input: 99_999 },
+          role: "assistant",
+        }),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.092",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toMatchObject({
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 99_999,
+        limit: 200_000,
+        usagePercent: 50,
+      });
+    });
+  });
+
   it("skips context progress when no positive configured model limit is known", async () => {
     const h = createHarness({
       opencodeConfig: {

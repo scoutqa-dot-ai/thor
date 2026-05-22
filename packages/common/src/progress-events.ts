@@ -33,7 +33,7 @@ export const ProgressContextSchema = z.object({
   modelID: z.string(),
   tokens: z.number().int().nonnegative(),
   limit: z.number().int().positive(),
-  usagePercent: z.number().nonnegative(),
+  usagePercent: z.number().int().nonnegative(),
 });
 
 export const ProgressDoneSchema = z.object({

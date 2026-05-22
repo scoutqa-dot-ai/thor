@@ -133,7 +133,7 @@ function shouldRenderContext(context: ContextStatus | undefined): context is Con
 }
 
 function formatContextStatus(context: ContextStatus): string {
-  return `${Math.round(context.usagePercent)}% (${formatCompactTokens(context.tokens)} / ${formatCompactTokens(context.limit)} tokens)`;
+  return `${context.usagePercent}% (${formatCompactTokens(context.tokens)} / ${formatCompactTokens(context.limit)} tokens)`;
 }
 
 function formatMemoryFileLabels(shortPaths: string[]): string {

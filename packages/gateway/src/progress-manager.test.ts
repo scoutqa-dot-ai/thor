@@ -182,6 +182,29 @@ describe("ProgressManager", () => {
     expect(lowUpdate.text).not.toContain("context:");
   });
 
+  it("renders context at the normalized 50 percent boundary", async () => {
+    const deps = mockSlackDeps();
+
+    await sendTools(deps, 3);
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 99_999,
+        limit: 200_000,
+        usagePercent: 50,
+      },
+      deps,
+      "",
+    );
+
+    const update = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
+    expect(update.text).toContain("context: 50% (100k / 200k tokens)");
+  });
+
   it("does not let context events satisfy the tool threshold", async () => {
     const deps = mockSlackDeps();
 

@@ -1399,13 +1399,14 @@ function emitContextProgressFromMessage(
   const tokens = numericTokenTotal(info.tokens);
   if (tokens === undefined) return;
   const tokenTotal = Math.max(0, Math.floor(tokens));
+  const usagePercent = Math.round((tokenTotal * 100) / limit);
   emit({
     type: "context",
     providerID,
     modelID,
     tokens: tokenTotal,
     limit,
-    usagePercent: (tokenTotal / limit) * 100,
+    usagePercent,
   });
 }
 
