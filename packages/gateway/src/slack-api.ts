@@ -94,12 +94,18 @@ export async function isSlackEventInPrivateChannelScope(
   if (["channel", "im", "mpim"].includes(event.channel_type ?? "")) return false;
 
   try {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const result = await Promise.race([
       deps.client.conversations.info({ channel: event.channel }),
       new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("slack privacy lookup timed out")), SLACK_PRIVACY_LOOKUP_TIMEOUT_MS);
+        timeoutHandle = setTimeout(
+          () => reject(new Error("slack privacy lookup timed out")),
+          SLACK_PRIVACY_LOOKUP_TIMEOUT_MS,
+        );
       }),
-    ]);
+    ]).finally(() => {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    });
     const channel = result.channel as
       | { is_private?: boolean; is_im?: boolean; is_mpim?: boolean }
       | undefined;
