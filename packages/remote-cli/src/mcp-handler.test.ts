@@ -764,7 +764,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
   });
 
-  it("injects Jira reporter during approved issue creation", async () => {
+  it("injects Jira assignee during approved issue creation", async () => {
     await approveJiraCreate(
       '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
     );
@@ -773,12 +773,12 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
     expect(toolCalls[1].arguments).toMatchObject({
       description: `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
-      additional_fields: { reporter: { id: "jira-account-1" } },
+      assignee_account_id: "jira-account-1",
     });
-    expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
+    expect(toolCalls[1].arguments?.additional_fields).toBeUndefined();
   });
 
-  it("merges Jira reporter into existing additional fields", async () => {
+  it("preserves Jira additional fields when injecting assignee", async () => {
     await approveJiraCreate(
       '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","additional_fields":{"labels":["thor"],"priority":{"name":"High"}}}',
     );
@@ -787,31 +787,18 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls[1].arguments?.additional_fields).toEqual({
       labels: ["thor"],
       priority: { name: "High" },
-      reporter: { id: "jira-account-1" },
     });
+    expect(toolCalls[1].arguments?.assignee_account_id).toBe("jira-account-1");
   });
 
-  it("does not overwrite existing Jira reporter", async () => {
+  it("does not overwrite existing Jira assignee account id", async () => {
     await approveJiraCreate(
-      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","additional_fields":{"reporter":{"id":"existing"},"labels":["thor"]}}',
+      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","assignee_account_id":"existing"}',
     );
 
     expect(jiraLookups).toEqual([]);
     expect(toolCalls).toHaveLength(1);
-    expect(toolCalls[0].arguments?.additional_fields).toEqual({
-      reporter: { id: "existing" },
-      labels: ["thor"],
-    });
-  });
-
-  it("does not clobber malformed Jira additional fields", async () => {
-    await approveJiraCreate(
-      '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","additional_fields":"bad-shape"}',
-    );
-
-    expect(jiraLookups).toEqual([]);
-    expect(toolCalls).toHaveLength(1);
-    expect(toolCalls[0].arguments?.additional_fields).toBe("bad-shape");
+    expect(toolCalls[0].arguments?.assignee_account_id).toBe("existing");
   });
 
   it("keeps Jira issue creation best-effort when account lookup returns multiple matches", async () => {
@@ -823,7 +810,7 @@ describe("remote-cli MCP endpoints", () => {
     );
 
     expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
-    expect(toolCalls[1].arguments?.additional_fields).toBeUndefined();
+    expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
   });
 
   it("keeps Jira issue creation best-effort when account lookup throws", async () => {
@@ -833,7 +820,7 @@ describe("remote-cli MCP endpoints", () => {
     );
 
     expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
-    expect(toolCalls[1].arguments?.additional_fields).toBeUndefined();
+    expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
   });
 
   it("keeps Jira issue creation best-effort when cloudId is missing", async () => {
@@ -843,7 +830,7 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(jiraLookups).toEqual([]);
     expect(toolCalls).toHaveLength(1);
-    expect(toolCalls[0].arguments?.additional_fields).toBeUndefined();
+    expect(toolCalls[0].arguments?.assignee_account_id).toBeUndefined();
   });
 
   it("blocks Jira approvals when contentFormat is not markdown", async () => {
