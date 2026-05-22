@@ -371,7 +371,7 @@ ${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${t
           aliasType: "github.issue",
           aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
         }),
-      ).toBe(anchorParent);
+      ).toBeUndefined();
     });
   });
 
