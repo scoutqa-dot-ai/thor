@@ -95,7 +95,6 @@ export async function resolvePrChecksTerminalState(input: {
   directory: string;
   prNumber: number;
 }): Promise<PrChecksTerminalStateResult> {
-  const jsonCommand = `gh pr checks ${input.prNumber} --json name,state,bucket,link,description,workflow`;
   let jsonResult;
   try {
     jsonResult = await input.internalExec({
