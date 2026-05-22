@@ -130,6 +130,25 @@ function signGitHub(body: string, secret: string): string {
   return `sha256=${createHmac("sha256", secret).update(Buffer.from(body)).digest("hex")}`;
 }
 
+function terminalPrChecksJson(): string {
+  return JSON.stringify([
+    { name: "build", state: "SUCCESS", bucket: "pass", workflow: "ci" },
+    { name: "lint", state: "FAILURE", bucket: "fail", workflow: "ci" },
+  ]);
+}
+
+function mockSuccessfulCheckSuiteExec(internalExec: ReturnType<typeof vi.fn>): void {
+  internalExec
+    .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
+    .mockResolvedValueOnce({
+      stdout: "49699333+thor[bot]@users.noreply.github.com\n",
+      stderr: "",
+      exitCode: 0,
+    })
+    .mockResolvedValueOnce({ stdout: terminalPrChecksJson(), stderr: "", exitCode: 0 })
+    .mockResolvedValueOnce({ stdout: "build pass\nlint fail\n", stderr: "", exitCode: 1 });
+}
+
 function checkSuiteWebhookBody(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     action: "completed",
@@ -1549,14 +1568,8 @@ describe("gateway", () => {
 
   it("enqueues check_suite events when the branch has an existing session alias", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi
-      .fn()
-      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
-      .mockResolvedValueOnce({
-        stdout: "49699333+thor[bot]@users.noreply.github.com\n",
-        stderr: "",
-        exitCode: 0,
-      });
+    const internalExec = vi.fn();
+    mockSuccessfulCheckSuiteExec(internalExec);
 
     await withWorklogDir(async (worklogDir) => {
       sessionKeys.add("git:branch:thor:feature/refactor");
@@ -1595,6 +1608,17 @@ describe("gateway", () => {
                 head_branch: "feature/refactor",
                 conclusion: "failure",
               },
+              thor: {
+                pr_checks: {
+                  command: "gh pr checks 42",
+                  stdout: "build pass\nlint fail\n",
+                  exitCode: 1,
+                },
+                pr_checks_summary: [
+                  { name: "build", state: "SUCCESS", bucket: "pass", workflow: "ci" },
+                  { name: "lint", state: "FAILURE", bucket: "fail", workflow: "ci" },
+                ],
+              },
             },
           });
 
@@ -1626,6 +1650,16 @@ describe("gateway", () => {
       args: ["log", "-1", "--format=%ae", "abc123def456"],
       cwd: "/workspace/repos/thor",
     });
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "gh",
+      args: ["pr", "checks", "42", "--json", "name,state,bucket,link,description,workflow"],
+      cwd: "/workspace/repos/thor",
+    });
+    expect(internalExec).toHaveBeenCalledWith({
+      bin: "gh",
+      args: ["pr", "checks", "42"],
+      cwd: "/workspace/repos/thor",
+    });
   });
 
   it.each([
@@ -1640,14 +1674,8 @@ describe("gateway", () => {
     "startup_failure",
   ])("enqueues terminal check_suite conclusion %p with interrupt false", async (conclusion) => {
     const fetchImpl = vi.fn<typeof fetch>();
-    const internalExec = vi
-      .fn()
-      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
-      .mockResolvedValueOnce({
-        stdout: "49699333+thor[bot]@users.noreply.github.com\n",
-        stderr: "",
-        exitCode: 0,
-      });
+    const internalExec = vi.fn();
+    mockSuccessfulCheckSuiteExec(internalExec);
 
     await withWorklogDir(async (worklogDir) => {
       sessionKeys.add("git:branch:thor:feature/refactor");
@@ -1686,6 +1714,7 @@ describe("gateway", () => {
                 head_branch: "feature/refactor",
                 conclusion,
               },
+              thor: { pr_checks: { stdout: "build pass\nlint fail\n", exitCode: 1 } },
             },
           });
 
@@ -1770,6 +1799,170 @@ describe("gateway", () => {
       });
     },
   );
+
+  it.each([
+    { name: "missing", pull_requests: [], reason: "check_suite_pr_missing" },
+    {
+      name: "ambiguous",
+      pull_requests: [
+        {
+          number: 42,
+          head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
+        },
+        {
+          number: 43,
+          head: { ref: "feature/refactor-2", repo: { full_name: "scoutqa-dot-ai/thor" } },
+        },
+      ],
+      reason: "check_suite_pr_ambiguous",
+    },
+  ])("ignores check_suite with $name pull_requests", async ({ pull_requests, reason }) => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi.fn();
+
+    await withWorklogDir(async (worklogDir) => {
+      sessionKeys.add("git:branch:thor:feature/refactor");
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody({ pull_requests });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": `delivery-${reason}`,
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          expect(internalExec).not.toHaveBeenCalled();
+
+          expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
+            { reason, eventType: "check_suite", metadata: { headSha: "abc123def456" } },
+          ]);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+          githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+          internalExec,
+        },
+      );
+    });
+  });
+
+  it("ignores check_suite while PR-wide checks are still pending", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
+      .mockResolvedValueOnce({
+        stdout: "49699333+thor[bot]@users.noreply.github.com\n",
+        stderr: "",
+        exitCode: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([{ name: "build", state: "IN_PROGRESS", bucket: "pending" }]),
+        stderr: "",
+        exitCode: 0,
+      });
+
+    await withWorklogDir(async (worklogDir) => {
+      sessionKeys.add("git:branch:thor:feature/refactor");
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody({ conclusion: "success" });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-pending",
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
+            {
+              reason: "check_suite_pr_checks_pending",
+              metadata: { prNumber: 42, pending: [{ name: "build" }] },
+            },
+          ]);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+          githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+          internalExec,
+        },
+      );
+    });
+  });
+
+  it("ignores check_suite when PR-wide check lookup fails", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const internalExec = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
+      .mockResolvedValueOnce({
+        stdout: "49699333+thor[bot]@users.noreply.github.com\n",
+        stderr: "",
+        exitCode: 0,
+      })
+      .mockResolvedValueOnce({ stdout: "not-json", stderr: "gh failed", exitCode: 1 });
+
+    await withWorklogDir(async (worklogDir) => {
+      sessionKeys.add("git:branch:thor:feature/refactor");
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl, _queue, queueDir) => {
+          const body = checkSuiteWebhookBody({ conclusion: "success" });
+          const response = await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(body, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-lookup-failed",
+              "X-GitHub-Event": "check_suite",
+            },
+            body,
+          });
+
+          expect(response.status).toBe(200);
+          expect(await response.json()).toEqual({ ok: true, ignored: true });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
+            {
+              reason: "check_suite_pr_checks_lookup_failed",
+              metadata: { prNumber: 42, stderr: "gh failed", exitCode: 1 },
+            },
+          ]);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+          githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+          internalExec,
+        },
+      );
+    });
+  });
 
   it.each([
     {

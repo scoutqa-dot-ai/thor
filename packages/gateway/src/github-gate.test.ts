@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { verifyThorAuthoredSha } from "./github-gate.js";
+import { resolvePrChecksTerminalState, verifyThorAuthoredSha } from "./github-gate.js";
 import type { InternalExecClient } from "./service.js";
 
 function ok(stdout = "") {
@@ -65,5 +65,98 @@ describe("verifyThorAuthoredSha", () => {
         expectedEmail: "49699333+thor[bot]@users.noreply.github.com",
       }),
     ).resolves.toEqual({ ok: false, reason: "exec_failed" });
+  });
+});
+
+describe("resolvePrChecksTerminalState", () => {
+  it("returns aggregate output when all PR checks are terminal", async () => {
+    const internalExec = vi
+      .fn<InternalExecClient>()
+      .mockResolvedValueOnce(
+        ok(
+          JSON.stringify([
+            { name: "build", state: "SUCCESS", bucket: "pass", workflow: "ci" },
+            { name: "lint", state: "FAILURE", bucket: "fail", workflow: "ci" },
+          ]),
+        ),
+      )
+      .mockResolvedValueOnce({ stdout: "build pass\nlint fail\n", stderr: "", exitCode: 1 });
+
+    await expect(
+      resolvePrChecksTerminalState({
+        internalExec,
+        directory: "/workspace/repos/thor",
+        prNumber: 42,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      checks: [
+        { name: "build", state: "SUCCESS", bucket: "pass" },
+        { name: "lint", state: "FAILURE", bucket: "fail" },
+      ],
+      aggregate: { command: "gh pr checks 42", stdout: "build pass\nlint fail\n", exitCode: 1 },
+    });
+  });
+
+  it("treats gh bucket cancel as terminal", async () => {
+    const internalExec = vi
+      .fn<InternalExecClient>()
+      .mockResolvedValueOnce(
+        ok(JSON.stringify([{ name: "deploy", state: "CANCELLED", bucket: "cancel" }])),
+      )
+      .mockResolvedValueOnce({ stdout: "deploy cancel\n", stderr: "", exitCode: 1 });
+
+    await expect(
+      resolvePrChecksTerminalState({
+        internalExec,
+        directory: "/workspace/repos/thor",
+        prNumber: 42,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      checks: [{ name: "deploy", state: "CANCELLED", bucket: "cancel" }],
+      aggregate: { command: "gh pr checks 42", stdout: "deploy cancel\n", exitCode: 1 },
+    });
+    expect(internalExec).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports pending checks when any PR check is non-terminal", async () => {
+    const internalExec = vi
+      .fn<InternalExecClient>()
+      .mockResolvedValueOnce(
+        ok(JSON.stringify([{ name: "build", state: "IN_PROGRESS", bucket: "pending" }])),
+      );
+
+    await expect(
+      resolvePrChecksTerminalState({
+        internalExec,
+        directory: "/workspace/repos/thor",
+        prNumber: 42,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      reason: "pr_checks_pending",
+      pending: [{ name: "build", state: "IN_PROGRESS", bucket: "pending" }],
+    });
+    expect(internalExec).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats invalid JSON as lookup failure", async () => {
+    const internalExec = vi
+      .fn<InternalExecClient>()
+      .mockResolvedValueOnce({ stdout: "not-json", stderr: "bad fields", exitCode: 1 });
+
+    await expect(
+      resolvePrChecksTerminalState({
+        internalExec,
+        directory: "/workspace/repos/thor",
+        prNumber: 42,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      reason: "pr_checks_lookup_failed",
+      stderr: "bad fields",
+      exitCode: 1,
+    });
   });
 });

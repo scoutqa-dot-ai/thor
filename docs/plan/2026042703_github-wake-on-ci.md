@@ -209,6 +209,18 @@ re-wake.
 - Sibling plan `docs/plan/2026042702_github-event-passthrough.md` — the
   pass-through refactor that ships first, independently.
 
+## 2026-05-22 follow-up — PR-wide `gh pr checks` debounce
+
+`check_suite.completed` is now gated on exactly one PR association from
+`check_suite.pull_requests[]`; empty or ambiguous arrays are ignored with
+structured reasons. After the existing session and Thor-authored-sha gates pass,
+the gateway queries `gh pr checks <pr> --json name,state,bucket,link,description,workflow`
+through `internalExec` and drops the wake while any PR-wide check is still
+non-terminal, or if the lookup cannot be parsed. Once all PR checks are terminal,
+the gateway enqueues the CI wake with `interrupt: false` and appends a namespaced
+`thor.pr_checks` / `thor.pr_checks_summary` block containing the aggregate
+`gh pr checks <pr>` output and parsed rows so OpenCode sees final PR-wide status.
+
 ## Phases
 
 Each phase = one commit. Phases land in order; later phases assume earlier phases are merged. Per AGENTS.md, run unit tests against the phase exit criteria before moving on; push at the end for E2E verification.

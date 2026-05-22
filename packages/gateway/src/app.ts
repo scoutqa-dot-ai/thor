@@ -39,7 +39,7 @@ import {
   type RunnerDeps,
 } from "./service.js";
 import { createSlackClient, type SlackDeps } from "./slack-api.js";
-import { verifyThorAuthoredSha } from "./github-gate.js";
+import { resolvePrChecksTerminalState, verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKeys,
@@ -388,7 +388,11 @@ type GitHubIgnoreReason =
   | "check_suite_branch_missing"
   | "correlation_key_unresolved"
   | "check_suite_conclusion_missing"
-  | "check_suite_gate_failed";
+  | "check_suite_gate_failed"
+  | "check_suite_pr_missing"
+  | "check_suite_pr_ambiguous"
+  | "check_suite_pr_checks_pending"
+  | "check_suite_pr_checks_lookup_failed";
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
@@ -1611,6 +1615,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     let correlationKey: string;
     let delayMs = githubMentionDelay;
     let interrupt = true;
+    let payload: GitHubWebhookEvent | unknown = parsed.data;
 
     if (isPullRequestClosedEvent(parsed.data)) {
       const rawKey = buildCorrelationKey(localRepo, parsed.data.pull_request.head.ref);
@@ -1642,6 +1647,56 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       delayMs = 0;
       interrupt = false;
     } else if (isCheckSuiteCompletedEvent(parsed.data)) {
+      const pullRequests = parsed.data.check_suite.pull_requests;
+      if (pullRequests.length === 0) {
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "check_suite_pr_missing";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          headSha: parsed.data.check_suite.head_sha,
+        };
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_pr_missing",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      if (pullRequests.length !== 1) {
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "check_suite_pr_ambiguous";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          headSha: parsed.data.check_suite.head_sha,
+          pullRequests: pullRequests.map((pr) => ({
+            number: pr.number,
+            headRef: pr.head?.ref,
+            headRepoFullName: pr.head?.repo?.full_name,
+          })),
+        };
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_pr_ambiguous",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      const prNumber = pullRequests[0]!.number;
+
       if (!branch) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
@@ -1710,14 +1765,36 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       }
 
       const directory = resolveRepoDirectory(localRepo);
-      const gate = directory
-        ? await verifyThorAuthoredSha({
-            internalExec,
-            directory,
-            sha: parsed.data.check_suite.head_sha,
-            expectedEmail: config.githubAppBotEmail ?? "",
-          })
-        : { ok: false as const, reason: "exec_failed" as const };
+      if (!directory) {
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "check_suite_gate_failed";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          rawKey,
+          resolvedKey,
+          headSha: parsed.data.check_suite.head_sha,
+          gateReason: "exec_failed",
+        };
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_gate_failed",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      const gate = await verifyThorAuthoredSha({
+        internalExec,
+        directory,
+        sha: parsed.data.check_suite.head_sha,
+        expectedEmail: config.githubAppBotEmail ?? "",
+      });
       if (!gate.ok) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
@@ -1742,6 +1819,48 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         return;
       }
 
+      const prChecks = await resolvePrChecksTerminalState({
+        internalExec,
+        directory,
+        prNumber,
+      });
+      if (!prChecks.ok) {
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason =
+          prChecks.reason === "pr_checks_pending"
+            ? "check_suite_pr_checks_pending"
+            : "check_suite_pr_checks_lookup_failed";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          rawKey,
+          resolvedKey,
+          headSha: parsed.data.check_suite.head_sha,
+          prNumber,
+          ...(prChecks.reason === "pr_checks_pending"
+            ? { pending: prChecks.pending, checks: prChecks.checks }
+            : { error: prChecks.error, stderr: prChecks.stderr, exitCode: prChecks.exitCode }),
+        };
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: history.reason,
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      payload = {
+        ...parsed.data,
+        thor: {
+          pr_checks: prChecks.aggregate,
+          pr_checks_summary: prChecks.checks,
+        },
+      };
       correlationKey = resolvedKey;
       delayMs = 0;
       interrupt = false;
@@ -1759,7 +1878,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       id: deliveryId,
       source: "github",
       correlationKey,
-      payload: parsed.data,
+      payload,
       receivedAt: new Date().toISOString(),
       sourceTs,
       readyAt: sourceTs + delayMs,
