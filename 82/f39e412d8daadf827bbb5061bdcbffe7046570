@@ -1,0 +1,23 @@
+docs/plan/2026052201_private-channel-allowlist.md
+  949a310e1627dced 42,72-92,98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "82f39e412d8daadf827bbb5061bdcbffe7046570",
+  "prompts": {
+    "949a310e1627dced": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "89f98aa5-6248-4d29-a887-d359cdad4e42",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 23,
+      "total_deletions": 0,
+      "accepted_lines": 23,
+      "overriden_lines": 0
+    }
+  }
+}
