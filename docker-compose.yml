@@ -128,6 +128,12 @@ services:
       - NODE_EXTRA_CA_CERTS=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
       - CURL_CA_BUNDLE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
       - SSL_CERT_FILE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      - AIKIDO_API_KEY=${AIKIDO_API_KEY:-}
+      - WIZ_CLIENT_ID=${WIZ_CLIENT_ID:-}
+      - WIZ_CLIENT_SECRET=${WIZ_CLIENT_SECRET:-}
+      - WIZ_TENANT_DC=${WIZ_TENANT_DC:-}
+      - KIBANA_URL=${KIBANA_URL:-}
+      - AUTH_HEADER=${AUTH_HEADER:-}
     volumes:
       - ./docker-volumes/opencode:/home/thor/.local/share/opencode
       - ./docker-volumes/workspace/memory:/workspace/memory
