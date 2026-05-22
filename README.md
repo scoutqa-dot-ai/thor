@@ -195,6 +195,18 @@ Human attribution entries live under `users[]`. `email` must be the Jira account
 
 To verify your entry, trigger Thor from Slack and look for `attribution_applied` with `outcome: "applied"` and your Slack id; `skipped_no_user_record` means the configured Slack id did not match the trigger. See [`docs/feat/users-directory-provenance.md`](docs/feat/users-directory-provenance.md) for registry provenance.
 
+Private Slack channels are gated by an explicit allowlist under `slack.private_channel_allowlist`. Public channels are unaffected; DMs and group DMs (`mpim`) are not gated. List the channel ids that Thor is permitted to act in:
+
+```json
+{
+  "slack": {
+    "private_channel_allowlist": ["C0123456789", "C0987654321"]
+  }
+}
+```
+
+When the channel type is not present on the Slack event, the gateway calls `conversations.info` with a short timeout to determine privacy. If the lookup fails or times out, or if the workspace config cannot be loaded, the gate fails closed and the event is dropped with reason `private_channel_not_allowlisted`. Omitting the `slack` key (or leaving the list empty) means every private channel is rejected.
+
 If you have internal APIs that Thor should access with injected credentials,
 define rules in `/workspace/config/thor.json` and keep only secret values in `.env`:
 
