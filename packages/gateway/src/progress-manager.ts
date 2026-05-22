@@ -58,6 +58,14 @@ interface DelegateGroup {
   count: number;
 }
 
+interface ContextStatus {
+  providerID: string;
+  modelID: string;
+  tokens: number;
+  limit: number;
+  usagePercent: number;
+}
+
 /** Format tool groups for display: [{name:"grep",count:2},{name:"read",count:1}] → "grep x2, read" */
 function formatToolGroups(groups: ToolGroup[]): string {
   return groups.map((g) => (g.count > 1 ? `${g.name} x${g.count}` : g.name)).join(", ");
@@ -109,6 +117,23 @@ function formatDelegates(activities: DelegateActivity[]): string {
   }
 
   return groups.map((g) => (g.count > 1 ? `${g.name} x${g.count}` : g.name)).join(", ");
+}
+
+function formatCompactTokens(value: number): string {
+  if (value >= 1_000_000) {
+    const rounded = Math.round(value / 100_000) / 10;
+    return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}M`;
+  }
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
+  return String(value);
+}
+
+function shouldRenderContext(context: ContextStatus | undefined): context is ContextStatus {
+  return !!context && context.usagePercent >= 50;
+}
+
+function formatContextStatus(context: ContextStatus): string {
+  return `${Math.round(context.usagePercent)}% (${formatCompactTokens(context.tokens)} / ${formatCompactTokens(context.limit)} tokens)`;
 }
 
 function formatMemoryFileLabels(shortPaths: string[]): string {
@@ -337,6 +362,8 @@ class ProgressSession {
   private recentMemory: MemoryActivity[] = [];
   /** Recent delegated agents from subtask parts. */
   private recentDelegates: DelegateActivity[] = [];
+  /** Latest context-window usage update from the runner. */
+  private latestContext?: ContextStatus;
   private startTime: number;
   private lastUpdateTime = 0;
   private thresholdMet = false;
@@ -464,6 +491,15 @@ class ProgressSession {
     }
   }
 
+  async onContext(status: ContextStatus): Promise<void> {
+    if (this.finished) return;
+    this.latestContext = status;
+
+    if (this.thresholdMet) {
+      await this.flush();
+    }
+  }
+
   async finish(status: "completed" | "error", errorMsg?: string): Promise<void> {
     logInfo(log, "session_finish", {
       channel: this.channel,
@@ -524,7 +560,9 @@ class ProgressSession {
 
   private async flush(): Promise<void> {
     const elapsed = formatDuration(Date.now() - this.startTime);
-    const hasExtras = this.recentMemory.length > 0 || this.recentDelegates.length > 0;
+    const context = shouldRenderContext(this.latestContext) ? this.latestContext : undefined;
+    const hasExtras =
+      this.recentMemory.length > 0 || this.recentDelegates.length > 0 || !!context;
     const toolLimit = hasExtras ? 5 : 3;
     const toolGroups = this.lastToolGroups.slice(-toolLimit);
 
@@ -545,6 +583,9 @@ class ProgressSession {
     }
     if (this.recentDelegates.length > 0) {
       lines.push(`• agents: ${formatDelegates(this.recentDelegates)}`);
+    }
+    if (context) {
+      lines.push(`• context: ${formatContextStatus(context)}`);
     }
 
     const text = lines.join("\n");
@@ -612,6 +653,15 @@ export async function handleProgressEvent(
       ? { action: event.action, path: event.path, source: event.source }
       : {}),
     ...(event.type === "delegate" ? { agent: event.agent } : {}),
+    ...(event.type === "context"
+      ? {
+          providerID: event.providerID,
+          modelID: event.modelID,
+          tokens: event.tokens,
+          limit: event.limit,
+          usagePercent: event.usagePercent,
+        }
+      : {}),
     ...(event.type === "done" ? { status: event.status } : {}),
     hasSession: activeSessions.has(key),
     ts: Date.now(),
@@ -647,6 +697,15 @@ export async function handleProgressEvent(
       break;
     case "delegate":
       await session.onDelegate({ agent: event.agent });
+      break;
+    case "context":
+      await session.onContext({
+        providerID: event.providerID,
+        modelID: event.modelID,
+        tokens: event.tokens,
+        limit: event.limit,
+        usagePercent: event.usagePercent,
+      });
       break;
     case "done": {
       // A late `done` from a superseded stream must not finish the current

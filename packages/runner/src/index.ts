@@ -88,6 +88,7 @@ const MEMORY_DIR = "/workspace/memory";
 const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
+type ModelContextLimits = Map<string, number>;
 
 export interface RunnerAppOptions {
   opencodeUrl?: string;
@@ -736,6 +737,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         baseUrl: opencodeUrl,
         directory: sessionDirectory,
       });
+      const modelContextLimits = await resolveModelContextLimits(client);
 
       if (!requestedSessionId && correlationKey) {
         await ensureAnchorForCorrelationKey(correlationKey);
@@ -947,6 +949,15 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             ? { action: event.action, path: event.path, source: event.source }
             : {}),
           ...(event.type === "delegate" ? { agent: event.agent } : {}),
+          ...(event.type === "context"
+            ? {
+                providerID: event.providerID,
+                modelID: event.modelID,
+                tokens: event.tokens,
+                limit: event.limit,
+                usagePercent: event.usagePercent,
+              }
+            : {}),
           ...(event.type === "done"
             ? { status: event.status, durationMs: (event as { durationMs?: number }).durationMs }
             : {}),
@@ -1049,6 +1060,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             appendSessionEvent(originSessionId, { type: "opencode_event", event });
 
             const isParent = isSessionEvent(event, sessionId);
+
+            if (isParent && event.type === "message.updated") {
+              emitContextProgressFromMessage(event, modelContextLimits, emit);
+            }
 
             // Forward tool progress from child sessions so
             // Slack progress isn't silent while a task runs.
@@ -1266,6 +1281,10 @@ async function withNdjsonHeartbeat<T>(
 
 function eventSessionId(event: Event): string | undefined {
   if (event.type === "message.part.updated") return event.properties.part.sessionID;
+  if (event.type === "message.updated") {
+    const info = messageUpdatedInfo(event);
+    return safeStr(info?.sessionID) ?? safeStr(info?.sessionId);
+  }
   if (
     event.type === "session.idle" ||
     event.type === "session.status" ||
@@ -1274,6 +1293,120 @@ function eventSessionId(event: Event): string | undefined {
     return event.properties.sessionID;
   }
   return undefined;
+}
+
+function contextLimitKey(providerID: string, modelID: string): string {
+  return `${providerID}/${modelID}`;
+}
+
+async function resolveModelContextLimits(client: OpencodeClient): Promise<ModelContextLimits> {
+  const limits: ModelContextLimits = new Map();
+  const candidates = await loadOpencodeConfigCandidates(client);
+  for (const candidate of candidates) collectModelContextLimits(candidate, limits);
+  return limits;
+}
+
+async function loadOpencodeConfigCandidates(client: OpencodeClient): Promise<unknown[]> {
+  const raw = client as unknown as Record<string, unknown>;
+  const candidates: unknown[] = [];
+
+  const invoke = async (path: string[]): Promise<void> => {
+    let current: unknown = raw;
+    for (const segment of path) {
+      if (!isRecord(current)) return;
+      current = current[segment];
+    }
+    if (typeof current !== "function") return;
+    try {
+      const result = await current.call(path.length === 2 ? raw[path[0]] : raw, {});
+      candidates.push(isRecord(result) && "data" in result ? result.data : result);
+    } catch (err) {
+      logWarn(log, "model_context_config_read_failed", {
+        path: path.join("."),
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
+  await invoke(["config", "get"]);
+  await invoke(["app", "config"]);
+  await invoke(["provider", "list"]);
+  return candidates;
+}
+
+function collectModelContextLimits(value: unknown, limits: ModelContextLimits): void {
+  const root = isRecord(value) && isRecord(value.data) ? value.data : value;
+  const providers = providerCollection(root);
+  if (!providers) return;
+
+  for (const [providerID, providerValue] of objectEntriesWithIds(providers)) {
+    if (!isRecord(providerValue)) continue;
+    const models = providerValue.models ?? providerValue.model;
+    if (!models) continue;
+    for (const [modelID, modelValue] of objectEntriesWithIds(models)) {
+      if (!isRecord(modelValue)) continue;
+      const limit = isRecord(modelValue.limit) ? modelValue.limit.context : undefined;
+      if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) continue;
+      limits.set(contextLimitKey(providerID, modelID), Math.floor(limit));
+    }
+  }
+}
+
+function providerCollection(value: unknown): unknown {
+  if (Array.isArray(value)) return value;
+  if (!isRecord(value)) return undefined;
+  return value.providers ?? value.provider ?? value;
+}
+
+function objectEntriesWithIds(value: unknown): Array<[string, unknown]> {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      if (!isRecord(item)) return [];
+      const id = safeStr(item.id) ?? safeStr(item.providerID) ?? safeStr(item.modelID);
+      return id ? [[id, item] as [string, unknown]] : [];
+    });
+  }
+  if (!isRecord(value)) return [];
+  return Object.entries(value).map(([key, item]) => {
+    const id = isRecord(item)
+      ? (safeStr(item.id) ?? safeStr(item.providerID) ?? safeStr(item.modelID) ?? key)
+      : key;
+    return [id, item];
+  });
+}
+
+function messageUpdatedInfo(event: Event): Record<string, unknown> | undefined {
+  const properties = (event as unknown as { properties?: unknown }).properties;
+  if (!isRecord(properties)) return undefined;
+  const info = properties.info ?? properties.message;
+  return isRecord(info) ? info : undefined;
+}
+
+function emitContextProgressFromMessage(
+  event: Event,
+  limits: ModelContextLimits,
+  emit: (event: ProgressEvent) => void,
+): void {
+  const info = messageUpdatedInfo(event);
+  if (!info) return;
+  const role = safeStr(info.role) ?? safeStr(info.type);
+  if (role && role !== "assistant") return;
+  const providerID = safeStr(info.providerID) ?? safeStr(info.providerId);
+  const modelID = safeStr(info.modelID) ?? safeStr(info.modelId);
+  if (!providerID || !modelID) return;
+  const limit = limits.get(contextLimitKey(providerID, modelID));
+  if (!limit) return;
+  const tokens = numericTokenTotal(info.tokens);
+  if (tokens === undefined) return;
+  const tokenTotal = Math.max(0, Math.floor(tokens));
+  emit({
+    type: "context",
+    providerID,
+    modelID,
+    tokens: tokenTotal,
+    limit,
+    usagePercent: (tokenTotal / limit) * 100,
+  });
 }
 
 function isSessionEvent(event: Event, sessionId: string): boolean {

@@ -98,6 +98,23 @@ Expand the Slack progress message so long-running sessions can also show:
 - No timer outlives its `ProgressSession`
 - Existing throttle test (10s window for event-driven flushes) still passes
 
+### Phase 4 — Context-window status
+
+**Changes**
+
+- Extend `ProgressEventSchema` with a typed `context` event carrying the model identity, current token total, context limit, and computed usage percentage. Keep the event separate from `tool` so tool thresholds/counts remain unchanged.
+- In `runner`, resolve model context limits once per trigger from the OpenCode provider/config surface (same source OpenCode `run` uses in `runtime.boot.ts`: provider model `limit.context`, keyed as `providerID/modelID`). While consuming SSE, handle `message.updated` for assistant messages and emit `context` events from `info.tokens`, `info.providerID`, and `info.modelID` whenever a positive limit is known. Emit percentages below 50 too; the gateway owns the render threshold so a later compaction/model change can hide the line again.
+- In `gateway` `ProgressSession`, store the latest context status and include a compact progress line only when `usagePercent >= 50`, e.g. `• context: 63% (126k / 200k tokens)`. Do not let context events create a Slack progress message before the existing 3-tool threshold; after the threshold is met, context changes may flush using the same throttled/immediate semantics as memory/delegate updates.
+- Thread `context` through progress logging/dispatch without changing final `done` payloads or persisted session viewer behavior.
+- Add targeted coverage in `common`, `runner`, and `gateway` for schema validation, runner extraction from `message.updated`, render/no-render threshold behavior, and no tool-threshold side effects.
+
+**Exit criteria**
+
+- Slack progress updates show a context line when the latest known usage is at least 50% and omit/remove it when the latest known usage is below 50% or no limit is available.
+- Context events do not increment tool count, do not satisfy the 3-tool threshold, and do not alter final success/error behavior.
+- Runner uses OpenCode's provider/model context limits rather than hard-coded limits.
+- Existing memory/delegate/tool formatting and heartbeat/throttle behavior remain unchanged.
+
 ## Decision log
 
 | #   | Decision                                                                                | Rationale                                                                                          | Rejected                                                                              |
@@ -110,3 +127,13 @@ Expand the Slack progress message so long-running sessions can also show:
 | 6   | Emit `tool` event on `running` (deduped by `callID`) instead of waiting for `completed` | Long tools were silent for minutes; users want to see what's currently running                     | Adding a separate `tool_start` event type — would fork rendering logic in `slack-mcp` |
 | 7   | Use recursive `setTimeout` rather than `setInterval` for the elapsed-timer heartbeat    | Lets the next delay adapt to the session's age and avoids runaway interval if a tick handler hangs | A fixed `setInterval` with branching inside the callback                              |
 | 8   | Back off heartbeat cadence (10s → 30s past 10m → 60s past 60m)                          | Avoids burning Slack `chat.update` calls on tiny relative increments for hour-long sessions        | Constant 10s cadence forever                                                          |
+| 9   | Add a separate `context` progress event instead of extending `tool`, `memory`, or `done` | Context-window status is live session state, not a tool call or terminal result                    | Encoding context usage into tool names or only appending it to `done`                 |
+| 10  | Gate context visibility in the gateway at render time (`>= 50%`)                         | Lets later low-usage updates remove the line after compaction/model changes while preserving relay semantics | Suppressing sub-50 events in `runner`, which could leave stale high-usage Slack text  |
+| 11  | Resolve model limits from OpenCode provider/config metadata                              | Keeps Thor aligned with OpenCode's own context-window source of truth and avoids hard-coded limits | Maintaining a Thor-owned model limit table                                            |
+| 12  | Render percentage plus token total/limit, but not cost, in Slack progress                | The user-facing risk is context-window saturation; cost already belongs to terminal/session summaries | Copying OpenCode's full footer usage text including cost                              |
+
+## Targeted verification
+
+- `pnpm vitest run packages/common/src/progress-events.test.ts packages/gateway/src/progress-manager.test.ts packages/runner/src/trigger.test.ts`
+- `pnpm --filter @thor/common typecheck && pnpm --filter @thor/gateway typecheck && pnpm --filter @thor/runner typecheck`
+- If the touched tests are not file-scoped or new common tests are added under a different name, run `pnpm test` only if the targeted Vitest invocation is insufficient.

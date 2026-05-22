@@ -85,6 +85,29 @@ function textEvent(sessionId: string, text: string): Event {
   } as Event;
 }
 
+function messageUpdatedEvent(
+  sessionId: string,
+  opts: { providerID: string; modelID: string; tokens: unknown; role?: string } = {
+    providerID: "openai",
+    modelID: "gpt-5.5",
+    tokens: { input: 100_000, output: 20_000, reasoning: 6_000 },
+    role: "assistant",
+  },
+): Event {
+  return {
+    type: "message.updated",
+    properties: {
+      info: {
+        sessionID: sessionId,
+        role: opts.role ?? "assistant",
+        providerID: opts.providerID,
+        modelID: opts.modelID,
+        tokens: opts.tokens,
+      },
+    },
+  } as unknown as Event;
+}
+
 function idleEvent(sessionId: string): Event {
   return { type: "session.idle", properties: { sessionID: sessionId } } as Event;
 }
@@ -184,6 +207,7 @@ function createHarness(
     promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
     throwInSubscribe?: boolean;
     workspaceConfig?: WorkspaceConfig;
+    opencodeConfig?: unknown;
   } = {},
 ) {
   const buses = new FakeEventBuses();
@@ -234,6 +258,9 @@ function createHarness(
         return { data: {} };
       },
       children: async () => ({ data: opts.children ?? [] }),
+    },
+    config: {
+      get: async () => ({ data: opts.opencodeConfig ?? {} }),
     },
   };
 
@@ -1148,6 +1175,64 @@ describe("runner /trigger orchestration", () => {
       });
       expect(h.prompts[1]).not.toContain("root memory text");
       expect(h.prompts[1]).not.toContain("repo memory text");
+    });
+  });
+
+  it("emits context progress from assistant message updates using configured model limits", async () => {
+    const h = createHarness({
+      opencodeConfig: {
+        provider: {
+          openai: {
+            models: {
+              "gpt-5.5": { limit: { context: 200_000 } },
+            },
+          },
+        },
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.090",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toMatchObject({
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 126_000,
+        limit: 200_000,
+        usagePercent: 63,
+      });
+      expect(result.events.filter((e) => e.type === "tool")).toHaveLength(0);
+    });
+  });
+
+  it("skips context progress when no positive configured model limit is known", async () => {
+    const h = createHarness({
+      opencodeConfig: {
+        provider: { openai: { models: { "gpt-5.5": { limit: { context: 0 } } } } },
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.091",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toBeUndefined();
     });
   });
 

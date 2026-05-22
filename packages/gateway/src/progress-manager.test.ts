@@ -123,6 +123,90 @@ describe("ProgressManager", () => {
     expect(postCall.text).toContain("agents: research-agent");
   });
 
+  it("renders context only at or above 50 percent and removes it on later lower usage", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 90_000,
+        limit: 200_000,
+        usagePercent: 45,
+      },
+      deps,
+      "",
+    );
+    await sendTools(deps, 3);
+
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).not.toContain("context:");
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 126_000,
+        limit: 200_000,
+        usagePercent: 63,
+      },
+      deps,
+      "",
+    );
+
+    const highUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
+    expect(highUpdate.text).toContain("context: 63% (126k / 200k tokens)");
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 80_000,
+        limit: 200_000,
+        usagePercent: 40,
+      },
+      deps,
+      "",
+    );
+
+    const lowUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
+    expect(lowUpdate.text).not.toContain("context:");
+  });
+
+  it("does not let context events satisfy the tool threshold", async () => {
+    const deps = mockSlackDeps();
+
+    for (let i = 0; i < 3; i++) {
+      await handleProgressEvent(
+        "C123",
+        "1710000000.001",
+        {
+          type: "context",
+          providerID: "openai",
+          modelID: "gpt-5.5",
+          tokens: 150_000 + i,
+          limit: 200_000,
+          usagePercent: 75,
+        },
+        deps,
+        "",
+      );
+    }
+
+    expect(chat(deps).postMessage).not.toHaveBeenCalled();
+    await sendTools(deps, 2);
+    expect(chat(deps).postMessage).not.toHaveBeenCalled();
+  });
+
   it("renders delegate context from task-derived delegate events", async () => {
     const deps = mockSlackDeps();
 
