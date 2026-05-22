@@ -1,6 +1,6 @@
 ---
 name: slack
-description: Read Slack threads or channel history and post concise bot replies through slack-post-message when the user asks to answer in Slack or when a Slack event payload provides channel and thread context.
+description: Read Slack threads or channel history, post concise bot replies, and create channel canvases for longer Slack artifacts when the user asks to answer in Slack or when a Slack event payload provides channel and thread context.
 ---
 
 ## When to use
@@ -12,6 +12,7 @@ Use this skill when:
 - you need to read a Slack thread before answering
 - you need recent channel context to understand a Slack discussion
 - you need to fetch a Slack file mentioned in a thread
+- you need to create a longer Slack artifact or report as a channel canvas
 
 General reply policy lives in `build.md`. This skill only covers how to read
 and write Slack through the proxy.
@@ -25,9 +26,11 @@ Talk to Slack through real upstream URLs:
 
 Authentication is injected automatically, do not pass `Authorization` header.
 
-The default tool for Slack reads is `curl`. For message writes, use `slack-post-message`.
-For file uploads, prefer `slack-upload` over manually calling Slack's
-multi-step upload endpoints.
+The default tool for Slack reads and canvas creation is `curl`. For message writes, use `slack-post-message`.
+Only upload files when the user explicitly requests a file attachment or upload;
+when you need to share a longer report/artifact, create a channel canvas by
+default. For requested file uploads, prefer `slack-upload` over manually calling
+Slack's multi-step upload endpoints.
 
 ## Temporary files
 
@@ -53,11 +56,13 @@ Do not use fixed paths like `/tmp/report.txt` or relative paths like
 
 ## Allowed Slack endpoints
 
-The proxy supports the read/post/upload/react endpoints used by the workflows
-below (`conversations.replies`, `conversations.history`, `files.info`,
+The proxy supports the read/post/canvas/upload/react endpoints used by the
+workflows below (`conversations.replies`, `conversations.history`,
+`files.info`, `canvases.create`, `conversations.canvases.create`,
 `reactions.add`, the message-post and external-upload paths, and supported
-`files.slack.com` file URLs). Other Slack methods — including update/delete
-and reaction update/remove — return a proxy denial.
+`files.slack.com` file URLs). Other Slack methods — including update/delete,
+canvas edit/delete/access changes, and reaction update/remove — return a proxy
+denial.
 
 ## Core workflow
 
@@ -153,7 +158,36 @@ curl -sS -X POST https://slack.com/api/reactions.add \
   --data-urlencode 'name=done'
 ```
 
-### 6. Upload a file
+### 6. Create a channel canvas for longer artifacts
+
+When the answer is a longer report, runbook, investigation note, or other
+artifact, create a Slack canvas on the target channel by default instead of
+uploading a file. Use the channel ID from context and include a clear title.
+
+```bash
+curl -sS -X POST https://slack.com/api/conversations.canvases.create \
+  -H 'content-type: application/json; charset=utf-8' \
+  --data @- <<'JSON'
+{
+  "channel_id": "C123",
+  "title": "Deployment investigation summary",
+  "document_content": {
+    "type": "markdown",
+    "markdown": "# Deployment investigation summary\n\n- Deploy is healthy\n- Backlog drain is complete"
+  }
+}
+JSON
+```
+
+Use `canvases.create` only when you specifically need a standalone canvas; if
+you have a channel target, prefer `conversations.canvases.create` so the canvas
+is attached to that channel.
+
+### 7. Upload a file only when requested
+
+Use `slack-upload` only when the user explicitly asks for a file attachment,
+file upload, or a specific file format. Do not upload files as the default way
+to share reports; use a channel canvas for those.
 
 Use the helper instead of re-creating Slack's external upload flow inline.
 Generate the file in a unique temp path first unless the user explicitly asks
@@ -173,7 +207,7 @@ EOF
 slack-upload "$REPORT_FILE" \
   --channel C123 \
   --thread-ts 1710000000.001 \
-  --comment 'Attached the report.'
+  --comment 'Attached the requested report file.'
 ```
 
 ## Response handling
@@ -199,9 +233,11 @@ Common failures to report as-is:
 - Do not use literal `\n` inside single-quoted `text=...` arguments.
 - Do not use shared temp paths. Default to `mktemp` under `/tmp`; use
   `mktemp -d` when you need a stable filename inside a unique temp directory.
-- Use `slack-upload` for uploads; it wraps `files.getUploadURLExternal`,
-  the raw `files.slack.com/upload/v1/...` upload, and
-  `files.completeUploadExternal`.
+- Create a channel canvas by default for longer reports/artifacts; upload a
+  file only when the user explicitly asks for a file attachment or upload.
+- Use `slack-upload` for requested uploads; it wraps
+  `files.getUploadURLExternal`, the raw `files.slack.com/upload/v1/...`
+  upload, and `files.completeUploadExternal`.
 - `/tmp` is the default location for temporary Slack artifacts. Treat
   `/workspace/worktrees` as persistent storage and use it only when
   persistence is explicitly requested.

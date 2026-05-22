@@ -106,6 +106,17 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     slack_upload_complete = ruleset.classify("slack.com", "/api/files.completeUploadExternal")
     assert slack_upload_complete.action == "inject"
 
+    slack_canvas_create = ruleset.classify("slack.com", "/api/canvases.create")
+    assert slack_canvas_create.action == "inject"
+
+    slack_channel_canvas_create = ruleset.classify(
+        "slack.com", "/api/conversations.canvases.create"
+    )
+    assert slack_channel_canvas_create.action == "inject"
+
+    slack_canvas_edit = ruleset.classify("slack.com", "/api/canvases.edit")
+    assert slack_canvas_edit.action == "deny"
+
     slack_update = ruleset.classify("slack.com", "/api/chat.update")
     assert slack_update.action == "deny"
 

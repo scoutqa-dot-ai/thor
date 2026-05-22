@@ -161,6 +161,16 @@ BUILTIN_RULES = [
         path_prefix="/api/files.completeUploadExternal",
     ),
     InjectRule(
+        host="slack.com",
+        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+        path_prefix="/api/canvases.create",
+    ),
+    InjectRule(
+        host="slack.com",
+        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
+        path_prefix="/api/conversations.canvases.create",
+    ),
+    InjectRule(
         host="files.slack.com",
         headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
         path_prefix="/upload/v1/",

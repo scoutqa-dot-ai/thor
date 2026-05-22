@@ -15,6 +15,7 @@
         "app_mentions:read",
         "bookmarks:read",
         "canvases:read",
+        "canvases:write",
         "channels:history",
         "channels:read",
         "chat:write",
