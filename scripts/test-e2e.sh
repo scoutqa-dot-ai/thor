@@ -626,7 +626,7 @@ elif assert_attribution_config; then
     assert '[[ "$issue_logs" == *"\"event\":\"exec_gh\""*"\"issue\""*"\"create\""*"\"--assignee\""*"\"${ATTRIBUTION_E2E_GITHUB}\""* ]]' \
       "attribution e2e: gh issue create invocation includes --assignee with the configured github login" \
       "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in issue create exec_gh args; logs: ${issue_logs:0:1500}"
-    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh\""*"$issue_body"*"View Thor context"* ]]' \
+    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh\""*"$issue_body"*"View Neo context"* ]]' \
       "attribution e2e: gh issue create invocation keeps the traced body footer" \
       "expected original body marker and Thor context footer in exec_gh args; logs: ${issue_logs:0:1500}"
   fi

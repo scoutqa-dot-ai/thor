@@ -1,7 +1,7 @@
 import { findActiveTrigger, findAnchorContext } from "./event-log.js";
 
 export function formatThorContextFooter(thorUrl: string): string {
-  return ["", "---", `AI-generated — verify before acting. [View Thor context](${thorUrl})`].join(
+  return ["", "---", `AI-generated — verify before acting. [View Neo context](${thorUrl})`].join(
     "\n",
   );
 }
