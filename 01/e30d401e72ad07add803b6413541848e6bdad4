@@ -1,0 +1,27 @@
+docker-compose.yml
+  b6f664c3bc10ae98 172-173
+README.md
+  b6f664c3bc10ae98 151-152
+.env.example
+  b6f664c3bc10ae98 110-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "01e30d401e72ad07add803b6413541848e6bdad4",
+  "prompts": {
+    "b6f664c3bc10ae98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "85ff5fcc-17ac-40a6-9ee6-f9803c5d95f5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 4,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
