@@ -90,10 +90,11 @@ const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 type ModelContextLimits = Map<string, number>;
 const MODEL_CONTEXT_LIMIT_CACHE_TTL_MS = 5 * 60_000;
-let cachedModelContextLimits:
-  | { expiresAt: number; limits: ModelContextLimits; opencodeUrl: string }
-  | undefined;
-let cachedModelContextLimitsPending: Promise<ModelContextLimits> | undefined;
+const cachedModelContextLimits = new Map<
+  string,
+  { expiresAt: number; limits: ModelContextLimits }
+>();
+const cachedModelContextLimitsPending = new Map<string, Promise<ModelContextLimits>>();
 
 export interface RunnerAppOptions {
   opencodeUrl?: string;
@@ -742,7 +743,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         baseUrl: opencodeUrl,
         directory: sessionDirectory,
       });
-      const modelContextLimits = await resolveModelContextLimits(client, opencodeUrl);
 
       if (!requestedSessionId && correlationKey) {
         await ensureAnchorForCorrelationKey(correlationKey);
@@ -862,6 +862,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           logInfo(log, "session_abort_complete", { sessionId });
         }
       }
+
+      let modelContextLimitsPromise: Promise<ModelContextLimits> | undefined;
+      const getModelContextLimits = (): Promise<ModelContextLimits> => {
+        modelContextLimitsPromise ??= resolveModelContextLimits(client, opencodeUrl);
+        return modelContextLimitsPromise;
+      };
 
       const bootstrapMemoryPaths: string[] = [];
 
@@ -1067,7 +1073,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             const isParent = isSessionEvent(event, sessionId);
 
             if (isParent && event.type === "message.updated") {
-              emitContextProgressFromMessage(event, modelContextLimits, emit);
+              await emitContextProgressFromMessage(event, getModelContextLimits, emit);
             }
 
             // Forward tool progress from child sessions so
@@ -1087,9 +1093,15 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   } else if (status === "completed" || status === "error") {
                     emitToolProgress(toolPart, status);
                     emitMemoryEventsFromToolPart(toolPart, emit);
-                  }
-                }
-              }
+          }
+        }
+      }
+
+      let modelContextLimitsPromise: Promise<ModelContextLimits> | undefined;
+      const getModelContextLimits = (): Promise<ModelContextLimits> => {
+        modelContextLimitsPromise ??= resolveModelContextLimits(client, opencodeUrl);
+        return modelContextLimitsPromise;
+      };
               continue;
             }
 
@@ -1309,31 +1321,34 @@ async function resolveModelContextLimits(
   opencodeUrl: string,
 ): Promise<ModelContextLimits> {
   const now = Date.now();
-  const cached = cachedModelContextLimits;
-  if (cached && cached.opencodeUrl === opencodeUrl && cached.expiresAt > now) {
+  const cached = cachedModelContextLimits.get(opencodeUrl);
+  if (cached && cached.expiresAt > now) {
     return cached.limits;
   }
 
-  if (cachedModelContextLimitsPending) {
-    return cachedModelContextLimitsPending;
+  const pending = cachedModelContextLimitsPending.get(opencodeUrl);
+  if (pending) {
+    return pending;
   }
 
-  cachedModelContextLimitsPending = (async () => {
+  const promise = (async () => {
     const limits: ModelContextLimits = new Map();
     const candidates = await loadOpencodeConfigCandidates(client);
     for (const candidate of candidates) collectModelContextLimits(candidate, limits);
-    cachedModelContextLimits = {
-      opencodeUrl,
+    cachedModelContextLimits.set(opencodeUrl, {
       limits,
       expiresAt: Date.now() + MODEL_CONTEXT_LIMIT_CACHE_TTL_MS,
-    };
+    });
     return limits;
   })();
+  cachedModelContextLimitsPending.set(opencodeUrl, promise);
 
   try {
-    return await cachedModelContextLimitsPending;
+    return await promise;
   } finally {
-    cachedModelContextLimitsPending = undefined;
+    if (cachedModelContextLimitsPending.get(opencodeUrl) === promise) {
+      cachedModelContextLimitsPending.delete(opencodeUrl);
+    }
   }
 }
 
@@ -1413,11 +1428,11 @@ function messageUpdatedInfo(event: Event): Record<string, unknown> | undefined {
   return isRecord(info) ? info : undefined;
 }
 
-function emitContextProgressFromMessage(
+async function emitContextProgressFromMessage(
   event: Event,
-  limits: ModelContextLimits,
+  getLimits: () => Promise<ModelContextLimits>,
   emit: (event: ProgressEvent) => void,
-): void {
+): Promise<void> {
   const info = messageUpdatedInfo(event);
   if (!info) return;
   const role = safeStr(info.role) ?? safeStr(info.type);
@@ -1425,6 +1440,7 @@ function emitContextProgressFromMessage(
   const providerID = safeStr(info.providerID) ?? safeStr(info.providerId);
   const modelID = safeStr(info.modelID) ?? safeStr(info.modelId);
   if (!providerID || !modelID) return;
+  const limits = await getLimits();
   const limit = limits.get(contextLimitKey(providerID, modelID));
   if (!limit) return;
   const tokens = numericTokenTotal(info.tokens);

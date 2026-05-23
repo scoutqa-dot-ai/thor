@@ -1296,6 +1296,78 @@ describe("runner /trigger orchestration", () => {
     expect(configGets).toBe(1);
   });
 
+  it("does not share pending model-limit lookups across different opencode urls", async () => {
+    let configGetsA = 0;
+    let configGetsB = 0;
+    const promptEvents = (sessionId: string) => [
+      messageUpdatedEvent(sessionId),
+      textEvent(sessionId, "done"),
+      idleEvent(sessionId),
+    ];
+
+    const a = createHarness({
+      opencodeUrl: "http://opencode-a.test:4096",
+      onConfigGet: () => {
+        configGetsA++;
+      },
+      opencodeConfig: {
+        provider: { openai: { models: { "gpt-5.5": { limit: { context: 200_000 } } } } },
+      },
+      promptEvents,
+    });
+    const b = createHarness({
+      opencodeUrl: "http://opencode-b.test:4096",
+      onConfigGet: () => {
+        configGetsB++;
+      },
+      opencodeConfig: {
+        provider: { openai: { models: { "gpt-5.5": { limit: { context: 200_000 } } } } },
+      },
+      promptEvents,
+    });
+
+    await withServer(a.app, async (urlA) => {
+      await withServer(b.app, async (urlB) => {
+        await Promise.all([
+          trigger(urlA, { prompt: "large search a", correlationKey: "slack:thread:1710000000.095" }),
+          trigger(urlB, { prompt: "large search b", correlationKey: "slack:thread:1710000000.096" }),
+        ]);
+      });
+    });
+
+    expect(configGetsA).toBe(1);
+    expect(configGetsB).toBe(1);
+  });
+
+  it("skips model-limit resolution on resumed busy sessions when interrupt is false", async () => {
+    let configGets = 0;
+    const h = createHarness({
+      existingSessions: new Set(["busy-session"]),
+      busySessions: new Set(["busy-session"]),
+      onConfigGet: () => {
+        configGets++;
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/trigger`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt: "hello",
+          sessionId: "busy-session",
+          correlationKey: "slack:thread:1710000000.097",
+          directory: "/workspace/repos/runner-trigger-test",
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ busy: true });
+    });
+
+    expect(configGets).toBe(0);
+  });
+
   it("skips context progress when no positive configured model limit is known", async () => {
     const h = createHarness({
       opencodeConfig: {
