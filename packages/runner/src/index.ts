@@ -1093,16 +1093,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   } else if (status === "completed" || status === "error") {
                     emitToolProgress(toolPart, status);
                     emitMemoryEventsFromToolPart(toolPart, emit);
-          }
-        }
-      }
-
-      let modelContextLimitsPromise: Promise<ModelContextLimits> | undefined;
-      const getModelContextLimits = (): Promise<ModelContextLimits> => {
-        modelContextLimitsPromise ??= resolveModelContextLimits(client, opencodeUrl);
-        return modelContextLimitsPromise;
-      };
-              continue;
+                  }
+                }
+                continue;
+              }
             }
 
             if (event.type === "message.part.updated") {
