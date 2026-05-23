@@ -161,7 +161,7 @@ describe("ProgressManager", () => {
     );
 
     const highUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
-    expect(highUpdate.text).toContain("context: 63% (126k / 200k tokens)");
+    expect(highUpdate.text).toContain("context: 63% (126.0K / 200.0K tokens)");
 
     await handleProgressEvent(
       "C123",
@@ -202,7 +202,7 @@ describe("ProgressManager", () => {
     );
 
     const update = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
-    expect(update.text).toContain("context: 50% (100k / 200k tokens)");
+    expect(update.text).toContain("context: 50% (99.9K / 200.0K tokens)");
   });
 
   it("does not let context events satisfy the tool threshold", async () => {
