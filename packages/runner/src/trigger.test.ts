@@ -204,10 +204,12 @@ function createHarness(
     busySessions?: Set<string>;
     children?: Array<{ id: string }>;
     onGet?: (sessionId: string) => Promise<void>;
+    onConfigGet?: () => void;
     promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
     throwInSubscribe?: boolean;
     workspaceConfig?: WorkspaceConfig;
     opencodeConfig?: unknown;
+    opencodeUrl?: string;
   } = {},
 ) {
   const buses = new FakeEventBuses();
@@ -260,11 +262,15 @@ function createHarness(
       children: async () => ({ data: opts.children ?? [] }),
     },
     config: {
-      get: async () => ({ data: opts.opencodeConfig ?? {} }),
+      get: async () => {
+        opts.onConfigGet?.();
+        return { data: opts.opencodeConfig ?? {} };
+      },
     },
   };
 
   const app = createRunnerApp({
+    opencodeUrl: opts.opencodeUrl ?? `http://opencode.test/${Math.random().toString(16).slice(2)}`,
     eventBuses: opts.throwInSubscribe
       ? ({
           subscribe: async () => {
@@ -1252,6 +1258,42 @@ describe("runner /trigger orchestration", () => {
         usagePercent: 50,
       });
     });
+  });
+
+  it("caches resolved model context limits in memory across triggers", async () => {
+    let configGets = 0;
+    const h = createHarness({
+      onConfigGet: () => {
+        configGets++;
+      },
+      opencodeConfig: {
+        provider: {
+          openai: {
+            models: {
+              "gpt-5.5": { limit: { context: 200_000 } },
+            },
+          },
+        },
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      await trigger(url, {
+        prompt: "large search one",
+        correlationKey: "slack:thread:1710000000.093",
+      });
+      await trigger(url, {
+        prompt: "large search two",
+        correlationKey: "slack:thread:1710000000.094",
+      });
+    });
+
+    expect(configGets).toBe(1);
   });
 
   it("skips context progress when no positive configured model limit is known", async () => {

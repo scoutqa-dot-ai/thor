@@ -89,6 +89,11 @@ const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 type ModelContextLimits = Map<string, number>;
+const MODEL_CONTEXT_LIMIT_CACHE_TTL_MS = 5 * 60_000;
+let cachedModelContextLimits:
+  | { expiresAt: number; limits: ModelContextLimits; opencodeUrl: string }
+  | undefined;
+let cachedModelContextLimitsPending: Promise<ModelContextLimits> | undefined;
 
 export interface RunnerAppOptions {
   opencodeUrl?: string;
@@ -737,7 +742,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         baseUrl: opencodeUrl,
         directory: sessionDirectory,
       });
-      const modelContextLimits = await resolveModelContextLimits(client);
+      const modelContextLimits = await resolveModelContextLimits(client, opencodeUrl);
 
       if (!requestedSessionId && correlationKey) {
         await ensureAnchorForCorrelationKey(correlationKey);
@@ -1299,11 +1304,37 @@ function contextLimitKey(providerID: string, modelID: string): string {
   return `${providerID}/${modelID}`;
 }
 
-async function resolveModelContextLimits(client: OpencodeClient): Promise<ModelContextLimits> {
-  const limits: ModelContextLimits = new Map();
-  const candidates = await loadOpencodeConfigCandidates(client);
-  for (const candidate of candidates) collectModelContextLimits(candidate, limits);
-  return limits;
+async function resolveModelContextLimits(
+  client: OpencodeClient,
+  opencodeUrl: string,
+): Promise<ModelContextLimits> {
+  const now = Date.now();
+  const cached = cachedModelContextLimits;
+  if (cached && cached.opencodeUrl === opencodeUrl && cached.expiresAt > now) {
+    return cached.limits;
+  }
+
+  if (cachedModelContextLimitsPending) {
+    return cachedModelContextLimitsPending;
+  }
+
+  cachedModelContextLimitsPending = (async () => {
+    const limits: ModelContextLimits = new Map();
+    const candidates = await loadOpencodeConfigCandidates(client);
+    for (const candidate of candidates) collectModelContextLimits(candidate, limits);
+    cachedModelContextLimits = {
+      opencodeUrl,
+      limits,
+      expiresAt: Date.now() + MODEL_CONTEXT_LIMIT_CACHE_TTL_MS,
+    };
+    return limits;
+  })();
+
+  try {
+    return await cachedModelContextLimitsPending;
+  } finally {
+    cachedModelContextLimitsPending = undefined;
+  }
 }
 
 async function loadOpencodeConfigCandidates(client: OpencodeClient): Promise<unknown[]> {

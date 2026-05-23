@@ -3,6 +3,7 @@ import {
   logInfo,
   logError,
   formatDuration,
+  formatTokens,
 } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
 import {
@@ -119,21 +120,12 @@ function formatDelegates(activities: DelegateActivity[]): string {
   return groups.map((g) => (g.count > 1 ? `${g.name} x${g.count}` : g.name)).join(", ");
 }
 
-function formatCompactTokens(value: number): string {
-  if (value >= 1_000_000) {
-    const rounded = Math.round(value / 100_000) / 10;
-    return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}M`;
-  }
-  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
-  return String(value);
-}
-
 function shouldRenderContext(context: ContextStatus | undefined): context is ContextStatus {
   return !!context && context.usagePercent >= 50;
 }
 
 function formatContextStatus(context: ContextStatus): string {
-  return `${context.usagePercent}% (${formatCompactTokens(context.tokens)} / ${formatCompactTokens(context.limit)} tokens)`;
+  return `${context.usagePercent}% (${formatTokens(context.tokens)} / ${formatTokens(context.limit)} tokens)`;
 }
 
 function formatMemoryFileLabels(shortPaths: string[]): string {
