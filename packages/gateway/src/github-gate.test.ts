@@ -159,4 +159,23 @@ describe("resolvePrChecksTerminalState", () => {
       exitCode: 1,
     });
   });
+
+  it("returns lookup_failed with error details when internalExec rejects", async () => {
+    const internalExec = vi
+      .fn<InternalExecClient>()
+      .mockRejectedValueOnce(new Error("remote-cli timeout"));
+
+    await expect(
+      resolvePrChecksTerminalState({
+        internalExec,
+        directory: "/workspace/repos/thor",
+        prNumber: 42,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      reason: "pr_checks_lookup_failed",
+      error: "remote-cli timeout",
+    });
+    expect(internalExec).toHaveBeenCalledTimes(1);
+  });
 });
