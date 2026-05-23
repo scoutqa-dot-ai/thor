@@ -1,0 +1,35 @@
+README.md
+  ae81d9223ee5d508 210
+packages/gateway/src/slack-channel-allowlist.test.ts
+  ae81d9223ee5d508 3,12-13,16,21-22,24,27-28,35,37,40-44,47,50,52,55,57,60
+packages/gateway/src/slack-api.ts
+  ae81d9223ee5d508 20,88-100,103-104,111,113,121
+packages/gateway/src/service.ts
+  ae81d9223ee5d508 35-36,671,687
+packages/gateway/src/app.ts
+  ae81d9223ee5d508 45-47,1007-1008,1012-1013,1030
+docs/feat/event-flow.md
+  ae81d9223ee5d508 46,49-50,55
+packages/gateway/src/app.test.ts
+  ae81d9223ee5d508 2435-2502
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "7edbb1bf683ffbb45e6895dc930868ba6bcdde9c",
+  "prompts": {
+    "ae81d9223ee5d508": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a673956b-56f9-47ea-b362-978b6b8ba4ea",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 134,
+      "total_deletions": 53,
+      "accepted_lines": 133,
+      "overriden_lines": 0
+    }
+  }
+}
