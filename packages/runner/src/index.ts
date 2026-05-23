@@ -952,6 +952,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       res.status(200);
 
       function emit(event: ProgressEvent): void {
+        if (res.writableEnded || res.destroyed) return;
         logInfo(log, "progress_emit", {
           sessionId,
           type: event.type,
@@ -1002,6 +1003,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       let latestSessionErrorAt: number | undefined;
       let finished = false;
       let sawParentMessagePart = false;
+      const pendingContextEmits = new Set<Promise<void>>();
 
       // Track child session IDs for progress forwarding.
       const childSessionIds = new Set<string>();
@@ -1073,7 +1075,19 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             const isParent = isSessionEvent(event, sessionId);
 
             if (isParent && event.type === "message.updated") {
-              await emitContextProgressFromMessage(event, getModelContextLimits, emit);
+              const contextEmit = emitContextProgressFromMessage(event, getModelContextLimits, emit)
+                .catch((err) =>
+                  logError(
+                    log,
+                    "context_progress_emit_failed",
+                    err instanceof Error ? err.message : String(err),
+                    { sessionId, eventType: event.type },
+                  ),
+                )
+                .finally(() => {
+                  pendingContextEmits.delete(contextEmit);
+                });
+              pendingContextEmits.add(contextEmit);
             }
 
             // Forward tool progress from child sessions so
@@ -1210,6 +1224,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       if (!finished && latestSessionError) {
         terminalError = latestSessionError;
+      }
+
+      if (pendingContextEmits.size > 0) {
+        await Promise.allSettled([...pendingContextEmits]);
       }
 
       const durationMs = Date.now() - promptStart;

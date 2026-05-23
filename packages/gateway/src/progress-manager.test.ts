@@ -230,6 +230,44 @@ describe("ProgressManager", () => {
     expect(chat(deps).postMessage).not.toHaveBeenCalled();
   });
 
+  it("does not flush for repeated sub-50 context updates with no rendered change", async () => {
+    const deps = mockSlackDeps();
+
+    await sendTools(deps, 3);
+    const updateCountBefore = chat(deps).update.mock.calls.length;
+
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 90_000,
+        limit: 200_000,
+        usagePercent: 45,
+      },
+      deps,
+      "",
+    );
+    await handleProgressEvent(
+      "C123",
+      "1710000000.001",
+      {
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 80_000,
+        limit: 200_000,
+        usagePercent: 40,
+      },
+      deps,
+      "",
+    );
+
+    expect(chat(deps).update.mock.calls.length).toBe(updateCountBefore);
+  });
+
   it("renders delegate context from task-derived delegate events", async () => {
     const deps = mockSlackDeps();
 

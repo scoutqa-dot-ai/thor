@@ -128,6 +128,11 @@ function formatContextStatus(context: ContextStatus): string {
   return `${context.usagePercent}% (${formatTokens(context.tokens)} / ${formatTokens(context.limit)} tokens)`;
 }
 
+function renderedContextText(context: ContextStatus | undefined): string | undefined {
+  if (!shouldRenderContext(context)) return undefined;
+  return formatContextStatus(context);
+}
+
 function formatMemoryFileLabels(shortPaths: string[]): string {
   if (shortPaths.length === 0) return "";
 
@@ -485,9 +490,23 @@ class ProgressSession {
 
   async onContext(status: ContextStatus): Promise<void> {
     if (this.finished) return;
+    const prevRendered = renderedContextText(this.latestContext);
     this.latestContext = status;
+    const nextRendered = renderedContextText(this.latestContext);
 
-    if (this.thresholdMet) {
+    if (!this.thresholdMet) {
+      return;
+    }
+
+    if (prevRendered === nextRendered) {
+      return;
+    }
+
+    if (
+      prevRendered === undefined ||
+      nextRendered === undefined ||
+      Date.now() - this.lastUpdateTime >= UPDATE_INTERVAL_MS
+    ) {
       await this.flush();
     }
   }
