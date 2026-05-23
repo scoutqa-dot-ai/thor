@@ -88,17 +88,9 @@ export async function addReaction(
   }
 }
 
-/**
- * Returns true when the event must pass the allowlist to be admitted.
- *
- * Only `channel_type === "channel"` (a regular public workspace channel) is
- * trusted as ungated. Every other surface — `group`, `im`, `mpim`, and any
- * event whose surface must be confirmed via `conversations.info` — is gated
- * and requires explicit allowlisting.
- *
- * Lookup failures and incomplete `conversations.info` responses fail closed
- * (return `true`).
- */
+// Returns true when the event must pass the allowlist to be admitted.
+// Only `channel_type === "channel"` is admitted ungated; missing types are
+// resolved via `conversations.info` and fail closed on any error.
 export async function isSlackEventGated(
   event: SlackChannelGateInput,
   deps: SlackDeps,
