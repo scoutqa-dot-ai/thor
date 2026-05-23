@@ -15,11 +15,16 @@ export interface SlackDeps {
   client: WebClient;
 }
 
-export type SlackChannelType = "channel" | "im" | "group" | "mpim";
-
 export interface SlackChannelGateInput {
   channel: string;
-  channel_type?: SlackChannelType;
+  /**
+   * Slack-supplied channel surface. Known values are `"channel"`, `"im"`,
+   * `"group"`, `"mpim"`, but we accept any string so future Slack surfaces
+   * (e.g. shared-channel envelopes) flow through the gate instead of being
+   * rejected at schema validation. Only `"channel"` admits without a check;
+   * anything else is gated.
+   */
+  channel_type?: string;
 }
 
 // Predates a scope broadening (now fires for DMs and MPIMs too); retained for log-grep continuity.

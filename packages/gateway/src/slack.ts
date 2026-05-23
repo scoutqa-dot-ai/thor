@@ -10,7 +10,7 @@ const SlackAppMentionEventSchema = z
     text: z.string(),
     ts: z.string(),
     channel: z.string(),
-    channel_type: z.enum(["channel", "im", "group", "mpim"]).optional(),
+    channel_type: z.string().optional(),
     thread_ts: z.string().optional(),
     bot_id: z.string().optional(),
   })
@@ -42,7 +42,7 @@ const SlackMessageEventSchema = z
     ts: z.string(),
     channel: z.string(),
     thread_ts: z.string().optional(),
-    channel_type: z.enum(["channel", "im", "group", "mpim"]).optional(),
+    channel_type: z.string().optional(),
     bot_id: z.string().optional(),
     subtype: z.string().optional(),
     files: z.array(SlackFileMetadataSchema).optional(),

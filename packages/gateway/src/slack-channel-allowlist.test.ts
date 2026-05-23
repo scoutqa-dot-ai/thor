@@ -47,6 +47,14 @@ describe("Slack channel gating", () => {
     await expect(isSlackEventGated({ channel: "C123" }, publicDeps)).resolves.toBe(false);
   });
 
+  it("gates unknown channel_type values (e.g. future Slack surfaces) without a lookup", async () => {
+    const deps = depsWithInfo();
+    await expect(
+      isSlackEventGated({ channel: "CSHARED", channel_type: "shared_channel" }, deps),
+    ).resolves.toBe(true);
+    expect(deps.info).not.toHaveBeenCalled();
+  });
+
   it("fails closed on lookup errors", async () => {
     const deps = depsWithInfo(vi.fn().mockRejectedValue(new Error("unavailable")));
     await expect(isSlackEventGated({ channel: "G123" }, deps)).resolves.toBe(true);
