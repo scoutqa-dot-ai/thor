@@ -39,7 +39,12 @@ import {
   type RunnerDeps,
 } from "./service.js";
 import { createSlackClient, type SlackDeps } from "./slack-api.js";
-import { resolvePrChecksTerminalState, verifyThorAuthoredSha } from "./github-gate.js";
+import {
+  resolvePrChecksTerminalState,
+  verifyThorAuthoredSha,
+  type PrCheckSummary,
+  type PrChecksAggregateOutput,
+} from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKeys,
@@ -87,6 +92,13 @@ interface CronQueuedEvent extends QueuedEvent<CronPayload> {
 interface GitHubQueuedEvent extends QueuedEvent<GitHubWebhookEvent> {
   source: "github";
 }
+
+type GitHubQueuedPayload = GitHubWebhookEvent & {
+  thor?: {
+    pr_checks: PrChecksAggregateOutput;
+    pr_checks_summary: PrCheckSummary[];
+  };
+};
 
 interface ApprovalQueuedEvent extends QueuedEvent<ApprovalOutcomeEventPayload> {
   source: "approval";
@@ -1615,7 +1627,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     let correlationKey: string;
     let delayMs = githubMentionDelay;
     let interrupt = true;
-    let payload: GitHubWebhookEvent | unknown = parsed.data;
+    let payload: GitHubQueuedPayload = parsed.data;
 
     if (isPullRequestClosedEvent(parsed.data)) {
       const rawKey = buildCorrelationKey(localRepo, parsed.data.pull_request.head.ref);
@@ -1764,34 +1776,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         return;
       }
 
-      const directory = resolveRepoDirectory(localRepo);
-      if (!directory) {
-        history.githubStream = "ignored";
-        history.parseStatus = "schema_valid";
-        history.action = parsed.data.action;
-        history.reason = "check_suite_gate_failed";
-        history.metadata = {
-          repoFullName,
-          localRepo,
-          rawKey,
-          resolvedKey,
-          headSha: parsed.data.check_suite.head_sha,
-          gateReason: "exec_failed",
-        };
-        logGitHubIgnored({
-          deliveryId,
-          repoFullName,
-          eventType: eventTypeHeader,
-          action: parsed.data.action,
-          reason: "check_suite_gate_failed",
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
       const gate = await verifyThorAuthoredSha({
         internalExec,
-        directory,
+        directory: repoDir,
         sha: parsed.data.check_suite.head_sha,
         expectedEmail: config.githubAppBotEmail ?? "",
       });
@@ -1821,7 +1808,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
       const prChecks = await resolvePrChecksTerminalState({
         internalExec,
-        directory,
+        directory: repoDir,
         prNumber,
       });
       if (!prChecks.ok) {
