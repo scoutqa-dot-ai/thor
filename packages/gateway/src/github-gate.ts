@@ -1,5 +1,7 @@
 import type { InternalExecClient } from "./service.js";
 
+type InternalExecResult = Awaited<ReturnType<InternalExecClient>>;
+
 export type CheckSuiteGateFailureReason = "sha_missing" | "author_mismatch" | "exec_failed";
 
 export type CheckSuiteGateResult =
@@ -95,7 +97,7 @@ export async function resolvePrChecksTerminalState(input: {
   directory: string;
   prNumber: number;
 }): Promise<PrChecksTerminalStateResult> {
-  let jsonResult;
+  let jsonResult: InternalExecResult;
   try {
     jsonResult = await input.internalExec({
       bin: "gh",
@@ -132,7 +134,7 @@ export async function resolvePrChecksTerminalState(input: {
   }
 
   const aggregateCommand = `gh pr checks ${input.prNumber}`;
-  let aggregate;
+  let aggregate: InternalExecResult;
   try {
     aggregate = await input.internalExec({
       bin: "gh",
@@ -165,7 +167,7 @@ export async function verifyThorAuthoredSha(input: {
   sha: string;
   expectedEmail: string;
 }): Promise<CheckSuiteGateResult> {
-  let exists;
+  let exists: InternalExecResult;
   try {
     exists = await input.internalExec({
       bin: "git",
@@ -180,7 +182,7 @@ export async function verifyThorAuthoredSha(input: {
     return { ok: false, reason: "sha_missing" };
   }
 
-  let author;
+  let author: InternalExecResult;
   try {
     author = await input.internalExec({
       bin: "git",
