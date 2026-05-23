@@ -2,9 +2,13 @@
 
 ## Goal
 
-Stop Thor from reacting to or queuing work for Slack events in private channels unless the channel id is explicitly allowlisted in workspace config. Public channels, DMs (`im`), and group DMs (`mpim`) are unaffected — the gate is scoped narrowly to private channels (`group` in Slack RTM nomenclature).
+Stop Thor from reacting to or queuing work for any Slack event that does not originate in a regular public channel unless the source conversation id is explicitly allowlisted in workspace config. Only `channel_type === "channel"` (a public, non-shared workspace channel) is admitted without an allowlist check. Every other surface — private channels (`group`), DMs (`im`), group DMs (`mpim`), and any event whose privacy must be confirmed via `conversations.info` — must be on the allowlist.
 
 The allowlist is operator-maintained config, not an env var, and is read on every event so changes take effect without restart.
+
+### Behavior change (supersedes earlier scope)
+
+Earlier revisions of this plan gated only `channel_type === "group"` and explicitly admitted `im` / `mpim` (see Decision #2). That decision is reversed by Decision #11: every non-public surface requires explicit operator approval via the allowlist. The config key name is retained for the channel surface that originally motivated the gate; the allowlist now also accepts DM and MPIM conversation ids.
 
 ## Architecture context
 
@@ -23,8 +27,9 @@ Out of scope:
 
 - Per-user allowlists or role-based gating.
 - Allowlisting by channel name (Slack rename is silent — id is the stable handle).
-- DM / group-DM gating. If we want to gate those later, it's a separate decision.
-- Audit logging of dropped events beyond the existing `private_channel_not_allowlisted` reason on the webhook history record.
+- Splitting the allowlist by surface type (separate lists for private channels vs DMs vs MPIMs). One unified allowlist keeps the rule "is this conversation id approved?" easy to reason about.
+- Renaming the config key (`slack.private_channel_allowlist`). The semantics broaden but the existing operator-facing name is retained to avoid churn; the README will note the broader scope explicitly. Revisit only if the name becomes a frequent source of confusion.
+- Audit logging of dropped events beyond the existing `private_channel_not_allowlisted` reason on the webhook history record (kept for log-grep continuity even though the reason now covers DMs/MPIMs too).
 
 ## Decision log
 
@@ -40,6 +45,7 @@ Out of scope:
 | 8   | Trust `channel_type === "channel"` as definitively public (no lookup)                 | Slack routes `message.channels` with `channel_type: "channel"` and `message.groups` with `channel_type: "group"`. A real private-channel capture (`C0AK4C2SZAT`, see Verification) confirms `message*` events arrive as `group`, never `channel`. Known soft spot: Slack Connect / shared-channel envelopes are not exercised in this sample — revisit if Connect comes into scope. | Force a `conversations.info` lookup on `channel_type: "channel"` too. Rejected: doubles Slack API traffic on the hot public-channel path for a hypothetical leak. |
 | 9   | Accept the lookup fan-out for events that omit `channel_type`                          | Empirically (12-event private-channel sample), `app_mention` and `reaction_added` lack `channel_type` and force a lookup; `message` / `message_changed` keep the fast path. A typical "mention + emoji" interaction is ~3 lookups. `conversations.info` is tier-3 (50/min) — comfortably above expected per-workspace traffic, and the 1.5s timeout caps worst case. | Cache privacy decisions per channel in memory. Rejected for now: extra state, invalidation question on public↔private conversion, and current traffic doesn't justify it. Revisit if rate-limit headroom shrinks. |
 | 10  | Resolve missing-`channel_type` privacy asynchronously, after Slack ack — mirroring GitHub's `pending:branch-resolve:` pattern | The webhook handler currently runs `conversations.info` inline, inside Slack's 3s ack budget. GitHub handles the same shape (lookup needed before dispatch decision) by enqueueing with a `pending:branch-resolve:` correlation key, acking 200 immediately, and resolving in `planBatchDispatch` (`packages/gateway/src/github.ts:291-299`, `packages/gateway/src/app.ts:1812,1847`, `packages/gateway/src/service.ts:650-691`). Reusing the established pattern eliminates ack-budget pressure, removes the class of bug where a slow Slack API blows past the 3s window, and lets the privacy timeout grow toward the GitHub side's 5s `INTERNAL_EXEC_TIMEOUT_MS` (`service.ts:32`) without consequence. Conclusive `channel_type` values still take the synchronous fast path so cheap drops stay cheap and don't accrete onto the queue. | Add a per-channel privacy cache (#9). Still useful eventually, but doesn't address the ack-budget concern. Keep the inline lookup. Rejected: leaks Slack-API health into Slack-ack reliability. |
+| 11  | **Reverses #2.** Gate every non-`channel` surface — `group`, `im`, `mpim`, and any event whose surface must be confirmed via `conversations.info` — behind the allowlist. Only `channel_type === "channel"` admits without an allowlist check. | A uniform "is this conversation id approved?" rule is easier to reason about and audit than per-surface carve-outs. Treating DM and MPIM access as implicitly granted assumes a bot install + invite is meaningful authorization; in practice an operator who hasn't approved a DM context shouldn't have Thor reacting in it. The cost is one extra line in the operator's allowlist for any legitimate DM/MPIM trigger, which is acceptable for the safety it buys. The `conversations.info` fallback path becomes the only way to confirm a missing-`channel_type` event is actually public; fail-closed semantics already match this rule. | Keep the original carve-out for `im` / `mpim` (Decision #2). Rejected: silent admission of DMs/MPIMs widens the trust boundary in a way operators cannot see from config. Add separate `dm_allowlist` / `mpim_allowlist` keys. Rejected as multi-list complexity without a real use case. |
 
 ## Phases
 
@@ -73,9 +79,9 @@ Exit: README example matches the schema; canonical example file validates agains
 
 Mirror the GitHub `pending:branch-resolve:` pattern (`packages/gateway/src/github.ts:291-299`, `packages/gateway/src/app.ts:1812,1847`, `packages/gateway/src/service.ts:650-691`) for the Slack privacy fallback. Keep the synchronous fast path for events where `channel_type` is conclusive — those still decide drop/accept before the queue.
 
-- **Hybrid gate split** (`packages/gateway/src/app.ts`):
-  - `channel_type === "group"` → run allowlist check inline; drop or enqueue accordingly (no API call, current behavior).
-  - `channel_type ∈ {"channel", "im", "mpim"}` → not private, enqueue (current behavior).
+- **Hybrid gate split** (`packages/gateway/src/app.ts`), aligned with Decision #11:
+  - `channel_type === "channel"` → admitted inline, no API call. The only public-by-construction surface.
+  - `channel_type ∈ {"group", "im", "mpim"}` → run allowlist check inline; drop or enqueue accordingly (no API call). Same fast path, just broader coverage.
   - `channel_type` missing → enqueue under a new `pending:slack-privacy:` correlation key, ack 200 immediately, **do not** call `conversations.info` in the webhook handler.
 - **Privacy correlation key** in `packages/gateway/src/slack.ts` (or alongside the existing helpers): `buildPendingSlackPrivacyKey(channel, eventId)` and `isPendingSlackPrivacyKey(key)`, modeled on `buildPendingBranchResolveKey` (`github.ts:293`). Channel id is in the key so the dispatcher can resolve once per channel per batch.
 - **Resolver in `planBatchDispatch`** (`packages/gateway/src/service.ts`): before slack-event dispatch, group pending-privacy events by channel, call `isSlackEventInPrivateChannelScope` once per channel, then apply the allowlist. Dropped events are recorded with `reason: "private_channel_not_allowlisted"` against the original webhook history row via the existing audit-update path. Mirror `resolveGitHubPrHead` in shape (`service.ts:1059-1099`).
@@ -90,9 +96,32 @@ Exit: `pnpm --filter @thor/gateway test` green; integration run against a non-al
 
 Out of scope for Phase 4 (revisit if metrics demand): per-channel privacy cache from Decision #9 — Phase 4 already collapses lookups within a batch, so the marginal value of a TTL cache is smaller.
 
+### Phase 5 — Broaden gate to all non-`channel` surfaces
+
+Apply Decision #11. The Phase 1/2 helpers were scoped to private channels (`group`); they need to admit only `channel_type === "channel"` and require allowlist membership for every other surface.
+
+- **Helper rename / rescope** (`packages/gateway/src/slack-api.ts`): the existing `isSlackEventInPrivateChannelScope` semantics shift from "is this event in a private channel?" to "does this event require the allowlist to admit?". The same control flow still applies (fast path on known `channel_type`, fallback to `conversations.info`, fail-closed on error), but `im` and `mpim` now flow through the allowlist instead of being short-circuited as not-private. The exported function name and any related identifiers (e.g. `SlackPrivateChannelGateInput`) are renamed to drop the "private" framing — proposed names: `isSlackEventGated` and `SlackChannelGateInput`. The `slack-api.ts` privacy-lookup helper retains its `is_private` / `is_im` / `is_mpim` interpretation but now reports "gated" rather than "private".
+- **Allowlist key**: keep `slack.private_channel_allowlist` (see Scope). The list now accepts ids for any surface — public-channel ids in the list are accepted but unnecessary, since public channels skip the check entirely.
+- **Audit reason**: keep `private_channel_not_allowlisted` (see Scope). Operators grepping logs for this string keep working. README and plan note explicitly that the reason fires for DMs and MPIMs too.
+- **`shouldIgnoreForPrivateChannel`** in `app.ts` is renamed to `shouldIgnoreForGatedChannel` (or equivalent) and its branch coverage expands: it now runs on every Slack event path that previously short-circuited on `im` / `mpim`.
+- **Tests** (`app.test.ts`, `slack-channel-allowlist.test.ts`, `slack-api` unit tests):
+  - `channel_type: "channel"` → admitted without allowlist check, no `conversations.info` call.
+  - `channel_type: "im"` not on allowlist → dropped with `private_channel_not_allowlisted`.
+  - `channel_type: "im"` on allowlist → admitted.
+  - `channel_type: "mpim"` not on allowlist → dropped; on allowlist → admitted.
+  - `channel_type: "group"` paths unchanged.
+  - Missing `channel_type` paths unchanged (Phase 4 governs how they're resolved).
+- **Docs sweep** (must land with the code, not after):
+  - README "private channel allowlist" paragraph: revise to describe the broader rule. Add a sentence noting the config key name predates the broader scope and that DM/MPIM ids belong in the same list.
+  - `docs/feat/event-flow.md` §1.1 Slack intake: add the channel-gate description (see follow-up doc update in this branch).
+  - `docs/examples/thor.json`: keep the example as a single private-channel id; do not seed a DM id, since DM ids vary per workspace and would be misleading as a copy-paste example.
+
+Exit: `pnpm --filter @thor/gateway test` green; manual smoke matrix (private channel ✓✗, DM ✓✗, MPIM ✓✗, public channel admitted) all match expectations; README, plan, and event-flow.md describe identical semantics.
+
 ## Verification
 
 - After deploying, invite the bot to a private channel that is **not** on the allowlist and post a message that would normally trigger Thor. Confirm the gateway logs the event with `reason: "private_channel_not_allowlisted"` and the runner is not called.
 - Add the channel id to `slack.private_channel_allowlist` in `thor.json`. No restart. Repeat the trigger and confirm normal handling.
 - Repeat the same two steps in a public channel to confirm the gate does not affect public-channel behavior.
+- After Phase 5 ships: open a DM with the bot from a user whose DM channel id is **not** on the allowlist and trigger Thor. Confirm the event is dropped with `private_channel_not_allowlisted`. Add the DM channel id to the allowlist and confirm the next trigger succeeds. Repeat with a group DM (`mpim`) to confirm the same rule applies.
 - After Phase 4 ships: @-mention the bot in a non-allowlisted private channel (an `app_mention` event has no `channel_type`, so it takes the async path). Confirm the webhook returns 200 in <100ms, the corresponding queue entry is recorded with a `pending:slack-privacy:` correlation key, the dispatcher records `private_channel_not_allowlisted` against the original webhook history row, and **no** `:eyes:` reaction is posted to the message.
