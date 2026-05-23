@@ -1,0 +1,27 @@
+docs/plan/2026052201_private-channel-allowlist.md
+  949a310e1627dced 5,9-11,30-32,48,82-84,99-120,126
+docs/feat/event-flow.md
+  949a310e1627dced 46-50,55
+README.md
+  949a310e1627dced 198,203,208-210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2db88fc89f86df693f72d85c2536b404e3809fc7",
+  "prompts": {
+    "949a310e1627dced": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "89f98aa5-6248-4d29-a887-d359cdad4e42",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 46,
+      "total_deletions": 10,
+      "accepted_lines": 46,
+      "overriden_lines": 0
+    }
+  }
+}
