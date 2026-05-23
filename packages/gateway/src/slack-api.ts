@@ -22,6 +22,9 @@ export interface SlackChannelGateInput {
   channel_type?: SlackChannelType;
 }
 
+// Predates a scope broadening (now fires for DMs and MPIMs too); retained for log-grep continuity.
+export const SLACK_GATE_DROP_REASON = "private_channel_not_allowlisted";
+
 export function createSlackClient(token: string, slackApiUrl?: string): WebClient {
   if (!token.trim()) {
     throw new Error("SLACK_BOT_TOKEN is required");
@@ -116,8 +119,4 @@ export async function isSlackEventGated(
     logError(log, "slack_channel_privacy_lookup_failed", error, { channel: event.channel });
     return true;
   }
-}
-
-export function isSlackChannelAllowlisted(channel: string, allowlist: string[]): boolean {
-  return allowlist.includes(channel);
 }

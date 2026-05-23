@@ -32,8 +32,8 @@ import {
 import type { WebClient } from "@slack/web-api";
 import {
   addReaction,
-  isSlackChannelAllowlisted,
   isSlackEventGated,
+  SLACK_GATE_DROP_REASON,
   updateMessage,
   type SlackDeps,
 } from "./slack-api.js";
@@ -666,7 +666,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   if (input.slackEvents.length > 0 && isPendingSlackPrivacyKey(input.correlationKey)) {
     const event = input.slackEvents[0];
     if (!event) {
-      return { kind: "drop", logPrefix, reason: "private_channel_not_allowlisted" };
+      return { kind: "drop", logPrefix, reason: SLACK_GATE_DROP_REASON };
     }
     const gated = await isSlackEventGated(
       { channel: event.channel, channel_type: event.channel_type },
@@ -682,10 +682,10 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
           channel: event.channel,
           correlationKey: input.correlationKey,
         });
-        return { kind: "drop", logPrefix: "slack", reason: "private_channel_not_allowlisted" };
+        return { kind: "drop", logPrefix: "slack", reason: SLACK_GATE_DROP_REASON };
       }
-      if (!isSlackChannelAllowlisted(event.channel, allowlist)) {
-        return { kind: "drop", logPrefix: "slack", reason: "private_channel_not_allowlisted" };
+      if (!allowlist.includes(event.channel)) {
+        return { kind: "drop", logPrefix: "slack", reason: SLACK_GATE_DROP_REASON };
       }
     }
     const resolvedKey = resolveCorrelationKeys(getSlackCorrelationKeys(event));

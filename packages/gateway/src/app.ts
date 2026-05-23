@@ -43,7 +43,7 @@ import {
 import {
   createSlackClient,
   isSlackEventGated,
-  isSlackChannelAllowlisted,
+  SLACK_GATE_DROP_REASON,
   type SlackChannelGateInput,
   type SlackDeps,
 } from "./slack-api.js";
@@ -1027,9 +1027,9 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         channel: event.channel,
       });
     }
-    if (isSlackChannelAllowlisted(event.channel, allowlist)) return false;
+    if (allowlist.includes(event.channel)) return false;
 
-    history.reason = "private_channel_not_allowlisted";
+    history.reason = SLACK_GATE_DROP_REASON;
     history.metadata = {
       ...(history.metadata ?? {}),
       channel: event.channel,
@@ -1354,35 +1354,43 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
+    const deferForPendingPrivacy = async (
+      target: typeof event & { channel: string; ts: string },
+      options: { delayMs: number; interrupt?: boolean },
+    ): Promise<void> => {
+      const correlationKey = buildPendingSlackPrivacyKey(target.channel, eventId);
+      history.metadata = {
+        ...(history.metadata ?? {}),
+        channel: target.channel,
+        correlationKey,
+      };
+      logInfo(log, "event_deferred_pending_privacy", {
+        eventId,
+        teamId: envelope.data.team_id,
+        eventType: target.type,
+        subtype: target.type === "message" ? target.subtype : undefined,
+        channel: target.channel,
+        ts: target.ts,
+        correlationKey,
+      });
+      await queue.enqueue({
+        id: eventId,
+        source: "slack",
+        correlationKey,
+        payload: target,
+        receivedAt: new Date().toISOString(),
+        sourceTs: parseSlackTs(target.ts),
+        readyAt: Date.now() + options.delayMs,
+        delayMs: options.delayMs,
+        ...(options.interrupt !== undefined ? { interrupt: options.interrupt } : {}),
+      });
+      res.status(200).json({ ok: true });
+    };
+
     // app_mention — always forward
     if (event.type === "app_mention") {
       if (event.channel_type === undefined) {
-        const correlationKey = buildPendingSlackPrivacyKey(event.channel, eventId);
-        history.metadata = {
-          ...(history.metadata ?? {}),
-          channel: event.channel,
-          correlationKey,
-        };
-        logInfo(log, "event_deferred_pending_privacy", {
-          eventId,
-          teamId: envelope.data.team_id,
-          eventType: event.type,
-          channel: event.channel,
-          ts: event.ts,
-          correlationKey,
-        });
-        await queue.enqueue({
-          id: eventId,
-          source: "slack",
-          correlationKey,
-          payload: event,
-          receivedAt: new Date().toISOString(),
-          sourceTs: parseSlackTs(event.ts),
-          readyAt: Date.now(),
-          delayMs: 0,
-          interrupt: true,
-        });
-        res.status(200).json({ ok: true });
+        await deferForPendingPrivacy(event, { delayMs: 0, interrupt: true });
         return;
       }
 
@@ -1457,32 +1465,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       }
 
       if (event.channel_type === undefined) {
-        const pendingKey = buildPendingSlackPrivacyKey(event.channel, eventId);
-        history.metadata = {
-          ...(history.metadata ?? {}),
-          channel: event.channel,
-          correlationKey: pendingKey,
-        };
-        logInfo(log, "event_deferred_pending_privacy", {
-          eventId,
-          teamId: envelope.data.team_id,
-          eventType: event.type,
-          subtype: event.subtype,
-          channel: event.channel,
-          ts: event.ts,
-          correlationKey: pendingKey,
-        });
-        await queue.enqueue({
-          id: eventId,
-          source: "slack",
-          correlationKey: pendingKey,
-          payload: event,
-          receivedAt: new Date().toISOString(),
-          sourceTs: parseSlackTs(event.ts),
-          readyAt: Date.now() + shortDelay,
-          delayMs: shortDelay,
-        });
-        res.status(200).json({ ok: true });
+        await deferForPendingPrivacy(event, { delayMs: shortDelay });
         return;
       }
 
