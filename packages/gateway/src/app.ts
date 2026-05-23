@@ -1354,8 +1354,25 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
+    const enqueueSlackEvent = (
+      payload: SlackThreadEvent,
+      correlationKey: string,
+      options: { delayMs: number; interrupt?: boolean },
+    ) =>
+      queue.enqueue({
+        id: eventId,
+        source: "slack",
+        correlationKey,
+        payload,
+        receivedAt: new Date().toISOString(),
+        sourceTs: parseSlackTs(payload.ts),
+        readyAt: Date.now() + options.delayMs,
+        delayMs: options.delayMs,
+        ...(options.interrupt !== undefined ? { interrupt: options.interrupt } : {}),
+      });
+
     const deferForPendingPrivacy = async (
-      target: typeof event & { channel: string; ts: string },
+      target: SlackThreadEvent,
       options: { delayMs: number; interrupt?: boolean },
     ): Promise<void> => {
       const correlationKey = buildPendingSlackPrivacyKey(target.channel, eventId);
@@ -1373,17 +1390,26 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         ts: target.ts,
         correlationKey,
       });
-      await queue.enqueue({
-        id: eventId,
-        source: "slack",
+      await enqueueSlackEvent(target, correlationKey, options);
+      res.status(200).json({ ok: true });
+    };
+
+    const acceptSlackEvent = async (
+      target: SlackThreadEvent,
+      correlationKey: string,
+      options: { delayMs: number; interrupt?: boolean },
+    ): Promise<void> => {
+      logInfo(log, "event_accepted", {
+        eventId,
+        teamId: envelope.data.team_id,
+        eventType: target.type,
+        subtype: target.type === "message" ? target.subtype : undefined,
+        channel: target.channel,
+        ts: target.ts,
+        threadTs: target.thread_ts,
         correlationKey,
-        payload: target,
-        receivedAt: new Date().toISOString(),
-        sourceTs: parseSlackTs(target.ts),
-        readyAt: Date.now() + options.delayMs,
-        delayMs: options.delayMs,
-        ...(options.interrupt !== undefined ? { interrupt: options.interrupt } : {}),
       });
+      await enqueueSlackEvent(target, correlationKey, options);
       res.status(200).json({ ok: true });
     };
 
@@ -1407,27 +1433,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       if (correlationKey !== rawKeys[0]) {
         logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
       }
-      logInfo(log, "event_accepted", {
-        eventId,
-        teamId: envelope.data.team_id,
-        eventType: event.type,
-        channel: event.channel,
-        ts: event.ts,
-        threadTs: event.thread_ts,
-        correlationKey,
-      });
-      await queue.enqueue({
-        id: eventId,
-        source: "slack",
-        correlationKey,
-        payload: event,
-        receivedAt: new Date().toISOString(),
-        sourceTs: parseSlackTs(event.ts),
-        readyAt: Date.now(),
-        delayMs: 0,
-        interrupt: true,
-      });
-      res.status(200).json({ ok: true });
+      await acceptSlackEvent(event, correlationKey, { delayMs: 0, interrupt: true });
       return;
     }
 
@@ -1474,27 +1480,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         return;
       }
 
-      logInfo(log, "event_accepted", {
-        eventId,
-        teamId: envelope.data.team_id,
-        eventType: event.type,
-        subtype: event.subtype,
-        channel: event.channel,
-        ts: event.ts,
-        threadTs: event.thread_ts,
-        correlationKey,
-      });
-      await queue.enqueue({
-        id: eventId,
-        source: "slack",
-        correlationKey,
-        payload: event,
-        receivedAt: new Date().toISOString(),
-        sourceTs: parseSlackTs(event.ts),
-        readyAt: Date.now() + shortDelay,
-        delayMs: shortDelay,
-      });
-      res.status(200).json({ ok: true });
+      await acceptSlackEvent(event, correlationKey, { delayMs: shortDelay });
       return;
     }
 
