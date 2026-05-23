@@ -1,0 +1,23 @@
+packages/gateway/src/slack-api.ts
+  a8eccd2c1a288fcb 91-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e25aac723dff2f81fb1c0ec588c100f298ede55a",
+  "prompts": {
+    "a8eccd2c1a288fcb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6078387f-25b1-4a72-a744-1b88deb5902b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 11,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
