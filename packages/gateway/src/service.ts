@@ -32,8 +32,8 @@ import {
 import type { WebClient } from "@slack/web-api";
 import {
   addReaction,
-  isSlackEventInPrivateChannelScope,
-  isSlackPrivateChannelAllowed,
+  isSlackChannelAllowlisted,
+  isSlackEventGated,
   updateMessage,
   type SlackDeps,
 } from "./slack-api.js";
@@ -668,7 +668,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     if (!event) {
       return { kind: "drop", logPrefix, reason: "private_channel_not_allowlisted" };
     }
-    const gated = await isSlackEventInPrivateChannelScope(
+    const gated = await isSlackEventGated(
       { channel: event.channel, channel_type: event.channel_type },
       input.slackDeps,
     );
@@ -684,7 +684,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
         });
         return { kind: "drop", logPrefix: "slack", reason: "private_channel_not_allowlisted" };
       }
-      if (!isSlackPrivateChannelAllowed(event.channel, allowlist)) {
+      if (!isSlackChannelAllowlisted(event.channel, allowlist)) {
         return { kind: "drop", logPrefix: "slack", reason: "private_channel_not_allowlisted" };
       }
     }

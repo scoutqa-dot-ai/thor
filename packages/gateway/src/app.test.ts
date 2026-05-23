@@ -2432,6 +2432,74 @@ describe("gateway", () => {
     );
   });
 
+  it("gates DMs (im) behind the allowlist", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue, queueDir, slack) => {
+        const blockedBody = slackEventBody("EvImBlocked", {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> dm task",
+          ts: "1710000000.201",
+          channel: "DBLOCKED",
+          channel_type: "im",
+        });
+        const blockedResponse = await postSignedSlackEvent(baseUrl, blockedBody);
+        expect(blockedResponse.status).toBe(200);
+        expect(await blockedResponse.json()).toEqual({ ok: true, ignored: true });
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+        const allowedBody = slackEventBody("EvImAllowed", {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> dm allowed",
+          ts: "1710000000.202",
+          channel: "DALLOWED",
+          channel_type: "im",
+        });
+        const allowedResponse = await postSignedSlackEvent(baseUrl, allowedBody);
+        expect(allowedResponse.status).toBe(200);
+        expect(await allowedResponse.json()).toEqual({ ok: true });
+        await queue.flush();
+        expect(slack.reactionsAdd).toHaveBeenCalledWith({
+          channel: "DALLOWED",
+          timestamp: "1710000000.202",
+          name: "eyes",
+        });
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+      },
+      {
+        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["DALLOWED"] } }),
+      },
+    );
+  });
+
+  it("gates group DMs (mpim) behind the allowlist", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (baseUrl, _queue, queueDir, slack) => {
+      const body = slackEventBody("EvMpimBlocked", {
+        type: "app_mention",
+        user: "U123",
+        text: "<@U999> group dm",
+        ts: "1710000000.203",
+        channel: "GMPIM",
+        channel_type: "mpim",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+      expect(slack.reactionsAdd).not.toHaveBeenCalled();
+      expect(readQueuedEvents(queueDir)).toHaveLength(0);
+    });
+  });
+
   it("fails closed with a 200 response when allowlist config load fails for a private channel", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 

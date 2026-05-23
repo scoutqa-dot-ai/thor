@@ -42,10 +42,10 @@ import {
 } from "./service.js";
 import {
   createSlackClient,
-  isSlackEventInPrivateChannelScope,
-  isSlackPrivateChannelAllowed,
+  isSlackEventGated,
+  isSlackChannelAllowlisted,
+  type SlackChannelGateInput,
   type SlackDeps,
-  type SlackPrivateChannelGateInput,
 } from "./slack-api.js";
 import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
@@ -1004,13 +1004,13 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     client: config.slackClient ?? createSlackClient(config.slackBotToken, config.slackApiBaseUrl),
   };
 
-  const shouldIgnoreForPrivateChannel = async (
-    event: SlackPrivateChannelGateInput,
+  const shouldIgnoreForGatedChannel = async (
+    event: SlackChannelGateInput,
     eventId: string,
     history: WebhookHistoryState,
   ): Promise<boolean> => {
-    const isPrivate = await isSlackEventInPrivateChannelScope(event, slackDeps);
-    if (!isPrivate) return false;
+    const gated = await isSlackEventGated(event, slackDeps);
+    if (!gated) return false;
 
     let allowlist: string[] = [];
     try {
@@ -1027,7 +1027,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         channel: event.channel,
       });
     }
-    if (isSlackPrivateChannelAllowed(event.channel, allowlist)) return false;
+    if (isSlackChannelAllowlisted(event.channel, allowlist)) return false;
 
     history.reason = "private_channel_not_allowlisted";
     history.metadata = {
@@ -1386,7 +1386,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         return;
       }
 
-      if (await shouldIgnoreForPrivateChannel(event, eventId, history)) {
+      if (await shouldIgnoreForGatedChannel(event, eventId, history)) {
         res.status(200).json({ ok: true, ignored: true });
         return;
       }
@@ -1486,7 +1486,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         return;
       }
 
-      if (await shouldIgnoreForPrivateChannel(event, eventId, history)) {
+      if (await shouldIgnoreForGatedChannel(event, eventId, history)) {
         res.status(200).json({ ok: true, ignored: true });
         return;
       }

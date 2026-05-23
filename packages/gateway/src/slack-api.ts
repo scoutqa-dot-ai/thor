@@ -17,7 +17,7 @@ export interface SlackDeps {
 
 export type SlackChannelType = "channel" | "im" | "group" | "mpim";
 
-export interface SlackPrivateChannelGateInput {
+export interface SlackChannelGateInput {
   channel: string;
   channel_type?: SlackChannelType;
 }
@@ -85,20 +85,32 @@ export async function addReaction(
   }
 }
 
-export async function isSlackEventInPrivateChannelScope(
-  event: SlackPrivateChannelGateInput,
+/**
+ * Returns true when the event must pass the allowlist to be admitted.
+ *
+ * Only `channel_type === "channel"` (a regular public workspace channel) is
+ * trusted as ungated. Every other surface — `group`, `im`, `mpim`, and any
+ * event whose surface must be confirmed via `conversations.info` — is gated
+ * and requires explicit allowlisting.
+ *
+ * Lookup failures and incomplete `conversations.info` responses fail closed
+ * (return `true`).
+ */
+export async function isSlackEventGated(
+  event: SlackChannelGateInput,
   deps: SlackDeps,
 ): Promise<boolean> {
-  if (event.channel_type === "group") return true;
-  if (["channel", "im", "mpim"].includes(event.channel_type ?? "")) return false;
+  if (event.channel_type === "channel") return false;
+  if (event.channel_type !== undefined) return true;
 
   try {
     const result = await deps.client.conversations.info({ channel: event.channel });
     const channel = result.channel as
       | { is_private?: boolean; is_im?: boolean; is_mpim?: boolean }
       | undefined;
-    if (channel?.is_im === true || channel?.is_mpim === true) return false;
-    if (channel?.is_private === false) return false;
+    if (channel?.is_private === false && channel?.is_im !== true && channel?.is_mpim !== true) {
+      return false;
+    }
     return true;
   } catch (error) {
     logError(log, "slack_channel_privacy_lookup_failed", error, { channel: event.channel });
@@ -106,6 +118,6 @@ export async function isSlackEventInPrivateChannelScope(
   }
 }
 
-export function isSlackPrivateChannelAllowed(channel: string, allowlist: string[]): boolean {
+export function isSlackChannelAllowlisted(channel: string, allowlist: string[]): boolean {
   return allowlist.includes(channel);
 }
