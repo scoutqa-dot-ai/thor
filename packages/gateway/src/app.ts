@@ -50,9 +50,11 @@ import {
 import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
+  buildPendingSlackPrivacyKey,
   getSlackCorrelationKeys,
   isForwardableSlackMessage,
   isSupportedSlackMessageSubtype,
+  isPendingSlackPrivacyKey,
   parseSlackTs,
   SlackEventEnvelopeSchema,
   SlackInteractivityPayloadSchema,
@@ -1098,28 +1100,51 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           onAccepted: ack,
           onRejected: reject,
           slackDirectoryForChannel: resolveSlackDirectory,
+          workspaceConfigLoader: config.workspaceConfigLoader,
         });
 
         if (plan.kind === "reroute") {
           const now = Date.now();
           const resolvedKey = resolveCorrelationKeys([plan.toCorrelationKey]);
-          for (const [index, event] of githubEvents.entries()) {
-            await queue.enqueue({
-              ...event,
-              id: `${event.id}:resolved`,
-              correlationKey: resolvedKey,
-              payload: plan.githubEvents[index],
-              readyAt: now,
-              delayMs: 0,
+          if (plan.githubEvents) {
+            for (const [index, event] of githubEvents.entries()) {
+              await queue.enqueue({
+                ...event,
+                id: `${event.id}:resolved`,
+                correlationKey: resolvedKey,
+                payload: plan.githubEvents[index],
+                readyAt: now,
+                delayMs: 0,
+              });
+            }
+            ack();
+            logInfo(log, "github_events_rerouted", {
+              fromCorrelationKey: plan.fromCorrelationKey,
+              toCorrelationKey: resolvedKey,
+              batchSize: githubEvents.length,
             });
+            return;
           }
-          ack();
-          logInfo(log, "github_events_rerouted", {
-            fromCorrelationKey: plan.fromCorrelationKey,
-            toCorrelationKey: resolvedKey,
-            batchSize: githubEvents.length,
-          });
-          return;
+          if (plan.slackEvents) {
+            for (const [index, event] of slackEvents.entries()) {
+              await queue.enqueue({
+                ...event,
+                id: `${event.id}:resolved`,
+                correlationKey: resolvedKey,
+                payload: plan.slackEvents[index],
+                readyAt: now,
+                delayMs: 0,
+              });
+            }
+            ack();
+            logInfo(log, "slack_events_rerouted", {
+              fromCorrelationKey: plan.fromCorrelationKey,
+              toCorrelationKey: resolvedKey,
+              batchSize: slackEvents.length,
+            });
+            return;
+          }
+          throw new Error("reroute plan missing event payload");
         }
 
         if (plan.kind === "drop") {
@@ -1141,6 +1166,14 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           logError(log, "github_branch_resolution_retryable", error, {
             correlationKey,
             batchSize: githubEvents.length,
+          });
+          return;
+        }
+
+        if (logPrefix === "slack" && correlationKey && isPendingSlackPrivacyKey(correlationKey)) {
+          logError(log, "slack_privacy_resolution_retryable", error, {
+            correlationKey,
+            batchSize: slackEvents.length,
           });
           return;
         }
@@ -1323,6 +1356,36 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     // app_mention — always forward
     if (event.type === "app_mention") {
+      if (event.channel_type === undefined) {
+        const correlationKey = buildPendingSlackPrivacyKey(event.channel, eventId);
+        history.metadata = {
+          ...(history.metadata ?? {}),
+          channel: event.channel,
+          correlationKey,
+        };
+        logInfo(log, "event_deferred_pending_privacy", {
+          eventId,
+          teamId: envelope.data.team_id,
+          eventType: event.type,
+          channel: event.channel,
+          ts: event.ts,
+          correlationKey,
+        });
+        await queue.enqueue({
+          id: eventId,
+          source: "slack",
+          correlationKey,
+          payload: event,
+          receivedAt: new Date().toISOString(),
+          sourceTs: parseSlackTs(event.ts),
+          readyAt: Date.now(),
+          delayMs: 0,
+          interrupt: true,
+        });
+        res.status(200).json({ ok: true });
+        return;
+      }
+
       if (await shouldIgnoreForPrivateChannel(event, eventId, history)) {
         res.status(200).json({ ok: true, ignored: true });
         return;
@@ -1374,11 +1437,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // Message continuations. Supported subtypes are user-authored messages;
     // unsupported/system subtypes remain ignored below.
     if (event.type === "message" && isForwardableSlackMessage(event)) {
-      if (await shouldIgnoreForPrivateChannel(event, eventId, history)) {
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
       const rawKeys = getSlackCorrelationKeys(event);
       const correlationKey = resolveCorrelationKeys(rawKeys);
       if (correlationKey !== rawKeys[0]) {
@@ -1394,6 +1452,41 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           correlationKey,
           subtype: event.subtype,
         });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      if (event.channel_type === undefined) {
+        const pendingKey = buildPendingSlackPrivacyKey(event.channel, eventId);
+        history.metadata = {
+          ...(history.metadata ?? {}),
+          channel: event.channel,
+          correlationKey: pendingKey,
+        };
+        logInfo(log, "event_deferred_pending_privacy", {
+          eventId,
+          teamId: envelope.data.team_id,
+          eventType: event.type,
+          subtype: event.subtype,
+          channel: event.channel,
+          ts: event.ts,
+          correlationKey: pendingKey,
+        });
+        await queue.enqueue({
+          id: eventId,
+          source: "slack",
+          correlationKey: pendingKey,
+          payload: event,
+          receivedAt: new Date().toISOString(),
+          sourceTs: parseSlackTs(event.ts),
+          readyAt: Date.now() + shortDelay,
+          delayMs: shortDelay,
+        });
+        res.status(200).json({ ok: true });
+        return;
+      }
+
+      if (await shouldIgnoreForPrivateChannel(event, eventId, history)) {
         res.status(200).json({ ok: true, ignored: true });
         return;
       }

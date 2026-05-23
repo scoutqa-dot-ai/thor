@@ -203,3 +203,13 @@ export function parseSlackTs(ts: string): number {
 export function isSupportedSlackBotEvent(event: unknown): event is SlackBotEvent {
   return SlackBotEventSchema.safeParse(event).success;
 }
+
+const PENDING_SLACK_PRIVACY_PREFIX = "pending:slack-privacy:";
+
+export function buildPendingSlackPrivacyKey(channel: string, eventId: string): string {
+  return `${PENDING_SLACK_PRIVACY_PREFIX}${channel}:${eventId}`;
+}
+
+export function isPendingSlackPrivacyKey(key: string): boolean {
+  return key.startsWith(PENDING_SLACK_PRIVACY_PREFIX);
+}

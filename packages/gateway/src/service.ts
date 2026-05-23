@@ -2,16 +2,24 @@ import {
   createLogger,
   ExecResultSchema,
   extractApprovalFailureCategory,
+  getSlackPrivateChannelAllowlist,
   hasSessionForCorrelationKey,
   logInfo,
   logWarn,
   logError,
+  resolveCorrelationKeys,
   truncate,
   ProgressEventSchema,
   resolveRepoDirectory,
+  type ConfigLoader,
 } from "@thor/common";
 import type { ExecResult, ProgressEvent } from "@thor/common";
-import { getSlackThreadTs, type SlackThreadEvent } from "./slack.js";
+import {
+  getSlackCorrelationKeys,
+  getSlackThreadTs,
+  isPendingSlackPrivacyKey,
+  type SlackThreadEvent,
+} from "./slack.js";
 import type { CronPayload } from "./cron.js";
 import {
   buildCorrelationKey,
@@ -22,7 +30,13 @@ import {
   type IssueCommentEvent,
 } from "./github.js";
 import type { WebClient } from "@slack/web-api";
-import { addReaction, updateMessage, type SlackDeps } from "./slack-api.js";
+import {
+  addReaction,
+  isSlackEventInPrivateChannelScope,
+  isSlackPrivateChannelAllowed,
+  updateMessage,
+  type SlackDeps,
+} from "./slack-api.js";
 import { handleProgressEvent } from "./progress-manager.js";
 
 /** SlackDeps stub for triggers that never post to Slack (cron, github). */
@@ -94,6 +108,7 @@ export interface BatchDispatchInput {
   onAccepted?: () => void;
   onRejected?: (reason: string) => void;
   slackDirectoryForChannel?: (channel: string) => SlackRoutingInfo;
+  workspaceConfigLoader?: ConfigLoader;
 }
 
 export interface SlackRoutingInfo {
@@ -118,10 +133,11 @@ export type BatchDispatchPlan =
     }
   | {
       kind: "reroute";
-      logPrefix: "github";
+      logPrefix: "github" | "slack";
       fromCorrelationKey: string;
       toCorrelationKey: string;
-      githubEvents: GitHubWebhookEvent[];
+      githubEvents?: GitHubWebhookEvent[];
+      slackEvents?: SlackThreadEvent[];
     };
 
 interface DispatchPart {
@@ -647,6 +663,50 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   const sources = getBatchSources(input);
   const logPrefix = getBatchLogPrefix(sources);
 
+  if (input.slackEvents.length > 0 && isPendingSlackPrivacyKey(input.correlationKey)) {
+    const event = input.slackEvents[0];
+    if (!event) {
+      return { kind: "drop", logPrefix, reason: "private_channel_not_allowlisted" };
+    }
+    const gated = await isSlackEventInPrivateChannelScope(
+      { channel: event.channel, channel_type: event.channel_type },
+      input.slackDeps,
+    );
+    if (gated) {
+      let allowlist: string[] = [];
+      try {
+        const workspaceConfig = input.workspaceConfigLoader?.();
+        allowlist = workspaceConfig ? getSlackPrivateChannelAllowlist(workspaceConfig) : [];
+      } catch (error) {
+        logError(log, "private_channel_allowlist_config_load_failed", error, {
+          channel: event.channel,
+          correlationKey: input.correlationKey,
+        });
+        return { kind: "drop", logPrefix: "slack", reason: "private_channel_not_allowlisted" };
+      }
+      if (!isSlackPrivateChannelAllowed(event.channel, allowlist)) {
+        return { kind: "drop", logPrefix: "slack", reason: "private_channel_not_allowlisted" };
+      }
+    }
+    const resolvedKey = resolveCorrelationKeys(getSlackCorrelationKeys(event));
+    if (event.type === "app_mention") {
+      void addReaction(event.channel, event.ts, "eyes", input.slackDeps).catch((err) =>
+        logWarn(log, "slack_pending_privacy_reaction_failed", {
+          channel: event.channel,
+          ts: event.ts,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
+    return {
+      kind: "reroute",
+      logPrefix: "slack",
+      fromCorrelationKey: input.correlationKey,
+      toCorrelationKey: resolvedKey,
+      slackEvents: input.slackEvents,
+    };
+  }
+
   if (input.githubEvents.length > 0 && isPendingBranchResolveKey(input.correlationKey)) {
     const latest = input.githubEvents[input.githubEvents.length - 1];
     if (!latest || !isIssueCommentEvent(latest)) {
@@ -815,7 +875,8 @@ async function dispatchBatch(input: BatchDispatchInput): Promise<TriggerResult> 
       currentInput = {
         ...currentInput,
         correlationKey: plan.toCorrelationKey,
-        githubEvents: plan.githubEvents,
+        githubEvents: plan.githubEvents ?? currentInput.githubEvents,
+        slackEvents: plan.slackEvents ?? currentInput.slackEvents,
       };
       continue;
     }

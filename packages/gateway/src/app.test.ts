@@ -2463,29 +2463,14 @@ describe("gateway", () => {
     );
   });
 
-  it("falls back to conversations.info for missing channel_type", async () => {
+  it("defers privacy resolution for missing channel_type without calling Slack from the webhook", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
-      slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: true } });
-      let body = slackEventBody("EvFallbackPrivate", {
-        type: "app_mention",
-        user: "U123",
-        text: "<@U999> blocked",
-        ts: "1710000000.103",
-        channel: "GLOOKUP",
-      });
-
-      let response = await postSignedSlackEvent(baseUrl, body);
-
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true, ignored: true });
-      expect(slack.reactionsAdd).not.toHaveBeenCalled();
-
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
       slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: false } });
-      body = slackEventBody("EvFallbackPublic", {
+      const body = slackEventBody("EvDeferredPublic", {
         type: "app_mention",
         user: "U123",
         text: "<@U999> allowed",
@@ -2493,12 +2478,21 @@ describe("gateway", () => {
         channel: "CLOOKUP",
       });
 
-      response = await postSignedSlackEvent(baseUrl, body);
+      const response = await postSignedSlackEvent(baseUrl, body);
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
+
+      const enqueued = readQueuedEvents(queueDir);
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]).toMatchObject({
+        correlationKey: "pending:slack-privacy:CLOOKUP:EvDeferredPublic",
+      });
+      expect(slack.conversationsInfo).not.toHaveBeenCalled();
+      expect(slack.reactionsAdd).not.toHaveBeenCalled();
+
       await queue.flush();
-      expect(slack.conversationsInfo).toHaveBeenCalledTimes(2);
+      expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
       expect(slack.reactionsAdd).toHaveBeenCalledWith({
         channel: "CLOOKUP",
         timestamp: "1710000000.104",
@@ -2508,10 +2502,36 @@ describe("gateway", () => {
     });
   });
 
-  it("fails closed when conversations.info cannot determine privacy", async () => {
+  it("drops deferred events for non-allowlisted private channels resolved via conversations.info", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
-    await withServer(fetchImpl, async (baseUrl, _queue, _queueDir, slack) => {
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
+      slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: true } });
+      const body = slackEventBody("EvDeferredPrivate", {
+        type: "app_mention",
+        user: "U123",
+        text: "<@U999> secret",
+        ts: "1710000000.103",
+        channel: "GLOOKUP",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(readQueuedEvents(queueDir)).toHaveLength(1);
+
+      await queue.flush();
+      expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
+      expect(slack.reactionsAdd).not.toHaveBeenCalled();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("fails closed when conversations.info errors during deferred privacy resolution", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
       slack.conversationsInfo.mockRejectedValueOnce(new Error("slack unavailable"));
       const body = slackEventBody("EvFallbackError", {
         type: "app_mention",
@@ -2524,7 +2544,9 @@ describe("gateway", () => {
       const response = await postSignedSlackEvent(baseUrl, body);
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true, ignored: true });
+      expect(await response.json()).toEqual({ ok: true });
+
+      await queue.flush();
       expect(slack.reactionsAdd).not.toHaveBeenCalled();
       expect(fetchImpl).not.toHaveBeenCalled();
     });

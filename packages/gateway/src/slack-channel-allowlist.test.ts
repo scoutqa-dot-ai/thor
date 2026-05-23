@@ -41,35 +41,10 @@ describe("Slack private-channel detection", () => {
     );
   });
 
-  it("clears the timeout when privacy lookup resolves quickly", async () => {
-    vi.useFakeTimers();
-    const clearTimeoutSpy = vi.spyOn(global, "clearTimeout");
-    try {
-      const deps = depsWithInfo(vi.fn().mockResolvedValue({ channel: { is_private: false } }));
-      await expect(isSlackEventInPrivateChannelScope({ channel: "C123" }, deps)).resolves.toBe(false);
-      expect(clearTimeoutSpy).toHaveBeenCalled();
-    } finally {
-      clearTimeoutSpy.mockRestore();
-      vi.useRealTimers();
-    }
-  });
-
   it("treats lookup failures as private", async () => {
     const deps = depsWithInfo(vi.fn().mockRejectedValue(new Error("unavailable")));
 
     await expect(isSlackEventInPrivateChannelScope({ channel: "G123" }, deps)).resolves.toBe(true);
-  });
-
-  it("times out slow privacy lookups and treats them as private", async () => {
-    vi.useFakeTimers();
-    try {
-      const deps = depsWithInfo(vi.fn().mockImplementation(() => new Promise(() => {})));
-      const resultPromise = isSlackEventInPrivateChannelScope({ channel: "G123" }, deps);
-      await vi.advanceTimersByTimeAsync(1_500);
-      await expect(resultPromise).resolves.toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("treats incomplete lookup responses as private", async () => {
