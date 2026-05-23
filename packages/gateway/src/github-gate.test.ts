@@ -178,4 +178,26 @@ describe("resolvePrChecksTerminalState", () => {
     });
     expect(internalExec).toHaveBeenCalledTimes(1);
   });
+
+  it("returns lookup_failed when aggregate pr checks call rejects", async () => {
+    const internalExec = vi
+      .fn<InternalExecClient>()
+      .mockResolvedValueOnce(
+        ok(JSON.stringify([{ name: "build", state: "SUCCESS", bucket: "pass" }])),
+      )
+      .mockRejectedValueOnce(new Error("aggregate lookup failed"));
+
+    await expect(
+      resolvePrChecksTerminalState({
+        internalExec,
+        directory: "/workspace/repos/thor",
+        prNumber: 42,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      reason: "pr_checks_lookup_failed",
+      error: "aggregate lookup failed",
+    });
+    expect(internalExec).toHaveBeenCalledTimes(2);
+  });
 });
