@@ -1004,13 +1004,27 @@ describe("runner /trigger orchestration", () => {
     });
 
     await withServer(h.app, async (url) => {
-      const first = trigger(url, { prompt: "from slack", correlationKey: slackKey });
+      const postTrigger = (correlationKey: string, prompt: string) =>
+        fetch(`${url}/trigger`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            prompt,
+            correlationKey,
+            directory: "/workspace/repos/runner-trigger-test",
+          }),
+        });
+
+      const first = postTrigger(slackKey, "from slack");
       await firstGetStarted;
-      const second = trigger(url, { prompt: "from github", correlationKey: gitKey });
+      const second = postTrigger(gitKey, "from github");
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(maxActiveGets).toBe(1);
       releaseFirstGet();
-      await Promise.all([first, second]);
+      const [firstResponse, secondResponse] = await Promise.all([first, second]);
+      expect(firstResponse.status).toBe(200);
+      expect(secondResponse.status).toBe(200);
+      await Promise.all([firstResponse.body?.cancel?.(), secondResponse.body?.cancel?.()]);
     });
 
     expect(maxActiveGets).toBe(1);
@@ -1388,6 +1402,45 @@ describe("runner /trigger orchestration", () => {
 
       expect(result.events.find((e) => e.type === "context")).toBeUndefined();
     });
+  });
+
+  it("still resolves model limits once per non-busy trigger even for tokenless message.updated events", async () => {
+    let configGets = 0;
+    const h = createHarness({
+      onConfigGet: () => {
+        configGets++;
+      },
+      opencodeConfig: {
+        provider: {
+          openai: {
+            models: {
+              "gpt-5.5": { limit: { context: 200_000 } },
+            },
+          },
+        },
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId, {
+          providerID: "openai",
+          modelID: "gpt-5.5",
+          tokens: undefined,
+          role: "assistant",
+        }),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "tokenless update",
+        correlationKey: "slack:thread:1710000000.098",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toBeUndefined();
+    });
+
+    expect(configGets).toBe(1);
   });
 
   it("emits opencode.subsession aliases for discovered child sessions", async () => {

@@ -863,11 +863,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         }
       }
 
-      let modelContextLimitsPromise: Promise<ModelContextLimits> | undefined;
-      const getModelContextLimits = (): Promise<ModelContextLimits> => {
-        modelContextLimitsPromise ??= resolveModelContextLimits(client, opencodeUrl);
-        return modelContextLimitsPromise;
-      };
+      const modelContextLimits = await resolveModelContextLimits(client, opencodeUrl);
 
       const bootstrapMemoryPaths: string[] = [];
 
@@ -1003,8 +999,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       let latestSessionErrorAt: number | undefined;
       let finished = false;
       let sawParentMessagePart = false;
-      const pendingContextEmits = new Set<Promise<void>>();
-
       // Track child session IDs for progress forwarding.
       const childSessionIds = new Set<string>();
       // Dedupe task delegate emissions across repeated part updates.
@@ -1075,19 +1069,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             const isParent = isSessionEvent(event, sessionId);
 
             if (isParent && event.type === "message.updated") {
-              const contextEmit = emitContextProgressFromMessage(event, getModelContextLimits, emit)
-                .catch((err) =>
-                  logError(
-                    log,
-                    "context_progress_emit_failed",
-                    err instanceof Error ? err.message : String(err),
-                    { sessionId, eventType: event.type },
-                  ),
-                )
-                .finally(() => {
-                  pendingContextEmits.delete(contextEmit);
-                });
-              pendingContextEmits.add(contextEmit);
+              emitContextProgressFromMessage(event, modelContextLimits, emit);
             }
 
             // Forward tool progress from child sessions so
@@ -1224,10 +1206,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       if (!finished && latestSessionError) {
         terminalError = latestSessionError;
-      }
-
-      if (pendingContextEmits.size > 0) {
-        await Promise.allSettled([...pendingContextEmits]);
       }
 
       const durationMs = Date.now() - promptStart;
@@ -1440,24 +1418,23 @@ function messageUpdatedInfo(event: Event): Record<string, unknown> | undefined {
   return isRecord(info) ? info : undefined;
 }
 
-async function emitContextProgressFromMessage(
+function emitContextProgressFromMessage(
   event: Event,
-  getLimits: () => Promise<ModelContextLimits>,
+  limits: ModelContextLimits,
   emit: (event: ProgressEvent) => void,
-): Promise<void> {
+): void {
   const info = messageUpdatedInfo(event);
   if (!info) return;
   const role = safeStr(info.role) ?? safeStr(info.type);
   if (role && role !== "assistant") return;
-  const providerID = safeStr(info.providerID) ?? safeStr(info.providerId);
-  const modelID = safeStr(info.modelID) ?? safeStr(info.modelId);
-  if (!providerID || !modelID) return;
-  const limits = await getLimits();
-  const limit = limits.get(contextLimitKey(providerID, modelID));
-  if (!limit) return;
   const tokens = numericTokenTotal(info.tokens);
   if (tokens === undefined) return;
   const tokenTotal = Math.max(0, Math.floor(tokens));
+  const providerID = safeStr(info.providerID) ?? safeStr(info.providerId);
+  const modelID = safeStr(info.modelID) ?? safeStr(info.modelId);
+  if (!providerID || !modelID) return;
+  const limit = limits.get(contextLimitKey(providerID, modelID));
+  if (!limit) return;
   const usagePercent = Math.round((tokenTotal * 100) / limit);
   emit({
     type: "context",
