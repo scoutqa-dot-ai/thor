@@ -69,17 +69,23 @@ function parsePrCheckSummaries(stdout: string): PrCheckSummary[] | null {
     return null;
   }
   if (!Array.isArray(parsed)) return null;
-  return parsed.map((row) => {
-    const obj = row && typeof row === "object" ? (row as Record<string, unknown>) : {};
-    return {
+  const checks: PrCheckSummary[] = [];
+  for (const row of parsed) {
+    if (!row || typeof row !== "object") return null;
+    const obj = row as Record<string, unknown>;
+    const state = normalizeOptionalString(obj.state);
+    const bucket = normalizeOptionalString(obj.bucket);
+    if (!state && !bucket) return null;
+    checks.push({
       name: normalizeOptionalString(obj.name),
-      state: normalizeOptionalString(obj.state),
-      bucket: normalizeOptionalString(obj.bucket),
+      state,
+      bucket,
       link: normalizeOptionalString(obj.link),
       description: normalizeOptionalString(obj.description),
       workflow: normalizeOptionalString(obj.workflow),
-    };
-  });
+    });
+  }
+  return checks;
 }
 
 function isTerminalPrCheck(check: PrCheckSummary): boolean {

@@ -160,6 +160,26 @@ describe("resolvePrChecksTerminalState", () => {
     });
   });
 
+  it("treats malformed summary rows as lookup failure", async () => {
+    const internalExec = vi
+      .fn<InternalExecClient>()
+      .mockResolvedValueOnce({ stdout: JSON.stringify([{}]), stderr: "bad row", exitCode: 0 });
+
+    await expect(
+      resolvePrChecksTerminalState({
+        internalExec,
+        directory: "/workspace/repos/thor",
+        prNumber: 42,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      reason: "pr_checks_lookup_failed",
+      stderr: "bad row",
+      exitCode: 0,
+    });
+    expect(internalExec).toHaveBeenCalledTimes(1);
+  });
+
   it("returns lookup_failed with error details when internalExec rejects", async () => {
     const internalExec = vi
       .fn<InternalExecClient>()
