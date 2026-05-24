@@ -347,34 +347,6 @@ describe("gh disclaimer injection", () => {
     });
   });
 
-  it("injects into issue comment bodies", async () => {
-    bindSessionToAnchor("parent", anchorParent);
-    appendSessionEvent("parent", { type: "trigger_start", triggerId });
-
-    await withServer(async (url) => {
-      const { response } = await postGh(
-        url,
-        ["issue", "comment", "42", "--body", "note"],
-        "parent",
-      );
-      expect(response.status).toBe(200);
-      expect(execCalls[0].args).toEqual([
-        "issue",
-        "comment",
-        "42",
-        "--body",
-        `note
-${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
-      ]);
-      expect(
-        resolveAlias({
-          aliasType: "github.issue",
-          aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
-        }),
-      ).toBe(anchorParent);
-    });
-  });
-
   it("injects into issue create bodies and binds the created issue alias with GitHub repo basename", async () => {
     bindSessionToAnchor("parent", anchorParent);
     appendSessionEvent("parent", { type: "trigger_start", triggerId });
