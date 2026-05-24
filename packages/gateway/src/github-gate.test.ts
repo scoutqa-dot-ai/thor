@@ -120,6 +120,28 @@ describe("resolvePrChecksTerminalState", () => {
     expect(internalExec).toHaveBeenCalledTimes(2);
   });
 
+  it("treats startup_failure state as terminal", async () => {
+    const internalExec = vi
+      .fn<InternalExecClient>()
+      .mockResolvedValueOnce(
+        ok(JSON.stringify([{ name: "bootstrap", state: "STARTUP_FAILURE" }])),
+      )
+      .mockResolvedValueOnce({ stdout: "bootstrap startup_failure\n", stderr: "", exitCode: 1 });
+
+    await expect(
+      resolvePrChecksTerminalState({
+        internalExec,
+        directory: "/workspace/repos/thor",
+        prNumber: 42,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      checks: [{ name: "bootstrap", state: "STARTUP_FAILURE" }],
+      aggregate: { command: "gh pr checks 42", stdout: "bootstrap startup_failure\n", exitCode: 1 },
+    });
+    expect(internalExec).toHaveBeenCalledTimes(2);
+  });
+
   it("reports pending checks when any PR check is non-terminal", async () => {
     const internalExec = vi
       .fn<InternalExecClient>()

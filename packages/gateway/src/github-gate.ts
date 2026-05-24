@@ -52,6 +52,7 @@ const TERMINAL_STATES = new Set([
   "FAILURE",
   "NEUTRAL",
   "SKIPPED",
+  "STARTUP_FAILURE",
   "STALE",
   "SUCCESS",
   "TIMED_OUT",
