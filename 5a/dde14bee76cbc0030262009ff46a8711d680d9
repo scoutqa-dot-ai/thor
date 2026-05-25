@@ -1,0 +1,31 @@
+docs/feat/integrations.md
+  71f884fe7265a6a3 1-61
+README.md
+  71f884fe7265a6a3 248-256
+docs/slack.md
+  71f884fe7265a6a3 1-122
+docs/github.md
+  71f884fe7265a6a3 166,168
+docs/feat/security-model.md
+  71f884fe7265a6a3 1-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5adde14bee76cbc0030262009ff46a8711d680d9",
+  "prompts": {
+    "71f884fe7265a6a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "615df081-cf0a-460a-8f5d-3b9ee7231412",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 298,
+      "total_deletions": 21,
+      "accepted_lines": 295,
+      "overriden_lines": 1
+    }
+  }
+}
