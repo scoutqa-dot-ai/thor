@@ -357,6 +357,24 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 | 19  | Same-key mixed-source batches dispatch as one runner trigger                                       | `git:branch:*` is intentionally shared across Slack, cron, and GitHub. Dispatching one composite prompt per ready batch preserves every event under a single queue ack and avoids source-priority drops when multiple intake paths hit the same branch together.  |
 | 20  | Centralize queue dispatch behind one batch planner + executor                                      | Single-source and mixed-source batches now share one decision path (`dispatch` / `reroute` / `drop`). Source-specific rules stay local, while queue handling stops duplicating routing policy across Slack, cron, and GitHub branches.                            |
 
+## Inherited auth decisions
+
+The following decisions originated in the deleted `2026041503_github-app-auth.md` and are still in force. They cover the `git` / `gh` wrapper auth path that this plan's D6 ("remote-cli owns App private key") delegates to.
+
+| #   | Decision                                                       | Rationale                                                                                                                                                  |
+| --- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Mint full installation tokens per org, not narrowed per repo   | Preserves a simple cache key and avoids token churn; GitHub still enforces the installation's repo access at the API.                                      |
+| A2  | Reject ambiguous or unsupported target-org resolution          | Silent fallback to the wrong org would be a high-risk auth bug. Wrappers fail loudly when the org cannot be resolved from cwd remote.                      |
+
+### Subsequent reversals
+
+Things the original auth plan called for that have since been removed:
+
+- **GitHub Enterprise support removed.** The `api_url` installation field, the `GITHUB_API_URL` env var, and the `deriveAllowedGitHosts` / `addGitHostsFromApiUrl` machinery were dropped. Thor only targets `github.com`. The token-mint URL is hardcoded to `https://api.github.com`.
+- **Arg-based org resolution removed.** `resolveOrgFromArgs` (the `-R` / `--repo` parser) was unreachable because `validateGhArgs.hasRepoOverride` denies all four shapes (`-R`, `-Rfoo`, `--repo`, `--repo=foo`) before the auth helper runs. `resolveOrg` now defers entirely to the cwd's git remote.
+- **Host check on `parseOrgFromRemoteUrl` dropped.** It only defended against admin compromise of the clone path, which already implies broader compromise; the check was noise on a trusted admin workflow.
+- **Legacy PAT fallback removed (2026-05-16).** GitHub App installation tokens are the only supported auth path for `git` / `gh`.
+
 ## Out of Scope
 
 - Replying back to GitHub (issues, PRs, reviews) from Thor.

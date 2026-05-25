@@ -379,6 +379,18 @@ breakdown. They are recorded here so the plan reflects what shipped.
 | --- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | D13 | Use `@slack/web-api` `WebClient` in gateway instead of a hand-rolled fetch wrapper | Official typings for the four methods we use, one timeout seam, and tests can mock the client object directly. The wrapper was already gateway-local — the cost of swapping is tests + a small dep. |
 
+## Inherited progress-message behavior
+
+The following behavioral decisions originated in the deleted `2026031203_slack-progress-to-slack-mcp.md` and still ship now that gateway owns the progress lifecycle:
+
+| #   | Decision                                                                                                 | Rationale                                                                                                                                                                                          |
+| --- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1  | Register progress messages as `in_progress` at post time, not at `finish()`                              | Closes the race where the bot replies before `finish()` runs — `onBotReply` can always find and delete the message because it was tracked the moment it was posted.                                |
+| P2  | Auto-delete progress on `post_message`, not on Slack event webhook echo                                  | The posting service knows immediately when the bot replies; no need to wait for Slack's event echo (which introduced a race window and required a 60s timeout fallback in the original design).    |
+| P3  | Status-aware cleanup — delete non-error progress, preserve error progress                                | Error messages stay visible as debugging evidence; only successful/in-progress messages are cleaned up when the agent replies.                                                                     |
+| P4  | Update cadence ~10s                                                                                      | Slack rate-limits `chat.update` to ~50/min per channel; 10s stays well within limits while still feeling responsive.                                                                               |
+| P5  | Threshold of 3+ tool calls before any progress message is posted                                         | Avoids posting a progress message for quick tasks that complete in a few tool calls.                                                                                                               |
+
 ## Verification matrix
 
 Run these checks before considering the migration complete:
