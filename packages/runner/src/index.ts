@@ -1059,7 +1059,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           {
             const iterator = subscription[Symbol.asyncIterator]();
             try {
-              while (!finished) {
+              while (true) {
                 const remainingSessionErrorGraceMs = latestSessionErrorAt
                   ? SESSION_ERROR_GRACE_MS - (Date.now() - latestSessionErrorAt)
                   : undefined;
@@ -1081,7 +1081,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                 }
 
                 const event = next.value;
-                if (finished) break;
 
                 // Child sub-session events land in the child's own log so the
                 // viewer's owner-only slice never surfaces them.

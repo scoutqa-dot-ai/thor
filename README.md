@@ -195,6 +195,20 @@ Human attribution entries live under `users[]`. `email` must be the Jira account
 
 To verify your entry, trigger Thor from Slack and look for `attribution_applied` with `outcome: "applied"` and your Slack id; `skipped_no_user_record` means the configured Slack id did not match the trigger. See [`docs/feat/users-directory-provenance.md`](docs/feat/users-directory-provenance.md) for registry provenance.
 
+Every Slack surface other than a regular public, non-shared channel is gated by an explicit allowlist under `slack.private_channel_allowlist`. Private channels, DMs (`im`), group DMs (`mpim`), and Slack Connect/shared channels must all have their conversation id on the list. List every conversation id that Thor is permitted to act in:
+
+```json
+{
+  "slack": {
+    "private_channel_allowlist": ["C0123456789", "D0123456789", "G0123456789"]
+  }
+}
+```
+
+The config key name predates a scope broadening; the list now accepts DM (`D…`) and group-DM (`G…`) ids alongside private-channel and Slack Connect ids. Public, non-shared channel ids in the list are accepted but unnecessary.
+
+When the channel type is not present on the Slack event (always true for `app_mention` in observed Slack payloads), or when the event says `channel_type === "channel"` and Thor still has to rule out Slack Connect/shared-channel flags, the webhook acknowledges immediately and enqueues the event under a `pending:slack-privacy:` correlation key, mirroring the GitHub `pending:branch-resolve:` pattern. The dispatcher then calls `conversations.info` off the ack path to resolve the surface; successful classifications are cached for 60 minutes. If the lookup fails, or if the workspace config cannot be loaded, the gate fails closed and the event is dropped with reason `private_channel_not_allowlisted`. The same audit reason fires for non-allowlisted DMs and MPIMs even though the string still says "private channel"; it is retained for log-grep continuity. For app mentions, Thor posts `:eyes:` immediately to show receipt before privacy resolution; any channel-gate rejection adds `:lock:` to mark a policy block. `:x:` remains reserved for processing failures. Omitting the `slack` key (or leaving the list empty) means every non-public or shared surface is rejected.
+
 If you have internal APIs that Thor should access with injected credentials,
 define rules in `/workspace/config/thor.json` and keep only secret values in `.env`:
 

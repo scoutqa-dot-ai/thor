@@ -457,6 +457,185 @@ describe("planBatchDispatch", () => {
 
     expect(plan.options.prompt).not.toContain("[Slack routing]");
   });
+
+  describe("pending Slack privacy resolution", () => {
+    type SlackClientLike = {
+      conversations: { info: ReturnType<typeof vi.fn> };
+      reactions: { add: ReturnType<typeof vi.fn> };
+    };
+    function slackDepsWith(client: SlackClientLike): SlackDeps {
+      return { client: client as unknown as SlackDeps["client"] };
+    }
+
+    beforeEach(async () => {
+      const { __resetSlackChannelGateCacheForTests } = await import("./slack-api.js");
+      __resetSlackChannelGateCacheForTests();
+    });
+
+    const pendingEvent = {
+      channel: "C_DEFER",
+      ts: "1710000000.500",
+      text: "<@U999> ping",
+      user: "U123",
+      type: "app_mention" as const,
+    };
+
+    async function planPendingPrivacy(opts: {
+      slackDeps: SlackDeps;
+      workspaceConfigLoader?: () => unknown;
+    }) {
+      const { planBatchDispatch } = await import("./service.js");
+      return planBatchDispatch({
+        slackEvents: [pendingEvent],
+        cronEvents: [],
+        githubEvents: [],
+        approvalOutcomes: [],
+        correlationKey: "pending:slack-privacy:C_DEFER:Ev1",
+        deps: { runnerUrl: "http://runner:3000" },
+        slackDeps: opts.slackDeps,
+        workspaceConfigLoader: opts.workspaceConfigLoader as never,
+      });
+    }
+
+    it("reroutes to the resolved key when the channel is public", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi.fn().mockResolvedValue({ ok: true, channel: { is_private: false } }),
+        },
+        reactions: { add: vi.fn().mockResolvedValue({ ok: true }) },
+      };
+
+      const plan = await planPendingPrivacy({ slackDeps: slackDepsWith(client) });
+
+      expect(plan.kind).toBe("reroute");
+      if (plan.kind !== "reroute") return;
+      expect(plan.logPrefix).toBe("slack");
+      expect(plan.fromCorrelationKey).toBe("pending:slack-privacy:C_DEFER:Ev1");
+      expect(plan.toCorrelationKey).toBe("slack:thread:C_DEFER/1710000000.500");
+      expect(plan.slackEvents).toEqual([pendingEvent]);
+      expect(client.reactions.add).not.toHaveBeenCalled();
+    });
+
+    it("reroutes when the resolved private channel is allowlisted", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi.fn().mockResolvedValue({ ok: true, channel: { is_private: true } }),
+        },
+        reactions: { add: vi.fn().mockResolvedValue({ ok: true }) },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["C_DEFER"] } }),
+      });
+
+      expect(plan.kind).toBe("reroute");
+    });
+
+    it("drops with private_channel_not_allowlisted when the resolved channel is private and unallowlisted", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi.fn().mockResolvedValue({ ok: true, channel: { is_private: true } }),
+        },
+        reactions: { add: vi.fn() },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => ({}),
+      });
+
+      expect(plan).toEqual({
+        kind: "drop",
+        logPrefix: "slack",
+        reason: "private_channel_not_allowlisted",
+      });
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
+      });
+    });
+
+    it("drops with private_channel_not_allowlisted when the resolved public channel is externally shared", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi
+            .fn()
+            .mockResolvedValue({ ok: true, channel: { is_private: false, is_ext_shared: true } }),
+        },
+        reactions: { add: vi.fn() },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => ({}),
+      });
+
+      expect(plan).toEqual({
+        kind: "drop",
+        logPrefix: "slack",
+        reason: "private_channel_not_allowlisted",
+      });
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
+      });
+    });
+
+    it("fails closed when conversations.info errors", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi.fn().mockRejectedValue(new Error("slack down")),
+        },
+        reactions: { add: vi.fn() },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => ({}),
+      });
+
+      expect(plan).toEqual({
+        kind: "drop",
+        logPrefix: "slack",
+        reason: "private_channel_not_allowlisted",
+      });
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
+      });
+    });
+
+    it("fails closed when the workspace config loader throws", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi.fn().mockResolvedValue({ ok: true, channel: { is_private: true } }),
+        },
+        reactions: { add: vi.fn() },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => {
+          throw new Error("config unavailable");
+        },
+      });
+
+      expect(plan).toEqual({
+        kind: "drop",
+        logPrefix: "slack",
+        reason: "private_channel_not_allowlisted",
+      });
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
+      });
+    });
+  });
 });
 
 describe("triggerRunnerApprovalOutcomes", () => {
