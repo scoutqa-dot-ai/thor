@@ -15,8 +15,57 @@ The docker network — gateway, runner, remote-cli, mitmproxy — is the trust b
 ## Layer 1: Network boundary
 
 - **Ingress + Vouch.** `ingress` terminates TLS and delegates auth to Vouch. Vouch admits Google-authenticated users whose email domain matches `VOUCH_ALLOWED_EMAIL_DOMAINS`. The OpenCode SPA root and `/admin/` additionally require membership in `THOR_ADMIN_EMAILS`; `/runner/` viewer routes remain open to any allowed-domain user. Static OpenCode assets bypass Vouch for performance.
-- **Egress through mitmproxy.** All outbound HTTP(S) from OpenCode traverses mitmproxy. See README "Outbound HTTP(S) proxy path" for the inspectable-vs-passthrough split.
+- **Egress through mitmproxy.** All outbound HTTP(S) from OpenCode traverses mitmproxy. See Layer 1a for the routing path, built-in defaults, and custom rule format.
 - **Host port hardening.** `remote-cli` binds `127.0.0.1:3004:3004` so it is unreachable from outside the host.
+
+## Layer 1a: Outbound proxy (mitmproxy)
+
+Thor's outbound HTTP(S) routing for operator-invoked clients is explicit:
+
+```text
+opencode -> HTTP(S)_PROXY -> mitmproxy -> upstream
+```
+
+- `opencode` sets both lowercase and uppercase proxy env vars (`http_proxy`, `https_proxy`, `HTTP_PROXY`, `HTTPS_PROXY`, with matching `NO_PROXY` forms).
+- Supported outbound clients in this workflow are `curl` and built-in `fetch()`.
+- This is env-proxy routing, not transparent interception or firewall-style egress enforcement.
+- The mitmproxy CA private key stays on the host (initialized once via `./scripts/mitmproxy-ca-init.sh`); only the public trust bundle is exposed inside `opencode`.
+
+### Built-in defaults
+
+Built-in defaults are intentionally narrow:
+
+- Atlassian: injected auth for `api.atlassian.com` and `*.atlassian.net`, read-only by default. Jira attachment uploads (`POST .../rest/api/3/issue/{key}/attachments` on `*.atlassian.net`, and `POST .../ex/jira/{cloudId}/rest/api/3/issue/{key}/attachments` on `api.atlassian.com`) are allowed as a POST-only narrow write exception.
+- Atlassian media redirects: `api.media.atlassian.com` passthrough.
+- Slack API: injected auth only for thread/history reads, `reactions.add`, `files.info`, and the upload setup/complete endpoints on `slack.com/api/...`; message writes must use `slack-post-message`.
+- Slack files: read-only downloads on `files.slack.com/files-pri/...` and upload flow support on `files.slack.com/upload/v1/...`.
+- OpenAI and ChatGPT domains: passthrough only (no injected credentials).
+
+The shared upstream registry and allow/approve policy are checked into [`packages/common/src/proxies.ts`](../../packages/common/src/proxies.ts).
+
+### Custom rules
+
+Custom credential rules and passthrough hosts live in `/workspace/config/thor.json` under `mitmproxy[]` and `mitmproxy_passthrough[]`. Keep secrets in `.env` only and reference them in config via `${ENV_VAR}`. Rules can match either an exact `host` or a `host_suffix`, and can optionally add `path_prefix` and/or `path_suffix` when one domain needs different headers by URL prefix or suffix.
+
+```json
+{
+  "mitmproxy": [
+    {
+      "host": "billing.example.com",
+      "path_prefix": "/v1/",
+      "headers": { "X-Custom-Auth": "${BILLING_API_KEY}" }
+    },
+    {
+      "host_suffix": ".internal.example",
+      "headers": { "Authorization": "Bearer ${INTERNAL_API_TOKEN}" },
+      "readonly": true
+    }
+  ],
+  "mitmproxy_passthrough": ["api.openai.com", ".anthropic.com"]
+}
+```
+
+mitmproxy evaluates user rules first, then built-in defaults. Rules match by exact host or suffix first, then by optional `path_prefix` and `path_suffix`.
 
 ## Layer 2: Inbound authentication
 
