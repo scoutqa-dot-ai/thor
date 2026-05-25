@@ -7,15 +7,12 @@ import {
   logWarn,
   logError,
   resolveCorrelationKeys,
-  truncate,
-  ProgressEventSchema,
   resolveRepoDirectory,
   type ConfigLoader,
 } from "@thor/common";
-import type { ExecResult, ProgressEvent } from "@thor/common";
+import type { ExecResult } from "@thor/common";
 import {
   getSlackCorrelationKeys,
-  getSlackThreadTs,
   isPendingSlackPrivacyKey,
   type SlackThreadEvent,
 } from "./slack.js";
@@ -28,17 +25,12 @@ import {
   type GitHubWebhookEvent,
   type IssueCommentEvent,
 } from "./github.js";
-import type { WebClient } from "@slack/web-api";
 import { addReaction, updateMessage, type SlackDeps } from "./slack-api.js";
 import {
   addSlackGateRejectedReaction,
   evaluateSlackChannelGate,
   SLACK_GATE_DROP_REASON,
 } from "./slack-channel-gate.js";
-import { handleProgressEvent } from "./progress-manager.js";
-
-/** SlackDeps stub for triggers that never post to Slack (cron, github). */
-const NOOP_SLACK_DEPS: SlackDeps = { client: {} as WebClient };
 
 const log = createLogger("gateway-service");
 const INTERNAL_EXEC_TIMEOUT_MS = 5000;
@@ -53,13 +45,6 @@ export interface RunnerDeps {
 export type BatchSource = "slack" | "cron" | "github" | "approval";
 export type BatchLogPrefix = BatchSource | "mixed";
 
-export interface ProgressRelayTarget {
-  channel: string;
-  threadTs: string;
-  triggerTs: string;
-  slackDeps: SlackDeps;
-}
-
 export interface RunnerTriggerOptions {
   prompt: string;
   correlationKey: string;
@@ -70,9 +55,6 @@ export interface RunnerTriggerOptions {
   interrupt?: boolean;
   onAccepted?: () => void;
   onRejected?: (reason: string) => void;
-  progressTarget?: ProgressRelayTarget;
-  backgroundDrain?: boolean;
-  backgroundDrainLogEvent?: string;
 }
 
 export interface ApprovalOutcomeEventPayload {
@@ -96,7 +78,7 @@ export interface BatchDispatchInput {
   approvalOutcomes: ApprovalOutcomeEventPayload[];
   correlationKey: string;
   deps: RunnerDeps;
-  slackDeps: SlackDeps;
+  slackDeps?: SlackDeps;
   remoteCliUrl?: string;
   internalSecret?: string;
   internalExec?: InternalExecClient;
@@ -474,36 +456,6 @@ export function buildDispatchLogContext(input: {
   return context;
 }
 
-function buildProgressTarget(
-  slackEvents: SlackThreadEvent[],
-  approvalOutcomes: ApprovalOutcomeEventPayload[],
-  slackDeps: SlackDeps,
-): ProgressRelayTarget | undefined {
-  const lastSlackEvent = slackEvents[slackEvents.length - 1];
-  if (lastSlackEvent) {
-    return {
-      channel: lastSlackEvent.channel,
-      threadTs: getSlackThreadTs(lastSlackEvent),
-      triggerTs: lastSlackEvent.ts,
-      slackDeps,
-    };
-  }
-  // Approval-outcome batches resume an existing Slack thread session — without
-  // a progress target the resumed run goes silent (no progress, no further
-  // approval cards) because triggerRunnerPrompt would background-drain the
-  // NDJSON instead of forwarding events to Slack.
-  const lastApproval = approvalOutcomes[approvalOutcomes.length - 1];
-  if (lastApproval) {
-    return {
-      channel: lastApproval.channel,
-      threadTs: lastApproval.threadTs,
-      triggerTs: lastApproval.messageTs ?? lastApproval.threadTs,
-      slackDeps,
-    };
-  }
-  return undefined;
-}
-
 function collectBatchDirectory<T>(
   label: string,
   events: T[],
@@ -612,48 +564,11 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
     throw new Error(`Runner returned ${response.status}: ${text}`);
   }
 
-  const contentType = response.headers.get("content-type") ?? "";
-  // JSON response means the runner returned a final status, not a stream.
-  // Body is fully consumed by response.json() — skip the drain/stream paths
-  // below, which would otherwise hit "ReadableStream is locked".
-  if (contentType.includes("application/json")) {
-    const json = (await response.json()) as Record<string, unknown>;
-    if (json.busy === true) {
-      return { busy: true };
-    }
-    options.onAccepted?.();
-    return { busy: false };
+  const json = (await response.json()) as Record<string, unknown>;
+  if (json.busy === true) {
+    return { busy: true };
   }
-
   options.onAccepted?.();
-
-  if (options.progressTarget) {
-    const { channel, threadTs, triggerTs, slackDeps } = options.progressTarget;
-    void consumeNdjsonStream(response, channel, threadTs, triggerTs, slackDeps).catch(
-      async (err) => {
-        logError(log, "stream_consume_error", err instanceof Error ? err.message : String(err));
-        await forwardProgressEvent(
-          channel,
-          threadTs,
-          { type: "error", error: err instanceof Error ? err.message : "stream error" },
-          slackDeps,
-          triggerTs,
-        ).catch(() => {});
-      },
-    );
-    return { busy: false };
-  }
-
-  if (options.backgroundDrain) {
-    void drainResponseBody(response).catch((err) => {
-      logWarn(log, options.backgroundDrainLogEvent ?? "runner_response_drain_error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-    return { busy: false };
-  }
-
-  await drainResponseBody(response);
   return { busy: false };
 }
 
@@ -666,15 +581,19 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     if (!event) {
       return { kind: "drop", logPrefix, reason: SLACK_GATE_DROP_REASON };
     }
+    const slackDeps = input.slackDeps;
+    if (!slackDeps) {
+      return { kind: "drop", logPrefix: "slack", reason: SLACK_GATE_DROP_REASON };
+    }
     const channelType = event.type === "message" ? event.channel_type : undefined;
     const decision = await evaluateSlackChannelGate({
       event: { channel: event.channel, channel_type: channelType },
-      slackDeps: input.slackDeps,
+      slackDeps,
       workspaceConfigLoader: input.workspaceConfigLoader,
       logContext: { correlationKey: input.correlationKey },
     });
     if (!decision.allowed) {
-      addSlackGateRejectedReaction(event, input.slackDeps, {
+      addSlackGateRejectedReaction(event, slackDeps, {
         correlationKey: input.correlationKey,
       });
       return { kind: "drop", logPrefix: "slack", reason: decision.reason };
@@ -806,15 +725,6 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     return { kind: "drop", logPrefix, reason };
   }
 
-  const progressTarget = buildProgressTarget(
-    input.slackEvents,
-    input.approvalOutcomes,
-    input.slackDeps,
-  );
-  // Cron-only batches have no Slack progress relay; drain in foreground so
-  // callers can rely on cleanup happening before return.
-  const isSilentOnly = sources.length === 1 && sources[0] === "cron";
-  const backgroundDrain = !progressTarget && !isSilentOnly;
   const prompt =
     parts.length === 1 ? parts[0].singlePrompt : parts.map((part) => part.mixedPrompt).join("\n\n");
 
@@ -831,9 +741,6 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       interrupt: input.interrupt,
       onAccepted: input.onAccepted,
       onRejected: input.onRejected,
-      progressTarget,
-      backgroundDrain,
-      backgroundDrainLogEvent: backgroundDrain ? `${logPrefix}_response_drain_error` : undefined,
     },
   };
 }
@@ -909,96 +816,6 @@ export async function triggerRunnerSlack(
   });
 }
 
-async function consumeNdjsonStream(
-  response: Response,
-  channel: string,
-  threadTs: string,
-  triggerTs: string,
-  slackDeps: SlackDeps,
-): Promise<void> {
-  const body = response.body;
-  if (!body) return;
-
-  const lines = body.pipeThrough(new TextDecoderStream()).pipeThrough(newlineStream());
-  for await (const line of lines) {
-    if (!line.trim()) continue;
-    try {
-      const parsed = ProgressEventSchema.safeParse(JSON.parse(line));
-      if (!parsed.success) continue;
-      const event = parsed.data;
-      if (event.type === "heartbeat") continue;
-
-      logInfo(log, "progress_relay", {
-        channel,
-        threadTs,
-        type: event.type,
-        ...(event.type === "tool" ? { tool: event.tool } : {}),
-        ...(event.type === "done" ? { status: event.status } : {}),
-        ts: Date.now(),
-      });
-
-      await forwardProgressEvent(channel, threadTs, event, slackDeps, triggerTs);
-    } catch (err) {
-      logWarn(log, "ndjson_parse_skip", {
-        line: truncate(line, 200),
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-}
-
-async function drainResponseBody(response: Response): Promise<void> {
-  const body = response.body;
-  if (!body) return;
-
-  for await (const _ of body) {
-    // discard
-  }
-}
-
-/** Maximum bytes the newlineStream buffer is allowed to grow before forcing
- * a flush. Caps adversarial / runaway inputs that would otherwise OOM the
- * gateway (a single multi-MB NDJSON line). 1 MiB is well above any legitimate
- * progress event payload. */
-const NDJSON_LINE_BYTE_LIMIT = 1 * 1024 * 1024;
-
-/** TransformStream that splits chunks on newlines. */
-function newlineStream(): TransformStream<string, string> {
-  let buffer = "";
-  return new TransformStream({
-    transform(chunk, controller) {
-      buffer += chunk;
-      const parts = buffer.split("\n");
-      buffer = parts.pop() ?? "";
-      for (const part of parts) controller.enqueue(part);
-      if (buffer.length > NDJSON_LINE_BYTE_LIMIT) {
-        // Drop the oversized partial line and reset; the next newline starts
-        // a fresh line. The truncated event will fail JSON.parse downstream
-        // and be skipped via the existing parse-error log.
-        logWarn(log, "ndjson_line_too_large", { bufferedBytes: buffer.length });
-        buffer = "";
-      }
-    },
-    flush(controller) {
-      if (buffer) controller.enqueue(buffer);
-    },
-  });
-}
-
-async function forwardProgressEvent(
-  channel: string,
-  threadTs: string,
-  event: ProgressEvent,
-  deps: SlackDeps,
-  sourceTs: string,
-): Promise<void> {
-  try {
-    await handleProgressEvent(channel, threadTs, event, deps, sourceTs);
-  } catch (err) {
-    logError(log, "progress_forward_error", err instanceof Error ? err.message : String(err));
-  }
-}
-
 /**
  * Trigger the runner with a cron job payload.
  * Consumes the response stream silently — the prompt itself should
@@ -1019,7 +836,6 @@ export async function triggerRunnerCron(
     approvalOutcomes: [],
     correlationKey,
     deps,
-    slackDeps: NOOP_SLACK_DEPS,
     interrupt,
     onAccepted,
     onRejected,
@@ -1046,7 +862,6 @@ export async function triggerRunnerGitHub(
     correlationKey,
     ...triggerActorFromGitHubEvents(events),
     deps,
-    slackDeps: NOOP_SLACK_DEPS,
     remoteCliUrl,
     internalSecret,
     internalExec: createInternalExecClient({

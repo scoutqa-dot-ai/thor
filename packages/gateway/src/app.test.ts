@@ -2621,7 +2621,9 @@ describe("gateway", () => {
   });
 
   it("uses a fresh public-channel cache hit to accept app mentions without pending privacy", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify({ busy: false }), { status: 200 }));
 
     await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
       slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: false } });

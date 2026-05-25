@@ -69,7 +69,6 @@ Atlassian provides a hosted MCP server at `https://mcp.atlassian.com/v1/mcp` wit
 | `addCommentToJiraIssue`         | Add comments           |
 | `transitionJiraIssue`           | Change issue status    |
 | `addWorklogToJiraIssue`         | Log work time          |
-| `createIssueLink`               | Link issues together   |
 | `createConfluencePage`          | Create new pages       |
 | `updateConfluencePage`          | Edit existing pages    |
 | `createConfluenceFooterComment` | Add footer comments    |
@@ -83,7 +82,7 @@ Atlassian provides a hosted MCP server at `https://mcp.atlassian.com/v1/mcp` wit
 | 1   | Use Atlassian hosted MCP (`mcp.atlassian.com`)      | Zero maintenance, same pattern as PostHog, official Streamable HTTP support |
 | 2   | Scoped API token with Basic auth                    | Legacy tokens only get 2 tools; scoped tokens unlock all 37 tools           |
 | 3   | Jira + Confluence + JSM in one proxy                | Single upstream exposes all products; no need for separate instances        |
-| 4   | 26 allow / 11 approve split                         | Read tools auto-forwarded; write tools require human approval for safety    |
+| 4   | 27 allow / 10 approve split                         | Read tools auto-forwarded; selected write tools require human approval      |
 | 5   | Port 3014 for proxy instance                        | Next available port after 3013 (grafana)                                    |
 | 6   | `ATLASSIAN_BASIC_AUTH` env var (pre-encoded base64) | Avoids runtime base64 encoding; `echo -n "email:token" \| base64` in setup  |
 

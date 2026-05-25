@@ -47,6 +47,8 @@ export function loadRunnerEnv(env: EnvSource = process.env) {
     opencodeConnectTimeout: envInt(env, "OPENCODE_CONNECT_TIMEOUT", 15000),
     abortTimeout: envInt(env, "ABORT_TIMEOUT", 10000),
     sessionErrorGraceMs: envInt(env, "SESSION_ERROR_GRACE_MS", 10000),
+    slackBotToken: envOptionalString(env, "SLACK_BOT_TOKEN") ?? "",
+    slackApiBaseUrl: envBaseUrl(env, "SLACK_API_BASE_URL", "https://slack.com/api"),
   };
 }
 
