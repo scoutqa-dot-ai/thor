@@ -1410,7 +1410,9 @@ function collectModelContextLimits(value: unknown, limits: ModelContextLimits): 
 function providerCollection(value: unknown): unknown {
   if (Array.isArray(value)) return value;
   if (!isRecord(value)) return undefined;
-  return value.providers ?? value.provider ?? value;
+  // `provider.list` returns { all: Provider[], default, connected } — unwrap `all`
+  // so the provider array is iterated, not the response wrapper itself.
+  return value.providers ?? value.provider ?? value.all ?? value;
 }
 
 function objectEntriesWithIds(value: unknown): Array<[string, unknown]> {
