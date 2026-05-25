@@ -1302,11 +1302,11 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           await progressChain;
         }
       })();
-      void backgroundTask;
       if (stream) {
         await backgroundTask;
         if (!res.writableEnded) res.end();
       } else {
+        void backgroundTask;
         res.json({ accepted: true, sessionId, resumed });
       }
     } catch (err) {
