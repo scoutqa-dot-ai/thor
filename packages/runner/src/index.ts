@@ -535,6 +535,13 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     interrupt: z.boolean().optional(),
     /** Working directory for the OpenCode session. */
     directory: z.string(),
+    /** If true, hold the HTTP response open and stream progress events as
+     *  NDJSON lines until the agent settles, ending with a `done` line.
+     *  Default false: fire-and-forget — return {accepted,sessionId,resumed}
+     *  immediately and run the agent in a background task. Used by the
+     *  OpenCode smoke test, which needs to read the agent's final response
+     *  text and status from the trigger call. */
+    stream: z.boolean().optional(),
   });
 
   type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
@@ -950,6 +957,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       const progressTarget = resolveSlackProgressTarget(correlationKey);
       let progressChain = Promise.resolve();
 
+      const stream = parsed.data.stream === true;
+      if (stream) {
+        res.setHeader("Content-Type", "application/x-ndjson");
+        res.flushHeaders?.();
+      }
+
       function emit(event: ProgressEvent): void {
         logInfo(log, "progress_emit", {
           sessionId,
@@ -965,6 +978,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           ts: Date.now(),
         });
         options.progressEventSink?.(event);
+        if (stream && !res.writableEnded) {
+          res.write(JSON.stringify(event) + "\n");
+        }
         if (!progressTarget || !progressTransport) return;
         progressChain = progressChain
           .catch(() => undefined)
@@ -1248,8 +1264,13 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           await progressChain;
         }
       })();
-      void backgroundTask;
-      res.json({ accepted: true, sessionId, resumed });
+      if (stream) {
+        await backgroundTask;
+        if (!res.writableEnded) res.end();
+      } else {
+        void backgroundTask;
+        res.json({ accepted: true, sessionId, resumed });
+      }
     } catch (err) {
       logError(log, "trigger_error", err);
       // Emit trigger_end{status:"error"} so the trigger doesn't render as `in_flight`
