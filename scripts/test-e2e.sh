@@ -617,18 +617,18 @@ elif assert_attribution_config; then
       2>/dev/null || echo '{}')
     issue_create_exit=$(json_field "$issue_create_raw" "exitCode")
     issue_logs=$(docker logs --since "$issue_log_since" "$remote_cli_container" 2>&1 || true)
-    assert '[[ "$issue_create_exit" != "0" ]]' \
-      "attribution e2e: gh issue create fails before creating an issue" \
+    assert '[[ "$issue_create_exit" == "0" && "$issue_create_raw" == *"\"type\": \"approval_required\""* && "$issue_create_raw" == *"\"tool\": \"ghIssueCreate\""* ]]' \
+      "attribution e2e: gh issue create is intercepted for approval before creating an issue" \
       "exitCode='$issue_create_exit' response: ${issue_create_raw:0:500}"
     assert '[[ "$issue_logs" == *"\"surface\":\"gh-assignee\",\"outcome\":\"applied\""* ]]' \
       "attribution e2e: gh issue create attribution was applied" \
       "logs: ${issue_logs:0:1000}"
-    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh\""*"\"issue\""*"\"create\""*"\"--assignee\""*"\"${ATTRIBUTION_E2E_GITHUB}\""* ]]' \
-      "attribution e2e: gh issue create invocation includes --assignee with the configured github login" \
-      "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in issue create exec_gh args; logs: ${issue_logs:0:1500}"
-    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh\""*"$issue_body"*"View Thor context"* ]]' \
-      "attribution e2e: gh issue create invocation keeps the traced body footer" \
-      "expected original body marker and Thor context footer in exec_gh args; logs: ${issue_logs:0:1500}"
+    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh_pending_approval\""*"\"issue\""*"\"create\""*"\"--assignee\""*"\"${ATTRIBUTION_E2E_GITHUB}\""* ]]' \
+      "attribution e2e: gh issue create approval payload includes --assignee with the configured github login" \
+      "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in issue create pending-approval args; logs: ${issue_logs:0:1500}"
+    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh_pending_approval\""*"$issue_body"*"View Thor context"* ]]' \
+      "attribution e2e: gh issue create approval payload keeps the traced body footer" \
+      "expected original body marker and Thor context footer in pending-approval args; logs: ${issue_logs:0:1500}"
   fi
 fi
 
