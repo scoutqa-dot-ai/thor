@@ -225,6 +225,53 @@ describe("ProgressManager", () => {
     expect(update.text).toContain("context: 50% (99.9K / 200.0K tokens)");
   });
 
+  it("preserves a visible context line across bogus zero context updates", async () => {
+    const deps = mockSlackDeps();
+
+    await sendTools(deps, 3);
+    await handleProgressEvent(
+      progressTarget(deps),
+      {
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 126_000,
+        limit: 200_000,
+        usagePercent: 63,
+      },
+      transport,
+    );
+
+    const updateCountBeforeZero = chat(deps).update.mock.calls.length;
+    await handleProgressEvent(
+      progressTarget(deps),
+      {
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 0,
+        limit: 200_000,
+        usagePercent: 0,
+      },
+      transport,
+    );
+
+    expect(chat(deps).update.mock.calls.length).toBe(updateCountBeforeZero);
+
+    await handleProgressEvent(
+      progressTarget(deps),
+      {
+        type: "delegate",
+        agent: "coding-agent",
+      },
+      transport,
+    );
+
+    const latestUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
+    expect(latestUpdate.text).toContain("context: 63% (126.0K / 200.0K tokens)");
+    expect(latestUpdate.text).toContain("agents: coding-agent");
+  });
+
   it("does not let context events satisfy the tool threshold", async () => {
     const deps = mockSlackDeps();
 

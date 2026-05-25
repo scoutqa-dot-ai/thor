@@ -94,7 +94,7 @@ Restart the `remote-cli` service. New sandboxes will launch from the custom snap
 2. The workflow publishes a new `:latest` and `:<sha>` tag to GHCR.
 3. In Daytona, update the snapshot to the new tag (or create a new snapshot and switch `DAYTONA_SNAPSHOT`).
 
-For one-off extra toolchains in a running sandbox, use the helper documented in `docker/opencode/config/skills/sandbox/SKILL.md` (`docker/opencode/config/skills/sandbox/install-common-toolchains.sh`) instead of expanding the base image preinstall matrix.
+For one-off extra toolchains in a running sandbox, see the guidance in `docker/opencode/config/skills/sandbox/SKILL.md` instead of expanding the base image preinstall matrix.
 
 Pinning `DAYTONA_SNAPSHOT` to a snapshot built from a specific `:<sha>` tag gives you reproducible sandbox environments across teams.
 
