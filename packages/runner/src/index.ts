@@ -1088,7 +1088,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             }
 
             // Forward tool progress from child sessions so
-            // Slack progress isn't silent while a task runs.
+            // Slack progress isn't silent while a task runs. Non-parent
+            // events must never drive parent terminal handling below — a
+            // child's session.idle / session.error would otherwise end the
+            // parent run before its final answer is emitted.
             if (!isParent) {
               if (
                 event.type === "message.part.updated" &&
@@ -1106,8 +1109,8 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                     emitMemoryEventsFromToolPart(toolPart, emit);
                   }
                 }
-                continue;
               }
+              continue;
             }
 
             if (event.type === "message.part.updated") {
