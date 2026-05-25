@@ -1,0 +1,25 @@
+scripts/test-opencode-e2e.sh
+  1cba09453fdeef7d 160,177,190,271
+packages/runner/src/index.ts
+  1cba09453fdeef7d 538-544,960-965,981-983,1268-1270,1273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3903809f217c6a0dfda77685d59544ba44f9d37c",
+  "prompts": {
+    "1cba09453fdeef7d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "23561a84-be83-4eb7-8b1f-a1d51eff76f1",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 165,
+      "total_deletions": 144,
+      "accepted_lines": 40,
+      "overriden_lines": 0
+    }
+  }
+}
