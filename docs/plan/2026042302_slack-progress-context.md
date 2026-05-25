@@ -115,6 +115,23 @@ Expand the Slack progress message so long-running sessions can also show:
 - Runner uses OpenCode's provider/model context limits rather than hard-coded limits.
 - Existing memory/delegate/tool formatting and heartbeat/throttle behavior remain unchanged.
 
+### Phase 5 — Context progress correctness follow-ups
+
+**Changes**
+
+- Change model-context limit cache keys from `modelID` to `${providerID}/${modelID}` in both load and lookup paths, matching OpenCode UI behavior and preventing same-model collisions across providers.
+- Replace context progress token aggregation with a strict extractor for OpenCode's usage shape: `input + output + reasoning + cache.read`. Do not recursively sum nested numeric fields, and do not include `cache.write` unless OpenCode later exposes it as part of the displayed total for this surface.
+- Suppress zero-token assistant `message.updated` context emissions in `runner`; OpenCode initializes fresh assistant messages with zeroed token counters, and those lifecycle updates should not erase real context usage.
+- Harden `ProgressSession.onContext()` so a non-renderable/bogus zero snapshot cannot replace an already-renderable context line. Preserve the prior renderable context until a trusted non-zero context update changes it; keep future explicit reset/compaction semantics as a separate event/schema decision if needed.
+- Add focused coverage for provider/model limit collisions, strict token extraction, zero-token suppression, and progress-manager preservation of a visible context line across bogus zero updates.
+
+**Exit criteria**
+
+- `openai/gpt-5.4` and another provider's `gpt-5.4` can coexist with different limits, and a context event for OpenAI uses the OpenAI denominator.
+- Context token totals are derived only from the intended usage fields and cannot be inflated by recursively summing nested metadata.
+- A later zero-token assistant `message.updated` does not emit a Slack context update and does not remove an already-rendered context line.
+- Existing context visibility threshold behavior remains: context events do not satisfy the tool threshold, and renderable non-zero updates still refresh Slack after threshold using the existing throttle rules.
+
 ## Decision log
 
 | #   | Decision                                                                                | Rationale                                                                                          | Rejected                                                                              |
@@ -131,9 +148,14 @@ Expand the Slack progress message so long-running sessions can also show:
 | 10  | Gate context visibility in the gateway at render time (`>= 50%`)                         | Lets later low-usage updates remove the line after compaction/model changes while preserving relay semantics | Suppressing sub-50 events in `runner`, which could leave stale high-usage Slack text  |
 | 11  | Resolve model limits from OpenCode provider/config metadata via a global best-effort model-id cache | Keeps Thor aligned with OpenCode's own context-window source of truth while preserving a simple request path | Maintaining a Thor-owned model limit table or adding per-request / per-directory cache complexity |
 | 12  | Render percentage plus token total/limit, but not cost, in Slack progress                | The user-facing risk is context-window saturation; cost already belongs to terminal/session summaries | Copying OpenCode's full footer usage text including cost                              |
+| 13  | Key context limits by `${providerID}/${modelID}`                                        | OpenCode can expose the same model id through multiple providers with different limits; provider+model matches the UI source of truth | Model-only keys, which let the last provider win                                     |
+| 14  | Use strict context token extraction (`input`, `output`, `reasoning`, `cache.read`)       | Recursive numeric summation double-counts or includes unrelated nested numbers and produced impossible percentages | Summing all numeric descendants under `tokens` or including `cache.write` without UI parity |
+| 15  | Drop zero-token assistant context updates at the runner boundary                         | Zeroed assistant messages are a normal OpenCode creation lifecycle signal, not an authoritative context reset | Emitting zeros and relying only on the renderer to recover                            |
+| 16  | Preserve a renderable gateway context across bogus zero/non-renderable updates           | Defense in depth keeps Slack stable if a malformed or stale event slips past the runner | Letting every latest context snapshot replace the visible one                         |
 
 ## Targeted verification
 
 - `pnpm vitest run packages/common/src/progress-events.test.ts packages/gateway/src/progress-manager.test.ts packages/runner/src/trigger.test.ts`
 - `pnpm --filter @thor/common typecheck && pnpm --filter @thor/gateway typecheck && pnpm --filter @thor/runner typecheck`
+- Phase 5 should specifically cover: provider/model collision in runner tests, strict extractor totals, zero-token `message.updated` suppression, and gateway preservation of a visible context line across bogus zero/non-renderable updates.
 - If the touched tests are not file-scoped or new common tests are added under a different name, run `pnpm test` only if the targeted Vitest invocation is insufficient.
