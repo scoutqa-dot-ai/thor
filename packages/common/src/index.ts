@@ -201,7 +201,6 @@ export { handleProgressEvent, getRegistrySize, clearRegistry } from "./progress-
 export type { ProgressTransport, ProgressTarget, ProgressBlock } from "./progress-manager.js";
 export {
   buildApprovalButtonValue,
-  extractApprovalFailureCategory,
   parseApprovalButtonValue,
   resolveSlackThreadTargetFromTrigger,
   formatApprovalArgs,

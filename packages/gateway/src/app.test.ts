@@ -3058,8 +3058,9 @@ describe("gateway", () => {
         new Response(
           JSON.stringify({
             stdout: "",
-            stderr: 'Error calling "merge_pull_request": upstream unavailable\n',
+            stderr: "upstream unavailable\n",
             exitCode: 1,
+            sideEffectAttempted: true,
           }),
         ),
       )
@@ -3114,7 +3115,8 @@ describe("gateway", () => {
     expect(capturedSlack!.update).toHaveBeenCalled();
     const updateArg = capturedSlack!.update.mock.calls[0][0] as { text: string };
     expect(updateArg.text).toContain("Approved, resolution failed");
-    expect(updateArg.text).toContain('Error calling "merge_pull_request"');
+    // Slack card never echoes raw stderr — privacy boundary preserved by
+    // surfacing only JSON-structured fields from stdout (none here on failure).
     expect(updateArg.text).not.toContain("upstream unavailable");
 
     const runnerCall = fetchImpl.mock.calls.find(
@@ -3122,7 +3124,11 @@ describe("gateway", () => {
     );
     expect(runnerCall).toBeDefined();
     const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
-    expect(runnerBody.prompt).toContain('Error calling "merge_pull_request"');
+    // Agent gets the "do not replay, choose a safe recovery action" guidance
+    // structurally via resolutionExitCode + sideEffectAttempted-driven routing;
+    // the raw stderr stays out of the runner prompt.
+    expect(runnerBody.prompt).toContain("act-1");
+    expect(runnerBody.prompt).toContain("approval resolver already");
     expect(runnerBody.prompt).not.toContain("upstream unavailable");
   });
 });

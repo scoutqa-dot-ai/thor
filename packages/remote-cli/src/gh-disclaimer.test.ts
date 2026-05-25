@@ -435,7 +435,7 @@ describe("gh disclaimer injection", () => {
     }, approvalConfig());
   });
 
-  it("returns an MCP-shaped failure stderr when an approved gh issue create fails", async () => {
+  it("returns a side-effect-attempted failure when an approved gh issue create fails", async () => {
     bindSessionToAnchor("parent", anchorParent);
     appendSessionEvent("parent", {
       type: "trigger_start",
@@ -463,8 +463,8 @@ describe("gh disclaimer injection", () => {
       const resolved = await postMcpResolve(url, payload.actionId);
       expect(resolved.response.status).toBe(200);
       expect(resolved.body.exitCode).toBe(1);
-      expect(resolved.body.stderr).toMatch(/^Error calling "gh issue create": /);
       expect(resolved.body.stderr).toContain("repository not found");
+      expect((resolved.body as { sideEffectAttempted?: boolean }).sideEffectAttempted).toBe(true);
       expect(
         resolveAlias({
           aliasType: "github.issue",

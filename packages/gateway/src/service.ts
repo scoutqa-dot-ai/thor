@@ -1,7 +1,6 @@
 import {
   createLogger,
   ExecResultSchema,
-  extractApprovalFailureCategory,
   hasSessionForCorrelationKey,
   logInfo,
   logWarn,
@@ -997,7 +996,11 @@ export async function resolveApproval(
           `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
           { remoteCliUrl, attempt },
         );
-        return isResolvedApprovalExecutionFailure(body) ? body : undefined;
+        // Forward the body only when the executor attempted a side effect —
+        // the gateway then re-enters the agent with "do not replay" guidance.
+        // Pre-write failures (bad args, unreachable upstream) are swallowed
+        // here; the Slack card already shows the resolution failed.
+        return body.sideEffectAttempted ? body : undefined;
       }
       return body;
     } catch (err) {
@@ -1015,10 +1018,6 @@ export async function resolveApproval(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isResolvedApprovalExecutionFailure(body: ExecResult): boolean {
-  return body.exitCode !== 0 && extractApprovalFailureCategory(body.stderr) !== undefined;
 }
 
 export async function updateSlackMessage(

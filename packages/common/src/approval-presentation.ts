@@ -83,12 +83,6 @@ export function buildApprovalButtonValue(input: {
   return actionId;
 }
 
-export function extractApprovalFailureCategory(stderr: string): string | undefined {
-  return (
-    stderr.match(/^Error calling "[^"]+"/m)?.[0] ?? stderr.match(/^Unknown upstream "[^"]+"/m)?.[0]
-  );
-}
-
 export function parseApprovalButtonValue(value: string): ApprovalButtonRoute | undefined {
   const parts = value.split(":");
 

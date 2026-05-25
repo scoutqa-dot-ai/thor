@@ -973,7 +973,12 @@ describe("remote-cli MCP endpoints", () => {
       exitCode: number;
     };
 
-    expect(firstBody).toEqual({ stdout: "created", stderr: "", exitCode: 0 });
+    expect(firstBody).toEqual({
+      stdout: "created",
+      stderr: "",
+      exitCode: 0,
+      sideEffectAttempted: true,
+    });
     expect(secondBody).toEqual(firstBody);
     expect(toolCalls).toHaveLength(1);
 
@@ -1047,7 +1052,12 @@ describe("remote-cli MCP endpoints", () => {
       stderr: string;
       exitCode: number;
     };
-    expect(firstBody).toEqual({ stdout: "created", stderr: "", exitCode: 0 });
+    expect(firstBody).toEqual({
+      stdout: "created",
+      stderr: "",
+      exitCode: 0,
+      sideEffectAttempted: true,
+    });
     expect(toolCalls).toHaveLength(1);
   });
 
@@ -1085,9 +1095,11 @@ describe("remote-cli MCP endpoints", () => {
       stdout: string;
       stderr: string;
       exitCode: number;
+      sideEffectAttempted?: boolean;
     };
     expect(failedBody.exitCode).toBe(1);
-    expect(failedBody.stderr).toContain('Error calling "createJiraIssue": upstream unavailable');
+    expect(failedBody.stderr).toContain("upstream unavailable");
+    expect(failedBody.sideEffectAttempted).toBe(true);
 
     const statusAfterFailure = await postJson("/exec/approval", { args: ["status", actionId] });
     const statusAfterFailureBody = (await statusAfterFailure.json()) as { stdout: string };
@@ -1107,7 +1119,12 @@ describe("remote-cli MCP endpoints", () => {
       stderr: string;
       exitCode: number;
     };
-    expect(successfulRetryBody).toEqual({ stdout: "created", stderr: "", exitCode: 0 });
+    expect(successfulRetryBody).toEqual({
+      stdout: "created",
+      stderr: "",
+      exitCode: 0,
+      sideEffectAttempted: true,
+    });
 
     const statusAfterSuccess = await postJson("/exec/approval", { args: ["status", actionId] });
     const statusAfterSuccessBody = (await statusAfterSuccess.json()) as { stdout: string };

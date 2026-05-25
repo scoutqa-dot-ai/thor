@@ -117,6 +117,7 @@ export interface McpExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  sideEffectAttempted?: boolean;
 }
 
 export interface McpCommandContext {
@@ -409,17 +410,44 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (!instance.upstream.tools.some((tool) => tool.name === JIRA_ACCOUNT_LOOKUP_TOOL)) {
       return { ok: false, reason: "tool_unavailable" };
     }
-    const result = await executeUpstreamCall({
-      instance,
-      toolName: JIRA_ACCOUNT_LOOKUP_TOOL,
-      args: { cloudId, searchString: email },
-      logEvent: "jira_account_lookup",
-      decision: "allowed",
-    });
-    if (result.exitCode !== 0) {
+    const start = Date.now();
+    const args = { cloudId, searchString: email };
+    try {
+      const result = await instance.upstream.client.callTool({
+        name: JIRA_ACCOUNT_LOOKUP_TOOL,
+        arguments: args,
+      });
+      const durationMs = Date.now() - start;
+      logInfo(log, "jira_account_lookup", {
+        upstream: instance.name,
+        tool: JIRA_ACCOUNT_LOOKUP_TOOL,
+        durationMs,
+      });
+      writeToolCallLogFn({
+        tool: JIRA_ACCOUNT_LOOKUP_TOOL,
+        decision: "allowed",
+        args,
+        result,
+        durationMs,
+      });
+      return parseJiraAccountLookupStdout(unwrapResult(result));
+    } catch (err) {
+      const durationMs = Date.now() - start;
+      const message = err instanceof Error ? err.message : String(err);
+      logError(log, "jira_account_lookup", message, {
+        upstream: instance.name,
+        tool: JIRA_ACCOUNT_LOOKUP_TOOL,
+        durationMs,
+      });
+      writeToolCallLogFn({
+        tool: JIRA_ACCOUNT_LOOKUP_TOOL,
+        decision: "allowed",
+        args,
+        durationMs,
+        error: message,
+      });
       return { ok: false, reason: "upstream_disconnected" };
     }
-    return parseJiraAccountLookupStdout(result.stdout);
   }
 
   function validateRepoDirectory(directory?: string): McpExecResult | undefined {
@@ -523,17 +551,18 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     instance: ProxyInstance;
     toolName: string;
     args: Record<string, unknown>;
-    logEvent: string;
-    decision: "allowed" | "blocked" | "pending" | "approved" | "rejected";
-    extraLogFields?: Record<string, unknown>;
     sessionId?: string;
     inputSchema?: unknown;
-    onSuccess?: (rawResult: unknown) => void;
-    onError?: (message: string) => void;
   }
 
-  async function executeUpstreamCall(opts: UpstreamCallOpts): Promise<McpExecResult> {
-    const { instance, toolName, args, logEvent, decision, extraLogFields, inputSchema } = opts;
+  /**
+   * Direct (non-approval) MCP tool invocation. Logs, writes the worklog, and
+   * formats stderr with an input-schema hint so the calling agent can fix
+   * malformed input. Approval execution goes through {@link ApprovalExecutor}
+   * instead; the resolver owns those audit and wire-shape concerns.
+   */
+  async function executeDirectMcpCall(opts: UpstreamCallOpts): Promise<McpExecResult> {
+    const { instance, toolName, args, inputSchema } = opts;
     const start = Date.now();
     try {
       const result = await instance.upstream.client.callTool({
@@ -541,14 +570,19 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         arguments: args,
       });
       const duration = Date.now() - start;
-      logInfo(log, logEvent, {
+      logInfo(log, "tool_call", {
         upstream: instance.name,
         tool: toolName,
         durationMs: duration,
-        ...extraLogFields,
+        ...getThorIds({ sessionId: opts.sessionId }),
       });
-      writeToolCallLogFn({ tool: toolName, decision, args, result, durationMs: duration });
-      opts.onSuccess?.(result);
+      writeToolCallLogFn({
+        tool: toolName,
+        decision: "allowed",
+        args,
+        result,
+        durationMs: duration,
+      });
 
       const stdout = unwrapResult(result);
       if (toolName === "post_message" && opts.sessionId) {
@@ -578,16 +612,21 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     } catch (err) {
       const duration = Date.now() - start;
       const message = err instanceof Error ? err.message : String(err);
-      logError(log, logEvent, message, {
+      logError(log, "tool_call", message, {
         upstream: instance.name,
         tool: toolName,
         durationMs: duration,
-        ...extraLogFields,
+        ...getThorIds({ sessionId: opts.sessionId }),
       });
-      writeToolCallLogFn({ tool: toolName, decision, args, durationMs: duration, error: message });
-      opts.onError?.(message);
+      writeToolCallLogFn({
+        tool: toolName,
+        decision: "allowed",
+        args,
+        durationMs: duration,
+        error: message,
+      });
 
-      let stderr = `Error calling "${toolName}": ${message}\n`;
+      let stderr = `${message}\n`;
       if (inputSchema) {
         stderr += `\n[hint] Input schema for "${toolName}":\n${JSON.stringify(inputSchema, null, 2)}\n`;
       }
@@ -688,13 +727,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       );
     }
 
-    return executeUpstreamCall({
+    return executeDirectMcpCall({
       instance,
       toolName: toolInfo.name,
       args,
-      logEvent: "tool_call",
-      decision: "allowed",
-      extraLogFields: getThorIds(context),
       sessionId: context.sessionId,
       inputSchema: toolInfo.inputSchema,
     });
@@ -711,43 +747,108 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return undefined;
   }
 
-  async function executeGhIssueCreateApproval(
-    lookup: ApprovalLookup,
-    reviewer: string,
-    reason: string | undefined,
-  ): Promise<McpExecResult> {
-    const pendingAction = lookup.action;
-    const parsed = GhIssueCreateApprovalArgsSchema.safeParse(pendingAction.args);
-    if (!parsed.success) {
-      return fail(
-        `Stored gh issue create approval action ${pendingAction.id} is invalid: ${parsed.error.message}`,
-      );
-    }
-    const result = await execCommandFn("gh", parsed.data.args, parsed.data.cwd);
-    if (result.exitCode !== 0) {
-      const rawStderr = result.stderr || `gh exited with code ${result.exitCode}`;
-      pendingAction.error = rawStderr;
-      lookup.store.update(pendingAction);
-      // Prefix the stderr with the MCP-style "Error calling" marker so the
-      // gateway recognizes this as an attempted side-effect failure and
-      // re-enters the agent with the outcome, mirroring the MCP path.
-      return {
-        ...result,
-        stderr: `Error calling "gh issue create": ${rawStderr}`,
-      };
-    }
-    registerCreatedIssueCorrelationAlias(
-      pendingAction.origin?.sessionId,
-      parsed.data.cwd,
-      result.stdout,
-    );
-    lookup.store.approveLoaded(pendingAction, result, reviewer, reason);
-    writeToolCallLogFn({
-      tool: pendingAction.tool,
-      decision: "approved",
-      args: pendingAction.args,
-    });
-    return result;
+  /**
+   * Outcome shape returned by every approval executor. The resolver consumes
+   * this to decide audit logging, store transitions, and the wire shape sent
+   * back to the gateway — executors do not write the worklog or touch the
+   * approval store themselves.
+   */
+  interface ApprovalExecutionOutcome {
+    ok: boolean;
+    stdout: string;
+    stderr: string;
+    /**
+     * True iff the executor issued a side-effecting write that may have taken
+     * effect (MCP request was sent; gh subprocess ran to non-zero exit).
+     * False for short-circuits before the write (bad stored args, args build
+     * failure).
+     */
+    sideEffectAttempted: boolean;
+  }
+
+  interface ApprovalExecutor {
+    run(action: ApprovalAction): Promise<ApprovalExecutionOutcome>;
+  }
+
+  function createMcpApprovalExecutor(instance: ProxyInstance): ApprovalExecutor {
+    return {
+      async run(action: ApprovalAction): Promise<ApprovalExecutionOutcome> {
+        let upstreamArgs: Record<string, unknown>;
+        try {
+          upstreamArgs = buildUpstreamArgs(action);
+          if (action.tool === "createJiraIssue") {
+            upstreamArgs = await withJiraAttribution(
+              upstreamArgs,
+              action.origin?.sessionId,
+              instance,
+            );
+          }
+        } catch (err) {
+          return {
+            ok: false,
+            stdout: "",
+            stderr: err instanceof Error ? err.message : String(err),
+            sideEffectAttempted: false,
+          };
+        }
+
+        try {
+          const result = await instance.upstream.client.callTool({
+            name: action.tool,
+            arguments: upstreamArgs,
+          });
+          return {
+            ok: true,
+            stdout: unwrapResult(result),
+            stderr: "",
+            sideEffectAttempted: true,
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            stdout: "",
+            stderr: err instanceof Error ? err.message : String(err),
+            sideEffectAttempted: true,
+          };
+        }
+      },
+    };
+  }
+
+  function createGhIssueCreateApprovalExecutor(): ApprovalExecutor {
+    return {
+      async run(action: ApprovalAction): Promise<ApprovalExecutionOutcome> {
+        const parsed = GhIssueCreateApprovalArgsSchema.safeParse(action.args);
+        if (!parsed.success) {
+          return {
+            ok: false,
+            stdout: "",
+            stderr: `Stored gh issue create approval action ${action.id} is invalid: ${parsed.error.message}`,
+            sideEffectAttempted: false,
+          };
+        }
+        const result = await execCommandFn("gh", parsed.data.args, parsed.data.cwd);
+        if (result.exitCode !== 0) {
+          return {
+            ok: false,
+            stdout: result.stdout,
+            stderr: result.stderr || `gh exited with code ${result.exitCode}`,
+            sideEffectAttempted: true,
+          };
+        }
+        registerCreatedIssueCorrelationAlias(
+          action.origin?.sessionId,
+          parsed.data.cwd,
+          result.stdout,
+        );
+        return {
+          ok: true,
+          stdout: result.stdout,
+          stderr: "",
+          sideEffectAttempted: true,
+        };
+      },
+    };
   }
 
   function storedApprovedResult(action: ApprovalAction): McpExecResult {
@@ -831,46 +932,63 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return ok(stringify(rejected));
     }
 
+    let executor: ApprovalExecutor;
     if (lookup.upstreamName === GH_APPROVAL_STORE) {
-      return executeGhIssueCreateApproval(lookup, reviewer, reason);
-    }
-
-    const instance = await getInstance(lookup.upstreamName);
-    if (!instance) {
-      return fail(`Unknown upstream "${lookup.upstreamName}".`);
+      executor = createGhIssueCreateApprovalExecutor();
+    } else {
+      const instance = await getInstance(lookup.upstreamName);
+      if (!instance) {
+        return fail(`Unknown upstream "${lookup.upstreamName}".`);
+      }
+      executor = createMcpApprovalExecutor(instance);
     }
 
     const pendingAction = lookup.action;
-    let upstreamArgs: Record<string, unknown>;
-    try {
-      upstreamArgs = buildUpstreamArgs(pendingAction);
-      if (pendingAction.tool === "createJiraIssue") {
-        upstreamArgs = await withJiraAttribution(
-          upstreamArgs,
-          pendingAction.origin?.sessionId,
-          instance,
-        );
-      }
-    } catch (err) {
-      return fail(err instanceof Error ? err.message : String(err));
+    const start = Date.now();
+    const outcome = await executor.run(pendingAction);
+    const durationMs = Date.now() - start;
+
+    const baseLogFields = {
+      upstream: lookup.upstreamName,
+      tool: pendingAction.tool,
+      durationMs,
+      actionId: pendingAction.id,
+    };
+
+    if (outcome.ok) {
+      logInfo(log, "tool_call_approved", baseLogFields);
+      writeToolCallLogFn({
+        tool: pendingAction.tool,
+        decision: "approved",
+        args: pendingAction.args,
+        durationMs,
+      });
+      const execResult: McpExecResult = {
+        stdout: outcome.stdout,
+        stderr: "",
+        exitCode: 0,
+        sideEffectAttempted: outcome.sideEffectAttempted,
+      };
+      lookup.store.approveLoaded(pendingAction, execResult, reviewer, reason);
+      return execResult;
     }
-    const result = await executeUpstreamCall({
-      instance,
-      toolName: pendingAction.tool,
-      args: upstreamArgs,
-      logEvent: "tool_call_approved",
+
+    logError(log, "tool_call_approved", outcome.stderr, baseLogFields);
+    writeToolCallLogFn({
+      tool: pendingAction.tool,
       decision: "approved",
-      extraLogFields: { actionId: pendingAction.id },
-      onError: (message) => {
-        pendingAction.error = message;
-        lookup.store.update(pendingAction);
-      },
+      args: pendingAction.args,
+      durationMs,
+      error: outcome.stderr,
     });
-    if (result.exitCode !== 0) {
-      return result;
-    }
-    lookup.store.approveLoaded(pendingAction, result, reviewer, reason);
-    return result;
+    pendingAction.error = outcome.stderr;
+    lookup.store.update(pendingAction);
+    return {
+      stdout: outcome.stdout,
+      stderr: outcome.stderr,
+      exitCode: 1,
+      sideEffectAttempted: outcome.sideEffectAttempted,
+    };
   }
 
   async function withJiraAttribution(
