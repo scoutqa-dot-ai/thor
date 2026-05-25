@@ -208,11 +208,11 @@ function createHarness(
     busySessions?: Set<string>;
     children?: Array<{ id: string }>;
     onGet?: (sessionId: string) => Promise<void>;
-    onConfigGet?: () => void;
+    onProviderList?: () => void;
     promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
     throwInSubscribe?: boolean;
     workspaceConfig?: WorkspaceConfig;
-    opencodeConfig?: unknown;
+    providerList?: unknown;
     opencodeUrl?: string;
   } = {},
 ) {
@@ -266,10 +266,10 @@ function createHarness(
       },
       children: async () => ({ data: opts.children ?? [] }),
     },
-    config: {
-      get: async () => {
-        opts.onConfigGet?.();
-        return { data: opts.opencodeConfig ?? {} };
+    provider: {
+      list: async () => {
+        opts.onProviderList?.();
+        return { data: opts.providerList ?? { all: [], default: {}, connected: [] } };
       },
     },
   };
@@ -1221,14 +1221,17 @@ describe("runner /trigger orchestration", () => {
 
   it("emits context progress from assistant message updates using configured model limits", async () => {
     const h = createHarness({
-      opencodeConfig: {
-        provider: {
-          openai: {
+      providerList: {
+        all: [
+          {
+            id: "openai",
             models: {
               "gpt-5.5": { limit: { context: 200_000 } },
             },
           },
-        },
+        ],
+        default: {},
+        connected: [],
       },
       promptEvents: (sessionId) => [
         messageUpdatedEvent(sessionId),
@@ -1257,14 +1260,17 @@ describe("runner /trigger orchestration", () => {
 
   it("normalizes context usage percent to an integer before emitting", async () => {
     const h = createHarness({
-      opencodeConfig: {
-        provider: {
-          openai: {
+      providerList: {
+        all: [
+          {
+            id: "openai",
             models: {
               "gpt-5.5": { limit: { context: 200_000 } },
             },
           },
-        },
+        ],
+        default: {},
+        connected: [],
       },
       promptEvents: (sessionId) => [
         messageUpdatedEvent(sessionId, {
@@ -1296,19 +1302,22 @@ describe("runner /trigger orchestration", () => {
   });
 
   it("caches resolved model context limits in memory across triggers", async () => {
-    let configGets = 0;
+    let providerLists = 0;
     const h = createHarness({
-      onConfigGet: () => {
-        configGets++;
+      onProviderList: () => {
+        providerLists++;
       },
-      opencodeConfig: {
-        provider: {
-          openai: {
+      providerList: {
+        all: [
+          {
+            id: "openai",
             models: {
               "gpt-5.5": { limit: { context: 200_000 } },
             },
           },
-        },
+        ],
+        default: {},
+        connected: [],
       },
       promptEvents: (sessionId) => [
         messageUpdatedEvent(sessionId),
@@ -1328,12 +1337,12 @@ describe("runner /trigger orchestration", () => {
       });
     });
 
-    expect(configGets).toBe(1);
+    expect(providerLists).toBe(1);
   });
 
   it("shares the global model-limit cache across opencode urls", async () => {
-    let configGetsA = 0;
-    let configGetsB = 0;
+    let providerListsA = 0;
+    let providerListsB = 0;
     const promptEvents = (sessionId: string) => [
       messageUpdatedEvent(sessionId),
       textEvent(sessionId, "done"),
@@ -1342,21 +1351,25 @@ describe("runner /trigger orchestration", () => {
 
     const a = createHarness({
       opencodeUrl: "http://opencode-a.test:4096",
-      onConfigGet: () => {
-        configGetsA++;
+      onProviderList: () => {
+        providerListsA++;
       },
-      opencodeConfig: {
-        provider: { openai: { models: { "gpt-5.5": { limit: { context: 200_000 } } } } },
+      providerList: {
+        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
+        default: {},
+        connected: [],
       },
       promptEvents,
     });
     const b = createHarness({
       opencodeUrl: "http://opencode-b.test:4096",
-      onConfigGet: () => {
-        configGetsB++;
+      onProviderList: () => {
+        providerListsB++;
       },
-      opencodeConfig: {
-        provider: { openai: { models: { "gpt-5.5": { limit: { context: 200_000 } } } } },
+      providerList: {
+        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
+        default: {},
+        connected: [],
       },
       promptEvents,
     });
@@ -1364,22 +1377,28 @@ describe("runner /trigger orchestration", () => {
     await withServer(a.app, async (urlA) => {
       await withServer(b.app, async (urlB) => {
         await Promise.all([
-          trigger(urlA, { prompt: "large search a", correlationKey: "slack:thread:1710000000.095" }),
-          trigger(urlB, { prompt: "large search b", correlationKey: "slack:thread:1710000000.096" }),
+          trigger(urlA, {
+            prompt: "large search a",
+            correlationKey: "slack:thread:1710000000.095",
+          }),
+          trigger(urlB, {
+            prompt: "large search b",
+            correlationKey: "slack:thread:1710000000.096",
+          }),
         ]);
       });
     });
 
-    expect(configGetsA + configGetsB).toBe(1);
+    expect(providerListsA + providerListsB).toBe(1);
   });
 
   it("warms model limits best-effort even when a resumed session returns busy", async () => {
-    let configGets = 0;
+    let providerLists = 0;
     const h = createHarness({
       existingSessions: new Set(["busy-session"]),
       busySessions: new Set(["busy-session"]),
-      onConfigGet: () => {
-        configGets++;
+      onProviderList: () => {
+        providerLists++;
       },
     });
 
@@ -1399,13 +1418,15 @@ describe("runner /trigger orchestration", () => {
       expect(await response.json()).toEqual({ busy: true });
     });
 
-    expect(configGets).toBe(1);
+    expect(providerLists).toBe(1);
   });
 
   it("skips context progress when no positive configured model limit is known", async () => {
     const h = createHarness({
-      opencodeConfig: {
-        provider: { openai: { models: { "gpt-5.5": { limit: { context: 0 } } } } },
+      providerList: {
+        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 0 } } } }],
+        default: {},
+        connected: [],
       },
       promptEvents: (sessionId) => [
         messageUpdatedEvent(sessionId),
@@ -1425,19 +1446,22 @@ describe("runner /trigger orchestration", () => {
   });
 
   it("warms model limits best-effort even for tokenless message.updated events", async () => {
-    let configGets = 0;
+    let providerLists = 0;
     const h = createHarness({
-      onConfigGet: () => {
-        configGets++;
+      onProviderList: () => {
+        providerLists++;
       },
-      opencodeConfig: {
-        provider: {
-          openai: {
+      providerList: {
+        all: [
+          {
+            id: "openai",
             models: {
               "gpt-5.5": { limit: { context: 200_000 } },
             },
           },
-        },
+        ],
+        default: {},
+        connected: [],
       },
       promptEvents: (sessionId) => [
         messageUpdatedEvent(sessionId, {
@@ -1460,7 +1484,7 @@ describe("runner /trigger orchestration", () => {
       expect(result.events.find((e) => e.type === "context")).toBeUndefined();
     });
 
-    expect(configGets).toBe(1);
+    expect(providerLists).toBe(1);
   });
 
   it("emits opencode.subsession aliases for discovered child sessions", async () => {

@@ -1353,8 +1353,20 @@ function contextLimitKey(_providerID: string, modelID: string): string {
 
 async function resolveModelContextLimits(client: OpencodeClient): Promise<ModelContextLimits> {
   const limits: ModelContextLimits = new Map();
-  const candidates = await loadOpencodeConfigCandidates(client);
-  for (const candidate of candidates) collectModelContextLimits(candidate, limits);
+  try {
+    const { data } = await client.provider.list({});
+    for (const provider of data?.all ?? []) {
+      for (const [modelID, model] of Object.entries(provider.models)) {
+        if (model.limit.context > 0) {
+          limits.set(contextLimitKey(provider.id, modelID), Math.floor(model.limit.context));
+        }
+      }
+    }
+  } catch (err) {
+    logWarn(log, "model_context_limits_load_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   return limits;
 }
 
@@ -1390,77 +1402,6 @@ function warmModelContextLimits(input: {
       cachedModelContextLimitsPending = undefined;
     });
   return cachedModelContextLimitsPending;
-}
-
-async function loadOpencodeConfigCandidates(client: OpencodeClient): Promise<unknown[]> {
-  const raw = client as unknown as Record<string, unknown>;
-  const candidates: unknown[] = [];
-
-  const invoke = async (path: string[]): Promise<void> => {
-    let current: unknown = raw;
-    for (const segment of path) {
-      if (!isRecord(current)) return;
-      current = current[segment];
-    }
-    if (typeof current !== "function") return;
-    try {
-      const result = await current.call(path.length === 2 ? raw[path[0]] : raw, {});
-      candidates.push(isRecord(result) && "data" in result ? result.data : result);
-    } catch (err) {
-      logWarn(log, "model_context_config_read_failed", {
-        path: path.join("."),
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  };
-
-  await invoke(["config", "get"]);
-  await invoke(["app", "config"]);
-  await invoke(["provider", "list"]);
-  return candidates;
-}
-
-function collectModelContextLimits(value: unknown, limits: ModelContextLimits): void {
-  const root = isRecord(value) && isRecord(value.data) ? value.data : value;
-  const providers = providerCollection(root);
-  if (!providers) return;
-
-  for (const [providerID, providerValue] of objectEntriesWithIds(providers)) {
-    if (!isRecord(providerValue)) continue;
-    const models = providerValue.models ?? providerValue.model;
-    if (!models) continue;
-    for (const [modelID, modelValue] of objectEntriesWithIds(models)) {
-      if (!isRecord(modelValue)) continue;
-      const limit = isRecord(modelValue.limit) ? modelValue.limit.context : undefined;
-      if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) continue;
-      limits.set(contextLimitKey(providerID, modelID), Math.floor(limit));
-    }
-  }
-}
-
-function providerCollection(value: unknown): unknown {
-  if (Array.isArray(value)) return value;
-  if (!isRecord(value)) return undefined;
-  // `provider.list` returns { all: Provider[], default, connected } — unwrap `all`
-  // so the provider array is iterated, not the response wrapper itself.
-  return value.providers ?? value.provider ?? value.all ?? value;
-}
-
-function objectEntriesWithIds(value: unknown): Array<[string, unknown]> {
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => {
-      if (!isRecord(item)) return [];
-      const id = safeStr(item.id) ?? safeStr(item.providerID) ?? safeStr(item.modelID);
-      return id ? [[id, item] as [string, unknown]] : [];
-    });
-  }
-  if (!isRecord(value)) return [];
-  return Object.entries(value).map(([key, item]) => {
-    const id = isRecord(item)
-      ? (safeStr(item.id) ?? safeStr(item.providerID) ?? safeStr(item.modelID) ?? key)
-      : key;
-    return [id, item];
-  });
 }
 
 function messageUpdatedInfo(event: Event): Record<string, unknown> | undefined {
