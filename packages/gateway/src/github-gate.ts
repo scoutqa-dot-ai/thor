@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { InternalExecClient } from "./service.js";
 
 type InternalExecResult = Awaited<ReturnType<InternalExecClient>>;
@@ -8,14 +9,20 @@ export type CheckSuiteGateResult =
   | { ok: true }
   | { ok: false; reason: CheckSuiteGateFailureReason };
 
-export interface PrCheckSummary {
-  name?: string;
-  state?: string;
-  bucket?: string;
-  link?: string;
-  description?: string;
-  workflow?: string;
-}
+const PrCheckSummarySchema = z
+  .object({
+    name: z.string().optional(),
+    state: z.string().optional(),
+    bucket: z.string().optional(),
+    link: z.string().optional(),
+    description: z.string().optional(),
+    workflow: z.string().optional(),
+  })
+  .refine((row) => row.state !== undefined || row.bucket !== undefined);
+
+const PrCheckSummariesSchema = z.array(PrCheckSummarySchema);
+
+export type PrCheckSummary = z.infer<typeof PrCheckSummarySchema>;
 
 export interface PrChecksAggregateOutput {
   command: string;
@@ -58,10 +65,6 @@ const TERMINAL_STATES = new Set([
   "TIMED_OUT",
 ]);
 
-function normalizeOptionalString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
 function parsePrCheckSummaries(stdout: string): PrCheckSummary[] | null {
   let parsed: unknown;
   try {
@@ -69,24 +72,8 @@ function parsePrCheckSummaries(stdout: string): PrCheckSummary[] | null {
   } catch {
     return null;
   }
-  if (!Array.isArray(parsed)) return null;
-  const checks: PrCheckSummary[] = [];
-  for (const row of parsed) {
-    if (!row || typeof row !== "object") return null;
-    const obj = row as Record<string, unknown>;
-    const state = normalizeOptionalString(obj.state);
-    const bucket = normalizeOptionalString(obj.bucket);
-    if (!state && !bucket) return null;
-    checks.push({
-      name: normalizeOptionalString(obj.name),
-      state,
-      bucket,
-      link: normalizeOptionalString(obj.link),
-      description: normalizeOptionalString(obj.description),
-      workflow: normalizeOptionalString(obj.workflow),
-    });
-  }
-  return checks;
+  const result = PrCheckSummariesSchema.safeParse(parsed);
+  return result.success ? result.data : null;
 }
 
 function isTerminalPrCheck(check: PrCheckSummary): boolean {
