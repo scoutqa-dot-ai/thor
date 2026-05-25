@@ -2697,6 +2697,11 @@ describe("gateway", () => {
       expect(secondResponse.status).toBe(200);
       expect(await secondResponse.json()).toEqual({ ok: true, ignored: true });
       expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
+      expect(slack.reactionsAdd).not.toHaveBeenCalledWith({
+        channel: "G_CACHED",
+        timestamp: "1710000000.207",
+        name: "eyes",
+      });
       expect(slack.reactionsAdd).toHaveBeenCalledWith({
         channel: "G_CACHED",
         timestamp: "1710000000.207",

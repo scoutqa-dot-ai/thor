@@ -1414,9 +1414,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // app_mention events do not include channel_type. A fresh cache hit can
     // decide inline; otherwise privacy resolution stays off the Slack ack path.
     if (event.type === "app_mention") {
-      void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
-        logError(log, "reaction_failed", err, { eventId }),
-      );
+      const addEyesReaction = (): void => {
+        void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
+          logError(log, "reaction_failed", err, { eventId }),
+        );
+      };
       const cachedDecision = evaluateCachedSlackChannelGate({
         event,
         workspaceConfigLoader: config.workspaceConfigLoader,
@@ -1428,6 +1430,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           res.status(200).json({ ok: true, ignored: true });
           return;
         }
+        addEyesReaction();
         const rawKeys = getSlackCorrelationKeys(event);
         const correlationKey = resolveCorrelationKeys(rawKeys);
         if (correlationKey !== rawKeys[0]) {
@@ -1436,6 +1439,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         await acceptSlackEvent(event, correlationKey, { delayMs: 0, interrupt: true });
         return;
       }
+      addEyesReaction();
       await deferForPendingPrivacy(event, { delayMs: 0, interrupt: true });
       return;
     }

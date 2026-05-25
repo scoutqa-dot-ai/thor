@@ -52,7 +52,7 @@ All routes live in `packages/gateway/src/app.ts`. Each has its own validator, si
 - **Enqueue shape**:
   - `app_mention`: `interrupt=true`, `delayMs=0` (immediate, can preempt a busy session).
   - regular `message`: `interrupt=false`, `delayMs=shortDelay` (~3 s), so multi-line bursts coalesce.
-- **Side effect**: posts an "eyes" emoji reaction immediately for `app_mention` so the user sees Thor received the event before the queue drains. Any channel-surface gate rejection adds a `:lock:` reaction to distinguish a policy block from processing failure; `:x:` remains reserved for runtime failure.
+- **Side effect**: posts an "eyes" emoji reaction immediately for accepted or deferred `app_mention` events so the user sees Thor received the event before the queue drains. A cached channel-surface policy drop skips `:eyes:` and adds only `:lock:`; deferred gate rejections add `:lock:` after privacy resolution. `:x:` remains reserved for runtime failure.
 
 ### 1.2 `POST /github/webhook` — GitHub webhooks
 
