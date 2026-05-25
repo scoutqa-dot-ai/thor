@@ -1,0 +1,23 @@
+packages/remote-cli/src/gh-disclaimer.test.ts
+  462b1730f13ea62a 291-294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4072b9cb87d03bb3dc97acf75d776fcd56a5bb32",
+  "prompts": {
+    "462b1730f13ea62a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd095f4b-b1d5-425d-9762-7af0b3b8d6be",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 15,
+      "total_deletions": 0,
+      "accepted_lines": 15,
+      "overriden_lines": 0
+    }
+  }
+}
