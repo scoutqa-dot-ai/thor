@@ -3,6 +3,8 @@ import { z } from "zod/v4";
 export const APPROVAL_TOOL_NAMES = [
   "createJiraIssue",
   "addCommentToJiraIssue",
+  "editJiraIssue",
+  "transitionJiraIssue",
   "create-feature-flag",
 ] as const;
 
@@ -22,6 +24,22 @@ export const AddCommentToJiraIssueApprovalArgsSchema = z
   })
   .passthrough();
 
+export const EditJiraIssueApprovalArgsSchema = z
+  .object({
+    issueIdOrKey: z.string().min(1),
+    fields: z.record(z.string(), z.unknown()).optional(),
+    update: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
+export const TransitionJiraIssueApprovalArgsSchema = z
+  .object({
+    issueIdOrKey: z.string().min(1),
+    transitionId: z.string().min(1).optional(),
+    transitionName: z.string().min(1).optional(),
+  })
+  .passthrough();
+
 export const CreateFeatureFlagApprovalArgsSchema = z
   .object({
     key: z.string().min(1),
@@ -36,6 +54,8 @@ export const CreateFeatureFlagApprovalArgsSchema = z
 export const ApprovalArgsSchema = z.union([
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
+  EditJiraIssueApprovalArgsSchema,
+  TransitionJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
 ]);
 
@@ -53,6 +73,14 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("addCommentToJiraIssue"),
     args: AddCommentToJiraIssueApprovalArgsSchema,
+  }),
+  ApprovalRequiredEventBaseSchema.extend({
+    tool: z.literal("editJiraIssue"),
+    args: EditJiraIssueApprovalArgsSchema,
+  }),
+  ApprovalRequiredEventBaseSchema.extend({
+    tool: z.literal("transitionJiraIssue"),
+    args: TransitionJiraIssueApprovalArgsSchema,
   }),
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("create-feature-flag"),
@@ -115,5 +143,8 @@ export function injectApprovalDisclaimer(
         ...parsed.data.args,
         commentBody: `${parsed.data.args.commentBody}\n${footer}`,
       };
+    case "editJiraIssue":
+    case "transitionJiraIssue":
+      return parsed.data.args;
   }
 }

@@ -2,6 +2,8 @@ import {
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
+  EditJiraIssueApprovalArgsSchema,
+  TransitionJiraIssueApprovalArgsSchema,
   type ApprovalToolName,
 } from "./approval-events.js";
 import { findSlackTriggerCorrelationKey } from "./event-log.js";
@@ -170,6 +172,10 @@ export function buildApprovalPresentation(
         return buildCreateJiraIssuePresentation(args);
       case "addCommentToJiraIssue":
         return buildAddJiraCommentPresentation(args);
+      case "editJiraIssue":
+        return buildEditJiraIssuePresentation(args);
+      case "transitionJiraIssue":
+        return buildTransitionJiraIssuePresentation(args);
       case "create-feature-flag":
         return buildCreateFeatureFlagPresentation(args);
       default:
@@ -300,6 +306,30 @@ function buildAddJiraCommentPresentation(args: Record<string, unknown>): Approva
   return {
     title: `Comment on Jira issue: ${renderValue(parsed.issueIdOrKey) ?? "unknown issue"}`,
     markdown: joinMarkdown([renderValue(parsed.commentBody)]),
+  };
+}
+
+function buildEditJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = EditJiraIssueApprovalArgsSchema.parse(args);
+  return {
+    title: `Edit Jira issue: ${renderValue(parsed.issueIdOrKey) ?? "unknown issue"}`,
+    markdown: joinMarkdown([
+      bullet("Issue", parsed.issueIdOrKey),
+      section("Fields", parsed.fields),
+      section("Update", parsed.update),
+    ]),
+  };
+}
+
+function buildTransitionJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = TransitionJiraIssueApprovalArgsSchema.parse(args);
+  return {
+    title: `Transition Jira issue: ${renderValue(parsed.issueIdOrKey) ?? "unknown issue"}`,
+    markdown: joinMarkdown([
+      bullet("Issue", parsed.issueIdOrKey),
+      bullet("Transition ID", parsed.transitionId),
+      bullet("Transition", parsed.transitionName),
+    ]),
   };
 }
 

@@ -31,13 +31,19 @@ const tools: Tool[] = [
     description: "Create a Jira issue link",
     inputSchema: {
       type: "object",
-      properties: {
-        outwardIssueIdOrKey: { type: "string" },
-        inwardIssueIdOrKey: { type: "string" },
-        linkType: { type: "string" },
-      },
-      required: ["outwardIssueIdOrKey", "inwardIssueIdOrKey", "linkType"],
-      additionalProperties: false,
+      properties: { issueIdOrKey: { type: "string" }, fields: { type: "object" } },
+      required: ["issueIdOrKey"],
+      additionalProperties: true,
+    },
+  },
+  {
+    name: "transitionJiraIssue",
+    description: "Transition a Jira issue",
+    inputSchema: {
+      type: "object",
+      properties: { issueIdOrKey: { type: "string" }, transitionId: { type: "string" } },
+      required: ["issueIdOrKey"],
+      additionalProperties: true,
     },
   },
   {
@@ -119,8 +125,10 @@ describe("remote-cli MCP endpoints", () => {
     jiraLookupFailure = undefined;
     slackFetch = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1710000000.100" })),
+      .mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1710000000.100" })),
+        ),
       );
     appendAlias({
       aliasType: "opencode.session",
@@ -196,6 +204,16 @@ describe("remote-cli MCP endpoints", () => {
                   if (jiraLookupFailure) throw jiraLookupFailure;
                   return {
                     content: [{ type: "text", text: jiraLookupResultText }],
+                  };
+                }
+                if (name === "editJiraIssue") {
+                  return {
+                    content: [{ type: "text", text: "edited" }],
+                  };
+                }
+                if (name === "transitionJiraIssue") {
+                  return {
+                    content: [{ type: "text", text: "transitioned" }],
                   };
                 }
                 throw new Error(`Unexpected tool: ${name}`);
@@ -293,6 +311,8 @@ describe("remote-cli MCP endpoints", () => {
       "getJiraIssue",
       "createJiraIssue",
       "createIssueLink",
+      "editJiraIssue",
+      "transitionJiraIssue",
     ]);
 
     const hiddenLookup = await postJson("/exec/mcp", {
@@ -341,6 +361,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(health.status).toBe(200);
     expect(healthBody.mcp.configured).toBe(3);
     expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 5 });
+    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 6 });
   });
 
   it("warms every registered upstream", async () => {
@@ -448,6 +469,76 @@ describe("remote-cli MCP endpoints", () => {
     const list = await postJson("/exec/approval", { args: ["list"] });
     const listBody = (await list.json()) as { stdout: string };
     expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
+  });
+
+  it("approval-gates Jira edit and transition tools", async () => {
+    appendActiveTrigger();
+    const cases = [
+      {
+        tool: "editJiraIssue",
+        args: { issueIdOrKey: "THOR-123", fields: { summary: "Updated summary" } },
+        stdout: "edited",
+      },
+      {
+        tool: "transitionJiraIssue",
+        args: { issueIdOrKey: "THOR-123", transitionId: "31" },
+        stdout: "transitioned",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const pending = await postJson(
+        "/exec/mcp",
+        {
+          args: ["atlassian", testCase.tool, JSON.stringify(testCase.args)],
+          cwd: "/workspace/repos/acme",
+          directory: "/workspace/repos/acme",
+        },
+        { "x-thor-session-id": "parent-session" },
+      );
+      const pendingBody = (await pending.json()) as {
+        stdout: string;
+        stderr: string;
+        exitCode: number;
+      };
+
+      expect(pending.status).toBe(200);
+      expect(pendingBody).toEqual({ stdout: expect.any(String), stderr: "", exitCode: 0 });
+      const approvalOutput = JSON.parse(pendingBody.stdout) as {
+        type: string;
+        actionId: string;
+        proxyName: string;
+        tool: string;
+        args: Record<string, unknown>;
+      };
+
+      expect(approvalOutput).toMatchObject({
+        type: "approval_required",
+        proxyName: "atlassian",
+        tool: testCase.tool,
+        args: testCase.args,
+      });
+      expect(toolCalls).not.toContainEqual({ name: testCase.tool, arguments: testCase.args });
+
+      const resolved = await postJson(
+        "/exec/mcp",
+        { args: ["resolve", approvalOutput.actionId, "approved", "U123"] },
+        { "x-thor-internal-secret": "resolve-secret" },
+      );
+      const resolvedBody = (await resolved.json()) as {
+        stdout: string;
+        stderr: string;
+        exitCode: number;
+      };
+
+      expect(resolved.status).toBe(200);
+      expect(resolvedBody).toMatchObject({ stdout: testCase.stdout, stderr: "", exitCode: 0 });
+    }
+
+    expect(toolCalls).toEqual([
+      { name: "editJiraIssue", arguments: cases[0]!.args },
+      { name: "transitionJiraIssue", arguments: cases[1]!.args },
+    ]);
   });
 
   it("creates approvals with Jira disclaimers, exposes them via approval commands, and returns 401 for resolve without the internal secret", async () => {
