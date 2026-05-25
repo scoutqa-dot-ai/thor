@@ -1,0 +1,23 @@
+packages/gateway/src/github-gate.ts
+  2970d55bbd912653 1,12-25,75-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "614c45b2eda6d08430563b97580d9dbc43382044",
+  "prompts": {
+    "2970d55bbd912653": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d3a294a1-4819-4804-8bb3-8acc509ff642",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 30,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    }
+  }
+}
