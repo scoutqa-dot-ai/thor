@@ -1203,7 +1203,9 @@ describe("runner /trigger orchestration", () => {
       // trigger_start no longer carries a promptPreview field — the prompt
       // body lives in the opencode_event stream as a `[correlation-key:]`
       // text part.
-      expect(firstTriggerStart).toMatchObject({ correlationKey: "slack:thread:C123/1710000000.005" });
+      expect(firstTriggerStart).toMatchObject({
+        correlationKey: "slack:thread:C123/1710000000.005",
+      });
       expect(firstTriggerStart).not.toHaveProperty("promptPreview");
       expect(JSON.stringify(firstTriggerStart)).not.toContain("root memory text");
       expect(JSON.stringify(firstTriggerStart)).not.toContain("repo memory text");

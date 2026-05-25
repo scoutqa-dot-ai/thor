@@ -1090,7 +1090,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           {
             const iterator = subscription[Symbol.asyncIterator]();
             try {
-              while (!finished) {
+              while (true) {
                 const remainingSessionErrorGraceMs = latestSessionErrorAt
                   ? SESSION_ERROR_GRACE_MS - (Date.now() - latestSessionErrorAt)
                   : undefined;

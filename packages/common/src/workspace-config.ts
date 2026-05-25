@@ -51,9 +51,20 @@ const UserRecordSchema = z.object({
   github: z.string().min(1).optional(),
 });
 
+const SlackConfigSchema = z.object({
+  private_channel_allowlist: z
+    .array(z.string().min(1))
+    .optional()
+    .refine(
+      (channels) => channels === undefined || new Set(channels).size === channels.length,
+      "Slack private channel allowlist must not contain duplicates",
+    ),
+});
+
 export const WorkspaceConfigSchema = z.object({
   owners: z.record(z.string(), OwnerConfigSchema).optional(),
   users: z.array(UserRecordSchema).optional(),
+  slack: SlackConfigSchema.optional(),
   mitmproxy: z.array(MitmproxyRuleSchema).optional(),
   mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
 });
@@ -212,6 +223,10 @@ export function findUserByGithub(config: WorkspaceConfig, github: string): UserR
 export function findUserByEmail(config: WorkspaceConfig, email: string): UserRecord | undefined {
   const normalized = email.toLowerCase();
   return config.users?.find((user) => user.email.toLowerCase() === normalized);
+}
+
+export function getSlackPrivateChannelAllowlist(config: WorkspaceConfig): string[] {
+  return config.slack?.private_channel_allowlist ?? [];
 }
 
 /**

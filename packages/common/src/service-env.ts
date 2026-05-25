@@ -20,6 +20,7 @@ export function loadGatewayEnv(env: EnvSource = process.env) {
 
   return {
     port: envInt(env, "PORT", 3002),
+    configPath: envString(env, "CONFIG_PATH", WORKSPACE_CONFIG_PATH),
     runnerUrl: envBaseUrl(env, "RUNNER_URL", "http://runner:3000"),
     slackSigningSecret: envOptionalString(env, "SLACK_SIGNING_SECRET") ?? "",
     slackBotToken: envOptionalString(env, "SLACK_BOT_TOKEN") ?? "",
