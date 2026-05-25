@@ -1347,8 +1347,8 @@ function eventSessionId(event: Event): string | undefined {
   return undefined;
 }
 
-function contextLimitKey(_providerID: string, modelID: string): string {
-  return modelID;
+function contextLimitKey(providerID: string, modelID: string): string {
+  return `${providerID}/${modelID}`;
 }
 
 async function resolveModelContextLimits(client: OpencodeClient): Promise<ModelContextLimits> {
@@ -1420,9 +1420,10 @@ function emitContextProgressFromMessage(
   if (!info) return;
   const role = safeStr(info.role) ?? safeStr(info.type);
   if (role && role !== "assistant") return;
-  const tokens = numericTokenTotal(info.tokens);
+  const tokens = contextTokenTotal(info.tokens);
   if (tokens === undefined) return;
   const tokenTotal = Math.max(0, Math.floor(tokens));
+  if (tokenTotal <= 0) return;
   const providerID = safeStr(info.providerID) ?? safeStr(info.providerId);
   const modelID = safeStr(info.modelID) ?? safeStr(info.modelId);
   if (!providerID || !modelID) return;
@@ -2131,6 +2132,12 @@ function numericTokenTotal(tokens: unknown): number | undefined {
     }
   }
   return found ? total : undefined;
+}
+
+function contextTokenTotal(tokens: unknown): number | undefined {
+  const counts = extractTokenCounts(tokens);
+  if (!counts) return undefined;
+  return counts.input + counts.output + counts.reasoning + counts.cacheRead;
 }
 
 /**
