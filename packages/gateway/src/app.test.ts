@@ -2717,6 +2717,46 @@ describe("gateway", () => {
     });
   });
 
+  it("blocks engaged message continuations in Slack Connect public channels", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.add("slack:thread:CEXT/1710000000.001");
+
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
+      slack.conversationsInfo.mockResolvedValueOnce({
+        ok: true,
+        channel: { is_private: false, is_ext_shared: true },
+      });
+      const body = slackEventBody("EvSharedContinuation", {
+        type: "message",
+        user: "U123",
+        text: "continue this from shared channel",
+        ts: "1710000000.107",
+        thread_ts: "1710000000.001",
+        channel: "CEXT",
+        channel_type: "channel",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(readQueuedEvents(queueDir)[0]).toMatchObject({
+        correlationKey: "pending:slack-privacy:CEXT:EvSharedContinuation",
+      });
+      expect(slack.conversationsInfo).not.toHaveBeenCalled();
+
+      await queue.flush();
+      expect(slack.conversationsInfo).toHaveBeenCalledWith({ channel: "CEXT" });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "CEXT",
+        timestamp: "1710000000.107",
+        name: "lock",
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(readQueuedEvents(queueDir)).toHaveLength(0);
+    });
+  });
+
   it("ignores thread replies in unengaged threads (Thor has not replied)", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     sessionKeys.delete("slack:thread:1710000000.001");

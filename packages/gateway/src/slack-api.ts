@@ -29,6 +29,7 @@ export interface SlackChannelGateInput {
 
 // Predates a scope broadening (now fires for DMs and MPIMs too); retained for log-grep continuity.
 export const SLACK_GATE_DROP_REASON = "private_channel_not_allowlisted";
+const SLACK_CHANNEL_GATE_CACHE_TTL_MS = 60 * 60 * 1000;
 
 export function createSlackClient(token: string, slackApiUrl?: string): WebClient {
   if (!token.trim()) {
@@ -93,12 +94,11 @@ export async function addReaction(
   }
 }
 
-// Cache successful `conversations.info` results forever. The Slack workspace
-// is configured to forbid creating new private channels, so private→public
-// conversions are rare; a server restart is acceptable as the invalidation
-// mechanism. Failures are not cached so a transient Slack outage doesn't
-// permanently pin a channel as gated.
-const channelGateCache = new Map<string, boolean>();
+// Cache successful `conversations.info` results briefly so Slack Connect or
+// public/private conversions are picked up without requiring a gateway restart.
+// Failures are not cached so a transient Slack outage doesn't permanently pin a
+// channel as gated.
+const channelGateCache = new Map<string, { gated: boolean; expiresAt: number }>();
 
 // Test hook: drops the in-memory channel gate cache so tests reusing channel ids
 // across cases do not see leaked state. Not exported for production use.
@@ -106,30 +106,58 @@ export function __resetSlackChannelGateCacheForTests(): void {
   channelGateCache.clear();
 }
 
+function isKnownPublicNonSharedChannel(
+  channel:
+    | {
+        is_private?: boolean;
+        is_im?: boolean;
+        is_mpim?: boolean;
+        is_shared?: boolean;
+        is_ext_shared?: boolean;
+        is_org_shared?: boolean;
+      }
+    | undefined,
+): boolean {
+  return (
+    channel?.is_private === false &&
+    channel?.is_im !== true &&
+    channel?.is_mpim !== true &&
+    channel?.is_shared !== true &&
+    channel?.is_ext_shared !== true &&
+    channel?.is_org_shared !== true
+  );
+}
+
 // Returns true when the event must pass the allowlist to be admitted.
-// Only `channel_type === "channel"` is admitted ungated; missing types are
-// resolved via `conversations.info` and fail closed on any error.
+// Known private/DM surfaces gate immediately. Public channels are verified via
+// `conversations.info` so Slack Connect / shared channels do not bypass policy.
+// Lookup failures fail closed.
 export async function isSlackEventGated(
   event: SlackChannelGateInput,
   deps: SlackDeps,
 ): Promise<boolean> {
-  if (event.channel_type === "channel") return false;
-  if (event.channel_type !== undefined) return true;
+  if (event.channel_type !== undefined && event.channel_type !== "channel") return true;
 
   const cached = channelGateCache.get(event.channel);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined && cached.expiresAt > Date.now()) return cached.gated;
 
   try {
     const result = await deps.client.conversations.info({ channel: event.channel });
     const channel = result.channel as
-      | { is_private?: boolean; is_im?: boolean; is_mpim?: boolean }
+      | {
+          is_private?: boolean;
+          is_im?: boolean;
+          is_mpim?: boolean;
+          is_shared?: boolean;
+          is_ext_shared?: boolean;
+          is_org_shared?: boolean;
+        }
       | undefined;
-    const gated = !(
-      channel?.is_private === false &&
-      channel?.is_im !== true &&
-      channel?.is_mpim !== true
-    );
-    channelGateCache.set(event.channel, gated);
+    const gated = !isKnownPublicNonSharedChannel(channel);
+    channelGateCache.set(event.channel, {
+      gated,
+      expiresAt: Date.now() + SLACK_CHANNEL_GATE_CACHE_TTL_MS,
+    });
     return gated;
   } catch (error) {
     logError(log, "slack_channel_privacy_lookup_failed", error, { channel: event.channel });

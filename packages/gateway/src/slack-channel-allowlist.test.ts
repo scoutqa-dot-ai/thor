@@ -1,5 +1,5 @@
 import type { WebClient } from "@slack/web-api";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetSlackChannelGateCacheForTests, isSlackEventGated } from "./slack-api.js";
 
 function depsWithInfo(info = vi.fn()) {
@@ -14,12 +14,25 @@ describe("Slack channel gating", () => {
     __resetSlackChannelGateCacheForTests();
   });
 
-  it("admits regular public channels without an allowlist check", async () => {
-    const deps = depsWithInfo();
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("admits regular public channels after confirming they are not shared", async () => {
+    const deps = depsWithInfo(vi.fn().mockResolvedValue({ channel: { is_private: false } }));
     await expect(
       isSlackEventGated({ channel: "C123", channel_type: "channel" }, deps),
     ).resolves.toBe(false);
-    expect(deps.info).not.toHaveBeenCalled();
+    expect(deps.info).toHaveBeenCalledWith({ channel: "C123" });
+  });
+
+  it("gates public Slack Connect/shared channels", async () => {
+    const deps = depsWithInfo(
+      vi.fn().mockResolvedValue({ channel: { is_private: false, is_ext_shared: true } }),
+    );
+    await expect(
+      isSlackEventGated({ channel: "CEXT", channel_type: "channel" }, deps),
+    ).resolves.toBe(true);
   });
 
   it("gates every other known surface (group, im, mpim) without a lookup", async () => {
@@ -70,6 +83,24 @@ describe("Slack channel gating", () => {
     await expect(isSlackEventGated({ channel: "C_cached_public" }, deps)).resolves.toBe(false);
     await expect(isSlackEventGated({ channel: "C_cached_public" }, deps)).resolves.toBe(false);
     expect(info).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes successful lookups after the 60 minute TTL", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-25T00:00:00Z"));
+    const info = vi
+      .fn()
+      .mockResolvedValueOnce({ channel: { is_private: false } })
+      .mockResolvedValueOnce({ channel: { is_private: true } });
+    const deps = depsWithInfo(info);
+
+    await expect(isSlackEventGated({ channel: "C_ttl" }, deps)).resolves.toBe(false);
+    vi.advanceTimersByTime(60 * 60 * 1000 - 1);
+    await expect(isSlackEventGated({ channel: "C_ttl" }, deps)).resolves.toBe(false);
+    vi.advanceTimersByTime(1);
+    await expect(isSlackEventGated({ channel: "C_ttl" }, deps)).resolves.toBe(true);
+
+    expect(info).toHaveBeenCalledTimes(2);
   });
 
   it("does not cache lookup failures so transient outages can recover", async () => {

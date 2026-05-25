@@ -771,6 +771,33 @@ describe("planBatchDispatch", () => {
       });
     });
 
+    it("drops with private_channel_not_allowlisted when the resolved public channel is externally shared", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi
+            .fn()
+            .mockResolvedValue({ ok: true, channel: { is_private: false, is_ext_shared: true } }),
+        },
+        reactions: { add: vi.fn() },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => ({}),
+      });
+
+      expect(plan).toEqual({
+        kind: "drop",
+        logPrefix: "slack",
+        reason: "private_channel_not_allowlisted",
+      });
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
+      });
+    });
+
     it("fails closed when conversations.info errors", async () => {
       const client: SlackClientLike = {
         conversations: {

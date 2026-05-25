@@ -2,7 +2,6 @@ import { z } from "zod/v4";
 import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.js";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
-import { createLogger, logWarn } from "./logger.js";
 
 // --- Schema ---
 
@@ -151,34 +150,13 @@ export const WORKSPACE_CONFIG_PATH = "/workspace/config/thor.json";
 
 export type ConfigLoader = () => WorkspaceConfig;
 
-const configLog = createLogger("config-loader");
-
 /**
  * Create a config loader that re-reads the workspace config on every access.
  * The config is small and reloaded infrequently, so there's no need for
  * caching — changes take effect immediately.
  */
 export function createConfigLoader(path: string): ConfigLoader {
-  let lastGood: WorkspaceConfig | null = null;
-
-  return () => {
-    try {
-      lastGood = loadWorkspaceConfig(path);
-      return lastGood;
-    } catch (err) {
-      // If we have a previous good config, keep using it
-      if (lastGood) {
-        logWarn(configLog, "config_reload_failed_using_last_good", {
-          path,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        return lastGood;
-      }
-      throw new Error(
-        `Failed to load workspace config from ${path} and no previous config available`,
-      );
-    }
-  };
+  return () => loadWorkspaceConfig(path);
 }
 
 // --- Helpers ---

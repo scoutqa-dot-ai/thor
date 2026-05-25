@@ -1440,7 +1440,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         return;
       }
 
-      if (event.channel_type === undefined) {
+      if (event.channel_type === undefined || event.channel_type === "channel") {
         await deferForPendingPrivacy(event, { delayMs: shortDelay });
         return;
       }
