@@ -725,9 +725,16 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
     const result = await execCommandFn("gh", parsed.data.args, parsed.data.cwd);
     if (result.exitCode !== 0) {
-      pendingAction.error = result.stderr || `gh exited with code ${result.exitCode}`;
+      const rawStderr = result.stderr || `gh exited with code ${result.exitCode}`;
+      pendingAction.error = rawStderr;
       lookup.store.update(pendingAction);
-      return result;
+      // Prefix the stderr with the MCP-style "Error calling" marker so the
+      // gateway recognizes this as an attempted side-effect failure and
+      // re-enters the agent with the outcome, mirroring the MCP path.
+      return {
+        ...result,
+        stderr: `Error calling "gh issue create": ${rawStderr}`,
+      };
     }
     registerCreatedIssueCorrelationAlias(
       pendingAction.origin?.sessionId,
@@ -735,7 +742,11 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       result.stdout,
     );
     lookup.store.approveLoaded(pendingAction, result, reviewer, reason);
-    writeToolCallLogFn({ tool: pendingAction.tool, decision: "approved", args: pendingAction.args });
+    writeToolCallLogFn({
+      tool: pendingAction.tool,
+      decision: "approved",
+      args: pendingAction.args,
+    });
     return result;
   }
 

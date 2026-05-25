@@ -38,6 +38,7 @@ vi.mock("./exec.js", () => ({
 }));
 
 import { createRemoteCliApp, type RemoteCliAppConfig } from "./index.js";
+import { execCommand } from "./exec.js";
 
 const worklogRoot = "/tmp/thor-remote-cli-gh-test";
 const cwd = "/workspace/worktrees/acme/feat/test";
@@ -431,6 +432,45 @@ describe("gh disclaimer injection", () => {
           aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
         }),
       ).toBe(anchorParent);
+    }, approvalConfig());
+  });
+
+  it("returns an MCP-shaped failure stderr when an approved gh issue create fails", async () => {
+    bindSessionToAnchor("parent", anchorParent);
+    appendSessionEvent("parent", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "slack:thread:C123/177.1",
+    });
+
+    await withServer(async (url) => {
+      const { body } = await postGh(
+        url,
+        ["issue", "create", "--title", "Bug", "--body", "Broken"],
+        "parent",
+      );
+      const payload = JSON.parse(body.stdout);
+
+      vi.mocked(execCommand).mockImplementationOnce(async (bin, args, cwd) => {
+        execCalls.push({ bin, args, cwd });
+        return {
+          stdout: "",
+          stderr: "could not create issue: repository not found\n",
+          exitCode: 1,
+        };
+      });
+
+      const resolved = await postMcpResolve(url, payload.actionId);
+      expect(resolved.response.status).toBe(200);
+      expect(resolved.body.exitCode).toBe(1);
+      expect(resolved.body.stderr).toMatch(/^Error calling "gh issue create": /);
+      expect(resolved.body.stderr).toContain("repository not found");
+      expect(
+        resolveAlias({
+          aliasType: "github.issue",
+          aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
+        }),
+      ).toBeUndefined();
     }, approvalConfig());
   });
 
