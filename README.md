@@ -60,12 +60,31 @@ curl http://localhost:8080/health
 
 ## Integrations
 
-Each integration owns its own env vars, app/manifest setup, required permissions, and troubleshooting reasons.
+Thor is an internal AI teammate for engineering and product work; it is not meant to mirror production infrastructure exactly. Each integration owns its own env vars, app/manifest setup, required permissions, and troubleshooting reasons.
 
 - **Slack** — [`docs/slack.md`](docs/slack.md). Events API intake, signing-secret verification, private-channel allowlist, per-channel repo override, app manifest.
 - **GitHub App** — [`docs/github.md`](docs/github.md). Webhook intake, App permissions and event subscriptions, installation IDs, bot commit identity, CI wake gate.
 - **Daytona sandboxes** — [`docs/daytona.md`](docs/daytona.md). On-demand cloud sandboxes for project builds/tests/lints. Custom snapshot publishing.
 - **Outbound HTTP(S) (mitmproxy)** — [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a. Routing path, built-in defaults (Atlassian/Slack/OpenAI), custom credential rules.
+
+Runtime integration paths:
+
+| Integration      | Path                                               | Auth                    | Notes                                                   |
+| ---------------- | -------------------------------------------------- | ----------------------- | ------------------------------------------------------- |
+| Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`                 | GitHub App token        | Repo-scoped worktree edits                              |
+| Atlassian MCP    | `remote-cli /exec/mcp`                             | `ATLASSIAN_AUTH` header | Read + approved writes                                  |
+| PostHog MCP      | `remote-cli /exec/mcp`                             | API key                 | Read + approved writes                                  |
+| Grafana MCP      | `remote-cli /exec/mcp`                             | Service account token   | Logs and observability                                  |
+| Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token               | Mentions, progress, approval cards, thread reads/writes |
+| Langfuse         | `remote-cli /exec/langfuse`                        | API key pair            | Read-only trace queries                                 |
+| LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token            | Read-only feature flag inspection                       |
+| Metabase         | `remote-cli /exec/metabase`                        | API key                 | Read-only warehouse access                              |
+
+Common usage patterns:
+
+- **PR merged, errors spike** — a scheduled prompt checks telemetry, inspects recent merges through GitHub tools, prepares a fix in a worktree, and requests approval for the final write action.
+- **Jira issue triage** — a webhook or Slack prompt asks Thor to investigate an issue; Thor reads Jira, checks recent commits, and reports likely owners and suspects.
+- **Daily delivery digest** — a cron job asks Thor to summarize stale PRs, blocked issues, or failing tests and post the result to Slack.
 
 ## Deployment Configuration
 
