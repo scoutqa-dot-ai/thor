@@ -149,6 +149,15 @@ function mockSuccessfulCheckSuiteExec(internalExec: ReturnType<typeof vi.fn>): v
     .mockResolvedValueOnce({ stdout: "build pass\nlint fail\n", stderr: "", exitCode: 1 });
 }
 
+function mockRunnerAccepted(fetchImpl: ReturnType<typeof vi.fn>): void {
+  fetchImpl.mockResolvedValue(
+    new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+}
+
 function checkSuiteWebhookBody(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     action: "completed",
@@ -1568,6 +1577,7 @@ describe("gateway", () => {
 
   it("enqueues check_suite events when the branch has an existing session alias", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
+    mockRunnerAccepted(fetchImpl);
     const internalExec = vi.fn();
     mockSuccessfulCheckSuiteExec(internalExec);
 
@@ -1576,7 +1586,7 @@ describe("gateway", () => {
 
       await withServer(
         fetchImpl,
-        async (baseUrl, _queue, queueDir) => {
+        async (baseUrl, queue, queueDir) => {
           const body = checkSuiteWebhookBody({ conclusion: "failure" });
           const response = await fetch(`${baseUrl}/github/webhook`, {
             method: "POST",
@@ -1591,6 +1601,7 @@ describe("gateway", () => {
 
           expect(response.status).toBe(200);
           expect(await response.json()).toEqual({ ok: true });
+          expect(internalExec).not.toHaveBeenCalled();
 
           const queued = readQueuedEvents(queueDir);
           expect(queued).toHaveLength(1);
@@ -1608,17 +1619,6 @@ describe("gateway", () => {
                 head_branch: "feature/refactor",
                 conclusion: "failure",
               },
-              thor: {
-                pr_checks: {
-                  command: "gh pr checks 42",
-                  stdout: "build pass\nlint fail\n",
-                  exitCode: 1,
-                },
-                pr_checks_summary: [
-                  { name: "build", state: "SUCCESS", bucket: "pass", workflow: "ci" },
-                  { name: "lint", state: "FAILURE", bucket: "fail", workflow: "ci" },
-                ],
-              },
             },
           });
 
@@ -1628,6 +1628,25 @@ describe("gateway", () => {
             reason: "accepted",
             eventType: "check_suite",
             metadata: { correlationKey: "git:branch:thor:feature/refactor" },
+          });
+
+          await queue.flush();
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+          expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
+          expect(JSON.parse(triggerBody.prompt)).toMatchObject({
+            event_type: "check_suite",
+            thor: {
+              pr_checks: {
+                command: "gh pr checks 42",
+                stdout: "build pass\nlint fail\n",
+                exitCode: 1,
+              },
+              pr_checks_summary: [
+                { name: "build", state: "SUCCESS", bucket: "pass", workflow: "ci" },
+                { name: "lint", state: "FAILURE", bucket: "fail", workflow: "ci" },
+              ],
+            },
           });
         },
         {
@@ -1674,6 +1693,7 @@ describe("gateway", () => {
     "startup_failure",
   ])("enqueues terminal check_suite conclusion %p with interrupt false", async (conclusion) => {
     const fetchImpl = vi.fn<typeof fetch>();
+    mockRunnerAccepted(fetchImpl);
     const internalExec = vi.fn();
     mockSuccessfulCheckSuiteExec(internalExec);
 
@@ -1682,7 +1702,7 @@ describe("gateway", () => {
 
       await withServer(
         fetchImpl,
-        async (baseUrl, _queue, queueDir) => {
+        async (baseUrl, queue, queueDir) => {
           const body = checkSuiteWebhookBody({ conclusion });
           const response = await fetch(`${baseUrl}/github/webhook`, {
             method: "POST",
@@ -1697,6 +1717,7 @@ describe("gateway", () => {
 
           expect(response.status).toBe(200);
           expect(await response.json()).toEqual({ ok: true });
+          expect(internalExec).not.toHaveBeenCalled();
 
           const queued = readQueuedEvents(queueDir);
           expect(queued).toHaveLength(1);
@@ -1714,7 +1735,6 @@ describe("gateway", () => {
                 head_branch: "feature/refactor",
                 conclusion,
               },
-              thor: { pr_checks: { stdout: "build pass\nlint fail\n", exitCode: 1 } },
             },
           });
 
@@ -1724,6 +1744,14 @@ describe("gateway", () => {
             reason: "accepted",
             eventType: "check_suite",
             metadata: { correlationKey: "git:branch:thor:feature/refactor" },
+          });
+
+          await queue.flush();
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+          expect(JSON.parse(triggerBody.prompt)).toMatchObject({
+            event_type: "check_suite",
+            thor: { pr_checks: { stdout: "build pass\nlint fail\n", exitCode: 1 } },
           });
         },
         {
@@ -1858,7 +1886,7 @@ describe("gateway", () => {
     });
   });
 
-  it("ignores check_suite while PR-wide checks are still pending", async () => {
+  it("defers queued check_suite dispatch while PR-wide checks are still pending", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi
       .fn()
@@ -1879,7 +1907,7 @@ describe("gateway", () => {
 
       await withServer(
         fetchImpl,
-        async (baseUrl, _queue, queueDir) => {
+        async (baseUrl, queue, queueDir) => {
           const body = checkSuiteWebhookBody({ conclusion: "success" });
           const response = await fetch(`${baseUrl}/github/webhook`, {
             method: "POST",
@@ -1893,27 +1921,31 @@ describe("gateway", () => {
           });
 
           expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true, ignored: true });
-          expect(readQueuedEvents(queueDir)).toHaveLength(0);
-          expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
-            {
-              reason: "check_suite_pr_checks_pending",
-              metadata: { prNumber: 42, pending: [{ name: "build" }] },
-            },
+          expect(await response.json()).toEqual({ ok: true });
+          expect(internalExec).not.toHaveBeenCalled();
+          expect(readQueuedEvents(queueDir)).toHaveLength(1);
+          expect(readGitHubIngestedEntries(worklogDir)).toMatchObject([
+            { reason: "accepted", eventType: "check_suite" },
           ]);
+
+          await queue.flush();
+          expect(fetchImpl).not.toHaveBeenCalled();
+          expect(readQueuedEvents(queueDir)).toHaveLength(1);
+          expect(readQueuedEvents(queueDir, "dead-letter")).toHaveLength(0);
         },
         {
           githubWebhookSecret: "github-secret",
           githubMentionLogins: ["thor", "thor[bot]"],
           githubAppBotId: 7777,
           githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+          githubPrChecksRetryDelayMs: 30_000,
           internalExec,
         },
       );
     });
   });
 
-  it("ignores check_suite when PR-wide check lookup fails", async () => {
+  it("dead-letters queued check_suite dispatch when PR-wide check lookup fails", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi
       .fn()
@@ -1930,7 +1962,7 @@ describe("gateway", () => {
 
       await withServer(
         fetchImpl,
-        async (baseUrl, _queue, queueDir) => {
+        async (baseUrl, queue, queueDir) => {
           const body = checkSuiteWebhookBody({ conclusion: "success" });
           const response = await fetch(`${baseUrl}/github/webhook`, {
             method: "POST",
@@ -1944,14 +1976,17 @@ describe("gateway", () => {
           });
 
           expect(response.status).toBe(200);
-          expect(await response.json()).toEqual({ ok: true, ignored: true });
-          expect(readQueuedEvents(queueDir)).toHaveLength(0);
-          expect(readGitHubIgnoredEntries(worklogDir)).toMatchObject([
-            {
-              reason: "check_suite_pr_checks_lookup_failed",
-              metadata: { prNumber: 42, stderr: "gh failed", exitCode: 1 },
-            },
+          expect(await response.json()).toEqual({ ok: true });
+          expect(internalExec).not.toHaveBeenCalled();
+          expect(readQueuedEvents(queueDir)).toHaveLength(1);
+          expect(readGitHubIngestedEntries(worklogDir)).toMatchObject([
+            { reason: "accepted", eventType: "check_suite" },
           ]);
+
+          await queue.flush();
+          expect(fetchImpl).not.toHaveBeenCalled();
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          expect(readQueuedEvents(queueDir, "dead-letter")).toHaveLength(1);
         },
         {
           githubWebhookSecret: "github-secret",
@@ -2125,7 +2160,7 @@ describe("gateway", () => {
       execResults: [new Error("timeout")],
     },
   ])(
-    "ignores check_suite events when the git gate returns $gateReason",
+    "dead-letters queued check_suite events when the git gate returns $gateReason",
     async ({ gateReason, execResults }) => {
       const fetchImpl = vi.fn<typeof fetch>();
       const internalExec = vi.fn();
@@ -2142,7 +2177,7 @@ describe("gateway", () => {
 
         await withServer(
           fetchImpl,
-          async (baseUrl, _queue, queueDir) => {
+          async (baseUrl, queue, queueDir) => {
             const body = checkSuiteWebhookBody({ conclusion: "failure" });
             const response = await fetch(`${baseUrl}/github/webhook`, {
               method: "POST",
@@ -2156,19 +2191,17 @@ describe("gateway", () => {
             });
 
             expect(response.status).toBe(200);
-            expect(await response.json()).toEqual({ ok: true, ignored: true });
-            expect(readQueuedEvents(queueDir)).toHaveLength(0);
+            expect(await response.json()).toEqual({ ok: true });
+            expect(internalExec).not.toHaveBeenCalled();
+            expect(readQueuedEvents(queueDir)).toHaveLength(1);
+            expect(readGitHubIngestedEntries(worklogDir)).toMatchObject([
+              { reason: "accepted", eventType: "check_suite" },
+            ]);
 
-            const ignored = readGitHubIgnoredEntries(worklogDir);
-            expect(ignored).toHaveLength(1);
-            expect(ignored[0]).toMatchObject({
-              reason: "check_suite_gate_failed",
-              eventType: "check_suite",
-              metadata: {
-                headSha: "abc123def456",
-                gateReason,
-              },
-            });
+            await queue.flush();
+            expect(fetchImpl).not.toHaveBeenCalled();
+            expect(readQueuedEvents(queueDir)).toHaveLength(0);
+            expect(readQueuedEvents(queueDir, "dead-letter")).toHaveLength(1);
           },
           {
             githubWebhookSecret: "github-secret",

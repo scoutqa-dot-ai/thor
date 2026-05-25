@@ -63,14 +63,16 @@ const QueuedEventSchema = z.object({
 /**
  * Handler callback. Call `ack()` to confirm processing and delete the files.
  * Call `reject(reason)` to move files to the dead-letter directory.
- * If the handler returns without calling ack or reject (e.g. runner busy),
- * files stay on disk and will be retried on the next scan cycle.
+ * Call `defer(delayMs, reason)` to reschedule files without hammering the handler.
+ * If the handler returns without settling (e.g. runner busy), files stay on
+ * disk and will be retried on the next scan cycle.
  * If the handler throws, files are deleted to prevent infinite retry loops.
  */
 export type EventHandler = (
   events: QueuedEvent[],
   ack: () => void,
   reject: (reason: string) => void,
+  defer: (delayMs: number, reason?: string) => void,
 ) => Promise<void>;
 
 export interface EventQueueOptions {
@@ -287,6 +289,38 @@ export class EventQueue {
     logInfo(log, "event_dead_lettered", { count: entries.length, reason });
   }
 
+  private deferFiles(
+    entries: Array<{ file: string; event: QueuedEvent }>,
+    delayMs: number,
+    reason?: string,
+  ): void {
+    const normalizedDelayMs = Math.max(0, delayMs);
+    const readyAt = Date.now() + normalizedDelayMs;
+    for (const { file, event } of entries) {
+      const tmpPath = join(this.dir, `.${file}.tmp`);
+      const finalPath = join(this.dir, file);
+      const deferred: QueuedEvent = {
+        ...event,
+        readyAt,
+        delayMs: normalizedDelayMs,
+      };
+      try {
+        writeFileSync(tmpPath, JSON.stringify(deferred), "utf8");
+        renameSync(tmpPath, finalPath);
+      } catch {
+        try {
+          unlinkSync(tmpPath);
+        } catch {}
+      }
+    }
+    logInfo(log, "event_rescheduled", {
+      count: entries.length,
+      delayMs: normalizedDelayMs,
+      readyAt,
+      ...(reason ? { reason } : {}),
+    });
+  }
+
   private async processBatch(
     lockKey: string,
     entries: Array<{ file: string; event: QueuedEvent }>,
@@ -302,27 +336,34 @@ export class EventQueue {
         source: entries[0].event.source,
       });
 
-      let settled = false;
+      let settlement: "acked" | "rejected" | "deferred" | undefined;
       const ack = () => {
-        if (settled) return;
-        settled = true;
+        if (settlement) return;
+        settlement = "acked";
         this.ackCount++;
         this.deleteFiles(entries);
       };
       const reject = (reason: string) => {
-        if (settled) return;
-        settled = true;
+        if (settlement) return;
+        settlement = "rejected";
         this.ackCount++;
         this.moveToDeadLetter(entries, reason);
+      };
+      const defer = (delayMs: number, reason?: string) => {
+        if (settlement) return;
+        settlement = "deferred";
+        this.ackCount++;
+        this.deferFiles(entries, delayMs, reason);
       };
 
       await this.handler(
         entries.map((e) => e.event),
         ack,
         reject,
+        defer,
       );
 
-      if (settled) {
+      if (settlement === "acked" || settlement === "rejected") {
         logInfo(log, "event_completed", { lockKey, ...keyMetadata });
       } else {
         logInfo(log, "event_deferred", { lockKey, ...keyMetadata });

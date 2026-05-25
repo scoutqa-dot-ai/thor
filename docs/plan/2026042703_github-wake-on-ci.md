@@ -221,6 +221,18 @@ the gateway enqueues the CI wake with `interrupt: false` and appends a namespace
 `thor.pr_checks` / `thor.pr_checks_summary` block containing the aggregate
 `gh pr checks <pr>` output and parsed rows so OpenCode sees final PR-wide status.
 
+## 2026-05-25 follow-up — queue PR checks instead of blocking webhooks
+
+The PR-wide `gh pr checks` debounce must run from queued GitHub dispatch, not
+inside the `/github/webhook` request. The webhook route still performs cheap
+signature/schema/repo/session routing and enqueues accepted `check_suite.completed`
+events immediately so GitHub is not kept waiting on remote-cli or GitHub CLI.
+During queue processing, the gateway runs the Thor-authored SHA gate and
+PR-wide checks gate; terminal PR checks augment the prompt with `thor.pr_checks`,
+lookup failures dead-letter the queued event, and pending PR checks explicitly
+reschedule the queue file with a delay instead of dropping the only wake signal
+or retrying every scan tick.
+
 ## Phases
 
 Each phase = one commit. Phases land in order; later phases assume earlier phases are merged. Per AGENTS.md, run unit tests against the phase exit criteria before moving on; push at the end for E2E verification.

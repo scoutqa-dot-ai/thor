@@ -16,6 +16,7 @@ import type { CronPayload } from "./cron.js";
 import {
   buildCorrelationKey,
   getGitHubEventLocalRepo,
+  isCheckSuiteCompletedEvent,
   isIssueCommentEvent,
   isPendingBranchResolveKey,
   type GitHubWebhookEvent,
@@ -24,12 +25,19 @@ import {
 import type { WebClient } from "@slack/web-api";
 import { addReaction, updateMessage, type SlackDeps } from "./slack-api.js";
 import { handleProgressEvent } from "./progress-manager.js";
+import {
+  resolvePrChecksTerminalState,
+  verifyThorAuthoredSha,
+  type PrCheckSummary,
+  type PrChecksAggregateOutput,
+} from "./github-gate.js";
 
 /** SlackDeps stub for triggers that never post to Slack (cron, github). */
 const NOOP_SLACK_DEPS: SlackDeps = { client: {} as WebClient };
 
 const log = createLogger("gateway-service");
 const INTERNAL_EXEC_TIMEOUT_MS = 5000;
+const GITHUB_PR_CHECKS_RETRY_DELAY_MS = 30_000;
 
 // --- Runner deps (internal HTTP, testable via fetchImpl) ---
 
@@ -88,6 +96,8 @@ export interface BatchDispatchInput {
   remoteCliUrl?: string;
   internalSecret?: string;
   internalExec?: InternalExecClient;
+  githubAppBotEmail?: string;
+  githubPrChecksRetryDelayMs?: number;
   triggerSlackId?: string;
   triggerGithubLogin?: string;
   interrupt?: boolean;
@@ -122,6 +132,12 @@ export type BatchDispatchPlan =
       fromCorrelationKey: string;
       toCorrelationKey: string;
       githubEvents: GitHubWebhookEvent[];
+    }
+  | {
+      kind: "defer";
+      logPrefix: BatchLogPrefix;
+      reason: string;
+      delayMs: number;
     };
 
 interface DispatchPart {
@@ -562,6 +578,101 @@ function resolveCronBatchDirectory(events: CronPayload[]): { directory?: string;
   return collectBatchDirectory("Cron", events, (event) => ({ directory: event.directory }));
 }
 
+function resolveInternalExecClient(input: {
+  internalExec?: InternalExecClient;
+  remoteCliUrl?: string;
+  internalSecret?: string;
+  deps: RunnerDeps;
+}): InternalExecClient | undefined {
+  return (
+    input.internalExec ??
+    (input.remoteCliUrl
+      ? createInternalExecClient({
+          remoteCliUrl: input.remoteCliUrl,
+          internalSecret: input.internalSecret,
+          fetchImpl: input.deps.fetchImpl,
+        })
+      : undefined)
+  );
+}
+
+async function prepareGitHubCheckSuiteEvents(input: {
+  events: GitHubWebhookEvent[];
+  internalExec: InternalExecClient;
+  githubAppBotEmail: string;
+  retryDelayMs: number;
+}): Promise<
+  | { ok: true; events: GitHubWebhookEvent[] }
+  | { ok: false; kind: "drop"; reason: string }
+  | { ok: false; kind: "defer"; reason: string; delayMs: number }
+> {
+  const prepared: GitHubWebhookEvent[] = [];
+
+  for (const event of input.events) {
+    if (!isCheckSuiteCompletedEvent(event)) {
+      prepared.push(event);
+      continue;
+    }
+
+    const localRepo = getGitHubEventLocalRepo(event);
+    const directory = localRepo ? resolveRepoDirectory(localRepo) : undefined;
+    if (!localRepo || !directory) {
+      return { ok: false, kind: "drop", reason: "repo_not_mapped" };
+    }
+
+    const pullRequests = event.check_suite.pull_requests;
+    if (pullRequests.length !== 1) {
+      return {
+        ok: false,
+        kind: "drop",
+        reason: pullRequests.length === 0 ? "check_suite_pr_missing" : "check_suite_pr_ambiguous",
+      };
+    }
+
+    const gate = await verifyThorAuthoredSha({
+      internalExec: input.internalExec,
+      directory,
+      sha: event.check_suite.head_sha,
+      expectedEmail: input.githubAppBotEmail,
+    });
+    if (!gate.ok) {
+      return { ok: false, kind: "drop", reason: "check_suite_gate_failed" };
+    }
+
+    const prChecks = await resolvePrChecksTerminalState({
+      internalExec: input.internalExec,
+      directory,
+      prNumber: pullRequests[0]!.number,
+    });
+    if (!prChecks.ok) {
+      if (prChecks.reason === "pr_checks_pending") {
+        return {
+          ok: false,
+          kind: "defer",
+          reason: "check_suite_pr_checks_pending",
+          delayMs: input.retryDelayMs,
+        };
+      }
+      return { ok: false, kind: "drop", reason: "check_suite_pr_checks_lookup_failed" };
+    }
+
+    prepared.push({
+      ...event,
+      thor: {
+        pr_checks: prChecks.aggregate,
+        pr_checks_summary: prChecks.checks,
+      },
+    } as GitHubWebhookEvent & {
+      thor: {
+        pr_checks: PrChecksAggregateOutput;
+        pr_checks_summary: PrCheckSummary[];
+      };
+    });
+  }
+
+  return { ok: true, events: prepared };
+}
+
 function resolveApprovalBatchDirectory(
   events: ApprovalOutcomeEventPayload[],
   slackDirectoryForChannel?: (channel: string) => SlackRoutingInfo,
@@ -646,6 +757,7 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
 export async function planBatchDispatch(input: BatchDispatchInput): Promise<BatchDispatchPlan> {
   const sources = getBatchSources(input);
   const logPrefix = getBatchLogPrefix(sources);
+  let githubEvents = input.githubEvents;
 
   if (input.githubEvents.length > 0 && isPendingBranchResolveKey(input.correlationKey)) {
     const latest = input.githubEvents[input.githubEvents.length - 1];
@@ -660,15 +772,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     if (!directory) {
       return { kind: "drop", logPrefix, reason: `repo directory not found for ${localRepo}` };
     }
-    const internalExec =
-      input.internalExec ??
-      (input.remoteCliUrl
-        ? createInternalExecClient({
-            remoteCliUrl: input.remoteCliUrl,
-            internalSecret: input.internalSecret,
-            fetchImpl: input.deps.fetchImpl,
-          })
-        : undefined);
+    const internalExec = resolveInternalExecClient(input);
     if (!internalExec) {
       throw new Error(
         "internalExec or remoteCliUrl is required for pending GitHub branch resolution",
@@ -691,6 +795,31 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     }
   }
 
+  if (githubEvents.some(isCheckSuiteCompletedEvent)) {
+    const internalExec = resolveInternalExecClient(input);
+    if (!internalExec) {
+      throw new Error("internalExec or remoteCliUrl is required for GitHub check_suite gating");
+    }
+    const prepared = await prepareGitHubCheckSuiteEvents({
+      events: githubEvents,
+      internalExec,
+      githubAppBotEmail: input.githubAppBotEmail ?? "",
+      retryDelayMs: input.githubPrChecksRetryDelayMs ?? GITHUB_PR_CHECKS_RETRY_DELAY_MS,
+    });
+    if (!prepared.ok) {
+      if (prepared.kind === "defer") {
+        return {
+          kind: "defer",
+          logPrefix,
+          reason: prepared.reason,
+          delayMs: prepared.delayMs,
+        };
+      }
+      return { kind: "drop", logPrefix, reason: prepared.reason };
+    }
+    githubEvents = prepared.events;
+  }
+
   const parts: DispatchPart[] = [];
 
   if (input.slackEvents.length > 0) {
@@ -709,15 +838,15 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     });
   }
 
-  if (input.githubEvents.length > 0) {
-    const githubDirectory = resolveGitHubBatchDirectory(input.githubEvents);
+  if (githubEvents.length > 0) {
+    const githubDirectory = resolveGitHubBatchDirectory(githubEvents);
     if (githubDirectory.reason) {
       return { kind: "drop", logPrefix, reason: githubDirectory.reason };
     }
     parts.push({
       directory: githubDirectory.directory!,
-      singlePrompt: renderGitHubPrompt(input.githubEvents),
-      mixedPrompt: renderGitHubPromptSection(input.githubEvents),
+      singlePrompt: renderGitHubPrompt(githubEvents),
+      mixedPrompt: renderGitHubPromptSection(githubEvents),
     });
   }
 
@@ -810,6 +939,9 @@ async function dispatchBatch(input: BatchDispatchInput): Promise<TriggerResult> 
     if (plan.kind === "drop") {
       currentInput.onRejected?.(plan.reason);
       return { busy: false, rejected: true, reason: plan.reason };
+    }
+    if (plan.kind === "defer") {
+      return { busy: true };
     }
     if (plan.kind === "reroute") {
       currentInput = {

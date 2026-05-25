@@ -39,12 +39,6 @@ import {
   type RunnerDeps,
 } from "./service.js";
 import { createSlackClient, type SlackDeps } from "./slack-api.js";
-import {
-  resolvePrChecksTerminalState,
-  verifyThorAuthoredSha,
-  type PrCheckSummary,
-  type PrChecksAggregateOutput,
-} from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   getSlackCorrelationKeys,
@@ -92,13 +86,6 @@ interface CronQueuedEvent extends QueuedEvent<CronPayload> {
 interface GitHubQueuedEvent extends QueuedEvent<GitHubWebhookEvent> {
   source: "github";
 }
-
-type GitHubQueuedPayload = GitHubWebhookEvent & {
-  thor?: {
-    pr_checks: PrChecksAggregateOutput;
-    pr_checks_summary: PrCheckSummary[];
-  };
-};
 
 interface ApprovalQueuedEvent extends QueuedEvent<ApprovalOutcomeEventPayload> {
   source: "approval";
@@ -495,6 +482,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   internalExec?: InternalExecClient;
   /** GitHub mention debounce delay in ms. Default: 3000. */
   githubMentionDelayMs?: number;
+  /** Retry delay for queued PR-wide check-suite polling. Default: 30000. */
+  githubPrChecksRetryDelayMs?: number;
   /** Required default repo directory name for Slack channels without a valid override. */
   slackDefaultRepo?: string;
   /** Test override for Slack channel repo memory root. */
@@ -1020,7 +1009,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
     disableInterval: config.disableQueueInterval === true,
-    handler: async (events: QueuedEvent[], ack: () => void, reject: (reason: string) => void) => {
+    handler: async (
+      events: QueuedEvent[],
+      ack: () => void,
+      reject: (reason: string) => void,
+      defer: (delayMs: number, reason?: string) => void,
+    ) => {
       const slackEvents = events.filter(isSlackEvent);
       const cronEvents = events.filter(isCronEvent);
       const githubEvents = events.filter(isGitHubEvent);
@@ -1031,7 +1025,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       const hasInterrupt = events.some((event) => event.interrupt);
       const logTrigger = (
         prefix: BatchLogPrefix,
-        outcome: "busy" | "dropped" | "fired",
+        outcome: "busy" | "deferred" | "dropped" | "fired",
         reason?: string,
       ) => {
         logInfo(
@@ -1060,6 +1054,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           remoteCliUrl,
           internalSecret: config.internalSecret,
           internalExec,
+          githubAppBotEmail: config.githubAppBotEmail,
+          githubPrChecksRetryDelayMs: config.githubPrChecksRetryDelayMs,
           ...latestQueuedTriggerActor(events),
           interrupt: hasInterrupt,
           onAccepted: ack,
@@ -1086,6 +1082,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             toCorrelationKey: resolvedKey,
             batchSize: githubEvents.length,
           });
+          return;
+        }
+
+        if (plan.kind === "defer") {
+          defer(plan.delayMs, plan.reason);
+          logTrigger(plan.logPrefix, "deferred", plan.reason);
           return;
         }
 
@@ -1627,7 +1629,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     let correlationKey: string;
     let delayMs = githubMentionDelay;
     let interrupt = true;
-    let payload: GitHubQueuedPayload = parsed.data;
+    const payload: GitHubWebhookEvent = parsed.data;
 
     if (isPullRequestClosedEvent(parsed.data)) {
       const rawKey = buildCorrelationKey(localRepo, parsed.data.pull_request.head.ref);
@@ -1707,8 +1709,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         return;
       }
 
-      const prNumber = pullRequests[0]!.number;
-
       if (!branch) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
@@ -1775,79 +1775,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         res.status(200).json({ ok: true, ignored: true });
         return;
       }
-
-      const gate = await verifyThorAuthoredSha({
-        internalExec,
-        directory: repoDir,
-        sha: parsed.data.check_suite.head_sha,
-        expectedEmail: config.githubAppBotEmail ?? "",
-      });
-      if (!gate.ok) {
-        history.githubStream = "ignored";
-        history.parseStatus = "schema_valid";
-        history.action = parsed.data.action;
-        history.reason = "check_suite_gate_failed";
-        history.metadata = {
-          repoFullName,
-          localRepo,
-          rawKey,
-          resolvedKey,
-          headSha: parsed.data.check_suite.head_sha,
-          gateReason: gate.reason,
-        };
-        logGitHubIgnored({
-          deliveryId,
-          repoFullName,
-          eventType: eventTypeHeader,
-          action: parsed.data.action,
-          reason: "check_suite_gate_failed",
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
-      const prChecks = await resolvePrChecksTerminalState({
-        internalExec,
-        directory: repoDir,
-        prNumber,
-      });
-      if (!prChecks.ok) {
-        history.githubStream = "ignored";
-        history.parseStatus = "schema_valid";
-        history.action = parsed.data.action;
-        history.reason =
-          prChecks.reason === "pr_checks_pending"
-            ? "check_suite_pr_checks_pending"
-            : "check_suite_pr_checks_lookup_failed";
-        history.metadata = {
-          repoFullName,
-          localRepo,
-          rawKey,
-          resolvedKey,
-          headSha: parsed.data.check_suite.head_sha,
-          prNumber,
-          ...(prChecks.reason === "pr_checks_pending"
-            ? { pending: prChecks.pending, checks: prChecks.checks }
-            : { error: prChecks.error, stderr: prChecks.stderr, exitCode: prChecks.exitCode }),
-        };
-        logGitHubIgnored({
-          deliveryId,
-          repoFullName,
-          eventType: eventTypeHeader,
-          action: parsed.data.action,
-          reason: history.reason,
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
-      payload = {
-        ...parsed.data,
-        thor: {
-          pr_checks: prChecks.aggregate,
-          pr_checks_summary: prChecks.checks,
-        },
-      };
       correlationKey = resolvedKey;
       delayMs = 0;
       interrupt = false;
