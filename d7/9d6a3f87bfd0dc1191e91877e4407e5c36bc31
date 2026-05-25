@@ -1,0 +1,35 @@
+packages/gateway/src/app.ts
+  462b1730f13ea62a 142-143,619
+packages/remote-cli/src/mcp-handler.test.ts
+  462b1730f13ea62a 979-980,1058-1059,1098,1101-1102,1125-1126
+packages/common/src/exec-result.ts
+  462b1730f13ea62a 8-14
+packages/gateway/src/app.test.ts
+  462b1730f13ea62a 3061,3063,3118-3119,3127-3131
+packages/remote-cli/src/mcp-handler.ts
+  462b1730f13ea62a 120,413-427,429-431,433-448,558-564,573,577,581,584,615,619-621,623-624,626,629,730,750-821,823-828,832-836,840,844-848,850-851,935,937-938,941-943,947-973,975-978,980-982,984-991
+packages/gateway/src/service.ts
+  462b1730f13ea62a 999-1003
+packages/remote-cli/src/gh-disclaimer.test.ts
+  462b1730f13ea62a 438,467
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d79d6a3f87bfd0dc1191e91877e4407e5c36bc31",
+  "prompts": {
+    "462b1730f13ea62a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd095f4b-b1d5-425d-9762-7af0b3b8d6be",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 265,
+      "total_deletions": 133,
+      "accepted_lines": 231,
+      "overriden_lines": 0
+    }
+  }
+}
