@@ -14,23 +14,6 @@ vi.mock("@thor/common", async (importOriginal) => {
   };
 });
 
-function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
-  const text = lines.join("\n") + "\n";
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode(text));
-      controller.close();
-    },
-  });
-}
-
-function ndjsonResponse(lines: string[], status = 200): Response {
-  return new Response(ndjsonStream(lines), {
-    status,
-    headers: { "content-type": "application/x-ndjson" },
-  });
-}
-
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -114,197 +97,6 @@ describe("resolveApproval", () => {
   });
 });
 
-describe("consumeNdjsonStream (via triggerRunnerSlack)", () => {
-  let mockRunnerFetch: ReturnType<typeof vi.fn>;
-  let postMessage: ReturnType<typeof vi.fn>;
-  let update: ReturnType<typeof vi.fn>;
-  let del: ReturnType<typeof vi.fn>;
-  let reactionsAdd: ReturnType<typeof vi.fn>;
-  let runnerDeps: RunnerDeps;
-  let slackDeps: SlackDeps;
-
-  beforeEach(() => {
-    mockRunnerFetch = vi.fn();
-    postMessage = vi.fn().mockResolvedValue({ ok: true, ts: "msg.001", channel: "C123" });
-    update = vi.fn().mockResolvedValue({ ok: true });
-    del = vi.fn().mockResolvedValue({ ok: true });
-    reactionsAdd = vi.fn().mockResolvedValue({ ok: true });
-    runnerDeps = { runnerUrl: "http://runner:3000", fetchImpl: mockRunnerFetch };
-    slackDeps = {
-      client: {
-        chat: { postMessage, update, delete: del },
-        reactions: { add: reactionsAdd },
-      },
-    } as unknown as SlackDeps;
-  });
-
-  const slackEvent = {
-    channel: "C123",
-    ts: "1710000000.001",
-    thread_ts: "1710000000.001",
-    text: "hello",
-    user: "U1",
-    type: "message",
-  } as const;
-  const slackDirectoryForChannel = () => ({
-    directory: "/workspace/repos/my-repo",
-    repoName: "my-repo",
-    source: "default" as const,
-  });
-
-  it("posts, updates, and deletes progress messages via Slack Web API", async () => {
-    const lines = [
-      JSON.stringify({ type: "start", sessionId: "s1", resumed: false }),
-      JSON.stringify({ type: "tool", tool: "bash", status: "completed" }),
-      JSON.stringify({ type: "tool", tool: "read", status: "completed" }),
-      JSON.stringify({ type: "tool", tool: "write", status: "completed" }),
-      JSON.stringify({
-        type: "memory",
-        action: "write",
-        path: "/workspace/memory/my-repo/README.md",
-        source: "tool",
-      }),
-      JSON.stringify({
-        type: "delegate",
-        agent: "research-agent",
-      }),
-      JSON.stringify({
-        type: "done",
-        sessionId: "s1",
-        resumed: false,
-        status: "completed",
-        response: "ok",
-        toolCalls: [],
-        durationMs: 100,
-      }),
-    ];
-    mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
-
-    const { triggerRunnerSlack } = await import("./service.js");
-    const result = await triggerRunnerSlack(
-      [slackEvent],
-      "key1",
-      runnerDeps,
-      slackDeps,
-      false,
-      undefined,
-      slackDirectoryForChannel,
-    );
-    expect(result.busy).toBe(false);
-    expect(JSON.parse(String(mockRunnerFetch.mock.calls[0][1]?.body))).toMatchObject({
-      triggerSlackId: "U1",
-    });
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(postMessage).toHaveBeenCalled();
-    expect(update).toHaveBeenCalled();
-    expect(del).toHaveBeenCalled();
-    const updateTexts = update.mock.calls.map(([arg]) => (arg as { text: string }).text);
-    expect(updateTexts.some((t) => t.includes("memory: README.md"))).toBe(true);
-    expect(updateTexts.some((t) => t.includes("agents: research-agent"))).toBe(true);
-  });
-
-  it("skips invalid NDJSON lines without crashing", async () => {
-    const lines = [
-      "not valid json",
-      JSON.stringify({ type: "tool", tool: "bash", status: "completed" }),
-      JSON.stringify({ unknown: "schema" }),
-      "",
-    ];
-    mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
-
-    const { triggerRunnerSlack } = await import("./service.js");
-    const result = await triggerRunnerSlack(
-      [slackEvent],
-      "key1",
-      runnerDeps,
-      slackDeps,
-      false,
-      undefined,
-      slackDirectoryForChannel,
-    );
-    expect(result.busy).toBe(false);
-
-    await new Promise((r) => setTimeout(r, 50));
-    expect(postMessage).not.toHaveBeenCalled();
-    expect(update).not.toHaveBeenCalled();
-    expect(del).not.toHaveBeenCalled();
-    expect(reactionsAdd).not.toHaveBeenCalled();
-  });
-
-  it("adds an x reaction on early errors below the progress threshold", async () => {
-    const lines = [
-      JSON.stringify({ type: "start", sessionId: "s1", resumed: false }),
-      JSON.stringify({ type: "tool", tool: "bash", status: "completed" }),
-      JSON.stringify({
-        type: "done",
-        sessionId: "s1",
-        resumed: false,
-        status: "error",
-        error: "provider unavailable",
-        response: "",
-        toolCalls: [],
-        durationMs: 100,
-      }),
-    ];
-    mockRunnerFetch.mockResolvedValue(ndjsonResponse(lines));
-
-    const { triggerRunnerSlack } = await import("./service.js");
-    await triggerRunnerSlack(
-      [slackEvent],
-      "key1",
-      runnerDeps,
-      slackDeps,
-      false,
-      undefined,
-      slackDirectoryForChannel,
-    );
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(reactionsAdd).toHaveBeenCalledWith({
-      channel: "C123",
-      timestamp: "1710000000.001",
-      name: "x",
-    });
-  });
-
-  it("handles chunked delivery across newline boundaries", async () => {
-    const line1 = JSON.stringify({ type: "tool", tool: "read", status: "completed" });
-    const line2 = JSON.stringify({ type: "tool", tool: "write", status: "completed" });
-    const line3 = JSON.stringify({ type: "tool", tool: "bash", status: "completed" });
-    const stream = new ReadableStream({
-      start(controller) {
-        const enc = new TextEncoder();
-        const full = line1 + "\n" + line2 + "\n" + line3 + "\n";
-        const mid = Math.floor(full.length / 2);
-        controller.enqueue(enc.encode(full.slice(0, mid)));
-        controller.enqueue(enc.encode(full.slice(mid)));
-        controller.close();
-      },
-    });
-    mockRunnerFetch.mockResolvedValue(
-      new Response(stream, { status: 200, headers: { "content-type": "application/x-ndjson" } }),
-    );
-
-    const { triggerRunnerSlack } = await import("./service.js");
-    await triggerRunnerSlack(
-      [slackEvent],
-      "key1",
-      runnerDeps,
-      slackDeps,
-      false,
-      undefined,
-      slackDirectoryForChannel,
-    );
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(postMessage).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe("triggerRunnerSlack edge cases", () => {
   let mockRunnerFetch: ReturnType<typeof vi.fn>;
   let runnerDeps: RunnerDeps;
@@ -370,7 +162,7 @@ describe("triggerRunnerCron", () => {
   });
 
   it("batches multiple cron payloads that share a correlation key", async () => {
-    mockFetch.mockResolvedValue(ndjsonResponse(["line1"]));
+    mockFetch.mockResolvedValue(jsonResponse({ accepted: true }));
 
     const { triggerRunnerCron } = await import("./service.js");
     const result = await triggerRunnerCron(
@@ -406,9 +198,7 @@ describe("triggerRunnerGitHub", () => {
           headRepository: { name: "thor" },
         }),
       )
-      .mockResolvedValueOnce(
-        ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
-      );
+      .mockResolvedValueOnce(jsonResponse({ accepted: true }));
 
     const onAccepted = vi.fn();
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -451,9 +241,7 @@ describe("triggerRunnerGitHub", () => {
   });
 
   it("dispatches pure issue comments without pending PR branch lookup", async () => {
-    mockFetch.mockResolvedValueOnce(
-      ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
-    );
+    mockFetch.mockResolvedValueOnce(jsonResponse({ accepted: true }));
     const pureIssue = {
       ...githubEventBase,
       issue: { number: 42, pull_request: null },
@@ -523,9 +311,7 @@ describe("triggerRunnerGitHub", () => {
           headRepository: { name: "thor" },
         }),
       )
-      .mockResolvedValueOnce(
-        ndjsonResponse([JSON.stringify({ type: "done", status: "completed" })]),
-      );
+      .mockResolvedValueOnce(jsonResponse({ accepted: true }));
     const onRejected = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -671,23 +457,190 @@ describe("planBatchDispatch", () => {
 
     expect(plan.options.prompt).not.toContain("[Slack routing]");
   });
+
+  describe("pending Slack privacy resolution", () => {
+    type SlackClientLike = {
+      conversations: { info: ReturnType<typeof vi.fn> };
+      reactions: { add: ReturnType<typeof vi.fn> };
+    };
+    function slackDepsWith(client: SlackClientLike): SlackDeps {
+      return { client: client as unknown as SlackDeps["client"] };
+    }
+
+    beforeEach(async () => {
+      const { __resetSlackChannelGateCacheForTests } = await import("./slack-api.js");
+      __resetSlackChannelGateCacheForTests();
+    });
+
+    const pendingEvent = {
+      channel: "C_DEFER",
+      ts: "1710000000.500",
+      text: "<@U999> ping",
+      user: "U123",
+      type: "app_mention" as const,
+    };
+
+    async function planPendingPrivacy(opts: {
+      slackDeps: SlackDeps;
+      workspaceConfigLoader?: () => unknown;
+    }) {
+      const { planBatchDispatch } = await import("./service.js");
+      return planBatchDispatch({
+        slackEvents: [pendingEvent],
+        cronEvents: [],
+        githubEvents: [],
+        approvalOutcomes: [],
+        correlationKey: "pending:slack-privacy:C_DEFER:Ev1",
+        deps: { runnerUrl: "http://runner:3000" },
+        slackDeps: opts.slackDeps,
+        workspaceConfigLoader: opts.workspaceConfigLoader as never,
+      });
+    }
+
+    it("reroutes to the resolved key when the channel is public", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi.fn().mockResolvedValue({ ok: true, channel: { is_private: false } }),
+        },
+        reactions: { add: vi.fn().mockResolvedValue({ ok: true }) },
+      };
+
+      const plan = await planPendingPrivacy({ slackDeps: slackDepsWith(client) });
+
+      expect(plan.kind).toBe("reroute");
+      if (plan.kind !== "reroute") return;
+      expect(plan.logPrefix).toBe("slack");
+      expect(plan.fromCorrelationKey).toBe("pending:slack-privacy:C_DEFER:Ev1");
+      expect(plan.toCorrelationKey).toBe("slack:thread:C_DEFER/1710000000.500");
+      expect(plan.slackEvents).toEqual([pendingEvent]);
+      expect(client.reactions.add).not.toHaveBeenCalled();
+    });
+
+    it("reroutes when the resolved private channel is allowlisted", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi.fn().mockResolvedValue({ ok: true, channel: { is_private: true } }),
+        },
+        reactions: { add: vi.fn().mockResolvedValue({ ok: true }) },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["C_DEFER"] } }),
+      });
+
+      expect(plan.kind).toBe("reroute");
+    });
+
+    it("drops with private_channel_not_allowlisted when the resolved channel is private and unallowlisted", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi.fn().mockResolvedValue({ ok: true, channel: { is_private: true } }),
+        },
+        reactions: { add: vi.fn() },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => ({}),
+      });
+
+      expect(plan).toEqual({
+        kind: "drop",
+        logPrefix: "slack",
+        reason: "private_channel_not_allowlisted",
+      });
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
+      });
+    });
+
+    it("drops with private_channel_not_allowlisted when the resolved public channel is externally shared", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi
+            .fn()
+            .mockResolvedValue({ ok: true, channel: { is_private: false, is_ext_shared: true } }),
+        },
+        reactions: { add: vi.fn() },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => ({}),
+      });
+
+      expect(plan).toEqual({
+        kind: "drop",
+        logPrefix: "slack",
+        reason: "private_channel_not_allowlisted",
+      });
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
+      });
+    });
+
+    it("fails closed when conversations.info errors", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi.fn().mockRejectedValue(new Error("slack down")),
+        },
+        reactions: { add: vi.fn() },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => ({}),
+      });
+
+      expect(plan).toEqual({
+        kind: "drop",
+        logPrefix: "slack",
+        reason: "private_channel_not_allowlisted",
+      });
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
+      });
+    });
+
+    it("fails closed when the workspace config loader throws", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi.fn().mockResolvedValue({ ok: true, channel: { is_private: true } }),
+        },
+        reactions: { add: vi.fn() },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => {
+          throw new Error("config unavailable");
+        },
+      });
+
+      expect(plan).toEqual({
+        kind: "drop",
+        logPrefix: "slack",
+        reason: "private_channel_not_allowlisted",
+      });
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
+      });
+    });
+  });
 });
 
 describe("triggerRunnerApprovalOutcomes", () => {
   it("returns after acceptance without waiting for the runner body to finish", async () => {
-    let closeStream: (() => void) | undefined;
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode("pending"));
-        closeStream = () => controller.close();
-      },
-    });
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(stream, {
-        status: 200,
-        headers: { "content-type": "application/x-ndjson" },
-      }),
-    );
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ accepted: true }));
     const onAccepted = vi.fn();
     const { triggerRunnerApprovalOutcomes } = await import("./service.js");
 
@@ -719,7 +672,6 @@ describe("triggerRunnerApprovalOutcomes", () => {
     expect(outcome).toEqual({ kind: "resolved", result: { busy: false } });
     expect(onAccepted).toHaveBeenCalledTimes(1);
 
-    closeStream?.();
     await resultPromise;
   });
 });

@@ -7,7 +7,7 @@
 #     target: gateway
 
 FROM node:24-slim AS base
-RUN corepack enable && corepack prepare pnpm@10.33.3 --activate
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
 RUN groupadd --gid 1001 thor && useradd --uid 1001 --gid thor --create-home thor
 RUN mkdir -p /workspace && chown thor:thor /workspace
 
@@ -82,7 +82,7 @@ CMD ["node", "/app/packages/runner/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
-RUN npm install -g opencode-ai@1.15.7
+RUN npm install -g opencode-ai@1.15.10
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
     && npm install -g prettier@3.8.3 \

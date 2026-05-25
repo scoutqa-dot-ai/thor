@@ -16,6 +16,7 @@ export {
   findUserBySlack,
   findUserByGithub,
   findUserByEmail,
+  getSlackPrivateChannelAllowlist,
 } from "./workspace-config.js";
 export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.js";
 export {
@@ -196,6 +197,8 @@ export type {
   ProgressError,
   ProgressEvent,
 } from "./progress-events.js";
+export { handleProgressEvent, getRegistrySize, clearRegistry } from "./progress-manager.js";
+export type { ProgressTransport, ProgressTarget, ProgressBlock } from "./progress-manager.js";
 export {
   buildApprovalButtonValue,
   extractApprovalFailureCategory,

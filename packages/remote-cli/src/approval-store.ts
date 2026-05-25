@@ -1,7 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ExecResultSchema, type ExecResult } from "@thor/common";
+import { ExecResultSchema, isUuidV7, mintAnchor, type ExecResult } from "@thor/common";
 import { z } from "zod/v4";
 
 const ApprovalActionSchema = z
@@ -66,7 +65,7 @@ export class ApprovalStore {
   ): ApprovalAction {
     const now = new Date();
     return {
-      id: randomUUID(),
+      id: mintAnchor(),
       upstream: this.upstream,
       status: "pending",
       tool,
@@ -79,6 +78,9 @@ export class ApprovalStore {
   }
 
   get(id: string): ApprovalAction | undefined {
+    // IDs are minted by mintAnchor() (UUIDv7). Reject anything else before any
+    // FS work — defends against path-traversal probes and catches caller bugs.
+    if (!isUuidV7(id)) return undefined;
     const dateDirs = this.listDateDirsIn(this.baseDir);
     for (const dateDir of dateDirs) {
       const filePath = join(this.baseDir, dateDir, `${id}.json`);

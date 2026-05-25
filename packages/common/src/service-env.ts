@@ -20,6 +20,7 @@ export function loadGatewayEnv(env: EnvSource = process.env) {
 
   return {
     port: envInt(env, "PORT", 3002),
+    configPath: envString(env, "CONFIG_PATH", WORKSPACE_CONFIG_PATH),
     runnerUrl: envBaseUrl(env, "RUNNER_URL", "http://runner:3000"),
     slackSigningSecret: envOptionalString(env, "SLACK_SIGNING_SECRET") ?? "",
     slackBotToken: envOptionalString(env, "SLACK_BOT_TOKEN") ?? "",
@@ -46,6 +47,8 @@ export function loadRunnerEnv(env: EnvSource = process.env) {
     opencodeConnectTimeout: envInt(env, "OPENCODE_CONNECT_TIMEOUT", 15000),
     abortTimeout: envInt(env, "ABORT_TIMEOUT", 10000),
     sessionErrorGraceMs: envInt(env, "SESSION_ERROR_GRACE_MS", 10000),
+    slackBotToken: envOptionalString(env, "SLACK_BOT_TOKEN") ?? "",
+    slackApiBaseUrl: envBaseUrl(env, "SLACK_API_BASE_URL", "https://slack.com/api"),
   };
 }
 
