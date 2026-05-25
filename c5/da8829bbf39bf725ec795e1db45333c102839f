@@ -1,0 +1,25 @@
+docs/feat/security-model.md
+  fc0fddcbc87fda93 18,21-68
+README.md
+  fc0fddcbc87fda93 34,41,43,63,65-68,72-113,127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "c5da8829bbf39bf725ec795e1db45333c102839f",
+  "prompts": {
+    "fc0fddcbc87fda93": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a78a5b78-d117-4e14-bc3f-c42337368055",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 133,
+      "total_deletions": 218,
+      "accepted_lines": 102,
+      "overriden_lines": 1
+    }
+  }
+}
