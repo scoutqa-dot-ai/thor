@@ -109,7 +109,6 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
   };
 }
 
-
 type FlagMatch = { index: number; valueIndex?: number; inlinePrefix?: string };
 
 function rewriteValueFlag(
@@ -222,6 +221,7 @@ function withGhAttribution(
   getConfig: ConfigLoader,
 ): string[] {
   if (!((args[0] === "pr" || args[0] === "issue") && args[1] === "create")) return args;
+  if (isGhHelpRequest(args)) return args;
   const resolved = resolveTriggerUser(sessionId, getConfig);
   if (hasFlag(args, ["--assignee", "-a"])) {
     logAttribution(
@@ -643,7 +643,11 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
       const effectiveArgs = withGhAttribution(disclaimerArgs, ids.sessionId, getConfig);
 
-      if (effectiveArgs[0] === "issue" && effectiveArgs[1] === "create" && !isGhHelpRequest(effectiveArgs)) {
+      if (
+        effectiveArgs[0] === "issue" &&
+        effectiveArgs[1] === "create" &&
+        !isGhHelpRequest(effectiveArgs)
+      ) {
         logInfo(log, "exec_gh_pending_approval", { args: effectiveArgs, cwd, ...ids });
         const result = await mcpService.requestGhIssueCreateApproval({
           cwd,

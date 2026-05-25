@@ -159,11 +159,12 @@ describe("gh disclaimer injection", () => {
     ...extra,
     mcp: {
       approvalsDir: `${worklogRoot}/approvals`,
-      fetchImpl: vi.fn(async () =>
-        new Response(JSON.stringify({ ok: true, ts: "177.2" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(JSON.stringify({ ok: true, ts: "177.2" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
       ) as unknown as typeof fetch,
       slack: { botToken: "xoxb-test", apiBaseUrl: "https://slack.example.com/api" },
       ...extra.mcp,
@@ -240,52 +241,57 @@ describe("gh disclaimer injection", () => {
 
   it("requests approval for issue create with footer and GitHub assignee when trigger user resolves", async () => {
     seedActor();
-    await withServer(
-      async (url) => {
-        const { response, body } = await postGh(
-          url,
-          ["issue", "create", "--title", "Bug", "--body", "Broken"],
-          "parent",
-        );
-        expect(response.status).toBe(200);
-        expect(execCalls).toHaveLength(0);
-        const payload = JSON.parse(body.stdout);
-        expect(payload.type).toBe("approval_required");
-        expect(payload.tool).toBe("ghIssueCreate");
-        expect(payload.command).toBe(`approval status ${payload.actionId}`);
-        expect(payload.args.args).toEqual([
-          "issue",
-          "create",
-          "--title",
-          "Bug",
-          "--body",
-          `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
-          "--assignee",
-          "alice",
-        ]);
-      },
-      approvalConfig({ configLoader }),
-    );
+    await withServer(async (url) => {
+      const { response, body } = await postGh(
+        url,
+        ["issue", "create", "--title", "Bug", "--body", "Broken"],
+        "parent",
+      );
+      expect(response.status).toBe(200);
+      expect(execCalls).toHaveLength(0);
+      const payload = JSON.parse(body.stdout);
+      expect(payload.type).toBe("approval_required");
+      expect(payload.tool).toBe("ghIssueCreate");
+      expect(payload.command).toBe(`approval status ${payload.actionId}`);
+      expect(payload.args.args).toEqual([
+        "issue",
+        "create",
+        "--title",
+        "Bug",
+        "--body",
+        `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+        "--assignee",
+        "alice",
+      ]);
+    }, approvalConfig({ configLoader }));
   });
 
   it("keeps an existing issue assignee", async () => {
     seedActor();
-    await withServer(
-      async (url) => {
-        const { body } = await postGh(
-          url,
-          ["issue", "create", "--title", "x", "--body", "Body", "-a", "bob"],
-          "parent",
-        );
-        const payload = JSON.parse(body.stdout);
-        expect(
-          payload.args.args.filter((arg: string) => arg === "-a" || arg === "--assignee"),
-        ).toHaveLength(1);
-        expect(payload.args.args).toContain("bob");
-        expect(payload.args.args).not.toContain("alice");
-      },
-      approvalConfig({ configLoader }),
-    );
+    await withServer(async (url) => {
+      const { body } = await postGh(
+        url,
+        ["issue", "create", "--title", "x", "--body", "Body", "-a", "bob"],
+        "parent",
+      );
+      const payload = JSON.parse(body.stdout);
+      expect(
+        payload.args.args.filter((arg: string) => arg === "-a" || arg === "--assignee"),
+      ).toHaveLength(1);
+      expect(payload.args.args).toContain("bob");
+      expect(payload.args.args).not.toContain("alice");
+    }, approvalConfig({ configLoader }));
+  });
+
+  it("does not attach an assignee or request approval for gh issue create --help", async () => {
+    seedActor();
+    await withServer(async (url) => {
+      const { response, body } = await postGh(url, ["issue", "create", "--help"], "parent");
+      expect(response.status).toBe(200);
+      expect(body.stdout).not.toContain("approval_required");
+      expect(execCalls).toHaveLength(1);
+      expect(execCalls[0].args).toEqual(["issue", "create", "--help"]);
+    }, approvalConfig({ configLoader }));
   });
 
   it("passes git commit through when attribution config is unavailable", async () => {
