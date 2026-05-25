@@ -219,7 +219,7 @@ describe("createConfigLoader", () => {
     expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com", ".anthropic.com"]);
   });
 
-  it("throws on corrupt file instead of using stale config", () => {
+  it("falls back to last good config on corrupt file", () => {
     const path = writeConfig("config.json", {
       mitmproxy_passthrough: ["api.openai.com"],
     });
@@ -227,12 +227,12 @@ describe("createConfigLoader", () => {
     expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com"]);
 
     writeFileSync(path, "corrupt{{{");
-    expect(() => getConfig()).toThrow("Invalid JSON in workspace config");
+    expect(getConfig().mitmproxy_passthrough).toEqual(["api.openai.com"]);
   });
 
-  it("throws when no file exists", () => {
+  it("throws when no file and no previous config", () => {
     const getConfig = createConfigLoader("/nonexistent/config.json");
-    expect(() => getConfig()).toThrow("Failed to read workspace config");
+    expect(() => getConfig()).toThrow("no previous config available");
   });
 });
 
