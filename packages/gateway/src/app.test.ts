@@ -12,9 +12,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebClient } from "@slack/web-api";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveAnchorForCorrelationKey } from "@thor/common";
 import { createGatewayApp, type GatewayAppConfig } from "./app.js";
+import { __resetSlackChannelGateCacheForTests } from "./slack-api.js";
 import type { EventQueue } from "./queue.js";
 
 interface MockSlackClient {
@@ -23,6 +24,7 @@ interface MockSlackClient {
   update: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
   reactionsAdd: ReturnType<typeof vi.fn>;
+  conversationsInfo: ReturnType<typeof vi.fn>;
 }
 
 function createMockSlackClient(): MockSlackClient {
@@ -30,15 +32,18 @@ function createMockSlackClient(): MockSlackClient {
   const update = vi.fn().mockResolvedValue({ ok: true });
   const del = vi.fn().mockResolvedValue({ ok: true });
   const reactionsAdd = vi.fn().mockResolvedValue({ ok: true });
+  const conversationsInfo = vi.fn().mockResolvedValue({ ok: true, channel: { is_private: false } });
   return {
     client: {
       chat: { postMessage, update, delete: del },
       reactions: { add: reactionsAdd },
+      conversations: { info: conversationsInfo },
     } as unknown as WebClient,
     postMessage,
     update,
     delete: del,
     reactionsAdd,
+    conversationsInfo,
   };
 }
 
@@ -388,6 +393,10 @@ afterEach(() => {
 });
 
 describe("gateway", () => {
+  beforeEach(() => {
+    __resetSlackChannelGateCacheForTests();
+  });
+
   it("returns 503 when queue has stale pending events", async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input);
@@ -2568,9 +2577,9 @@ describe("gateway", () => {
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
-      expect(resolveAnchorForCorrelationKey("slack:thread:C123/1710000000.001")).toBeDefined();
 
       await queue.flush();
+      expect(resolveAnchorForCorrelationKey("slack:thread:C123/1710000000.001")).toBeDefined();
 
       // Reaction via Slack Web API
       expect(slack.reactionsAdd).toHaveBeenCalledWith({
@@ -2578,6 +2587,7 @@ describe("gateway", () => {
         timestamp: "1710000000.001",
         name: "eyes",
       });
+      expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
 
       // Runner trigger via fetchImpl
       const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
@@ -2591,6 +2601,479 @@ describe("gateway", () => {
       expect(promptPayload.event_type).toBe("app_mention");
       expect(promptPayload.channel).toBe("C123");
       expect(promptPayload.text).toContain("investigate checkout errors");
+    });
+  });
+
+  it("marks app mentions in non-allowlisted private channels as policy-blocked", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
+      slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: true } });
+      const body = slackEventBody("EvPrivateBlocked", {
+        type: "app_mention",
+        user: "U123",
+        text: "<@U999> secret task",
+        ts: "1710000000.101",
+        channel: "GPRIVATE",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(readQueuedEvents(queueDir)).toHaveLength(1);
+      await queue.flush();
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GPRIVATE",
+        timestamp: "1710000000.101",
+        name: "eyes",
+      });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GPRIVATE",
+        timestamp: "1710000000.101",
+        name: "lock",
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(readQueuedEvents(queueDir)).toHaveLength(0);
+    });
+  });
+
+  it("allows app mentions in allowlisted private channels", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue, _queueDir, slack) => {
+        slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: true } });
+        const body = slackEventBody("EvPrivateAllowed", {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> secret task",
+          ts: "1710000000.102",
+          channel: "GPRIVATE",
+        });
+
+        const response = await postSignedSlackEvent(baseUrl, body);
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+        await queue.flush();
+        expect(slack.reactionsAdd).toHaveBeenCalledWith({
+          channel: "GPRIVATE",
+          timestamp: "1710000000.102",
+          name: "eyes",
+        });
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+      },
+      {
+        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["GPRIVATE"] } }),
+      },
+    );
+  });
+
+  it("gates DMs (im) behind the allowlist", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, queue, queueDir, slack) => {
+        slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_im: true } });
+        const blockedBody = slackEventBody("EvImBlocked", {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> dm task",
+          ts: "1710000000.201",
+          channel: "DBLOCKED",
+        });
+        const blockedResponse = await postSignedSlackEvent(baseUrl, blockedBody);
+        expect(blockedResponse.status).toBe(200);
+        expect(await blockedResponse.json()).toEqual({ ok: true });
+        await queue.flush();
+        expect(slack.reactionsAdd).toHaveBeenCalledWith({
+          channel: "DBLOCKED",
+          timestamp: "1710000000.201",
+          name: "eyes",
+        });
+        expect(slack.reactionsAdd).toHaveBeenCalledWith({
+          channel: "DBLOCKED",
+          timestamp: "1710000000.201",
+          name: "lock",
+        });
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+        slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_im: true } });
+        const allowedBody = slackEventBody("EvImAllowed", {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> dm allowed",
+          ts: "1710000000.202",
+          channel: "DALLOWED",
+        });
+        const allowedResponse = await postSignedSlackEvent(baseUrl, allowedBody);
+        expect(allowedResponse.status).toBe(200);
+        expect(await allowedResponse.json()).toEqual({ ok: true });
+        await queue.flush();
+        expect(slack.reactionsAdd).toHaveBeenCalledWith({
+          channel: "DALLOWED",
+          timestamp: "1710000000.202",
+          name: "eyes",
+        });
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+      },
+      {
+        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["DALLOWED"] } }),
+      },
+    );
+  });
+
+  it("gates group DMs (mpim) behind the allowlist", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
+      slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_mpim: true } });
+      const body = slackEventBody("EvMpimBlocked", {
+        type: "app_mention",
+        user: "U123",
+        text: "<@U999> group dm",
+        ts: "1710000000.203",
+        channel: "GMPIM",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      await queue.flush();
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GMPIM",
+        timestamp: "1710000000.203",
+        name: "eyes",
+      });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GMPIM",
+        timestamp: "1710000000.203",
+        name: "lock",
+      });
+      expect(readQueuedEvents(queueDir)).toHaveLength(0);
+    });
+  });
+
+  it("fails closed with a 200 response when allowlist config load fails for a private channel", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(
+      fetchImpl,
+      async (baseUrl, _queue, queueDir, slack) => {
+        slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: true } });
+        const body = slackEventBody("EvPrivateConfigError", {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> secret task",
+          ts: "1710000000.1025",
+          channel: "GPRIVATE",
+        });
+
+        const response = await postSignedSlackEvent(baseUrl, body);
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+        await _queue.flush();
+        expect(slack.reactionsAdd).toHaveBeenCalledWith({
+          channel: "GPRIVATE",
+          timestamp: "1710000000.1025",
+          name: "eyes",
+        });
+        expect(slack.reactionsAdd).toHaveBeenCalledWith({
+          channel: "GPRIVATE",
+          timestamp: "1710000000.1025",
+          name: "lock",
+        });
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+      },
+      {
+        workspaceConfigLoader: () => {
+          throw new Error("config unavailable");
+        },
+      },
+    );
+  });
+
+  it("defers privacy resolution for missing channel_type without calling conversations.info from the webhook", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
+      slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: false } });
+      const body = slackEventBody("EvDeferredPublic", {
+        type: "app_mention",
+        user: "U123",
+        text: "<@U999> allowed",
+        ts: "1710000000.104",
+        channel: "CLOOKUP",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+
+      const enqueued = readQueuedEvents(queueDir);
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]).toMatchObject({
+        correlationKey: "pending:slack-privacy:CLOOKUP:EvDeferredPublic",
+      });
+      expect(slack.conversationsInfo).not.toHaveBeenCalled();
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "CLOOKUP",
+        timestamp: "1710000000.104",
+        name: "eyes",
+      });
+
+      await queue.flush();
+      expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "CLOOKUP",
+        timestamp: "1710000000.104",
+        name: "eyes",
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("uses a fresh public-channel cache hit to accept app mentions without pending privacy", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify({ busy: false }), { status: 200 }));
+
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
+      slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: false } });
+
+      const firstResponse = await postSignedSlackEvent(
+        baseUrl,
+        slackEventBody("EvCachePrimePublic", {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> prime cache",
+          ts: "1710000000.204",
+          channel: "CCACHED",
+        }),
+      );
+      expect(firstResponse.status).toBe(200);
+      await queue.flush();
+      expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
+
+      const secondResponse = await postSignedSlackEvent(
+        baseUrl,
+        slackEventBody("EvCacheHitPublic", {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> use cached public channel",
+          ts: "1710000000.205",
+          channel: "CCACHED",
+        }),
+      );
+
+      expect(secondResponse.status).toBe(200);
+      expect(await secondResponse.json()).toEqual({ ok: true });
+      expect(readQueuedEvents(queueDir)[0]).toMatchObject({
+        correlationKey: "slack:thread:CCACHED/1710000000.205",
+      });
+      expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
+      await queue.flush();
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("uses a fresh gated-channel cache hit to block app mentions without pending privacy", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
+      slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: true } });
+
+      const firstResponse = await postSignedSlackEvent(
+        baseUrl,
+        slackEventBody("EvCachePrimePrivate", {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> prime private cache",
+          ts: "1710000000.206",
+          channel: "G_CACHED",
+        }),
+      );
+      expect(firstResponse.status).toBe(200);
+      await queue.flush();
+      expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
+
+      const secondResponse = await postSignedSlackEvent(
+        baseUrl,
+        slackEventBody("EvCacheHitPrivate", {
+          type: "app_mention",
+          user: "U123",
+          text: "<@U999> should be cached block",
+          ts: "1710000000.207",
+          channel: "G_CACHED",
+        }),
+      );
+
+      expect(secondResponse.status).toBe(200);
+      expect(await secondResponse.json()).toEqual({ ok: true, ignored: true });
+      expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
+      expect(slack.reactionsAdd).not.toHaveBeenCalledWith({
+        channel: "G_CACHED",
+        timestamp: "1710000000.207",
+        name: "eyes",
+      });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "G_CACHED",
+        timestamp: "1710000000.207",
+        name: "lock",
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(readQueuedEvents(queueDir)).toHaveLength(0);
+    });
+  });
+
+  it("drops deferred events for non-allowlisted private channels resolved via conversations.info", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
+      slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: true } });
+      const body = slackEventBody("EvDeferredPrivate", {
+        type: "app_mention",
+        user: "U123",
+        text: "<@U999> secret",
+        ts: "1710000000.103",
+        channel: "GLOOKUP",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(readQueuedEvents(queueDir)).toHaveLength(1);
+
+      await queue.flush();
+      expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GLOOKUP",
+        timestamp: "1710000000.103",
+        name: "eyes",
+      });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GLOOKUP",
+        timestamp: "1710000000.103",
+        name: "lock",
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("fails closed when conversations.info errors during deferred privacy resolution", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
+      slack.conversationsInfo.mockRejectedValueOnce(new Error("slack unavailable"));
+      const body = slackEventBody("EvFallbackError", {
+        type: "app_mention",
+        user: "U123",
+        text: "<@U999> maybe private",
+        ts: "1710000000.105",
+        channel: "GUNKNOWN",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+
+      await queue.flush();
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GUNKNOWN",
+        timestamp: "1710000000.105",
+        name: "eyes",
+      });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GUNKNOWN",
+        timestamp: "1710000000.105",
+        name: "lock",
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("blocks engaged message continuations in non-allowlisted private channels", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.add("slack:thread:GPRIVATE/1710000000.001");
+
+    await withServer(fetchImpl, async (baseUrl, _queue, queueDir, slack) => {
+      const body = slackEventBody("EvPrivateContinuation", {
+        type: "message",
+        user: "U123",
+        text: "continue this",
+        ts: "1710000000.106",
+        thread_ts: "1710000000.001",
+        channel: "GPRIVATE",
+        channel_type: "group",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, ignored: true });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GPRIVATE",
+        timestamp: "1710000000.106",
+        name: "lock",
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(readQueuedEvents(queueDir)).toHaveLength(0);
+    });
+  });
+
+  it("blocks engaged message continuations in Slack Connect public channels", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.add("slack:thread:CEXT/1710000000.001");
+
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
+      slack.conversationsInfo.mockResolvedValueOnce({
+        ok: true,
+        channel: { is_private: false, is_ext_shared: true },
+      });
+      const body = slackEventBody("EvSharedContinuation", {
+        type: "message",
+        user: "U123",
+        text: "continue this from shared channel",
+        ts: "1710000000.107",
+        thread_ts: "1710000000.001",
+        channel: "CEXT",
+        channel_type: "channel",
+      });
+
+      const response = await postSignedSlackEvent(baseUrl, body);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(readQueuedEvents(queueDir)[0]).toMatchObject({
+        correlationKey: "pending:slack-privacy:CEXT:EvSharedContinuation",
+      });
+      expect(slack.conversationsInfo).not.toHaveBeenCalled();
+
+      await queue.flush();
+      expect(slack.conversationsInfo).toHaveBeenCalledWith({ channel: "CEXT" });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "CEXT",
+        timestamp: "1710000000.107",
+        name: "lock",
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(readQueuedEvents(queueDir)).toHaveLength(0);
     });
   });
 

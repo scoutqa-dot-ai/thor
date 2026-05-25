@@ -1,4 +1,4 @@
-import { createLogger, logError, logInfo, loadGatewayEnv } from "@thor/common";
+import { createConfigLoader, createLogger, logError, logInfo, loadGatewayEnv } from "@thor/common";
 import { createGatewayApp } from "./app.js";
 import { buildMentionLogins } from "./github.js";
 
@@ -6,6 +6,7 @@ const log = createLogger("gateway");
 
 const config = loadGatewayEnv();
 const githubMentionLogins = buildMentionLogins(config.githubAppSlug);
+const workspaceConfigLoader = createConfigLoader(config.configPath);
 
 if (!config.slackBotToken.trim()) {
   logError(log, "missing_env", "SLACK_BOT_TOKEN is required");
@@ -29,12 +30,10 @@ const { app } = createGatewayApp({
   githubMentionLogins,
   githubAppBotId: config.githubAppBotId,
   githubAppBotEmail: config.githubAppBotEmail,
+  workspaceConfigLoader,
 });
 
 app.listen(config.port, () => {
-  const configSummary: Record<string, unknown> = {
-    slackDefaultRepo: config.slackDefaultRepo,
-  };
   logInfo(log, "gateway_started", {
     port: config.port,
     runnerUrl: config.runnerUrl,
@@ -45,6 +44,7 @@ app.listen(config.port, () => {
     githubAppSlug: config.githubAppSlug,
     githubAppBotId: config.githubAppBotId,
     githubMentionLogins,
-    ...configSummary,
+    slackDefaultRepo: config.slackDefaultRepo,
+    configPath: config.configPath,
   });
 });
