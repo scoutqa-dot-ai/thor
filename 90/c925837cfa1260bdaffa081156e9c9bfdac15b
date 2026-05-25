@@ -1,0 +1,25 @@
+docs/plan/2026042301_refactor-slack-mcp.md
+  71f884fe7265a6a3 382-393
+docs/plan/2026042301_github-app-webhooks.md
+  71f884fe7265a6a3 360-377
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "90c925837cfa1260bdaffa081156e9c9bfdac15b",
+  "prompts": {
+    "71f884fe7265a6a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "615df081-cf0a-460a-8f5d-3b9ee7231412",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 30,
+      "total_deletions": 0,
+      "accepted_lines": 30,
+      "overriden_lines": 0
+    }
+  }
+}
