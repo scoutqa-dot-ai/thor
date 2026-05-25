@@ -155,8 +155,7 @@ describe("ProgressManager", () => {
     const deps = mockSlackDeps();
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "context",
         providerID: "openai",
@@ -165,8 +164,7 @@ describe("ProgressManager", () => {
         limit: 200_000,
         usagePercent: 45,
       },
-      deps,
-      "",
+      transport,
     );
     await sendTools(deps, 3);
 
@@ -174,8 +172,7 @@ describe("ProgressManager", () => {
     expect(postCall.text).not.toContain("context:");
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "context",
         providerID: "openai",
@@ -184,16 +181,14 @@ describe("ProgressManager", () => {
         limit: 200_000,
         usagePercent: 63,
       },
-      deps,
-      "",
+      transport,
     );
 
     const highUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
     expect(highUpdate.text).toContain("context: 63% (126.0K / 200.0K tokens)");
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "context",
         providerID: "openai",
@@ -202,8 +197,7 @@ describe("ProgressManager", () => {
         limit: 200_000,
         usagePercent: 40,
       },
-      deps,
-      "",
+      transport,
     );
 
     const lowUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
@@ -215,8 +209,7 @@ describe("ProgressManager", () => {
 
     await sendTools(deps, 3);
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "context",
         providerID: "openai",
@@ -225,8 +218,7 @@ describe("ProgressManager", () => {
         limit: 200_000,
         usagePercent: 50,
       },
-      deps,
-      "",
+      transport,
     );
 
     const update = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
