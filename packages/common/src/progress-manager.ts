@@ -123,6 +123,16 @@ function renderedContextText(context: ContextStatus | undefined): string | undef
   return formatContextStatus(context);
 }
 
+function isBogusContextStatus(context: ContextStatus): boolean {
+  return (
+    !Number.isFinite(context.tokens) ||
+    !Number.isFinite(context.limit) ||
+    !Number.isFinite(context.usagePercent) ||
+    context.tokens <= 0 ||
+    context.limit <= 0
+  );
+}
+
 function formatMemoryFileLabels(shortPaths: string[]): string {
   if (shortPaths.length === 0) return "";
 
@@ -495,6 +505,9 @@ class ProgressSession {
   async onContext(status: ContextStatus): Promise<void> {
     if (this.finished) return;
     const prevRendered = renderedContextText(this.latestContext);
+    if (prevRendered !== undefined && isBogusContextStatus(status)) {
+      return;
+    }
     this.latestContext = status;
     const nextRendered = renderedContextText(this.latestContext);
 

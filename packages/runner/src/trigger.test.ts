@@ -1258,6 +1258,112 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
+  it("keys context limits by provider and model to avoid same-model collisions", async () => {
+    const h = createHarness({
+      providerList: {
+        all: [
+          { id: "openai", models: { "gpt-5.4": { limit: { context: 200_000 } } } },
+          { id: "anthropic", models: { "gpt-5.4": { limit: { context: 1_000_000 } } } },
+        ],
+        default: {},
+        connected: [],
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId, {
+          providerID: "openai",
+          modelID: "gpt-5.4",
+          tokens: { input: 100_000, output: 20_000, reasoning: 6_000 },
+          role: "assistant",
+        }),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.099",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toMatchObject({
+        providerID: "openai",
+        modelID: "gpt-5.4",
+        tokens: 126_000,
+        limit: 200_000,
+        usagePercent: 63,
+      });
+    });
+  });
+
+  it("extracts context totals only from displayed token usage fields", async () => {
+    const h = createHarness({
+      providerList: {
+        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
+        default: {},
+        connected: [],
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId, {
+          providerID: "openai",
+          modelID: "gpt-5.5",
+          tokens: {
+            input: 100_000,
+            output: 20_000,
+            reasoning: 6_000,
+            cache: { read: 4_000, write: 99_000 },
+            metadata: { nested: 999_000 },
+          },
+          role: "assistant",
+        }),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.100",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toMatchObject({
+        tokens: 130_000,
+        limit: 200_000,
+        usagePercent: 65,
+      });
+    });
+  });
+
+  it("suppresses zero-token assistant message context updates", async () => {
+    const h = createHarness({
+      providerList: {
+        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
+        default: {},
+        connected: [],
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId, {
+          providerID: "openai",
+          modelID: "gpt-5.5",
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0 } },
+          role: "assistant",
+        }),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "fresh assistant",
+        correlationKey: "slack:thread:1710000000.101",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toBeUndefined();
+    });
+  });
+
   it("normalizes context usage percent to an integer before emitting", async () => {
     const h = createHarness({
       providerList: {
