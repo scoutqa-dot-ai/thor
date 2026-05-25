@@ -193,7 +193,9 @@ Human attribution entries live under `users[]`. `email` must be the Jira account
 }
 ```
 
-To verify your entry, trigger Thor from Slack and look for `attribution_applied` with `outcome: "applied"` and your Slack id; `skipped_no_user_record` means the configured Slack id did not match the trigger. See [`docs/feat/users-directory-provenance.md`](docs/feat/users-directory-provenance.md) for registry provenance.
+To verify your entry, trigger Thor from Slack and look for `attribution_applied` with `outcome: "applied"` and your Slack id; `skipped_no_user_record` means the configured Slack id did not match the trigger.
+
+The `users[]` registry is maintained by operators from team Slack and GitHub membership records, with Jira account emails verified manually when needed. Keep source exports out of git if they contain personal data — commit only sanitized reconciliation decisions.
 
 Every Slack surface other than a regular public, non-shared channel is gated by an explicit allowlist under `slack.private_channel_allowlist`. Private channels, DMs (`im`), group DMs (`mpim`), and Slack Connect/shared channels must all have their conversation id on the list. List every conversation id that Thor is permitted to act in:
 
