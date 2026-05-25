@@ -97,6 +97,11 @@ type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 type ModelContextLimits = Map<string, number>;
 const EMPTY_MODEL_CONTEXT_LIMITS: ModelContextLimits = new Map();
 const MODEL_CONTEXT_LIMIT_CACHE_TTL_MS = 5 * 60_000;
+// Empty warm results are usually a signal that the warming client pointed at a
+// directory without provider metadata. Cache them briefly to avoid hammering
+// opencode on every trigger, but expire fast enough that a later /trigger using
+// the real session directory can repopulate the cache and emit context progress.
+const MODEL_CONTEXT_LIMIT_EMPTY_TTL_MS = 5_000;
 let cachedModelContextLimits:
   | {
       expiresAt: number;
@@ -1097,7 +1102,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                 }
 
                 const event = next.value;
-                if (finished) break;
 
                 // Child sub-session events land in the child's own log so the
                 // viewer's owner-only slice never surfaces them.
@@ -1353,9 +1357,11 @@ function warmModelContextLimits(input: { client: OpencodeClient; opencodeUrl: st
 
   cachedModelContextLimitsPending = resolveModelContextLimits(input.client)
     .then((limits) => {
+      const ttl =
+        limits.size > 0 ? MODEL_CONTEXT_LIMIT_CACHE_TTL_MS : MODEL_CONTEXT_LIMIT_EMPTY_TTL_MS;
       cachedModelContextLimits = {
         limits,
-        expiresAt: Date.now() + MODEL_CONTEXT_LIMIT_CACHE_TTL_MS,
+        expiresAt: Date.now() + ttl,
       };
     })
     .catch((err) => {

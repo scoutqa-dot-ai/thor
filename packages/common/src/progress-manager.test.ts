@@ -230,8 +230,7 @@ describe("ProgressManager", () => {
 
     for (let i = 0; i < 3; i++) {
       await handleProgressEvent(
-        "C123",
-        "1710000000.001",
+        progressTarget(deps),
         {
           type: "context",
           providerID: "openai",
@@ -240,8 +239,7 @@ describe("ProgressManager", () => {
           limit: 200_000,
           usagePercent: 75,
         },
-        deps,
-        "",
+        transport,
       );
     }
 
@@ -257,8 +255,7 @@ describe("ProgressManager", () => {
     const updateCountBefore = chat(deps).update.mock.calls.length;
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "context",
         providerID: "openai",
@@ -267,12 +264,10 @@ describe("ProgressManager", () => {
         limit: 200_000,
         usagePercent: 45,
       },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "context",
         providerID: "openai",
@@ -281,8 +276,7 @@ describe("ProgressManager", () => {
         limit: 200_000,
         usagePercent: 40,
       },
-      deps,
-      "",
+      transport,
     );
 
     expect(chat(deps).update.mock.calls.length).toBe(updateCountBefore);

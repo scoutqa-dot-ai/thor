@@ -108,11 +108,14 @@ function formatDelegates(activities: DelegateActivity[]): string {
 }
 
 function shouldRenderContext(context: ContextStatus | undefined): context is ContextStatus {
-  return !!context && context.usagePercent >= 50;
+  // Compare on the same rounded percent we render, so a nominal 50% (e.g. 49.9
+  // from float math) isn't hidden by the threshold while the rendered line
+  // would have shown "50%".
+  return !!context && Math.round(context.usagePercent) >= 50;
 }
 
 function formatContextStatus(context: ContextStatus): string {
-  return `${context.usagePercent}% (${formatTokens(context.tokens)} / ${formatTokens(context.limit)} tokens)`;
+  return `${Math.round(context.usagePercent)}% (${formatTokens(context.tokens)} / ${formatTokens(context.limit)} tokens)`;
 }
 
 function renderedContextText(context: ContextStatus | undefined): string | undefined {
@@ -299,7 +302,8 @@ async function cleanupProgressMessages(channel: string, threadTs: string): Promi
     if (entry.status === "error") continue;
 
     deletions.push(
-      entry.transport.delete(entry.target, messageTs)
+      entry.transport
+        .delete(entry.target, messageTs)
         .then(() => {
           thread.delete(messageTs);
           logInfo(log, "progress_deleted", { channel, ts: messageTs, threadTs });
@@ -574,8 +578,7 @@ class ProgressSession {
   private async flush(): Promise<void> {
     const elapsed = formatDuration(Date.now() - this.startTime);
     const context = shouldRenderContext(this.latestContext) ? this.latestContext : undefined;
-    const hasExtras =
-      this.recentMemory.length > 0 || this.recentDelegates.length > 0 || !!context;
+    const hasExtras = this.recentMemory.length > 0 || this.recentDelegates.length > 0 || !!context;
     const toolLimit = hasExtras ? 5 : 3;
     const toolGroups = this.lastToolGroups.slice(-toolLimit);
 
@@ -621,7 +624,14 @@ class ProgressSession {
       const result = await this.transport.post(this.progressTarget.transportTarget, text, blocks);
       this.messageTs = result.ts;
       // Register immediately — this is the key to avoiding the race condition
-      registerProgress(this.channel, this.threadTs, this.messageTs, "in_progress", this.transport, this.progressTarget.transportTarget);
+      registerProgress(
+        this.channel,
+        this.threadTs,
+        this.messageTs,
+        "in_progress",
+        this.transport,
+        this.progressTarget.transportTarget,
+      );
       logInfo(log, "progress_posted", { channel: this.channel, ts: this.messageTs });
     } catch (err) {
       logError(log, "post_error", err instanceof Error ? err.message : String(err));
@@ -632,7 +642,12 @@ class ProgressSession {
     if (!this.messageTs) return;
     try {
       const blocks = contextBlocks(text);
-      await this.transport.update(this.progressTarget.transportTarget, this.messageTs, text, blocks);
+      await this.transport.update(
+        this.progressTarget.transportTarget,
+        this.messageTs,
+        text,
+        blocks,
+      );
     } catch (err) {
       logError(log, "update_error", err instanceof Error ? err.message : String(err));
     }
@@ -684,10 +699,7 @@ export async function handleProgressEvent(
     // editing the OLD progress message while the new session runs.
     const prior = activeSessions.get(key);
     if (prior) prior.abandon();
-    activeSessions.set(
-      key,
-      new ProgressSession(target, transport, event.sessionId),
-    );
+    activeSessions.set(key, new ProgressSession(target, transport, event.sessionId));
     return;
   }
 
