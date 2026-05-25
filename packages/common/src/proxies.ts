@@ -14,6 +14,7 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
     allow: [
       "atlassianUserInfo",
       "getJiraIssue",
+      "createIssueLink",
       "searchJiraIssuesUsingJql",
       "getConfluenceSpaces",
       "getConfluencePage",

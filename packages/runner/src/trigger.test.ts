@@ -191,6 +191,7 @@ function createHarness(
   const busySessions = opts.busySessions ?? new Set<string>();
   const prompts: string[] = [];
   const aborts: string[] = [];
+  const progressEvents: unknown[] = [];
   const abortedPending = new Set<string>();
   let counter = 0;
 
@@ -260,10 +261,14 @@ function createHarness(
     ensureOpencodeAvailable: async () => {},
     isOpencodeReachable: async () => true,
     workspaceConfigLoader: opts.workspaceConfig ? () => opts.workspaceConfig! : () => ({}),
+    progressEventSink: (event) => progressEvents.push(event),
   });
 
-  return { app, prompts, aborts, existingSessions, busySessions };
+  latestProgressEvents = progressEvents;
+  return { app, prompts, aborts, existingSessions, busySessions, progressEvents };
 }
+
+let latestProgressEvents: unknown[] = [];
 
 async function withServer<T>(
   app: ReturnType<typeof createRunnerApp>,
@@ -280,18 +285,28 @@ async function withServer<T>(
 }
 
 async function trigger(url: string, body: Record<string, unknown>) {
+  const progressOffset = latestProgressEvents.length;
   const response = await fetch(`${url}/trigger`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ directory: sessionDir, ...body }),
   });
   const text = await response.text();
-  const events = text
+  const json = text.trim() ? JSON.parse(text) : undefined;
+  let events = text
     .trim()
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-  return { response, events };
+  if (events.length === 1 && events[0]?.accepted === true) {
+    const deadline = Date.now() + 100;
+    do {
+      events = latestProgressEvents.slice(progressOffset);
+      if (events.some((event) => (event as { type?: string }).type === "done")) break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    } while (Date.now() < deadline);
+  }
+  return { response, json, events };
 }
 
 beforeEach(() => {
@@ -345,8 +360,8 @@ function setupBusySession(slackThreadTs: string): string {
   const anchorId = mintAnchor();
   bindSessionToAnchor("busy-session", anchorId);
   appendAlias({
-    aliasType: "slack.thread_id",
-    aliasValue: slackThreadTs,
+    aliasType: "slack.thread",
+    aliasValue: `C123/${slackThreadTs}`,
     anchorId,
   });
   return anchorId;
@@ -777,7 +792,7 @@ describe("runner /trigger orchestration", () => {
 
   it("creates a correlation-key session, records JSONL events, and resumes the same session", async () => {
     const h = createHarness();
-    const correlationKey = "slack:thread:1710000000.001";
+    const correlationKey = "slack:thread:C123/1710000000.001";
 
     await withServer(h.app, async (url) => {
       const first = await trigger(url, {
@@ -802,7 +817,7 @@ describe("runner /trigger orchestration", () => {
         .split("\n")
         .map((line) => JSON.parse(line));
       const slackAlias = aliases.find(
-        (a) => a.aliasType === "slack.thread_id" && a.aliasValue === "1710000000.001",
+        (a) => a.aliasType === "slack.thread" && a.aliasValue === "C123/1710000000.001",
       );
       const sessionAlias = aliases.find(
         (a) => a.aliasType === "opencode.session" && a.aliasValue === "session-1",
@@ -837,7 +852,7 @@ describe("runner /trigger orchestration", () => {
         ],
       },
     });
-    const correlationKey = "slack:thread:1710000000.091";
+    const correlationKey = "slack:thread:C123/1710000000.091";
 
     await withServer(h.app, async (url) => {
       await trigger(url, {
@@ -865,7 +880,7 @@ describe("runner /trigger orchestration", () => {
 
   it("serializes direct no-session triggers for the same fresh known correlation key", async () => {
     const h = createHarness();
-    const correlationKey = "slack:thread:1710000000.050";
+    const correlationKey = "slack:thread:C123/1710000000.050";
 
     await withServer(h.app, async (url) => {
       const [first, second] = await Promise.all([
@@ -873,15 +888,14 @@ describe("runner /trigger orchestration", () => {
         trigger(url, { prompt: "second", correlationKey }),
       ]);
 
-      const starts = [first, second].map((result) => result.events.find((e) => e.type === "start"));
-      expect(starts.map((event) => event?.sessionId)).toEqual(["session-1", "session-1"]);
-      expect(starts.map((event) => event?.resumed).sort()).toEqual([false, true]);
+      expect([first.json?.sessionId, second.json?.sessionId]).toEqual(["session-1", "session-1"]);
+      expect([first.json?.resumed, second.json?.resumed].sort()).toEqual([false, true]);
     });
 
     expect(h.existingSessions).toEqual(new Set(["session-1"]));
     const aliases = readAliases();
     const slackAliases = aliases.filter(
-      (alias) => alias.aliasType === "slack.thread_id" && alias.aliasValue === "1710000000.050",
+      (alias) => alias.aliasType === "slack.thread" && alias.aliasValue === "C123/1710000000.050",
     );
     const sessionAliases = aliases.filter(
       (alias) => alias.aliasType === "opencode.session" && alias.aliasValue === "session-1",
@@ -913,7 +927,7 @@ describe("runner /trigger orchestration", () => {
     const h = createHarness({ existingSessions: new Set(["requested-session"]) });
     const anchorId = mintAnchor();
     bindSessionToAnchor("requested-session", anchorId);
-    const correlationKey = "slack:thread:1710000000.060";
+    const correlationKey = "slack:thread:C123/1710000000.060";
 
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
@@ -931,7 +945,7 @@ describe("runner /trigger orchestration", () => {
   });
 
   it("serializes session resolution for different aliases of the same session", async () => {
-    const slackKey = "slack:thread:1710000000.010";
+    const slackKey = "slack:thread:C123/1710000000.010";
     const gitKey = "git:branch:runner-trigger-test:feature/shared";
     const sharedAnchor = mintAnchor();
     appendAlias({
@@ -985,7 +999,7 @@ describe("runner /trigger orchestration", () => {
 
   it("falls back from stale stored session without markdown-notes continuity", async () => {
     const h = createHarness();
-    const correlationKey = "slack:thread:1710000000.002";
+    const correlationKey = "slack:thread:C123/1710000000.002";
 
     await withServer(h.app, async (url) => {
       await trigger(url, { prompt: "old", correlationKey });
@@ -1014,7 +1028,7 @@ describe("runner /trigger orchestration", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           prompt: "later",
-          correlationKey: "slack:thread:1710000000.003",
+          correlationKey: "slack:thread:C123/1710000000.003",
           directory: sessionDir,
         }),
       });
@@ -1035,7 +1049,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "now",
-        correlationKey: "slack:thread:1710000000.004",
+        correlationKey: "slack:thread:C123/1710000000.004",
         interrupt: true,
       });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
@@ -1071,7 +1085,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "now",
-        correlationKey: "slack:thread:1710000000.012",
+        correlationKey: "slack:thread:C123/1710000000.012",
         interrupt: true,
       });
 
@@ -1104,7 +1118,7 @@ describe("runner /trigger orchestration", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           prompt: "later",
-          correlationKey: "slack:thread:1710000000.011",
+          correlationKey: "slack:thread:C123/1710000000.011",
           directory: sessionDir,
           interrupt: false,
         }),
@@ -1124,7 +1138,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const first = await trigger(url, {
         prompt: "first",
-        correlationKey: "slack:thread:1710000000.005",
+        correlationKey: "slack:thread:C123/1710000000.005",
       });
       expect(first.events.filter((e) => e.type === "memory")).toHaveLength(2);
       expect(h.prompts[0]).toContain("root memory text");
@@ -1137,14 +1151,16 @@ describe("runner /trigger orchestration", () => {
       // trigger_start no longer carries a promptPreview field — the prompt
       // body lives in the opencode_event stream as a `[correlation-key:]`
       // text part.
-      expect(firstTriggerStart).toMatchObject({ correlationKey: "slack:thread:1710000000.005" });
+      expect(firstTriggerStart).toMatchObject({
+        correlationKey: "slack:thread:C123/1710000000.005",
+      });
       expect(firstTriggerStart).not.toHaveProperty("promptPreview");
       expect(JSON.stringify(firstTriggerStart)).not.toContain("root memory text");
       expect(JSON.stringify(firstTriggerStart)).not.toContain("repo memory text");
 
       await trigger(url, {
         prompt: "second",
-        correlationKey: "slack:thread:1710000000.005",
+        correlationKey: "slack:thread:C123/1710000000.005",
       });
       expect(h.prompts[1]).not.toContain("root memory text");
       expect(h.prompts[1]).not.toContain("repo memory text");
@@ -1160,7 +1176,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "delegate",
-        correlationKey: "slack:thread:1710000000.006",
+        correlationKey: "slack:thread:C123/1710000000.006",
       });
       expect(result.events.find((e) => e.type === "delegate")).toMatchObject({ agent: "general" });
     });
@@ -1193,7 +1209,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "delegate without input",
-        correlationKey: "slack:thread:1710000000.061",
+        correlationKey: "slack:thread:C123/1710000000.061",
       });
       expect(result.events.find((e) => e.type === "delegate")).toBeUndefined();
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
@@ -1215,7 +1231,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "large search",
-        correlationKey: "slack:thread:1710000000.007",
+        correlationKey: "slack:thread:C123/1710000000.007",
       });
       expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
@@ -1233,7 +1249,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "fail",
-        correlationKey: "slack:thread:1710000000.008",
+        correlationKey: "slack:thread:C123/1710000000.008",
       });
       expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
@@ -1251,7 +1267,7 @@ describe("runner /trigger orchestration", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           prompt: "go",
-          correlationKey: "slack:thread:1710000200.001",
+          correlationKey: "slack:thread:C123/1710000200.001",
           directory: sessionDir,
         }),
       });
@@ -1309,7 +1325,7 @@ describe("runner /trigger orchestration", () => {
             "x-thor-internal-secret": process.env.THOR_INTERNAL_SECRET!,
           },
           body: JSON.stringify({
-            correlationKey: "slack:thread:1710000200.002",
+            correlationKey: "slack:thread:C123/1710000200.002",
             triggerSlackId: "UABCDEF1",
             triggerGithubLogin: "alice",
           }),
@@ -1351,7 +1367,7 @@ describe("runner /trigger orchestration", () => {
       const startedAt = Date.now();
       const result = await trigger(url, {
         prompt: "fail",
-        correlationKey: "slack:thread:1710000000.009",
+        correlationKey: "slack:thread:C123/1710000000.009",
       });
       expect(Date.now() - startedAt).toBeLessThan(100);
       expect(result.events.find((e) => e.type === "done")).toMatchObject({

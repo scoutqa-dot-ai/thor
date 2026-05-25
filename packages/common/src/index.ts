@@ -196,6 +196,8 @@ export type {
   ProgressError,
   ProgressEvent,
 } from "./progress-events.js";
+export { handleProgressEvent, getRegistrySize, clearRegistry } from "./progress-manager.js";
+export type { ProgressTransport, ProgressTarget, ProgressBlock } from "./progress-manager.js";
 export {
   buildApprovalButtonValue,
   extractApprovalFailureCategory,
