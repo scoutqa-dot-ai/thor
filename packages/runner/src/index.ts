@@ -97,11 +97,6 @@ type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 type ModelContextLimits = Map<string, number>;
 const EMPTY_MODEL_CONTEXT_LIMITS: ModelContextLimits = new Map();
 const MODEL_CONTEXT_LIMIT_CACHE_TTL_MS = 5 * 60_000;
-// Empty warm results are usually a signal that the warming client pointed at a
-// directory without provider metadata. Cache them briefly to avoid hammering
-// opencode on every trigger, but expire fast enough that a later /trigger using
-// the real session directory can repopulate the cache and emit context progress.
-const MODEL_CONTEXT_LIMIT_EMPTY_TTL_MS = 5_000;
 let cachedModelContextLimits:
   | {
       expiresAt: number;
@@ -389,13 +384,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       token: config.slackBotToken,
       slackApiUrl: config.slackApiBaseUrl,
     });
-
-  // Warm global model limits best-effort outside the request hot path. Limits are
-  // treated as process-global, so any successful load is reused for later triggers.
-  warmModelContextLimits({
-    client: createClient({ baseUrl: opencodeUrl, directory: process.cwd() }),
-    opencodeUrl,
-  });
 
   function routeParam(value: string | string[] | undefined): string {
     return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
@@ -862,6 +850,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       const resumed = resolution.resumed;
       const anchorId = resolution.anchorId;
 
+      // Kick off model-limit warming up front so it overlaps the busy check and
+      // prompt-send. Awaited later before the stream loop reads the cache.
+      const warmModelLimits = warmModelContextLimits({ client, opencodeUrl });
+
       // --- If resuming a busy session, abort or bail ---
       if (resumed) {
         const statusResult = await client.session.status({});
@@ -904,7 +896,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         }
       }
 
-      warmModelContextLimits({ client, opencodeUrl });
+      // Block briefly so the first trigger after process start sees populated
+      // limits; subsequent calls within the cache TTL resolve immediately.
+      await warmModelLimits;
 
       const bootstrapMemoryPaths: string[] = [];
 
@@ -1371,18 +1365,19 @@ function currentModelContextLimits(): ModelContextLimits {
   return cached.limits;
 }
 
-function warmModelContextLimits(input: { client: OpencodeClient; opencodeUrl: string }): void {
+function warmModelContextLimits(input: {
+  client: OpencodeClient;
+  opencodeUrl: string;
+}): Promise<void> {
   const cached = cachedModelContextLimits;
-  if (cached && cached.expiresAt > Date.now()) return;
-  if (cachedModelContextLimitsPending) return;
+  if (cached && cached.expiresAt > Date.now()) return Promise.resolve();
+  if (cachedModelContextLimitsPending) return cachedModelContextLimitsPending;
 
   cachedModelContextLimitsPending = resolveModelContextLimits(input.client)
     .then((limits) => {
-      const ttl =
-        limits.size > 0 ? MODEL_CONTEXT_LIMIT_CACHE_TTL_MS : MODEL_CONTEXT_LIMIT_EMPTY_TTL_MS;
       cachedModelContextLimits = {
         limits,
-        expiresAt: Date.now() + ttl,
+        expiresAt: Date.now() + MODEL_CONTEXT_LIMIT_CACHE_TTL_MS,
       };
     })
     .catch((err) => {
@@ -1394,6 +1389,7 @@ function warmModelContextLimits(input: { client: OpencodeClient; opencodeUrl: st
     .finally(() => {
       cachedModelContextLimitsPending = undefined;
     });
+  return cachedModelContextLimitsPending;
 }
 
 async function loadOpencodeConfigCandidates(client: OpencodeClient): Promise<unknown[]> {
