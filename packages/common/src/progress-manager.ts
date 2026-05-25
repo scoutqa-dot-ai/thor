@@ -1,20 +1,8 @@
-import {
-  createLogger,
-  logInfo,
-  logError,
-  formatDuration,
-} from "@thor/common";
-import type { ProgressEvent } from "@thor/common";
-import {
-  postMessage,
-  updateMessage,
-  deleteMessage,
-  addReaction,
-  type SlackDeps,
-  type SlackBlock,
-} from "./slack-api.js";
+import { createLogger, logInfo, logError } from "./logger.js";
+import { formatDuration } from "./format.js";
+import type { ProgressEvent } from "./progress-events.js";
 
-const log = createLogger("gateway-progress");
+const log = createLogger("progress");
 
 /** Threshold: post first message after this many tool calls. */
 const TOOL_CALL_THRESHOLD = 3;
@@ -167,7 +155,7 @@ function formatMemoryFileLabels(shortPaths: string[]): string {
 const BLOCK_TEXT_LIMIT = 3000;
 
 /** Wrap text in a context block for compact, muted rendering in Slack. */
-function contextBlocks(text: string): SlackBlock[] {
+function contextBlocks(text: string): ProgressBlock[] {
   const truncated =
     text.length > BLOCK_TEXT_LIMIT ? text.slice(0, BLOCK_TEXT_LIMIT - 1) + "…" : text;
   return [{ type: "context", elements: [{ type: "mrkdwn", text: truncated }] }];
@@ -177,11 +165,27 @@ function contextBlocks(text: string): SlackBlock[] {
 // Progress message registry — tracks all progress messages by thread
 // ---------------------------------------------------------------------------
 
+export interface ProgressTransport<TTarget = unknown> {
+  post(target: TTarget, text: string, blocks?: ProgressBlock[]): Promise<{ ts: string }>;
+  update(target: TTarget, messageTs: string, text: string, blocks?: ProgressBlock[]): Promise<void>;
+  delete(target: TTarget, messageTs: string): Promise<void>;
+  addReaction(target: TTarget, timestamp: string, name: string): Promise<void>;
+}
+
+export type ProgressBlock = { type: string; [key: string]: unknown };
+
+export interface ProgressTarget<TTarget = unknown> {
+  key: string;
+  sourceTs: string;
+  transportTarget: TTarget;
+}
+
 type ProgressStatus = "in_progress" | "completed" | "error";
 
 interface ProgressEntry {
   status: ProgressStatus;
-  deps: SlackDeps;
+  transport: ProgressTransport;
+  target: unknown;
 }
 
 /** Map<threadKey, Map<messageTs, ProgressEntry>> */
@@ -199,7 +203,8 @@ function registerProgress(
   threadTs: string,
   messageTs: string,
   status: ProgressStatus,
-  deps: SlackDeps,
+  transport: ProgressTransport,
+  target: unknown,
 ): void {
   const key = threadKey(channel, threadTs);
   let thread = progressMessages.get(key);
@@ -207,7 +212,7 @@ function registerProgress(
     thread = new Map();
     progressMessages.set(key, thread);
   }
-  thread.set(messageTs, { status, deps });
+  thread.set(messageTs, { status, transport, target });
 }
 
 function evictExcessErrors(thread: Map<string, ProgressEntry>): void {
@@ -273,7 +278,7 @@ async function cleanupProgressMessages(channel: string, threadTs: string): Promi
     if (entry.status === "error") continue;
 
     deletions.push(
-      deleteMessage(channel, messageTs, entry.deps)
+      entry.transport.delete(entry.target, messageTs)
         .then(() => {
           thread.delete(messageTs);
           logInfo(log, "progress_deleted", { channel, ts: messageTs, threadTs });
@@ -326,7 +331,6 @@ class ProgressSession {
   readonly sessionId: string | undefined;
   private channel: string;
   private threadTs: string;
-  private deps: SlackDeps;
   private sourceTs: string;
 
   private messageTs?: string;
@@ -344,16 +348,13 @@ class ProgressSession {
   private tickTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
-    channel: string,
-    threadTs: string,
-    deps: SlackDeps,
-    sourceTs: string,
+    private progressTarget: ProgressTarget,
+    private transport: ProgressTransport,
     sessionId?: string,
   ) {
-    this.channel = channel;
-    this.threadTs = threadTs;
-    this.deps = deps;
-    this.sourceTs = sourceTs;
+    this.channel = progressTarget.key;
+    this.threadTs = progressTarget.key;
+    this.sourceTs = progressTarget.sourceTs;
     this.sessionId = sessionId;
     this.startTime = Date.now();
     this.scheduleNextTick();
@@ -516,9 +517,11 @@ class ProgressSession {
       await this.update(text);
       updateProgressStatus(this.channel, this.threadTs, this.messageTs, "error");
     } else {
-      await addReaction(this.channel, this.sourceTs, "x", this.deps).catch((err) =>
-        logError(log, "reaction_error", err instanceof Error ? err.message : String(err)),
-      );
+      await this.transport
+        .addReaction(this.progressTarget.transportTarget, this.sourceTs, "x")
+        .catch((err: unknown) =>
+          logError(log, "reaction_error", err instanceof Error ? err.message : String(err)),
+        );
     }
   }
 
@@ -564,10 +567,10 @@ class ProgressSession {
   private async post(text: string): Promise<void> {
     try {
       const blocks = contextBlocks(text);
-      const result = await postMessage(this.channel, text, this.threadTs, this.deps, blocks);
+      const result = await this.transport.post(this.progressTarget.transportTarget, text, blocks);
       this.messageTs = result.ts;
       // Register immediately — this is the key to avoiding the race condition
-      registerProgress(this.channel, this.threadTs, this.messageTs, "in_progress", this.deps);
+      registerProgress(this.channel, this.threadTs, this.messageTs, "in_progress", this.transport, this.progressTarget.transportTarget);
       logInfo(log, "progress_posted", { channel: this.channel, ts: this.messageTs });
     } catch (err) {
       logError(log, "post_error", err instanceof Error ? err.message : String(err));
@@ -578,7 +581,7 @@ class ProgressSession {
     if (!this.messageTs) return;
     try {
       const blocks = contextBlocks(text);
-      await updateMessage(this.channel, this.messageTs, text, this.deps, blocks);
+      await this.transport.update(this.progressTarget.transportTarget, this.messageTs, text, blocks);
     } catch (err) {
       logError(log, "update_error", err instanceof Error ? err.message : String(err));
     }
@@ -596,13 +599,11 @@ const activeSessions = new Map<string, ProgressSession>();
  * Creates/reuses a ProgressSession per channel+threadTs.
  */
 export async function handleProgressEvent(
-  channel: string,
-  threadTs: string,
+  target: ProgressTarget,
   event: ProgressEvent,
-  deps: SlackDeps,
-  sourceTs: string,
+  transport: ProgressTransport,
 ): Promise<void> {
-  const key = threadKey(channel, threadTs);
+  const key = target.key;
 
   logInfo(log, "progress_recv", {
     key,
@@ -625,7 +626,7 @@ export async function handleProgressEvent(
     if (prior) prior.abandon();
     activeSessions.set(
       key,
-      new ProgressSession(channel, threadTs, deps, sourceTs, event.sessionId),
+      new ProgressSession(target, transport, event.sessionId),
     );
     return;
   }
@@ -633,10 +634,10 @@ export async function handleProgressEvent(
   let session = activeSessions.get(key);
   if (!session) {
     // Late-arriving event without start — create session on the fly
-    session = new ProgressSession(channel, threadTs, deps, sourceTs);
+    session = new ProgressSession(target, transport);
     activeSessions.set(key, session);
   }
-  session.setSourceTs(sourceTs);
+  session.setSourceTs(target.sourceTs);
 
   switch (event.type) {
     case "tool":
@@ -662,13 +663,13 @@ export async function handleProgressEvent(
       }
       await session.finish(event.status === "completed" ? "completed" : "error", event.error);
       activeSessions.delete(key);
-      await onSessionEnd(channel, threadTs);
+      await onSessionEnd(target.key, target.key);
       break;
     }
     case "error":
       await session.finish("error", event.error);
       activeSessions.delete(key);
-      await onSessionEnd(channel, threadTs);
+      await onSessionEnd(target.key, target.key);
       break;
   }
 }
