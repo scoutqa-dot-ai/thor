@@ -15,7 +15,7 @@ OpenHands, open-swe, background-agents, junior, goose.
 
 Thor is an **event-driven, single-tenant, internal-team AI teammate**. A
 `gateway` ingests Slack mentions, GitHub webhooks, and cron events; a `runner`
-manages OpenCode session continuity and streams progress back to Slack; the
+manages OpenCode session continuity and owns Slack progress updates; the
 OpenCode agent reaches the outside world through `remote-cli`, which is the
 **MCP / CLI policy gateway** (allow / approve / hide). Outbound HTTPS goes
 through explicit `mitmproxy` rules for configured outbound credential

@@ -11,7 +11,7 @@ ingress -> gateway -> runner -> opencode
 ```
 
 - `gateway` accepts Slack, GitHub webhook, and cron events, batches them, and forwards them to the runner.
-- `runner` manages OpenCode session continuity and streams progress back out.
+- `runner` manages OpenCode session continuity and Slack progress updates.
 - `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, langfuse, metabase, MCP tool calls, direct Slack approval-card posting, and approval status/resolution.
 
 ## Services
@@ -26,7 +26,7 @@ ingress -> gateway -> runner -> opencode
 | `grafana-mcp` | 8000 | Docker image       | Grafana MCP server                          |
 | `ingress`     | 8080 | `docker/ingress`   | Reverse proxy + Vouch integration           |
 | `opencode`    | 4096 | Docker image       | Headless agent runtime                      |
-| `runner`      | 3000 | `@thor/runner`     | Session lifecycle + NDJSON progress stream  |
+| `runner`      | 3000 | `@thor/runner`     | Session lifecycle + Slack progress updates  |
 | `vouch`       | 9090 | Docker image       | OAuth/SSO proxy                             |
 
 ## Quick Start
