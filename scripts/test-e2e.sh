@@ -617,8 +617,8 @@ elif assert_attribution_config; then
       2>/dev/null || echo '{}')
     issue_create_exit=$(json_field "$issue_create_raw" "exitCode")
     issue_logs=$(docker logs --since "$issue_log_since" "$remote_cli_container" 2>&1 || true)
-    assert '[[ "$issue_create_exit" == "0" && "$issue_create_raw" == *"\"type\": \"approval_required\""* && "$issue_create_raw" == *"\"tool\": \"ghIssueCreate\""* ]]' \
-      "attribution e2e: gh issue create is intercepted for approval before creating an issue" \
+    assert '[[ "$issue_create_exit" != "0" && "$issue_create_raw" == *"has no Slack trigger correlation key"* ]]' \
+      "attribution e2e: gh issue create fails closed when no Slack approval thread is available" \
       "exitCode='$issue_create_exit' response: ${issue_create_raw:0:500}"
     assert '[[ "$issue_logs" == *"\"surface\":\"gh-assignee\",\"outcome\":\"applied\""* ]]' \
       "attribution e2e: gh issue create attribution was applied" \
