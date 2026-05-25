@@ -86,7 +86,7 @@ After authentication, events still face content-aware gates before they wake the
 - **Slack private-channel allowlist** — public non-shared channels admit by default; private channels, DMs, group DMs, and Slack Connect channels must appear in `slack.private_channel_allowlist` in `thor.json`. Fail-closed on lookup error. See `slack.md` §5.
 - **GitHub mention-required for first contact** — pure issue comments require `@${GITHUB_APP_SLUG}`. Once a session exists for the issue, later follow-ups can wake without a mention. See `github.md` §4.
 - **Self-loop guards** — events whose sender matches `SLACK_BOT_USER_ID` or `GITHUB_APP_BOT_ID` are dropped. Without these, every Thor-authored reply would re-trigger Thor.
-- **CI wake gate.** `check_suite.completed` only wakes Thor when the head commit's author email matches the derived GitHub App bot email and a notes-backed session for that branch already exists. See `github.md` §4a.
+- **CI wake gate.** `check_suite.completed` only wakes Thor when the head commit's author email matches the derived GitHub App bot email and an alias-backed session for that branch already exists. See `github.md` §4a.
 
 ## Layer 4: Server-side policy at remote-cli
 

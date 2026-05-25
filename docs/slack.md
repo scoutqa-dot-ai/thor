@@ -67,7 +67,7 @@ Public, non-shared channels can trigger Thor without configuration. Private chan
 }
 ```
 
-Allowlist edits hot-reload — no service restart needed. Events from gated channels that are not allowlisted are dropped with `private_channel_not_allowlisted` (§8).
+Allowlist edits hot-reload — no service restart needed. Events from gated channels that are not allowlisted are dropped with `private_channel_not_allowlisted` (§10).
 
 ## 6) Per-channel repo override
 
