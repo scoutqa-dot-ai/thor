@@ -106,6 +106,16 @@ export function __resetSlackChannelGateCacheForTests(): void {
   channelGateCache.clear();
 }
 
+export function getCachedSlackChannelGate(channel: string): boolean | undefined {
+  const cached = channelGateCache.get(channel);
+  if (cached === undefined) return undefined;
+  if (cached.expiresAt <= Date.now()) {
+    channelGateCache.delete(channel);
+    return undefined;
+  }
+  return cached.gated;
+}
+
 function isKnownPublicNonSharedChannel(
   channel:
     | {
@@ -138,8 +148,8 @@ export async function isSlackEventGated(
 ): Promise<boolean> {
   if (event.channel_type !== undefined && event.channel_type !== "channel") return true;
 
-  const cached = channelGateCache.get(event.channel);
-  if (cached !== undefined && cached.expiresAt > Date.now()) return cached.gated;
+  const cachedGate = getCachedSlackChannelGate(event.channel);
+  if (cachedGate !== undefined) return cachedGate;
 
   try {
     const result = await deps.client.conversations.info({ channel: event.channel });

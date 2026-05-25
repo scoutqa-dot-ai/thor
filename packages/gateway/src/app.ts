@@ -40,7 +40,12 @@ import {
   type RunnerDeps,
 } from "./service.js";
 import { createSlackClient, type SlackChannelGateInput, type SlackDeps } from "./slack-api.js";
-import { addSlackGateRejectedReaction, evaluateSlackChannelGate } from "./slack-channel-gate.js";
+import {
+  addSlackGateRejectedReaction,
+  evaluateCachedSlackChannelGate,
+  evaluateSlackChannelGate,
+  type SlackChannelGateDecision,
+} from "./slack-channel-gate.js";
 import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
@@ -998,6 +1003,26 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     client: config.slackClient ?? createSlackClient(config.slackBotToken, config.slackApiBaseUrl),
   };
 
+  const markIgnoredForGatedChannel = (
+    event: SlackChannelGateInput & { ts: string },
+    eventId: string,
+    history: WebhookHistoryState,
+    decision: Extract<SlackChannelGateDecision, { allowed: false }>,
+  ): void => {
+    history.reason = decision.reason;
+    history.metadata = {
+      ...(history.metadata ?? {}),
+      channel: event.channel,
+      privateChannelAllowed: false,
+      ...(decision.workspaceConfigLoadFailed ? { workspaceConfigLoadFailed: true } : {}),
+    };
+    logInfo(log, "event_ignored_private_channel_not_allowlisted", {
+      eventId,
+      channel: event.channel,
+    });
+    addSlackGateRejectedReaction(event, slackDeps, { eventId });
+  };
+
   const shouldIgnoreForGatedChannel = async (
     event: SlackChannelGateInput & { ts: string },
     eventId: string,
@@ -1011,18 +1036,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     });
     if (decision.allowed) return false;
 
-    history.reason = decision.reason;
-    history.metadata = {
-      ...(history.metadata ?? {}),
-      channel: event.channel,
-      privateChannelAllowed: false,
-      ...(decision.workspaceConfigLoadFailed ? { workspaceConfigLoadFailed: true } : {}),
-    };
-    logInfo(log, "event_ignored_private_channel_not_allowlisted", {
-      eventId,
-      channel: event.channel,
-    });
-    addSlackGateRejectedReaction(event, slackDeps, { eventId });
+    markIgnoredForGatedChannel(event, eventId, history, decision);
     return true;
   };
 
@@ -1397,12 +1411,31 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       res.status(200).json({ ok: true });
     };
 
-    // app_mention events do not include channel_type, so privacy resolution
-    // always happens asynchronously off the Slack ack path.
+    // app_mention events do not include channel_type. A fresh cache hit can
+    // decide inline; otherwise privacy resolution stays off the Slack ack path.
     if (event.type === "app_mention") {
       void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
         logError(log, "reaction_failed", err, { eventId }),
       );
+      const cachedDecision = evaluateCachedSlackChannelGate({
+        event,
+        workspaceConfigLoader: config.workspaceConfigLoader,
+        logContext: { eventId },
+      });
+      if (cachedDecision) {
+        if (!cachedDecision.allowed) {
+          markIgnoredForGatedChannel(event, eventId, history, cachedDecision);
+          res.status(200).json({ ok: true, ignored: true });
+          return;
+        }
+        const rawKeys = getSlackCorrelationKeys(event);
+        const correlationKey = resolveCorrelationKeys(rawKeys);
+        if (correlationKey !== rawKeys[0]) {
+          logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
+        }
+        await acceptSlackEvent(event, correlationKey, { delayMs: 0, interrupt: true });
+        return;
+      }
       await deferForPendingPrivacy(event, { delayMs: 0, interrupt: true });
       return;
     }

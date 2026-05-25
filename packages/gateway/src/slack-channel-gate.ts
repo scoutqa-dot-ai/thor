@@ -7,6 +7,7 @@ import {
 } from "@thor/common";
 import {
   addReaction,
+  getCachedSlackChannelGate,
   isSlackEventGated,
   SLACK_GATE_DROP_REASON,
   type SlackChannelGateInput,
@@ -25,15 +26,11 @@ export type SlackChannelGateDecision =
       workspaceConfigLoadFailed?: boolean;
     };
 
-export async function evaluateSlackChannelGate(input: {
+function evaluateAllowlist(input: {
   event: SlackChannelGateInput;
-  slackDeps: SlackDeps;
   workspaceConfigLoader?: ConfigLoader;
   logContext?: Record<string, unknown>;
-}): Promise<SlackChannelGateDecision> {
-  const gated = await isSlackEventGated(input.event, input.slackDeps);
-  if (!gated) return { allowed: true };
-
+}): SlackChannelGateDecision {
   let allowlist: string[] = [];
   try {
     const workspaceConfig = input.workspaceConfigLoader?.();
@@ -52,6 +49,29 @@ export async function evaluateSlackChannelGate(input: {
 
   if (allowlist.includes(input.event.channel)) return { allowed: true };
   return { allowed: false, reason: SLACK_GATE_DROP_REASON };
+}
+
+export function evaluateCachedSlackChannelGate(input: {
+  event: SlackChannelGateInput;
+  workspaceConfigLoader?: ConfigLoader;
+  logContext?: Record<string, unknown>;
+}): SlackChannelGateDecision | undefined {
+  const gated = getCachedSlackChannelGate(input.event.channel);
+  if (gated === undefined) return undefined;
+  if (!gated) return { allowed: true };
+  return evaluateAllowlist(input);
+}
+
+export async function evaluateSlackChannelGate(input: {
+  event: SlackChannelGateInput;
+  slackDeps: SlackDeps;
+  workspaceConfigLoader?: ConfigLoader;
+  logContext?: Record<string, unknown>;
+}): Promise<SlackChannelGateDecision> {
+  const gated = await isSlackEventGated(input.event, input.slackDeps);
+  if (!gated) return { allowed: true };
+
+  return evaluateAllowlist(input);
 }
 
 export function addSlackGateRejectedReaction(

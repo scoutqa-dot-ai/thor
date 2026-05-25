@@ -1,6 +1,10 @@
 import type { WebClient } from "@slack/web-api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { __resetSlackChannelGateCacheForTests, isSlackEventGated } from "./slack-api.js";
+import {
+  __resetSlackChannelGateCacheForTests,
+  getCachedSlackChannelGate,
+  isSlackEventGated,
+} from "./slack-api.js";
 
 function depsWithInfo(info = vi.fn()) {
   return {
@@ -81,6 +85,7 @@ describe("Slack channel gating", () => {
     const info = vi.fn().mockResolvedValue({ channel: { is_private: false } });
     const deps = depsWithInfo(info);
     await expect(isSlackEventGated({ channel: "C_cached_public" }, deps)).resolves.toBe(false);
+    expect(getCachedSlackChannelGate("C_cached_public")).toBe(false);
     await expect(isSlackEventGated({ channel: "C_cached_public" }, deps)).resolves.toBe(false);
     expect(info).toHaveBeenCalledTimes(1);
   });
@@ -96,8 +101,10 @@ describe("Slack channel gating", () => {
 
     await expect(isSlackEventGated({ channel: "C_ttl" }, deps)).resolves.toBe(false);
     vi.advanceTimersByTime(60 * 60 * 1000 - 1);
+    expect(getCachedSlackChannelGate("C_ttl")).toBe(false);
     await expect(isSlackEventGated({ channel: "C_ttl" }, deps)).resolves.toBe(false);
     vi.advanceTimersByTime(1);
+    expect(getCachedSlackChannelGate("C_ttl")).toBeUndefined();
     await expect(isSlackEventGated({ channel: "C_ttl" }, deps)).resolves.toBe(true);
 
     expect(info).toHaveBeenCalledTimes(2);
