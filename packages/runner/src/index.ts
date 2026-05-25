@@ -89,12 +89,20 @@ const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 type ModelContextLimits = Map<string, number>;
+const EMPTY_MODEL_CONTEXT_LIMITS: ModelContextLimits = new Map();
 const MODEL_CONTEXT_LIMIT_CACHE_TTL_MS = 5 * 60_000;
-const cachedModelContextLimits = new Map<
-  string,
-  { expiresAt: number; limits: ModelContextLimits }
->();
-const cachedModelContextLimitsPending = new Map<string, Promise<ModelContextLimits>>();
+let cachedModelContextLimits:
+  | {
+      expiresAt: number;
+      limits: ModelContextLimits;
+    }
+  | undefined;
+let cachedModelContextLimitsPending: Promise<void> | undefined;
+
+export function resetModelContextLimitCacheForTests(): void {
+  cachedModelContextLimits = undefined;
+  cachedModelContextLimitsPending = undefined;
+}
 
 export interface RunnerAppOptions {
   opencodeUrl?: string;
@@ -362,6 +370,13 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   const checkOpencodeReachable = options.isOpencodeReachable ?? isOpencodeReachable;
   const waitForOpencode = options.ensureOpencodeAvailable ?? ensureOpencodeAvailable;
   const workspaceConfigLoader = options.workspaceConfigLoader ?? defaultWorkspaceConfigLoader;
+
+  // Warm global model limits best-effort outside the request hot path. Limits are
+  // treated as process-global, so any successful load is reused for later triggers.
+  warmModelContextLimits({
+    client: createClient({ baseUrl: opencodeUrl, directory: process.cwd() }),
+    opencodeUrl,
+  });
 
   function routeParam(value: string | string[] | undefined): string {
     return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
@@ -863,7 +878,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         }
       }
 
-      const modelContextLimits = await resolveModelContextLimits(client, opencodeUrl);
+      warmModelContextLimits({ client, opencodeUrl });
 
       const bootstrapMemoryPaths: string[] = [];
 
@@ -1069,7 +1084,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             const isParent = isSessionEvent(event, sessionId);
 
             if (isParent && event.type === "message.updated") {
-              emitContextProgressFromMessage(event, modelContextLimits, emit);
+              emitContextProgressFromMessage(event, currentModelContextLimits(), emit);
             }
 
             // Forward tool progress from child sessions so
@@ -1302,44 +1317,45 @@ function eventSessionId(event: Event): string | undefined {
   return undefined;
 }
 
-function contextLimitKey(providerID: string, modelID: string): string {
-  return `${providerID}/${modelID}`;
+function contextLimitKey(_providerID: string, modelID: string): string {
+  return modelID;
 }
 
-async function resolveModelContextLimits(
-  client: OpencodeClient,
-  opencodeUrl: string,
-): Promise<ModelContextLimits> {
-  const now = Date.now();
-  const cached = cachedModelContextLimits.get(opencodeUrl);
-  if (cached && cached.expiresAt > now) {
-    return cached.limits;
-  }
+async function resolveModelContextLimits(client: OpencodeClient): Promise<ModelContextLimits> {
+  const limits: ModelContextLimits = new Map();
+  const candidates = await loadOpencodeConfigCandidates(client);
+  for (const candidate of candidates) collectModelContextLimits(candidate, limits);
+  return limits;
+}
 
-  const pending = cachedModelContextLimitsPending.get(opencodeUrl);
-  if (pending) {
-    return pending;
-  }
+function currentModelContextLimits(): ModelContextLimits {
+  const cached = cachedModelContextLimits;
+  if (!cached) return EMPTY_MODEL_CONTEXT_LIMITS;
+  if (cached.expiresAt <= Date.now()) return EMPTY_MODEL_CONTEXT_LIMITS;
+  return cached.limits;
+}
 
-  const promise = (async () => {
-    const limits: ModelContextLimits = new Map();
-    const candidates = await loadOpencodeConfigCandidates(client);
-    for (const candidate of candidates) collectModelContextLimits(candidate, limits);
-    cachedModelContextLimits.set(opencodeUrl, {
-      limits,
-      expiresAt: Date.now() + MODEL_CONTEXT_LIMIT_CACHE_TTL_MS,
+function warmModelContextLimits(input: { client: OpencodeClient; opencodeUrl: string }): void {
+  const cached = cachedModelContextLimits;
+  if (cached && cached.expiresAt > Date.now()) return;
+  if (cachedModelContextLimitsPending) return;
+
+  cachedModelContextLimitsPending = resolveModelContextLimits(input.client)
+    .then((limits) => {
+      cachedModelContextLimits = {
+        limits,
+        expiresAt: Date.now() + MODEL_CONTEXT_LIMIT_CACHE_TTL_MS,
+      };
+    })
+    .catch((err) => {
+      logWarn(log, "model_context_limits_warm_failed", {
+        opencodeUrl: input.opencodeUrl,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    })
+    .finally(() => {
+      cachedModelContextLimitsPending = undefined;
     });
-    return limits;
-  })();
-  cachedModelContextLimitsPending.set(opencodeUrl, promise);
-
-  try {
-    return await promise;
-  } finally {
-    if (cachedModelContextLimitsPending.get(opencodeUrl) === promise) {
-      cachedModelContextLimitsPending.delete(opencodeUrl);
-    }
-  }
 }
 
 async function loadOpencodeConfigCandidates(client: OpencodeClient): Promise<unknown[]> {

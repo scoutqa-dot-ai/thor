@@ -3,7 +3,11 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Event, TextPart } from "@opencode-ai/sdk";
-import { createRunnerApp, type RunnerAppOptions } from "./index.js";
+import {
+  createRunnerApp,
+  resetModelContextLimitCacheForTests,
+  type RunnerAppOptions,
+} from "./index.js";
 import {
   appendAlias,
   appendCorrelationAliasForAnchor,
@@ -330,6 +334,7 @@ async function trigger(url: string, body: Record<string, unknown>) {
 beforeEach(() => {
   process.env.WORKLOG_DIR = worklogDir;
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
+  resetModelContextLimitCacheForTests();
 });
 
 afterEach(() => {
@@ -1310,7 +1315,7 @@ describe("runner /trigger orchestration", () => {
     expect(configGets).toBe(1);
   });
 
-  it("does not share pending model-limit lookups across different opencode urls", async () => {
+  it("shares the global model-limit cache across opencode urls", async () => {
     let configGetsA = 0;
     let configGetsB = 0;
     const promptEvents = (sessionId: string) => [
@@ -1349,11 +1354,10 @@ describe("runner /trigger orchestration", () => {
       });
     });
 
-    expect(configGetsA).toBe(1);
-    expect(configGetsB).toBe(1);
+    expect(configGetsA + configGetsB).toBe(1);
   });
 
-  it("skips model-limit resolution on resumed busy sessions when interrupt is false", async () => {
+  it("warms model limits best-effort even when a resumed session returns busy", async () => {
     let configGets = 0;
     const h = createHarness({
       existingSessions: new Set(["busy-session"]),
@@ -1379,7 +1383,7 @@ describe("runner /trigger orchestration", () => {
       expect(await response.json()).toEqual({ busy: true });
     });
 
-    expect(configGets).toBe(0);
+    expect(configGets).toBe(1);
   });
 
   it("skips context progress when no positive configured model limit is known", async () => {
@@ -1404,7 +1408,7 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("still resolves model limits once per non-busy trigger even for tokenless message.updated events", async () => {
+  it("warms model limits best-effort even for tokenless message.updated events", async () => {
     let configGets = 0;
     const h = createHarness({
       onConfigGet: () => {
