@@ -1,6 +1,6 @@
 import type { WebClient } from "@slack/web-api";
-import { describe, expect, it, vi } from "vitest";
-import { isSlackEventGated } from "./slack-api.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { __resetSlackChannelGateCacheForTests, isSlackEventGated } from "./slack-api.js";
 
 function depsWithInfo(info = vi.fn()) {
   return {
@@ -10,6 +10,10 @@ function depsWithInfo(info = vi.fn()) {
 }
 
 describe("Slack channel gating", () => {
+  beforeEach(() => {
+    __resetSlackChannelGateCacheForTests();
+  });
+
   it("admits regular public channels without an allowlist check", async () => {
     const deps = depsWithInfo();
     await expect(
@@ -57,7 +61,26 @@ describe("Slack channel gating", () => {
 
   it("fails closed on lookup errors", async () => {
     const deps = depsWithInfo(vi.fn().mockRejectedValue(new Error("unavailable")));
-    await expect(isSlackEventGated({ channel: "G123" }, deps)).resolves.toBe(true);
+    await expect(isSlackEventGated({ channel: "G_fail_only" }, deps)).resolves.toBe(true);
+  });
+
+  it("caches successful lookups and skips Slack on repeat hits for the same channel", async () => {
+    const info = vi.fn().mockResolvedValue({ channel: { is_private: false } });
+    const deps = depsWithInfo(info);
+    await expect(isSlackEventGated({ channel: "C_cached_public" }, deps)).resolves.toBe(false);
+    await expect(isSlackEventGated({ channel: "C_cached_public" }, deps)).resolves.toBe(false);
+    expect(info).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not cache lookup failures so transient outages can recover", async () => {
+    const info = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("unavailable"))
+      .mockResolvedValueOnce({ channel: { is_private: false } });
+    const deps = depsWithInfo(info);
+    await expect(isSlackEventGated({ channel: "C_recover" }, deps)).resolves.toBe(true);
+    await expect(isSlackEventGated({ channel: "C_recover" }, deps)).resolves.toBe(false);
+    expect(info).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed on incomplete lookup responses", async () => {

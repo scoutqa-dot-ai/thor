@@ -12,9 +12,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebClient } from "@slack/web-api";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveAnchorForCorrelationKey } from "@thor/common";
 import { createGatewayApp, type GatewayAppConfig } from "./app.js";
+import { __resetSlackChannelGateCacheForTests } from "./slack-api.js";
 import type { EventQueue } from "./queue.js";
 
 interface MockSlackClient {
@@ -364,6 +365,10 @@ afterEach(() => {
 });
 
 describe("gateway", () => {
+  beforeEach(() => {
+    __resetSlackChannelGateCacheForTests();
+  });
+
   it("returns 503 when queue has stale pending events", async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       const url = String(input);

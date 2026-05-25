@@ -681,6 +681,11 @@ describe("planBatchDispatch", () => {
       return { client: client as unknown as SlackDeps["client"] };
     }
 
+    beforeEach(async () => {
+      const { __resetSlackChannelGateCacheForTests } = await import("./slack-api.js");
+      __resetSlackChannelGateCacheForTests();
+    });
+
     const pendingEvent = {
       channel: "C_DEFER",
       ts: "1710000000.500",

@@ -93,6 +93,19 @@ export async function addReaction(
   }
 }
 
+// Cache successful `conversations.info` results forever. The Slack workspace
+// is configured to forbid creating new private channels, so private→public
+// conversions are rare; a server restart is acceptable as the invalidation
+// mechanism. Failures are not cached so a transient Slack outage doesn't
+// permanently pin a channel as gated.
+const channelGateCache = new Map<string, boolean>();
+
+// Test hook: drops the in-memory channel gate cache so tests reusing channel ids
+// across cases do not see leaked state. Not exported for production use.
+export function __resetSlackChannelGateCacheForTests(): void {
+  channelGateCache.clear();
+}
+
 // Returns true when the event must pass the allowlist to be admitted.
 // Only `channel_type === "channel"` is admitted ungated; missing types are
 // resolved via `conversations.info` and fail closed on any error.
@@ -103,15 +116,21 @@ export async function isSlackEventGated(
   if (event.channel_type === "channel") return false;
   if (event.channel_type !== undefined) return true;
 
+  const cached = channelGateCache.get(event.channel);
+  if (cached !== undefined) return cached;
+
   try {
     const result = await deps.client.conversations.info({ channel: event.channel });
     const channel = result.channel as
       | { is_private?: boolean; is_im?: boolean; is_mpim?: boolean }
       | undefined;
-    if (channel?.is_private === false && channel?.is_im !== true && channel?.is_mpim !== true) {
-      return false;
-    }
-    return true;
+    const gated = !(
+      channel?.is_private === false &&
+      channel?.is_im !== true &&
+      channel?.is_mpim !== true
+    );
+    channelGateCache.set(event.channel, gated);
+    return gated;
   } catch (error) {
     logError(log, "slack_channel_privacy_lookup_failed", error, { channel: event.channel });
     return true;
