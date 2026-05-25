@@ -15,6 +15,7 @@ flowchart LR
     F[Atlassian MCP]
     G[PostHog MCP]
     H[Grafana MCP]
+    K[Falcon MCP]
     I[Langfuse / Git / GH / Metabase / LaunchDarkly]
     J[Slack Web API<br/>via Gateway + OpenCode]
 
@@ -26,6 +27,7 @@ flowchart LR
     D --> F
     D --> G
     D --> H
+    D --> K
     D --> I
 ```
 
@@ -37,6 +39,7 @@ flowchart LR
 | Atlassian MCP    | `remote-cli /exec/mcp`                             | `ATLASSIAN_AUTH` header | Read + approved writes                                  |
 | PostHog MCP      | `remote-cli /exec/mcp`                             | API key                 | Read + approved writes                                  |
 | Grafana MCP      | `remote-cli /exec/mcp`                             | Service account token   | Logs and observability                                  |
+| Falcon MCP       | `remote-cli /exec/mcp`                             | Falcon API client       | Read-only security investigation                        |
 | Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token               | Mentions, progress, approval cards, thread reads/writes |
 | Langfuse         | `remote-cli /exec/langfuse`                        | API key pair            | Read-only trace queries                                 |
 | LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token            | Read-only feature flag inspection                       |

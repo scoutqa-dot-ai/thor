@@ -46,6 +46,10 @@ jobs:
       SLACK_SIGNING_SECRET: ci-fake
       GRAFANA_URL: http://grafana-mcp:8000
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
+      FALCON_CLIENT_ID: ci-fake
+      FALCON_CLIENT_SECRET: ci-fake
+      FALCON_BASE_URL: https://api.crowdstrike.com
+      FALCON_MCP_MODULES: detections,hosts,intel,spotlight
       ATLASSIAN_AUTH: ci-fake
       POSTHOG_API_KEY: ci-fake
       LANGFUSE_PUBLIC_KEY: ci-fake

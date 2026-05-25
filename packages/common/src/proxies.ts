@@ -1,7 +1,7 @@
 import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
 import type { ProxyConfig } from "./workspace-config.js";
 
-export const PROXY_NAMES = ["atlassian", "grafana", "posthog"] as const;
+export const PROXY_NAMES = ["atlassian", "grafana", "posthog", "falcon"] as const;
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
 
@@ -90,6 +90,24 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
       "update-issue-status",
     ],
     approve: ["create-feature-flag"],
+  },
+  falcon: {
+    upstream: { url: "http://falcon-mcp:8000/mcp" },
+    allow: [
+      "falcon_check_connectivity",
+      "falcon_list_enabled_modules",
+      "falcon_list_modules",
+      "falcon_search_detections",
+      "falcon_get_detection_details",
+      "falcon_search_hosts",
+      "falcon_get_host_details",
+      "falcon_search_actors",
+      "falcon_search_indicators",
+      "falcon_search_reports",
+      "falcon_get_mitre_report",
+      "falcon_search_vulnerabilities",
+    ],
+    approve: [],
   },
 };
 

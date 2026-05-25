@@ -24,6 +24,7 @@ ingress -> gateway -> runner -> opencode
 | `remote-cli`  | 3004 | `@thor/remote-cli` | CLI + MCP policy gateway                    |
 | `admin`       | 3005 | `@thor/admin`      | Admin dashboard and workspace configuration |
 | `grafana-mcp` | 8000 | Docker image       | Grafana MCP server                          |
+| `falcon-mcp`  | 8000 | Docker image       | CrowdStrike Falcon MCP server               |
 | `ingress`     | 8080 | `docker/ingress`   | Reverse proxy + Vouch integration           |
 | `opencode`    | 4096 | Docker image       | Headless agent runtime                      |
 | `runner`      | 3000 | `@thor/runner`     | Session lifecycle + Slack progress updates  |

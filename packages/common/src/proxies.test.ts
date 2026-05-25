@@ -5,12 +5,16 @@ import { interpolateHeaders } from "./workspace-config.js";
 
 describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {
-    expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "posthog"]);
+    expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "posthog", "falcon"]);
     expect(getProxyConfig("atlassian")?.upstream.url).toBe("https://mcp.atlassian.com/v1/mcp");
     expect(getProxyConfig("grafana")?.allow).toEqual(
       expect.arrayContaining(["query_prometheus", "list_prometheus_metric_names"]),
     );
     expect(getProxyConfig("posthog")?.allow).toContain("query-run");
+    expect(getProxyConfig("falcon")?.upstream.url).toBe("http://falcon-mcp:8000/mcp");
+    expect(getProxyConfig("falcon")?.allow).toEqual(
+      expect.arrayContaining(["falcon_search_detections", "falcon_get_host_details"]),
+    );
     expect(getProxyConfig("unknown")).toBeUndefined();
   });
 
@@ -39,7 +43,9 @@ describe("proxy registry", () => {
   });
 
   it("requires approval only for the approved write-tool inventory", () => {
-    const approvedTools = Object.values(PROXY_REGISTRY).flatMap((proxy) => proxy.approve).sort();
+    const approvedTools = Object.values(PROXY_REGISTRY)
+      .flatMap((proxy) => proxy.approve)
+      .sort();
 
     expect(approvedTools).toEqual([...APPROVAL_TOOL_NAMES].sort());
   });

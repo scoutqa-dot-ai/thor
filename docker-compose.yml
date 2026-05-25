@@ -54,6 +54,8 @@ services:
     depends_on:
       grafana-mcp:
         condition: service_healthy
+      falcon-mcp:
+        condition: service_healthy
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3004/health').then(r=>{if(!r.ok)throw 1})"]
@@ -83,6 +85,39 @@ services:
       interval: 30s
       timeout: 3s
       retries: 5
+      start_period: 10s
+      start_interval: 2s
+
+  falcon-mcp:
+    image: quay.io/crowdstrike/falcon-mcp:0.10.0
+    restart: unless-stopped
+    command:
+      [
+        "--transport",
+        "streamable-http",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--modules",
+        "${FALCON_MCP_MODULES:-detections,hosts,intel,spotlight}",
+      ]
+    environment:
+      - FALCON_CLIENT_ID=${FALCON_CLIENT_ID:?set FALCON_CLIENT_ID}
+      - FALCON_CLIENT_SECRET=${FALCON_CLIENT_SECRET:?set FALCON_CLIENT_SECRET}
+      - FALCON_BASE_URL=${FALCON_BASE_URL:-https://api.crowdstrike.com}
+      - FALCON_MEMBER_CID=${FALCON_MEMBER_CID:-}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.create_connection(('127.0.0.1',8000),3); s.close()",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
       start_period: 10s
       start_interval: 2s
 
@@ -125,10 +160,10 @@ services:
     environment:
       - http_proxy=http://mitmproxy:8080
       - https_proxy=http://mitmproxy:8080
-      - no_proxy=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - no_proxy=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,falcon-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
       - HTTP_PROXY=http://mitmproxy:8080
       - HTTPS_PROXY=http://mitmproxy:8080
-      - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,falcon-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
       - NODE_OPTIONS=--use-env-proxy --disable-warning=UNDICI-EHPA
       - NODE_EXTRA_CA_CERTS=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
       - CURL_CA_BUNDLE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem

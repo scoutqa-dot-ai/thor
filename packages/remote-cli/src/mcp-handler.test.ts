@@ -296,6 +296,7 @@ describe("remote-cli MCP endpoints", () => {
         { name: "atlassian", toolCount: 0, connected: false },
         { name: "grafana", toolCount: 0, connected: false },
         { name: "posthog", toolCount: 0, connected: false },
+        { name: "falcon", toolCount: 0, connected: false },
       ],
     });
 
@@ -388,7 +389,7 @@ describe("remote-cli MCP endpoints", () => {
     closeRemoteCli = remoteCli.close;
     await remoteCli.warmUp();
 
-    expect(connectedUpstreams.sort()).toEqual(["atlassian", "grafana", "posthog"]);
+    expect(connectedUpstreams.sort()).toEqual(["atlassian", "falcon", "grafana", "posthog"]);
   });
 
   it("rejects worktree session directories for MCP authz", async () => {
