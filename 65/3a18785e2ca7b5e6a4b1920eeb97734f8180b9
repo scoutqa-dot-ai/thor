@@ -1,0 +1,25 @@
+packages/common/src/workspace-config.test.ts
+  ae81d9223ee5d508 222,230,233,235
+packages/common/src/workspace-config.ts
+  ae81d9223ee5d508 5,154-155,162-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "653a18785e2ca7b5e6a4b1920eeb97734f8180b9",
+  "prompts": {
+    "ae81d9223ee5d508": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a673956b-56f9-47ea-b362-978b6b8ba4ea",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 27,
+      "total_deletions": 5,
+      "accepted_lines": 27,
+      "overriden_lines": 0
+    }
+  }
+}
