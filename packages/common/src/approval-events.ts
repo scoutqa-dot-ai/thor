@@ -3,7 +3,6 @@ import { z } from "zod/v4";
 export const APPROVAL_TOOL_NAMES = [
   "createJiraIssue",
   "addCommentToJiraIssue",
-  "createIssueLink",
   "create-feature-flag",
 ] as const;
 
@@ -23,24 +22,6 @@ export const AddCommentToJiraIssueApprovalArgsSchema = z
   })
   .passthrough();
 
-export const CreateIssueLinkApprovalArgsSchema = z
-  .object({
-    cloudId: z.string().min(1).optional(),
-    linkType: z.string().min(1).optional(),
-    issueLinkType: z.string().min(1).optional(),
-    type: z.string().min(1).optional(),
-    issueIdOrKey: z.string().min(1).optional(),
-    linkedIssueIdOrKey: z.string().min(1).optional(),
-    inwardIssueKey: z.string().min(1).optional(),
-    inwardIssueIdOrKey: z.string().min(1).optional(),
-    outwardIssueKey: z.string().min(1).optional(),
-    outwardIssueIdOrKey: z.string().min(1).optional(),
-    sourceIssueIdOrKey: z.string().min(1).optional(),
-    targetIssueIdOrKey: z.string().min(1).optional(),
-    comment: z.string().optional(),
-  })
-  .passthrough();
-
 export const CreateFeatureFlagApprovalArgsSchema = z
   .object({
     key: z.string().min(1),
@@ -55,7 +36,6 @@ export const CreateFeatureFlagApprovalArgsSchema = z
 export const ApprovalArgsSchema = z.union([
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
-  CreateIssueLinkApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
 ]);
 
@@ -73,10 +53,6 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("addCommentToJiraIssue"),
     args: AddCommentToJiraIssueApprovalArgsSchema,
-  }),
-  ApprovalRequiredEventBaseSchema.extend({
-    tool: z.literal("createIssueLink"),
-    args: CreateIssueLinkApprovalArgsSchema,
   }),
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("create-feature-flag"),
@@ -139,7 +115,5 @@ export function injectApprovalDisclaimer(
         ...parsed.data.args,
         commentBody: `${parsed.data.args.commentBody}\n${footer}`,
       };
-    case "createIssueLink":
-      return parsed.data.args;
   }
 }

@@ -3,7 +3,6 @@ import {
   buildApprovalButtonValue,
   buildApprovalPresentation,
   buildApprovalPresentationBlocks,
-  buildApprovalSlackMessage,
   buildInlineApprovalBlocks,
   formatApprovalArgs,
   parseApprovalButtonValue,
@@ -129,19 +128,6 @@ describe("approval presentation", () => {
       markdown: "Approved.",
     });
     expect(
-      buildApprovalPresentation("createIssueLink", {
-        cloudId: "cloud-1",
-        outwardIssueKey: "ENG-42",
-        inwardIssueKey: "ENG-99",
-        issueLinkType: "blocks",
-        comment: "Implementation ticket for the product work.",
-      }),
-    ).toEqual({
-      title: "Link Jira issues: ENG-42 ↔ ENG-99",
-      markdown:
-        "*Source issue:* ENG-42\n\n*Target issue:* ENG-99\n\n*Link type:* blocks\n\n*Comment:*\nImplementation ticket for the product work.",
-    });
-    expect(
       buildApprovalPresentation("create-feature-flag", { key: "beta", active: false }),
     ).toEqual({ title: "Create feature flag: beta", markdown: "*Key:* beta\n\n*Active:* false" });
   });
@@ -160,37 +146,6 @@ describe("approval presentation", () => {
       }),
     ).toBeUndefined();
     expect(buildApprovalPresentation("create-feature-flag", { flagKey: "beta" })).toBeUndefined();
-  });
-
-  it("falls back to raw JSON for unrecognized Jira issue-link payload shapes", () => {
-    const args = {
-      cloudId: "cloud-1",
-      fromIssue: "ENG-42",
-      toIssue: "ENG-99",
-      relation: "blocks",
-    };
-
-    expect(buildApprovalPresentation("createIssueLink", args)).toBeUndefined();
-
-    const message = buildApprovalSlackMessage({
-      actionId: "act-1",
-      tool: "createIssueLink",
-      args,
-      upstreamName: "atlassian",
-      threadTs: "1710000000.001",
-    });
-
-    expect(message.text).toBe("Approval required for `createIssueLink`");
-    expect(message.blocks[1]).toMatchObject({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: expect.stringContaining('"fromIssue": "ENG-42"'),
-      },
-    });
-    expect((message.blocks[1] as { text: { text: string } }).text.text).toContain(
-      '"relation": "blocks"',
-    );
   });
 
   it("renders presentations for known tool schemas with extra unknown fields", () => {

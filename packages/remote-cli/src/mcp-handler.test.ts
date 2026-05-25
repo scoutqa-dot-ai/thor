@@ -570,7 +570,7 @@ describe("remote-cli MCP endpoints", () => {
     ]);
   });
 
-  it("creates and resolves Jira issue-link approvals without disclaimer injection", async () => {
+  it("calls Jira issue-link creation directly without approval", async () => {
     appendActiveTrigger();
     const cleanArgs = {
       cloudId: "cloud-1",
@@ -589,44 +589,16 @@ describe("remote-cli MCP endpoints", () => {
       },
       { "x-thor-session-id": "parent-session" },
     );
-    const pendingBody = (await pending.json()) as { stdout: string; exitCode: number };
-
-    expect(pending.status).toBe(200);
-    expect(pendingBody.exitCode).toBe(0);
-    const approvalOutput = JSON.parse(pendingBody.stdout) as {
-      actionId: string;
-      tool: string;
-      args: Record<string, unknown>;
-    };
-    expect(approvalOutput).toMatchObject({
-      type: "approval_required",
-      proxyName: "atlassian",
-      tool: "createIssueLink",
-      args: cleanArgs,
-    });
-    expect(toolCalls).toEqual([]);
-
-    const slackPayload = JSON.parse(String(slackFetch.mock.calls[0]?.[1]?.body)) as {
-      text: string;
-      blocks: Array<{ text?: { text: string } }>;
-    };
-    expect(slackPayload.text).toBe("Link Jira issues: THOR-1 ↔ THOR-2");
-    expect(slackPayload.blocks[1].text?.text).toContain("*Link type:* blocks");
-
-    const resolved = await postJson(
-      "/exec/mcp",
-      { args: ["resolve", approvalOutput.actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
-    const resolvedBody = (await resolved.json()) as {
+    const pendingBody = (await pending.json()) as {
       stdout: string;
       stderr: string;
       exitCode: number;
     };
 
-    expect(resolved.status).toBe(200);
-    expect(resolvedBody).toEqual({ stdout: "linked", stderr: "", exitCode: 0 });
+    expect(pending.status).toBe(200);
+    expect(pendingBody).toEqual({ stdout: "linked", stderr: "", exitCode: 0 });
     expect(toolCalls).toEqual([{ name: "createIssueLink", arguments: cleanArgs }]);
+    expect(slackFetch).not.toHaveBeenCalled();
   });
 
   it("posts approval cards to the trigger Slack thread when the anchor has other Slack aliases", async () => {

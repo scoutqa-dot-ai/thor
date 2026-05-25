@@ -14,6 +14,7 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
     allow: [
       "atlassianUserInfo",
       "getJiraIssue",
+      "createIssueLink",
       "searchJiraIssuesUsingJql",
       "getConfluenceSpaces",
       "getConfluencePage",
@@ -25,7 +26,7 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
       "search",
       "fetch",
     ],
-    approve: ["createJiraIssue", "addCommentToJiraIssue", "createIssueLink"],
+    approve: ["createJiraIssue", "addCommentToJiraIssue"],
   },
   grafana: {
     upstream: { url: "http://grafana-mcp:8000/mcp" },
