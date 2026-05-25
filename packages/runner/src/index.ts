@@ -55,6 +55,7 @@ import {
   findUserByGithub,
   findUserBySlack,
   WORKSPACE_CONFIG_PATH,
+  handleProgressEvent,
 } from "@thor/common";
 import type {
   ConfigLoader,
@@ -66,10 +67,15 @@ import type {
   ParsedOpencodeEvent,
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
-import type { ProgressEvent } from "@thor/common";
+import type { ProgressEvent, ProgressTarget, ProgressTransport } from "@thor/common";
 import { buildToolInstructions } from "./tool-instructions.js";
 import { getMemoryProgressEvents } from "./memory-progress.js";
 import { pathToFileURL } from "node:url";
+import {
+  createSlackProgressTransport,
+  resolveSlackProgressTarget,
+  type SlackProgressTransportTarget,
+} from "./slack-progress.js";
 
 const log = createLogger("runner");
 
@@ -112,6 +118,8 @@ export interface RunnerAppOptions {
   isOpencodeReachable?: () => Promise<boolean>;
   ensureOpencodeAvailable?: () => Promise<void>;
   workspaceConfigLoader?: ConfigLoader;
+  progressTransport?: ProgressTransport<SlackProgressTransportTarget>;
+  progressEventSink?: (event: ProgressEvent) => void;
 }
 
 /** Read a file, returns trimmed content or undefined. */
@@ -370,6 +378,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   const checkOpencodeReachable = options.isOpencodeReachable ?? isOpencodeReachable;
   const waitForOpencode = options.ensureOpencodeAvailable ?? ensureOpencodeAvailable;
   const workspaceConfigLoader = options.workspaceConfigLoader ?? defaultWorkspaceConfigLoader;
+  const progressTransport =
+    options.progressTransport ??
+    createSlackProgressTransport({
+      token: config.slackBotToken,
+      slackApiUrl: config.slackApiBaseUrl,
+    });
 
   // Warm global model limits best-effort outside the request hot path. Limits are
   // treated as process-global, so any successful load is reused for later triggers.
@@ -957,10 +971,8 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       logInfo(log, "prompt_sent", { sessionId });
 
-      // --- NDJSON streaming response ---
-      res.setHeader("Content-Type", "application/x-ndjson");
-      res.setHeader("Transfer-Encoding", "chunked");
-      res.status(200);
+      const progressTarget = resolveSlackProgressTarget(correlationKey);
+      let progressChain = Promise.resolve();
 
       function emit(event: ProgressEvent): void {
         if (res.writableEnded || res.destroyed) return;
@@ -986,7 +998,15 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             : {}),
           ts: Date.now(),
         });
-        res.write(JSON.stringify(event) + "\n");
+        options.progressEventSink?.(event);
+        if (!progressTarget || !progressTransport) return;
+        progressChain = progressChain.catch(() => undefined).then(() =>
+          handleProgressEvent(
+            progressTarget as ProgressTarget<SlackProgressTransportTarget>,
+            event,
+            progressTransport,
+          ),
+        );
       }
 
       emit({
@@ -999,6 +1019,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       for (const path of bootstrapMemoryPaths) {
         emit({ type: "memory", action: "read", path, source: "bootstrap" });
       }
+
+      const backgroundTask = (async () => {
+        try {
 
       // --- Stream processing ---
 
@@ -1049,7 +1072,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         emit({ type: "delegate", agent });
       }
 
-      await withNdjsonHeartbeat(emit, async () => {
+      {
         const iterator = subscription[Symbol.asyncIterator]();
         try {
           while (!finished) {
@@ -1220,7 +1243,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           await iterator.return?.();
           subscription.close();
         }
-      });
+      }
 
       if (!finished && latestSessionError) {
         terminalError = latestSessionError;
@@ -1255,7 +1278,18 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         messageId: lastMessageId,
         durationMs,
       });
-      res.end();
+      await progressChain;
+        } catch (err) {
+          logError(log, "trigger_background_error", err);
+          endTrigger(triggerId, "error", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          emit({ type: "error", error: err instanceof Error ? err.message : String(err) });
+          await progressChain;
+        }
+      })();
+      void backgroundTask;
+      res.json({ accepted: true, sessionId, resumed });
     } catch (err) {
       logError(log, "trigger_error", err);
       // Emit trigger_end{status:"error"} so the trigger doesn't render as `in_flight`
@@ -1269,15 +1303,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         res.status(500).json({
           error: err instanceof Error ? err.message : String(err),
         });
-      } else {
-        // Stream already started — emit error event and close
-        res.write(
-          JSON.stringify({
-            type: "error",
-            error: err instanceof Error ? err.message : String(err),
-          }) + "\n",
-        );
-        res.end();
       }
     }
   });
@@ -1286,23 +1311,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 }
 
 // --- Helpers ---
-
-/**
- * Run `fn` while a heartbeat keeps the NDJSON response stream alive.
- * Sends a typed heartbeat event every 30s to prevent idle-connection
- * timeouts; the heartbeat is always cleared on exit.
- */
-async function withNdjsonHeartbeat<T>(
-  emit: (event: ProgressEvent) => void,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const id = setInterval(() => emit({ type: "heartbeat" }), 30_000);
-  try {
-    return await fn();
-  } finally {
-    clearInterval(id);
-  }
-}
 
 function eventSessionId(event: Event): string | undefined {
   if (event.type === "message.part.updated") return event.properties.part.sessionID;

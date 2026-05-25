@@ -1,8 +1,13 @@
-import type { WebClient } from "@slack/web-api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProgressEvent } from "@thor/common";
-import { handleProgressEvent, getRegistrySize, clearRegistry } from "./progress-manager.js";
-import type { SlackDeps } from "./slack-api.js";
+import type { ProgressEvent } from "./progress-events.js";
+import {
+  handleProgressEvent,
+  getRegistrySize,
+  clearRegistry,
+  type ProgressTransport,
+  type ProgressTarget,
+} from "./progress-manager.js";
+type SlackDeps = { client: any };
 
 function mockSlackDeps() {
   return {
@@ -15,11 +20,40 @@ function mockSlackDeps() {
       reactions: {
         add: vi.fn().mockResolvedValue({ ok: true }),
       },
-    } as unknown as WebClient,
+    },
   } satisfies SlackDeps;
 }
 
 type MockDeps = ReturnType<typeof mockSlackDeps>;
+
+function progressTarget(
+  deps: MockDeps,
+  sourceTs = "",
+  channel = "C123",
+  threadTs = "1710000000.001",
+): ProgressTarget<MockDeps> {
+  return { key: `${channel}:${threadTs}`, sourceTs, transportTarget: deps };
+}
+
+const transport: ProgressTransport<MockDeps> = {
+  async post(deps, text, blocks) {
+    return deps.client.chat.postMessage({
+      channel: "C123",
+      text,
+      thread_ts: "1710000000.001",
+      ...(blocks ? { blocks } : {}),
+    });
+  },
+  async update(deps, ts, text, blocks) {
+    await deps.client.chat.update({ channel: "C123", ts, text, ...(blocks ? { blocks } : {}) });
+  },
+  async delete(deps, ts) {
+    await deps.client.chat.delete({ channel: "C123", ts });
+  },
+  async addReaction(deps, timestamp, name) {
+    await deps.client.reactions.add({ channel: "C123", timestamp, name });
+  },
+};
 
 function chat(deps: MockDeps) {
   const c = deps.client as unknown as {
@@ -50,11 +84,9 @@ async function sendTools(
 ) {
   for (let i = 0; i < count; i++) {
     await handleProgressEvent(
-      channel,
-      threadTs,
+      progressTarget(deps, sourceTs, channel, threadTs),
       { type: "tool", tool: `Tool${i}`, status: "completed" },
-      deps,
-      sourceTs,
+      transport,
     );
   }
 }
@@ -93,26 +125,22 @@ describe("ProgressManager", () => {
     const deps = mockSlackDeps();
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps, ""),
       {
         type: "memory",
         action: "write",
         path: "/workspace/memory/my-repo/README.md",
         source: "tool",
       },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "delegate",
         agent: "research-agent",
       },
-      deps,
-      "",
+      transport,
     );
     await sendTools(deps, 3);
 
@@ -272,24 +300,20 @@ describe("ProgressManager", () => {
     const deps = mockSlackDeps();
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "delegate",
         agent: "research-agent",
       },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "delegate",
         agent: "research-agent",
       },
-      deps,
-      "",
+      transport,
     );
     await sendTools(deps, 3);
 
@@ -301,32 +325,24 @@ describe("ProgressManager", () => {
     const deps = mockSlackDeps();
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       { type: "delegate", agent: "research-agent" },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       { type: "delegate", agent: "research-agent" },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       { type: "delegate", agent: "coding-agent" },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       { type: "delegate", agent: "research-agent" },
-      deps,
-      "",
+      transport,
     );
     await sendTools(deps, 3);
 
@@ -338,28 +354,24 @@ describe("ProgressManager", () => {
     const deps = mockSlackDeps();
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "memory",
         action: "read",
         path: "/workspace/memory/service-a/notes.md",
         source: "bootstrap",
       },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "memory",
         action: "write",
         path: "/workspace/memory/service-b/README.md",
         source: "tool",
       },
-      deps,
-      "",
+      transport,
     );
     await sendTools(deps, 3);
 
@@ -374,52 +386,44 @@ describe("ProgressManager", () => {
     const deps = mockSlackDeps();
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "memory",
         action: "write",
         path: "/workspace/memory/a.md",
         source: "tool",
       },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "memory",
         action: "read",
         path: "/workspace/memory/b.md",
         source: "tool",
       },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "memory",
         action: "read",
         path: "/workspace/memory/c.md",
         source: "tool",
       },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "memory",
         action: "read",
         path: "/workspace/memory/a.md",
         source: "tool",
       },
-      deps,
-      "",
+      transport,
     );
     await sendTools(deps, 3);
 
@@ -431,28 +435,24 @@ describe("ProgressManager", () => {
     const deps = mockSlackDeps();
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "memory",
         action: "read",
         path: "/workspace/memory/my-repo/README.md",
         source: "bootstrap",
       },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "memory",
         action: "read",
         path: "/workspace/memory/my-repo/notes.md",
         source: "tool",
       },
-      deps,
-      "",
+      transport,
     );
     await sendTools(deps, 3);
 
@@ -466,26 +466,22 @@ describe("ProgressManager", () => {
     await sendTools(deps, 2);
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "memory",
         action: "write",
         path: "/workspace/memory/README.md",
         source: "tool",
       },
-      deps,
-      "",
+      transport,
     );
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "delegate",
         agent: "coding-agent",
       },
-      deps,
-      "",
+      transport,
     );
 
     expect(chat(deps).postMessage).not.toHaveBeenCalled();
@@ -499,16 +495,14 @@ describe("ProgressManager", () => {
     expect(chat(deps).update).not.toHaveBeenCalled();
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "memory",
         action: "write",
         path: "/workspace/memory/README.md",
         source: "tool",
       },
-      deps,
-      "",
+      transport,
     );
     expect(chat(deps).update).toHaveBeenCalledOnce();
     expect((chat(deps).update.mock.calls[0][0] as { text: string }).text).toContain(
@@ -516,14 +510,12 @@ describe("ProgressManager", () => {
     );
 
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       {
         type: "delegate",
         agent: "coding-agent",
       },
-      deps,
-      "",
+      transport,
     );
     expect(chat(deps).update).toHaveBeenCalledTimes(2);
     expect((chat(deps).update.mock.calls[1][0] as { text: string }).text).toContain(
@@ -538,22 +530,18 @@ describe("ProgressManager", () => {
 
     // 4th call immediately — should be throttled
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       { type: "tool", tool: "Write", status: "completed" },
-      deps,
-      "",
+      transport,
     );
     expect(chat(deps).update).not.toHaveBeenCalled();
 
     // Advance 10s, next call should trigger update
     vi.advanceTimersByTime(10_000);
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps),
       { type: "tool", tool: "Bash", status: "completed" },
-      deps,
-      "",
+      transport,
     );
     expect(chat(deps).update).toHaveBeenCalledOnce();
   });
@@ -615,7 +603,7 @@ describe("ProgressManager", () => {
       toolCalls: [],
       durationMs: 5000,
     };
-    await handleProgressEvent("C123", "1710000000.001", doneEvent, deps, "");
+    await handleProgressEvent(progressTarget(deps), doneEvent, transport);
 
     // Updates message to "Done", then onSessionEnd deletes it
     expect(chat(deps).update).toHaveBeenCalledWith(
@@ -645,7 +633,7 @@ describe("ProgressManager", () => {
       toolCalls: [],
       durationMs: 500,
     };
-    await handleProgressEvent("C123", "1710000000.001", abortEvent, deps, "");
+    await handleProgressEvent(progressTarget(deps, ""), abortEvent, transport);
 
     // Should update to "Done" — not show an error
     expect(chat(deps).update).toHaveBeenCalledOnce();
@@ -668,7 +656,7 @@ describe("ProgressManager", () => {
       toolCalls: [],
       durationMs: 200,
     };
-    await handleProgressEvent("C123", "1710000000.001", abortEvent, deps, "");
+    await handleProgressEvent(progressTarget(deps, ""), abortEvent, transport);
 
     expect(chat(deps).postMessage).not.toHaveBeenCalled();
     expect(chat(deps).update).not.toHaveBeenCalled();
@@ -687,7 +675,7 @@ describe("ProgressManager", () => {
       toolCalls: [],
       durationMs: 1000,
     };
-    await handleProgressEvent("C123", "1710000000.001", doneEvent, deps, "");
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
 
     expect(chat(deps).postMessage).not.toHaveBeenCalled();
     expect(chat(deps).update).not.toHaveBeenCalled();
@@ -696,11 +684,9 @@ describe("ProgressManager", () => {
   it("adds x reaction instead of posting a first-time failure message", async () => {
     const deps = mockSlackDeps();
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps, "1710000000.123"),
       { type: "start", sessionId: "s1", resumed: false },
-      deps,
-      "1710000000.123",
+      transport,
     );
     await sendTools(deps, 1);
 
@@ -714,7 +700,7 @@ describe("ProgressManager", () => {
       toolCalls: [],
       durationMs: 100,
     };
-    await handleProgressEvent("C123", "1710000000.001", errorEvent, deps, "1710000000.123");
+    await handleProgressEvent(progressTarget(deps, "1710000000.123"), errorEvent, transport);
 
     expect(chat(deps).postMessage).not.toHaveBeenCalled();
     expect(chat(deps).update).not.toHaveBeenCalled();
@@ -741,7 +727,7 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
       toolCalls: [],
       durationMs: 5000,
     };
-    await handleProgressEvent("C123", "1710000000.001", doneEvent, deps, "");
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
 
     expect(chat(deps).delete).toHaveBeenCalledWith({
       channel: "C123",
@@ -764,7 +750,7 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
       toolCalls: [],
       durationMs: 5000,
     };
-    await handleProgressEvent("C123", "1710000000.001", errorEvent, deps, "");
+    await handleProgressEvent(progressTarget(deps, ""), errorEvent, transport);
 
     expect(chat(deps).delete).not.toHaveBeenCalled();
     expect(getRegistrySize()).toBe(1);
@@ -785,7 +771,7 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
       toolCalls: [],
       durationMs: 5000,
     };
-    await handleProgressEvent("C123", "1710000000.001", done1, deps, "");
+    await handleProgressEvent(progressTarget(deps, ""), done1, transport);
 
     // Session 1's message cleaned up immediately
     expect(chat(deps).delete).toHaveBeenCalledWith({ channel: "C123", ts: "msg.001" });
@@ -794,11 +780,9 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
     // Second session in same thread
     chat(deps).postMessage.mockResolvedValueOnce({ ok: true, ts: "msg.002", channel: "C123" });
     await handleProgressEvent(
-      "C123",
-      "1710000000.001",
+      progressTarget(deps, ""),
       { type: "start", sessionId: "s2", resumed: false },
-      deps,
-      "",
+      transport,
     );
     await sendTools(deps, 3);
     const done2: ProgressEvent = {
@@ -810,7 +794,7 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
       toolCalls: [],
       durationMs: 3000,
     };
-    await handleProgressEvent("C123", "1710000000.001", done2, deps, "");
+    await handleProgressEvent(progressTarget(deps, ""), done2, transport);
 
     // Session 2's message also cleaned up
     expect(chat(deps).delete).toHaveBeenCalledWith({ channel: "C123", ts: "msg.002" });

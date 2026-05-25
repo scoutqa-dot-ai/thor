@@ -169,36 +169,13 @@ function parseCreatedIssueCorrelationKey(stdout: string, cwd: string): string | 
   return buildIssueCorrelationKey(issue.owner, issue.repo, issue.number);
 }
 
-function parseIssueCommentCorrelationKey(
-  args: string[],
-  cwd: string,
-  stdout: string,
-): string | undefined {
-  if (args[0] !== "issue" || args[1] !== "comment") return undefined;
-  const number = args[2];
-  if (!number) return undefined;
-
-  const cwdRepo = resolveOwnerRepoFromRemote(cwd);
-  if (cwdRepo?.host === "github.com") {
-    return buildIssueCorrelationKey(cwdRepo.owner, cwdRepo.repo, number);
-  }
-
-  const issue = parseIssueUrl(stdout);
-  if (!issue || issue.number !== number) return undefined;
-  return buildIssueCorrelationKey(issue.owner, issue.repo, issue.number);
-}
-
-function registerIssueCorrelationAlias(
+function registerCreatedIssueCorrelationAlias(
   sessionId: string | undefined,
-  args: string[],
   cwd: string,
   stdout: string,
 ): void {
-  if (!sessionId || args[0] !== "issue") return;
-  const correlationKey =
-    args[1] === "create"
-      ? parseCreatedIssueCorrelationKey(stdout, cwd)
-      : parseIssueCommentCorrelationKey(args, cwd, stdout);
+  if (!sessionId) return;
+  const correlationKey = parseCreatedIssueCorrelationKey(stdout, cwd);
   if (!correlationKey) return;
   try {
     appendCorrelationAlias(sessionId, correlationKey);
@@ -748,7 +725,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
       const result = await execCommand("gh", effectiveArgs, cwd);
       if ((result.exitCode ?? 0) === 0) {
-        registerIssueCorrelationAlias(ids.sessionId, effectiveArgs, cwd, result.stdout);
+        if (effectiveArgs[0] === "issue" && effectiveArgs[1] === "create") {
+          registerCreatedIssueCorrelationAlias(ids.sessionId, cwd, result.stdout);
+        }
       }
       res.json(result);
     } catch (err) {
