@@ -1,6 +1,7 @@
 import {
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
+  CreateIssueLinkApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
   type ApprovalToolName,
 } from "./approval-events.js";
@@ -170,6 +171,8 @@ export function buildApprovalPresentation(
         return buildCreateJiraIssuePresentation(args);
       case "addCommentToJiraIssue":
         return buildAddJiraCommentPresentation(args);
+      case "createIssueLink":
+        return buildCreateIssueLinkPresentation(args);
       case "create-feature-flag":
         return buildCreateFeatureFlagPresentation(args);
       default:
@@ -303,6 +306,39 @@ function buildAddJiraCommentPresentation(args: Record<string, unknown>): Approva
   };
 }
 
+function buildCreateIssueLinkPresentation(
+  args: Record<string, unknown>,
+): ApprovalPresentation | undefined {
+  const parsed = CreateIssueLinkApprovalArgsSchema.parse(args);
+  const source = firstValue(
+    parsed.outwardIssueIdOrKey,
+    parsed.outwardIssueKey,
+    parsed.sourceIssueIdOrKey,
+    parsed.issueIdOrKey,
+  );
+  const target = firstValue(
+    parsed.inwardIssueIdOrKey,
+    parsed.inwardIssueKey,
+    parsed.targetIssueIdOrKey,
+    parsed.linkedIssueIdOrKey,
+  );
+  const linkType = firstValue(parsed.linkType, parsed.issueLinkType, parsed.type);
+  const markdownParts = [
+    bullet("Source issue", source),
+    bullet("Target issue", target),
+    bullet("Link type", linkType),
+    section("Comment", parsed.comment),
+  ];
+  if (Object.keys(args).length > 0 && markdownParts.every((part) => part === undefined)) {
+    return undefined;
+  }
+  const titleTarget = [source, target].filter(Boolean).join(" ↔ ") || "Jira issues";
+  return {
+    title: `Link Jira issues: ${renderValue(titleTarget) ?? "Jira issues"}`,
+    markdown: joinMarkdown(markdownParts),
+  };
+}
+
 function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
   const parsed = CreateFeatureFlagApprovalArgsSchema.parse(args);
   const titleTarget = renderValue(parsed.name ?? parsed.key) ?? "feature flag";
@@ -327,6 +363,10 @@ function renderValue(value: unknown): string | undefined {
   }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return escapeMrkdwnText(JSON.stringify(value));
+}
+
+function firstValue(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => value !== undefined);
 }
 
 function bullet(label: string, value: unknown): string | undefined {

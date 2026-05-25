@@ -27,6 +27,20 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "createIssueLink",
+    description: "Create a Jira issue link",
+    inputSchema: {
+      type: "object",
+      properties: {
+        outwardIssueIdOrKey: { type: "string" },
+        inwardIssueIdOrKey: { type: "string" },
+        linkType: { type: "string" },
+      },
+      required: ["outwardIssueIdOrKey", "inwardIssueIdOrKey", "linkType"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "lookupJiraAccountId",
     description: "Resolve a Jira account id",
     inputSchema: {
@@ -172,6 +186,11 @@ describe("remote-cli MCP endpoints", () => {
                     content: [{ type: "text", text: "created" }],
                   };
                 }
+                if (name === "createIssueLink") {
+                  return {
+                    content: [{ type: "text", text: "linked" }],
+                  };
+                }
                 if (name === "lookupJiraAccountId") {
                   jiraLookups.push(args);
                   if (jiraLookupFailure) throw jiraLookupFailure;
@@ -270,7 +289,11 @@ describe("remote-cli MCP endpoints", () => {
     const toolsBody = (await listedTools.json()) as { stdout: string };
 
     expect(listedTools.status).toBe(200);
-    expect(toolsBody.stdout.trim().split("\n")).toEqual(["getJiraIssue", "createJiraIssue"]);
+    expect(toolsBody.stdout.trim().split("\n")).toEqual([
+      "getJiraIssue",
+      "createJiraIssue",
+      "createIssueLink",
+    ]);
 
     const hiddenLookup = await postJson("/exec/mcp", {
       args: [
@@ -317,7 +340,7 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(health.status).toBe(200);
     expect(healthBody.mcp.configured).toBe(3);
-    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 4 });
+    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 5 });
   });
 
   it("warms every registered upstream", async () => {
@@ -545,6 +568,65 @@ describe("remote-cli MCP endpoints", () => {
         arguments: upstreamArgs,
       },
     ]);
+  });
+
+  it("creates and resolves Jira issue-link approvals without disclaimer injection", async () => {
+    appendActiveTrigger();
+    const cleanArgs = {
+      cloudId: "cloud-1",
+      outwardIssueIdOrKey: "THOR-1",
+      inwardIssueIdOrKey: "THOR-2",
+      linkType: "blocks",
+      comment: "Implementation ticket for the product work.",
+    };
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "createIssueLink", JSON.stringify(cleanArgs)],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string; exitCode: number };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody.exitCode).toBe(0);
+    const approvalOutput = JSON.parse(pendingBody.stdout) as {
+      actionId: string;
+      tool: string;
+      args: Record<string, unknown>;
+    };
+    expect(approvalOutput).toMatchObject({
+      type: "approval_required",
+      proxyName: "atlassian",
+      tool: "createIssueLink",
+      args: cleanArgs,
+    });
+    expect(toolCalls).toEqual([]);
+
+    const slackPayload = JSON.parse(String(slackFetch.mock.calls[0]?.[1]?.body)) as {
+      text: string;
+      blocks: Array<{ text?: { text: string } }>;
+    };
+    expect(slackPayload.text).toBe("Link Jira issues: THOR-1 ↔ THOR-2");
+    expect(slackPayload.blocks[1].text?.text).toContain("*Link type:* blocks");
+
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", approvalOutput.actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(resolved.status).toBe(200);
+    expect(resolvedBody).toEqual({ stdout: "linked", stderr: "", exitCode: 0 });
+    expect(toolCalls).toEqual([{ name: "createIssueLink", arguments: cleanArgs }]);
   });
 
   it("posts approval cards to the trigger Slack thread when the anchor has other Slack aliases", async () => {

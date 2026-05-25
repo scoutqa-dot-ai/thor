@@ -25,7 +25,7 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
       "search",
       "fetch",
     ],
-    approve: ["createJiraIssue", "addCommentToJiraIssue"],
+    approve: ["createJiraIssue", "addCommentToJiraIssue", "createIssueLink"],
   },
   grafana: {
     upstream: { url: "http://grafana-mcp:8000/mcp" },

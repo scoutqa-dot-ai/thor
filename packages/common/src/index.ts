@@ -24,6 +24,7 @@ export {
   ApprovalRequiredEventPayloadSchema,
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
+  CreateIssueLinkApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   approvalToolRequiresDisclaimer,
   injectApprovalDisclaimer,
