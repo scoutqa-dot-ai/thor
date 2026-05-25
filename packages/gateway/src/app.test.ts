@@ -2330,7 +2330,6 @@ describe("gateway", () => {
           text: "<@U999> investigate checkout errors",
           ts: "1710000000.001",
           channel: "C123",
-          channel_type: "channel",
         },
       });
       const timestamp = `${Math.floor(Date.now() / 1000)}`;
@@ -2347,9 +2346,9 @@ describe("gateway", () => {
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
-      expect(resolveAnchorForCorrelationKey("slack:thread:C123/1710000000.001")).toBeDefined();
 
       await queue.flush();
+      expect(resolveAnchorForCorrelationKey("slack:thread:C123/1710000000.001")).toBeDefined();
 
       // Reaction via Slack Web API
       expect(slack.reactionsAdd).toHaveBeenCalledWith({
@@ -2357,7 +2356,7 @@ describe("gateway", () => {
         timestamp: "1710000000.001",
         name: "eyes",
       });
-      expect(slack.conversationsInfo).not.toHaveBeenCalled();
+      expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
 
       // Runner trigger via fetchImpl
       const triggerCall = fetchImpl.mock.calls.find((c) => c[0] === "http://runner.test/trigger");
@@ -2374,24 +2373,35 @@ describe("gateway", () => {
     });
   });
 
-  it("ignores app mentions in non-allowlisted private channels before reacting", async () => {
+  it("marks app mentions in non-allowlisted private channels as policy-blocked", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
-    await withServer(fetchImpl, async (baseUrl, _queue, queueDir, slack) => {
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
+      slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: true } });
       const body = slackEventBody("EvPrivateBlocked", {
         type: "app_mention",
         user: "U123",
         text: "<@U999> secret task",
         ts: "1710000000.101",
         channel: "GPRIVATE",
-        channel_type: "group",
       });
 
       const response = await postSignedSlackEvent(baseUrl, body);
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true, ignored: true });
-      expect(slack.reactionsAdd).not.toHaveBeenCalled();
+      expect(await response.json()).toEqual({ ok: true });
+      expect(readQueuedEvents(queueDir)).toHaveLength(1);
+      await queue.flush();
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GPRIVATE",
+        timestamp: "1710000000.101",
+        name: "eyes",
+      });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GPRIVATE",
+        timestamp: "1710000000.101",
+        name: "lock",
+      });
       expect(fetchImpl).not.toHaveBeenCalled();
       expect(readQueuedEvents(queueDir)).toHaveLength(0);
     });
@@ -2405,13 +2415,13 @@ describe("gateway", () => {
     await withServer(
       fetchImpl,
       async (baseUrl, queue, _queueDir, slack) => {
+        slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: true } });
         const body = slackEventBody("EvPrivateAllowed", {
           type: "app_mention",
           user: "U123",
           text: "<@U999> secret task",
           ts: "1710000000.102",
           channel: "GPRIVATE",
-          channel_type: "group",
         });
 
         const response = await postSignedSlackEvent(baseUrl, body);
@@ -2440,26 +2450,37 @@ describe("gateway", () => {
     await withServer(
       fetchImpl,
       async (baseUrl, queue, queueDir, slack) => {
+        slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_im: true } });
         const blockedBody = slackEventBody("EvImBlocked", {
           type: "app_mention",
           user: "U123",
           text: "<@U999> dm task",
           ts: "1710000000.201",
           channel: "DBLOCKED",
-          channel_type: "im",
         });
         const blockedResponse = await postSignedSlackEvent(baseUrl, blockedBody);
         expect(blockedResponse.status).toBe(200);
-        expect(await blockedResponse.json()).toEqual({ ok: true, ignored: true });
+        expect(await blockedResponse.json()).toEqual({ ok: true });
+        await queue.flush();
+        expect(slack.reactionsAdd).toHaveBeenCalledWith({
+          channel: "DBLOCKED",
+          timestamp: "1710000000.201",
+          name: "eyes",
+        });
+        expect(slack.reactionsAdd).toHaveBeenCalledWith({
+          channel: "DBLOCKED",
+          timestamp: "1710000000.201",
+          name: "lock",
+        });
         expect(readQueuedEvents(queueDir)).toHaveLength(0);
 
+        slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_im: true } });
         const allowedBody = slackEventBody("EvImAllowed", {
           type: "app_mention",
           user: "U123",
           text: "<@U999> dm allowed",
           ts: "1710000000.202",
           channel: "DALLOWED",
-          channel_type: "im",
         });
         const allowedResponse = await postSignedSlackEvent(baseUrl, allowedBody);
         expect(allowedResponse.status).toBe(200);
@@ -2481,21 +2502,31 @@ describe("gateway", () => {
   it("gates group DMs (mpim) behind the allowlist", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
-    await withServer(fetchImpl, async (baseUrl, _queue, queueDir, slack) => {
+    await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
+      slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_mpim: true } });
       const body = slackEventBody("EvMpimBlocked", {
         type: "app_mention",
         user: "U123",
         text: "<@U999> group dm",
         ts: "1710000000.203",
         channel: "GMPIM",
-        channel_type: "mpim",
       });
 
       const response = await postSignedSlackEvent(baseUrl, body);
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true, ignored: true });
-      expect(slack.reactionsAdd).not.toHaveBeenCalled();
+      expect(await response.json()).toEqual({ ok: true });
+      await queue.flush();
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GMPIM",
+        timestamp: "1710000000.203",
+        name: "eyes",
+      });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GMPIM",
+        timestamp: "1710000000.203",
+        name: "lock",
+      });
       expect(readQueuedEvents(queueDir)).toHaveLength(0);
     });
   });
@@ -2506,20 +2537,30 @@ describe("gateway", () => {
     await withServer(
       fetchImpl,
       async (baseUrl, _queue, queueDir, slack) => {
+        slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: true } });
         const body = slackEventBody("EvPrivateConfigError", {
           type: "app_mention",
           user: "U123",
           text: "<@U999> secret task",
           ts: "1710000000.1025",
           channel: "GPRIVATE",
-          channel_type: "group",
         });
 
         const response = await postSignedSlackEvent(baseUrl, body);
 
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ ok: true, ignored: true });
-        expect(slack.reactionsAdd).not.toHaveBeenCalled();
+        expect(await response.json()).toEqual({ ok: true });
+        await _queue.flush();
+        expect(slack.reactionsAdd).toHaveBeenCalledWith({
+          channel: "GPRIVATE",
+          timestamp: "1710000000.1025",
+          name: "eyes",
+        });
+        expect(slack.reactionsAdd).toHaveBeenCalledWith({
+          channel: "GPRIVATE",
+          timestamp: "1710000000.1025",
+          name: "lock",
+        });
         expect(fetchImpl).not.toHaveBeenCalled();
         expect(readQueuedEvents(queueDir)).toHaveLength(0);
       },
@@ -2531,7 +2572,7 @@ describe("gateway", () => {
     );
   });
 
-  it("defers privacy resolution for missing channel_type without calling Slack from the webhook", async () => {
+  it("defers privacy resolution for missing channel_type without calling conversations.info from the webhook", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
@@ -2557,7 +2598,11 @@ describe("gateway", () => {
         correlationKey: "pending:slack-privacy:CLOOKUP:EvDeferredPublic",
       });
       expect(slack.conversationsInfo).not.toHaveBeenCalled();
-      expect(slack.reactionsAdd).not.toHaveBeenCalled();
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "CLOOKUP",
+        timestamp: "1710000000.104",
+        name: "eyes",
+      });
 
       await queue.flush();
       expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
@@ -2591,7 +2636,16 @@ describe("gateway", () => {
 
       await queue.flush();
       expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
-      expect(slack.reactionsAdd).not.toHaveBeenCalled();
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GLOOKUP",
+        timestamp: "1710000000.103",
+        name: "eyes",
+      });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GLOOKUP",
+        timestamp: "1710000000.103",
+        name: "lock",
+      });
       expect(fetchImpl).not.toHaveBeenCalled();
     });
   });
@@ -2615,7 +2669,16 @@ describe("gateway", () => {
       expect(await response.json()).toEqual({ ok: true });
 
       await queue.flush();
-      expect(slack.reactionsAdd).not.toHaveBeenCalled();
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GUNKNOWN",
+        timestamp: "1710000000.105",
+        name: "eyes",
+      });
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GUNKNOWN",
+        timestamp: "1710000000.105",
+        name: "lock",
+      });
       expect(fetchImpl).not.toHaveBeenCalled();
     });
   });
@@ -2639,7 +2702,11 @@ describe("gateway", () => {
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true, ignored: true });
-      expect(slack.reactionsAdd).not.toHaveBeenCalled();
+      expect(slack.reactionsAdd).toHaveBeenCalledWith({
+        channel: "GPRIVATE",
+        timestamp: "1710000000.106",
+        name: "lock",
+      });
       expect(fetchImpl).not.toHaveBeenCalled();
       expect(readQueuedEvents(queueDir)).toHaveLength(0);
     });

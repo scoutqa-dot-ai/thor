@@ -2,7 +2,6 @@ import {
   createLogger,
   ExecResultSchema,
   extractApprovalFailureCategory,
-  getSlackPrivateChannelAllowlist,
   hasSessionForCorrelationKey,
   logInfo,
   logWarn,
@@ -30,13 +29,12 @@ import {
   type IssueCommentEvent,
 } from "./github.js";
 import type { WebClient } from "@slack/web-api";
+import { addReaction, updateMessage, type SlackDeps } from "./slack-api.js";
 import {
-  addReaction,
-  isSlackEventGated,
+  addSlackGateRejectedReaction,
+  evaluateSlackChannelGate,
   SLACK_GATE_DROP_REASON,
-  updateMessage,
-  type SlackDeps,
-} from "./slack-api.js";
+} from "./slack-channel-gate.js";
 import { handleProgressEvent } from "./progress-manager.js";
 
 /** SlackDeps stub for triggers that never post to Slack (cron, github). */
@@ -668,36 +666,20 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     if (!event) {
       return { kind: "drop", logPrefix, reason: SLACK_GATE_DROP_REASON };
     }
-    const gated = await isSlackEventGated(
-      { channel: event.channel, channel_type: event.channel_type },
-      input.slackDeps,
-    );
-    if (gated) {
-      let allowlist: string[] = [];
-      try {
-        const workspaceConfig = input.workspaceConfigLoader?.();
-        allowlist = workspaceConfig ? getSlackPrivateChannelAllowlist(workspaceConfig) : [];
-      } catch (error) {
-        logError(log, "private_channel_allowlist_config_load_failed", error, {
-          channel: event.channel,
-          correlationKey: input.correlationKey,
-        });
-        return { kind: "drop", logPrefix: "slack", reason: SLACK_GATE_DROP_REASON };
-      }
-      if (!allowlist.includes(event.channel)) {
-        return { kind: "drop", logPrefix: "slack", reason: SLACK_GATE_DROP_REASON };
-      }
+    const channelType = event.type === "message" ? event.channel_type : undefined;
+    const decision = await evaluateSlackChannelGate({
+      event: { channel: event.channel, channel_type: channelType },
+      slackDeps: input.slackDeps,
+      workspaceConfigLoader: input.workspaceConfigLoader,
+      logContext: { correlationKey: input.correlationKey },
+    });
+    if (!decision.allowed) {
+      addSlackGateRejectedReaction(event, input.slackDeps, {
+        correlationKey: input.correlationKey,
+      });
+      return { kind: "drop", logPrefix: "slack", reason: decision.reason };
     }
     const resolvedKey = resolveCorrelationKeys(getSlackCorrelationKeys(event));
-    if (event.type === "app_mention") {
-      void addReaction(event.channel, event.ts, "eyes", input.slackDeps).catch((err) =>
-        logWarn(log, "slack_pending_privacy_reaction_failed", {
-          channel: event.channel,
-          ts: event.ts,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      );
-    }
     return {
       kind: "reroute",
       logPrefix: "slack",

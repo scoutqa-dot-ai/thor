@@ -706,7 +706,7 @@ describe("planBatchDispatch", () => {
       });
     }
 
-    it("reroutes to the resolved key and posts :eyes: when the channel is public", async () => {
+    it("reroutes to the resolved key when the channel is public", async () => {
       const client: SlackClientLike = {
         conversations: {
           info: vi.fn().mockResolvedValue({ ok: true, channel: { is_private: false } }),
@@ -722,12 +722,7 @@ describe("planBatchDispatch", () => {
       expect(plan.fromCorrelationKey).toBe("pending:slack-privacy:C_DEFER:Ev1");
       expect(plan.toCorrelationKey).toBe("slack:thread:C_DEFER/1710000000.500");
       expect(plan.slackEvents).toEqual([pendingEvent]);
-      await new Promise((r) => setImmediate(r));
-      expect(client.reactions.add).toHaveBeenCalledWith({
-        channel: "C_DEFER",
-        timestamp: "1710000000.500",
-        name: "eyes",
-      });
+      expect(client.reactions.add).not.toHaveBeenCalled();
     });
 
     it("reroutes when the resolved private channel is allowlisted", async () => {
@@ -764,7 +759,11 @@ describe("planBatchDispatch", () => {
         logPrefix: "slack",
         reason: "private_channel_not_allowlisted",
       });
-      expect(client.reactions.add).not.toHaveBeenCalled();
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
+      });
     });
 
     it("fails closed when conversations.info errors", async () => {
@@ -785,7 +784,11 @@ describe("planBatchDispatch", () => {
         logPrefix: "slack",
         reason: "private_channel_not_allowlisted",
       });
-      expect(client.reactions.add).not.toHaveBeenCalled();
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
+      });
     });
 
     it("fails closed when the workspace config loader throws", async () => {
@@ -807,6 +810,11 @@ describe("planBatchDispatch", () => {
         kind: "drop",
         logPrefix: "slack",
         reason: "private_channel_not_allowlisted",
+      });
+      expect(client.reactions.add).toHaveBeenCalledWith({
+        channel: "C_DEFER",
+        timestamp: "1710000000.500",
+        name: "lock",
       });
     });
   });
