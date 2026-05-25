@@ -1,0 +1,3 @@
+# Google Workspace CLI uses remote-cli with read-only service identity
+
+Thor integrates the `gws` Google Workspace CLI through the existing `remote-cli` boundary rather than exposing Google credentials or unrestricted CLI execution inside OpenCode. The v1 integration uses a dedicated service identity mounted only into `remote-cli`, ignores repo cwd, permits only an exact allowlist of read-only Drive, Docs, Sheets, Calendar, and Gmail commands, and denies auth, dry-run, sanitize, file-output, download, and mutating commands. This keeps Google Workspace access auditable and server-policy controlled while avoiding per-user OAuth, broad discovery-driven write surfaces, and credential exposure to the agent sandbox.

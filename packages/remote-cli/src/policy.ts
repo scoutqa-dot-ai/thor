@@ -1,5 +1,5 @@
 /**
- * Server-side command policy for git, gh, scoutqa, langfuse, ldcli, metabase.
+ * Server-side command policy for git, gh, scoutqa, langfuse, ldcli, gws, metabase.
  *
  * All validation happens here — the OpenCode wrapper scripts are untrusted.
  *
@@ -233,6 +233,213 @@ function hasOptionValue(args: string[], option: string): boolean {
   }
 
   return false;
+}
+
+// ── Google Workspace policy ───────────────────────────────────────────────
+
+const ALLOWED_GWS_SERVICES: ReadonlySet<string> = new Set([
+  "drive",
+  "docs",
+  "sheets",
+  "calendar",
+  "gmail",
+]);
+
+const ALLOWED_GWS_COMMANDS: ReadonlySet<string> = new Set([
+  "drive about get",
+  "drive files get",
+  "drive files list",
+  "drive files export",
+  "drive drives get",
+  "drive drives list",
+  "drive permissions get",
+  "drive permissions list",
+  "drive comments get",
+  "drive comments list",
+  "drive replies get",
+  "drive replies list",
+  "drive revisions get",
+  "drive revisions list",
+  "docs documents get",
+  "sheets spreadsheets get",
+  "sheets spreadsheets getByDataFilter",
+  "sheets spreadsheets values get",
+  "sheets spreadsheets values batchGet",
+]);
+
+const ALLOWED_GWS_HELPERS: ReadonlySet<string> = new Set(["sheets +read"]);
+
+const DENIED_GWS_FLAGS: ReadonlySet<string> = new Set([
+  "--dry-run",
+  "--output",
+  "-o",
+  "--sanitize",
+  "--upload",
+  "--upload-content-type",
+]);
+
+const GWS_MAX_PAGE_LIMIT = 10;
+
+export function validateGwsArgs(args: string[]): string | null {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "args must be a non-empty array";
+  }
+
+  if (!args.every((arg) => typeof arg === "string")) {
+    return "args must be a string array";
+  }
+
+  const flagError = validateGwsFlags(args);
+  if (flagError) return flagError;
+
+  if (isGwsRootHelp(args) || isGwsServiceHelp(args)) return null;
+
+  const commandTokens = getGwsCommandTokens(args);
+  if (commandTokens.length === 0) {
+    return "gws command is required";
+  }
+
+  if (commandTokens[0] === "schema") {
+    return validateGwsSchemaArgs(args, commandTokens);
+  }
+
+  const service = commandTokens[0];
+  if (!ALLOWED_GWS_SERVICES.has(service)) {
+    return `"gws ${service}" is not allowed`;
+  }
+
+  const command = commandTokens.join(" ");
+  if (ALLOWED_GWS_COMMANDS.has(command) || ALLOWED_GWS_HELPERS.has(command)) {
+    return null;
+  }
+
+  return `"gws ${command}" is not allowed`;
+}
+
+function validateGwsFlags(args: string[]): string | null {
+  for (const arg of args) {
+    const flag = arg.split("=")[0];
+    if (DENIED_GWS_FLAGS.has(flag)) {
+      return `flag "${flag}" is not allowed`;
+    }
+  }
+
+  const format = optionValues(args, "--format");
+  if (format.missing) return '"--format" requires a value';
+  for (const value of format.values) {
+    if (value !== "json") {
+      return 'gws API calls must use "--format json"';
+    }
+  }
+
+  const pageLimit = optionValues(args, "--page-limit");
+  if (pageLimit.missing) return '"--page-limit" requires a value';
+  for (const rawValue of pageLimit.values) {
+    const value = Number.parseInt(rawValue, 10);
+    if (!Number.isFinite(value) || String(value) !== rawValue || value < 1) {
+      return '"--page-limit" must be a positive integer';
+    }
+    if (value > GWS_MAX_PAGE_LIMIT) {
+      return `"--page-limit" must be <= ${GWS_MAX_PAGE_LIMIT}`;
+    }
+  }
+
+  const params = optionValues(args, "--params");
+  if (params.missing) return '"--params" requires a value';
+  for (const value of params.values) {
+    const paramsError = validateGwsParams(value);
+    if (paramsError) return paramsError;
+  }
+
+  return null;
+}
+
+function optionValues(args: string[], option: string): { values: string[]; missing: boolean } {
+  const values: string[] = [];
+  let missing = false;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === option) {
+      const value = args[i + 1];
+      if (!value || value.startsWith("-")) {
+        missing = true;
+      } else {
+        values.push(value);
+        i += 1;
+      }
+      continue;
+    }
+
+    if (arg.startsWith(`${option}=`)) {
+      const value = arg.slice(option.length + 1);
+      if (!value) missing = true;
+      else values.push(value);
+    }
+  }
+
+  return { values, missing };
+}
+
+function validateGwsParams(raw: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    !Array.isArray(parsed) &&
+    String((parsed as Record<string, unknown>).alt ?? "").toLowerCase() === "media"
+  ) {
+    return "binary Drive media downloads are not allowed";
+  }
+
+  return null;
+}
+
+function isGwsRootHelp(args: string[]): boolean {
+  return args.length === 1 && (args[0] === "--help" || args[0] === "-h");
+}
+
+function isGwsServiceHelp(args: string[]): boolean {
+  return (
+    args.length === 2 &&
+    ALLOWED_GWS_SERVICES.has(args[0]) &&
+    (args[1] === "--help" || args[1] === "-h")
+  );
+}
+
+function getGwsCommandTokens(args: string[]): string[] {
+  const tokens: string[] = [];
+  for (const arg of args) {
+    if (arg.startsWith("-")) break;
+    tokens.push(arg);
+  }
+  return tokens;
+}
+
+function validateGwsSchemaArgs(args: string[], commandTokens: string[]): string | null {
+  if (commandTokens.length !== 2) {
+    return '"gws schema" requires exactly 1 argument: <service.resource.method>';
+  }
+
+  const schemaRef = commandTokens[1];
+  if (!ALLOWED_GWS_COMMANDS.has(schemaRef.split(".").join(" "))) {
+    return `"gws schema ${schemaRef}" is not allowed`;
+  }
+
+  const flagTokens = args.slice(commandTokens.length);
+  for (const arg of flagTokens) {
+    if (arg !== "--resolve-refs") {
+      return `flag "${arg.split("=")[0]}" is not allowed for gws schema`;
+    }
+  }
+
+  return null;
 }
 
 // ── metabase policy ────────────────────────────────────────────────────────

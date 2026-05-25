@@ -50,6 +50,7 @@ import {
   resolveGitArgs,
   validateCwd,
   validateGhArgs,
+  validateGwsArgs,
   validateLdcliArgs,
   validateLangfuseArgs,
   validateMetabaseArgs,
@@ -1056,6 +1057,38 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     }
   });
 
+  app.post("/exec/gws", async (req, res) => {
+    try {
+      const { args } = req.body ?? {};
+
+      const argsError = validateGwsArgs(args);
+      if (argsError) {
+        res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
+        return;
+      }
+
+      const finalArgs = withGwsJsonFormat(args);
+
+      logInfo(log, "exec_gws", { args: finalArgs, ...thorIds(req) });
+      const result = await execCommand("gws", finalArgs, "/workspace", {
+        env: {
+          GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: process.env.GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE,
+          GOOGLE_WORKSPACE_CLI_CONFIG_DIR: process.env.GOOGLE_WORKSPACE_CLI_CONFIG_DIR,
+          GOOGLE_WORKSPACE_PROJECT_ID: process.env.GOOGLE_WORKSPACE_PROJECT_ID,
+        },
+      });
+      res.json(result);
+    } catch (err) {
+      logError(
+        log,
+        "exec_gws_error",
+        err instanceof Error ? err.message : String(err),
+        thorIds(req),
+      );
+      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+    }
+  });
+
   app.post("/exec/metabase", async (req, res) => {
     try {
       const { args } = req.body ?? {};
@@ -1216,6 +1249,22 @@ function hasLdcliOutputOverride(args: string[]): boolean {
     }
 
     return arg === "--output" && Boolean(args[index + 1]);
+  });
+}
+
+function withGwsJsonFormat(args: string[]): string[] {
+  if (isGwsHelpOrSchema(args) || hasGwsFormat(args)) return args;
+  return [...args, "--format", "json"];
+}
+
+function isGwsHelpOrSchema(args: string[]): boolean {
+  return args.includes("--help") || args.includes("-h") || args[0] === "schema";
+}
+
+function hasGwsFormat(args: string[]): boolean {
+  return args.some((arg, index) => {
+    if (arg.startsWith("--format=")) return true;
+    return arg === "--format" && Boolean(args[index + 1]);
   });
 }
 

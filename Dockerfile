@@ -98,6 +98,7 @@ COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
 COPY docker/opencode/bin/langfuse /usr/local/bin/langfuse
 COPY docker/opencode/bin/metabase /usr/local/bin/metabase
 COPY docker/opencode/bin/ldcli /usr/local/bin/ldcli
+COPY docker/opencode/bin/gws /usr/local/bin/gws
 COPY docker/opencode/bin/sandbox /usr/local/bin/sandbox
 COPY docker/opencode/bin/rg /usr/local/bin/rg
 # npm/npx/pnpm wrappers — redirect to sandbox so code runs in the cloud
@@ -126,7 +127,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
-RUN npm i -g @scoutqa/cli@latest langfuse-cli@0.0.8 @launchdarkly/ldcli@2.2.0
+RUN npm i -g @scoutqa/cli@latest langfuse-cli@0.0.8 @launchdarkly/ldcli@2.2.0 @googleworkspace/cli@0.22.5
 
 FROM remote-cli-tools AS remote-cli
 COPY --from=remote-cli-build /app /app
@@ -136,12 +137,13 @@ COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git
 COPY packages/remote-cli/bin/gh /usr/local/lib/thor/bin/gh
 COPY packages/remote-cli/bin/git-askpass /usr/local/lib/thor/bin/git-askpass
 RUN chmod +x /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh /usr/local/lib/thor/bin/git-askpass
-RUN mkdir -p /var/lib/remote-cli/github-app/cache && chown -R thor:thor /var/lib/remote-cli
+RUN mkdir -p /var/lib/remote-cli/github-app/cache /var/lib/remote-cli/google-workspace/config && chown -R thor:thor /var/lib/remote-cli
 USER thor
 RUN mkdir -p /workspace/repos
 WORKDIR /workspace/repos
 # Prepend Thor wrappers to PATH so they shadow /usr/bin/git and /usr/bin/gh
 ENV PATH="/usr/local/lib/thor/bin:$PATH"
+ENV GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/var/lib/remote-cli/google-workspace/config
 ENV PORT=3004
 EXPOSE 3004
 ENTRYPOINT ["/entrypoint.sh"]

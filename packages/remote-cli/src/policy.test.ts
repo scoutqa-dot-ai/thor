@@ -9,6 +9,7 @@ import {
   validateCwd,
   validateGitArgs,
   validateGhArgs,
+  validateGwsArgs,
   validateLdcliArgs,
   validateLangfuseArgs,
   validateMetabaseArgs,
@@ -1915,6 +1916,112 @@ describe("validateLdcliArgs", () => {
 
     it("rejects missing action", () => {
       expect(validateLdcliArgs(["flags"])).not.toBeNull();
+    });
+  });
+});
+
+// ── Google Workspace policy ───────────────────────────────────────────────
+
+describe("validateGwsArgs", () => {
+  describe("allowed commands", () => {
+    it("allows root help, allowed service help, and schema for allowed methods", () => {
+      expect(validateGwsArgs(["--help"])).toBeNull();
+      expect(validateGwsArgs(["drive", "--help"])).toBeNull();
+      expect(validateGwsArgs(["gmail", "-h"])).toBeNull();
+      expect(validateGwsArgs(["schema", "drive.files.list"])).toBeNull();
+      expect(validateGwsArgs(["schema", "calendar.events.list", "--resolve-refs"])).toBeNull();
+    });
+
+    it("allows selected read-only API methods", () => {
+      expect(validateGwsArgs(["drive", "files", "list", "--params", '{"pageSize":10}'])).toBeNull();
+      expect(
+        validateGwsArgs(["docs", "documents", "get", "--params", '{"documentId":"doc"}']),
+      ).toBeNull();
+      expect(
+        validateGwsArgs([
+          "sheets",
+          "spreadsheets",
+          "values",
+          "batchGet",
+          "--params",
+          '{"spreadsheetId":"sheet","ranges":["A1:B2"]}',
+        ]),
+      ).toBeNull();
+      expect(validateGwsArgs(["calendar", "freebusy", "query", "--json", "{}"])).toBeNull();
+      expect(validateGwsArgs(["gmail", "users", "messages", "get", "--params", "{}"])).toBeNull();
+    });
+
+    it("allows selected read-only helpers", () => {
+      expect(validateGwsArgs(["sheets", "+read", "--help"])).toBeNull();
+      expect(validateGwsArgs(["calendar", "+agenda", "--help"])).toBeNull();
+      expect(validateGwsArgs(["gmail", "+read", "--help"])).toBeNull();
+      expect(validateGwsArgs(["gmail", "+triage", "--help"])).toBeNull();
+    });
+
+    it("allows json format and bounded pagination", () => {
+      expect(validateGwsArgs(["drive", "files", "list", "--format", "json"])).toBeNull();
+      expect(validateGwsArgs(["drive", "files", "list", "--format=json"])).toBeNull();
+      expect(validateGwsArgs(["drive", "files", "list", "--page-all"])).toBeNull();
+      expect(
+        validateGwsArgs(["drive", "files", "list", "--page-all", "--page-limit", "10"]),
+      ).toBeNull();
+    });
+  });
+
+  describe("blocked commands", () => {
+    it("blocks unlisted services and auth", () => {
+      expect(validateGwsArgs(["admin-reports", "activities", "list"])).not.toBeNull();
+      expect(validateGwsArgs(["chat", "spaces", "list"])).not.toBeNull();
+      expect(validateGwsArgs(["auth", "login"])).not.toBeNull();
+    });
+
+    it("blocks mutating methods and helpers", () => {
+      expect(validateGwsArgs(["drive", "files", "create", "--json", "{}"])).not.toBeNull();
+      expect(validateGwsArgs(["drive", "files", "delete", "--params", "{}"])).not.toBeNull();
+      expect(validateGwsArgs(["docs", "documents", "batchUpdate", "--json", "{}"])).not.toBeNull();
+      expect(validateGwsArgs(["gmail", "+send", "--to", "a@example.com"])).not.toBeNull();
+      expect(validateGwsArgs(["calendar", "+insert", "--json", "{}"])).not.toBeNull();
+    });
+
+    it("blocks schema for denied methods", () => {
+      expect(validateGwsArgs(["schema", "drive.files.create"])).not.toBeNull();
+      expect(validateGwsArgs(["schema", "chat.spaces.list"])).not.toBeNull();
+    });
+  });
+
+  describe("dangerous flags", () => {
+    it("blocks writes, uploads, dry-runs, and sanitization flags", () => {
+      expect(validateGwsArgs(["drive", "files", "get", "--output", "/tmp/file"])).not.toBeNull();
+      expect(validateGwsArgs(["drive", "files", "get", "--output=/tmp/file"])).not.toBeNull();
+      expect(validateGwsArgs(["drive", "files", "get", "-o", "/tmp/file"])).not.toBeNull();
+      expect(validateGwsArgs(["drive", "files", "get", "--upload", "/tmp/file"])).not.toBeNull();
+      expect(validateGwsArgs(["drive", "files", "get", "--dry-run"])).not.toBeNull();
+      expect(validateGwsArgs(["drive", "files", "get", "--sanitize", "template"])).not.toBeNull();
+    });
+
+    it("blocks non-json output formats", () => {
+      expect(validateGwsArgs(["drive", "files", "list", "--format", "table"])).not.toBeNull();
+      expect(validateGwsArgs(["drive", "files", "list", "--format=yaml"])).not.toBeNull();
+      expect(validateGwsArgs(["drive", "files", "list", "--format"])).not.toBeNull();
+    });
+
+    it("blocks unbounded pagination", () => {
+      expect(validateGwsArgs(["drive", "files", "list", "--page-limit", "11"])).not.toBeNull();
+      expect(validateGwsArgs(["drive", "files", "list", "--page-limit", "0"])).not.toBeNull();
+      expect(validateGwsArgs(["drive", "files", "list", "--page-limit", "abc"])).not.toBeNull();
+    });
+
+    it("blocks direct binary media downloads", () => {
+      expect(
+        validateGwsArgs(["drive", "files", "get", "--params", '{"fileId":"file","alt":"media"}']),
+      ).not.toBeNull();
+    });
+  });
+
+  describe("edge cases", () => {
+    it("rejects empty and non-array args", () => {
+      expect(validateGwsArgs([])).not.toBeNull();
+      expect(validateGwsArgs("drive" as unknown as string[])).not.toBeNull();
     });
   });
 });
