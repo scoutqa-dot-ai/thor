@@ -20,7 +20,6 @@ import {
   type GitHubWebhookEvent,
   type IssueCommentEvent,
 } from "./github.js";
-import type { WebClient } from "@slack/web-api";
 import { addReaction, updateMessage, type SlackDeps } from "./slack-api.js";
 import {
   resolvePrChecksTerminalState,
@@ -28,9 +27,6 @@ import {
   type PrCheckSummary,
   type PrChecksAggregateOutput,
 } from "./github-gate.js";
-
-/** SlackDeps stub for triggers that never post to Slack (cron, github). */
-const NOOP_SLACK_DEPS: SlackDeps = { client: {} as WebClient };
 
 const log = createLogger("gateway-service");
 const INTERNAL_EXEC_TIMEOUT_MS = 5000;
