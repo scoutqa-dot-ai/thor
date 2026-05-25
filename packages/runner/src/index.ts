@@ -535,6 +535,13 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     interrupt: z.boolean().optional(),
     /** Working directory for the OpenCode session. */
     directory: z.string(),
+    /** If true, hold the HTTP response open and stream progress events as
+     *  NDJSON lines until the agent settles, ending with a `done` line.
+     *  Default false: fire-and-forget — return {accepted,sessionId,resumed}
+     *  immediately and run the agent in a background task. Used by the
+     *  OpenCode smoke test, which needs to read the agent's final response
+     *  text and status from the trigger call. */
+    stream: z.boolean().optional(),
   });
 
   type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
@@ -950,6 +957,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       const progressTarget = resolveSlackProgressTarget(correlationKey);
       let progressChain = Promise.resolve();
 
+      const stream = parsed.data.stream === true;
+      if (stream) {
+        res.setHeader("Content-Type", "application/x-ndjson");
+        res.flushHeaders?.();
+      }
+
       function emit(event: ProgressEvent): void {
         logInfo(log, "progress_emit", {
           sessionId,
@@ -965,14 +978,19 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           ts: Date.now(),
         });
         options.progressEventSink?.(event);
+        if (stream && !res.writableEnded) {
+          res.write(JSON.stringify(event) + "\n");
+        }
         if (!progressTarget || !progressTransport) return;
-        progressChain = progressChain.catch(() => undefined).then(() =>
-          handleProgressEvent(
-            progressTarget as ProgressTarget<SlackProgressTransportTarget>,
-            event,
-            progressTransport,
-          ),
-        );
+        progressChain = progressChain
+          .catch(() => undefined)
+          .then(() =>
+            handleProgressEvent(
+              progressTarget as ProgressTarget<SlackProgressTransportTarget>,
+              event,
+              progressTransport,
+            ),
+          );
       }
 
       emit({
@@ -988,257 +1006,256 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       const backgroundTask = (async () => {
         try {
+          // --- Stream processing ---
 
-      // --- Stream processing ---
+          let seq = 0;
+          const collectedTextParts: string[] = [];
+          const collectedToolCalls: Array<{ tool: string; state: string }> = [];
+          let lastMessageId: string | undefined;
+          let totalCost = 0;
+          const totalTokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+          let terminalError: string | undefined;
+          let latestSessionError: string | undefined;
+          let latestSessionErrorSeq: number | undefined;
+          let latestSessionErrorAt: number | undefined;
+          let finished = false;
+          let sawParentMessagePart = false;
 
-      let seq = 0;
-      const collectedTextParts: string[] = [];
-      const collectedToolCalls: Array<{ tool: string; state: string }> = [];
-      let lastMessageId: string | undefined;
-      let totalCost = 0;
-      const totalTokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
-      let terminalError: string | undefined;
-      let latestSessionError: string | undefined;
-      let latestSessionErrorSeq: number | undefined;
-      let latestSessionErrorAt: number | undefined;
-      let finished = false;
-      let sawParentMessagePart = false;
+          // Track child session IDs for progress forwarding.
+          const childSessionIds = new Set<string>();
+          // Dedupe task delegate emissions across repeated part updates.
+          const emittedTaskDelegates = new Set<string>();
+          // Dedupe tool progress emissions — emit once per call when it starts running.
+          const emittedToolStarts = new Set<string>();
 
-      // Track child session IDs for progress forwarding.
-      const childSessionIds = new Set<string>();
-      // Dedupe task delegate emissions across repeated part updates.
-      const emittedTaskDelegates = new Set<string>();
-      // Dedupe tool progress emissions — emit once per call when it starts running.
-      const emittedToolStarts = new Set<string>();
+          function emitToolProgress(
+            toolPart: ToolPart,
+            status: "running" | "completed" | "error",
+          ): void {
+            const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
+            if (emittedToolStarts.has(key)) return;
+            emittedToolStarts.add(key);
+            const displayName = toolDisplayName(toolPart);
+            emit({ type: "tool", tool: displayName, status });
+          }
 
-      function emitToolProgress(
-        toolPart: ToolPart,
-        status: "running" | "completed" | "error",
-      ): void {
-        const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
-        if (emittedToolStarts.has(key)) return;
-        emittedToolStarts.add(key);
-        const displayName = toolDisplayName(toolPart);
-        emit({ type: "tool", tool: displayName, status });
-      }
+          function emitTaskDelegateProgress(toolPart: ToolPart): void {
+            if (toolPart.tool !== "task") return;
 
-      function emitTaskDelegateProgress(toolPart: ToolPart): void {
-        if (toolPart.tool !== "task") return;
+            const input = (toolPart.state as { input?: unknown }).input;
+            if (!isRecord(input)) return;
+            const raw = input.subagent_type;
+            if (typeof raw !== "string") return;
+            const agent = raw.trim();
+            if (!agent) return;
 
-        const input = (toolPart.state as { input?: unknown }).input;
-        if (!isRecord(input)) return;
-        const raw = input.subagent_type;
-        if (typeof raw !== "string") return;
-        const agent = raw.trim();
-        if (!agent) return;
+            const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
+            if (emittedTaskDelegates.has(key)) return;
+            emittedTaskDelegates.add(key);
 
-        const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
-        if (emittedTaskDelegates.has(key)) return;
-        emittedTaskDelegates.add(key);
+            emit({ type: "delegate", agent });
+          }
 
-        emit({ type: "delegate", agent });
-      }
+          {
+            const iterator = subscription[Symbol.asyncIterator]();
+            try {
+              while (!finished) {
+                const remainingSessionErrorGraceMs = latestSessionErrorAt
+                  ? SESSION_ERROR_GRACE_MS - (Date.now() - latestSessionErrorAt)
+                  : undefined;
+                const next = latestSessionError
+                  ? await nextWithTimeout(
+                      iterator,
+                      remainingSessionErrorGraceMs ?? SESSION_ERROR_GRACE_MS,
+                    )
+                  : await iterator.next();
 
-      {
-        const iterator = subscription[Symbol.asyncIterator]();
-        try {
-          while (!finished) {
-            const remainingSessionErrorGraceMs = latestSessionErrorAt
-              ? SESSION_ERROR_GRACE_MS - (Date.now() - latestSessionErrorAt)
-              : undefined;
-            const next = latestSessionError
-              ? await nextWithTimeout(
-                  iterator,
-                  remainingSessionErrorGraceMs ?? SESSION_ERROR_GRACE_MS,
-                )
-              : await iterator.next();
-
-            if (next === "timeout") {
-              terminalError = latestSessionError;
-              finished = true;
-              break;
-            }
-            if (next.done) {
-              terminalError = latestSessionError;
-              break;
-            }
-
-            const event = next.value;
-            if (finished) break;
-
-            // Child sub-session events land in the child's own log so the
-            // viewer's owner-only slice never surfaces them.
-            const originSessionId = eventSessionId(event) ?? sessionId;
-            appendSessionEvent(originSessionId, { type: "opencode_event", event });
-
-            const isParent = isSessionEvent(event, sessionId);
-
-            // Forward tool progress from child sessions so
-            // Slack progress isn't silent while a task runs.
-            if (!isParent) {
-              if (
-                event.type === "message.part.updated" &&
-                childSessionIds.has(event.properties.part.sessionID)
-              ) {
-                const part = event.properties.part;
-                if (part.type === "tool") {
-                  const toolPart = part as ToolPart;
-                  emitTaskDelegateProgress(toolPart);
-                  const status = toolPart.state.status;
-                  if (status === "running") {
-                    emitToolProgress(toolPart, "running");
-                  } else if (status === "completed" || status === "error") {
-                    emitToolProgress(toolPart, status);
-                    emitMemoryEventsFromToolPart(toolPart, emit);
-                  }
+                if (next === "timeout") {
+                  terminalError = latestSessionError;
+                  finished = true;
+                  break;
                 }
-              }
-              continue;
-            }
+                if (next.done) {
+                  terminalError = latestSessionError;
+                  break;
+                }
 
-            if (event.type === "message.part.updated") {
-              sawParentMessagePart = true;
-              const part = event.properties.part;
-              seq++;
+                const event = next.value;
+                if (finished) break;
 
-              if (latestSessionErrorSeq !== undefined && seq > latestSessionErrorSeq) {
-                latestSessionError = undefined;
-                latestSessionErrorSeq = undefined;
-                latestSessionErrorAt = undefined;
-              }
+                // Child sub-session events land in the child's own log so the
+                // viewer's owner-only slice never surfaces them.
+                const originSessionId = eventSessionId(event) ?? sessionId;
+                appendSessionEvent(originSessionId, { type: "opencode_event", event });
 
-              // Stdout logging (selective)
-              logPartToStdout(sessionId, part);
+                const isParent = isSessionEvent(event, sessionId);
 
-              // Accumulate data for response regardless of filtering
-              if (part.type === "text") {
-                const textPart = part as TextPart;
-                collectedTextParts.push(textPart.text);
-                lastMessageId = textPart.messageID;
-              } else if (part.type === "tool") {
-                const toolPart = part as ToolPart;
-                emitTaskDelegateProgress(toolPart);
-                const status = toolPart.state.status;
+                // Forward tool progress from child sessions so
+                // Slack progress isn't silent while a task runs.
+                if (!isParent) {
+                  if (
+                    event.type === "message.part.updated" &&
+                    childSessionIds.has(event.properties.part.sessionID)
+                  ) {
+                    const part = event.properties.part;
+                    if (part.type === "tool") {
+                      const toolPart = part as ToolPart;
+                      emitTaskDelegateProgress(toolPart);
+                      const status = toolPart.state.status;
+                      if (status === "running") {
+                        emitToolProgress(toolPart, "running");
+                      } else if (status === "completed" || status === "error") {
+                        emitToolProgress(toolPart, status);
+                        emitMemoryEventsFromToolPart(toolPart, emit);
+                      }
+                    }
+                  }
+                  continue;
+                }
 
-                // Discover child sessions when a task tool starts running.
-                if (toolPart.tool === "task" && status === "running") {
-                  client.session
-                    .children({ path: { id: sessionId } })
-                    .then((resp) => {
-                      if (!resp.data) return;
-                      for (const child of resp.data) {
-                        if (childSessionIds.has(child.id)) continue;
-                        childSessionIds.add(child.id);
-                        subscription.addSessionId(child.id);
-                        try {
-                          appendAlias({
-                            aliasType: "opencode.subsession",
-                            aliasValue: child.id,
-                            anchorId,
-                          });
-                        } catch (err) {
+                if (event.type === "message.part.updated") {
+                  sawParentMessagePart = true;
+                  const part = event.properties.part;
+                  seq++;
+
+                  if (latestSessionErrorSeq !== undefined && seq > latestSessionErrorSeq) {
+                    latestSessionError = undefined;
+                    latestSessionErrorSeq = undefined;
+                    latestSessionErrorAt = undefined;
+                  }
+
+                  // Stdout logging (selective)
+                  logPartToStdout(sessionId, part);
+
+                  // Accumulate data for response regardless of filtering
+                  if (part.type === "text") {
+                    const textPart = part as TextPart;
+                    collectedTextParts.push(textPart.text);
+                    lastMessageId = textPart.messageID;
+                  } else if (part.type === "tool") {
+                    const toolPart = part as ToolPart;
+                    emitTaskDelegateProgress(toolPart);
+                    const status = toolPart.state.status;
+
+                    // Discover child sessions when a task tool starts running.
+                    if (toolPart.tool === "task" && status === "running") {
+                      client.session
+                        .children({ path: { id: sessionId } })
+                        .then((resp) => {
+                          if (!resp.data) return;
+                          for (const child of resp.data) {
+                            if (childSessionIds.has(child.id)) continue;
+                            childSessionIds.add(child.id);
+                            subscription.addSessionId(child.id);
+                            try {
+                              appendAlias({
+                                aliasType: "opencode.subsession",
+                                aliasValue: child.id,
+                                anchorId,
+                              });
+                            } catch (err) {
+                              logError(
+                                log,
+                                "opencode_subsession_alias_write_failed",
+                                err instanceof Error ? err.message : String(err),
+                                { sessionId, anchorId, childId: child.id },
+                              );
+                            }
+                          }
+                        })
+                        .catch((err) => {
                           logError(
                             log,
-                            "opencode_subsession_alias_write_failed",
+                            "child_session_discovery_failed",
                             err instanceof Error ? err.message : String(err),
-                            { sessionId, anchorId, childId: child.id },
+                            { sessionId, anchorId },
                           );
-                        }
-                      }
-                    })
-                    .catch((err) => {
-                      logError(
-                        log,
-                        "child_session_discovery_failed",
-                        err instanceof Error ? err.message : String(err),
-                        { sessionId, anchorId },
-                      );
-                    });
-                }
+                        });
+                    }
 
-                if (status === "running") {
-                  emitToolProgress(toolPart, "running");
-                }
+                    if (status === "running") {
+                      emitToolProgress(toolPart, "running");
+                    }
 
-                if (status === "completed" || status === "error") {
-                  const displayName = toolDisplayName(toolPart);
-                  collectedToolCalls.push({ tool: displayName, state: status });
-                  emitToolProgress(toolPart, status);
-                  emitMemoryEventsFromToolPart(toolPart, emit);
+                    if (status === "completed" || status === "error") {
+                      const displayName = toolDisplayName(toolPart);
+                      collectedToolCalls.push({ tool: displayName, state: status });
+                      emitToolProgress(toolPart, status);
+                      emitMemoryEventsFromToolPart(toolPart, emit);
+                    }
+                    lastMessageId = toolPart.messageID;
+                  } else if (part.type === "step-finish") {
+                    const stepFinish = part as StepFinishPart;
+                    totalCost += stepFinish.cost;
+                    totalTokens.input += stepFinish.tokens.input;
+                    totalTokens.output += stepFinish.tokens.output;
+                    totalTokens.reasoning += stepFinish.tokens.reasoning;
+                    totalTokens.cache.read += stepFinish.tokens.cache.read;
+                    totalTokens.cache.write += stepFinish.tokens.cache.write;
+                    lastMessageId = stepFinish.messageID;
+                  }
+                } else if (event.type === "session.error") {
+                  const errorProps = event.properties;
+                  const errorMessage = sessionErrorMessage(errorProps.error);
+                  latestSessionError = errorMessage;
+                  latestSessionErrorSeq = seq;
+                  latestSessionErrorAt = Date.now();
+                  collectedToolCalls.push({ tool: "error", state: "error" });
+                  emit({ type: "tool", tool: "error", status: "error" });
+                  logError(log, "session_error", errorMessage, {
+                    sessionId,
+                    errorDetail: JSON.stringify(errorProps.error),
+                  });
+                } else if (event.type === "session.idle") {
+                  if (!sawParentMessagePart) {
+                    logInfo(log, "stale_session_idle_ignored", { sessionId });
+                    continue;
+                  }
+                  terminalError = latestSessionError;
+                  finished = true;
+                  break;
                 }
-                lastMessageId = toolPart.messageID;
-              } else if (part.type === "step-finish") {
-                const stepFinish = part as StepFinishPart;
-                totalCost += stepFinish.cost;
-                totalTokens.input += stepFinish.tokens.input;
-                totalTokens.output += stepFinish.tokens.output;
-                totalTokens.reasoning += stepFinish.tokens.reasoning;
-                totalTokens.cache.read += stepFinish.tokens.cache.read;
-                totalTokens.cache.write += stepFinish.tokens.cache.write;
-                lastMessageId = stepFinish.messageID;
               }
-            } else if (event.type === "session.error") {
-              const errorProps = event.properties;
-              const errorMessage = sessionErrorMessage(errorProps.error);
-              latestSessionError = errorMessage;
-              latestSessionErrorSeq = seq;
-              latestSessionErrorAt = Date.now();
-              collectedToolCalls.push({ tool: "error", state: "error" });
-              emit({ type: "tool", tool: "error", status: "error" });
-              logError(log, "session_error", errorMessage, {
-                sessionId,
-                errorDetail: JSON.stringify(errorProps.error),
-              });
-            } else if (event.type === "session.idle") {
-              if (!sawParentMessagePart) {
-                logInfo(log, "stale_session_idle_ignored", { sessionId });
-                continue;
-              }
-              terminalError = latestSessionError;
-              finished = true;
-              break;
+            } finally {
+              await iterator.return?.();
+              subscription.close();
             }
           }
-        } finally {
-          await iterator.return?.();
-          subscription.close();
-        }
-      }
 
-      if (!finished && latestSessionError) {
-        terminalError = latestSessionError;
-      }
+          if (!finished && latestSessionError) {
+            terminalError = latestSessionError;
+          }
 
-      const durationMs = Date.now() - promptStart;
-      endTrigger(
-        triggerId,
-        terminalError ? "error" : "completed",
-        terminalError ? { error: terminalError } : {},
-      );
+          const durationMs = Date.now() - promptStart;
+          endTrigger(
+            triggerId,
+            terminalError ? "error" : "completed",
+            terminalError ? { error: terminalError } : {},
+          );
 
-      logInfo(log, "session_done", {
-        sessionId,
-        status: terminalError ? "error" : "completed",
-        textParts: collectedTextParts.length,
-        toolCalls: collectedToolCalls.length,
-        totalParts: seq,
-        durationMs,
-      });
+          logInfo(log, "session_done", {
+            sessionId,
+            status: terminalError ? "error" : "completed",
+            textParts: collectedTextParts.length,
+            toolCalls: collectedToolCalls.length,
+            totalParts: seq,
+            durationMs,
+          });
 
-      // Final NDJSON event
-      emit({
-        type: "done",
-        sessionId,
-        correlationKey,
-        resumed,
-        status: terminalError ? "error" : "completed",
-        ...(terminalError ? { error: terminalError } : {}),
-        response: collectedTextParts.join("\n\n"),
-        toolCalls: collectedToolCalls,
-        messageId: lastMessageId,
-        durationMs,
-      });
-      await progressChain;
+          // Final NDJSON event
+          emit({
+            type: "done",
+            sessionId,
+            correlationKey,
+            resumed,
+            status: terminalError ? "error" : "completed",
+            ...(terminalError ? { error: terminalError } : {}),
+            response: collectedTextParts.join("\n\n"),
+            toolCalls: collectedToolCalls,
+            messageId: lastMessageId,
+            durationMs,
+          });
+          await progressChain;
         } catch (err) {
           logError(log, "trigger_background_error", err);
           endTrigger(triggerId, "error", {
@@ -1248,8 +1265,13 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           await progressChain;
         }
       })();
-      void backgroundTask;
-      res.json({ accepted: true, sessionId, resumed });
+      if (stream) {
+        await backgroundTask;
+        if (!res.writableEnded) res.end();
+      } else {
+        void backgroundTask;
+        res.json({ accepted: true, sessionId, resumed });
+      }
     } catch (err) {
       logError(log, "trigger_error", err);
       // Emit trigger_end{status:"error"} so the trigger doesn't render as `in_flight`
