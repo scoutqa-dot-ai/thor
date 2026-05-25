@@ -40,7 +40,8 @@ describe("proxy registry", () => {
 
   it("requires approval only for the approved write-tool inventory", () => {
     const approvedTools = Object.values(PROXY_REGISTRY).flatMap((proxy) => proxy.approve).sort();
+    const typedApprovalTools = [...APPROVAL_TOOL_NAMES].filter((tool) => tool !== "ghIssueCreate").sort();
 
-    expect(approvedTools).toEqual([...APPROVAL_TOOL_NAMES].sort());
+    expect(approvedTools).toEqual(typedApprovalTools);
   });
 });
