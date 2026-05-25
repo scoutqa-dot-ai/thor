@@ -1,8 +1,10 @@
-# Thor — AI Team Member Architecture
+# Integrations
 
 > Scope: Thor is an internal AI teammate for engineering and product work. It is not meant to mirror production infra exactly.
 
-## Core Topology
+This doc is the canonical index of external systems Thor reaches into, how they're wired, and what they're used for. For the event/correlation mechanics, see [`event-flow.md`](./event-flow.md). For trust boundaries and tool-policy enforcement, see [`security-model.md`](./security-model.md).
+
+## Topology
 
 ```mermaid
 flowchart LR
@@ -29,7 +31,7 @@ flowchart LR
     D --> I
 ```
 
-## Integration Strategy
+## Integration matrix
 
 | Integration      | Path                                               | Auth                    | Notes                                                   |
 | ---------------- | -------------------------------------------------- | ----------------------- | ------------------------------------------------------- |
@@ -42,37 +44,9 @@ flowchart LR
 | LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token            | Read-only feature flag inspection                       |
 | Metabase         | `remote-cli /exec/metabase`                        | API key                 | Read-only warehouse access                              |
 
-## MCP Policy Layer
+## Usage patterns
 
-`remote-cli` now owns the MCP policy boundary.
-
-- Allow-listed tools execute immediately.
-- Approved tools create an approval record, post an approval card to the triggering Slack thread, and return an action ID.
-- Hidden tools are never listed to the agent.
-- Approval status is available through `POST /exec/approval`.
-- Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution and `POST /internal/exec`.
-
-Approval records are persisted under `/workspace/data/approvals`. Approval creation fails closed when remote-cli cannot resolve or post to the triggering Slack thread. Tool activity is audit-logged under `/workspace/worklog`.
-
-## Triggers
-
-Thor is event-driven.
-
-- Slack mentions and engaged thread replies enter through `gateway`.
-- Scheduled prompts enter through `gateway /cron`.
-- Approval resolutions re-enter the originating session through the runner.
-
-The runner batches events by correlation key, resumes prior OpenCode sessions when possible, and posts Slack progress directly for current Slack-thread triggers.
-
-## Security
-
-- Least privilege: each service keeps only the credentials it needs.
-- Server-side policy: MCP allow/approve enforcement happens in `remote-cli`, not in the agent.
-- Secret-gated internal routes: agents never receive `THOR_INTERNAL_SECRET`, which authorizes approval resolution and internal exec on gateway↔remote-cli routes.
-- Read-only repo mounts in OpenCode; modifications happen through worktrees.
-- Structured audit logs for tool calls and outcomes.
-
-## Example Scenarios
+Concrete examples of how these integrations get combined in a single agent task.
 
 ### PR merged, errors spike
 

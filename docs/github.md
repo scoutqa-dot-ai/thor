@@ -163,9 +163,6 @@ Queue-handler-side terminal rejections happen after the event passed intake. The
 
 ## 10) Trust boundary for `remote-cli`
 
-The `remote-cli` service owns the GitHub App private key and mints installation tokens on demand through the `git` / `gh` wrappers. Its endpoints have no per-request auth header — they rely on the docker network being the trust boundary:
+The `remote-cli` service owns the GitHub App private key and mints installation tokens on demand through the `git` / `gh` wrappers. Its endpoints have no per-request auth header — the docker network is the trust boundary, and operators adding new services to the compose network must treat them as equally trusted with gateway and runner.
 
-- The host port mapping is `127.0.0.1:3004:3004`, so it is not reachable from outside the host.
-- Inside the docker network, every compose service listed in the `depends_on` graph can call it directly.
-
-Operators adding new services to the compose network must treat them as equally trusted with gateway and runner. Gateway↔remote-cli internal routes are additionally protected by `THOR_INTERNAL_SECRET` / `x-thor-internal-secret`, including approval resolution and internal exec. Treat that secret as authorizing policy-bypass internal operations, not just approvals.
+For the full layered model — including how `THOR_INTERNAL_SECRET` gates policy-bypass internal routes — see [`docs/feat/security-model.md`](./feat/security-model.md).

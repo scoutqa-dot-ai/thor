@@ -85,6 +85,6 @@ When starting a new session on this repo:
 
 1. Read `AGENTS.md` (this file) for workflow rules
 2. Read the latest plan in `docs/plan/` for current work context
-3. Read `docs/feat/mvp.md` for the overall architecture
+3. Read `README.md` for the overall architecture
 4. Check `git log --oneline -10` for recent progress
 5. Check for `TODO` / `FIXME` comments in `packages/` and `scripts/` for incomplete work

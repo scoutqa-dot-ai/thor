@@ -245,19 +245,15 @@ Rules match by exact host or suffix first, then by optional `path_prefix` and
 
 ## Security Model
 
-- OpenCode does not get direct API credentials for MCP upstreams.
-- Vouch allows Google-authenticated users whose email domain matches
-  `VOUCH_ALLOWED_EMAIL_DOMAINS`; the OpenCode SPA root and `/admin/` ingress
-  routes additionally require one of `THOR_ADMIN_EMAILS`, while `/runner/`
-  viewer routes remain available to any allowed-domain user. Static OpenCode
-  assets (`/assets/`, `/oc-theme-preload.js`) bypass Vouch for performance.
-- `remote-cli` enforces MCP allow/approve policy server-side, stores approvals under `/workspace/data/approvals`, and posts approval cards directly to the triggering Slack thread.
-- Approval-gated MCP calls fail closed before a usable pending approval is created when remote-cli cannot resolve a channel-aware Slack trigger thread or cannot post the Slack card.
-- Gateway↔remote-cli internal routes are secret-gated with `x-thor-internal-secret`, including `POST /exec/mcp` approval resolution and `POST /internal/exec`.
-- `git` uses GitHub App installation tokens through `GIT_ASKPASS` when the target owner can be resolved from the command or repo remote.
-- `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.
-- Source repos are mounted read-only into OpenCode; edits happen in `/workspace/worktrees`.
-- Tool calls are audit-logged under `/workspace/worklog`.
+Thor contains untrusted input — agent, OpenCode wrappers, external webhooks — through layered controls. In short:
+
+- Vouch SSO + mitmproxy bound the network; remote-cli binds to `127.0.0.1` only.
+- Inbound webhooks are HMAC-verified (Slack signing secret, GitHub `X-Hub-Signature-256`); internal gateway↔remote-cli routes are gated with `x-thor-internal-secret`.
+- Channel/mention/self-loop gates filter authenticated traffic before it wakes the agent.
+- `remote-cli` is the only place tool policy is enforced: MCP allow/approve/hidden tiers, command allowlists, GitHub App installation tokens. OpenCode never holds direct upstream credentials.
+- Repos mount read-only into OpenCode; edits happen in `/workspace/worktrees`. Tool calls are audit-logged under `/workspace/worklog`.
+
+See [`docs/feat/security-model.md`](docs/feat/security-model.md) for the full layered breakdown.
 
 ## Testing
 
