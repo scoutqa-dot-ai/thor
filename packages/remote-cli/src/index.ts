@@ -3,9 +3,7 @@ import { access } from "node:fs/promises";
 import { dirname, normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import {
-  appendCorrelationAlias,
   buildThorDisclaimerForSession,
-  computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
   getRunnerBaseUrl,
@@ -21,8 +19,11 @@ import {
   type ConfigLoader,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
-import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.js";
+import {
+  registerCreatedIssueCorrelationAlias,
+  registerGitCorrelationAlias,
+} from "./gh-issue-alias.js";
 import {
   handleSlackPostMessage,
   parseSlackPostMessageArgs,
@@ -64,8 +65,6 @@ const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
-const GITHUB_ISSUE_URL_RE =
-  /https:\/\/github\.com\/([^\s/]+)\/([^\s/]+)\/issues\/(\d+)(?:\b|[/?#])/;
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   loadRemoteCliGitHubEnv(env);
@@ -110,84 +109,6 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
   };
 }
 
-function registerGitCorrelationAlias(
-  sessionId: string | undefined,
-  args: string[],
-  cwd: string,
-): void {
-  if (!sessionId) return;
-  const correlationKey = computeGitCorrelationKey(args, cwd);
-  if (!correlationKey) return;
-
-  try {
-    appendCorrelationAlias(sessionId, correlationKey);
-  } catch (err) {
-    logError(log, "alias_registration_error", err instanceof Error ? err.message : String(err), {
-      sessionId,
-      correlationKey,
-    });
-    return;
-  }
-  logInfo(log, "alias_registered", { sessionId, correlationKey, source: "git" });
-}
-
-function buildIssueCorrelationKey(owner: string, repo: string, number: string): string {
-  // Gateway issue correlation uses the GitHub repo basename as the local repo
-  // component. Keep producer-side aliases aligned even when the local worktree
-  // parent directory is not the same as owner/repo's basename.
-  return `github:issue:${repo}:${owner}/${repo}#${number}`;
-}
-
-function parseIssueUrl(
-  stdout: string,
-): { owner: string; repo: string; number: string } | undefined {
-  const match = stdout.match(GITHUB_ISSUE_URL_RE);
-  if (!match) return undefined;
-  const [, owner, repo, number] = match;
-  if (!owner || !repo || !number) return undefined;
-  return { owner, repo, number };
-}
-
-function ownerRepoMatches(
-  cwdRepo: ReturnType<typeof resolveOwnerRepoFromRemote> | undefined,
-  owner: string,
-  repo: string,
-): boolean {
-  return (
-    !cwdRepo ||
-    (cwdRepo.host === "github.com" &&
-      cwdRepo.owner.toLowerCase() === owner.toLowerCase() &&
-      cwdRepo.repo.toLowerCase() === repo.toLowerCase())
-  );
-}
-
-function parseCreatedIssueCorrelationKey(stdout: string, cwd: string): string | undefined {
-  const issue = parseIssueUrl(stdout);
-  if (!issue) return undefined;
-  const cwdRepo = resolveOwnerRepoFromRemote(cwd);
-  if (!ownerRepoMatches(cwdRepo, issue.owner, issue.repo)) return undefined;
-  return buildIssueCorrelationKey(issue.owner, issue.repo, issue.number);
-}
-
-function registerCreatedIssueCorrelationAlias(
-  sessionId: string | undefined,
-  cwd: string,
-  stdout: string,
-): void {
-  if (!sessionId) return;
-  const correlationKey = parseCreatedIssueCorrelationKey(stdout, cwd);
-  if (!correlationKey) return;
-  try {
-    appendCorrelationAlias(sessionId, correlationKey);
-  } catch (err) {
-    logError(log, "alias_registration_error", err instanceof Error ? err.message : String(err), {
-      sessionId,
-      correlationKey,
-    });
-    return;
-  }
-  logInfo(log, "alias_registered", { sessionId, correlationKey, source: "gh" });
-}
 
 type FlagMatch = { index: number; valueIndex?: number; inlinePrefix?: string };
 
@@ -721,6 +642,17 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
       const effectiveArgs = withGhAttribution(disclaimerArgs, ids.sessionId, getConfig);
+
+      if (effectiveArgs[0] === "issue" && effectiveArgs[1] === "create" && !isGhHelpRequest(effectiveArgs)) {
+        logInfo(log, "exec_gh_pending_approval", { args: effectiveArgs, cwd, ...ids });
+        const result = await mcpService.requestGhIssueCreateApproval({
+          cwd,
+          args: effectiveArgs,
+          ...ids,
+        });
+        res.status(result.exitCode === 0 ? 200 : 400).json(result);
+        return;
+      }
 
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
       const result = await execCommand("gh", effectiveArgs, cwd);

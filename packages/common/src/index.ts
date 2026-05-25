@@ -25,6 +25,7 @@ export {
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
+  GhIssueCreateApprovalArgsSchema,
   approvalToolRequiresDisclaimer,
   injectApprovalDisclaimer,
   validateDisclaimerCompatibleArgs,

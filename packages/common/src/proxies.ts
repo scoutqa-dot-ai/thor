@@ -96,7 +96,9 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
 const configuredApprovedTools = Object.values(PROXY_REGISTRY)
   .flatMap((proxy) => proxy.approve)
   .sort();
-const typedApprovalTools = [...APPROVAL_TOOL_NAMES].sort();
+const typedApprovalTools = [...APPROVAL_TOOL_NAMES]
+  .filter((tool) => tool !== "ghIssueCreate")
+  .sort();
 
 if (
   configuredApprovedTools.length !== typedApprovalTools.length ||

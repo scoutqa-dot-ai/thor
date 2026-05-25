@@ -4,6 +4,7 @@ export const APPROVAL_TOOL_NAMES = [
   "createJiraIssue",
   "addCommentToJiraIssue",
   "create-feature-flag",
+  "ghIssueCreate",
 ] as const;
 
 export const CreateJiraIssueApprovalArgsSchema = z
@@ -33,10 +34,22 @@ export const CreateFeatureFlagApprovalArgsSchema = z
   })
   .passthrough();
 
+export const GhIssueCreateApprovalArgsSchema = z
+  .object({
+    cwd: z.string().min(1),
+    args: z.array(z.string()),
+    title: z.string().optional(),
+    bodyPreview: z.string().optional(),
+    labels: z.array(z.string()).optional(),
+    assignees: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
 export const ApprovalArgsSchema = z.union([
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
+  GhIssueCreateApprovalArgsSchema,
 ]);
 
 const ApprovalRequiredEventBaseSchema = z.object({
@@ -57,6 +70,10 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("create-feature-flag"),
     args: CreateFeatureFlagApprovalArgsSchema,
+  }),
+  ApprovalRequiredEventBaseSchema.extend({
+    tool: z.literal("ghIssueCreate"),
+    args: GhIssueCreateApprovalArgsSchema,
   }),
 ]);
 
@@ -115,5 +132,7 @@ export function injectApprovalDisclaimer(
         ...parsed.data.args,
         commentBody: `${parsed.data.args.commentBody}\n${footer}`,
       };
+    case "ghIssueCreate":
+      return parsed.data.args;
   }
 }

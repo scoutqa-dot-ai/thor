@@ -16,6 +16,7 @@ import {
   isProxyName,
   getRunnerBaseUrl,
   ApprovalRequiredEventPayloadSchema,
+  GhIssueCreateApprovalArgsSchema,
   interpolateHeaders,
   logError,
   logInfo,
@@ -40,9 +41,12 @@ import { unwrapResult } from "./unwrap-result.js";
 import { connectUpstream, type UpstreamConnection } from "./upstream.js";
 import { attributionFields, resolveTriggerUser } from "./attribution.js";
 import { postSlackMessageApi } from "./slack-post-message.js";
+import { execCommand } from "./exec.js";
+import { registerCreatedIssueCorrelationAlias } from "./gh-issue-alias.js";
 
 const log = createLogger("mcp");
 const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
+export const GH_APPROVAL_STORE = "gh";
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
@@ -129,6 +133,7 @@ export interface McpServiceDeps {
   configLoader?: ConfigLoader;
   fetchImpl?: typeof fetch;
   slack?: { botToken?: string; apiBaseUrl?: string };
+  execCommandFn?: typeof execCommand;
 }
 
 interface ToolInfo {
@@ -188,6 +193,12 @@ export interface McpService {
   closeAll(): Promise<void>;
   executeMcp(args: string[], context: McpCommandContext): Promise<McpExecResult>;
   executeApproval(args: string[]): Promise<McpExecResult>;
+  requestGhIssueCreateApproval(input: {
+    cwd: string;
+    args: string[];
+    sessionId?: string;
+    callId?: string;
+  }): Promise<McpExecResult>;
 }
 
 export function createMcpService(deps: McpServiceDeps): McpService {
@@ -197,6 +208,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const getConfig = deps.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const fetchImpl = deps.fetchImpl;
   const slackConfig = deps.slack;
+  const execCommandFn = deps.execCommandFn ?? execCommand;
   const instances = new Map<string, ProxyInstance>();
   const connecting = new Map<string, Promise<ProxyInstance>>();
   const approvalStores = new Map<string, ApprovalStore>();
@@ -223,6 +235,39 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     const store = new ApprovalStore(`${approvalsDir}/${name}`, name);
     approvalStores.set(name, store);
     return store;
+  }
+
+  function approvalStoreNames(): string[] {
+    return [...PROXY_NAMES, GH_APPROVAL_STORE];
+  }
+
+  function parseGhIssueDisplay(args: string[]): {
+    title?: string;
+    bodyPreview?: string;
+    labels?: string[];
+    assignees?: string[];
+  } {
+    const values = (names: string[]) => {
+      const found: string[] = [];
+      for (let i = 0; i < args.length; i += 1) {
+        const arg = args[i];
+        const name = names.find((n) => arg === n || arg.startsWith(`${n}=`));
+        if (!name) continue;
+        if (arg === name && i + 1 < args.length) found.push(args[++i]);
+        else if (arg.startsWith(`${name}=`)) found.push(arg.slice(name.length + 1));
+      }
+      return found;
+    };
+    const title = values(["--title", "-t"])[0];
+    const body = values(["--body", "-b"])[0];
+    const labels = values(["--label", "-l"]).flatMap((v) => v.split(",").filter(Boolean));
+    const assignees = values(["--assignee", "-a"]).flatMap((v) => v.split(",").filter(Boolean));
+    return {
+      ...(title ? { title } : {}),
+      ...(body ? { bodyPreview: body.length > 700 ? `${body.slice(0, 700)}…` : body } : {}),
+      ...(labels.length > 0 ? { labels } : {}),
+      ...(assignees.length > 0 ? { assignees } : {}),
+    };
   }
 
   async function postSlackApprovalMessage(input: {
@@ -656,7 +701,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   }
 
   function findApproval(actionId: string): ApprovalLookup | undefined {
-    for (const upstreamName of PROXY_NAMES) {
+    for (const upstreamName of approvalStoreNames()) {
       const store = getApprovalStore(upstreamName);
       const action = store.get(actionId);
       if (action) {
@@ -664,6 +709,34 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
     }
     return undefined;
+  }
+
+  async function executeGhIssueCreateApproval(
+    lookup: ApprovalLookup,
+    reviewer: string,
+    reason: string | undefined,
+  ): Promise<McpExecResult> {
+    const pendingAction = lookup.action;
+    const parsed = GhIssueCreateApprovalArgsSchema.safeParse(pendingAction.args);
+    if (!parsed.success) {
+      return fail(
+        `Stored gh issue create approval action ${pendingAction.id} is invalid: ${parsed.error.message}`,
+      );
+    }
+    const result = await execCommandFn("gh", parsed.data.args, parsed.data.cwd);
+    if (result.exitCode !== 0) {
+      pendingAction.error = result.stderr || `gh exited with code ${result.exitCode}`;
+      lookup.store.update(pendingAction);
+      return result;
+    }
+    registerCreatedIssueCorrelationAlias(
+      pendingAction.origin?.sessionId,
+      parsed.data.cwd,
+      result.stdout,
+    );
+    lookup.store.approveLoaded(pendingAction, result, reviewer, reason);
+    writeToolCallLogFn({ tool: pendingAction.tool, decision: "approved", args: pendingAction.args });
+    return result;
   }
 
   function storedApprovedResult(action: ApprovalAction): McpExecResult {
@@ -745,6 +818,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       });
       writeToolCallLogFn({ tool: rejected.tool, decision: "rejected", args: rejected.args });
       return ok(stringify(rejected));
+    }
+
+    if (lookup.upstreamName === GH_APPROVAL_STORE) {
+      return executeGhIssueCreateApproval(lookup, reviewer, reason);
     }
 
     const instance = await getInstance(lookup.upstreamName);
@@ -954,7 +1031,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
 
       if (args[0] === "list") {
-        const approvals = PROXY_NAMES.flatMap((upstreamName) =>
+        const approvals = approvalStoreNames().flatMap((upstreamName) =>
           getApprovalStore(upstreamName).listPending(),
         );
         return ok(stringify({ approvals }));
@@ -963,6 +1040,74 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return fail(
         `Unknown subcommand: ${args[0]}\nUsage:\n  approval status <action-id>\n  approval list\n`,
       );
+    },
+
+    async requestGhIssueCreateApproval(input): Promise<McpExecResult> {
+      if (!input.sessionId) {
+        return fail('Approval required for "gh issue create": missing Thor session id');
+      }
+      const anchorContext = findAnchorContext(input.sessionId);
+      if (!anchorContext.ok) {
+        return fail(
+          `Approval required for "gh issue create": no Thor anchor for session ${input.sessionId} (${anchorContext.reason})`,
+        );
+      }
+      const slackTarget = resolveSlackThreadTargetFromTrigger(input.sessionId);
+      if ("error" in slackTarget) {
+        return fail(`Approval required for "gh issue create": ${slackTarget.error}`);
+      }
+      const store = getApprovalStore(GH_APPROVAL_STORE);
+      const args = GhIssueCreateApprovalArgsSchema.parse({
+        cwd: input.cwd,
+        args: input.args,
+        ...parseGhIssueDisplay(input.args),
+      });
+      const action = store.buildPending(
+        "ghIssueCreate",
+        args,
+        {
+          sessionId: input.sessionId,
+          trigger: {
+            anchorId: anchorContext.anchorId,
+            ...(anchorContext.triggerId ? { triggerId: anchorContext.triggerId } : {}),
+          },
+        },
+        { provider: "slack", channel: slackTarget.channel, threadTs: slackTarget.threadTs },
+      );
+      const slackPost = await postSlackApprovalMessage({
+        action,
+        upstreamName: GH_APPROVAL_STORE,
+        channel: slackTarget.channel,
+        threadTs: slackTarget.threadTs,
+      });
+      if ("error" in slackPost) {
+        store.rejectLoaded(action, "system", slackPost.error);
+        return fail(`Approval required for "gh issue create": ${slackPost.error}`);
+      }
+      action.notification = {
+        provider: "slack",
+        channel: slackTarget.channel,
+        threadTs: slackTarget.threadTs,
+        messageTs: slackPost.ts,
+        postedAt: new Date().toISOString(),
+      };
+      store.update(action);
+      logInfo(log, "tool_call_pending_approval", {
+        upstream: GH_APPROVAL_STORE,
+        tool: action.tool,
+        actionId: action.id,
+        sessionId: input.sessionId,
+        ...(input.callId ? { callId: input.callId } : {}),
+      });
+      writeToolCallLogFn({ tool: action.tool, decision: "pending", args });
+      const approvalEvent: ApprovalRequiredEventPayload = {
+        type: "approval_required",
+        actionId: action.id,
+        proxyName: GH_APPROVAL_STORE,
+        tool: "ghIssueCreate",
+        args,
+      };
+      return ok(stringify({ ...approvalEvent, command: `approval status ${action.id}` }));
     },
   };
 }
