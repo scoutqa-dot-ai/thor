@@ -1,0 +1,25 @@
+packages/remote-cli/src/mcp-handler.ts
+  462b1730f13ea62a 728-729,731-737
+packages/remote-cli/src/gh-disclaimer.test.ts
+  462b1730f13ea62a 41,438-476
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "273afd4478493b349eea66a1b56d3023c0c31fe5",
+  "prompts": {
+    "462b1730f13ea62a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd095f4b-b1d5-425d-9762-7af0b3b8d6be",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 49,
+      "total_deletions": 2,
+      "accepted_lines": 49,
+      "overriden_lines": 0
+    }
+  }
+}
