@@ -5,7 +5,7 @@ An event-driven AI team member that watches Slack and scheduled jobs, resumes Op
 ## Architecture
 
 ```text
-ingress -> gateway -> runner -> opencode
+ingress -> gateway -> runner -> opencode -> codex-lb -> ChatGPT
                            \
                             -> remote-cli -> MCP upstreams / CLI integrations
 ```
@@ -13,11 +13,13 @@ ingress -> gateway -> runner -> opencode
 - `gateway` accepts Slack, GitHub webhook, and cron events, batches them, and forwards them to the runner.
 - `runner` manages OpenCode session continuity and Slack progress updates.
 - `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, langfuse, metabase, MCP tool calls, direct Slack approval-card posting, and approval status/resolution.
+- `codex-lb` is an OpenAI-compatible proxy that fronts ChatGPT for opencode, pooling one or more ChatGPT account credentials so no paid OpenAI API key is needed. Its account/quota dashboard sits behind the same SSO + admin-email gate as `/admin/`.
 
 ## Services
 
 | Service       | Port | Package            | Role                                        |
 | ------------- | ---- | ------------------ | ------------------------------------------- |
+| `codex-lb`    | 2455 | Docker image       | ChatGPT-backed OpenAI-compatible proxy      |
 | `cron`        | -    | `docker/cron`      | Scheduled prompts                           |
 | `mitmproxy`   | 3080 | `docker/mitmproxy` | Explicit outbound HTTP(S) proxy             |
 | `gateway`     | 3002 | `@thor/gateway`    | Slack/GitHub webhook ingestion and batching |
@@ -38,7 +40,7 @@ ingress -> gateway -> runner -> opencode
 ./scripts/mitmproxy-ca-init.sh
 ```
 
-   All outbound HTTP(S) from OpenCode is routed through mitmproxy; see [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a for the routing path, built-in defaults, and custom rule format.
+All outbound HTTP(S) from OpenCode is routed through mitmproxy; see [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a for the routing path, built-in defaults, and custom rule format.
 
 3. Create `/workspace/config/thor.json` (on the host: `docker-volumes/workspace/config/thor.json`) from [`docs/examples/thor.json`](docs/examples/thor.json). It carries GitHub App installation IDs, user attribution, the Slack allowlist, and any mitmproxy rules. MCP upstream access is enabled for every repo automatically.
 
@@ -49,14 +51,21 @@ docker compose run --rm remote-cli \
   git clone https://github.com/your-org/your-repo.git
 ```
 
-   If the stack is already running, use `docker compose exec remote-cli ...` instead.
+If the stack is already running, use `docker compose exec remote-cli ...` instead.
 
 5. Start the stack:
 
 ```bash
+mkdir -p docker-volumes/codex-lb && chmod 777 docker-volumes/codex-lb
 docker compose up --build -d
-curl http://localhost:8080/health
+curl http://localhost:8080/global/health
 ```
+
+`codex-lb` runs as a non-root user and writes a SQLite store to `/var/lib/codex-lb`; pre-creating the host directory world-writable avoids a root-owned auto-mount.
+
+6. Link a ChatGPT account so opencode has an upstream model:
+
+   Visit `http://localhost:8080/dashboard` (admin-gated by Vouch + `THOR_ADMIN_EMAILS`), sign in with Google, and add a ChatGPT account from the codex-lb dashboard. Once linked, opencode picks the model from its UI (the provider whitelist surfaces `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`).
 
 ## Integrations
 
@@ -90,32 +99,32 @@ Common usage patterns:
 
 Integration-specific env vars live in each integration's doc. Cross-cutting vars:
 
-| Variable                        | Required | Service                 | Purpose                                                                                                  |
-| ------------------------------- | -------- | ----------------------- | -------------------------------------------------------------------------------------------------------- |
-| `CRON_SECRET`                   | Yes      | `gateway`, `cron`       | Shared secret for cron endpoint auth                                                                     |
-| `THOR_ADMIN_EMAILS`             | Yes      | `ingress`               | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes     |
-| `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway` | Secret-gates gateway↔remote-cli internal APIs                                                            |
-| `THOR_E2E_TEST_HELPERS`         | No       | `runner`                | Enables secret-gated deterministic runner e2e helpers                                                    |
-| `RUNNER_BASE_URL`               | Yes      | `remote-cli`            | Public base URL for Thor trigger viewer links in PR/Jira content                                         |
-| `INGRESS_PORT`                  | No       | `ingress`               | Host port for the reverse proxy                                                                          |
-| `ATLASSIAN_AUTH`                | Yes      | `remote-cli`, `mitmproxy` | Atlassian MCP auth header and mitmproxy default injection                                              |
-| `POSTHOG_API_KEY`               | Yes      | `remote-cli`            | PostHog MCP auth                                                                                         |
-| `GRAFANA_URL`                   | Yes      | `grafana-mcp`           | Grafana instance URL                                                                                     |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | Yes      | `grafana-mcp`           | Grafana service account token                                                                            |
-| `GRAFANA_ORG_ID`                | No       | `grafana-mcp`           | Grafana org ID (defaults to `1`)                                                                         |
-| `LANGFUSE_HOST`                 | No       | `remote-cli`            | Langfuse host URL                                                                                        |
-| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`            | Langfuse public key                                                                                      |
-| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`            | Langfuse secret key                                                                                      |
-| `METABASE_URL`                  | No       | `remote-cli`            | Metabase instance URL                                                                                    |
-| `METABASE_API_KEY`              | No       | `remote-cli`            | Metabase API key                                                                                         |
-| `METABASE_DATABASE_ID`          | No       | `remote-cli`            | Metabase database ID                                                                                     |
-| `METABASE_ALLOWED_SCHEMAS`      | No       | `remote-cli`            | Comma-separated schema allowlist                                                                         |
-| `VOUCH_GOOGLE_CLIENT_ID`        | Yes      | `vouch`                 | Google OAuth client ID                                                                                   |
-| `VOUCH_GOOGLE_CLIENT_SECRET`    | Yes      | `vouch`                 | Google OAuth client secret                                                                               |
-| `VOUCH_JWT_SECRET`              | Yes      | `vouch`                 | Session JWT signing secret                                                                               |
-| `VOUCH_ALLOWED_EMAIL_DOMAINS`   | No       | `compose -> vouch`      | Rendered into Vouch's `VOUCH_DOMAINS`; comma-separated email domains, default `scoutqa.cc`               |
-| `VOUCH_CALLBACK_URL`            | No       | `vouch`                 | OAuth callback URL                                                                                       |
-| `VOUCH_COOKIE_DOMAIN`           | No       | `vouch`                 | Cookie domain                                                                                            |
+| Variable                        | Required | Service                   | Purpose                                                                                              |
+| ------------------------------- | -------- | ------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `CRON_SECRET`                   | Yes      | `gateway`, `cron`         | Shared secret for cron endpoint auth                                                                 |
+| `THOR_ADMIN_EMAILS`             | Yes      | `ingress`                 | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes |
+| `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`   | Secret-gates gateway↔remote-cli internal APIs                                                        |
+| `THOR_E2E_TEST_HELPERS`         | No       | `runner`                  | Enables secret-gated deterministic runner e2e helpers                                                |
+| `RUNNER_BASE_URL`               | Yes      | `remote-cli`              | Public base URL for Thor trigger viewer links in PR/Jira content                                     |
+| `INGRESS_PORT`                  | No       | `ingress`                 | Host port for the reverse proxy                                                                      |
+| `ATLASSIAN_AUTH`                | Yes      | `remote-cli`, `mitmproxy` | Atlassian MCP auth header and mitmproxy default injection                                            |
+| `POSTHOG_API_KEY`               | Yes      | `remote-cli`              | PostHog MCP auth                                                                                     |
+| `GRAFANA_URL`                   | Yes      | `grafana-mcp`             | Grafana instance URL                                                                                 |
+| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | Yes      | `grafana-mcp`             | Grafana service account token                                                                        |
+| `GRAFANA_ORG_ID`                | No       | `grafana-mcp`             | Grafana org ID (defaults to `1`)                                                                     |
+| `LANGFUSE_HOST`                 | No       | `remote-cli`              | Langfuse host URL                                                                                    |
+| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`              | Langfuse public key                                                                                  |
+| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`              | Langfuse secret key                                                                                  |
+| `METABASE_URL`                  | No       | `remote-cli`              | Metabase instance URL                                                                                |
+| `METABASE_API_KEY`              | No       | `remote-cli`              | Metabase API key                                                                                     |
+| `METABASE_DATABASE_ID`          | No       | `remote-cli`              | Metabase database ID                                                                                 |
+| `METABASE_ALLOWED_SCHEMAS`      | No       | `remote-cli`              | Comma-separated schema allowlist                                                                     |
+| `VOUCH_GOOGLE_CLIENT_ID`        | Yes      | `vouch`                   | Google OAuth client ID                                                                               |
+| `VOUCH_GOOGLE_CLIENT_SECRET`    | Yes      | `vouch`                   | Google OAuth client secret                                                                           |
+| `VOUCH_JWT_SECRET`              | Yes      | `vouch`                   | Session JWT signing secret                                                                           |
+| `VOUCH_ALLOWED_EMAIL_DOMAINS`   | No       | `compose -> vouch`        | Rendered into Vouch's `VOUCH_DOMAINS`; comma-separated email domains, default `scoutqa.cc`           |
+| `VOUCH_CALLBACK_URL`            | No       | `vouch`                   | OAuth callback URL                                                                                   |
+| `VOUCH_COOKIE_DOMAIN`           | No       | `vouch`                   | Cookie domain                                                                                        |
 
 ### Workspace config (`thor.json`)
 

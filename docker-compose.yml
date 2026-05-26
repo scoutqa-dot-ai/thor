@@ -5,6 +5,14 @@
 # Logs:    docker compose logs -f
 # Stop:    docker compose down
 
+x-mitmproxy-egress-env: &mitmproxy-egress-env
+  http_proxy: http://mitmproxy:8080
+  https_proxy: http://mitmproxy:8080
+  HTTP_PROXY: http://mitmproxy:8080
+  HTTPS_PROXY: http://mitmproxy:8080
+  no_proxy: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
+  NO_PROXY: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
+
 services:
   remote-cli:
     build:
@@ -108,6 +116,33 @@ services:
       timeout: 3s
       retries: 10
 
+  codex-lb:
+    image: ghcr.io/soju06/codex-lb:1.19
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:2455:2455"
+      - "127.0.0.1:1455:1455"
+    environment:
+      <<: *mitmproxy-egress-env
+      CODEX_LB_DASHBOARD_AUTH_MODE: disabled
+      CODEX_LB_PROXY_UNAUTHENTICATED_CLIENT_CIDRS: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      CODEX_LB_UPSTREAM_WEBSOCKET_TRUST_ENV: "true"
+      # The HTTP responses session bridge pools concurrent same-session calls
+      # onto one upstream WebSocket; opencode's title+build forks then race and
+      # the title call receives an envelope with no output_text.delta events,
+      # leaving session titles stuck on "New session - <timestamp>". Disable
+      # the bridge so each request gets its own upstream stream.
+      CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED: "false"
+      SSL_CERT_FILE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      REQUESTS_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      CURL_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
+    volumes:
+      - ./docker-volumes/codex-lb:/var/lib/codex-lb
+      - ./docker-volumes/mitmproxy/public:/etc/thor/mitmproxy-public:ro
+    depends_on:
+      mitmproxy:
+        condition: service_healthy
+
   opencode:
     build:
       context: .
@@ -118,16 +153,11 @@ services:
     working_dir: /workspace
     command: ["serve", "--port", "4096", "--hostname", "0.0.0.0"]
     environment:
-      - http_proxy=http://mitmproxy:8080
-      - https_proxy=http://mitmproxy:8080
-      - no_proxy=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
-      - HTTP_PROXY=http://mitmproxy:8080
-      - HTTPS_PROXY=http://mitmproxy:8080
-      - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
-      - NODE_OPTIONS=--use-env-proxy --disable-warning=UNDICI-EHPA
-      - NODE_EXTRA_CA_CERTS=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
-      - CURL_CA_BUNDLE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
-      - SSL_CERT_FILE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      <<: *mitmproxy-egress-env
+      NODE_OPTIONS: --use-env-proxy --disable-warning=UNDICI-EHPA
+      NODE_EXTRA_CA_CERTS: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      CURL_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      SSL_CERT_FILE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
     volumes:
       - ./docker-volumes/opencode:/home/thor/.local/share/opencode
       - ./docker-volumes/workspace/memory:/workspace/memory
@@ -144,6 +174,8 @@ services:
         condition: service_healthy
       mitmproxy:
         condition: service_healthy
+      codex-lb:
+        condition: service_started
     deploy:
       resources:
         limits:
@@ -292,6 +324,8 @@ services:
         condition: service_healthy
       vouch:
         condition: service_healthy
+      codex-lb:
+        condition: service_started
 
 volumes:
   shared-tmp:
