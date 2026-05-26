@@ -1,0 +1,23 @@
+docs/plan/2026052601_codex-lb-integration.md
+  35c540ba565f560c 1-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "eb0e2b6444cc61a9378cc5008736bbda7be48cb5",
+  "prompts": {
+    "35c540ba565f560c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7789fac3-1ed5-4f73-b3cc-1dc216dc741e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 130,
+      "total_deletions": 0,
+      "accepted_lines": 130,
+      "overriden_lines": 0
+    }
+  }
+}
