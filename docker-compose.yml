@@ -319,6 +319,8 @@ services:
         condition: service_healthy
       vouch:
         condition: service_healthy
+      codex-lb:
+        condition: service_started
 
 volumes:
   shared-tmp:

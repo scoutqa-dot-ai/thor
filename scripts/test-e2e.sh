@@ -35,6 +35,7 @@ repo_name_from_clone_url() {
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 REMOTE_CLI_URL="${REMOTE_CLI_URL:-http://localhost:3004}"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
+INGRESS_URL="${INGRESS_URL:-http://localhost:${INGRESS_PORT:-8080}}"
 SLACK_API_URL="${SLACK_API_URL:-https://slack.com/api}"
 SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
 SLACK_CHANNEL_ID="${SLACK_E2E_CHANNEL_ID:-${SLACK_CHANNEL_ID:-}}"
@@ -1052,6 +1053,37 @@ else
     fi
   fi
 fi
+
+# ── Ingress Routing ─────────────────────────────────────────────────────────
+#
+# Hits the live nginx; verifies the auth-gated path matrix without authenticating.
+# Vouch returns 401 for missing cookies; nginx error_page 401 -> 302 to
+# /vouch/login. Any other status means either the route is missing (404) or the
+# auth gate has regressed (200/upstream).
+
+echo ""
+echo "=== Ingress Routing ==="
+
+ingress_probe() {
+  curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-redirs 0 "$INGRESS_URL$1"
+}
+
+health_probe=$(ingress_probe "/global/health")
+assert '[[ "${health_probe%% *}" == "200" ]]' "/global/health bypasses vouch (regression)" "got $health_probe"
+
+root_probe=$(ingress_probe "/")
+assert '[[ "${root_probe%% *}" == "302" && "$root_probe" == *"/vouch/login"* ]]' \
+  "/ (OpenCode SPA) redirects unauthenticated to vouch (regression)" "got $root_probe"
+
+admin_probe=$(ingress_probe "/admin/config")
+assert '[[ "${admin_probe%% *}" == "302" && "$admin_probe" == *"/vouch/login"* ]]' \
+  "/admin/config redirects unauthenticated to vouch (regression)" "got $admin_probe"
+
+for path in /dashboard /accounts /settings /api/accounts; do
+  codex_probe=$(ingress_probe "$path")
+  assert '[[ "${codex_probe%% *}" == "302" && "$codex_probe" == *"/vouch/login"* ]]' \
+    "codex-lb route $path is wired and auth-gated" "got $codex_probe"
+done
 
 # ── Results ─────────────────────────────────────────────────────────────────
 
