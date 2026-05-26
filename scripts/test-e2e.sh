@@ -1090,7 +1090,7 @@ done
 # dashboard loads. Pull a real asset path from each upstream's HTML and verify
 # both resolve through the ingress without auth.
 opencode_asset=$(docker exec thor-opencode-1 sh -c 'wget -q -O - http://127.0.0.1:4096/' 2>/dev/null \
-  | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"')
+  | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"' || true)
 if [[ -n "$opencode_asset" ]]; then
   asset_probe=$(ingress_probe "$opencode_asset")
   assert '[[ "${asset_probe%% *}" == "200" ]]' \
@@ -1100,7 +1100,7 @@ else
 fi
 
 codex_asset=$(docker exec thor-codex-lb-1 sh -c 'wget -q -O - http://127.0.0.1:2455/dashboard' 2>/dev/null \
-  | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"')
+  | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"' || true)
 if [[ -n "$codex_asset" ]]; then
   asset_probe=$(ingress_probe "$codex_asset")
   assert '[[ "${asset_probe%% *}" == "200" ]]' \
