@@ -39,7 +39,7 @@ Built-in defaults are intentionally narrow:
 - Atlassian media redirects: `api.media.atlassian.com` passthrough.
 - Slack API: injected auth only for thread/history reads, `reactions.add`, `files.info`, and the upload setup/complete endpoints on `slack.com/api/...`; message writes must use `slack-post-message`.
 - Slack files: read-only downloads on `files.slack.com/files-pri/...` and upload flow support on `files.slack.com/upload/v1/...`.
-- OpenAI and ChatGPT domains: passthrough only (no injected credentials).
+- OpenAI and ChatGPT domains: passthrough only (no injected credentials). In practice only `codex-lb` reaches these upstreams; opencode talks to `codex-lb` over the docker network instead of holding ChatGPT credentials itself.
 
 The shared upstream registry and allow/approve policy are checked into [`packages/common/src/proxies.ts`](../../packages/common/src/proxies.ts).
 
@@ -71,11 +71,11 @@ mitmproxy evaluates user rules first, then built-in defaults. Rules match by exa
 
 Every external request that reaches the gateway must prove origin before any work happens.
 
-| Source                | Mechanism                                                                   | Window |
-| --------------------- | --------------------------------------------------------------------------- | ------ |
-| Slack events / interactivity | `X-Slack-Signature` HMAC-SHA256 over `v0:<ts>:<raw-body>`             | 300s   |
-| GitHub webhooks       | `X-Hub-Signature-256` HMAC over raw body, secret `GITHUB_WEBHOOK_SECRET`    | n/a    |
-| Internal gateway↔remote-cli routes | `x-thor-internal-secret: $THOR_INTERNAL_SECRET`                | n/a    |
+| Source                             | Mechanism                                                                | Window |
+| ---------------------------------- | ------------------------------------------------------------------------ | ------ |
+| Slack events / interactivity       | `X-Slack-Signature` HMAC-SHA256 over `v0:<ts>:<raw-body>`                | 300s   |
+| GitHub webhooks                    | `X-Hub-Signature-256` HMAC over raw body, secret `GITHUB_WEBHOOK_SECRET` | n/a    |
+| Internal gateway↔remote-cli routes | `x-thor-internal-secret: $THOR_INTERNAL_SECRET`                          | n/a    |
 
 `THOR_INTERNAL_SECRET` authorizes policy-bypass internal operations — approval resolution (`POST /exec/mcp`) and arbitrary `POST /internal/exec`. Agents never receive it. Treat it with the same care as a root credential.
 
@@ -90,7 +90,7 @@ After authentication, events still face content-aware gates before they wake the
 
 ## Layer 4: Server-side policy at remote-cli
 
-remote-cli is the *only* place tool-level policy is enforced. OpenCode-side wrappers (skill scripts, CLI shims) are not trusted to filter their own arguments.
+remote-cli is the _only_ place tool-level policy is enforced. OpenCode-side wrappers (skill scripts, CLI shims) are not trusted to filter their own arguments.
 
 ### MCP tool tiers
 
@@ -109,6 +109,7 @@ Approval creation **fails closed** when remote-cli cannot resolve or post to the
 - `git` uses GitHub App installation tokens minted on demand through `GIT_ASKPASS` when the target owner resolves from the command or repo remote.
 - `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.
 - OpenCode never receives direct API credentials for MCP upstreams.
+- **ChatGPT subscription credentials live in `codex-lb`, not OpenCode.** opencode points its `openai` provider at `http://codex-lb:2455/v1` with a literal in-network token (`codex-lb-local`) that has no value outside the docker network. The OAuth refresh tokens and account cookies for ChatGPT are persisted under `codex-lb`'s own SQLite store at `/var/lib/codex-lb`, which is never mounted into OpenCode. An agent that reads opencode's auth/config files finds no ChatGPT credential it can replay.
 
 ## Layer 5: Blast radius limits
 
@@ -118,6 +119,7 @@ If a policy layer fails, these limit what damage is reachable:
 - **GitHub App scopes.** The app is granted the minimum permissions listed in `github.md` §3 — no admin, no settings write, no org-wide access.
 - **Per-owner installation tokens.** GitHub installation tokens are scoped to a single owner and expire within an hour.
 - **Daytona sandbox isolation.** Project builds and test runs execute in per-worktree Daytona sandboxes; `git` is blocked inside the sandbox so the agent cannot push from there.
+- **codex-lb account/quota dashboard isolation.** The codex-lb dashboard (`/dashboard`, `/accounts`, `/settings`, `/api/*`) sits behind the same Vouch + `THOR_ADMIN_EMAILS` gate as `/admin/`, and its host ports bind to `127.0.0.1` only. Adding or rotating ChatGPT accounts requires an admin browser session — neither OpenCode nor an external attacker can reach those routes.
 
 ## Layer 6: Audit trail
 
