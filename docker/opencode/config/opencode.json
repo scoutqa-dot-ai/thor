@@ -4,12 +4,15 @@
   "permission": "allow",
   "plugin": ["./plugins/thor.js"],
   "mcp": {},
+  "small_model": "openai/gpt-5.4-mini",
   "provider": {
     "openai": {
+      "name": "codex-lb",
       "options": {
         "baseURL": "http://codex-lb:2455/v1",
         "apiKey": "codex-lb-local"
-      }
+      },
+      "whitelist": ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5"]
     }
   }
 }
