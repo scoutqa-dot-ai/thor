@@ -5,7 +5,7 @@ An event-driven AI team member that watches Slack and scheduled jobs, resumes Op
 ## Architecture
 
 ```text
-ingress -> gateway -> runner -> opencode
+ingress -> gateway -> runner -> opencode -> codex-lb -> ChatGPT
                            \
                             -> remote-cli -> MCP upstreams / CLI integrations
 ```
@@ -13,11 +13,13 @@ ingress -> gateway -> runner -> opencode
 - `gateway` accepts Slack, GitHub webhook, and cron events, batches them, and forwards them to the runner.
 - `runner` manages OpenCode session continuity and Slack progress updates.
 - `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, langfuse, metabase, MCP tool calls, direct Slack approval-card posting, and approval status/resolution.
+- `codex-lb` is an OpenAI-compatible proxy that fronts ChatGPT for opencode, pooling one or more ChatGPT account credentials so no paid OpenAI API key is needed. Its account/quota dashboard sits behind the same SSO + admin-email gate as `/admin/`.
 
 ## Services
 
 | Service       | Port | Package            | Role                                        |
 | ------------- | ---- | ------------------ | ------------------------------------------- |
+| `codex-lb`    | 2455 | Docker image       | ChatGPT-backed OpenAI-compatible proxy      |
 | `cron`        | -    | `docker/cron`      | Scheduled prompts                           |
 | `mitmproxy`   | 3080 | `docker/mitmproxy` | Explicit outbound HTTP(S) proxy             |
 | `gateway`     | 3002 | `@thor/gateway`    | Slack/GitHub webhook ingestion and batching |
@@ -55,9 +57,16 @@ If the stack is already running, use `docker compose exec remote-cli ...` instea
 5. Start the stack:
 
 ```bash
+mkdir -p docker-volumes/codex-lb && chmod 777 docker-volumes/codex-lb
 docker compose up --build -d
-curl http://localhost:8080/health
+curl http://localhost:8080/global/health
 ```
+
+`codex-lb` runs as a non-root user and writes a SQLite store to `/var/lib/codex-lb`; pre-creating the host directory world-writable avoids a root-owned auto-mount.
+
+6. Link a ChatGPT account so opencode has an upstream model:
+
+   Visit `http://localhost:8080/dashboard` (admin-gated by Vouch + `THOR_ADMIN_EMAILS`), sign in with Google, and add a ChatGPT account from the codex-lb dashboard. Once linked, opencode picks the model from its UI (the provider whitelist surfaces `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`).
 
 ## Integrations
 

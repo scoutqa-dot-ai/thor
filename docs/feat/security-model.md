@@ -40,7 +40,7 @@ Built-in defaults are intentionally narrow:
 - Atlassian media redirects: `api.media.atlassian.com` passthrough.
 - Slack API: injected auth only for thread/history reads, `reactions.add`, `files.info`, and the upload setup/complete endpoints on `slack.com/api/...`; message writes must use `slack-post-message`.
 - Slack files: read-only downloads on `files.slack.com/files-pri/...` and upload flow support on `files.slack.com/upload/v1/...`.
-- OpenAI and ChatGPT domains: passthrough only (no injected credentials).
+- OpenAI and ChatGPT domains: passthrough only (no injected credentials). In practice only `codex-lb` reaches these upstreams; opencode talks to `codex-lb` over the docker network instead of holding ChatGPT credentials itself.
 
 The shared upstream registry and allow/approve policy are checked into [`packages/common/src/proxies.ts`](../../packages/common/src/proxies.ts).
 
@@ -111,6 +111,7 @@ Approval creation **fails closed** when remote-cli cannot resolve or post to the
 - `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.
 - OpenCode never receives direct API credentials for MCP upstreams.
 - **1Password browser credentials stay in the broker.** `OP_SERVICE_ACCOUNT_TOKEN` exists only in `remote-cli`; a dedicated stdio transport sends it to the sandbox over anonymous fd 3, where broker startup consumes and unlinks a private tmpfs file before accepting MCP requests. The broker lists only safe exact-origin Login metadata from one dedicated vault and reads credential-bearing fields only after Slack approval. If the approval explicitly enables automated TOTP, the broker re-reads one fresh SDK-computed code only after validating one same-origin MFA challenge and attempts it once. Authenticated Chromium remains broker-owned, credential-free in its process environment, exact-origin, Thor-session-bound, ref-controlled, and limited by a ten-minute inactivity lease. No credential, TOTP secret/code, cookie/storage value, full browser handle, or raw Playwright snapshot crosses the boundary.
+- **ChatGPT subscription credentials live in `codex-lb`, not OpenCode.** opencode points its `openai` provider at `http://codex-lb:2455/v1` with a literal in-network token (`codex-lb-local`) that has no value outside the docker network. The OAuth refresh tokens and account cookies for ChatGPT are persisted under `codex-lb`'s own SQLite store at `/var/lib/codex-lb`, which is never mounted into OpenCode. An agent that reads opencode's auth/config files finds no ChatGPT credential it can replay.
 
 ## Layer 5: Blast radius limits
 
@@ -121,6 +122,7 @@ If a policy layer fails, these limit what damage is reachable:
 - **Per-owner installation tokens.** GitHub installation tokens are scoped to a single owner and expire within an hour.
 - **Daytona sandbox isolation.** Project builds and test runs execute in per-worktree Daytona sandboxes; `git` is blocked inside the sandbox so the agent cannot push from there.
 - **Credential broker allowlist.** The 1Password integration reaches one configured dedicated vault. A credential-free browser may discover one application → credential → exact application callback route and freeze it in an owner-bound, short-lived approval plan. Credentials are injected only at the approved credential origin; after callback, continued access is restricted to the application origin and sanitized accessibility snapshots, latest-snapshot click/type refs, same-origin navigation, and close. It exposes no generic vault/secret reads, redirect parameters, arbitrary references/selectors/JavaScript, cross-origin continued browsing, persistent profile, CDP, cookie/storage, screenshot, trace, or download surface.
+- **codex-lb account/quota dashboard isolation.** The codex-lb dashboard (`/dashboard`, `/accounts`, `/settings`, `/api/*`) sits behind the same Vouch + `THOR_ADMIN_EMAILS` gate as `/admin/`, and its host ports bind to `127.0.0.1` only. Adding or rotating ChatGPT accounts requires an admin browser session — neither OpenCode nor an external attacker can reach those routes.
 
 ## Layer 6: Audit trail
 
