@@ -1,0 +1,27 @@
+docker/ingress/nginx.conf.template
+  35c540ba565f560c 11-15,126-137
+docker-compose.yml
+  35c540ba565f560c 322-323
+scripts/test-e2e.sh
+  35c540ba565f560c 38,1057-1087
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "7da611c99388c42dcf89855332ec12e44bac4bdc",
+  "prompts": {
+    "35c540ba565f560c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7789fac3-1ed5-4f73-b3cc-1dc216dc741e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 69,
+      "total_deletions": 24,
+      "accepted_lines": 51,
+      "overriden_lines": 0
+    }
+  }
+}
