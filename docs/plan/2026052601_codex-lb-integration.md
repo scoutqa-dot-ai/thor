@@ -10,7 +10,7 @@ Let opencode use ChatGPT-backed `gpt-5*` models without minting paid OpenAI API 
 
 **In scope**
 
-- New `codex-lb` service in `docker-compose.yml`, persisted via a named volume.
+- New `codex-lb` service in `docker-compose.yml`, persisted via a host bind mount at `./docker-volumes/codex-lb:/var/lib/codex-lb`.
 - opencode points its built-in `openai` provider at `http://codex-lb:2455/v1` with a literal API key the unauthenticated CIDR allowlist accepts.
 - Outbound traffic from codex-lb goes through mitmproxy; the existing built-in passthrough for `openai.com` / `chatgpt.com` carries it.
 - codex-lb trusts the mitmproxy CA (server.py uses aiohttp, which honors `SSL_CERT_FILE`).
@@ -51,7 +51,7 @@ flowchart LR
 
 ### Phase 1 — Add codex-lb container — _shipped in `f7769aa9`_
 
-- New service block in `docker-compose.yml` with ports, named volume, healthcheck dependency on mitmproxy.
+- New service block in `docker-compose.yml` with ports, a `./docker-volumes/codex-lb:/var/lib/codex-lb` host bind mount for the SQLite store, and a healthcheck dependency on mitmproxy.
 - `mitmproxy-egress-env` YAML anchor reused by both codex-lb and opencode.
 - `CODEX_LB_PROXY_UNAUTHENTICATED_CLIENT_CIDRS` covers the Docker bridge subnets so opencode can call codex-lb without minting a real API key.
 
