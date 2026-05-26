@@ -1,0 +1,27 @@
+scripts/test-e2e.sh
+  cda093fedcf9b1a0 1089-1093,1101-1110,1114-1118,1123-1127
+docker/ingress/nginx.conf.template
+  cda093fedcf9b1a0 76-81,83-84,88,91,93-94
+docs/plan/2026052601_codex-lb-integration.md
+  cda093fedcf9b1a0 104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "528f8aa790de57fd6c987bbc803d56a4c2a12c52",
+  "prompts": {
+    "cda093fedcf9b1a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "567ed7c0-6b51-41d9-9ab1-3642adfd4b58",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 92,
+      "total_deletions": 72,
+      "accepted_lines": 41,
+      "overriden_lines": 0
+    }
+  }
+}
