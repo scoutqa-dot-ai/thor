@@ -1099,7 +1099,7 @@ else
   echo "  ⚠ skipping /assets opencode probe (could not discover an opencode asset path)"
 fi
 
-codex_asset=$(curl -fsS http://127.0.0.1:2455/dashboard 2>/dev/null \
+codex_asset=$(curl -fsSL http://127.0.0.1:2455/dashboard 2>/dev/null \
   | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"' || true)
 if [[ -n "$codex_asset" ]]; then
   asset_probe=$(ingress_probe "$codex_asset")
