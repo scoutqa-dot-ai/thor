@@ -179,6 +179,7 @@ BUILTIN_PASSTHROUGH = [
     ".openai.com",
     "chatgpt.com",
     ".chatgpt.com",
+    "codex-lb",
 ]
 
 

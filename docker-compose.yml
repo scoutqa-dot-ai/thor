@@ -10,8 +10,8 @@ x-mitmproxy-egress-env: &mitmproxy-egress-env
   https_proxy: http://mitmproxy:8080
   HTTP_PROXY: http://mitmproxy:8080
   HTTPS_PROXY: http://mitmproxy:8080
-  no_proxy: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
-  NO_PROXY: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
+  no_proxy: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy"
+  NO_PROXY: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy"
 
 services:
   remote-cli:
