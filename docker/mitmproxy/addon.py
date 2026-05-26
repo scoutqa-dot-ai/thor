@@ -97,23 +97,5 @@ class ThorMitmAddon:
         for name, value in resolved_headers.items():
             request.headers[name] = value
 
-    def response(self, flow: Any) -> None:
-        host = getattr(flow.request, "pretty_host", None) or flow.request.host
-        if host != "codex-lb":
-            return
-        import os, time
-        os.makedirs("/tmp/codex-lb-dump", exist_ok=True)
-        ts = time.strftime("%H%M%S")
-        path = f"/tmp/codex-lb-dump/{ts}-{flow.request.path.replace('/', '_')}.txt"
-        body = flow.response.get_content() or b""
-        try:
-            with open(path, "wb") as f:
-                f.write(b"## REQ ##\n")
-                f.write(flow.request.get_content() or b"")
-                f.write(b"\n\n## RESP ##\n")
-                f.write(body)
-        except Exception:
-            pass
-
 
 addons = [ThorMitmAddon()]
