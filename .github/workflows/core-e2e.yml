@@ -97,9 +97,12 @@ jobs:
             docker-volumes/workspace/worktrees \
             docker-volumes/opencode \
             docker-volumes/github-app \
-            docker-volumes/home/thor
+            docker-volumes/home/thor \
+            docker-volumes/codex-lb
           # remote-cli runs as the "thor" user; make the mounted home writable.
           chmod 777 docker-volumes/home/thor
+          # codex-lb opens a SQLite DB under /var/lib/codex-lb as a non-root user.
+          chmod 777 docker-volumes/codex-lb
 
           printf '%s' "$THOR_GITHUB_APP_PRIVATE_KEY" > docker-volumes/github-app/private-key.pem
           chmod 600 docker-volumes/github-app/private-key.pem
