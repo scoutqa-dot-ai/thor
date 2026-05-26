@@ -1089,7 +1089,7 @@ done
 # tries opencode first; on 404 it falls back to codex-lb so the codex-lb
 # dashboard loads. Pull a real asset path from each upstream's HTML and verify
 # both resolve through the ingress without auth.
-opencode_asset=$(docker exec thor-opencode-1 sh -c 'wget -q -O - http://127.0.0.1:4096/' 2>/dev/null \
+opencode_asset=$(curl -fsS http://127.0.0.1:4096/ 2>/dev/null \
   | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"' || true)
 if [[ -n "$opencode_asset" ]]; then
   asset_probe=$(ingress_probe "$opencode_asset")
@@ -1099,7 +1099,7 @@ else
   echo "  ⚠ skipping /assets opencode probe (could not discover an opencode asset path)"
 fi
 
-codex_asset=$(docker exec thor-codex-lb-1 sh -c 'wget -q -O - http://127.0.0.1:2455/dashboard' 2>/dev/null \
+codex_asset=$(curl -fsS http://127.0.0.1:2455/dashboard 2>/dev/null \
   | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"' || true)
 if [[ -n "$codex_asset" ]]; then
   asset_probe=$(ingress_probe "$codex_asset")
