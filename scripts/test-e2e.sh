@@ -1086,9 +1086,11 @@ for path in /dashboard /accounts /settings /api/accounts; do
 done
 
 # /assets/ is shared between opencode and codex-lb (both Vite bundles). nginx
-# tries opencode first; on 404 it falls back to codex-lb so the codex-lb
-# dashboard loads. Pull a real asset path from each upstream's HTML and verify
-# both resolve through the ingress without auth.
+# tries codex-lb first; on 404 it falls back to opencode. codex-lb's
+# spa_fallback returns a real 404 for unknown /assets/<hash>, while opencode's
+# SPA returns 200 + index.html — so the order is asymmetric on purpose.
+# Status alone can't catch a silent SPA-fallback regression (it's also 200);
+# compare ingress body against the direct upstream byte-for-byte instead.
 discover_asset() {
   local url=$1
   local body
@@ -1096,19 +1098,33 @@ discover_asset() {
   printf '%s' "$body" | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"'
 }
 
+sha_of_url() {
+  local url=$1
+  local sha
+  sha=$(curl -fsS "$url" 2>/dev/null | shasum -a 256 | awk '{print $1}') || sha=""
+  if [[ "$sha" == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]]; then
+    sha=""
+  fi
+  printf '%s' "$sha"
+}
+
 opencode_asset=$(discover_asset http://127.0.0.1:4096/)
 assert '[[ -n "$opencode_asset" ]]' \
   "discovered an opencode asset path" "opencode HTML had no /assets/ reference"
-asset_probe=$(ingress_probe "$opencode_asset")
-assert '[[ "${asset_probe%% *}" == "200" ]]' \
-  "/assets/ serves opencode SPA bundles" "asset=$opencode_asset got=$asset_probe"
+opencode_direct_sha=$(sha_of_url "http://127.0.0.1:4096$opencode_asset")
+opencode_ingress_sha=$(sha_of_url "$INGRESS_URL$opencode_asset")
+assert '[[ -n "$opencode_direct_sha" && "$opencode_direct_sha" == "$opencode_ingress_sha" ]]' \
+  "/assets/ falls back from codex-lb 404 to opencode (body matches direct)" \
+  "asset=$opencode_asset direct=$opencode_direct_sha ingress=$opencode_ingress_sha"
 
 codex_asset=$(discover_asset http://127.0.0.1:2455/dashboard)
 assert '[[ -n "$codex_asset" ]]' \
   "discovered a codex-lb asset path" "codex-lb /dashboard HTML had no /assets/ reference"
-asset_probe=$(ingress_probe "$codex_asset")
-assert '[[ "${asset_probe%% *}" == "200" ]]' \
-  "/assets/ falls back to codex-lb for its dashboard bundles" "asset=$codex_asset got=$asset_probe"
+codex_direct_sha=$(sha_of_url "http://127.0.0.1:2455$codex_asset")
+codex_ingress_sha=$(sha_of_url "$INGRESS_URL$codex_asset")
+assert '[[ -n "$codex_direct_sha" && "$codex_direct_sha" == "$codex_ingress_sha" ]]' \
+  "/assets/ resolves to codex-lb for its bundles (body matches direct)" \
+  "asset=$codex_asset direct=$codex_direct_sha ingress=$codex_ingress_sha"
 
 # ── Results ─────────────────────────────────────────────────────────────────
 
