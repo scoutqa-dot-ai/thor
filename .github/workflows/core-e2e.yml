@@ -8,6 +8,7 @@ on:
       - "scripts/test-create-jira-approval-e2e.sh"
       - "scripts/test-opencode-e2e.sh"
       - "packages/**"
+      - "docker/**"
       - pnpm-lock.yaml
       - docker-compose.yml
   workflow_dispatch:
