@@ -1,0 +1,23 @@
+scripts/mitmproxy-ca-init.sh
+  35c540ba565f560c 44-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f30b626f3a65dd43d9782bb1880da1e968b333ac",
+  "prompts": {
+    "35c540ba565f560c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7789fac3-1ed5-4f73-b3cc-1dc216dc741e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
