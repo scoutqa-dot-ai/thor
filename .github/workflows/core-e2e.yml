@@ -144,7 +144,7 @@ jobs:
 
           ./scripts/mitmproxy-ca-init.sh
 
-          docker compose up --build --wait -d gateway
+          docker compose up --build --wait -d
 
       - name: Run e2e test
         env:
