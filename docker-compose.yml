@@ -129,6 +129,12 @@ services:
       CODEX_LB_UPSTREAM_WEBSOCKET_TRUST_ENV: "true"
       CODEX_LB_CONVERSATION_ARCHIVE_ENABLED: "true"
       CODEX_LB_LOG_PROXY_REQUEST_PAYLOAD: "true"
+      # The HTTP responses session bridge pools concurrent same-session calls
+      # onto one upstream WebSocket; opencode's title+build forks then race and
+      # the title call receives an envelope with no output_text.delta events,
+      # leaving session titles stuck on "New session - <timestamp>". Disable
+      # the bridge so each request gets its own upstream stream.
+      CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED: "false"
       SSL_CERT_FILE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
       REQUESTS_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
       CURL_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
