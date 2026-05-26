@@ -1,0 +1,25 @@
+docker-compose.yml
+  35c540ba565f560c 13-14
+docker/mitmproxy/rules.py
+  35c540ba565f560c 182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "dba4314c0c27713e9b059ecff9133c54e089b94e",
+  "prompts": {
+    "35c540ba565f560c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7789fac3-1ed5-4f73-b3cc-1dc216dc741e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 2,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
