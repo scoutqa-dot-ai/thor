@@ -127,8 +127,12 @@ services:
       CODEX_LB_DASHBOARD_AUTH_MODE: disabled
       CODEX_LB_PROXY_UNAUTHENTICATED_CLIENT_CIDRS: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
       CODEX_LB_UPSTREAM_WEBSOCKET_TRUST_ENV: "true"
+      SSL_CERT_FILE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      REQUESTS_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      CURL_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
     volumes:
       - ./docker-volumes/codex-lb:/var/lib/codex-lb
+      - ./docker-volumes/mitmproxy/public:/etc/thor/mitmproxy-public:ro
     depends_on:
       mitmproxy:
         condition: service_healthy
