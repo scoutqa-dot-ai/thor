@@ -1089,25 +1089,26 @@ done
 # tries opencode first; on 404 it falls back to codex-lb so the codex-lb
 # dashboard loads. Pull a real asset path from each upstream's HTML and verify
 # both resolve through the ingress without auth.
-opencode_asset=$(curl -fsS http://127.0.0.1:4096/ 2>/dev/null \
-  | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"' || true)
-if [[ -n "$opencode_asset" ]]; then
-  asset_probe=$(ingress_probe "$opencode_asset")
-  assert '[[ "${asset_probe%% *}" == "200" ]]' \
-    "/assets/ serves opencode SPA bundles" "asset=$opencode_asset got=$asset_probe"
-else
-  echo "  ⚠ skipping /assets opencode probe (could not discover an opencode asset path)"
-fi
+discover_asset() {
+  local url=$1
+  local body
+  body=$(curl -fsSL "$url")
+  printf '%s' "$body" | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"'
+}
 
-codex_asset=$(curl -fsSL http://127.0.0.1:2455/dashboard 2>/dev/null \
-  | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"' || true)
-if [[ -n "$codex_asset" ]]; then
-  asset_probe=$(ingress_probe "$codex_asset")
-  assert '[[ "${asset_probe%% *}" == "200" ]]' \
-    "/assets/ falls back to codex-lb for its dashboard bundles" "asset=$codex_asset got=$asset_probe"
-else
-  echo "  ⚠ skipping /assets codex-lb fallback probe (could not discover a codex-lb asset path)"
-fi
+opencode_asset=$(discover_asset http://127.0.0.1:4096/)
+assert '[[ -n "$opencode_asset" ]]' \
+  "discovered an opencode asset path" "opencode HTML had no /assets/ reference"
+asset_probe=$(ingress_probe "$opencode_asset")
+assert '[[ "${asset_probe%% *}" == "200" ]]' \
+  "/assets/ serves opencode SPA bundles" "asset=$opencode_asset got=$asset_probe"
+
+codex_asset=$(discover_asset http://127.0.0.1:2455/dashboard)
+assert '[[ -n "$codex_asset" ]]' \
+  "discovered a codex-lb asset path" "codex-lb /dashboard HTML had no /assets/ reference"
+asset_probe=$(ingress_probe "$codex_asset")
+assert '[[ "${asset_probe%% *}" == "200" ]]' \
+  "/assets/ falls back to codex-lb for its dashboard bundles" "asset=$codex_asset got=$asset_probe"
 
 # ── Results ─────────────────────────────────────────────────────────────────
 
