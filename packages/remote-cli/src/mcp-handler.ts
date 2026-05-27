@@ -939,7 +939,8 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
       return {
         configured: configured.size,
-        connected: instances.size,
+        connected: new Set([...instances.values()].map((instance) => instance.name)).size,
+        connectedTargets: instances.size,
         instances: Object.fromEntries(
           PROXY_NAMES.map((name) => {
             const matching = [...instances.values()].filter((instance) => instance.name === name);

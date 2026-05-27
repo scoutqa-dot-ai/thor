@@ -352,11 +352,18 @@ describe("remote-cli MCP endpoints", () => {
 
     const health = await fetch(`${baseUrl}/health`);
     const healthBody = (await health.json()) as {
-      mcp: { configured: number; instances: { atlassian: { connected: boolean; tools: number } } };
+      mcp: {
+        configured: number;
+        connected: number;
+        connectedTargets: number;
+        instances: { atlassian: { connected: boolean; tools: number } };
+      };
     };
 
     expect(health.status).toBe(200);
     expect(healthBody.mcp.configured).toBe(3);
+    expect(healthBody.mcp.connected).toBe(1);
+    expect(healthBody.mcp.connectedTargets).toBe(1);
     expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 5 });
   });
 
@@ -517,6 +524,52 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(health.status).toBe(200);
     expect(healthBody.mcp.configured).toBe(1);
+  });
+
+  it("reports connected upstream names separately from connected credential targets in health", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_AUTH_LABS", "Basic labs-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: { qa: { channels: ["C123"] }, labs: { channels: ["C999"] } },
+    };
+
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "labs-session",
+      anchorId: "00000000-0000-7000-8000-0000000004b1",
+    });
+    appendAlias({
+      aliasType: "slack.thread",
+      aliasValue: "C999/1710000000.002",
+      anchorId: "00000000-0000-7000-8000-0000000004b1",
+    });
+    appendSessionEvent("labs-session", {
+      type: "trigger_start",
+      triggerId: "00000000-0000-7000-8000-000000000103",
+      correlationKey: "slack:thread:C999/1710000000.002",
+    });
+
+    await postJson(
+      "/exec/mcp",
+      { args: ["atlassian", "getJiraIssue", "{}"], cwd: "/workspace/repos/acme", directory: "/workspace/repos/acme" },
+      { "x-thor-session-id": "parent-session" },
+    );
+    await postJson(
+      "/exec/mcp",
+      { args: ["atlassian", "getJiraIssue", "{}"], cwd: "/workspace/repos/acme", directory: "/workspace/repos/acme" },
+      { "x-thor-session-id": "labs-session" },
+    );
+
+    const health = await fetch(`${baseUrl}/health`);
+    const healthBody = (await health.json()) as {
+      mcp: { configured: number; connected: number; connectedTargets: number };
+    };
+
+    expect(health.status).toBe(200);
+    expect(healthBody.mcp.configured).toBeGreaterThanOrEqual(1);
+    expect(healthBody.mcp.connected).toBe(1);
+    expect(healthBody.mcp.connectedTargets).toBe(2);
   });
 
   it("rejects worktree session directories for MCP authz", async () => {

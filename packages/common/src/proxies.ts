@@ -1,4 +1,5 @@
 import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
+import { normalizeProfileEnvSuffix } from "./profile-normalization.js";
 import type { ProxyConfig } from "./workspace-config.js";
 
 export const PROXY_NAMES = ["atlassian", "grafana", "posthog"] as const;
@@ -100,15 +101,6 @@ export interface ResolvedProxyConfig extends ProxyConfig {
     profile?: string;
     envScope: "profile" | "global";
   };
-}
-
-export function normalizeProfileEnvSuffix(profile: string): string {
-  const normalized = profile.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
-  let start = 0;
-  let end = normalized.length;
-  while (start < end && normalized[start] === "_") start += 1;
-  while (end > start && normalized[end - 1] === "_") end -= 1;
-  return normalized.slice(start, end);
 }
 
 function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {

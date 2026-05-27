@@ -3,11 +3,11 @@ import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
 import {
   getAvailableProxyNames,
   getProxyConfig,
-  normalizeProfileEnvSuffix,
   PROXY_NAMES,
   PROXY_REGISTRY,
   resolveProxyConfig,
 } from "./proxies.js";
+import { normalizeProfileEnvSuffix } from "./profile-normalization.js";
 
 describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {

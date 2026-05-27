@@ -3,6 +3,7 @@ import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.js";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
 import { createLogger, logWarn } from "./logger.js";
+import { normalizeProfileEnvSuffix } from "./profile-normalization.js";
 
 // --- Schema ---
 
@@ -53,15 +54,6 @@ const UserRecordSchema = z.object({
 
 const SlackConfigSchema = z.object({}).strict();
 
-function normalizeProfileKey(profileName: string): string {
-  const normalized = profileName.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
-  let start = 0;
-  let end = normalized.length;
-  while (start < end && normalized[start] === "_") start += 1;
-  while (end > start && normalized[end - 1] === "_") end -= 1;
-  return normalized.slice(start, end);
-}
-
 const ProfileConfigSchema = z.object({
   channels: z
     .array(z.string().min(1))
@@ -83,7 +75,7 @@ export const WorkspaceConfigSchema = z
     const seen = new Map<string, string>();
     const normalizedProfiles = new Map<string, string>();
     for (const [profileName, profile] of Object.entries(config.profiles ?? {})) {
-      const normalizedProfile = normalizeProfileKey(profileName);
+      const normalizedProfile = normalizeProfileEnvSuffix(profileName);
       if (!normalizedProfile) {
         ctx.addIssue({
           code: "custom",

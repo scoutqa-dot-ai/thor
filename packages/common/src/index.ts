@@ -22,12 +22,14 @@ export {
   isSlackChannelInProfile,
 } from "./workspace-config.js";
 export {
+  normalizeProfileEnvSuffix,
+} from "./profile-normalization.js";
+export {
   PROXY_NAMES,
   PROXY_REGISTRY,
   isProxyName,
   getProxyConfig,
   resolveProxyConfig,
-  normalizeProfileEnvSuffix,
   getAvailableProxyNames,
 } from "./proxies.js";
 export {
