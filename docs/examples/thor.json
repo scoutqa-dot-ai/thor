@@ -12,6 +12,9 @@
       "github": "alice"
     }
   ],
+  "slack": {
+    "private_channel_allowlist": ["C0123456789"]
+  },
   "mitmproxy": [
     {
       "host": "billing.example.com",

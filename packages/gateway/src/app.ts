@@ -19,6 +19,7 @@ import {
   resolveRepoDirectory,
   type ApprovalButtonRoute,
   type InboundWebhookHistoryEntry,
+  type ConfigLoader,
 } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
@@ -37,13 +38,21 @@ import {
   type InternalExecClient,
   type RunnerDeps,
 } from "./service.js";
-import { createSlackClient, type SlackDeps } from "./slack-api.js";
+import { createSlackClient, type SlackChannelGateInput, type SlackDeps } from "./slack-api.js";
+import {
+  addSlackGateRejectedReaction,
+  evaluateCachedSlackChannelGate,
+  evaluateSlackChannelGate,
+  type SlackChannelGateDecision,
+} from "./slack-channel-gate.js";
 import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
+  buildPendingSlackPrivacyKey,
   getSlackCorrelationKeys,
   isForwardableSlackMessage,
   isSupportedSlackMessageSubtype,
+  isPendingSlackPrivacyKey,
   parseSlackTs,
   SlackEventEnvelopeSchema,
   SlackInteractivityPayloadSchema,
@@ -475,6 +484,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   slackDefaultRepo?: string;
   /** Test override for Slack channel repo memory root. */
   slackChannelRepoMemoryRoot?: string;
+  /** Dynamic workspace config loader. */
+  workspaceConfigLoader?: ConfigLoader;
 }
 
 const InteractivityBodySchema = z.object({
@@ -983,6 +994,44 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const slackDeps: SlackDeps = {
     client: config.slackClient ?? createSlackClient(config.slackBotToken, config.slackApiBaseUrl),
   };
+
+  const markIgnoredForGatedChannel = (
+    event: SlackChannelGateInput & { ts: string },
+    eventId: string,
+    history: WebhookHistoryState,
+    decision: Extract<SlackChannelGateDecision, { allowed: false }>,
+  ): void => {
+    history.reason = decision.reason;
+    history.metadata = {
+      ...(history.metadata ?? {}),
+      channel: event.channel,
+      privateChannelAllowed: false,
+      ...(decision.workspaceConfigLoadFailed ? { workspaceConfigLoadFailed: true } : {}),
+    };
+    logInfo(log, "event_ignored_private_channel_not_allowlisted", {
+      eventId,
+      channel: event.channel,
+    });
+    addSlackGateRejectedReaction(event, slackDeps, { eventId });
+  };
+
+  const shouldIgnoreForGatedChannel = async (
+    event: SlackChannelGateInput & { ts: string },
+    eventId: string,
+    history: WebhookHistoryState,
+  ): Promise<boolean> => {
+    const decision = await evaluateSlackChannelGate({
+      event,
+      slackDeps,
+      workspaceConfigLoader: config.workspaceConfigLoader,
+      logContext: { eventId },
+    });
+    if (decision.allowed) return false;
+
+    markIgnoredForGatedChannel(event, eventId, history, decision);
+    return true;
+  };
+
   const remoteCliHost = config.remoteCliHost ?? "remote-cli";
   const remoteCliUrl = `http://${remoteCliHost}:${config.remoteCliPort ?? 3004}`;
   const internalExec =
@@ -1041,28 +1090,51 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           onAccepted: ack,
           onRejected: reject,
           slackDirectoryForChannel: resolveSlackDirectory,
+          workspaceConfigLoader: config.workspaceConfigLoader,
         });
 
         if (plan.kind === "reroute") {
           const now = Date.now();
           const resolvedKey = resolveCorrelationKeys([plan.toCorrelationKey]);
-          for (const [index, event] of githubEvents.entries()) {
-            await queue.enqueue({
-              ...event,
-              id: `${event.id}:resolved`,
-              correlationKey: resolvedKey,
-              payload: plan.githubEvents[index],
-              readyAt: now,
-              delayMs: 0,
+          if (plan.githubEvents) {
+            for (const [index, event] of githubEvents.entries()) {
+              await queue.enqueue({
+                ...event,
+                id: `${event.id}:resolved`,
+                correlationKey: resolvedKey,
+                payload: plan.githubEvents[index],
+                readyAt: now,
+                delayMs: 0,
+              });
+            }
+            ack();
+            logInfo(log, "github_events_rerouted", {
+              fromCorrelationKey: plan.fromCorrelationKey,
+              toCorrelationKey: resolvedKey,
+              batchSize: githubEvents.length,
             });
+            return;
           }
-          ack();
-          logInfo(log, "github_events_rerouted", {
-            fromCorrelationKey: plan.fromCorrelationKey,
-            toCorrelationKey: resolvedKey,
-            batchSize: githubEvents.length,
-          });
-          return;
+          if (plan.slackEvents) {
+            for (const [index, event] of slackEvents.entries()) {
+              await queue.enqueue({
+                ...event,
+                id: `${event.id}:resolved`,
+                correlationKey: resolvedKey,
+                payload: plan.slackEvents[index],
+                readyAt: now,
+                delayMs: 0,
+              });
+            }
+            ack();
+            logInfo(log, "slack_events_rerouted", {
+              fromCorrelationKey: plan.fromCorrelationKey,
+              toCorrelationKey: resolvedKey,
+              batchSize: slackEvents.length,
+            });
+            return;
+          }
+          throw new Error("reroute plan missing event payload");
         }
 
         if (plan.kind === "drop") {
@@ -1084,6 +1156,14 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           logError(log, "github_branch_resolution_retryable", error, {
             correlationKey,
             batchSize: githubEvents.length,
+          });
+          return;
+        }
+
+        if (logPrefix === "slack" && correlationKey && isPendingSlackPrivacyKey(correlationKey)) {
+          logError(log, "slack_privacy_resolution_retryable", error, {
+            correlationKey,
+            batchSize: slackEvents.length,
           });
           return;
         }
@@ -1264,37 +1344,95 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    // app_mention — always forward
-    if (event.type === "app_mention") {
-      void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
-        logError(log, "reaction_failed", err, { eventId }),
-      );
-      const rawKeys = getSlackCorrelationKeys(event);
-      const correlationKey = resolveCorrelationKeys(rawKeys);
-      if (correlationKey !== rawKeys[0]) {
-        logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
-      }
-      logInfo(log, "event_accepted", {
-        eventId,
-        teamId: envelope.data.team_id,
-        eventType: event.type,
-        channel: event.channel,
-        ts: event.ts,
-        threadTs: event.thread_ts,
-        correlationKey,
-      });
-      await queue.enqueue({
+    const enqueueSlackEvent = (
+      payload: SlackThreadEvent,
+      correlationKey: string,
+      options: { delayMs: number; interrupt?: boolean },
+    ) =>
+      queue.enqueue({
         id: eventId,
         source: "slack",
         correlationKey,
-        payload: event,
+        payload,
         receivedAt: new Date().toISOString(),
-        sourceTs: parseSlackTs(event.ts),
-        readyAt: Date.now(),
-        delayMs: 0,
-        interrupt: true,
+        sourceTs: parseSlackTs(payload.ts),
+        readyAt: Date.now() + options.delayMs,
+        delayMs: options.delayMs,
+        ...(options.interrupt !== undefined ? { interrupt: options.interrupt } : {}),
       });
+
+    const deferForPendingPrivacy = async (
+      target: SlackThreadEvent,
+      options: { delayMs: number; interrupt?: boolean },
+    ): Promise<void> => {
+      const correlationKey = buildPendingSlackPrivacyKey(target.channel, eventId);
+      history.metadata = {
+        ...(history.metadata ?? {}),
+        channel: target.channel,
+        correlationKey,
+      };
+      logInfo(log, "event_deferred_pending_privacy", {
+        eventId,
+        teamId: envelope.data.team_id,
+        eventType: target.type,
+        subtype: target.type === "message" ? target.subtype : undefined,
+        channel: target.channel,
+        ts: target.ts,
+        correlationKey,
+      });
+      await enqueueSlackEvent(target, correlationKey, options);
       res.status(200).json({ ok: true });
+    };
+
+    const acceptSlackEvent = async (
+      target: SlackThreadEvent,
+      correlationKey: string,
+      options: { delayMs: number; interrupt?: boolean },
+    ): Promise<void> => {
+      logInfo(log, "event_accepted", {
+        eventId,
+        teamId: envelope.data.team_id,
+        eventType: target.type,
+        subtype: target.type === "message" ? target.subtype : undefined,
+        channel: target.channel,
+        ts: target.ts,
+        threadTs: target.thread_ts,
+        correlationKey,
+      });
+      await enqueueSlackEvent(target, correlationKey, options);
+      res.status(200).json({ ok: true });
+    };
+
+    // app_mention events do not include channel_type. A fresh cache hit can
+    // decide inline; otherwise privacy resolution stays off the Slack ack path.
+    if (event.type === "app_mention") {
+      const addEyesReaction = (): void => {
+        void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
+          logError(log, "reaction_failed", err, { eventId }),
+        );
+      };
+      const cachedDecision = evaluateCachedSlackChannelGate({
+        event,
+        workspaceConfigLoader: config.workspaceConfigLoader,
+        logContext: { eventId },
+      });
+      if (cachedDecision) {
+        if (!cachedDecision.allowed) {
+          markIgnoredForGatedChannel(event, eventId, history, cachedDecision);
+          res.status(200).json({ ok: true, ignored: true });
+          return;
+        }
+        addEyesReaction();
+        const rawKeys = getSlackCorrelationKeys(event);
+        const correlationKey = resolveCorrelationKeys(rawKeys);
+        if (correlationKey !== rawKeys[0]) {
+          logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
+        }
+        await acceptSlackEvent(event, correlationKey, { delayMs: 0, interrupt: true });
+        return;
+      }
+      addEyesReaction();
+      await deferForPendingPrivacy(event, { delayMs: 0, interrupt: true });
       return;
     }
 
@@ -1331,27 +1469,17 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         return;
       }
 
-      logInfo(log, "event_accepted", {
-        eventId,
-        teamId: envelope.data.team_id,
-        eventType: event.type,
-        subtype: event.subtype,
-        channel: event.channel,
-        ts: event.ts,
-        threadTs: event.thread_ts,
-        correlationKey,
-      });
-      await queue.enqueue({
-        id: eventId,
-        source: "slack",
-        correlationKey,
-        payload: event,
-        receivedAt: new Date().toISOString(),
-        sourceTs: parseSlackTs(event.ts),
-        readyAt: Date.now() + shortDelay,
-        delayMs: shortDelay,
-      });
-      res.status(200).json({ ok: true });
+      if (event.channel_type === undefined || event.channel_type === "channel") {
+        await deferForPendingPrivacy(event, { delayMs: shortDelay });
+        return;
+      }
+
+      if (await shouldIgnoreForGatedChannel(event, eventId, history)) {
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      await acceptSlackEvent(event, correlationKey, { delayMs: shortDelay });
       return;
     }
 

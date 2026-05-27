@@ -26,6 +26,22 @@ function makePartEvent(sessionID: string, text = `text ${sessionID}`): Event {
   };
 }
 
+function makeMessageUpdatedEvent(sessionID: string): Event {
+  return {
+    type: "message.updated",
+    properties: {
+      info: {
+        id: `msg-${sessionID}`,
+        sessionID,
+        role: "assistant",
+        tokens: { input: 1, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+        providerID: "anthropic",
+        modelID: "claude",
+      },
+    },
+  } as unknown as Event;
+}
+
 function makeIdleEvent(sessionID: string): Event {
   return {
     type: "session.idle",
@@ -230,6 +246,20 @@ describe("EventBusRegistry", () => {
     await expect(a1).resolves.toEqual([a1Part, a1Idle]);
     await expect(a2).resolves.toEqual([a2Part, a2Idle]);
     await expect(b3).resolves.toEqual([b3Part, b3Idle]);
+  });
+
+  it("routes message.updated events by session id from properties.info.sessionID", async () => {
+    const reg = new EventBusRegistry("http://localhost:4096");
+    const sub = await reg.subscribe(["s1"]);
+
+    const update = makeMessageUpdatedEvent("s1");
+    const idle = makeIdleEvent("s1");
+    const collected = collectUntilIdle(sub);
+
+    mockStream.push(makeGlobalEvent("/repo/a", update));
+    mockStream.push(makeGlobalEvent("/repo/a", idle));
+
+    await expect(collected).resolves.toEqual([update, idle]);
   });
 
   it("includes child session events after the subscription adds the child id", async () => {

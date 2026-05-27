@@ -5,10 +5,16 @@ import {
   logInfo,
   logWarn,
   logError,
+  resolveCorrelationKeys,
   resolveRepoDirectory,
+  type ConfigLoader,
 } from "@thor/common";
 import type { ExecResult } from "@thor/common";
-import type { SlackThreadEvent } from "./slack.js";
+import {
+  getSlackCorrelationKeys,
+  isPendingSlackPrivacyKey,
+  type SlackThreadEvent,
+} from "./slack.js";
 import type { CronPayload } from "./cron.js";
 import {
   buildCorrelationKey,
@@ -19,6 +25,11 @@ import {
   type IssueCommentEvent,
 } from "./github.js";
 import { addReaction, updateMessage, type SlackDeps } from "./slack-api.js";
+import {
+  addSlackGateRejectedReaction,
+  evaluateSlackChannelGate,
+  SLACK_GATE_DROP_REASON,
+} from "./slack-channel-gate.js";
 
 const log = createLogger("gateway-service");
 const INTERNAL_EXEC_TIMEOUT_MS = 5000;
@@ -76,6 +87,7 @@ export interface BatchDispatchInput {
   onAccepted?: () => void;
   onRejected?: (reason: string) => void;
   slackDirectoryForChannel?: (channel: string) => SlackRoutingInfo;
+  workspaceConfigLoader?: ConfigLoader;
 }
 
 export interface SlackRoutingInfo {
@@ -100,10 +112,11 @@ export type BatchDispatchPlan =
     }
   | {
       kind: "reroute";
-      logPrefix: "github";
+      logPrefix: "github" | "slack";
       fromCorrelationKey: string;
       toCorrelationKey: string;
-      githubEvents: GitHubWebhookEvent[];
+      githubEvents?: GitHubWebhookEvent[];
+      slackEvents?: SlackThreadEvent[];
     };
 
 interface DispatchPart {
@@ -562,6 +575,38 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   const sources = getBatchSources(input);
   const logPrefix = getBatchLogPrefix(sources);
 
+  if (input.slackEvents.length > 0 && isPendingSlackPrivacyKey(input.correlationKey)) {
+    const event = input.slackEvents[0];
+    if (!event) {
+      return { kind: "drop", logPrefix, reason: SLACK_GATE_DROP_REASON };
+    }
+    const slackDeps = input.slackDeps;
+    if (!slackDeps) {
+      return { kind: "drop", logPrefix: "slack", reason: SLACK_GATE_DROP_REASON };
+    }
+    const channelType = event.type === "message" ? event.channel_type : undefined;
+    const decision = await evaluateSlackChannelGate({
+      event: { channel: event.channel, channel_type: channelType },
+      slackDeps,
+      workspaceConfigLoader: input.workspaceConfigLoader,
+      logContext: { correlationKey: input.correlationKey },
+    });
+    if (!decision.allowed) {
+      addSlackGateRejectedReaction(event, slackDeps, {
+        correlationKey: input.correlationKey,
+      });
+      return { kind: "drop", logPrefix: "slack", reason: decision.reason };
+    }
+    const resolvedKey = resolveCorrelationKeys(getSlackCorrelationKeys(event));
+    return {
+      kind: "reroute",
+      logPrefix: "slack",
+      fromCorrelationKey: input.correlationKey,
+      toCorrelationKey: resolvedKey,
+      slackEvents: input.slackEvents,
+    };
+  }
+
   if (input.githubEvents.length > 0 && isPendingBranchResolveKey(input.correlationKey)) {
     const latest = input.githubEvents[input.githubEvents.length - 1];
     if (!latest || !isIssueCommentEvent(latest)) {
@@ -718,7 +763,8 @@ async function dispatchBatch(input: BatchDispatchInput): Promise<TriggerResult> 
       currentInput = {
         ...currentInput,
         correlationKey: plan.toCorrelationKey,
-        githubEvents: plan.githubEvents,
+        githubEvents: plan.githubEvents ?? currentInput.githubEvents,
+        slackEvents: plan.slackEvents ?? currentInput.slackEvents,
       };
       continue;
     }

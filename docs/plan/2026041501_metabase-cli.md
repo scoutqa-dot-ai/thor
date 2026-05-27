@@ -259,35 +259,3 @@ Wire up environment variables and update Docker config.
 | API key has broader access than allowlist         | The allowlist is UX-only. The DB role is the real boundary. Verify role permissions during deployment. |
 | SQL queries in logs leak PII                      | Route logs subcommand + schema only, never raw SQL text.                                               |
 | Metabase API rate limiting                        | Unlikely for internal instance. Add retry with backoff if encountered.                                 |
-
-<!-- AUTONOMOUS DECISION LOG -->
-
-## Decision Audit Trail
-
-| #   | Phase | Decision                              | Classification | Principle | Rationale                                                                               |
-| --- | ----- | ------------------------------------- | -------------- | --------- | --------------------------------------------------------------------------------------- |
-| 1   | CEO   | Keep remote-cli (not data proxy)      | User-decided   | --        | User chose: schema allowlist needs code                                                 |
-| 2   | CEO   | Drop keyword blocklist                | User-decided   | --        | Both voices agree, user confirmed                                                       |
-| 3   | CEO   | Keep scope minimal (infra only)       | User-decided   | --        | User chose: validation later                                                            |
-| 4   | CEO   | Fix Decision 9 contradiction          | Mechanical     | P5        | Decision 9 said "not build.md" but Phase 3 modifies it. Updated wording.                |
-| 5   | CEO   | Keep single database                  | Mechanical     | P3        | User already explicitly chose this.                                                     |
-| 6   | Eng   | Reframe allowlist as UX, not security | Mechanical     | P5        | Both voices: allowlist not enforced on queries. DB role is boundary.                    |
-| 7   | Eng   | No response truncation                | User-decided   | --        | OpenCode already truncates tool output. No need for service-level cap.                  |
-| 8   | Eng   | Fix shell wrapper path                | Mechanical     | P3        | Codex: `/opt/opencode/remote-cli.mjs` wrong, should be `/usr/local/bin/remote-cli.mjs`. |
-| 9   | Eng   | Fix Dockerfile reference              | Mechanical     | P3        | Codex: `docker/opencode/Dockerfile` wrong, integration in root `Dockerfile`.            |
-| 10  | Eng   | Skip cwd for metabase                 | Mechanical     | P5        | Claude subagent: client sends cwd unconditionally, route must not validate it.          |
-| 11  | Eng   | Do not log raw SQL                    | Mechanical     | P5        | Codex: PII risk. Log subcommand + schema only.                                          |
-| 12  | Eng   | Keep Phase 3 in plan                  | Taste          | P6        | Codex says split out, but user explicitly requested it. Keep it.                        |
-
-## GSTACK REVIEW REPORT
-
-| Review             | Trigger               | Why                            | Runs | Status          | Findings                          |
-| ------------------ | --------------------- | ------------------------------ | ---- | --------------- | --------------------------------- |
-| CEO Review         | `/plan-ceo-review`    | Scope & strategy               | 1    | issues_resolved | 3 user-decided, 5 auto-decided    |
-| Codex Review (CEO) | `codex exec`          | Independent strategy challenge | 1    | complete        | 7 findings, 4 open questions      |
-| Codex Review (Eng) | `codex exec`          | Architecture challenge         | 1    | complete        | 5 findings (2 P0, 3 P1)           |
-| Eng Review         | `/plan-eng-review`    | Architecture & tests           | 1    | issues_resolved | 6 findings across both voices     |
-| Design Review      | `/plan-design-review` | UI/UX gaps                     | 0    | skipped         | No UI scope                       |
-| DX Review          | `/plan-devex-review`  | Developer experience           | 0    | skipped         | Covered by eng review (4-cmd CLI) |
-
-**VERDICT:** REVIEWED. 3 user decisions, 9 auto-decisions, 2 taste decisions surfaced. All P0 issues resolved. Plan updated.

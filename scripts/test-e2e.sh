@@ -35,6 +35,7 @@ repo_name_from_clone_url() {
 RUNNER_URL="${RUNNER_URL:-http://localhost:3000}"
 REMOTE_CLI_URL="${REMOTE_CLI_URL:-http://localhost:3004}"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3002}"
+INGRESS_URL="${INGRESS_URL:-http://localhost:${INGRESS_PORT:-8080}}"
 SLACK_API_URL="${SLACK_API_URL:-https://slack.com/api}"
 SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
 SLACK_CHANNEL_ID="${SLACK_E2E_CHANNEL_ID:-${SLACK_CHANNEL_ID:-}}"
@@ -1052,6 +1053,78 @@ else
     fi
   fi
 fi
+
+# ── Ingress Routing ─────────────────────────────────────────────────────────
+#
+# Hits the live nginx; verifies the auth-gated path matrix without authenticating.
+# Vouch returns 401 for missing cookies; nginx error_page 401 -> 302 to
+# /vouch/login. Any other status means either the route is missing (404) or the
+# auth gate has regressed (200/upstream).
+
+echo ""
+echo "=== Ingress Routing ==="
+
+ingress_probe() {
+  curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-redirs 0 "$INGRESS_URL$1"
+}
+
+health_probe=$(ingress_probe "/global/health")
+assert '[[ "${health_probe%% *}" == "200" ]]' "/global/health bypasses vouch (regression)" "got $health_probe"
+
+root_probe=$(ingress_probe "/")
+assert '[[ "${root_probe%% *}" == "302" && "$root_probe" == *"/vouch/login"* ]]' \
+  "/ (OpenCode SPA) redirects unauthenticated to vouch (regression)" "got $root_probe"
+
+admin_probe=$(ingress_probe "/admin/config")
+assert '[[ "${admin_probe%% *}" == "302" && "$admin_probe" == *"/vouch/login"* ]]' \
+  "/admin/config redirects unauthenticated to vouch (regression)" "got $admin_probe"
+
+for path in /dashboard /accounts /settings /api/accounts; do
+  codex_probe=$(ingress_probe "$path")
+  assert '[[ "${codex_probe%% *}" == "302" && "$codex_probe" == *"/vouch/login"* ]]' \
+    "codex-lb route $path is wired and auth-gated" "got $codex_probe"
+done
+
+# /assets/ is shared between opencode and codex-lb (both Vite bundles). nginx
+# tries codex-lb first; on 404 it falls back to opencode. codex-lb's
+# spa_fallback returns a real 404 for unknown /assets/<hash>, while opencode's
+# SPA returns 200 + index.html — so the order is asymmetric on purpose.
+# Status alone can't catch a silent SPA-fallback regression (it's also 200);
+# compare ingress body against the direct upstream byte-for-byte instead.
+discover_asset() {
+  local url=$1
+  local body
+  body=$(curl -fsSL "$url")
+  printf '%s' "$body" | grep -oE '"/assets/[^"]+"' | head -1 | tr -d '"'
+}
+
+sha_of_url() {
+  local url=$1
+  local sha
+  sha=$(curl -fsS "$url" 2>/dev/null | shasum -a 256 | awk '{print $1}') || sha=""
+  if [[ "$sha" == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]]; then
+    sha=""
+  fi
+  printf '%s' "$sha"
+}
+
+opencode_asset=$(discover_asset http://127.0.0.1:4096/)
+assert '[[ -n "$opencode_asset" ]]' \
+  "discovered an opencode asset path" "opencode HTML had no /assets/ reference"
+opencode_direct_sha=$(sha_of_url "http://127.0.0.1:4096$opencode_asset")
+opencode_ingress_sha=$(sha_of_url "$INGRESS_URL$opencode_asset")
+assert '[[ -n "$opencode_direct_sha" && "$opencode_direct_sha" == "$opencode_ingress_sha" ]]' \
+  "/assets/ falls back from codex-lb 404 to opencode (body matches direct)" \
+  "asset=$opencode_asset direct=$opencode_direct_sha ingress=$opencode_ingress_sha"
+
+codex_asset=$(discover_asset http://127.0.0.1:2455/dashboard)
+assert '[[ -n "$codex_asset" ]]' \
+  "discovered a codex-lb asset path" "codex-lb /dashboard HTML had no /assets/ reference"
+codex_direct_sha=$(sha_of_url "http://127.0.0.1:2455$codex_asset")
+codex_ingress_sha=$(sha_of_url "$INGRESS_URL$codex_asset")
+assert '[[ -n "$codex_direct_sha" && "$codex_direct_sha" == "$codex_ingress_sha" ]]' \
+  "/assets/ resolves to codex-lb for its bundles (body matches direct)" \
+  "asset=$codex_asset direct=$codex_direct_sha ingress=$codex_ingress_sha"
 
 # ── Results ─────────────────────────────────────────────────────────────────
 

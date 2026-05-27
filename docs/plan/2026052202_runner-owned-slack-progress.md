@@ -151,13 +151,13 @@ Runner resolves progress target only from the current trigger request:
 
 ## Decision log
 
-| # | Decision | Rationale | Rejected |
-|---|---|---|---|
-| 1 | Put the progress engine in `@thor/common` with a narrow transport interface | Both runner and tests can share the state machine without giving common a Slack SDK dependency | Keeping progress state in gateway; building a broad multi-platform notification framework |
-| 2 | Keep the only concrete transport adapter in runner for now | Ownership moves to the process that already consumes OpenCode events while keeping this refactor Slack-only | Adding gateway callbacks; adding adapters for cron/GitHub/other platforms now |
-| 3 | Resolve Slack progress target only from `slack:thread:<channel>/<ts>` correlation keys | Matches the agreed simple target rule and avoids alias/approval edge cases in the migration | Looking up historical Slack aliases or deriving targets from payloads |
-| 4 | Change accepted runner triggers to quick JSON and run progress processing in the background | Preserves gateway queue semantics without keeping an HTTP stream open | Keeping NDJSON and requiring gateway to drain/relay it |
-| 5 | Preserve existing progress UX before making any visible improvements | This is an ownership refactor; behavior changes increase regression risk | Reworking message format, thresholds, or cleanup policy in the same change |
+| #   | Decision                                                                                    | Rationale                                                                                                   | Rejected                                                                                  |
+| --- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 1   | Put the progress engine in `@thor/common` with a narrow transport interface                 | Both runner and tests can share the state machine without giving common a Slack SDK dependency              | Keeping progress state in gateway; building a broad multi-platform notification framework |
+| 2   | Keep the only concrete transport adapter in runner for now                                  | Ownership moves to the process that already consumes OpenCode events while keeping this refactor Slack-only | Adding gateway callbacks; adding adapters for cron/GitHub/other platforms now             |
+| 3   | Resolve Slack progress target only from `slack:thread:<channel>/<ts>` correlation keys      | Matches the agreed simple target rule and avoids alias/approval edge cases in the migration                 | Looking up historical Slack aliases or deriving targets from payloads                     |
+| 4   | Change accepted runner triggers to quick JSON and run progress processing in the background | Preserves gateway queue semantics without keeping an HTTP stream open                                       | Keeping NDJSON and requiring gateway to drain/relay it                                    |
+| 5   | Preserve existing progress UX before making any visible improvements                        | This is an ownership refactor; behavior changes increase regression risk                                    | Reworking message format, thresholds, or cleanup policy in the same change                |
 
 ## Implementation risks
 

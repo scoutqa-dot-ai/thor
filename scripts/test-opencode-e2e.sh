@@ -157,7 +157,7 @@ GH_CORR_KEY="opencode-e2e-gh-$(date +%s)"
 echo "  Asking agent to run gh pr list..."
 gh_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"Run: gh pr list --limit 5\\nIf the command succeeds, reply with GH_PR_LIST_OK on the first line, then summarize the result in one short sentence. If the command fails, reply with GH_PR_LIST_FAILED on the first line and include the error.\",\"correlationKey\":\"$GH_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+  -d "{\"prompt\":\"Run: gh pr list --limit 5\\nIf the command succeeds, reply with GH_PR_LIST_OK on the first line, then summarize the result in one short sentence. If the command fails, reply with GH_PR_LIST_FAILED on the first line and include the error.\",\"correlationKey\":\"$GH_CORR_KEY\",\"directory\":\"$REMOTE_CLI_GIT_REPO_DIR\",\"stream\":true}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 gh_trigger=$(echo "$gh_trigger_raw" | parse_done)
 gh_session=$(json_field "$gh_trigger" "sessionId")
@@ -174,7 +174,7 @@ RESUME_CORR_KEY="slack:thread:opencode-e2e-resume-$(date +%s)"
 PHRASE="THOR$(date +%s | tail -c 6)"
 trigger1_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"Our team mascot name is $PHRASE. Confirm by repeating the mascot name back to me.\",\"correlationKey\":\"$RESUME_CORR_KEY\",\"directory\":\"$SESSION_DIR\"}" \
+  -d "{\"prompt\":\"Our team mascot name is $PHRASE. Confirm by repeating the mascot name back to me.\",\"correlationKey\":\"$RESUME_CORR_KEY\",\"directory\":\"$SESSION_DIR\",\"stream\":true}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 trigger1=$(echo "$trigger1_raw" | parse_done)
 session1=$(json_field "$trigger1" "sessionId")
@@ -187,7 +187,7 @@ assert '[[ "$response1_has_phrase" == "yes" ]]' "resume trigger #1: agent confir
 
 trigger2_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
-  -d "{\"prompt\":\"What is our team mascot name? Reply with just the name, nothing else.\",\"correlationKey\":\"$RESUME_CORR_KEY\",\"directory\":\"$SESSION_DIR\"}" \
+  -d "{\"prompt\":\"What is our team mascot name? Reply with just the name, nothing else.\",\"correlationKey\":\"$RESUME_CORR_KEY\",\"directory\":\"$SESSION_DIR\",\"stream\":true}" \
   --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
 trigger2=$(echo "$trigger2_raw" | parse_done)
 session2=$(json_field "$trigger2" "sessionId")
@@ -268,7 +268,7 @@ else
 
     approval_trigger_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
       -H 'Content-Type: application/json' \
-      -d "{\"prompt\":\"Run: approval status $e2e_action_id\\nThen tell me the status field.\",\"correlationKey\":\"opencode-e2e-approval-$(date +%s)\",\"directory\":\"$APPROVAL_DIR\"}" \
+      -d "{\"prompt\":\"Run: approval status $e2e_action_id\\nThen tell me the status field.\",\"correlationKey\":\"opencode-e2e-approval-$(date +%s)\",\"directory\":\"$APPROVAL_DIR\",\"stream\":true}" \
       --max-time 180 2>/dev/null || echo '{"type":"done","error":"request failed"}')
     approval_trigger=$(echo "$approval_trigger_raw" | parse_done)
     approval_session=$(json_field "$approval_trigger" "sessionId")
