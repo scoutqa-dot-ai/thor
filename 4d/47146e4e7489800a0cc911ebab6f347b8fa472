@@ -1,0 +1,23 @@
+packages/gateway/src/queue.ts
+  2970d55bbd912653 164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "4d47146e4e7489800a0cc911ebab6f347b8fa472",
+  "prompts": {
+    "2970d55bbd912653": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d3a294a1-4819-4804-8bb3-8acc509ff642",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
