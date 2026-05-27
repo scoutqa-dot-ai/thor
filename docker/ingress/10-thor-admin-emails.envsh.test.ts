@@ -21,14 +21,14 @@ function renderAdminRegex(input: string): string {
 
 describe("10-thor-admin-emails.envsh", () => {
   it("keeps the final email when multiple admins are configured", () => {
-    expect(renderAdminRegex("son.dao@katalon.com,duy.pham@katalon.com")).toBe(
-      "son\\.dao@katalon\\.com|duy\\.pham@katalon\\.com",
+    expect(renderAdminRegex("alice@acme.test,bob@acme.test")).toBe(
+      "alice@acme\\.test|bob@acme\\.test",
     );
   });
 
   it("trims whitespace and skips empty entries", () => {
-    expect(renderAdminRegex("  son.dao@katalon.com , , duy.pham@katalon.com  ")).toBe(
-      "son\\.dao@katalon\\.com|duy\\.pham@katalon\\.com",
+    expect(renderAdminRegex("  alice@acme.test , , bob@acme.test  ")).toBe(
+      "alice@acme\\.test|bob@acme\\.test",
     );
   });
 });
