@@ -72,10 +72,15 @@ describe("remote-cli slack-post-message endpoint", () => {
     const body = (await response.json()) as { stdout: string; stderr: string; exitCode: number };
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({
-      stdout: '{"ok":true}\n',
-      stderr: "",
-      exitCode: 0,
+    expect(body.stderr).toBe("");
+    expect(body.exitCode).toBe(0);
+    expect(JSON.parse(body.stdout)).toEqual({
+      ok: true,
+      channel: "C999",
+      ts: "1777940309.867569",
+      message_ts: "1777940309.867569",
+      thread_ts: "1777940309.867569",
+      continuation: { channel: "C999", thread_ts: "1777940309.867569" },
     });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://slack.com/api/chat.postMessage",
@@ -88,6 +93,28 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(appendAliasMock).toHaveBeenCalledWith(
       "session-1",
       "slack:thread:C999/1777940309.867569",
+    );
+  });
+
+  it("falls back to the requested channel in the success response", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, ts: "1777940309.867569" }));
+
+    const response = await postSlack(
+      { args: ["--channel", "CREQUESTED"], stdin: "hello" },
+      { "x-thor-session-id": "session-1" },
+    );
+    const body = (await response.json()) as { stdout: string; exitCode: number };
+
+    expect(response.status).toBe(200);
+    expect(body.exitCode).toBe(0);
+    expect(JSON.parse(body.stdout)).toMatchObject({
+      ok: true,
+      channel: "CREQUESTED",
+      continuation: { channel: "CREQUESTED", thread_ts: "1777940309.867569" },
+    });
+    expect(appendAliasMock).toHaveBeenCalledWith(
+      "session-1",
+      "slack:thread:CREQUESTED/1777940309.867569",
     );
   });
 
@@ -105,6 +132,14 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(JSON.parse(((await response.json()) as { stdout: string }).stdout)).toMatchObject({
+      ok: true,
+      channel: "C123",
+      ts: "1777940310.111111",
+      message_ts: "1777940310.111111",
+      thread_ts: "thread-parent-token",
+      continuation: { channel: "C123", thread_ts: "thread-parent-token" },
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({

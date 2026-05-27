@@ -186,5 +186,42 @@ if (!response.ok) {
   console.error(`slack-upload: ${response.error || "files.completeUploadExternal failed"}`);
   process.exit(1);
 }
- process.stdout.write("{\"ok\":true}\n");
- ' "$complete_json"
+const requested = {
+  fileId: process.argv[2],
+  title: process.argv[3],
+  channel: process.argv[4],
+  threadTs: process.argv[5],
+};
+function normalizedFile(file) {
+  if (!file || typeof file !== "object") return undefined;
+  const out = {};
+  for (const [from, to] of [
+    ["id", "id"],
+    ["title", "title"],
+    ["name", "name"],
+    ["permalink", "permalink"],
+    ["permalink_public", "permalink_public"],
+  ]) {
+    if (typeof file[from] === "string" && file[from].length > 0) out[to] = file[from];
+  }
+  return typeof out.id === "string" ? out : undefined;
+}
+let files = Array.isArray(response.files)
+  ? response.files.map(normalizedFile).filter(Boolean)
+  : [];
+if (files.length === 0) {
+  files = [{ id: requested.fileId, title: requested.title }];
+}
+const output = {
+  ok: true,
+  file_id: files[0].id,
+  file: files[0],
+  files,
+};
+if (requested.channel) output.channel = requested.channel;
+if (requested.threadTs) {
+  output.thread_ts = requested.threadTs;
+  if (requested.channel) output.continuation = { channel: requested.channel, thread_ts: requested.threadTs };
+}
+process.stdout.write(`${JSON.stringify(output)}\n`);
+ ' "$complete_json" "$file_id" "$title" "$channel" "$thread_ts"
