@@ -2,7 +2,7 @@
 
 **Date**: 2026-04-27
 **Status**: Ready to implement (Phase 0)
-**Updated**: 2026-05-21 (always wake on terminal `check_suite.completed` outcomes)
+**Updated**: 2026-05-27 (isolate PR-check polling from branch event batches)
 **Depends on**: ~~https://github.com/scoutqa-dot-ai/thor/pull/47~~ ✅ landed — provides `THOR_INTERNAL_SECRET` + `POST /internal/exec` endpoint
 
 ## Problem
@@ -19,14 +19,15 @@ implementation pending a design decision; decisions are now recorded below.
 
 ## Decisions
 
-| #       | Question                  | Decision                                                                                                                                                                                                                                         |
-| ------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Q1      | Event primitive           | **`check_suite.completed`** — single rollup per commit, native PR association, eliminates Q4 fan-out                                                                                                                                             |
-| Q2      | Self-loop guard           | **Gateway-side `git cat-file -e <head_sha>`** via `internalExec()` against the workspace directory before enqueue. No notes schema change, no woken-flag                                                                                         |
-| Q3      | Bot authorship            | **Gateway-side `git log -1 --format=%ae <head_sha>`** via `internalExec()`, matched against the GitHub App bot email derived from `GITHUB_APP_BOT_ID` + `GITHUB_APP_SLUG`. Both Q2 and Q3 must pass to enqueue                                   |
-| Q4      | Multi-workflow debounce   | **Not applicable** — eliminated by Q1 choice                                                                                                                                                                                                     |
-| Q5      | Terminal outcome handling | **Forward every terminal `check_suite.completed` outcome** in the JSON event payload so Thor never appears hidden/asleep after CI completes. Same Q2+Q3 gate applies; agent instructions distinguish success/log-only from failure/action paths. |
-| Rollout | Gating                    | **All repos on the GitHub App install.** No per-repo opt-in for now; existing-session + git-author gates are the rollout safety filter                                                                                                           |
+| #       | Question                   | Decision                                                                                                                                                                                                                                         |
+| ------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Q1      | Event primitive            | **`check_suite.completed`** — single rollup per commit, native PR association, eliminates Q4 fan-out                                                                                                                                             |
+| Q2      | Self-loop guard            | **Gateway-side `git cat-file -e <head_sha>`** via `internalExec()` against the workspace directory before enqueue. No notes schema change, no woken-flag                                                                                         |
+| Q3      | Bot authorship             | **Gateway-side `git log -1 --format=%ae <head_sha>`** via `internalExec()`, matched against the GitHub App bot email derived from `GITHUB_APP_BOT_ID` + `GITHUB_APP_SLUG`. Both Q2 and Q3 must pass to enqueue                                   |
+| Q4      | Multi-workflow debounce    | **Not applicable** — eliminated by Q1 choice                                                                                                                                                                                                     |
+| Q5      | Terminal outcome handling  | **Forward every terminal `check_suite.completed` outcome** in the JSON event payload so Thor never appears hidden/asleep after CI completes. Same Q2+Q3 gate applies; agent instructions distinguish success/log-only from failure/action paths. |
+| Q6      | PR-check polling isolation | **Use a pending check-suite queue key, then reroute to the branch key only after PR-wide checks are terminal.** This keeps user comments/reviews on the branch dispatchable while the CI wake is deferred or dead-lettered independently.        |
+| Rollout | Gating                     | **All repos on the GitHub App install.** No per-repo opt-in for now; existing-session + git-author gates are the rollout safety filter                                                                                                           |
 
 ### Wake-time gate (no schema change)
 
@@ -232,6 +233,36 @@ PR-wide checks gate; terminal PR checks augment the prompt with `thor.pr_checks`
 lookup failures dead-letter the queued event, and pending PR checks explicitly
 reschedule the queue file with a delay instead of dropping the only wake signal
 or retrying every scan tick.
+
+## 2026-05-27 follow-up — isolate pending CI wakes from branch batches
+
+Branch queue batches can contain different kinds of GitHub work for the same
+correlation anchor: a user comment/review is actionable immediately, while a
+`check_suite.completed` wake may need to wait for PR-wide checks. Batch-level
+`ack` / `reject` / `defer` is intentionally coarse, so applying the PR-check
+gate inside a normal `git:branch:<repo>:<branch>` batch can delay or
+dead-letter unrelated user events that happen to share the branch lock.
+
+Decision: accepted `check_suite.completed` webhooks should enqueue under a
+pending key such as `pending:check-suite:<repo>:<deliveryId>`. The pending-key
+dispatcher owns the Thor-authored SHA gate and `gh pr checks` polling:
+
+- Pending PR checks reschedule only the pending check-suite file.
+- Gate or lookup failures dead-letter only the pending check-suite file.
+- Terminal PR checks augment the event with `thor.pr_checks` /
+  `thor.pr_checks_summary`, then reroute/re-enqueue the event onto the real
+  `git:branch:<repo>:<branch>` key for normal branch dispatch.
+
+Normal branch batches must not run PR-wide check polling. By the time a
+check-suite event reaches the branch key, it is already actionable and can be
+merged into the branch prompt with any comments, reviews, approval outcomes, or
+other ready events.
+
+Rejected for this PR: replacing batch-level settlement with per-event queue
+ack/defer/reject. Per-event settlement is the more general long-term queue
+model, but it changes the core `EventQueue` handler contract, partial-settlement
+logging, busy retry semantics, and flush behavior. Keep that as a future queue
+refactor if more event types need independent settlement inside one batch.
 
 ## Phases
 
