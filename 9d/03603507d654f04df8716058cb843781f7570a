@@ -1,0 +1,33 @@
+packages/remote-cli/package.json
+  cb4f0744f0a59b7a 16-17
+packages/remote-cli/src/mcp-handler.test.ts
+  cb4f0744f0a59b7a 1,104,121,155,599,633-634,679-680,710,749,753-756
+packages/remote-cli/src/slack-post-message.test.ts
+  cb4f0744f0a59b7a 1,14-17,22,29,46,69,84,96,117,137,177,238,242,271,275,308,312,328,333,335,350,353-357,372,397,411
+docs/plan/2026050501_slack-post-message.md
+  cb4f0744f0a59b7a 233-236
+packages/remote-cli/src/mcp-handler.ts
+  cb4f0744f0a59b7a 1,132,200,251
+packages/remote-cli/src/slack-post-message.ts
+  cb4f0744f0a59b7a 1-2,28,312,333,335-336,338-341,344-357,360-367,369-370
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "9d03603507d654f04df8716058cb843781f7570a",
+  "prompts": {
+    "cb4f0744f0a59b7a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "58d9d6fd-8e10-4ced-8b31-98c0a4962ddb",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 147,
+      "total_deletions": 192,
+      "accepted_lines": 93,
+      "overriden_lines": 0
+    }
+  }
+}
