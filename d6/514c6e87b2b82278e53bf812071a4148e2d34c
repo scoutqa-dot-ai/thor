@@ -1,0 +1,27 @@
+scripts/test-e2e.sh
+  462b1730f13ea62a 852-857
+packages/remote-cli/src/mcp-handler.test.ts
+  462b1730f13ea62a 98,117,187-194,1176-1223
+packages/remote-cli/src/mcp-handler.ts
+  462b1730f13ea62a 573-598,609,792-797,833-843
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d6514c6e87b2b82278e53bf812071a4148e2d34c",
+  "prompts": {
+    "462b1730f13ea62a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd095f4b-b1d5-425d-9762-7af0b3b8d6be",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 112,
+      "total_deletions": 16,
+      "accepted_lines": 112,
+      "overriden_lines": 0
+    }
+  }
+}
