@@ -55,19 +55,21 @@ Subscribe to:
 
 Only `app_mention` is required for first-contact triggers. The `message.*` events are needed once a thread is already engaged so follow-up replies without `@mention` still wake Thor.
 
-## 5) Workspace config: private channel allowlist
+## 5) Workspace config: profiles for gated channels
 
-Public, non-shared channels can trigger Thor without configuration. Private channels (`group`), DMs (`im`), group DMs (`mpim`), and Slack Connect / shared channels are **fail-closed by default** — they only admit if the channel id appears in `slack.private_channel_allowlist` in `/workspace/config/thor.json`:
+Public, non-shared channels can trigger Thor without configuration. Private channels (`group`), DMs (`im`), group DMs (`mpim`), and Slack Connect / shared channels are **fail-closed by default** — they only admit if the channel id appears in a `profiles.<name>.channels[]` list in `/workspace/config/thor.json`:
 
 ```json
 {
-  "slack": {
-    "private_channel_allowlist": ["C0123456789", "C9876543210"]
+  "profiles": {
+    "qa": {
+      "channels": ["C0123456789", "C9876543210"]
+    }
   }
 }
 ```
 
-Allowlist edits hot-reload — no service restart needed. Events from gated channels that are not allowlisted are dropped with `private_channel_not_allowlisted` (§10).
+Profile edits hot-reload — no service restart needed. Events from gated channels that are not listed in any profile are dropped with `private_channel_not_allowlisted` (§10). The profile also selects profile-scoped MCP credentials when present; public channels outside profiles use unsuffixed global credentials.
 
 ## 6) Per-channel repo override
 
@@ -89,7 +91,7 @@ containing the repo basename (matching a directory under `/workspace/repos/`). T
 
 1. Generate a new signing secret in **Basic Information → Signing Secret**.
 2. Update `SLACK_SIGNING_SECRET` in Thor deployment immediately after.
-3. Trigger any Slack event (a test message in an allowlisted channel) and confirm acceptance with no `signature_invalid` entries.
+3. Trigger any Slack event (a test message in a profiled private channel or public channel) and confirm acceptance with no `signature_invalid` entries.
 
 Bot token rotation: re-install the app to the workspace, copy the new `xoxb-…` token, update `SLACK_BOT_TOKEN`, and restart the services that hold it in memory (`gateway`, `runner`, `remote-cli`, `mitmproxy`). Use a short overlap window so in-flight replies still resolve.
 
@@ -105,7 +107,7 @@ Slack requires a public HTTPS URL — there is no smee.io-equivalent. For local 
    ```
 
 3. Update the Slack app's Event Subscriptions, Interactivity, and OAuth redirect URLs to the tunnel URL.
-4. Send a test mention from any allowlisted channel and verify gateway logs.
+4. Send a test mention from any profiled private channel or public channel and verify gateway logs.
 
 Remember to revert URLs back to your shared deployment when you're done — only one URL set per app.
 
@@ -114,9 +116,9 @@ Remember to revert URLs back to your shared deployment when you're done — only
 | Reason                            | What it means                                                                       | How to fix                                                                                              |
 | --------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `signature_invalid`               | HMAC verification failed, signature header missing, or timestamp outside tolerance  | Verify `SLACK_SIGNING_SECRET`; check clock skew; ensure raw body is unmodified by proxies               |
-| `private_channel_not_allowlisted` | Event came from a gated channel (private / DM / group-DM / Slack Connect) not on the allowlist | Add the channel id to `slack.private_channel_allowlist` in `thor.json`                                  |
+| `private_channel_not_allowlisted` | Event came from a gated channel (private / DM / group-DM / Slack Connect) not in any profile | Add the channel id to `profiles.<name>.channels[]` in `thor.json`                                       |
 | `schema_validation_failed`        | Payload did not match the expected Slack event schema                               | Likely a Slack API change or a malformed delivery; inspect the gateway log entry for the failing path   |
 | `json_parse_error`                | Request body was not valid JSON                                                     | Confirm the app delivers `application/json`; check upstream proxies for body rewriting                  |
 | `self_sender`                     | Event sender id matches `SLACK_BOT_USER_ID`                                         | Self-loop guard — expected when Thor posts replies or reactions                                         |
 
-Channel-privacy lookups (`conversations.info`) are cached for 60 minutes; failures fail closed and drop the event under `private_channel_not_allowlisted`. If a private channel that should admit is being rejected, confirm the bot is invited to the channel and that the `*:read` scopes are granted.
+Channel-privacy lookups (`conversations.info`) are cached for 60 minutes; failures fail closed and drop the event under `private_channel_not_allowlisted`. If a private channel that should admit is being rejected, confirm the bot is invited to the channel, the channel id appears in exactly one profile, and the `*:read` scopes are granted.

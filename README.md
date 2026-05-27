@@ -42,7 +42,7 @@ ingress -> gateway -> runner -> opencode -> codex-lb -> ChatGPT
 
 All outbound HTTP(S) from OpenCode is routed through mitmproxy; see [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a for the routing path, built-in defaults, and custom rule format.
 
-3. Create `/workspace/config/thor.json` (on the host: `docker-volumes/workspace/config/thor.json`) from [`docs/examples/thor.json`](docs/examples/thor.json). It carries GitHub App installation IDs, user attribution, the Slack allowlist, and any mitmproxy rules. MCP upstream access is enabled for every repo automatically.
+3. Create `/workspace/config/thor.json` (on the host: `docker-volumes/workspace/config/thor.json`) from [`docs/examples/thor.json`](docs/examples/thor.json). It carries GitHub App installation IDs, user attribution, Slack routing profiles, and any mitmproxy rules. MCP upstream access is enabled when matching global or profile-scoped env vars are present.
 
 4. Clone repos into the shared workspace:
 
@@ -71,7 +71,7 @@ curl http://localhost:8080/global/health
 
 Thor is an internal AI teammate for engineering and product work; it is not meant to mirror production infrastructure exactly. Each integration owns its own env vars, app/manifest setup, required permissions, and troubleshooting reasons.
 
-- **Slack** — [`docs/slack.md`](docs/slack.md). Events API intake, signing-secret verification, private-channel allowlist, per-channel repo override, app manifest.
+- **Slack** — [`docs/slack.md`](docs/slack.md). Events API intake, signing-secret verification, routing profiles for gated channels, per-channel repo override, app manifest.
 - **GitHub App** — [`docs/github.md`](docs/github.md). Webhook intake, App permissions and event subscriptions, installation IDs, bot commit identity, CI wake gate.
 - **Daytona sandboxes** — [`docs/daytona.md`](docs/daytona.md). On-demand cloud sandboxes for project builds/tests/lints. Custom snapshot publishing.
 - **Outbound HTTP(S) (mitmproxy)** — [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a. Routing path, built-in defaults (Atlassian/Slack/OpenAI), custom credential rules.
@@ -107,11 +107,11 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `THOR_E2E_TEST_HELPERS`         | No       | `runner`                  | Enables secret-gated deterministic runner e2e helpers                                                |
 | `RUNNER_BASE_URL`               | Yes      | `remote-cli`              | Public base URL for Thor trigger viewer links in PR/Jira content                                     |
 | `INGRESS_PORT`                  | No       | `ingress`                 | Host port for the reverse proxy                                                                      |
-| `ATLASSIAN_AUTH`                | Yes      | `remote-cli`, `mitmproxy` | Atlassian MCP auth header and mitmproxy default injection                                            |
-| `POSTHOG_API_KEY`               | Yes      | `remote-cli`              | PostHog MCP auth                                                                                     |
-| `GRAFANA_URL`                   | Yes      | `grafana-mcp`             | Grafana instance URL                                                                                 |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | Yes      | `grafana-mcp`             | Grafana service account token                                                                        |
-| `GRAFANA_ORG_ID`                | No       | `grafana-mcp`             | Grafana org ID (defaults to `1`)                                                                     |
+| `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy` | Global Atlassian MCP auth header and mitmproxy default injection; profile variants use `_PROFILE` suffixes |
+| `POSTHOG_API_KEY`               | No       | `remote-cli`              | Global PostHog MCP auth; profile variants use `_PROFILE` suffixes                                    |
+| `GRAFANA_URL`                   | No       | `grafana-mcp`, `remote-cli` | Global Grafana instance URL; profile variants use `_PROFILE` suffixes                                |
+| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | No       | `grafana-mcp`, `remote-cli` | Global Grafana service account token; profile variants use `_PROFILE` suffixes                       |
+| `GRAFANA_ORG_ID`                | No       | `grafana-mcp`             | Grafana org ID (defaults to `1`); profile variants use `_PROFILE` suffixes                           |
 | `LANGFUSE_HOST`                 | No       | `remote-cli`              | Langfuse host URL                                                                                    |
 | `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`              | Langfuse public key                                                                                  |
 | `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`              | Langfuse secret key                                                                                  |
@@ -133,9 +133,11 @@ Lives at `/workspace/config/thor.json` inside containers, `docker-volumes/worksp
 The file carries four operator-maintained registries:
 
 - `owners.<owner>.github_app_installation_id` — GitHub App installation IDs. See [`docs/github.md`](docs/github.md) §2.
-- `slack.private_channel_allowlist` — conversation ids Thor may act in for private channels, DMs, group DMs, and Slack Connect. See [`docs/slack.md`](docs/slack.md) §5.
+- `profiles.<name>.channels[]` — Slack conversation ids assigned to a routing profile. Private channels, DMs, group DMs, and Slack Connect surfaces must appear in a profile to be admitted. See [`docs/slack.md`](docs/slack.md) §5.
 - `mitmproxy[]` / `mitmproxy_passthrough[]` — outbound credential rules and passthrough hosts. See [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a.
 - `users[]` — human attribution (see below).
+
+Profile names map to env suffixes by uppercasing and replacing non-alphanumerics with `_`: profile `qa-labs` checks `ATLASSIAN_AUTH_QA_LABS` before `ATLASSIAN_AUTH`, `POSTHOG_API_KEY_QA_LABS` before `POSTHOG_API_KEY`, and the Grafana bundle `GRAFANA_URL_QA_LABS` + `GRAFANA_SERVICE_ACCOUNT_TOKEN_QA_LABS` before the unsuffixed bundle. Profile-only Grafana bundles are valid; the unsuffixed Grafana vars are optional. Non-Slack triggers use unsuffixed globals only.
 
 ### Human attribution (`users[]`)
 

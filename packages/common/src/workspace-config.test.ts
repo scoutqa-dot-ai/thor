@@ -12,9 +12,11 @@ import {
   findUserBySlack,
   findUserByGithub,
   findUserByEmail,
+  getProfileForSlackChannel,
+  getProfileForSlackCorrelationKey,
+  isSlackChannelInProfile,
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
-  getSlackPrivateChannelAllowlist,
 } from "./workspace-config.js";
 
 let tempDir: string;
@@ -106,29 +108,46 @@ describe("loadWorkspaceConfig", () => {
     expect(findUserBySlack(config, "UNOMATCH")).toBeUndefined();
   });
 
-  it("accepts Slack private channel allowlist and exposes it through the helper", () => {
+  it("accepts profiles and exposes channel lookup helpers", () => {
     const path = writeConfig("config.json", {
-      slack: { private_channel_allowlist: ["G123", "G456"] },
+      profiles: {
+        qa: { channels: ["G123", "D456"] },
+        labs: { channels: ["C789"] },
+      },
     });
 
     const config = loadWorkspaceConfig(path);
-    expect(getSlackPrivateChannelAllowlist(config)).toEqual(["G123", "G456"]);
-    expect(getSlackPrivateChannelAllowlist({})).toEqual([]);
+    expect(getProfileForSlackChannel(config, "G123")).toBe("qa");
+    expect(getProfileForSlackChannel(config, "C789")).toBe("labs");
+    expect(getProfileForSlackChannel(config, "C000")).toBeUndefined();
+    expect(isSlackChannelInProfile(config, "D456")).toBe(true);
+    expect(isSlackChannelInProfile(config, "D000")).toBe(false);
+    expect(getProfileForSlackCorrelationKey(config, "slack:thread:C789/1710000000.001")).toBe(
+      "labs",
+    );
+    expect(getProfileForSlackCorrelationKey(config, "github:issue:repo#1")).toBeUndefined();
   });
 
-  it("rejects invalid Slack private channel allowlist entries", () => {
+  it("rejects invalid or duplicate profile channel entries", () => {
     expect(() =>
       loadWorkspaceConfig(
-        writeConfig("empty-channel.json", { slack: { private_channel_allowlist: [""] } }),
+        writeConfig("empty-channel.json", { profiles: { qa: { channels: [""] } } }),
       ),
-    ).toThrow("slack.private_channel_allowlist.0");
+    ).toThrow("profiles.qa.channels.0");
     expect(() =>
       loadWorkspaceConfig(
         writeConfig("duplicate-channel.json", {
-          slack: { private_channel_allowlist: ["G123", "G123"] },
+          profiles: { qa: { channels: ["G123", "G123"] } },
         }),
       ),
-    ).toThrow("Slack private channel allowlist must not contain duplicates");
+    ).toThrow("Profile channels must not contain duplicates");
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("duplicate-across-profiles.json", {
+          profiles: { qa: { channels: ["G123"] }, labs: { channels: ["G123"] } },
+        }),
+      ),
+    ).toThrow("Slack channel G123 is assigned to both profiles qa and labs");
   });
 
   it("rejects mitmproxy rule without host selector", () => {

@@ -49,6 +49,8 @@ services:
       - DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}
       - DAYTONA_SNAPSHOT=${DAYTONA_SNAPSHOT:-}
       - RUNNER_BASE_URL=${RUNNER_BASE_URL:?set RUNNER_BASE_URL}
+    env_file:
+      - .env
     volumes:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
@@ -78,9 +80,11 @@ services:
         "datasource,prometheus,loki,proxied",
       ]
     environment:
-      - GRAFANA_URL=${GRAFANA_URL:?set GRAFANA_URL}
-      - GRAFANA_SERVICE_ACCOUNT_TOKEN=${GRAFANA_SERVICE_ACCOUNT_TOKEN:?set GRAFANA_SERVICE_ACCOUNT_TOKEN}
+      - GRAFANA_URL=${GRAFANA_URL:-}
+      - GRAFANA_SERVICE_ACCOUNT_TOKEN=${GRAFANA_SERVICE_ACCOUNT_TOKEN:-}
       - GRAFANA_ORG_ID=${GRAFANA_ORG_ID:-1}
+    env_file:
+      - .env
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8000"]
       interval: 30s
@@ -203,6 +207,8 @@ services:
       - SLACK_TEAM_ID=${SLACK_TEAM_ID:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:?set SLACK_BOT_TOKEN}
       - SLACK_API_BASE_URL
+    env_file:
+      - .env
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:

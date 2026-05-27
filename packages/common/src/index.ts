@@ -16,9 +16,20 @@ export {
   findUserBySlack,
   findUserByGithub,
   findUserByEmail,
-  getSlackPrivateChannelAllowlist,
+  getProfileForSlackChannel,
+  getProfileForSlackCorrelationKey,
+  getSlackChannelFromCorrelationKey,
+  isSlackChannelInProfile,
 } from "./workspace-config.js";
-export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.js";
+export {
+  PROXY_NAMES,
+  PROXY_REGISTRY,
+  isProxyName,
+  getProxyConfig,
+  resolveProxyConfig,
+  normalizeProfileEnvSuffix,
+  getAvailableProxyNames,
+} from "./proxies.js";
 export {
   APPROVAL_TOOL_NAMES,
   ApprovalArgsSchema,
@@ -61,6 +72,7 @@ export type {
   WorkspaceConfig,
   ProxyConfig,
   ProxyUpstream,
+  ProfileConfig,
   ConfigLoader,
   OwnerConfig,
   UserRecord,

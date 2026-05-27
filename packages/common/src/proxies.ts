@@ -93,6 +93,107 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
   },
 };
 
+export interface ResolvedProxyConfig extends ProxyConfig {
+  target: {
+    key: string;
+    name: ProxyName;
+    profile?: string;
+    envScope: "profile" | "global";
+  };
+}
+
+export function normalizeProfileEnvSuffix(profile: string): string {
+  return profile
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const value = env[name];
+  return value && value.trim() ? value : undefined;
+}
+
+function scopedEnv(
+  env: NodeJS.ProcessEnv,
+  baseName: string,
+  profile: string | undefined,
+): { value?: string; scope: "profile" | "global" } {
+  const suffix = profile ? normalizeProfileEnvSuffix(profile) : "";
+  if (suffix) {
+    const scoped = envValue(env, `${baseName}_${suffix}`);
+    if (scoped) return { value: scoped, scope: "profile" };
+  }
+  return { value: envValue(env, baseName), scope: "global" };
+}
+
+function targetKey(name: ProxyName, profile: string | undefined, scope: "profile" | "global") {
+  const suffix = profile && scope === "profile" ? normalizeProfileEnvSuffix(profile) : "GLOBAL";
+  return `${name}:${suffix}`;
+}
+
+export function resolveProxyConfig(
+  name: string,
+  profile?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): ResolvedProxyConfig | undefined {
+  if (!isProxyName(name)) return undefined;
+  const policy = PROXY_REGISTRY[name];
+
+  if (name === "atlassian") {
+    const auth = scopedEnv(env, "ATLASSIAN_AUTH", profile);
+    if (!auth.value) return undefined;
+    return {
+      ...policy,
+      upstream: { url: policy.upstream.url, headers: { Authorization: auth.value } },
+      target: { key: targetKey(name, profile, auth.scope), name, ...(profile && { profile }), envScope: auth.scope },
+    };
+  }
+
+  if (name === "posthog") {
+    const apiKey = scopedEnv(env, "POSTHOG_API_KEY", profile);
+    if (!apiKey.value) return undefined;
+    return {
+      ...policy,
+      upstream: { url: policy.upstream.url, headers: { Authorization: `Bearer ${apiKey.value}` } },
+      target: { key: targetKey(name, profile, apiKey.scope), name, ...(profile && { profile }), envScope: apiKey.scope },
+    };
+  }
+
+  const suffix = profile ? normalizeProfileEnvSuffix(profile) : "";
+  const scopedUrl = suffix ? envValue(env, `GRAFANA_URL_${suffix}`) : undefined;
+  const scopedToken = suffix ? envValue(env, `GRAFANA_SERVICE_ACCOUNT_TOKEN_${suffix}`) : undefined;
+  const useScoped = Boolean(scopedUrl && scopedToken);
+  const url = useScoped ? scopedUrl : envValue(env, "GRAFANA_URL");
+  const token = useScoped ? scopedToken : envValue(env, "GRAFANA_SERVICE_ACCOUNT_TOKEN");
+  if (!url || !token) return undefined;
+  const orgId = useScoped
+    ? envValue(env, `GRAFANA_ORG_ID_${suffix}`)
+    : envValue(env, "GRAFANA_ORG_ID");
+  return {
+    ...policy,
+    upstream: {
+      url: policy.upstream.url,
+      headers: {
+        "X-Grafana-Url": url,
+        Authorization: `Bearer ${token}`,
+        ...(orgId ? { "X-Grafana-Org-Id": orgId } : {}),
+      },
+    },
+    target: {
+      key: targetKey(name, profile, useScoped ? "profile" : "global"),
+      name,
+      ...(profile && { profile }),
+      envScope: useScoped ? "profile" : "global",
+    },
+  };
+}
+
+export function getAvailableProxyNames(profile?: string, env: NodeJS.ProcessEnv = process.env): ProxyName[] {
+  return PROXY_NAMES.filter((name) => resolveProxyConfig(name, profile, env) !== undefined);
+}
+
 const configuredApprovedTools = Object.values(PROXY_REGISTRY)
   .flatMap((proxy) => proxy.approve)
   .sort();

@@ -144,9 +144,12 @@ function readRepoMemory(directory: string, memoryDir = MEMORY_DIR): string | und
   return readMemoryFile(`${memoryDir}/${repo}/README.md`);
 }
 
-function getToolInstructions(directory: string): string | undefined {
+function getToolInstructions(
+  directory: string,
+  opts: { correlationKey?: string; configLoader?: ConfigLoader } = {},
+): string | undefined {
   try {
-    return buildToolInstructions(directory);
+    return buildToolInstructions(directory, opts);
   } catch {
     return undefined;
   }
@@ -926,7 +929,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         }
 
         // Tool instructions: inject MCP tool list from config
-        const toolInstructions = getToolInstructions(sessionDirectory);
+        const toolInstructions = getToolInstructions(sessionDirectory, {
+          correlationKey,
+          configLoader: workspaceConfigLoader,
+        });
         if (toolInstructions) {
           prompt = `${toolInstructions}\n\n${prompt}`;
           logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });

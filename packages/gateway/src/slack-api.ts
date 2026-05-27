@@ -138,7 +138,7 @@ function isKnownPublicNonSharedChannel(
   );
 }
 
-// Returns true when the event must pass the allowlist to be admitted.
+// Returns true when the event must be explicitly configured in a profile to be admitted.
 // Known private/DM surfaces gate immediately. Public channels are verified via
 // `conversations.info` so Slack Connect / shared channels do not bypass policy.
 // Lookup failures fail closed.

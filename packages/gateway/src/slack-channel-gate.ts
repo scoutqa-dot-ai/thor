@@ -1,6 +1,6 @@
 import {
   createLogger,
-  getSlackPrivateChannelAllowlist,
+  isSlackChannelInProfile,
   logError,
   logWarn,
   type ConfigLoader,
@@ -26,17 +26,18 @@ export type SlackChannelGateDecision =
       workspaceConfigLoadFailed?: boolean;
     };
 
-function evaluateAllowlist(input: {
+function evaluateProfileGate(input: {
   event: SlackChannelGateInput;
   workspaceConfigLoader?: ConfigLoader;
   logContext?: Record<string, unknown>;
 }): SlackChannelGateDecision {
-  let allowlist: string[] = [];
   try {
     const workspaceConfig = input.workspaceConfigLoader?.();
-    allowlist = workspaceConfig ? getSlackPrivateChannelAllowlist(workspaceConfig) : [];
+    if (workspaceConfig && isSlackChannelInProfile(workspaceConfig, input.event.channel)) {
+      return { allowed: true };
+    }
   } catch (error) {
-    logError(log, "private_channel_allowlist_config_load_failed", error, {
+    logError(log, "profile_gate_config_load_failed", error, {
       channel: input.event.channel,
       ...(input.logContext ?? {}),
     });
@@ -47,7 +48,6 @@ function evaluateAllowlist(input: {
     };
   }
 
-  if (allowlist.includes(input.event.channel)) return { allowed: true };
   return { allowed: false, reason: SLACK_GATE_DROP_REASON };
 }
 
@@ -59,7 +59,7 @@ export function evaluateCachedSlackChannelGate(input: {
   const gated = getCachedSlackChannelGate(input.event.channel);
   if (gated === undefined) return undefined;
   if (!gated) return { allowed: true };
-  return evaluateAllowlist(input);
+  return evaluateProfileGate(input);
 }
 
 export async function evaluateSlackChannelGate(input: {
@@ -71,7 +71,7 @@ export async function evaluateSlackChannelGate(input: {
   const gated = await isSlackEventGated(input.event, input.slackDeps);
   if (!gated) return { allowed: true };
 
-  return evaluateAllowlist(input);
+  return evaluateProfileGate(input);
 }
 
 export function addSlackGateRejectedReaction(

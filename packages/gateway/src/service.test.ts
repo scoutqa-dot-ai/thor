@@ -526,7 +526,7 @@ describe("planBatchDispatch", () => {
 
       const plan = await planPendingPrivacy({
         slackDeps: slackDepsWith(client),
-        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["C_DEFER"] } }),
+        workspaceConfigLoader: () => ({ profiles: { qa: { channels: ["C_DEFER"] } } }),
       });
 
       expect(plan.kind).toBe("reroute");

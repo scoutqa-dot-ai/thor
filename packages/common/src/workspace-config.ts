@@ -51,27 +51,48 @@ const UserRecordSchema = z.object({
   github: z.string().min(1).optional(),
 });
 
-const SlackConfigSchema = z.object({
-  private_channel_allowlist: z
+const SlackConfigSchema = z.object({}).strict();
+
+const ProfileConfigSchema = z.object({
+  channels: z
     .array(z.string().min(1))
-    .optional()
-    .refine(
-      (channels) => channels === undefined || new Set(channels).size === channels.length,
-      "Slack private channel allowlist must not contain duplicates",
-    ),
+    .refine((channels) => new Set(channels).size === channels.length, {
+      message: "Profile channels must not contain duplicates",
+    }),
 });
 
-export const WorkspaceConfigSchema = z.object({
-  owners: z.record(z.string(), OwnerConfigSchema).optional(),
-  users: z.array(UserRecordSchema).optional(),
-  slack: SlackConfigSchema.optional(),
-  mitmproxy: z.array(MitmproxyRuleSchema).optional(),
-  mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
-});
+export const WorkspaceConfigSchema = z
+  .object({
+    owners: z.record(z.string(), OwnerConfigSchema).optional(),
+    users: z.array(UserRecordSchema).optional(),
+    slack: SlackConfigSchema.optional(),
+    profiles: z.record(z.string().min(1), ProfileConfigSchema).optional(),
+    mitmproxy: z.array(MitmproxyRuleSchema).optional(),
+    mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
+  })
+  .superRefine((config, ctx) => {
+    const seen = new Map<string, string>();
+    for (const [profileName, profile] of Object.entries(config.profiles ?? {})) {
+      for (let index = 0; index < profile.channels.length; index += 1) {
+        const channel = profile.channels[index]!;
+        const previous = seen.get(channel);
+        if (previous) {
+          ctx.addIssue({
+            code: "custom",
+            message: `Slack channel ${channel} is assigned to both profiles ${previous} and ${profileName}`,
+            path: ["profiles", profileName, "channels", index],
+          });
+        } else {
+          seen.set(channel, profileName);
+        }
+      }
+    }
+  });
 
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type OwnerConfig = z.infer<typeof OwnerConfigSchema>;
 export type UserRecord = z.infer<typeof UserRecordSchema>;
+export type ProfileConfig = z.infer<typeof ProfileConfigSchema>;
 
 export interface ProxyUpstream {
   url: string;
@@ -225,8 +246,37 @@ export function findUserByEmail(config: WorkspaceConfig, email: string): UserRec
   return config.users?.find((user) => user.email.toLowerCase() === normalized);
 }
 
-export function getSlackPrivateChannelAllowlist(config: WorkspaceConfig): string[] {
-  return config.slack?.private_channel_allowlist ?? [];
+export function getProfileForSlackChannel(
+  config: WorkspaceConfig,
+  channelId: string,
+): string | undefined {
+  for (const [profileName, profile] of Object.entries(config.profiles ?? {})) {
+    if (profile.channels.includes(channelId)) return profileName;
+  }
+  return undefined;
+}
+
+export function isSlackChannelInProfile(config: WorkspaceConfig, channelId: string): boolean {
+  return getProfileForSlackChannel(config, channelId) !== undefined;
+}
+
+export function getProfileForSlackCorrelationKey(
+  config: WorkspaceConfig,
+  correlationKey: string | undefined,
+): string | undefined {
+  const channel = getSlackChannelFromCorrelationKey(correlationKey);
+  return channel ? getProfileForSlackChannel(config, channel) : undefined;
+}
+
+export function getSlackChannelFromCorrelationKey(
+  correlationKey: string | undefined,
+): string | undefined {
+  const prefix = "slack:thread:";
+  if (!correlationKey?.startsWith(prefix)) return undefined;
+  const rest = correlationKey.slice(prefix.length);
+  const slash = rest.indexOf("/");
+  if (slash <= 0) return undefined;
+  return rest.slice(0, slash);
 }
 
 /**

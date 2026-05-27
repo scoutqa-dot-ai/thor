@@ -37,6 +37,12 @@ const ApprovalActionSchema = z
         postedAt: z.string().min(1).optional(),
       })
       .optional(),
+    routing: z
+      .object({
+        targetKey: z.string().min(1),
+        profile: z.string().min(1).optional(),
+      })
+      .optional(),
   })
   .superRefine((action, ctx) => {
     if (action.status === "approved" && !action.result) {
@@ -62,6 +68,7 @@ export class ApprovalStore {
     args: Record<string, unknown>,
     origin?: ApprovalAction["origin"],
     notification?: ApprovalAction["notification"],
+    routing?: ApprovalAction["routing"],
   ): ApprovalAction {
     const now = new Date();
     return {
@@ -72,6 +79,7 @@ export class ApprovalStore {
       args,
       ...(origin && (origin.sessionId || origin.trigger) && { origin }),
       ...(notification && { notification }),
+      ...(routing && { routing }),
       createdAt: now.toISOString(),
       dateSegment: now.toISOString().slice(0, 10),
     };

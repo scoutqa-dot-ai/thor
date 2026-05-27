@@ -11,21 +11,24 @@ import {
   ExecResultSchema,
   extractRepoFromCwd,
   findAnchorContext,
+  findSlackTriggerCorrelationKey,
+  getAvailableProxyNames,
+  getProfileForSlackCorrelationKey,
   getProxyConfig,
   injectApprovalDisclaimer,
   isProxyName,
   getRunnerBaseUrl,
   ApprovalRequiredEventPayloadSchema,
-  interpolateHeaders,
   logError,
   logInfo,
   logWarn,
   PROXY_NAMES,
+  resolveProxyConfig,
   resolveSlackThreadTargetFromTrigger,
   WORKSPACE_CONFIG_PATH,
   createConfigLoader,
-  type ProxyConfig,
   type ConfigLoader,
+  type ProxyName,
   writeToolCallLog,
 } from "@thor/common";
 import type { ApprovalRequiredEventPayload } from "@thor/common";
@@ -105,6 +108,7 @@ function parseJiraAccountLookupStdout(stdout: string): JiraLookupResult {
 
 interface ProxyInstance {
   name: string;
+  targetKey: string;
   upstream: UpstreamConnection;
   approvalStore: ApprovalStore;
 }
@@ -140,6 +144,7 @@ interface ToolInfo {
 
 interface ApprovalLookup {
   upstreamName: string;
+  targetKey?: string;
   action: ApprovalAction;
   store: ApprovalStore;
 }
@@ -256,15 +261,30 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return "error" in result ? result : { ts: result.ts };
   }
 
-  async function connectInstance(name: string, proxyDef: ProxyConfig): Promise<ProxyInstance> {
-    const interpolatedHeaders = interpolateHeaders(proxyDef.upstream.headers);
+  function resolveProfileForContext(context: McpCommandContext): string | undefined {
+    if (!context.sessionId) return undefined;
+    try {
+      return getProfileForSlackCorrelationKey(getConfig(), findSlackTriggerCorrelationKey(context.sessionId));
+    } catch (err) {
+      logWarn(log, "profile_resolution_failed_using_global", {
+        sessionId: context.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return undefined;
+    }
+  }
+
+  async function connectInstance(
+    name: ProxyName,
+    proxyDef: NonNullable<ReturnType<typeof resolveProxyConfig>>,
+  ): Promise<ProxyInstance> {
     const upstreamConfig = {
       url: proxyDef.upstream.url,
-      headers: interpolatedHeaders,
+      headers: proxyDef.upstream.headers,
     };
 
     function scheduleReconnect(attempt: number): void {
-      const instance = instances.get(name);
+      const instance = instances.get(proxyDef.target.key);
       if (!instance) return;
       if (attempt > MAX_RECONNECT_ATTEMPTS) {
         logError(
@@ -275,7 +295,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
             name,
           },
         );
-        instances.delete(name);
+        instances.delete(proxyDef.target.key);
         return;
       }
       const delay = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
@@ -298,7 +318,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }, delay);
     }
 
-    logInfo(log, "connecting_upstream", { name, url: proxyDef.upstream.url });
+    logInfo(log, "connecting_upstream", {
+      name,
+      targetKey: proxyDef.target.key,
+      profile: proxyDef.target.profile,
+      envScope: proxyDef.target.envScope,
+      url: proxyDef.upstream.url,
+    });
     const upstream = await connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1));
 
     const allToolNames = upstream.tools.map((tool) => tool.name);
@@ -327,32 +353,59 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
     return {
       name,
+      targetKey: proxyDef.target.key,
       upstream,
       approvalStore: getApprovalStore(name),
     };
   }
 
-  async function getInstance(name: string): Promise<ProxyInstance | undefined> {
-    const proxyDef = getProxyConfig(name);
+  async function getInstance(name: string, profile?: string): Promise<ProxyInstance | undefined> {
+    if (!isProxyName(name)) return undefined;
+    const proxyDef = resolveProxyConfig(name, profile);
     if (!proxyDef) {
-      instances.delete(name);
       return undefined;
     }
+    const instanceKey = proxyDef.target.key;
 
-    const existing = instances.get(name);
+    const existing = instances.get(instanceKey);
     if (existing) return existing;
 
-    const pending = connecting.get(name);
+    const pending = connecting.get(instanceKey);
     if (pending) return pending;
 
     const promise = connectInstance(name, proxyDef);
-    connecting.set(name, promise);
+    connecting.set(instanceKey, promise);
     try {
       const instance = await promise;
-      instances.set(name, instance);
+      instances.set(instanceKey, instance);
       return instance;
     } finally {
-      connecting.delete(name);
+      connecting.delete(instanceKey);
+    }
+  }
+
+  async function getInstanceForApprovalTarget(
+    name: string,
+    routing: ApprovalAction["routing"],
+  ): Promise<ProxyInstance | undefined> {
+    if (!routing?.targetKey) return getInstance(name);
+    const existing = instances.get(routing.targetKey);
+    if (existing) return existing;
+    if (!isProxyName(name)) return undefined;
+    const proxyDef = resolveProxyConfig(name, routing.profile);
+    if (!proxyDef || proxyDef.target.key !== routing.targetKey) return undefined;
+
+    const pending = connecting.get(routing.targetKey);
+    if (pending) return pending;
+
+    const promise = connectInstance(name, proxyDef);
+    connecting.set(routing.targetKey, promise);
+    try {
+      const instance = await promise;
+      instances.set(routing.targetKey, instance);
+      return instance;
+    } finally {
+      connecting.delete(routing.targetKey);
     }
   }
 
@@ -389,16 +442,19 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return undefined;
   }
 
-  async function listVisibleTools(upstreamName: string): Promise<ToolInfo[] | McpExecResult> {
+  async function listVisibleTools(
+    upstreamName: string,
+    profile?: string,
+  ): Promise<ToolInfo[] | McpExecResult> {
     if (!isProxyName(upstreamName)) {
       return fail(
         `Unknown upstream "${upstreamName}". Available upstreams: ${PROXY_NAMES.join(", ")}`,
       );
     }
 
-    const instance = await getInstance(upstreamName);
+    const instance = await getInstance(upstreamName, profile);
     if (!instance) {
-      return fail(`Unknown upstream "${upstreamName}".`);
+      return fail(`Upstream "${upstreamName}" is not configured for this thread/profile.`);
     }
 
     const proxyDef = getProxyConfig(upstreamName);
@@ -439,16 +495,17 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     );
   }
 
-  async function listUpstreams(directory?: string): Promise<McpExecResult> {
+  async function listUpstreams(directory?: string, profile?: string): Promise<McpExecResult> {
     const failure = validateRepoDirectory(directory);
     if (failure) return failure;
 
-    const upstreams = PROXY_NAMES.map((name) => {
-      const instance = instances.get(name);
+    const upstreams = getAvailableProxyNames(profile).map((name) => {
+      const resolved = resolveProxyConfig(name, profile)!;
+      const instance = instances.get(resolved.target.key);
       return {
         name,
         toolCount: instance?.upstream.tools.length ?? 0,
-        connected: instances.has(name),
+        connected: instances.has(resolved.target.key),
       };
     });
 
@@ -556,9 +613,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     args: Record<string, unknown>,
     context: McpCommandContext,
   ): Promise<McpExecResult> {
-    const instance = await getInstance(upstreamName);
+    const profile = resolveProfileForContext(context);
+    const instance = await getInstance(upstreamName, profile);
     if (!instance) {
-      return fail(`Unknown upstream "${upstreamName}".`);
+      return fail(`Upstream "${upstreamName}" is not configured for this thread/profile.`);
     }
 
     if (toolInfo.classification === "approve") {
@@ -604,6 +662,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
           provider: "slack",
           channel: slackTarget.channel,
           threadTs: slackTarget.threadTs,
+        },
+        {
+          targetKey: instance.targetKey,
+          profile,
         },
       );
       const slackPost = await postSlackApprovalMessage({
@@ -660,7 +722,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       const store = getApprovalStore(upstreamName);
       const action = store.get(actionId);
       if (action) {
-        return { upstreamName, action, store };
+        return { upstreamName, targetKey: action.routing?.targetKey, action, store };
       }
     }
     return undefined;
@@ -747,9 +809,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return ok(stringify(rejected));
     }
 
-    const instance = await getInstance(lookup.upstreamName);
+    const instance = await getInstanceForApprovalTarget(lookup.upstreamName, lookup.action.routing);
     if (!instance) {
-      return fail(`Unknown upstream "${lookup.upstreamName}".`);
+      return fail(
+        lookup.action.routing?.targetKey
+          ? `Approval action ${actionId} target ${lookup.action.routing.targetKey} is no longer configured.`
+          : `Unknown upstream "${lookup.upstreamName}".`,
+      );
     }
 
     const pendingAction = lookup.action;
@@ -850,26 +916,33 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   return {
     getHealth(): Record<string, unknown> {
       return {
-        configured: PROXY_NAMES.length,
-        connected: PROXY_NAMES.filter((name) => instances.has(name)).length,
+        configured: getAvailableProxyNames().length,
+        connected: instances.size,
         instances: Object.fromEntries(
-          PROXY_NAMES.map((name) => [
-            name,
-            {
-              connected: instances.has(name),
-              tools: instances.get(name)?.upstream.tools.length ?? 0,
-            },
-          ]),
+          PROXY_NAMES.map((name) => {
+            const matching = [...instances.values()].filter((instance) => instance.name === name);
+            return [
+              name,
+              {
+                connected: matching.length > 0,
+                tools: matching.reduce(
+                  (max, instance) => Math.max(max, instance.upstream.tools.length),
+                  0,
+                ),
+              },
+            ];
+          }),
         ),
       };
     },
 
     async warmUpstreams(): Promise<void> {
-      const results = await Promise.allSettled(PROXY_NAMES.map((name) => getInstance(name)));
-      for (let index = 0; index < PROXY_NAMES.length; index += 1) {
+      const names = getAvailableProxyNames();
+      const results = await Promise.allSettled(names.map((name) => getInstance(name)));
+      for (let index = 0; index < names.length; index += 1) {
         const result = results[index];
         if (result.status === "rejected") {
-          logError(log, "upstream_connect_failed", result.reason, { name: PROXY_NAMES[index] });
+          logError(log, "upstream_connect_failed", result.reason, { name: names[index] });
         }
       }
     },
@@ -895,7 +968,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
 
       if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-        return listUpstreams(context.directory);
+        return listUpstreams(context.directory, resolveProfileForContext(context));
       }
 
       const failure = validateRepoDirectory(context.directory);
@@ -911,7 +984,8 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         );
       }
 
-      const tools = await listVisibleTools(upstreamName);
+      const profile = resolveProfileForContext(context);
+      const tools = await listVisibleTools(upstreamName, profile);
       if (!Array.isArray(tools)) return tools;
 
       if (args.length === 1) {

@@ -1,7 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
-import { getProxyConfig, PROXY_NAMES, PROXY_REGISTRY } from "./proxies.js";
-import { interpolateHeaders } from "./workspace-config.js";
+import {
+  getAvailableProxyNames,
+  getProxyConfig,
+  normalizeProfileEnvSuffix,
+  PROXY_NAMES,
+  PROXY_REGISTRY,
+  resolveProxyConfig,
+} from "./proxies.js";
 
 describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {
@@ -14,18 +20,46 @@ describe("proxy registry", () => {
     expect(getProxyConfig("unknown")).toBeUndefined();
   });
 
-  it("interpolates registry auth headers with the current environment", () => {
-    vi.stubEnv("ATLASSIAN_AUTH", "Basic secret");
-    vi.stubEnv("POSTHOG_API_KEY", "phc_123");
+  it("resolves profile-scoped auth with global fallback", () => {
+    const env = {
+      ATLASSIAN_AUTH: "Basic global",
+      ATLASSIAN_AUTH_LABS: "Basic labs",
+      POSTHOG_API_KEY: "phc_global",
+    } as NodeJS.ProcessEnv;
 
-    expect(interpolateHeaders(getProxyConfig("atlassian")?.upstream.headers)).toEqual({
-      Authorization: "Basic secret",
+    expect(resolveProxyConfig("atlassian", "labs", env)?.upstream.headers).toEqual({
+      Authorization: "Basic labs",
     });
-    expect(interpolateHeaders(getProxyConfig("posthog")?.upstream.headers)).toEqual({
-      Authorization: "Bearer phc_123",
+    expect(resolveProxyConfig("atlassian", "qa", env)?.upstream.headers).toEqual({
+      Authorization: "Basic global",
     });
+    expect(resolveProxyConfig("posthog", "labs", env)?.target.envScope).toBe("global");
+    expect(resolveProxyConfig("posthog", "labs", env)?.upstream.headers?.Authorization).toBe(
+      "Bearer phc_global",
+    );
+  });
 
-    vi.unstubAllEnvs();
+  it("normalizes suffixes and resolves grafana as a bundle", () => {
+    expect(normalizeProfileEnvSuffix("qa-labs east")).toBe("QA_LABS_EAST");
+    const env = {
+      GRAFANA_URL: "https://grafana.global",
+      GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+      GRAFANA_URL_LABS: "https://grafana.labs",
+      GRAFANA_SERVICE_ACCOUNT_TOKEN_LABS: "labs-token",
+      GRAFANA_ORG_ID_LABS: "7",
+      ATLASSIAN_AUTH_LABS: "Basic labs",
+    } as NodeJS.ProcessEnv;
+
+    expect(resolveProxyConfig("grafana", "labs", env)?.upstream.headers).toEqual({
+      "X-Grafana-Url": "https://grafana.labs",
+      Authorization: "Bearer labs-token",
+      "X-Grafana-Org-Id": "7",
+    });
+    expect(resolveProxyConfig("grafana", "qa", env)?.upstream.headers).toEqual({
+      "X-Grafana-Url": "https://grafana.global",
+      Authorization: "Bearer global-token",
+    });
+    expect(getAvailableProxyNames("labs", env)).toEqual(["atlassian", "grafana"]);
   });
 
   it("keeps allow and approve sets disjoint for each upstream", () => {

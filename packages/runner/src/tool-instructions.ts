@@ -1,10 +1,28 @@
-import { extractRepoFromCwd, getProxyConfig, PROXY_NAMES } from "@thor/common";
+import {
+  extractRepoFromCwd,
+  getAvailableProxyNames,
+  getProfileForSlackCorrelationKey,
+  getProxyConfig,
+  type ConfigLoader,
+} from "@thor/common";
 
-export function buildToolInstructions(directory: string): string | undefined {
+export function buildToolInstructions(
+  directory: string,
+  opts: { correlationKey?: string; configLoader?: ConfigLoader } = {},
+): string | undefined {
   if (!extractRepoFromCwd(directory)) return undefined;
 
+  let profile: string | undefined;
+  if (opts.configLoader) {
+    try {
+      profile = getProfileForSlackCorrelationKey(opts.configLoader(), opts.correlationKey);
+    } catch {
+      profile = undefined;
+    }
+  }
+
   const mcpSections: string[] = [];
-  for (const upstreamName of PROXY_NAMES) {
+  for (const upstreamName of getAvailableProxyNames(profile)) {
     const proxyDef = getProxyConfig(upstreamName);
     if (!proxyDef) continue;
 
