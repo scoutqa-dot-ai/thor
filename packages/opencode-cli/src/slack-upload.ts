@@ -1,21 +1,18 @@
 /**
  * Slack external file upload helper.
  *
- * Talks directly to slack.com/api endpoints via curl so the mitmproxy egress
- * (HTTPS_PROXY + CURL_CA_BUNDLE in the opencode container) injects
+ * Talks directly to slack.com/api endpoints via Node fetch so the mitmproxy
+ * egress (HTTPS_PROXY + NODE_EXTRA_CA_CERTS in the opencode container) injects
  * authentication and trusts the proxy CA. Do not pass a Slack token.
  *
  * Usage: node slack-upload.mjs [options] <file>
  */
 
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
-import { promisify } from "node:util";
+import { openAsBlob } from "node:fs";
+import { stat } from "node:fs/promises";
+import { basename } from "node:path";
+import { parseArgs as parseNodeArgs } from "node:util";
 import { z } from "zod";
-
-const execFileAsync = promisify(execFile);
 
 const USAGE = `Usage:
   slack-upload [options] <file>
@@ -48,53 +45,49 @@ function parseArgs(argv: string[]): {
   title: string;
   comment: string;
 } {
-  let file = "";
-  let channel = "";
-  let threadTs = "";
-  let title = "";
-  let comment = "";
-
-  const takeValue = (flag: string, queue: string[]): string => {
-    const value = queue.shift();
-    if (value === undefined) die(`missing value for ${flag}`);
-    return value;
+  let parsed: {
+    values: {
+      channel?: string;
+      "thread-ts"?: string;
+      title?: string;
+      comment?: string;
+      help?: boolean;
+    };
+    positionals: string[];
   };
 
-  const queue = [...argv];
-  while (queue.length > 0) {
-    const arg = queue.shift()!;
-    switch (arg) {
-      case "--channel":
-        channel = takeValue("--channel", queue);
-        break;
-      case "--thread-ts":
-        threadTs = takeValue("--thread-ts", queue);
-        break;
-      case "--title":
-        title = takeValue("--title", queue);
-        break;
-      case "--comment":
-        comment = takeValue("--comment", queue);
-        break;
-      case "-h":
-      case "--help":
-        process.stdout.write(USAGE);
-        process.exit(0);
-      case "--": {
-        if (queue.length === 0) break;
-        if (file) die("unexpected extra arguments");
-        if (queue.length > 1) die("unexpected extra arguments");
-        file = queue.shift()!;
-        break;
-      }
-      default:
-        if (arg.startsWith("-")) die(`unknown option: ${arg}`);
-        if (file) die("only one file path is supported");
-        file = arg;
-    }
+  try {
+    parsed = parseNodeArgs({
+      args: argv,
+      allowPositionals: true,
+      strict: true,
+      options: {
+        channel: { type: "string" },
+        "thread-ts": { type: "string" },
+        title: { type: "string" },
+        comment: { type: "string" },
+        help: { type: "boolean", short: "h" },
+      },
+    });
+  } catch (err) {
+    die(err instanceof Error ? err.message : "could not parse arguments");
   }
 
-  return { file, channel, threadTs, title, comment };
+  if (parsed.values.help) {
+    process.stdout.write(USAGE);
+    process.exit(0);
+  }
+
+  if (parsed.positionals.length > 1) die("unexpected extra arguments");
+  const file = parsed.positionals[0] ?? "";
+
+  return {
+    file,
+    channel: parsed.values.channel ?? "",
+    threadTs: parsed.values["thread-ts"] ?? "",
+    title: parsed.values.title ?? "",
+    comment: parsed.values.comment ?? "",
+  };
 }
 
 const GetUploadUrlSchema = z.object({
@@ -106,11 +99,33 @@ const GetUploadUrlSchema = z.object({
 
 const SlackOkSchema = z.object({ ok: z.boolean(), error: z.string().optional() }).passthrough();
 
-async function curl(args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("curl", args, {
-    maxBuffer: 64 * 1024 * 1024,
+async function fetchText(label: string, url: string, init: RequestInit): Promise<string> {
+  const response = await fetch(url, { ...init, redirect: "manual" });
+  const body = await response.text();
+  if (!response.ok) die(`${label} failed with HTTP ${response.status}: ${body}`);
+  return body;
+}
+
+async function slackApiPost(method: string, params: Record<string, string>): Promise<string> {
+  return fetchText(method, `https://slack.com/api/${method}`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params),
   });
-  return stdout;
+}
+
+async function uploadFile(uploadUrl: string, file: string): Promise<void> {
+  const body = await openAsBlob(file, { type: "application/octet-stream" });
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { "content-type": "application/octet-stream" },
+    body,
+    redirect: "manual",
+  });
+  const responseBody = await response.text();
+  if (response.status !== 200) {
+    die(`raw upload failed with HTTP ${response.status}: ${responseBody}`);
+  }
 }
 
 function parseJson<T>(label: string, schema: z.ZodType<T>, raw: string): T {
@@ -139,18 +154,10 @@ const size = fileStat.size;
 const name = basename(file);
 const title = titleArg || name;
 
-const getUploadRaw = await curl([
-  "-sS",
-  "-X",
-  "POST",
-  "https://slack.com/api/files.getUploadURLExternal",
-  "-H",
-  "content-type: application/x-www-form-urlencoded",
-  "--data-urlencode",
-  `filename=${name}`,
-  "--data-urlencode",
-  `length=${size}`,
-]);
+const getUploadRaw = await slackApiPost("files.getUploadURLExternal", {
+  filename: name,
+  length: `${size}`,
+});
 
 const getUpload = parseJson("files.getUploadURLExternal", GetUploadUrlSchema, getUploadRaw);
 if (!getUpload.ok) die(getUpload.error || "files.getUploadURLExternal failed");
@@ -161,49 +168,15 @@ if (!getUpload.upload_url || !getUpload.file_id) {
 const uploadUrl = getUpload.upload_url;
 const fileId = getUpload.file_id;
 
-const tmpDir = await mkdtemp(join(tmpdir(), "slack-upload-"));
-const bodyPath = join(tmpDir, "body");
-try {
-  const uploadStatus = (
-    await curl([
-      "-sS",
-      "-o",
-      bodyPath,
-      "-w",
-      "%{http_code}",
-      "-X",
-      "POST",
-      uploadUrl,
-      "-H",
-      "content-type: application/octet-stream",
-      "--data-binary",
-      `@${file}`,
-    ])
-  ).trim();
-  if (uploadStatus !== "200") {
-    const body = await readFile(bodyPath, "utf8").catch(() => "");
-    die(`raw upload failed with HTTP ${uploadStatus}: ${body}`);
-  }
-} finally {
-  await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-}
+await uploadFile(uploadUrl, file);
 
 const filesArg = JSON.stringify([{ id: fileId, title }]);
-const completeArgs = [
-  "-sS",
-  "-X",
-  "POST",
-  "https://slack.com/api/files.completeUploadExternal",
-  "-H",
-  "content-type: application/x-www-form-urlencoded",
-  "--data-urlencode",
-  `files=${filesArg}`,
-];
-if (channel) completeArgs.push("--data-urlencode", `channel_id=${channel}`);
-if (threadTs) completeArgs.push("--data-urlencode", `thread_ts=${threadTs}`);
-if (comment) completeArgs.push("--data-urlencode", `initial_comment=${comment}`);
+const completeParams: Record<string, string> = { files: filesArg };
+if (channel) completeParams.channel_id = channel;
+if (threadTs) completeParams.thread_ts = threadTs;
+if (comment) completeParams.initial_comment = comment;
 
-const completeRaw = await curl(completeArgs);
+const completeRaw = await slackApiPost("files.completeUploadExternal", completeParams);
 const complete = parseJson("files.completeUploadExternal", SlackOkSchema, completeRaw);
 if (!complete.ok) die(complete.error || "files.completeUploadExternal failed");
 
