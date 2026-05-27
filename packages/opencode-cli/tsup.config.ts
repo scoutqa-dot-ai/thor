@@ -3,6 +3,7 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: {
     "remote-cli": "src/remote-cli.ts",
+    "slack-upload": "src/slack-upload.ts",
   },
   format: "esm",
   target: "node22",
