@@ -764,6 +764,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
      * failure).
      */
     sideEffectAttempted: boolean;
+    /**
+     * Raw transport response — MCP CallToolResult for the MCP executor (so
+     * the worklog preserves `isError`/`content` for downstream auditors that
+     * inspect upstream-reported errors). Undefined for non-MCP executors.
+     */
+    rawResult?: unknown;
   }
 
   interface ApprovalExecutor {
@@ -802,6 +808,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
             stdout: unwrapResult(result),
             stderr: "",
             sideEffectAttempted: true,
+            rawResult: result,
           };
         } catch (err) {
           return {
@@ -962,6 +969,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         decision: "approved",
         args: pendingAction.args,
         durationMs,
+        result: outcome.rawResult,
       });
       const execResult: McpExecResult = {
         stdout: outcome.stdout,
