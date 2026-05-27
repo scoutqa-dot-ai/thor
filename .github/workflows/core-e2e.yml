@@ -148,6 +148,12 @@ jobs:
 
           ./scripts/mitmproxy-ca-init.sh
 
+          # CI has no codex-lb upstream accounts; strip the codex-lb provider
+          # override so opencode talks to OpenAI directly via auth.json.
+          jq 'del(.provider)' docker/opencode/config/opencode.json \
+            > docker/opencode/config/opencode.json.tmp \
+            && mv docker/opencode/config/opencode.json.tmp docker/opencode/config/opencode.json
+
           docker compose up --build --wait -d
 
       - name: Run e2e test
@@ -156,7 +162,7 @@ jobs:
         run: pnpm test:e2e
 
       - name: Run approval card e2e
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/approval-required-after-abort'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/core-e2e'
         env:
           CI: "true"
         run: pnpm test:create-jira-approval-e2e
