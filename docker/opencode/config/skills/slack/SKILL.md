@@ -124,9 +124,6 @@ echo 'Root cause looks like a missing env var in the worker deploy. I confirmed 
 ```
 
 Always pass `--channel <id>`. Message text must come from stdin.
-On success, save the returned `channel` and `thread_ts` (or
-`continuation.channel` / `continuation.thread_ts`) if you will continue in the
-created thread later.
 If you need blocks, pass `--blocks-file <path>` to a JSON file that contains a
 top-level blocks array while still supplying stdin text as the fallback body.
 Stdin uses Slack mrkdwn: `*bold*`, `_italic_`, bullets, and code spans/fences.
@@ -178,24 +175,6 @@ slack-upload "$REPORT_FILE" \
   --thread-ts 1710000000.001 \
   --comment 'Attached the report.'
 ```
-
-## Response handling
-
-Slack Web API responses are JSON with an `ok` field.
-
-- `ok: true` means the call succeeded
-- `ok: false` means inspect the `error` field and surface the problem clearly
-- successful `slack-post-message` output includes `channel`, `ts`, `message_ts`,
-  `thread_ts`, and `continuation`; use `continuation` for later replies
-- successful `slack-upload` output includes `file_id`, `file`, `files`, and any
-  known `channel` / `thread_ts` locator
-
-Common failures to report as-is:
-
-- `channel_not_found`
-- `not_in_channel`
-- `missing_scope`
-- `ratelimited`
 
 ## Gotchas
 
