@@ -75,12 +75,8 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(body.stderr).toBe("");
     expect(body.exitCode).toBe(0);
     expect(JSON.parse(body.stdout)).toEqual({
-      ok: true,
-      channel: "C999",
       ts: "1777940309.867569",
-      message_ts: "1777940309.867569",
       thread_ts: "1777940309.867569",
-      continuation: { channel: "C999", thread_ts: "1777940309.867569" },
     });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://slack.com/api/chat.postMessage",
@@ -96,7 +92,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
   });
 
-  it("falls back to the requested channel in the success response", async () => {
+  it("keys aliases by the requested channel even when Slack omits it", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: true, ts: "1777940309.867569" }));
 
     const response = await postSlack(
@@ -107,10 +103,9 @@ describe("remote-cli slack-post-message endpoint", () => {
 
     expect(response.status).toBe(200);
     expect(body.exitCode).toBe(0);
-    expect(JSON.parse(body.stdout)).toMatchObject({
-      ok: true,
-      channel: "CREQUESTED",
-      continuation: { channel: "CREQUESTED", thread_ts: "1777940309.867569" },
+    expect(JSON.parse(body.stdout)).toEqual({
+      ts: "1777940309.867569",
+      thread_ts: "1777940309.867569",
     });
     expect(appendAliasMock).toHaveBeenCalledWith(
       "session-1",
@@ -118,9 +113,14 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
   });
 
-  it("registers reply aliases against the requested thread value", async () => {
+  it("registers reply aliases against the thread_ts Slack reports", async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ ok: true, channel: "C123", ts: "1777940310.111111" }),
+      jsonResponse({
+        ok: true,
+        channel: "C123",
+        ts: "1777940310.111111",
+        message: { thread_ts: "thread-parent-token" },
+      }),
     );
 
     const response = await postSlack(
@@ -132,13 +132,9 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(JSON.parse(((await response.json()) as { stdout: string }).stdout)).toMatchObject({
-      ok: true,
-      channel: "C123",
+    expect(JSON.parse(((await response.json()) as { stdout: string }).stdout)).toEqual({
       ts: "1777940310.111111",
-      message_ts: "1777940310.111111",
       thread_ts: "thread-parent-token",
-      continuation: { channel: "C123", thread_ts: "thread-parent-token" },
     });
     expect(fetchMock).toHaveBeenCalledWith(
       expect.any(String),
@@ -417,7 +413,14 @@ describe("remote-cli slack-post-message endpoint", () => {
     const integrationFetch = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }))
-      .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940310.111111" }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          ok: true,
+          channel: "C123",
+          ts: "1777940310.111111",
+          message: { thread_ts: "1777940309.867569" },
+        }),
+      )
       .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940311.222222" }));
     const remoteCli = createRemoteCliApp({
       env: { slackBotToken: "xoxb-test" } as any,

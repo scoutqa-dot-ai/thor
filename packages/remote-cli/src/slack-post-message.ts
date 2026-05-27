@@ -39,38 +39,17 @@ export interface SlackPostApiRequest {
 }
 
 export interface SlackCreatedMessageResponse {
-  ok: true;
-  channel: string;
   ts: string;
-  message_ts: string;
   thread_ts: string;
-  continuation: {
-    channel: string;
-    thread_ts: string;
-  };
 }
 
 function buildCreatedMessageResponse(input: {
-  requestedChannel: string;
-  responseChannel: unknown;
   responseTs: string;
-  requestedThreadTs?: string;
+  responseThreadTs?: string;
 }): SlackCreatedMessageResponse {
-  const channel =
-    typeof input.responseChannel === "string" && input.responseChannel.length > 0
-      ? input.responseChannel
-      : input.requestedChannel;
-  const threadTs = input.requestedThreadTs ?? input.responseTs;
   return {
-    ok: true,
-    channel,
     ts: input.responseTs,
-    message_ts: input.responseTs,
-    thread_ts: threadTs,
-    continuation: {
-      channel,
-      thread_ts: threadTs,
-    },
+    thread_ts: input.responseThreadTs ?? input.responseTs,
   };
 }
 
@@ -339,10 +318,7 @@ export async function handleSlackPostMessage(
   );
   if ("error" in slackResponse) return result(`Slack post failed: ${slackResponse.error}\n`);
 
-  const correlationKey = buildSlackCorrelationKeys(
-    slackResponse.continuation.channel,
-    slackResponse.continuation.thread_ts,
-  )[0];
+  const correlationKey = buildSlackCorrelationKeys(parsed.channel, slackResponse.thread_ts)[0];
   const appendAlias = deps.appendAlias ?? appendCorrelationAlias;
   try {
     appendAlias(sessionId, correlationKey);
@@ -398,15 +374,17 @@ export async function postSlackMessageApi(
   }
 
   const responseTs = (slackJson as { ts?: unknown }).ts;
-  const responseChannel = (slackJson as { channel?: unknown }).channel;
   if (typeof responseTs !== "string" || responseTs.length === 0) {
     return { error: "Slack API response missing ts" };
   }
+  const responseMessage = (slackJson as { message?: { thread_ts?: unknown } }).message;
+  const responseThreadTs =
+    typeof responseMessage?.thread_ts === "string" && responseMessage.thread_ts.length > 0
+      ? responseMessage.thread_ts
+      : undefined;
 
   return buildCreatedMessageResponse({
-    requestedChannel: request.channel,
-    responseChannel,
     responseTs,
-    ...(request.threadTs ? { requestedThreadTs: request.threadTs } : {}),
+    ...(responseThreadTs ? { responseThreadTs } : {}),
   });
 }

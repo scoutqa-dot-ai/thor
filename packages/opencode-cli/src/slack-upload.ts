@@ -251,9 +251,6 @@ const output: Record<string, unknown> = {
   files: normalized,
 };
 if (channel) output.channel = channel;
-if (threadTs) {
-  output.thread_ts = threadTs;
-  if (channel) output.continuation = { channel, thread_ts: threadTs };
-}
+if (threadTs) output.thread_ts = threadTs;
 
 process.stdout.write(`${JSON.stringify(output)}\n`);

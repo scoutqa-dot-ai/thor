@@ -619,10 +619,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
       action.notification = {
         provider: "slack",
-        channel: slackPost.channel,
+        channel: slackTarget.channel,
         threadTs: slackPost.thread_ts,
-        messageTs: slackPost.message_ts,
-        continuation: slackPost.continuation,
+        messageTs: slackPost.ts,
         postedAt: new Date().toISOString(),
       };
       instance.approvalStore.update(action);
@@ -641,13 +640,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         stringify({
           ...approvalEvent,
           command: `approval status ${action.id}`,
-          notification: {
-            provider: "slack",
-            channel: slackPost.channel,
-            threadTs: slackPost.thread_ts,
-            messageTs: slackPost.message_ts,
-            continuation: slackPost.continuation,
-          },
         }),
       );
     }

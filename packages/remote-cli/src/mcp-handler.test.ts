@@ -117,11 +117,16 @@ describe("remote-cli MCP endpoints", () => {
     jiraLookups = [];
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
     jiraLookupFailure = undefined;
-    slackFetch = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1710000000.100" })),
-      );
+    slackFetch = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          channel: "C123",
+          ts: "1710000000.100",
+          message: { thread_ts: "1710000000.001" },
+        }),
+      ),
+    );
     appendAlias({
       aliasType: "opencode.session",
       aliasValue: "parent-session",
@@ -477,13 +482,6 @@ describe("remote-cli MCP endpoints", () => {
       tool: string;
       args: Record<string, unknown>;
       command: string;
-      notification?: {
-        provider: string;
-        channel: string;
-        threadTs: string;
-        messageTs: string;
-        continuation: { channel: string; thread_ts: string };
-      };
     };
     const cleanArgs = {
       cloudId: "cloud-1",
@@ -501,16 +499,6 @@ describe("remote-cli MCP endpoints", () => {
       proxyName: "atlassian",
       tool: "createJiraIssue",
       args: cleanArgs,
-      notification: {
-        provider: "slack",
-        channel: "C123",
-        threadTs: "1710000000.001",
-        messageTs: "1710000000.100",
-        continuation: {
-          channel: "C123",
-          thread_ts: "1710000000.001",
-        },
-      },
     });
     expect(approvalOutput.command).toBe(`approval status ${approvalOutput.actionId}`);
     const actionId = approvalOutput.actionId;
@@ -535,10 +523,6 @@ describe("remote-cli MCP endpoints", () => {
         channel: "C123",
         threadTs: "1710000000.001",
         messageTs: "1710000000.100",
-        continuation: {
-          channel: "C123",
-          thread_ts: "1710000000.001",
-        },
       },
     });
     expect(slackFetch).toHaveBeenCalledWith(
