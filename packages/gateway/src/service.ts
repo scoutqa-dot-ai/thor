@@ -559,6 +559,15 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
     throw new Error(`Runner returned ${response.status}: ${text}`);
   }
 
+  if (response.body) {
+    await response.body.cancel().catch((error) => {
+      logWarn(log, "runner_response_cancel_failed", {
+        correlationKey: options.correlationKey,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
   options.onAccepted?.();
   return { rejected: false };
 }

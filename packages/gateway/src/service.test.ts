@@ -33,6 +33,23 @@ function execResponse(stdout: unknown, stderr = "", exitCode = 0): Response {
   });
 }
 
+function ndjsonResponseWithCancelSpy(cancelSpy: ReturnType<typeof vi.fn>): Response {
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"type":"start"}\n'));
+      },
+      cancel(reason) {
+        cancelSpy(reason);
+      },
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "application/x-ndjson" },
+    },
+  );
+}
+
 function noopSlackDeps(): SlackDeps {
   return { client: {} } as unknown as SlackDeps;
 }
@@ -331,7 +348,8 @@ describe("triggerRunnerGitHub", () => {
   });
 
   it("acks any successful runner response for non-mention events", async () => {
-    mockFetch.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    const cancelSpy = vi.fn();
+    mockFetch.mockResolvedValueOnce(ndjsonResponseWithCancelSpy(cancelSpy));
     const onAccepted = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.js");
@@ -347,6 +365,7 @@ describe("triggerRunnerGitHub", () => {
 
     expect(result).toEqual({ rejected: false });
     expect(onAccepted).toHaveBeenCalled();
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
     expect(triggerBody.interrupt).toBe(false);
   });
