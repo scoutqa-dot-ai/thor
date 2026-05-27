@@ -161,7 +161,7 @@ export class EventQueue {
       const acksBefore = this.ackCount;
       await Promise.allSettled([...this.processing.values()]);
 
-      // If no handler acked in this cycle, remaining files are deferred — stop.
+      // If no handler acked in this cycle, remaining files are unsettled — stop.
       if (this.ackCount === acksBefore) break;
     }
   }
