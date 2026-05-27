@@ -140,7 +140,12 @@ export function resolveProxyConfig(
     return {
       ...policy,
       upstream: { url: policy.upstream.url, headers: { Authorization: auth.value } },
-      target: { key: targetKey(name, profile, auth.scope), name, ...(profile && { profile }), envScope: auth.scope },
+      target: {
+        key: targetKey(name, profile, auth.scope),
+        name,
+        ...(profile && { profile }),
+        envScope: auth.scope,
+      },
     };
   }
 
@@ -150,7 +155,12 @@ export function resolveProxyConfig(
     return {
       ...policy,
       upstream: { url: policy.upstream.url, headers: { Authorization: `Bearer ${apiKey.value}` } },
-      target: { key: targetKey(name, profile, apiKey.scope), name, ...(profile && { profile }), envScope: apiKey.scope },
+      target: {
+        key: targetKey(name, profile, apiKey.scope),
+        name,
+        ...(profile && { profile }),
+        envScope: apiKey.scope,
+      },
     };
   }
 
@@ -169,8 +179,8 @@ export function resolveProxyConfig(
     upstream: {
       url: policy.upstream.url,
       headers: {
-        "X-Grafana-Url": url,
-        Authorization: `Bearer ${token}`,
+        "X-Grafana-URL": url,
+        "X-Grafana-Service-Account-Token": token,
         ...(orgId ? { "X-Grafana-Org-Id": orgId } : {}),
       },
     },
@@ -183,7 +193,10 @@ export function resolveProxyConfig(
   };
 }
 
-export function getAvailableProxyNames(profile?: string, env: NodeJS.ProcessEnv = process.env): ProxyName[] {
+export function getAvailableProxyNames(
+  profile?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): ProxyName[] {
   return PROXY_NAMES.filter((name) => resolveProxyConfig(name, profile, env) !== undefined);
 }
 

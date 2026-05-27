@@ -52,13 +52,13 @@ describe("proxy registry", () => {
     } as NodeJS.ProcessEnv;
 
     expect(resolveProxyConfig("grafana", "labs", env)?.upstream.headers).toEqual({
-      "X-Grafana-Url": "https://grafana.labs",
-      Authorization: "Bearer labs-token",
+      "X-Grafana-URL": "https://grafana.labs",
+      "X-Grafana-Service-Account-Token": "labs-token",
       "X-Grafana-Org-Id": "7",
     });
     expect(resolveProxyConfig("grafana", "qa", env)?.upstream.headers).toEqual({
-      "X-Grafana-Url": "https://grafana.global",
-      Authorization: "Bearer global-token",
+      "X-Grafana-URL": "https://grafana.global",
+      "X-Grafana-Service-Account-Token": "global-token",
     });
     expect(getAvailableProxyNames("labs", env)).toEqual(["atlassian", "grafana"]);
   });
@@ -74,7 +74,9 @@ describe("proxy registry", () => {
   });
 
   it("requires approval only for the approved write-tool inventory", () => {
-    const approvedTools = Object.values(PROXY_REGISTRY).flatMap((proxy) => proxy.approve).sort();
+    const approvedTools = Object.values(PROXY_REGISTRY)
+      .flatMap((proxy) => proxy.approve)
+      .sort();
 
     expect(approvedTools).toEqual([...APPROVAL_TOOL_NAMES].sort());
   });
