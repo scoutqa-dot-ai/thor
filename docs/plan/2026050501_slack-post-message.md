@@ -74,7 +74,7 @@ Validation expectations:
 1. OpenCode agents call `slack-post-message`; the wrapper sends argv, cwd/directory context, session ID, call ID, and stdin body to remote-cli.
 2. remote-cli validates the request and calls Slack `chat.postMessage` using `SLACK_BOT_TOKEN` from the service environment, not through mitmproxy auth injection.
 3. remote-cli parses Slack JSON and only treats `ok: true` as success.
-4. remote-cli appends the alias via `appendCorrelationAlias(sessionId, correlationKey)` when a Thor session ID is present, where `correlationKey` is `slack:thread:${aliasTs}`:
+4. remote-cli appends the alias via `appendCorrelationAlias(sessionId, correlationKey)` when a Thor session ID is present. It uses the channel-qualified primary key `slack:thread:<channel>/<aliasTs>` when the effective channel is known, with legacy `slack:thread:<aliasTs>` fallback keys retained for back-compat resolution:
    - `aliasTs = thread_ts` for replies
    - `aliasTs = response.ts` for new top-level messages
 5. remote-cli returns normalized created-resource JSON in stdout and preserves non-zero failures in the existing `ExecResult` shape.
@@ -121,8 +121,8 @@ Changes:
 Exit criteria:
 
 - Unit tests show stdin-only `mrkdwn` posts build the intended Slack request body.
-- New-thread success registers `slack:thread:{response.ts}` for the calling session.
-- Reply success registers `slack:thread:{thread_ts}` for the calling session.
+- New-thread success registers `slack:thread:<channel>/{response.ts}` for the calling session when channel is known, with the legacy ts-only form still resolvable for back-compat.
+- Reply success registers `slack:thread:<channel>/{thread_ts}` for the calling session when channel is known, with the legacy ts-only form still resolvable for back-compat.
 - Slack `ok: false`, invalid stdin/args, missing token, missing session ID, and alias-writer failure are covered with behavior-focused tests.
 - Existing `/exec/git`, `/exec/gh`, `/exec/mcp`, and other remote-cli wrapper behavior remains compatible.
 
@@ -136,7 +136,7 @@ Changes:
 - Update OpenCode image/build wiring so the command is available in PATH alongside `slack-upload`.
 - Update `build.md` tool list and Slack acknowledgement/posting examples to use `slack-post-message` with stdin heredocs or pipes.
 - Update Slack skill examples for short and multiline posts, preserving guidance to use unique `/tmp` files only for temporary artifacts unrelated to message stdin.
-- Document that callers must always pass channel ID because aliases store thread timestamps, not channel IDs.
+- Document that callers must always pass channel ID because aliases resolve best from the channel-qualified `slack:thread:<channel>/<thread_ts>` form, while ts-only aliases remain a legacy fallback.
 
 Exit criteria:
 
@@ -217,7 +217,7 @@ Apply this first to `/exec/slack-post-message` and the shared `postSlackMessageA
 | D5  | Disable raw mitmproxy auth injection for `chat.postMessage`                                                           | Leaving direct `curl`/`fetch` authenticated would preserve the bypass that caused the alias regression. Enforcement requires the unsupported path to fail closed.                                                                                                                                                                                                                                                                                     |
 | D6  | Register aliases in remote-cli after Slack `ok: true` without making aliasing part of the visible response contract   | remote-cli has the session/call IDs and existing alias writer. Alias registration should remain a side effect of a successful Slack write; visible stdout is governed by the created-resource response contract in D20.                                                                                                                                                                                                                                  |
 | D7  | Treat alias registration failure as logged side-effect failure after a successful Slack post                          | Retrying a successful post solely because bookkeeping failed can duplicate user-visible Slack messages. Operators need logs, but users should not get duplicate replies.                                                                                                                                                                                                                                                                              |
-| D8  | Keep channel ID out of alias storage in this branch                                                                   | Existing resolver keys are `slack:thread:{ts}`. Redesigning alias metadata would widen the feature; the CLI can require `--channel` explicitly for now.                                                                                                                                                                                                                                                                                               |
+| D8  | Keep explicit `--channel` in the CLI contract even though aliasing prefers channel-qualified keys                     | Current correlation resolution prefers `slack:thread:<channel>/<ts>` and retains the ts-only form for back-compat. The CLI should still require `--channel` explicitly rather than trying to infer it from alias state.                                                                                                                                                                                                                               |
 | D9  | Allow `blocks` only if strict validation is implemented; otherwise reject it clearly                                  | Blocks are useful but risk becoming arbitrary passthrough. A clear validation boundary is safer than a half-supported `--json` replacement.                                                                                                                                                                                                                                                                                                           |
 | D10 | Phase 1 rejects `--format blocks` with a clear validation error                                                       | Strict blocks validation and fallback-text semantics are deferred so the first controlled path can ship a narrow stdin-only `mrkdwn` contract without exposing passthrough JSON.                                                                                                                                                                                                                                                                      |
 | D11 | Do not restrict `slack-post-message` channels by repo/session directory                                               | Outbound Slack posts are controlled by the Thor session boundary and purpose-built endpoint. Thor may need to post to channels that are not listed as inbound trigger channels for the current repo.                                                                                                                                                                                                                                                  |
