@@ -142,6 +142,10 @@ describe("remote-cli MCP endpoints", () => {
       anchorId: activeAnchorId,
     });
 
+    await startRemoteCliServer();
+  });
+
+  async function startRemoteCliServer(): Promise<void> {
     const remoteCli = createRemoteCliApp({
       env: {
         port: 3004,
@@ -221,9 +225,9 @@ describe("remote-cli MCP endpoints", () => {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  });
+  }
 
-  afterEach(async () => {
+  async function stopRemoteCliServer(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       server.close((err) => {
         if (err) {
@@ -234,6 +238,10 @@ describe("remote-cli MCP endpoints", () => {
       });
     });
     await closeRemoteCli();
+  }
+
+  afterEach(async () => {
+    await stopRemoteCliServer();
     rmSync(approvalsDir, { recursive: true, force: true });
     rmSync("/tmp/thor-remote-cli-mcp-test", { recursive: true, force: true });
     vi.unstubAllEnvs();
@@ -427,9 +435,9 @@ describe("remote-cli MCP endpoints", () => {
 
     const status = await postJson("/exec/approval", { args: ["status", actionId] });
     const stored = JSON.parse(((await status.json()) as { stdout: string }).stdout) as {
-      routing: { targetKey: string; profile: string };
+      routing: { targetKey: string; profile: string; envScope: string };
     };
-    expect(stored.routing).toEqual({ targetKey: "atlassian:QA", profile: "qa" });
+    expect(stored.routing).toEqual({ targetKey: "atlassian:QA", profile: "qa", envScope: "profile" });
 
     workspaceConfig = { ...workspaceConfig, profiles: {} };
     vi.stubEnv("ATLASSIAN_AUTH_QA", "");
@@ -444,6 +452,71 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(resolvedBody).toMatchObject({ stdout: "created", exitCode: 0 });
     expect(upstreamConfigs).toEqual([]);
+  });
+
+  it("preserves approval routing when a profiled action originally used global fallback creds", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "");
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-before-approval");
+    workspaceConfig = { ...workspaceConfig, profiles: { qa: { channels: ["C123"] } } };
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    const status = await postJson("/exec/approval", { args: ["status", actionId] });
+    const stored = JSON.parse(((await status.json()) as { stdout: string }).stdout) as {
+      routing: { targetKey: string; profile: string; envScope: string };
+    };
+    expect(stored.routing).toEqual({
+      targetKey: "atlassian:GLOBAL",
+      profile: "qa",
+      envScope: "global",
+    });
+
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-after-approval");
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-after-approval");
+    await stopRemoteCliServer();
+    upstreamConfigs = [];
+    await startRemoteCliServer();
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as { stdout: string; exitCode: number };
+
+    expect(resolvedBody).toMatchObject({ stdout: "created", exitCode: 0 });
+    expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
+      Authorization: "Basic global-after-approval",
+    });
+  });
+
+  it("counts profile-only upstreams in health configured total", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "");
+    vi.stubEnv("POSTHOG_API_KEY", "");
+    vi.stubEnv("GRAFANA_URL", "");
+    vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = { ...workspaceConfig, profiles: { qa: { channels: ["C123"] } } };
+
+    const health = await fetch(`${baseUrl}/health`);
+    const healthBody = (await health.json()) as { mcp: { configured: number } };
+
+    expect(health.status).toBe(200);
+    expect(healthBody.mcp.configured).toBe(1);
   });
 
   it("rejects worktree session directories for MCP authz", async () => {

@@ -53,6 +53,15 @@ const UserRecordSchema = z.object({
 
 const SlackConfigSchema = z.object({}).strict();
 
+function normalizeProfileKey(profileName: string): string {
+  const normalized = profileName.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  let start = 0;
+  let end = normalized.length;
+  while (start < end && normalized[start] === "_") start += 1;
+  while (end > start && normalized[end - 1] === "_") end -= 1;
+  return normalized.slice(start, end);
+}
+
 const ProfileConfigSchema = z.object({
   channels: z
     .array(z.string().min(1))
@@ -72,7 +81,33 @@ export const WorkspaceConfigSchema = z
   })
   .superRefine((config, ctx) => {
     const seen = new Map<string, string>();
+    const normalizedProfiles = new Map<string, string>();
     for (const [profileName, profile] of Object.entries(config.profiles ?? {})) {
+      const normalizedProfile = normalizeProfileKey(profileName);
+      if (!normalizedProfile) {
+        ctx.addIssue({
+          code: "custom",
+          message: `Profile name ${JSON.stringify(profileName)} must contain at least one ASCII letter or digit`,
+          path: ["profiles", profileName],
+        });
+      } else if (normalizedProfile === "GLOBAL") {
+        ctx.addIssue({
+          code: "custom",
+          message: `Profile name ${JSON.stringify(profileName)} normalizes to reserved suffix GLOBAL`,
+          path: ["profiles", profileName],
+        });
+      } else {
+        const previousProfile = normalizedProfiles.get(normalizedProfile);
+        if (previousProfile) {
+          ctx.addIssue({
+            code: "custom",
+            message: `Profiles ${previousProfile} and ${profileName} normalize to the same env suffix ${normalizedProfile}`,
+            path: ["profiles", profileName],
+          });
+        } else {
+          normalizedProfiles.set(normalizedProfile, profileName);
+        }
+      }
       for (let index = 0; index < profile.channels.length; index += 1) {
         const channel = profile.channels[index]!;
         const previous = seen.get(channel);

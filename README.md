@@ -107,11 +107,11 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `THOR_E2E_TEST_HELPERS`         | No       | `runner`                  | Enables secret-gated deterministic runner e2e helpers                                                |
 | `RUNNER_BASE_URL`               | Yes      | `remote-cli`              | Public base URL for Thor trigger viewer links in PR/Jira content                                     |
 | `INGRESS_PORT`                  | No       | `ingress`                 | Host port for the reverse proxy                                                                      |
-| `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy` | Global Atlassian MCP auth header and mitmproxy default injection; profile variants use `_PROFILE` suffixes |
-| `POSTHOG_API_KEY`               | No       | `remote-cli`              | Global PostHog MCP auth; profile variants use `_PROFILE` suffixes                                    |
-| `GRAFANA_URL`                   | No       | `grafana-mcp`, `remote-cli` | Global Grafana instance URL; profile variants use `_PROFILE` suffixes                                |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | No       | `grafana-mcp`, `remote-cli` | Global Grafana service account token; profile variants use `_PROFILE` suffixes                       |
-| `GRAFANA_ORG_ID`                | No       | `grafana-mcp`             | Grafana org ID (defaults to `1`); profile variants use `_PROFILE` suffixes                           |
+| `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy` | Global Atlassian MCP auth header and mitmproxy default injection; profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes |
+| `POSTHOG_API_KEY`               | No       | `remote-cli`              | Global PostHog MCP auth; profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes                  |
+| `GRAFANA_URL`                   | No       | `grafana-mcp`, `remote-cli` | Global Grafana instance URL; profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes              |
+| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | No       | `grafana-mcp`, `remote-cli` | Global Grafana service account token; profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes     |
+| `GRAFANA_ORG_ID`                | No       | `grafana-mcp`             | Grafana org ID (defaults to `1`); profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes         |
 | `LANGFUSE_HOST`                 | No       | `remote-cli`              | Langfuse host URL                                                                                    |
 | `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`              | Langfuse public key                                                                                  |
 | `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`              | Langfuse secret key                                                                                  |

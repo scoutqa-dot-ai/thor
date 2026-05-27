@@ -148,6 +148,27 @@ describe("loadWorkspaceConfig", () => {
         }),
       ),
     ).toThrow("Slack channel G123 is assigned to both profiles qa and labs");
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("empty-profile-suffix.json", {
+          profiles: { ___: { channels: ["G123"] } },
+        }),
+      ),
+    ).toThrow("must contain at least one ASCII letter or digit");
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("duplicate-normalized-profiles.json", {
+          profiles: { "qa-labs": { channels: ["G123"] }, "qa labs": { channels: ["G456"] } },
+        }),
+      ),
+    ).toThrow("normalize to the same env suffix QA_LABS");
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("reserved-global-profile.json", {
+          profiles: { global: { channels: ["G123"] } },
+        }),
+      ),
+    ).toThrow("reserved suffix GLOBAL");
   });
 
   it("rejects mitmproxy rule without host selector", () => {

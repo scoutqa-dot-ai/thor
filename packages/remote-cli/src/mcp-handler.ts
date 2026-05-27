@@ -149,6 +149,8 @@ interface ApprovalLookup {
   store: ApprovalStore;
 }
 
+type ApprovalRouting = ApprovalAction["routing"];
+
 function ok(stdout = ""): McpExecResult {
   return { stdout, stderr: "", exitCode: 0 };
 }
@@ -384,15 +386,25 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
   }
 
+  function inferApprovalRoutingScope(routing: ApprovalRouting): "profile" | "global" | undefined {
+    if (!routing) return undefined;
+    if (routing.envScope) return routing.envScope;
+    const suffix = routing.targetKey.split(":")[1];
+    if (suffix === "GLOBAL") return "global";
+    if (suffix) return "profile";
+    return undefined;
+  }
+
   async function getInstanceForApprovalTarget(
     name: string,
-    routing: ApprovalAction["routing"],
+    routing: ApprovalRouting,
   ): Promise<ProxyInstance | undefined> {
     if (!routing?.targetKey) return getInstance(name);
     const existing = instances.get(routing.targetKey);
     if (existing) return existing;
     if (!isProxyName(name)) return undefined;
-    const proxyDef = resolveProxyConfig(name, routing.profile);
+    const scope = inferApprovalRoutingScope(routing);
+    const proxyDef = resolveProxyConfig(name, scope === "global" ? undefined : routing.profile);
     if (!proxyDef || proxyDef.target.key !== routing.targetKey) return undefined;
 
     const pending = connecting.get(routing.targetKey);
@@ -666,6 +678,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         {
           targetKey: instance.targetKey,
           profile,
+          envScope: instance.targetKey.endsWith(":GLOBAL") ? "global" : "profile",
         },
       );
       const slackPost = await postSlackApprovalMessage({
@@ -915,8 +928,17 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   return {
     getHealth(): Record<string, unknown> {
+      const configured = new Set(getAvailableProxyNames());
+      try {
+        const config = getConfig();
+        for (const profileName of Object.keys(config.profiles ?? {})) {
+          for (const name of getAvailableProxyNames(profileName)) configured.add(name);
+        }
+      } catch {
+        // Best-effort only; health falls back to global-only visibility when config cannot be loaded.
+      }
       return {
-        configured: getAvailableProxyNames().length,
+        configured: configured.size,
         connected: instances.size,
         instances: Object.fromEntries(
           PROXY_NAMES.map((name) => {

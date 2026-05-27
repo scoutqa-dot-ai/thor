@@ -41,6 +41,7 @@ const ApprovalActionSchema = z
       .object({
         targetKey: z.string().min(1),
         profile: z.string().min(1).optional(),
+        envScope: z.enum(["profile", "global"]).optional(),
       })
       .optional(),
   })
