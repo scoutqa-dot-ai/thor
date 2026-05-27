@@ -508,10 +508,7 @@ describe("gateway", () => {
         );
       }
       if (url === "http://runner.test/trigger" && init?.method === "POST") {
-        return new Response(JSON.stringify({ busy: true }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return new Response("runner unavailable", { status: 500 });
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -2623,7 +2620,7 @@ describe("gateway", () => {
   it("uses a fresh public-channel cache hit to accept app mentions without pending privacy", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(new Response(JSON.stringify({ busy: false }), { status: 200 }));
+      .mockResolvedValue(new Response(null, { status: 200 }));
 
     await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
       slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: false } });
@@ -3453,7 +3450,7 @@ describe("gateway", () => {
     expect(runnerBody.correlationKey).toBe("git:branch:test-repo:feature/from-slack");
   });
 
-  it("retries queued approval outcome re-entry when runner is busy", async () => {
+  it("acks queued approval outcome re-entry on any successful runner response", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -3471,9 +3468,9 @@ describe("gateway", () => {
         ),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ busy: true }), {
+        new Response('{"type":"start","sessionId":"s1","resumed":true}\n', {
           status: 200,
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/x-ndjson" },
         }),
       )
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
@@ -3514,7 +3511,6 @@ describe("gateway", () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
 
         await queue.flush();
-        await queue.flush();
       },
       {
         remoteCliHost: "remote-cli.internal",
@@ -3526,7 +3522,7 @@ describe("gateway", () => {
     const runnerCalls = fetchImpl.mock.calls.filter(
       ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
     );
-    expect(runnerCalls).toHaveLength(2);
+    expect(runnerCalls).toHaveLength(1);
 
     const firstBody = JSON.parse(String(runnerCalls[0]?.[1]?.body));
     expect(firstBody.interrupt).toBe(false);

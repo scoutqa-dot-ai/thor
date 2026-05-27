@@ -1064,7 +1064,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       const hasInterrupt = events.some((event) => event.interrupt);
       const logTrigger = (
         prefix: BatchLogPrefix,
-        outcome: "busy" | "dropped" | "fired",
+        outcome: "dropped" | "fired",
         reason?: string,
       ) => {
         logInfo(
@@ -1152,9 +1152,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         }
 
         const result = await executeBatchDispatchPlan(plan);
-        if (result.busy) {
-          logTrigger(plan.logPrefix, "busy");
-        } else if (result.rejected) {
+        if (result.rejected) {
           logTrigger(plan.logPrefix, "dropped", result.reason);
         } else {
           logTrigger(plan.logPrefix, "fired");

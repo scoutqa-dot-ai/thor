@@ -63,7 +63,7 @@ const QueuedEventSchema = z.object({
 /**
  * Handler callback. Call `ack()` to confirm processing and delete the files.
  * Call `reject(reason)` to move files to the dead-letter directory.
- * If the handler returns without calling ack or reject (e.g. runner busy),
+ * If the handler returns without calling ack or reject (e.g. retryable runner failure),
  * files stay on disk and will be retried on the next scan cycle.
  * If the handler throws, files are deleted to prevent infinite retry loops.
  */

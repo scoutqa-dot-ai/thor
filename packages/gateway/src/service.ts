@@ -130,14 +130,9 @@ function getFetch(fetchImpl?: typeof fetch): typeof fetch {
   return fetchImpl ?? fetch;
 }
 
-export interface TriggerResult {
-  /** True when the runner reported session busy and interrupt was false. */
-  busy: boolean;
-  /** True when the batch was terminally rejected (dead-lettered). */
-  rejected?: boolean;
-  /** Human-readable rejection reason; set when `rejected` is true. */
-  reason?: string;
-}
+export type TriggerResult =
+  | { rejected: true; reason: string }
+  | { rejected: false };
 
 export interface GitHubPrHeadResult {
   ref: string;
@@ -559,17 +554,13 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
     if (response.status >= 400 && response.status < 500) {
       const reason = `Runner returned ${response.status}: ${text}`;
       options.onRejected?.(reason);
-      return { busy: false, rejected: true, reason };
+      return { rejected: true, reason };
     }
     throw new Error(`Runner returned ${response.status}: ${text}`);
   }
 
-  const json = (await response.json()) as Record<string, unknown>;
-  if (json.busy === true) {
-    return { busy: true };
-  }
   options.onAccepted?.();
-  return { busy: false };
+  return { rejected: false };
 }
 
 export async function planBatchDispatch(input: BatchDispatchInput): Promise<BatchDispatchPlan> {
@@ -758,7 +749,7 @@ async function dispatchBatch(input: BatchDispatchInput): Promise<TriggerResult> 
     const plan = await planBatchDispatch(currentInput);
     if (plan.kind === "drop") {
       currentInput.onRejected?.(plan.reason);
-      return { busy: false, rejected: true, reason: plan.reason };
+      return { rejected: true, reason: plan.reason };
     }
     if (plan.kind === "reroute") {
       currentInput = {
@@ -785,7 +776,7 @@ export async function triggerRunnerSlack(
   approvalOutcomes?: ApprovalOutcomeEventPayload[],
 ): Promise<TriggerResult> {
   if (events.length === 0 && (!approvalOutcomes || approvalOutcomes.length === 0)) {
-    return { busy: false };
+    return { rejected: false };
   }
 
   const handleRejected = (reason: string) => {
@@ -852,7 +843,7 @@ export async function triggerRunnerGitHub(
   onAccepted?: () => void,
   onRejected?: (reason: string) => void,
 ): Promise<TriggerResult> {
-  if (events.length === 0) return { busy: false };
+  if (events.length === 0) return { rejected: false };
 
   return dispatchBatch({
     slackEvents: [],
@@ -885,7 +876,7 @@ export async function triggerRunnerApprovalOutcomes(
   slackDirectoryForChannel?: (channel: string) => SlackRoutingInfo,
   onRejected?: (reason: string) => void,
 ): Promise<TriggerResult> {
-  if (events.length === 0) return { busy: false };
+  if (events.length === 0) return { rejected: false };
 
   const handleRejected = (reason: string) => {
     const last = events[events.length - 1];
