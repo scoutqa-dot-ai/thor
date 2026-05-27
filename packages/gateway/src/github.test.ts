@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { computeGitCorrelationKey } from "@thor/common";
 import {
   buildCorrelationKey,
+  buildPendingCheckSuiteKey,
   CheckSuiteCompletedEventSchema,
   detectMention,
   extractGitHubBranchFromRef,
@@ -12,6 +13,7 @@ import {
   GitHubWebhookEnvelopeSchema,
   isCheckSuiteCompletedEvent,
   isIssueCommentEvent,
+  isPendingCheckSuiteKey,
   isPullRequestClosedEvent,
   isPushEvent,
   PullRequestClosedEventSchema,
@@ -508,5 +510,13 @@ describe("mention and correlation helpers", () => {
       "/workspace/repos/thor",
     );
     expect(computed).toBe(built);
+  });
+
+  it("builds and identifies pending check-suite keys", () => {
+    const key = buildPendingCheckSuiteKey("thor", "delivery-123");
+
+    expect(key).toBe("pending:check-suite:thor:delivery-123");
+    expect(isPendingCheckSuiteKey(key)).toBe(true);
+    expect(isPendingCheckSuiteKey("git:branch:thor:feature/refactor")).toBe(false);
   });
 });

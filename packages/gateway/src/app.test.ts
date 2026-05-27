@@ -1617,7 +1617,7 @@ describe("gateway", () => {
           expect(queued[0]).toMatchObject({
             id: "delivery-check-suite-ok",
             source: "github",
-            correlationKey: "git:branch:thor:feature/refactor",
+            correlationKey: "pending:check-suite:thor:delivery-check-suite-ok",
             delayMs: 0,
             interrupt: false,
             payload: {
@@ -1636,7 +1636,10 @@ describe("gateway", () => {
           expect(ingested[0]).toMatchObject({
             reason: "accepted",
             eventType: "check_suite",
-            metadata: { correlationKey: "git:branch:thor:feature/refactor" },
+            metadata: {
+              correlationKey: "pending:check-suite:thor:delivery-check-suite-ok",
+              targetCorrelationKey: "git:branch:thor:feature/refactor",
+            },
           });
 
           await queue.flush();
@@ -1733,7 +1736,7 @@ describe("gateway", () => {
           expect(queued[0]).toMatchObject({
             id: `delivery-check-suite-${String(conclusion)}`,
             source: "github",
-            correlationKey: "git:branch:thor:feature/refactor",
+            correlationKey: `pending:check-suite:thor:delivery-check-suite-${String(conclusion)}`,
             delayMs: 0,
             interrupt: false,
             payload: {
@@ -1752,7 +1755,10 @@ describe("gateway", () => {
           expect(ingested[0]).toMatchObject({
             reason: "accepted",
             eventType: "check_suite",
-            metadata: { correlationKey: "git:branch:thor:feature/refactor" },
+            metadata: {
+              correlationKey: `pending:check-suite:thor:delivery-check-suite-${String(conclusion)}`,
+              targetCorrelationKey: "git:branch:thor:feature/refactor",
+            },
           });
 
           await queue.flush();
@@ -1932,14 +1938,113 @@ describe("gateway", () => {
           expect(response.status).toBe(200);
           expect(await response.json()).toEqual({ ok: true });
           expect(internalExec).not.toHaveBeenCalled();
-          expect(readQueuedEvents(queueDir)).toHaveLength(1);
+          expect(readQueuedEvents(queueDir)).toMatchObject([
+            { correlationKey: "pending:check-suite:thor:delivery-check-suite-pending" },
+          ]);
           expect(readGitHubIngestedEntries(worklogDir)).toMatchObject([
             { reason: "accepted", eventType: "check_suite" },
           ]);
 
           await queue.flush();
           expect(fetchImpl).not.toHaveBeenCalled();
-          expect(readQueuedEvents(queueDir)).toHaveLength(1);
+          expect(readQueuedEvents(queueDir)).toMatchObject([
+            {
+              correlationKey: "pending:check-suite:thor:delivery-check-suite-pending",
+              delayMs: 30_000,
+            },
+          ]);
+          expect(readQueuedEvents(queueDir, "dead-letter")).toHaveLength(0);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+          githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+          githubPrChecksRetryDelayMs: 30_000,
+          internalExec,
+        },
+      );
+    });
+  });
+
+  it("does not defer same-branch GitHub comments behind pending PR-wide checks", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    mockRunnerAccepted(fetchImpl);
+    const internalExec = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 })
+      .mockResolvedValueOnce({
+        stdout: "49699333+thor[bot]@users.noreply.github.com\n",
+        stderr: "",
+        exitCode: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([{ name: "build", state: "IN_PROGRESS", bucket: "pending" }]),
+        stderr: "",
+        exitCode: 0,
+      });
+
+    await withWorklogDir(async () => {
+      sessionKeys.add("git:branch:thor:feature/refactor");
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl, queue, queueDir) => {
+          const checkSuiteBody = checkSuiteWebhookBody({ conclusion: "success" });
+          const reviewCommentBody = JSON.stringify({
+            action: "created",
+            installation: { id: 126669985 },
+            repository: { full_name: "scoutqa-dot-ai/thor" },
+            sender: { id: 1001, login: "alice", type: "User" },
+            pull_request: {
+              number: 42,
+              user: { id: 1001, login: "alice" },
+              head: { ref: "feature/refactor", repo: { full_name: "scoutqa-dot-ai/thor" } },
+              base: { repo: { full_name: "scoutqa-dot-ai/thor" } },
+            },
+            comment: {
+              body: "Please check this @thor",
+              html_url: "https://github.com/scoutqa-dot-ai/thor/pull/42#discussion_r1",
+              created_at: "2026-04-24T12:00:01Z",
+            },
+          });
+
+          await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(checkSuiteBody, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-pending-mixed",
+              "X-GitHub-Event": "check_suite",
+            },
+            body: checkSuiteBody,
+          });
+          await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(reviewCommentBody, "github-secret"),
+              "X-GitHub-Delivery": "delivery-review-comment-while-checks-pending",
+              "X-GitHub-Event": "pull_request_review_comment",
+            },
+            body: reviewCommentBody,
+          });
+
+          await queue.flush();
+
+          expect(fetchImpl).toHaveBeenCalledTimes(1);
+          const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+          expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
+          expect(JSON.parse(triggerBody.prompt)).toMatchObject({
+            event_type: "pull_request_review_comment",
+            comment: { body: "Please check this @thor" },
+          });
+          expect(readQueuedEvents(queueDir)).toMatchObject([
+            {
+              correlationKey: "pending:check-suite:thor:delivery-check-suite-pending-mixed",
+              delayMs: 30_000,
+            },
+          ]);
           expect(readQueuedEvents(queueDir, "dead-letter")).toHaveLength(0);
         },
         {
@@ -1987,7 +2092,9 @@ describe("gateway", () => {
           expect(response.status).toBe(200);
           expect(await response.json()).toEqual({ ok: true });
           expect(internalExec).not.toHaveBeenCalled();
-          expect(readQueuedEvents(queueDir)).toHaveLength(1);
+          expect(readQueuedEvents(queueDir)).toMatchObject([
+            { correlationKey: "pending:check-suite:thor:delivery-check-suite-lookup-failed" },
+          ]);
           expect(readGitHubIngestedEntries(worklogDir)).toMatchObject([
             { reason: "accepted", eventType: "check_suite" },
           ]);

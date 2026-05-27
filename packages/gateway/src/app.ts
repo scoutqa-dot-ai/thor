@@ -68,6 +68,7 @@ import {
   buildCorrelationKey,
   buildIssueCorrelationKey,
   buildPendingBranchResolveKey,
+  buildPendingCheckSuiteKey,
   getGitHubEventBranch,
   getGitHubEventLocalRepo,
   getGitHubEventNumber,
@@ -1756,6 +1757,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const branch = getGitHubEventBranch(parsed.data);
     let correlationKey: string;
+    let targetCorrelationKey: string | undefined;
     let delayMs = githubMentionDelay;
     let interrupt = true;
     const payload: GitHubWebhookEvent = parsed.data;
@@ -1904,7 +1906,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         res.status(200).json({ ok: true, ignored: true });
         return;
       }
-      correlationKey = resolvedKey;
+      targetCorrelationKey = resolvedKey;
+      correlationKey = buildPendingCheckSuiteKey(localRepo, deliveryId);
       delayMs = 0;
       interrupt = false;
     } else if (branch) {
@@ -1934,7 +1937,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     history.parseStatus = "schema_valid";
     history.action = parsed.data.action;
     history.reason = "accepted";
-    history.metadata = { repoFullName, localRepo, correlationKey };
+    history.metadata = {
+      repoFullName,
+      localRepo,
+      correlationKey,
+      ...(targetCorrelationKey ? { targetCorrelationKey } : {}),
+    };
 
     logInfo(log, "github_event_accepted", {
       deliveryId,

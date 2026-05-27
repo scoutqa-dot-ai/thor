@@ -19,10 +19,12 @@ import {
 import type { CronPayload } from "./cron.js";
 import {
   buildCorrelationKey,
+  getGitHubEventBranch,
   getGitHubEventLocalRepo,
   isCheckSuiteCompletedEvent,
   isIssueCommentEvent,
   isPendingBranchResolveKey,
+  isPendingCheckSuiteKey,
   type GitHubWebhookEvent,
   type IssueCommentEvent,
 } from "./github.js";
@@ -562,6 +564,19 @@ function resolveInternalExecClient(input: {
   );
 }
 
+function resolveCheckSuiteBranchCorrelationKey(events: GitHubWebhookEvent[]): string | undefined {
+  const keys = new Set<string>();
+  for (const event of events) {
+    if (!isCheckSuiteCompletedEvent(event)) continue;
+    const localRepo = getGitHubEventLocalRepo(event);
+    const branch = getGitHubEventBranch(event);
+    if (!localRepo || !branch) return undefined;
+    keys.add(resolveCorrelationKeys([buildCorrelationKey(localRepo, branch)]));
+  }
+  if (keys.size !== 1) return undefined;
+  return [...keys][0];
+}
+
 async function prepareGitHubCheckSuiteEvents(input: {
   events: GitHubWebhookEvent[];
   internalExec: InternalExecClient;
@@ -756,7 +771,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     }
   }
 
-  if (githubEvents.some(isCheckSuiteCompletedEvent)) {
+  if (isPendingCheckSuiteKey(input.correlationKey)) {
     const internalExec = resolveInternalExecClient(input);
     if (!internalExec) {
       throw new Error("internalExec or remoteCliUrl is required for GitHub check_suite gating");
@@ -778,7 +793,17 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       }
       return { kind: "drop", logPrefix, reason: prepared.reason };
     }
-    githubEvents = prepared.events;
+    const targetCorrelationKey = resolveCheckSuiteBranchCorrelationKey(prepared.events);
+    if (!targetCorrelationKey) {
+      return { kind: "drop", logPrefix, reason: "check_suite_branch_missing" };
+    }
+    return {
+      kind: "reroute",
+      logPrefix: "github",
+      fromCorrelationKey: input.correlationKey,
+      toCorrelationKey: targetCorrelationKey,
+      githubEvents: prepared.events,
+    };
   }
 
   const parts: DispatchPart[] = [];
