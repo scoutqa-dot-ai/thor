@@ -1,0 +1,25 @@
+packages/opencode-cli/src/slack-upload.ts
+  cb4f0744f0a59b7a 107,207,210
+scripts/test-e2e.sh
+  cb4f0744f0a59b7a 1017-1018
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "df4d3b257aa0149260c22051769b99dbcf1200c9",
+  "prompts": {
+    "cb4f0744f0a59b7a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "58d9d6fd-8e10-4ced-8b31-98c0a4962ddb",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 52,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
