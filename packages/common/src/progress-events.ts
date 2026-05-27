@@ -27,6 +27,15 @@ export const ProgressDelegateSchema = z.object({
   agent: z.string(),
 });
 
+export const ProgressContextSchema = z.object({
+  type: z.literal("context"),
+  providerID: z.string(),
+  modelID: z.string(),
+  tokens: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  usagePercent: z.number().int().nonnegative(),
+});
+
 export const ProgressDoneSchema = z.object({
   type: z.literal("done"),
   sessionId: z.string(),
@@ -56,6 +65,7 @@ export const ProgressEventSchema = z.union([
   ProgressToolSchema,
   ProgressMemorySchema,
   ProgressDelegateSchema,
+  ProgressContextSchema,
   ProgressDoneSchema,
   ProgressErrorSchema,
   ProgressHeartbeatSchema,
@@ -67,6 +77,7 @@ export type ProgressStart = z.infer<typeof ProgressStartSchema>;
 export type ProgressTool = z.infer<typeof ProgressToolSchema>;
 export type ProgressMemory = z.infer<typeof ProgressMemorySchema>;
 export type ProgressDelegate = z.infer<typeof ProgressDelegateSchema>;
+export type ProgressContext = z.infer<typeof ProgressContextSchema>;
 export type ProgressDone = z.infer<typeof ProgressDoneSchema>;
 export type ProgressError = z.infer<typeof ProgressErrorSchema>;
 export type ProgressEvent = z.infer<typeof ProgressEventSchema>;

@@ -6,7 +6,7 @@ if [ -z "${THOR_ADMIN_EMAILS:-}" ]; then
 fi
 
 admin_regex=$(
-  printf '%s' "$THOR_ADMIN_EMAILS" | tr ',' '\n' | while IFS= read -r raw_email; do
+  printf '%s\n' "$THOR_ADMIN_EMAILS" | tr ',' '\n' | while IFS= read -r raw_email; do
     email=$(printf '%s' "$raw_email" | tr -d '[:space:]')
     if [ -z "$email" ]; then
       continue

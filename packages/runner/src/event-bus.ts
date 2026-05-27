@@ -336,6 +336,11 @@ function extractSessionId(event: Event): string | undefined {
   if (event.type === "message.part.updated") {
     return event.properties.part.sessionID;
   }
+  if (event.type === "message.updated") {
+    const info = (event.properties as { info?: { sessionID?: string; sessionId?: string } })
+      .info;
+    return info?.sessionID ?? info?.sessionId;
+  }
   if (
     event.type === "session.idle" ||
     event.type === "session.status" ||

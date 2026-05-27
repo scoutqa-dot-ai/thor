@@ -94,6 +94,21 @@ const MEMORY_DIR = "/workspace/memory";
 const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
+type ModelContextLimits = Map<string, number>;
+const EMPTY_MODEL_CONTEXT_LIMITS: ModelContextLimits = new Map();
+const MODEL_CONTEXT_LIMIT_CACHE_TTL_MS = 5 * 60_000;
+let cachedModelContextLimits:
+  | {
+      expiresAt: number;
+      limits: ModelContextLimits;
+    }
+  | undefined;
+let cachedModelContextLimitsPending: Promise<void> | undefined;
+
+export function resetModelContextLimitCacheForTests(): void {
+  cachedModelContextLimits = undefined;
+  cachedModelContextLimitsPending = undefined;
+}
 
 export interface RunnerAppOptions {
   opencodeUrl?: string;
@@ -835,6 +850,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       const resumed = resolution.resumed;
       const anchorId = resolution.anchorId;
 
+      // Kick off model-limit warming up front so it overlaps the busy check and
+      // prompt-send. Awaited later before the stream loop reads the cache.
+      const warmModelLimits = warmModelContextLimits({ client, opencodeUrl });
+
       // --- If resuming a busy session, abort or bail ---
       if (resumed) {
         const statusResult = await client.session.status({});
@@ -876,6 +895,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           logInfo(log, "session_abort_complete", { sessionId });
         }
       }
+
+      // Block briefly so the first trigger after process start sees populated
+      // limits; subsequent calls within the cache TTL resolve immediately.
+      await warmModelLimits;
 
       const bootstrapMemoryPaths: string[] = [];
 
@@ -972,6 +995,15 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             ? { action: event.action, path: event.path, source: event.source }
             : {}),
           ...(event.type === "delegate" ? { agent: event.agent } : {}),
+          ...(event.type === "context"
+            ? {
+                providerID: event.providerID,
+                modelID: event.modelID,
+                tokens: event.tokens,
+                limit: event.limit,
+                usagePercent: event.usagePercent,
+              }
+            : {}),
           ...(event.type === "done"
             ? { status: event.status, durationMs: (event as { durationMs?: number }).durationMs }
             : {}),
@@ -1020,7 +1052,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           let latestSessionErrorAt: number | undefined;
           let finished = false;
           let sawParentMessagePart = false;
-
           // Track child session IDs for progress forwarding.
           const childSessionIds = new Set<string>();
           // Dedupe task delegate emissions across repeated part updates.
@@ -1089,8 +1120,15 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
                 const isParent = isSessionEvent(event, sessionId);
 
+                if (isParent && event.type === "message.updated") {
+                  emitContextProgressFromMessage(event, currentModelContextLimits(), emit);
+                }
+
                 // Forward tool progress from child sessions so
-                // Slack progress isn't silent while a task runs.
+                // Slack progress isn't silent while a task runs. Non-parent
+                // events must never drive parent terminal handling below — a
+                // child's session.idle / session.error would otherwise end the
+                // parent run before its final answer is emitted.
                 if (!isParent) {
                   if (
                     event.type === "message.part.updated" &&
@@ -1295,6 +1333,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
 function eventSessionId(event: Event): string | undefined {
   if (event.type === "message.part.updated") return event.properties.part.sessionID;
+  if (event.type === "message.updated") {
+    const info = messageUpdatedInfo(event);
+    return safeStr(info?.sessionID) ?? safeStr(info?.sessionId);
+  }
   if (
     event.type === "session.idle" ||
     event.type === "session.status" ||
@@ -1303,6 +1345,99 @@ function eventSessionId(event: Event): string | undefined {
     return event.properties.sessionID;
   }
   return undefined;
+}
+
+function contextLimitKey(providerID: string, modelID: string): string {
+  return `${providerID}/${modelID}`;
+}
+
+async function resolveModelContextLimits(client: OpencodeClient): Promise<ModelContextLimits> {
+  const limits: ModelContextLimits = new Map();
+  try {
+    const { data } = await client.provider.list({});
+    for (const provider of data?.all ?? []) {
+      for (const [modelID, model] of Object.entries(provider.models)) {
+        if (model.limit.context > 0) {
+          limits.set(contextLimitKey(provider.id, modelID), Math.floor(model.limit.context));
+        }
+      }
+    }
+  } catch (err) {
+    logWarn(log, "model_context_limits_load_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return limits;
+}
+
+function currentModelContextLimits(): ModelContextLimits {
+  const cached = cachedModelContextLimits;
+  if (!cached) return EMPTY_MODEL_CONTEXT_LIMITS;
+  if (cached.expiresAt <= Date.now()) return EMPTY_MODEL_CONTEXT_LIMITS;
+  return cached.limits;
+}
+
+function warmModelContextLimits(input: {
+  client: OpencodeClient;
+  opencodeUrl: string;
+}): Promise<void> {
+  const cached = cachedModelContextLimits;
+  if (cached && cached.expiresAt > Date.now()) return Promise.resolve();
+  if (cachedModelContextLimitsPending) return cachedModelContextLimitsPending;
+
+  cachedModelContextLimitsPending = resolveModelContextLimits(input.client)
+    .then((limits) => {
+      cachedModelContextLimits = {
+        limits,
+        expiresAt: Date.now() + MODEL_CONTEXT_LIMIT_CACHE_TTL_MS,
+      };
+    })
+    .catch((err) => {
+      logWarn(log, "model_context_limits_warm_failed", {
+        opencodeUrl: input.opencodeUrl,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    })
+    .finally(() => {
+      cachedModelContextLimitsPending = undefined;
+    });
+  return cachedModelContextLimitsPending;
+}
+
+function messageUpdatedInfo(event: Event): Record<string, unknown> | undefined {
+  const properties = (event as unknown as { properties?: unknown }).properties;
+  if (!isRecord(properties)) return undefined;
+  const info = properties.info ?? properties.message;
+  return isRecord(info) ? info : undefined;
+}
+
+function emitContextProgressFromMessage(
+  event: Event,
+  limits: ModelContextLimits,
+  emit: (event: ProgressEvent) => void,
+): void {
+  const info = messageUpdatedInfo(event);
+  if (!info) return;
+  const role = safeStr(info.role) ?? safeStr(info.type);
+  if (role && role !== "assistant") return;
+  const tokens = contextTokenTotal(info.tokens);
+  if (tokens === undefined) return;
+  const tokenTotal = Math.max(0, Math.floor(tokens));
+  if (tokenTotal <= 0) return;
+  const providerID = safeStr(info.providerID) ?? safeStr(info.providerId);
+  const modelID = safeStr(info.modelID) ?? safeStr(info.modelId);
+  if (!providerID || !modelID) return;
+  const limit = limits.get(contextLimitKey(providerID, modelID));
+  if (!limit) return;
+  const usagePercent = Math.round((tokenTotal * 100) / limit);
+  emit({
+    type: "context",
+    providerID,
+    modelID,
+    tokens: tokenTotal,
+    limit,
+    usagePercent,
+  });
 }
 
 function isSessionEvent(event: Event, sessionId: string): boolean {
@@ -1997,6 +2132,12 @@ function numericTokenTotal(tokens: unknown): number | undefined {
     }
   }
   return found ? total : undefined;
+}
+
+function contextTokenTotal(tokens: unknown): number | undefined {
+  const counts = extractTokenCounts(tokens);
+  if (!counts) return undefined;
+  return counts.input + counts.output + counts.reasoning + counts.cacheRead;
 }
 
 /**

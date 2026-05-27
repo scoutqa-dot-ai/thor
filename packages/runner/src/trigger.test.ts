@@ -3,7 +3,11 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Event, TextPart } from "@opencode-ai/sdk";
-import { createRunnerApp, type RunnerAppOptions } from "./index.js";
+import {
+  createRunnerApp,
+  resetModelContextLimitCacheForTests,
+  type RunnerAppOptions,
+} from "./index.js";
 import {
   appendAlias,
   appendCorrelationAliasForAnchor,
@@ -83,6 +87,29 @@ function textEvent(sessionId: string, text: string): Event {
       } as TextPart,
     },
   } as Event;
+}
+
+function messageUpdatedEvent(
+  sessionId: string,
+  opts: { providerID: string; modelID: string; tokens: unknown; role?: string } = {
+    providerID: "openai",
+    modelID: "gpt-5.5",
+    tokens: { input: 100_000, output: 20_000, reasoning: 6_000 },
+    role: "assistant",
+  },
+): Event {
+  return {
+    type: "message.updated",
+    properties: {
+      info: {
+        sessionID: sessionId,
+        role: opts.role ?? "assistant",
+        providerID: opts.providerID,
+        modelID: opts.modelID,
+        tokens: opts.tokens,
+      },
+    },
+  } as unknown as Event;
 }
 
 function idleEvent(sessionId: string): Event {
@@ -181,9 +208,12 @@ function createHarness(
     busySessions?: Set<string>;
     children?: Array<{ id: string }>;
     onGet?: (sessionId: string) => Promise<void>;
+    onProviderList?: () => void;
     promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
     throwInSubscribe?: boolean;
     workspaceConfig?: WorkspaceConfig;
+    providerList?: unknown;
+    opencodeUrl?: string;
   } = {},
 ) {
   const buses = new FakeEventBuses();
@@ -236,9 +266,16 @@ function createHarness(
       },
       children: async () => ({ data: opts.children ?? [] }),
     },
+    provider: {
+      list: async () => {
+        opts.onProviderList?.();
+        return { data: opts.providerList ?? { all: [], default: {}, connected: [] } };
+      },
+    },
   };
 
   const app = createRunnerApp({
+    opencodeUrl: opts.opencodeUrl ?? `http://opencode.test/${Math.random().toString(16).slice(2)}`,
     eventBuses: opts.throwInSubscribe
       ? ({
           subscribe: async () => {
@@ -312,6 +349,7 @@ async function trigger(url: string, body: Record<string, unknown>) {
 beforeEach(() => {
   process.env.WORKLOG_DIR = worklogDir;
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
+  resetModelContextLimitCacheForTests();
 });
 
 afterEach(() => {
@@ -985,13 +1023,27 @@ describe("runner /trigger orchestration", () => {
     });
 
     await withServer(h.app, async (url) => {
-      const first = trigger(url, { prompt: "from slack", correlationKey: slackKey });
+      const postTrigger = (correlationKey: string, prompt: string) =>
+        fetch(`${url}/trigger`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            prompt,
+            correlationKey,
+            directory: "/workspace/repos/runner-trigger-test",
+          }),
+        });
+
+      const first = postTrigger(slackKey, "from slack");
       await firstGetStarted;
-      const second = trigger(url, { prompt: "from github", correlationKey: gitKey });
+      const second = postTrigger(gitKey, "from github");
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(maxActiveGets).toBe(1);
       releaseFirstGet();
-      await Promise.all([first, second]);
+      const [firstResponse, secondResponse] = await Promise.all([first, second]);
+      expect(firstResponse.status).toBe(200);
+      expect(secondResponse.status).toBe(200);
+      await Promise.all([firstResponse.body?.cancel?.(), secondResponse.body?.cancel?.()]);
     });
 
     expect(maxActiveGets).toBe(1);
@@ -1165,6 +1217,380 @@ describe("runner /trigger orchestration", () => {
       expect(h.prompts[1]).not.toContain("root memory text");
       expect(h.prompts[1]).not.toContain("repo memory text");
     });
+  });
+
+  it("emits context progress from assistant message updates using configured model limits", async () => {
+    const h = createHarness({
+      providerList: {
+        all: [
+          {
+            id: "openai",
+            models: {
+              "gpt-5.5": { limit: { context: 200_000 } },
+            },
+          },
+        ],
+        default: {},
+        connected: [],
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.090",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toMatchObject({
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 126_000,
+        limit: 200_000,
+        usagePercent: 63,
+      });
+      expect(result.events.filter((e) => e.type === "tool")).toHaveLength(0);
+    });
+  });
+
+  it("keys context limits by provider and model to avoid same-model collisions", async () => {
+    const h = createHarness({
+      providerList: {
+        all: [
+          { id: "openai", models: { "gpt-5.4": { limit: { context: 200_000 } } } },
+          { id: "anthropic", models: { "gpt-5.4": { limit: { context: 1_000_000 } } } },
+        ],
+        default: {},
+        connected: [],
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId, {
+          providerID: "openai",
+          modelID: "gpt-5.4",
+          tokens: { input: 100_000, output: 20_000, reasoning: 6_000 },
+          role: "assistant",
+        }),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.099",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toMatchObject({
+        providerID: "openai",
+        modelID: "gpt-5.4",
+        tokens: 126_000,
+        limit: 200_000,
+        usagePercent: 63,
+      });
+    });
+  });
+
+  it("extracts context totals only from displayed token usage fields", async () => {
+    const h = createHarness({
+      providerList: {
+        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
+        default: {},
+        connected: [],
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId, {
+          providerID: "openai",
+          modelID: "gpt-5.5",
+          tokens: {
+            input: 100_000,
+            output: 20_000,
+            reasoning: 6_000,
+            cache: { read: 4_000, write: 99_000 },
+            metadata: { nested: 999_000 },
+          },
+          role: "assistant",
+        }),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.100",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toMatchObject({
+        tokens: 130_000,
+        limit: 200_000,
+        usagePercent: 65,
+      });
+    });
+  });
+
+  it("suppresses zero-token assistant message context updates", async () => {
+    const h = createHarness({
+      providerList: {
+        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
+        default: {},
+        connected: [],
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId, {
+          providerID: "openai",
+          modelID: "gpt-5.5",
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0 } },
+          role: "assistant",
+        }),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "fresh assistant",
+        correlationKey: "slack:thread:1710000000.101",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toBeUndefined();
+    });
+  });
+
+  it("normalizes context usage percent to an integer before emitting", async () => {
+    const h = createHarness({
+      providerList: {
+        all: [
+          {
+            id: "openai",
+            models: {
+              "gpt-5.5": { limit: { context: 200_000 } },
+            },
+          },
+        ],
+        default: {},
+        connected: [],
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId, {
+          providerID: "openai",
+          modelID: "gpt-5.5",
+          tokens: { input: 99_999 },
+          role: "assistant",
+        }),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.092",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toMatchObject({
+        type: "context",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: 99_999,
+        limit: 200_000,
+        usagePercent: 50,
+      });
+    });
+  });
+
+  it("caches resolved model context limits in memory across triggers", async () => {
+    let providerLists = 0;
+    const h = createHarness({
+      onProviderList: () => {
+        providerLists++;
+      },
+      providerList: {
+        all: [
+          {
+            id: "openai",
+            models: {
+              "gpt-5.5": { limit: { context: 200_000 } },
+            },
+          },
+        ],
+        default: {},
+        connected: [],
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      await trigger(url, {
+        prompt: "large search one",
+        correlationKey: "slack:thread:1710000000.093",
+      });
+      await trigger(url, {
+        prompt: "large search two",
+        correlationKey: "slack:thread:1710000000.094",
+      });
+    });
+
+    expect(providerLists).toBe(1);
+  });
+
+  it("shares the global model-limit cache across opencode urls", async () => {
+    let providerListsA = 0;
+    let providerListsB = 0;
+    const promptEvents = (sessionId: string) => [
+      messageUpdatedEvent(sessionId),
+      textEvent(sessionId, "done"),
+      idleEvent(sessionId),
+    ];
+
+    const a = createHarness({
+      opencodeUrl: "http://opencode-a.test:4096",
+      onProviderList: () => {
+        providerListsA++;
+      },
+      providerList: {
+        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
+        default: {},
+        connected: [],
+      },
+      promptEvents,
+    });
+    const b = createHarness({
+      opencodeUrl: "http://opencode-b.test:4096",
+      onProviderList: () => {
+        providerListsB++;
+      },
+      providerList: {
+        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
+        default: {},
+        connected: [],
+      },
+      promptEvents,
+    });
+
+    await withServer(a.app, async (urlA) => {
+      await withServer(b.app, async (urlB) => {
+        await Promise.all([
+          trigger(urlA, {
+            prompt: "large search a",
+            correlationKey: "slack:thread:1710000000.095",
+          }),
+          trigger(urlB, {
+            prompt: "large search b",
+            correlationKey: "slack:thread:1710000000.096",
+          }),
+        ]);
+      });
+    });
+
+    expect(providerListsA + providerListsB).toBe(1);
+  });
+
+  it("warms model limits best-effort even when a resumed session returns busy", async () => {
+    let providerLists = 0;
+    const h = createHarness({
+      existingSessions: new Set(["busy-session"]),
+      busySessions: new Set(["busy-session"]),
+      onProviderList: () => {
+        providerLists++;
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/trigger`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt: "hello",
+          sessionId: "busy-session",
+          correlationKey: "slack:thread:1710000000.097",
+          directory: "/workspace/repos/runner-trigger-test",
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ busy: true });
+    });
+
+    expect(providerLists).toBe(1);
+  });
+
+  it("skips context progress when no positive configured model limit is known", async () => {
+    const h = createHarness({
+      providerList: {
+        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 0 } } } }],
+        default: {},
+        connected: [],
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "large search",
+        correlationKey: "slack:thread:1710000000.091",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toBeUndefined();
+    });
+  });
+
+  it("warms model limits best-effort even for tokenless message.updated events", async () => {
+    let providerLists = 0;
+    const h = createHarness({
+      onProviderList: () => {
+        providerLists++;
+      },
+      providerList: {
+        all: [
+          {
+            id: "openai",
+            models: {
+              "gpt-5.5": { limit: { context: 200_000 } },
+            },
+          },
+        ],
+        default: {},
+        connected: [],
+      },
+      promptEvents: (sessionId) => [
+        messageUpdatedEvent(sessionId, {
+          providerID: "openai",
+          modelID: "gpt-5.5",
+          tokens: undefined,
+          role: "assistant",
+        }),
+        textEvent(sessionId, "done"),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "tokenless update",
+        correlationKey: "slack:thread:1710000000.098",
+      });
+
+      expect(result.events.find((e) => e.type === "context")).toBeUndefined();
+    });
+
+    expect(providerLists).toBe(1);
   });
 
   it("emits opencode.subsession aliases for discovered child sessions", async () => {

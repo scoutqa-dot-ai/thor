@@ -5,17 +5,17 @@ OpenHands, open-swe, background-agents, junior, goose.
 
 | Tool              | Repository                                                                      | License                            |
 | ----------------- | ------------------------------------------------------------------------------- | ---------------------------------- |
-| OpenHands         | [OpenHands/OpenHands](https://github.com/OpenHands/OpenHands)                   | MIT (core) + Polyform (enterprise) |
+| OpenHands         | [OpenHands/OpenHands](https://github.com/OpenHands/OpenHands)                   | MIT (core) + source-available (enterprise) |
 | open-swe          | [langchain-ai/open-swe](https://github.com/langchain-ai/open-swe)               | MIT                                |
 | background-agents | [ColeMurray/background-agents](https://github.com/ColeMurray/background-agents) | Open-source                        |
-| junior            | [getsentry/junior](https://github.com/getsentry/junior)                         | Sentry-operated                    |
+| junior            | [getsentry/junior](https://github.com/getsentry/junior)                         | Apache 2.0 (Sentry-maintained)     |
 | goose             | [aaif-goose/goose](https://github.com/aaif-goose/goose)                         | Apache 2.0                         |
 
 ## 1. Thor in one paragraph
 
 Thor is an **event-driven, single-tenant, internal-team AI teammate**. A
 `gateway` ingests Slack mentions, GitHub webhooks, and cron events; a `runner`
-manages OpenCode session continuity and streams progress back to Slack; the
+manages OpenCode session continuity and owns Slack progress updates; the
 OpenCode agent reaches the outside world through `remote-cli`, which is the
 **MCP / CLI policy gateway** (allow / approve / hide). Outbound HTTPS goes
 through explicit `mitmproxy` rules for configured outbound credential
@@ -29,7 +29,7 @@ workspace, one OpenCode runtime, one runner, no per-user sandbox fleet.
 | ----------------- | ------------------------------- | --------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------- |
 | OpenHands         | All Hands AI                    | Full IDE-style platform + Enterprise SaaS           | Docker / Remote / Local runtime                      | Web GUI, CLI, GitHub/GitLab/Bitbucket, Slack | Most "product-y" — workspaces, RBAC, billing, browser tool          |
 | open-swe          | LangChain                       | LangGraph + Deep Agents framework                   | Pluggable: LangSmith / Daytona / Modal / Runloop     | Slack, Linear, GitHub, webhook               | Composable framework; separate reviewer subgraph; AGENTS.md         |
-| background-agents | Open-Inspect (Ramp-style)       | Cloudflare control plane + Modal/Daytona data plane | Modal snapshots (fast restore) or Daytona persistent | Web, Slack, GitHub, Linear, webhook, cron    | Async-first multiplayer; per-session Durable Object SQLite          |
+| background-agents | Open-Inspect (Ramp-style)       | Cloudflare control plane + Modal data plane         | Modal snapshots (fast restore)                       | Web, Slack, GitHub, Linear, webhook, cron    | Async-first multiplayer; per-session Durable Object SQLite          |
 | junior            | Sentry                          | Slack-native turn-based agent harness (Pi)          | Vercel Sandbox                                       | Slack (DM, @mention, threads, app-home)      | Thinking-level routing; resumable durable turns; OAuth pause/resume |
 | goose             | Block → AAIF / Linux Foundation | Rust-native general-purpose agent                   | Local process; optional container                    | Desktop GUI, CLI, HTTP API (goosed)          | MCP-first; 15+ LLM providers; recipes; runs on the user's machine   |
 
@@ -82,7 +82,7 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 | Worktree-based edits in shared workspace    |                 ✅                  |    ❌     |                 ❌                  |          ❌          |           ❌           |           ❌           |
 | Session continuity / resume                 |                 ✅                  |    ✅     |                 ✅                  | ✅ (Durable Objects) |    ✅ (turn-resume)    |           ✅           |
 | Multi-user multiplayer in one session       |    🟡 (shared Slack thread / PR)    |    🟡     |                 ❌                  |  ✅ (real-time WS)   |           ❌           |           ❌           |
-| Multi-LLM provider                          |          🟡 (via OpenCode)          |    ✅     |                 ✅                  |          ✅          |           ✅           |        ✅ (30+)        |
+| Multi-LLM provider                          |          🟡 (via OpenCode)          |    ✅     |                 ✅                  |          ✅          |           ✅           |        ✅ (15+)        |
 | Outbound HTTPS credential injection         |           ✅ (mitmproxy)            |    ❌     |                 ❌                  |          ❌          |   ✅ (egress proxy)    |           ❌           |
 | Audit log of tool calls                     |                 ✅                  |    🟡     |           🟡 (LangSmith)            |          🟡          |           ✅           |           🟡           |
 | Plugin / extension ecosystem                |                 ❌                  |    ✅     |                 ✅                  |          🟡          |      ✅ (plugins)      |  ✅ (70+ extensions)   |
@@ -196,28 +196,22 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
    execution, but the always-on agent workspace is shared.
 3. **Automation engine.** JSONPath-conditioned webhook automations with
    idempotency keys. Thor has cron + raw webhooks; no condition layer.
-4. **Commit attribution per prompt.** Each prompt's effect is a separate
-   commit on the same branch, attributed to the requesting user. Thor's
-   worktree commits aren't attributed.
-5. **Multi-provider LLM, per-session reasoning-effort knob.** Thor inherits
+4. **Multi-provider LLM, per-session reasoning-effort knob.** Thor inherits
    whatever OpenCode is configured with.
 
 **Where Thor is doing better than background-agents**
 
 1. **MCP policy.** Same story — bg-agents lets the agent talk to whatever
    tools are bound.
-2. **Single-host self-host.** bg-agents requires a Cloudflare/Vercel-style
-   control plane plus a sandbox backend such as Modal or Daytona and Terraform
-   IaC. Thor is `docker compose up`.
+2. **Single-host self-host.** bg-agents requires a Cloudflare control plane
+   plus Modal for sandboxes and Terraform IaC. Thor is `docker compose up`.
 3. **Cron-native simplicity.** bg-agents has scheduled automations; Thor's
    cron trigger is simpler to operate in a single-host deployment.
-4. **Cost / footprint.** Cloudflare Workers + Durable Objects plus Modal or
-   Daytona sandboxes is real money at idle. Thor is one VM.
+4. **Cost / footprint.** Cloudflare Workers + Durable Objects plus Modal
+   sandboxes is real money at idle. Thor is one VM.
 
 **Should we adopt anything?**
 
-- ✅ **Per-prompt commit attribution.** Easy win: tag each worktree commit
-  with the requesting Slack user. Useful for audit and PR review.
 - ✅ **Webhook automations with conditions.** A small condition DSL (or
   even just allow-list of `event.type` + `path` regex) layered on the
   gateway would let users wire "PR labeled X → run prompt Y" without code.
@@ -275,7 +269,7 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
 
 **Where goose is doing better than Thor**
 
-1. **30+ LLM providers** behind one provider trait. Thor inherits OpenCode's
+1. **15+ LLM providers** behind one provider trait. Thor inherits OpenCode's
    provider list and can't swap mid-session.
 2. **70+ MCP extensions** as a community ecosystem. Thor's MCP upstreams are
    a manually curated list.
@@ -321,8 +315,8 @@ Legend: ✅ first-class · 🟡 partial / lightweight · ❌ not present
    comparable egress-proxy pattern, and theirs is per-plugin rather than
    Thor's host/path rule surface.
 3. **Single-Docker-Compose deployment.** Real operational advantage vs.
-   open-swe (LangGraph Cloud), bg-agents (Cloudflare/Vercel + Modal/Daytona +
-   Terraform), junior (Vercel + Redis), OpenHands Cloud (full SaaS).
+   open-swe (LangGraph Cloud), bg-agents (Cloudflare + Modal + Terraform),
+   junior (Vercel + Redis), OpenHands Cloud (full SaaS).
 
 ### Common patterns Thor is missing
 
@@ -336,12 +330,11 @@ simpler ones:
 2. **A mandatory reviewer / second-pass critique for user-visible output**
    (open-swe explicitly; OpenHands and junior via prompt patterns). Thor has
    reviewer subagents for code-change loops, but not a universal final gate.
-3. **Per-prompt / per-user commit attribution** (bg-agents).
-4. **Thinking-level / model-tier routing** (junior; bg-agents partially).
-5. **A richer web UI for session replay** (OpenHands, open-swe, bg-agents).
+3. **Thinking-level / model-tier routing** (junior; bg-agents partially).
+4. **A richer web UI for session replay** (OpenHands, open-swe, bg-agents).
    Thor has an admin/replay base, but it is not a full session workbench.
-6. **Recipes / reusable prompt templates** (goose).
-7. **A plugin / extension abstraction** (OpenHands, open-swe, junior, goose).
+5. **Recipes / reusable prompt templates** (goose).
+6. **A plugin / extension abstraction** (OpenHands, open-swe, junior, goose).
    Thor has none at all today — every new upstream is a manual edit across
    `proxies.ts`, mitmproxy config, MCP policy, and Slack permissions. Junior's
    plugin model (skills + capabilities + credentials bundled per provider) is
@@ -364,17 +357,15 @@ simpler ones:
 2. **Mandatory reviewer second pass** (open-swe-style) before posting
    substantial results to Slack.
 3. **Thinking-level routing** (junior-style) to cut LLM cost.
-4. **Per-prompt commit attribution** (bg-agents-style) in `runner` worktree
-   commits.
-5. **Plugin / extension abstraction** (junior-style) — bundles MCP policy,
+4. **Plugin / extension abstraction** (junior-style) — bundles MCP policy,
    mitmproxy rules, and credentials for each upstream into one unit. Today
    adding a new upstream touches 4+ files; this is a real gap, not just a
    scale concern.
-6. **Automatic AGENTS.md injection** from the target repo into the agent's
+5. **Automatic AGENTS.md injection** from the target repo into the agent's
    system prompt.
-7. **Richer session replay UI** (OpenHands-style) for non-Slack users and
+6. **Richer session replay UI** (OpenHands-style) for non-Slack users and
    post-hoc audit.
 
-Items 1–4 are each a few days of work and don't touch the architectural
-invariants. Items 5–7 are larger and worth their own plan docs in
+Items 1–3 are each a few days of work and don't touch the architectural
+invariants. Items 4–6 are larger and worth their own plan docs in
 `docs/plan/`.

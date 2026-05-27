@@ -91,6 +91,30 @@ describe("ApprovalStore", () => {
     expect(() => store.get(action.id)).toThrow(/approved approval actions must include/);
   });
 
+  it("returns undefined for ids that are not v7 UUIDs, including path-traversal attempts", () => {
+    const action = store.buildPending("merge_pull_request", { pr: 42 });
+    store.update(action);
+
+    // A real action is still retrievable after the validator is in place.
+    expect(store.get(action.id)?.id).toBe(action.id);
+
+    // Plant a file that the traversal would resolve to and confirm get()
+    // refuses to touch it.
+    const escaped = join(tempDir, "..", "escaped.json");
+    writeFileSync(
+      escaped,
+      JSON.stringify({ ...action, id: "../escaped", dateSegment: "" }, null, 2),
+    );
+    try {
+      expect(store.get("../escaped")).toBeUndefined();
+      expect(store.get("..%2Fescaped")).toBeUndefined();
+      expect(store.get("not-a-uuid")).toBeUndefined();
+      expect(store.get("")).toBeUndefined();
+    } finally {
+      rmSync(escaped, { force: true });
+    }
+  });
+
   it("lists pending actions for the current upstream only", () => {
     const pending = store.buildPending("new_tool", {});
     store.update(pending);
