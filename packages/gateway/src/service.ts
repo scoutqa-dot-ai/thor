@@ -43,7 +43,6 @@ import {
 
 const log = createLogger("gateway-service");
 const INTERNAL_EXEC_TIMEOUT_MS = 5000;
-const GITHUB_PR_CHECKS_RETRY_DELAY_MS = 30_000;
 
 // --- Runner deps (internal HTTP, testable via fetchImpl) ---
 
@@ -93,7 +92,6 @@ export interface BatchDispatchInput {
   internalSecret?: string;
   internalExec?: InternalExecClient;
   githubAppBotEmail?: string;
-  githubPrChecksRetryDelayMs?: number;
   triggerSlackId?: string;
   triggerGithubLogin?: string;
   interrupt?: boolean;
@@ -130,12 +128,6 @@ export type BatchDispatchPlan =
       toCorrelationKey: string;
       githubEvents?: GitHubWebhookEvent[];
       slackEvents?: SlackThreadEvent[];
-    }
-  | {
-      kind: "defer";
-      logPrefix: BatchLogPrefix;
-      reason: string;
-      delayMs: number;
     };
 
 interface DispatchPart {
@@ -581,11 +573,8 @@ async function prepareGitHubCheckSuiteEvents(input: {
   events: GitHubWebhookEvent[];
   internalExec: InternalExecClient;
   githubAppBotEmail: string;
-  retryDelayMs: number;
 }): Promise<
-  | { ok: true; events: GitHubWebhookEvent[] }
-  | { ok: false; kind: "drop"; reason: string }
-  | { ok: false; kind: "defer"; reason: string; delayMs: number }
+  { ok: true; events: GitHubWebhookEvent[] } | { ok: false; kind: "drop"; reason: string }
 > {
   const prepared: GitHubWebhookEvent[] = [];
 
@@ -627,12 +616,7 @@ async function prepareGitHubCheckSuiteEvents(input: {
     });
     if (!prChecks.ok) {
       if (prChecks.reason === "pr_checks_pending") {
-        return {
-          ok: false,
-          kind: "defer",
-          reason: "check_suite_pr_checks_pending",
-          delayMs: input.retryDelayMs,
-        };
+        return { ok: false, kind: "drop", reason: "check_suite_pr_checks_pending" };
       }
       return { ok: false, kind: "drop", reason: "check_suite_pr_checks_lookup_failed" };
     }
@@ -780,17 +764,8 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       events: githubEvents,
       internalExec,
       githubAppBotEmail: input.githubAppBotEmail ?? "",
-      retryDelayMs: input.githubPrChecksRetryDelayMs ?? GITHUB_PR_CHECKS_RETRY_DELAY_MS,
     });
     if (!prepared.ok) {
-      if (prepared.kind === "defer") {
-        return {
-          kind: "defer",
-          logPrefix,
-          reason: prepared.reason,
-          delayMs: prepared.delayMs,
-        };
-      }
       return { kind: "drop", logPrefix, reason: prepared.reason };
     }
     const targetCorrelationKey = resolveCheckSuiteBranchCorrelationKey(prepared.events);
@@ -913,9 +888,6 @@ async function dispatchBatch(input: BatchDispatchInput): Promise<TriggerResult> 
     if (plan.kind === "drop") {
       currentInput.onRejected?.(plan.reason);
       return { busy: false, rejected: true, reason: plan.reason };
-    }
-    if (plan.kind === "defer") {
-      return { busy: true };
     }
     if (plan.kind === "reroute") {
       currentInput = {

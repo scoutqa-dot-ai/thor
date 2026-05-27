@@ -1901,7 +1901,7 @@ describe("gateway", () => {
     });
   });
 
-  it("defers queued check_suite dispatch while PR-wide checks are still pending", async () => {
+  it("drops queued check_suite dispatch when PR-wide checks are still pending", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const internalExec = vi
       .fn()
@@ -1947,27 +1947,23 @@ describe("gateway", () => {
 
           await queue.flush();
           expect(fetchImpl).not.toHaveBeenCalled();
-          expect(readQueuedEvents(queueDir)).toMatchObject([
-            {
-              correlationKey: "pending:check-suite:thor:delivery-check-suite-pending",
-              delayMs: 30_000,
-            },
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          expect(readQueuedEvents(queueDir, "dead-letter")).toMatchObject([
+            { correlationKey: "pending:check-suite:thor:delivery-check-suite-pending" },
           ]);
-          expect(readQueuedEvents(queueDir, "dead-letter")).toHaveLength(0);
         },
         {
           githubWebhookSecret: "github-secret",
           githubMentionLogins: ["thor", "thor[bot]"],
           githubAppBotId: 7777,
           githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
-          githubPrChecksRetryDelayMs: 30_000,
           internalExec,
         },
       );
     });
   });
 
-  it("does not defer same-branch GitHub comments behind pending PR-wide checks", async () => {
+  it("does not block same-branch GitHub comments when a sibling check_suite has pending PR-wide checks", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     mockRunnerAccepted(fetchImpl);
     const internalExec = vi
@@ -2039,20 +2035,18 @@ describe("gateway", () => {
             event_type: "pull_request_review_comment",
             comment: { body: "Please check this @thor" },
           });
-          expect(readQueuedEvents(queueDir)).toMatchObject([
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+          expect(readQueuedEvents(queueDir, "dead-letter")).toMatchObject([
             {
               correlationKey: "pending:check-suite:thor:delivery-check-suite-pending-mixed",
-              delayMs: 30_000,
             },
           ]);
-          expect(readQueuedEvents(queueDir, "dead-letter")).toHaveLength(0);
         },
         {
           githubWebhookSecret: "github-secret",
           githubMentionLogins: ["thor", "thor[bot]"],
           githubAppBotId: 7777,
           githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
-          githubPrChecksRetryDelayMs: 30_000,
           internalExec,
         },
       );

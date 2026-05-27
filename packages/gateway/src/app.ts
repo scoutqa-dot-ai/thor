@@ -493,8 +493,6 @@ export interface GatewayAppConfig extends RunnerDeps {
   internalExec?: InternalExecClient;
   /** GitHub mention debounce delay in ms. Default: 3000. */
   githubMentionDelayMs?: number;
-  /** Retry delay for queued PR-wide check-suite polling. Default: 30000. */
-  githubPrChecksRetryDelayMs?: number;
   /** Required default repo directory name for Slack channels without a valid override. */
   slackDefaultRepo?: string;
   /** Test override for Slack channel repo memory root. */
@@ -1060,12 +1058,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
     disableInterval: config.disableQueueInterval === true,
-    handler: async (
-      events: QueuedEvent[],
-      ack: () => void,
-      reject: (reason: string) => void,
-      defer: (delayMs: number, reason?: string) => void,
-    ) => {
+    handler: async (events: QueuedEvent[], ack: () => void, reject: (reason: string) => void) => {
       const slackEvents = events.filter(isSlackEvent);
       const cronEvents = events.filter(isCronEvent);
       const githubEvents = events.filter(isGitHubEvent);
@@ -1076,7 +1069,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       const hasInterrupt = events.some((event) => event.interrupt);
       const logTrigger = (
         prefix: BatchLogPrefix,
-        outcome: "busy" | "deferred" | "dropped" | "fired",
+        outcome: "busy" | "dropped" | "fired",
         reason?: string,
       ) => {
         logInfo(
@@ -1106,7 +1099,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           internalSecret: config.internalSecret,
           internalExec,
           githubAppBotEmail: config.githubAppBotEmail,
-          githubPrChecksRetryDelayMs: config.githubPrChecksRetryDelayMs,
           ...latestQueuedTriggerActor(events),
           interrupt: hasInterrupt,
           onAccepted: ack,
@@ -1157,12 +1149,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
             return;
           }
           throw new Error("reroute plan missing event payload");
-        }
-
-        if (plan.kind === "defer") {
-          defer(plan.delayMs, plan.reason);
-          logTrigger(plan.logPrefix, "deferred", plan.reason);
-          return;
         }
 
         if (plan.kind === "drop") {

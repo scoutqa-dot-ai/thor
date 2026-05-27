@@ -292,42 +292,6 @@ describe("EventQueue", () => {
     expect(remaining).toHaveLength(0);
   });
 
-  it("explicit defer reschedules events until the delay elapses", async () => {
-    let callCount = 0;
-    const handler = vi
-      .fn<EventHandler>()
-      .mockImplementation(async (_events, ack, _reject, defer) => {
-        callCount++;
-        if (callCount === 1) {
-          defer(5_000, "checks pending");
-          return;
-        }
-        ack();
-      });
-    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
-
-    await queue.enqueue(makeEvent("key-1", "retry-later"));
-    await queue.flush();
-
-    expect(handler).toHaveBeenCalledTimes(1);
-    let pending = queue.snapshotPending().pending;
-    expect(pending).toHaveLength(1);
-    expect(pending[0]).toMatchObject({
-      readyAt: BASE_TIME + 5_000,
-      delayMs: 5_000,
-    });
-
-    await queue.flush();
-    expect(handler).toHaveBeenCalledTimes(1);
-
-    setTime(BASE_TIME + 5_000);
-    await queue.flush();
-
-    expect(handler).toHaveBeenCalledTimes(2);
-    pending = queue.snapshotPending().pending;
-    expect(pending).toHaveLength(0);
-  });
-
   it("ignores .tmp files in the queue directory", async () => {
     const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
