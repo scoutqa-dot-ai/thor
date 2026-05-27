@@ -41,6 +41,7 @@ describe("proxy registry", () => {
 
   it("normalizes suffixes and resolves grafana as a bundle", () => {
     expect(normalizeProfileEnvSuffix("qa-labs east")).toBe("QA_LABS_EAST");
+    expect(normalizeProfileEnvSuffix("___qa-labs east___")).toBe("QA_LABS_EAST");
     const env = {
       GRAFANA_URL: "https://grafana.global",
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
