@@ -104,6 +104,8 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `CRON_SECRET`                   | Yes      | `gateway`, `cron`         | Shared secret for cron endpoint auth                                                                 |
 | `THOR_ADMIN_EMAILS`             | Yes      | `ingress`                 | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes |
 | `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`   | Secret-gates gateway↔remote-cli internal APIs                                                        |
+| `THOR_CLOUDWATCH_LOG_GROUP`     | Overlay  | `compose`                 | Shared CloudWatch Logs group used by `docker-compose.cloudwatch.yml`                                  |
+| `THOR_CLOUDWATCH_LOG_REGION`    | Overlay  | `compose`                 | AWS region for CloudWatch Logs when using `docker-compose.cloudwatch.yml`                             |
 | `THOR_E2E_TEST_HELPERS`         | No       | `runner`                  | Enables secret-gated deterministic runner e2e helpers                                                |
 | `RUNNER_BASE_URL`               | Yes      | `remote-cli`              | Public base URL for Thor trigger viewer links in PR/Jira content                                     |
 | `INGRESS_PORT`                  | No       | `ingress`                 | Host port for the reverse proxy                                                                      |
@@ -161,6 +163,7 @@ The registry is maintained by operators from team Slack and GitHub membership re
 - Repos under `/workspace/repos` are mounted read-only into OpenCode. Thor creates edits in `/workspace/worktrees`.
 - OpenCode and remote-cli share the same `/tmp` volume so temporary artifacts referenced by absolute path, such as `slack-post-message --blocks-file /tmp/...`, are readable by the posting service.
 - Scheduled prompts live in `docker-volumes/workspace/cron/crontab`.
+- CloudWatch logging is opt-in via `docker compose -f docker-compose.yml -f docker-compose.cloudwatch.yml up --build -d`. The overlay sends every service to one shared log group with a static stream per service. The host must support Docker's `awslogs` driver and have an EC2 instance profile or AWS credentials with `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`, and `logs:DescribeLogStreams` for the selected region/log group.
 
 ## Security Model
 
