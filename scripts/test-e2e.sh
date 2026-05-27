@@ -840,8 +840,6 @@ else
       jira_create_entry=$(find_jira_tool_worklog_entry "createJiraIssue" 2>/dev/null || echo "")
       jira_injected_account_id=$(json_field "$jira_create_entry" "args.assignee_account_id")
       jira_create_project_key=$(json_field "$jira_create_entry" "args.projectKey")
-      jira_create_error=$(json_field "$jira_create_entry" "error")
-      jira_create_is_error=$(json_field "$jira_create_entry" "result.isError")
       assert '[[ -n "$jira_lookup_entry" ]]' \
         "jira attribution e2e: lookupJiraAccountId ran for the configured user email" \
         "expected cloud='$JIRA_CLOUD_ID' email='$THOR_E2E_JIRA_EMAIL'"
@@ -851,9 +849,12 @@ else
       assert '[[ -n "$jira_injected_account_id" ]]' \
         "jira attribution e2e: createJiraIssue received an assignee_account_id" \
         "worklog entry: ${jira_create_entry:0:800}"
-      assert '[[ "$jira_create_is_error" == "true" || -n "$jira_create_error" || -n "$resolve_stderr" || "$resolve_exit" != "0" ]]' \
-        "jira attribution e2e: failed create call recorded an upstream error" \
-        "isError='$jira_create_is_error' worklog error='$jira_create_error' stderr='${resolve_stderr:0:500}' response: ${resolve_raw:0:500}"
+      # The MCP executor normalizes any upstream-reported failure — SDK throw
+      # or `CallToolResult.isError: true` — into exitCode 1. A single signal,
+      # checked once.
+      assert '[[ "$resolve_exit" != "0" ]]' \
+        "jira attribution e2e: failed create call surfaced as non-zero exit" \
+        "exitCode='$resolve_exit' stderr='${resolve_stderr:0:500}' response: ${resolve_raw:0:500}"
 
       issue_key=$(extract_jira_issue_key "$resolve_stdout $resolve_stderr $resolve_raw $jira_create_entry")
       if [[ -n "$issue_key" ]]; then

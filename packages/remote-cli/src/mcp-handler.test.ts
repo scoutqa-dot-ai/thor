@@ -95,6 +95,7 @@ describe("remote-cli MCP endpoints", () => {
   let toolCalls: Array<{ name: string; arguments?: Record<string, unknown> }>;
   let createJiraIssueDelay: Promise<void> | undefined;
   let createJiraIssueFailure: Error | undefined;
+  let createJiraIssueErrorResponse: string | undefined;
   let connectedUpstreams: string[];
   let closeRemoteCli: () => Promise<void>;
   let jiraLookups: Array<Record<string, unknown> | undefined>;
@@ -113,6 +114,7 @@ describe("remote-cli MCP endpoints", () => {
     toolCalls = [];
     createJiraIssueDelay = undefined;
     createJiraIssueFailure = undefined;
+    createJiraIssueErrorResponse = undefined;
     connectedUpstreams = [];
     jiraLookups = [];
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
@@ -181,6 +183,14 @@ describe("remote-cli MCP endpoints", () => {
                     const failure = createJiraIssueFailure;
                     createJiraIssueFailure = undefined;
                     throw failure;
+                  }
+                  if (createJiraIssueErrorResponse) {
+                    const errorText = createJiraIssueErrorResponse;
+                    createJiraIssueErrorResponse = undefined;
+                    return {
+                      isError: true,
+                      content: [{ type: "text", text: errorText }],
+                    };
                   }
                   return {
                     content: [{ type: "text", text: "created" }],
@@ -1161,6 +1171,54 @@ describe("remote-cli MCP endpoints", () => {
     expect(corruptStatus.status).toBe(200);
     expect(corruptStatusBody.exitCode).toBe(1);
     expect(corruptStatusBody.stderr).toContain(`Failed to load approval action ${actionId}`);
+  });
+
+  it("surfaces MCP CallToolResult.isError as a side-effect-attempted failure on approved resolution", async () => {
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    createJiraIssueErrorResponse = "The target project doesn't exist or you don't have permission.";
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      sideEffectAttempted?: boolean;
+    };
+    expect(resolvedBody.exitCode).toBe(1);
+    expect(resolvedBody.sideEffectAttempted).toBe(true);
+    expect(resolvedBody.stderr).toContain("The target project doesn't exist");
+
+    const statusAfterFailure = await postJson("/exec/approval", { args: ["status", actionId] });
+    const statusAfterFailureBody = (await statusAfterFailure.json()) as { stdout: string };
+    expect(JSON.parse(statusAfterFailureBody.stdout)).toMatchObject({
+      id: actionId,
+      status: "pending",
+    });
   });
 
   it("returns 401 for /internal/exec without the internal secret", async () => {

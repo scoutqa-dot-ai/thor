@@ -570,6 +570,32 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         arguments: args,
       });
       const duration = Date.now() - start;
+      const stdout = unwrapResult(result);
+
+      if (isMcpToolError(result)) {
+        // MCP-spec error envelope; surface the same as an SDK throw so the
+        // agent's stderr/exitCode signal is consistent regardless of how
+        // the upstream signalled failure.
+        logError(log, "tool_call", stdout, {
+          upstream: instance.name,
+          tool: toolName,
+          durationMs: duration,
+          ...getThorIds({ sessionId: opts.sessionId }),
+        });
+        writeToolCallLogFn({
+          tool: toolName,
+          decision: "allowed",
+          args,
+          durationMs: duration,
+          error: stdout,
+        });
+        let stderr = `${stdout}\n`;
+        if (inputSchema) {
+          stderr += `\n[hint] Input schema for "${toolName}":\n${JSON.stringify(inputSchema, null, 2)}\n`;
+        }
+        return fail(stderr);
+      }
+
       logInfo(log, "tool_call", {
         upstream: instance.name,
         tool: toolName,
@@ -580,11 +606,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         tool: toolName,
         decision: "allowed",
         args,
-        result,
+        result: stdout,
         durationMs: duration,
       });
 
-      const stdout = unwrapResult(result);
       if (toolName === "post_message" && opts.sessionId) {
         const correlationKey = computeSlackCorrelationKey(args, stdout);
         if (correlationKey) {
@@ -764,12 +789,14 @@ export function createMcpService(deps: McpServiceDeps): McpService {
      * failure).
      */
     sideEffectAttempted: boolean;
-    /**
-     * Raw transport response — MCP CallToolResult for the MCP executor (so
-     * the worklog preserves `isError`/`content` for downstream auditors that
-     * inspect upstream-reported errors). Undefined for non-MCP executors.
-     */
-    rawResult?: unknown;
+  }
+
+  function isMcpToolError(result: unknown): boolean {
+    return (
+      typeof result === "object" &&
+      result !== null &&
+      (result as { isError?: unknown }).isError === true
+    );
   }
 
   interface ApprovalExecutor {
@@ -803,12 +830,24 @@ export function createMcpService(deps: McpServiceDeps): McpService {
             name: action.tool,
             arguments: upstreamArgs,
           });
+          const text = unwrapResult(result);
+          if (isMcpToolError(result)) {
+            // MCP-spec error envelope: the SDK call succeeded but the tool
+            // reported a semantic failure. Treat as a side-effect-attempted
+            // failure so the gateway routes it through the same "do not
+            // replay" guidance as SDK throws.
+            return {
+              ok: false,
+              stdout: "",
+              stderr: text,
+              sideEffectAttempted: true,
+            };
+          }
           return {
             ok: true,
-            stdout: unwrapResult(result),
+            stdout: text,
             stderr: "",
             sideEffectAttempted: true,
-            rawResult: result,
           };
         } catch (err) {
           return {
@@ -969,7 +1008,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         decision: "approved",
         args: pendingAction.args,
         durationMs,
-        result: outcome.rawResult,
+        result: outcome.stdout,
       });
       const execResult: McpExecResult = {
         stdout: outcome.stdout,
