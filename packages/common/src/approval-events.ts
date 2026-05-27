@@ -43,6 +43,18 @@ const ApprovalRequiredEventBaseSchema = z.object({
   type: z.literal("approval_required"),
   actionId: z.string().min(1),
   proxyName: z.string().min(1).optional(),
+  notification: z
+    .object({
+      provider: z.literal("slack"),
+      channel: z.string().min(1),
+      threadTs: z.string().min(1),
+      messageTs: z.string().min(1),
+      continuation: z.object({
+        channel: z.string().min(1),
+        thread_ts: z.string().min(1),
+      }),
+    })
+    .optional(),
 });
 
 export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [

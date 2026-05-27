@@ -40,6 +40,7 @@ import { unwrapResult } from "./unwrap-result.js";
 import { connectUpstream, type UpstreamConnection } from "./upstream.js";
 import { attributionFields, resolveTriggerUser } from "./attribution.js";
 import { postSlackMessageApi } from "./slack-post-message.js";
+import type { SlackCreatedMessageResponse } from "./slack-post-message.js";
 
 const log = createLogger("mcp");
 const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
@@ -230,7 +231,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     upstreamName: string;
     channel: string;
     threadTs: string;
-  }): Promise<{ ts: string } | { error: string }> {
+  }): Promise<SlackCreatedMessageResponse | { error: string }> {
     const slackMessage = buildApprovalSlackMessage({
       actionId: input.action.id,
       tool: input.action.tool as ApprovalRequiredEventPayload["tool"],
@@ -253,7 +254,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         },
       },
     );
-    return "error" in result ? result : { ts: result.ts };
+    return result;
   }
 
   async function connectInstance(name: string, proxyDef: ProxyConfig): Promise<ProxyInstance> {
@@ -618,9 +619,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
       action.notification = {
         provider: "slack",
-        channel: slackTarget.channel,
-        threadTs: slackTarget.threadTs,
-        messageTs: slackPost.ts,
+        channel: slackPost.channel,
+        threadTs: slackPost.thread_ts,
+        messageTs: slackPost.message_ts,
+        continuation: slackPost.continuation,
         postedAt: new Date().toISOString(),
       };
       instance.approvalStore.update(action);
@@ -639,6 +641,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         stringify({
           ...approvalEvent,
           command: `approval status ${action.id}`,
+          notification: {
+            provider: "slack",
+            channel: slackPost.channel,
+            threadTs: slackPost.thread_ts,
+            messageTs: slackPost.message_ts,
+            continuation: slackPost.continuation,
+          },
         }),
       );
     }

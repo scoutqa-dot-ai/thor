@@ -34,6 +34,12 @@ const ApprovalActionSchema = z
         channel: z.string().min(1),
         threadTs: z.string().min(1),
         messageTs: z.string().min(1).optional(),
+        continuation: z
+          .object({
+            channel: z.string().min(1),
+            thread_ts: z.string().min(1),
+          })
+          .optional(),
         postedAt: z.string().min(1).optional(),
       })
       .optional(),

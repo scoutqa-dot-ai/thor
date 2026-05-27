@@ -196,7 +196,7 @@ Final verification follows `AGENTS.md`: one commit per phase, push after all pha
 
 ### 2026-05-27 scope update — created resource response enrichment
 
-This branch should also stop collapsing successful Slack create/write responses to `{"ok":true}` or a bare `{ ts }`. The controlled Slack paths now need to return enough structured identity and locator data for agents and follow-up Thor code to continue in the created resource without scraping logs or relying on hidden alias state.
+This branch should also stop collapsing successful Slack create/write responses to `{"ok":true}` or a bare `{ ts }`. The controlled Slack paths now need to return enough structured identity and locator data for agents and follow-up Thor code to continue in the created resource without scraping logs or relying on hidden alias state, including approval-card Slack posts that are surfaced back through the `approval_required` response.
 
 Recommended contract for successful message creates:
 
@@ -206,7 +206,7 @@ Recommended contract for successful message creates:
 - `thread_ts`: requested parent thread for replies, otherwise the created message timestamp for new top-level messages
 - `continuation`: `{ "channel": "...", "thread_ts": "..." }`
 
-Apply this first to `/exec/slack-post-message` and the shared `postSlackMessageApi` helper, then update `slack-upload` to return Slack file IDs and any known channel/thread locator from `files.completeUploadExternal` rather than only `{"ok":true}`. Keep behavior-focused tests on parsed stdout JSON and alias side effects; do not expose tokens or turn the response into arbitrary Slack API passthrough.
+Apply this to `/exec/slack-post-message`, the shared `postSlackMessageApi` helper, approval-card Slack notifications surfaced via `approval_required`, and `slack-upload` so each successful create path returns or exposes stable IDs plus continuation locators instead of a collapsed success ack. Keep behavior-focused tests on parsed stdout JSON and alias side effects; do not expose tokens or turn the response into arbitrary Slack API passthrough.
 
 | #   | Decision                                                                                                              | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | --- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
