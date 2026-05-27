@@ -104,21 +104,7 @@ const GetUploadUrlSchema = z.object({
   file_id: z.string().optional(),
 });
 
-const SlackFileSchema = z
-  .object({
-    id: z.string().optional(),
-    title: z.string().optional(),
-    name: z.string().optional(),
-    permalink: z.string().optional(),
-    permalink_public: z.string().optional(),
-  })
-  .passthrough();
-
-const CompleteUploadSchema = z.object({
-  ok: z.boolean(),
-  error: z.string().optional(),
-  files: z.array(SlackFileSchema).optional(),
-});
+const SlackOkSchema = z.object({ ok: z.boolean(), error: z.string().optional() }).passthrough();
 
 async function curl(args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("curl", args, {
@@ -137,24 +123,6 @@ function parseJson<T>(label: string, schema: z.ZodType<T>, raw: string): T {
   const result = schema.safeParse(parsed);
   if (!result.success) die(`could not parse ${label} response`);
   return result.data;
-}
-
-type NormalizedFile = {
-  id: string;
-  title?: string;
-  name?: string;
-  permalink?: string;
-  permalink_public?: string;
-};
-
-function normalizeFile(file: z.infer<typeof SlackFileSchema>): NormalizedFile | undefined {
-  if (typeof file.id !== "string" || file.id.length === 0) return undefined;
-  const out: NormalizedFile = { id: file.id };
-  for (const key of ["title", "name", "permalink", "permalink_public"] as const) {
-    const value = file[key];
-    if (typeof value === "string" && value.length > 0) out[key] = value;
-  }
-  return out;
 }
 
 const { file, channel, threadTs, title: titleArg, comment } = parseArgs(process.argv.slice(2));
@@ -236,21 +204,7 @@ if (threadTs) completeArgs.push("--data-urlencode", `thread_ts=${threadTs}`);
 if (comment) completeArgs.push("--data-urlencode", `initial_comment=${comment}`);
 
 const completeRaw = await curl(completeArgs);
-const complete = parseJson("files.completeUploadExternal", CompleteUploadSchema, completeRaw);
+const complete = parseJson("files.completeUploadExternal", SlackOkSchema, completeRaw);
 if (!complete.ok) die(complete.error || "files.completeUploadExternal failed");
 
-let normalized: NormalizedFile[] = (complete.files ?? [])
-  .map(normalizeFile)
-  .filter((file): file is NormalizedFile => file !== undefined);
-if (normalized.length === 0) normalized = [{ id: fileId, title }];
-
-const output: Record<string, unknown> = {
-  ok: true,
-  file_id: normalized[0].id,
-  file: normalized[0],
-  files: normalized,
-};
-if (channel) output.channel = channel;
-if (threadTs) output.thread_ts = threadTs;
-
-process.stdout.write(`${JSON.stringify(output)}\n`);
+process.stdout.write(completeRaw.endsWith("\n") ? completeRaw : `${completeRaw}\n`);
