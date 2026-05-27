@@ -11,7 +11,7 @@ import {
   ExecResultSchema,
   extractRepoFromCwd,
   findAnchorContext,
-  findSlackTriggerCorrelationKey,
+  findTriggerCorrelationKey,
   getAvailableProxyNames,
   getProfileForSlackCorrelationKey,
   getProxyConfig,
@@ -266,7 +266,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   function resolveProfileForContext(context: McpCommandContext): string | undefined {
     if (!context.sessionId) return undefined;
     try {
-      return getProfileForSlackCorrelationKey(getConfig(), findSlackTriggerCorrelationKey(context.sessionId));
+      return getProfileForSlackCorrelationKey(getConfig(), findTriggerCorrelationKey(context.sessionId));
     } catch (err) {
       logWarn(log, "profile_resolution_failed_using_global", {
         sessionId: context.sessionId,

@@ -419,6 +419,42 @@ describe("remote-cli MCP endpoints", () => {
     });
   });
 
+  it("uses global credentials when the current trigger is non-Slack even if the anchor has an older Slack trigger", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = { ...workspaceConfig, profiles: { qa: { channels: ["C123"] } } };
+    appendActiveTrigger({ ts: "2026-05-21T00:00:01.000Z" });
+    appendSessionEvent("parent-session", {
+      type: "trigger_end",
+      triggerId: activeTriggerId,
+      status: "completed",
+      ts: "2026-05-21T00:00:02.000Z",
+    });
+    appendSessionEvent("parent-session", {
+      type: "trigger_start",
+      triggerId: githubTriggerId,
+      correlationKey: "github:issue:acme:acme/repo#42",
+      triggerGithubLogin: "octocat",
+      ts: "2026-05-21T00:00:03.000Z",
+    });
+
+    const call = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as { stdout: string; exitCode: number };
+
+    expect(body).toMatchObject({ stdout: "THOR-123", exitCode: 0 });
+    expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
+      Authorization: "Basic global-token",
+    });
+  });
+
   it("snapshots the profile credential target on approval actions", async () => {
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
     workspaceConfig = { ...workspaceConfig, profiles: { qa: { channels: ["C123"] } } };

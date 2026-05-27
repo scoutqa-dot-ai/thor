@@ -5,6 +5,20 @@ import { buildToolInstructions } from "./tool-instructions.js";
 
 const composePath = fileURLToPath(new URL("../../../docker-compose.yml", import.meta.url));
 
+function serviceBlock(name: string): string[] {
+  const lines = readFileSync(composePath, "utf-8").split("\n");
+  const start = lines.findIndex((line) => line === `  ${name}:`);
+  if (start === -1) return [];
+  const block: string[] = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (/^  [^\s].*:$/.test(line)) break;
+    if (/^[^\s]/.test(line)) break;
+    block.push(line);
+  }
+  return block;
+}
+
 describe("buildToolInstructions", () => {
   it("uses absolute HTTPS Jira attachment upload URLs", () => {
     const instructions = buildToolInstructions("/workspace/repos/my-repo");
@@ -22,16 +36,14 @@ describe("buildToolInstructions", () => {
   });
 
   it("keeps runner deployment env aligned with env-based MCP advertisement", () => {
-    const compose = readFileSync(composePath, "utf-8");
-    const runnerBlock = compose.match(/\n  runner:\n[\s\S]*?\n  gateway:/)?.[0] ?? "";
+    const runnerBlock = serviceBlock("runner").join("\n");
 
     expect(runnerBlock).toContain("env_file:");
     expect(runnerBlock).toContain("- .env");
   });
 
   it("allows profile-only Grafana deployments in compose", () => {
-    const compose = readFileSync(composePath, "utf-8");
-    const grafanaBlock = compose.match(/\n  grafana-mcp:\n[\s\S]*?\n  mitmproxy:/)?.[0] ?? "";
+    const grafanaBlock = serviceBlock("grafana-mcp").join("\n");
 
     expect(grafanaBlock).toContain("GRAFANA_URL=${GRAFANA_URL:-}");
     expect(grafanaBlock).toContain(
