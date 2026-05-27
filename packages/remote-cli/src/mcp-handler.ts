@@ -1,3 +1,4 @@
+import type { WebClient } from "@slack/web-api";
 import { z } from "zod";
 
 import {
@@ -128,7 +129,7 @@ export interface McpServiceDeps {
   connectUpstreamFn?: typeof connectUpstream;
   writeToolCallLogFn?: typeof writeToolCallLog;
   configLoader?: ConfigLoader;
-  fetchImpl?: typeof fetch;
+  slackClient?: WebClient;
   slack?: { botToken?: string; apiBaseUrl?: string };
 }
 
@@ -196,7 +197,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const connectUpstreamFn = deps.connectUpstreamFn ?? connectUpstream;
   const writeToolCallLogFn = deps.writeToolCallLogFn ?? writeToolCallLog;
   const getConfig = deps.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const fetchImpl = deps.fetchImpl;
+  const slackClient = deps.slackClient;
   const slackConfig = deps.slack;
   const instances = new Map<string, ProxyInstance>();
   const connecting = new Map<string, Promise<ProxyInstance>>();
@@ -247,7 +248,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         blocks: slackMessage.blocks,
       },
       {
-        fetch: fetchImpl,
+        client: slackClient,
         env: {
           SLACK_BOT_TOKEN: slackConfig?.botToken,
           SLACK_API_BASE_URL: slackConfig?.apiBaseUrl,

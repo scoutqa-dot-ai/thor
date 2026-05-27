@@ -13,6 +13,8 @@
   "dependencies": {
     "@daytonaio/sdk": "^0.173.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@slack/types": "2.21.1",
+    "@slack/web-api": "^7.15.1",
     "@thor/common": "workspace:*",
     "express": "^5.1.0",
     "markdown-it": "^14.1.1",

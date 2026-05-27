@@ -123,6 +123,12 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.29.0(zod@4.4.3)
+      '@slack/types':
+        specifier: 2.21.1
+        version: 2.21.1
+      '@slack/web-api':
+        specifier: ^7.15.1
+        version: 7.15.2
       '@thor/common':
         specifier: workspace:*
         version: link:../common
