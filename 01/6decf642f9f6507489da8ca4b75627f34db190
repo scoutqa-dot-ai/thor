@@ -1,0 +1,29 @@
+Dockerfile
+  c526edc5a47e0f57 113
+packages/opencode-cli/tsup.config.ts
+  c526edc5a47e0f57 6
+packages/opencode-cli/src/slack-upload.ts
+  c526edc5a47e0f57 1-259
+docker/opencode/bin/slack-upload
+  c526edc5a47e0f57 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "016decf642f9f6507489da8ca4b75627f34db190",
+  "prompts": {
+    "c526edc5a47e0f57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02c38ef3-24f5-4e64-8dc4-c0745a7a3164",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 270,
+      "total_deletions": 226,
+      "accepted_lines": 270,
+      "overriden_lines": 0
+    }
+  }
+}
