@@ -50,7 +50,7 @@ Additionally in scope (model-limit simplification, see Phase 5 below):
 - `emit()` (`:989-1026`) gates `res.write()` on the `stream` flag at `:1013`. The `start` event is already constructed at `:1028-1033` but never reaches the wire in fire-and-forget mode.
 - Gateway consumer: `packages/gateway/src/service.ts:543-573`. Reads `json.busy`; that is the only field it consumes from the success body. Confirmed by grep — no callsite reads `accepted`, `sessionId`, or `resumed` from the gateway side.
 - Dispatch handler busy-log: `packages/gateway/src/app.ts:1154-1161`. The `result.busy` branch returns without calling `ack()`; that is what causes the queue to retain the file for the next scan (`packages/gateway/src/queue.ts:70-74`).
-- Verified behavior of opencode (from reading `/Users/son.dao/repos/daohoangson/opencode`):
+- Verified behavior of opencode (from upstream source at https://github.com/anomalyco/opencode):
   - `Session.cancel` is a safe no-op when the runner is idle (`packages/opencode/src/session/run-state.ts:80-82`).
   - `ensureRunning` does **not** queue `work` on a `Running` collision — the new `work` is discarded and the caller attaches to the in-flight deferred (`packages/opencode/src/effect/runner.ts:120-122`). Pickup of the new user message depends on the loop's `MessageV2.filterCompactedEffect` re-read each iteration; the exit guard at `prompt.ts:1268-1276` uses the iteration's stale snapshot, so a message persisted during the final iteration can be missed.
   - `Shell` and `ShellThenRun` are safe collisions in practice: a fresh `runLoop` runs later and reads the DB, picking up new user messages.
