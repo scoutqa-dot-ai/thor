@@ -1,0 +1,23 @@
+.github/workflows/core-e2e.yml
+  6e21c93d0c4c42a2 165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "36c349c0a52271510024e844c54d698ad4487855",
+  "prompts": {
+    "6e21c93d0c4c42a2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5579ccd4-53f6-40bb-ab32-82563589179d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
