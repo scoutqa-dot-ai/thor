@@ -1,0 +1,23 @@
+docs/plan/2026052701_profile-based-integration-routing.md
+  a9188da7b3ec4027 135-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "7828ff79300b3b15332c0fc948802f815fd300fc",
+  "prompts": {
+    "a9188da7b3ec4027": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a2322551-fd78-44e4-aa2c-b3a00fee56c7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 7,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
