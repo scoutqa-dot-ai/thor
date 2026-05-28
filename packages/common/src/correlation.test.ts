@@ -4,7 +4,7 @@ import { appendAlias } from "./event-log.js";
 import {
   appendCorrelationAlias,
   appendCorrelationAliasForAnchor,
-  buildSlackCorrelationKeys,
+  buildSlackCorrelationKey,
   computeGitCorrelationKey,
   computeSlackCorrelationKey,
   ensureAnchorForCorrelationKey,
@@ -175,22 +175,18 @@ describe("correlation key resolution", () => {
   it("writes the channel-qualified slack.thread alias", () => {
     const channel = "C0AKCHANNEL";
     const ts = "1710000000.777";
-    const keys = buildSlackCorrelationKeys(channel, ts);
-    expect(keys).toEqual([`slack:thread:${channel}/${ts}`]);
+    const key = buildSlackCorrelationKey(channel, ts);
+    expect(key).toBe(`slack:thread:${channel}/${ts}`);
 
-    appendCorrelationAliasForAnchor(anchor1, keys[0]);
+    appendCorrelationAliasForAnchor(anchor1, key);
 
-    expect(resolveAnchorForCorrelationKey(keys[0])).toBe(anchor1);
-    expect(resolveCorrelationKeys(keys)).toBe(keys[0]);
+    expect(resolveAnchorForCorrelationKey(key)).toBe(anchor1);
+    expect(resolveCorrelationKeys([key])).toBe(key);
     expect(
       readAliases().some(
         (a) => a.aliasType === "slack.thread" && a.aliasValue === `${channel}/${ts}`,
       ),
     ).toBe(true);
-  });
-
-  it("buildSlackCorrelationKeys returns an empty array when channel is unknown", () => {
-    expect(buildSlackCorrelationKeys(undefined, "1710000000.888")).toEqual([]);
   });
 
   it("does not treat untyped keys as alias values", () => {

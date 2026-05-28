@@ -1,7 +1,7 @@
 import express, { type Express, type Request, type Response } from "express";
 import {
   appendJsonlWorklog,
-  buildSlackCorrelationKeys,
+  buildSlackCorrelationKey,
   createLogger,
   errorToMetadata,
   extractApprovalFailureCategory,
@@ -669,11 +669,11 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     resolutionExitCode: resolved.exitCode,
   };
 
-  const rawCorrelationKeys = buildSlackCorrelationKeys(channel, threadTs);
-  const outcomeCorrelationKey = resolveCorrelationKeys(rawCorrelationKeys);
-  if (outcomeCorrelationKey !== rawCorrelationKeys[0]) {
+  const rawCorrelationKey = buildSlackCorrelationKey(channel, threadTs);
+  const outcomeCorrelationKey = resolveCorrelationKeys([rawCorrelationKey]);
+  if (outcomeCorrelationKey !== rawCorrelationKey) {
     logInfo(log, "corr_key_resolved", {
-      rawKey: rawCorrelationKeys[0],
+      rawKey: rawCorrelationKey,
       correlationKey: outcomeCorrelationKey,
     });
   }

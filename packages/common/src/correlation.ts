@@ -61,36 +61,31 @@ export function computeSlackCorrelationKey(
 ): string | undefined {
   const input = SlackPostMessageInput.safeParse(toolArgs);
   if (!input.success) return undefined;
-  const channel = input.data.channel;
+  const channelFromArgs = input.data.channel;
   if (input.data.thread_ts) {
-    return buildSlackThreadCorrelationKey(channel, input.data.thread_ts);
+    if (!channelFromArgs) return undefined;
+    return buildSlackCorrelationKey(channelFromArgs, input.data.thread_ts);
   }
 
   try {
     const output = SlackPostMessageOutput.safeParse(JSON.parse(result));
     if (!output.success) return undefined;
-    return buildSlackThreadCorrelationKey(channel ?? output.data.channel, output.data.ts);
+    const channel = channelFromArgs ?? output.data.channel;
+    if (!channel) return undefined;
+    return buildSlackCorrelationKey(channel, output.data.ts);
   } catch {
     return undefined;
   }
 }
 
 /**
- * Build Slack thread correlation key(s). Returns the channel-qualified
- * `slack:thread:<channel>/<ts>` form when channel is known. Returns an empty
- * array when channel is missing — anchor binding under the strict
- * channel/profile model requires a channel.
+ * Build the channel-qualified `slack:thread:<channel>/<ts>` correlation key.
+ * Channel is required — anchor binding under the strict channel/profile model
+ * has no meaning without a channel, so callers that may not have one must
+ * guard before calling.
  */
-export function buildSlackCorrelationKeys(channel: string | undefined, threadTs: string): string[] {
-  if (!channel) return [];
-  return [`${SLACK_THREAD_PREFIX}${channel}/${threadTs}`];
-}
-
-function buildSlackThreadCorrelationKey(
-  channel: string | undefined,
-  threadTs: string,
-): string | undefined {
-  return channel ? `${SLACK_THREAD_PREFIX}${channel}/${threadTs}` : undefined;
+export function buildSlackCorrelationKey(channel: string, threadTs: string): string {
+  return `${SLACK_THREAD_PREFIX}${channel}/${threadTs}`;
 }
 
 /** Bind a correlation-key alias directly to a known anchor id. */

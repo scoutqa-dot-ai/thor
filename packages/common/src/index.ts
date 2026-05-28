@@ -170,7 +170,7 @@ export {
   ensureAnchorForCorrelationKey,
   appendCorrelationAlias,
   appendCorrelationAliasForAnchor,
-  buildSlackCorrelationKeys,
+  buildSlackCorrelationKey,
   computeGitCorrelationKey,
   computeSlackCorrelationKey,
   resolveAnchorForCorrelationKey,
