@@ -789,6 +789,14 @@ export function createMcpService(deps: McpServiceDeps): McpService {
      * failure).
      */
     sideEffectAttempted: boolean;
+    /**
+     * The args the executor actually sent to the upstream after disclaimer
+     * injection / attribution. Logged to the worklog so audit trails reflect
+     * what was sent, not the pre-attribution args from the approval store.
+     * Falls back to the action's stored args when the executor didn't reach
+     * the side-effect stage.
+     */
+    effectiveArgs?: Record<string, unknown>;
   }
 
   function isMcpToolError(result: unknown): boolean {
@@ -841,6 +849,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
               stdout: "",
               stderr: text,
               sideEffectAttempted: true,
+              effectiveArgs: upstreamArgs,
             };
           }
           return {
@@ -848,6 +857,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
             stdout: text,
             stderr: "",
             sideEffectAttempted: true,
+            effectiveArgs: upstreamArgs,
           };
         } catch (err) {
           return {
@@ -855,6 +865,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
             stdout: "",
             stderr: err instanceof Error ? err.message : String(err),
             sideEffectAttempted: true,
+            effectiveArgs: upstreamArgs,
           };
         }
       },
@@ -1006,7 +1017,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       writeToolCallLogFn({
         tool: pendingAction.tool,
         decision: "approved",
-        args: pendingAction.args,
+        args: outcome.effectiveArgs ?? pendingAction.args,
         durationMs,
         result: outcome.stdout,
       });
@@ -1024,7 +1035,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     writeToolCallLogFn({
       tool: pendingAction.tool,
       decision: "approved",
-      args: pendingAction.args,
+      args: outcome.effectiveArgs ?? pendingAction.args,
       durationMs,
       error: outcome.stderr,
     });

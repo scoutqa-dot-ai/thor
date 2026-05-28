@@ -96,6 +96,7 @@ describe("remote-cli MCP endpoints", () => {
   let createJiraIssueDelay: Promise<void> | undefined;
   let createJiraIssueFailure: Error | undefined;
   let createJiraIssueErrorResponse: string | undefined;
+  let toolCallLogEntries: Array<Record<string, unknown>>;
   let connectedUpstreams: string[];
   let closeRemoteCli: () => Promise<void>;
   let jiraLookups: Array<Record<string, unknown> | undefined>;
@@ -115,6 +116,7 @@ describe("remote-cli MCP endpoints", () => {
     createJiraIssueDelay = undefined;
     createJiraIssueFailure = undefined;
     createJiraIssueErrorResponse = undefined;
+    toolCallLogEntries = [];
     connectedUpstreams = [];
     jiraLookups = [];
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
@@ -153,7 +155,9 @@ describe("remote-cli MCP endpoints", () => {
         approvalsDir,
         isProduction: true,
         fetchImpl: slackFetch,
-        writeToolCallLogFn: () => {},
+        writeToolCallLogFn: (entry) => {
+          toolCallLogEntries.push(entry as unknown as Record<string, unknown>);
+        },
         configLoader: () => ({
           users: [
             { email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" },
@@ -360,7 +364,9 @@ describe("remote-cli MCP endpoints", () => {
       mcp: {
         approvalsDir,
         isProduction: true,
-        writeToolCallLogFn: () => {},
+        writeToolCallLogFn: (entry) => {
+          toolCallLogEntries.push(entry as unknown as Record<string, unknown>);
+        },
         connectUpstreamFn: async (name: string): Promise<UpstreamConnection> => {
           connectedUpstreams.push(name);
           return {
@@ -1179,7 +1185,10 @@ describe("remote-cli MCP endpoints", () => {
       aliasValue: "parent-session",
       anchorId: activeAnchorId,
     });
-    appendActiveTrigger();
+    // triggerSlackId lets resolveTriggerUser map the trigger to the configured
+    // user (alice@example.com) so withJiraAttribution actually runs and the
+    // worklog assertion below has something to verify.
+    appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
 
     const pending = await postJson(
       "/exec/mcp",
@@ -1219,6 +1228,20 @@ describe("remote-cli MCP endpoints", () => {
       id: actionId,
       status: "pending",
     });
+
+    // The worklog must reflect the args actually sent to the upstream
+    // (post-attribution), not the pre-attribution args from the approval
+    // store — auditors rely on the worklog to see assignee_account_id, etc.
+    const createEntry = toolCallLogEntries.find(
+      (entry) =>
+        entry.tool === "createJiraIssue" &&
+        entry.decision === "approved" &&
+        typeof entry.error === "string",
+    );
+    expect(createEntry).toBeDefined();
+    expect((createEntry!.args as Record<string, unknown>).assignee_account_id).toBe(
+      "jira-account-1",
+    );
   });
 
   it("returns 401 for /internal/exec without the internal secret", async () => {

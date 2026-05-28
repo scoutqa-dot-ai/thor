@@ -881,7 +881,11 @@ else
       -d "{\"args\":[\"status\",\"$action_id\"]}" \
       2>/dev/null || echo '{}')
     final_status=$(exec_stdout_field "$final_raw" "status")
-    expected_final_status=$([[ "$jira_assignee_live" == "true" ]] && echo "approved" || echo "rejected")
+    # When jira_assignee_live=true the e2e creates against a fake project key
+    # (THORE2E) so Atlassian returns a CallToolResult with isError: true. The
+    # MCP executor now normalizes that into a side-effect-attempted failure,
+    # so the action stays pending for retry instead of flipping to approved.
+    expected_final_status=$([[ "$jira_assignee_live" == "true" ]] && echo "pending" || echo "rejected")
     assert '[[ "$final_status" == "$expected_final_status" ]]' \
       "remote-cli: final status confirms '$expected_final_status'" \
       "status='$final_status'"
