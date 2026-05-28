@@ -162,7 +162,7 @@ jobs:
         run: pnpm test:e2e
 
       - name: Run approval card e2e
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/core-e2e'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/gh-issue-create-approval'
         env:
           CI: "true"
         run: pnpm test:create-jira-approval-e2e
