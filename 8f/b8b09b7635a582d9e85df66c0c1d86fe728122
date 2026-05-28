@@ -1,0 +1,29 @@
+packages/remote-cli/src/mcp-handler.ts
+  311c008d6b0606c8 470
+packages/common/src/proxies.test.ts
+  311c008d6b0606c8 2-9,14-15,17,20-21,80
+packages/runner/src/tool-instructions.ts
+  311c008d6b0606c8 1,12
+packages/common/src/proxies.ts
+  311c008d6b0606c8 5-11,20,34-37,58-61,90-92,126-130,145-149,181,188-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8fb8b09b7635a582d9e85df66c0c1d86fe728122",
+  "prompts": {
+    "311c008d6b0606c8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f400788c-6840-44b4-a5d5-2d1f00fd01e4",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 113,
+      "total_deletions": 157,
+      "accepted_lines": 49,
+      "overriden_lines": 0
+    }
+  }
+}
