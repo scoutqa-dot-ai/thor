@@ -99,32 +99,32 @@ Common usage patterns:
 
 Integration-specific env vars live in each integration's doc. Cross-cutting vars:
 
-| Variable                        | Required | Service                     | Purpose                                                                                                                      |
-| ------------------------------- | -------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `CRON_SECRET`                   | Yes      | `gateway`, `cron`           | Shared secret for cron endpoint auth                                                                                         |
-| `THOR_ADMIN_EMAILS`             | Yes      | `ingress`                   | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes                         |
-| `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`     | Secret-gates gateway↔remote-cli internal APIs                                                                                |
-| `THOR_E2E_TEST_HELPERS`         | No       | `runner`                    | Enables secret-gated deterministic runner e2e helpers                                                                        |
-| `RUNNER_BASE_URL`               | Yes      | `remote-cli`                | Public base URL for Thor trigger viewer links in PR/Jira content                                                             |
-| `INGRESS_PORT`                  | No       | `ingress`                   | Host port for the reverse proxy                                                                                              |
-| `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy`   | Global Atlassian MCP auth header and mitmproxy default injection; profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes |
-| `POSTHOG_API_KEY`               | No       | `remote-cli`                | Global PostHog MCP auth; profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes                                          |
-| `GRAFANA_URL`                   | No       | `grafana-mcp`, `remote-cli` | Global Grafana instance URL; profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes                                      |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | No       | `grafana-mcp`, `remote-cli` | Global Grafana service account token; profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes                             |
-| `GRAFANA_ORG_ID`                | No       | `grafana-mcp`, `remote-cli` | Grafana org ID (defaults to `1`); profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes                                 |
-| `LANGFUSE_HOST`                 | No       | `remote-cli`                | Langfuse host URL                                                                                                            |
-| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`                | Langfuse public key                                                                                                          |
-| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`                | Langfuse secret key                                                                                                          |
-| `METABASE_URL`                  | No       | `remote-cli`                | Metabase instance URL                                                                                                        |
-| `METABASE_API_KEY`              | No       | `remote-cli`                | Metabase API key                                                                                                             |
-| `METABASE_DATABASE_ID`          | No       | `remote-cli`                | Metabase database ID                                                                                                         |
-| `METABASE_ALLOWED_SCHEMAS`      | No       | `remote-cli`                | Comma-separated schema allowlist                                                                                             |
-| `VOUCH_GOOGLE_CLIENT_ID`        | Yes      | `vouch`                     | Google OAuth client ID                                                                                                       |
-| `VOUCH_GOOGLE_CLIENT_SECRET`    | Yes      | `vouch`                     | Google OAuth client secret                                                                                                   |
-| `VOUCH_JWT_SECRET`              | Yes      | `vouch`                     | Session JWT signing secret                                                                                                   |
-| `VOUCH_ALLOWED_EMAIL_DOMAINS`   | No       | `compose -> vouch`          | Rendered into Vouch's `VOUCH_DOMAINS`; comma-separated email domains, default `scoutqa.cc`                                   |
-| `VOUCH_CALLBACK_URL`            | No       | `vouch`                     | OAuth callback URL                                                                                                           |
-| `VOUCH_COOKIE_DOMAIN`           | No       | `vouch`                     | Cookie domain                                                                                                                |
+| Variable                        | Required | Service                     | Purpose                                                                                              |
+| ------------------------------- | -------- | --------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `CRON_SECRET`                   | Yes      | `gateway`, `cron`           | Shared secret for cron endpoint auth                                                                 |
+| `THOR_ADMIN_EMAILS`             | Yes      | `ingress`                   | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes |
+| `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`     | Secret-gates gateway↔remote-cli internal APIs                                                        |
+| `THOR_E2E_TEST_HELPERS`         | No       | `runner`                    | Enables secret-gated deterministic runner e2e helpers                                                |
+| `RUNNER_BASE_URL`               | Yes      | `remote-cli`                | Public base URL for Thor trigger viewer links in PR/Jira content                                     |
+| `INGRESS_PORT`                  | No       | `ingress`                   | Host port for the reverse proxy                                                                      |
+| `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy`   | Atlassian MCP auth header and mitmproxy default injection                                            |
+| `POSTHOG_API_KEY`               | No       | `remote-cli`                | Global PostHog MCP auth; profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes                  |
+| `GRAFANA_URL`                   | No       | `grafana-mcp`, `remote-cli` | Global Grafana instance URL; profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes              |
+| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | No       | `grafana-mcp`, `remote-cli` | Global Grafana service account token; profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes     |
+| `GRAFANA_ORG_ID`                | No       | `grafana-mcp`, `remote-cli` | Grafana org ID (defaults to `1`); profile variants use `_<NORMALIZED_PROFILE_NAME>` suffixes         |
+| `LANGFUSE_HOST`                 | No       | `remote-cli`                | Langfuse host URL                                                                                    |
+| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`                | Langfuse public key                                                                                  |
+| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`                | Langfuse secret key                                                                                  |
+| `METABASE_URL`                  | No       | `remote-cli`                | Metabase instance URL                                                                                |
+| `METABASE_API_KEY`              | No       | `remote-cli`                | Metabase API key                                                                                     |
+| `METABASE_DATABASE_ID`          | No       | `remote-cli`                | Metabase database ID                                                                                 |
+| `METABASE_ALLOWED_SCHEMAS`      | No       | `remote-cli`                | Comma-separated schema allowlist                                                                     |
+| `VOUCH_GOOGLE_CLIENT_ID`        | Yes      | `vouch`                     | Google OAuth client ID                                                                               |
+| `VOUCH_GOOGLE_CLIENT_SECRET`    | Yes      | `vouch`                     | Google OAuth client secret                                                                           |
+| `VOUCH_JWT_SECRET`              | Yes      | `vouch`                     | Session JWT signing secret                                                                           |
+| `VOUCH_ALLOWED_EMAIL_DOMAINS`   | No       | `compose -> vouch`          | Rendered into Vouch's `VOUCH_DOMAINS`; comma-separated email domains, default `scoutqa.cc`           |
+| `VOUCH_CALLBACK_URL`            | No       | `vouch`                     | OAuth callback URL                                                                                   |
+| `VOUCH_COOKIE_DOMAIN`           | No       | `vouch`                     | Cookie domain                                                                                        |
 
 ### Workspace config (`thor.json`)
 
@@ -137,7 +137,7 @@ The file carries four operator-maintained registries:
 - `mitmproxy[]` / `mitmproxy_passthrough[]` — outbound credential rules and passthrough hosts. See [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a.
 - `users[]` — human attribution (see below).
 
-Profile names map to env suffixes by uppercasing and replacing non-alphanumerics with `_`: profile `qa-labs` checks `ATLASSIAN_AUTH_QA_LABS` before `ATLASSIAN_AUTH`, `POSTHOG_API_KEY_QA_LABS` before `POSTHOG_API_KEY`, and the Grafana bundle `GRAFANA_URL_QA_LABS` + `GRAFANA_SERVICE_ACCOUNT_TOKEN_QA_LABS` before the unsuffixed bundle. Profile-only Grafana bundles are valid; the unsuffixed Grafana vars are optional. Non-Slack triggers use unsuffixed globals only.
+Profile names map to env suffixes by uppercasing and replacing non-alphanumerics with `_`: profile `qa-labs` checks `POSTHOG_API_KEY_QA_LABS` before `POSTHOG_API_KEY`, and the Grafana bundle `GRAFANA_URL_QA_LABS` + `GRAFANA_SERVICE_ACCOUNT_TOKEN_QA_LABS` before the unsuffixed bundle. Profile-only Grafana bundles are valid; the unsuffixed Grafana vars are optional. Non-Slack triggers use unsuffixed globals only.
 
 ### Human attribution (`users[]`)
 
@@ -180,7 +180,6 @@ See [`docs/feat/security-model.md`](docs/feat/security-model.md) for the full la
 
 ```bash
 pnpm test
-pnpm test:mcp
 REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
 REMOTE_CLI_GITHUB_REPO=owner/repo \
   pnpm test:e2e

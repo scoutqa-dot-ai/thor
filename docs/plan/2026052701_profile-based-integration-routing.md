@@ -12,7 +12,7 @@ Let Thor route integrations by Slack channel without duplicating full credential
 
 - New `profiles` config in `/workspace/config/thor.json` as the single operator-maintained source for channel-specific overrides.
 - Drop `slack.private_channel_allowlist` in favor of “non-public channels must appear in some profile”.
-- Keep unsuffixed env vars as global credentials; add profile-suffixed variants such as `ATLASSIAN_AUTH_LABS` and `POSTHOG_API_KEY_LABS`.
+- Keep unsuffixed env vars as global credentials; add profile-suffixed variants such as `POSTHOG_API_KEY_LABS`.
 - Start with MCP-backed integrations (`atlassian`, `grafana`, `posthog`) and design the config/runtime shape so other `remote-cli` surfaces can adopt it later.
 - Update Slack gating, tool advertisement, MCP routing, approval resolution, docs, and tests to match the new model.
 
@@ -49,7 +49,6 @@ Interpretation:
 
 For a profile `labs`:
 
-- Atlassian: `ATLASSIAN_AUTH_LABS` → fallback `ATLASSIAN_AUTH` → disabled if neither exists.
 - PostHog: `POSTHOG_API_KEY_LABS` → fallback `POSTHOG_API_KEY` → disabled if neither exists.
 - Grafana: resolve the full bundle by suffix first, then global fallback:
   - `GRAFANA_URL_LABS` + `GRAFANA_SERVICE_ACCOUNT_TOKEN_LABS` (+ optional `GRAFANA_ORG_ID_LABS`)
@@ -118,7 +117,7 @@ Rules:
 - Update MCP listing and execution so unavailable integrations do not appear for the current thread/profile.
 - Snapshot the resolved integration target on approval-required actions.
 
-**Exit criteria:** MCP tests prove `atlassian`/`posthog`/`grafana` can resolve differently per profile and that approvals execute against the originally resolved target.
+**Exit criteria:** MCP tests prove `posthog`/`grafana` can resolve differently per profile and that approvals execute against the originally resolved target.
 
 ### Phase 5 — Prompt/docs alignment and future-surface hooks
 
@@ -133,6 +132,8 @@ Rules:
 - Should repo routing eventually move into the same `profiles` block, or stay separate because repo selection is agent-steerable while integration routing is operator policy?
 - For bundle-based integrations, do we allow partial fallback (for example profile-specific token with global URL), or require the whole profile bundle to exist before using it?
 - When a public channel belongs to a profile, should that profile also be able to override repo routing later, or should repo routing remain an independent mechanism?
+- **Cron-triggered `hey-thor` sessions have no profile.** Profile resolution today reads the Slack correlation key's channel via `getProfileForSlackCorrelationKey`. Cron triggers do not carry a Slack channel, so they fall through to unsuffixed globals — consistent with the "non-Slack triggers use unsuffixed globals only" rule, but it means there is no way today for a scheduled prompt to opt into a profile's credentials. Options to revisit: declare a profile per cron job in `thor.json`, attach a synthetic correlation key whose channel maps to a profile, or let the cron payload carry an explicit profile name. Pick one before adding cron jobs that need profile-scoped writes.
+- **Atlassian (and any other integration reachable via direct HTTP) bypasses profile routing through mitmproxy.** Mitmproxy's `${ATLASSIAN_AUTH}` interpolation in `docker/mitmproxy/rules.py` is global and has no notion of session/profile, so an agent that shells out to `curl` or uses node `fetch` against `*.atlassian.net` will get the unsuffixed global credential even when the originating Slack channel belongs to a profile with `ATLASSIAN_AUTH_<PROFILE>` set. The MCP path respects the profile; the egress path does not. Pure-MCP integrations (PostHog, Grafana) do not have this gap because they have no mitmproxy rule. Needs a follow-up — likely per-session tagging from runner → OpenCode env → mitmproxy addon, so the addon can look up the right `ATLASSIAN_AUTH_<PROFILE>` with the same fallback rules as `resolveProxyConfig`. Until that lands, treat Atlassian profile suffixes as best-effort (correct for MCP, leaky for direct egress) and prefer PostHog as the canonical profile example in docs.
 
 ## Test plan
 
