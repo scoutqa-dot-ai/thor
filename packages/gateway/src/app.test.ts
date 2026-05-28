@@ -2853,7 +2853,7 @@ describe("gateway", () => {
 
   it("ignores thread replies in unengaged threads (Thor has not replied)", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    sessionKeys.delete("slack:thread:1710000000.001");
+    sessionKeys.delete("slack:thread:C0/1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2896,7 +2896,7 @@ describe("gateway", () => {
       .fn<typeof fetch>()
       // POST /trigger → 200 (fire-and-forget)
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    sessionKeys.add("slack:thread:1710000000.001");
+    sessionKeys.add("slack:thread:C123/1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2933,7 +2933,7 @@ describe("gateway", () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
-      expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
+      expect(triggerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
       expect(triggerBody.triggerSlackId).toBe("U123");
       expect(triggerBody.interrupt).toBe(false);
     });
@@ -3381,7 +3381,7 @@ describe("gateway", () => {
 
   it("resolves approval outcome correlation keys through registered aliases", async () => {
     correlationKeyAliases.set(
-      "slack:thread:1710000000.001",
+      "slack:thread:C123/1710000000.001",
       "git:branch:test-repo:feature/from-slack",
     );
     const fetchImpl = vi

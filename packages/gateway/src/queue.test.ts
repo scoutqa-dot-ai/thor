@@ -151,30 +151,30 @@ describe("EventQueue", () => {
       aliasValue: "session-1",
       anchorId,
     });
-    appendCorrelationAliasForAnchor(anchorId, "slack:thread:1710000000.001");
+    appendCorrelationAliasForAnchor(anchorId, "slack:thread:C123/1710000000.001");
     appendCorrelationAliasForAnchor(anchorId, "git:branch:thor:feature/shared");
 
     const handler = ackHandler();
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 
-    await queue.enqueue(makeEvent("slack:thread:1710000000.001", "slack"));
+    await queue.enqueue(makeEvent("slack:thread:C123/1710000000.001", "slack"));
     await queue.enqueue({
       ...makeEvent("git:branch:thor:feature/shared", "github"),
       source: "github",
     });
-    expect(resolveAnchorForCorrelationKey("slack:thread:1710000000.001")).toBe(anchorId);
+    expect(resolveAnchorForCorrelationKey("slack:thread:C123/1710000000.001")).toBe(anchorId);
     expect(resolveAnchorForCorrelationKey("git:branch:thor:feature/shared")).toBe(anchorId);
     await queue.flush();
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0][0].map((event) => event.correlationKey)).toEqual([
-      "slack:thread:1710000000.001",
+      "slack:thread:C123/1710000000.001",
       "git:branch:thor:feature/shared",
     ]);
   });
 
   it("does not redispatch an in-flight file when its correlation alias appears", async () => {
-    const key = "slack:thread:1710000000.010";
+    const key = "slack:thread:C123/1710000000.010";
     let markFirstStarted!: () => void;
     let releaseFirst!: () => void;
     const firstStarted = new Promise<void>((resolve) => {

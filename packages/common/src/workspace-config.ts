@@ -4,6 +4,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
 import { createLogger, logWarn } from "./logger.js";
 import { normalizeProfileEnvSuffix } from "./profile-normalization.js";
+import { resolveAlias, reverseLookupAnchor } from "./event-log.js";
 
 // --- Schema ---
 
@@ -304,6 +305,56 @@ export function getSlackChannelFromCorrelationKey(
   const slash = rest.indexOf("/");
   if (slash <= 0) return undefined;
   return rest.slice(0, slash);
+}
+
+export type ProfileResolution =
+  | { ok: true; profile: string | undefined }
+  | { ok: false; error: string };
+
+/**
+ * Strict profile resolver. Enumerates every `slack.thread` alias bound to the
+ * session's anchor, maps each channel to a profile, and:
+ *   - returns `{ profile: undefined }` if there are no Slack bindings,
+ *   - returns `{ profile: name }` if every binding maps to the same profile,
+ *   - returns an error otherwise (multiple profiles, or a mix of "in profile"
+ *     + "not in any profile" channels).
+ *
+ * Failing fast on multi-profile sessions defends against silent credential
+ * flips when one anchor accumulates triggers from different channels.
+ */
+export function resolveStrictProfileForSession(
+  config: WorkspaceConfig,
+  sessionId: string,
+): ProfileResolution {
+  const anchorId =
+    resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) ??
+    resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId });
+  if (!anchorId) return { ok: true, profile: undefined };
+
+  const slackKeys = reverseLookupAnchor(anchorId).externalKeys.filter(
+    (key) => key.aliasType === "slack.thread",
+  );
+  if (slackKeys.length === 0) return { ok: true, profile: undefined };
+
+  const profiles = new Set<string | undefined>();
+  const channels: string[] = [];
+  for (const key of slackKeys) {
+    const slash = key.aliasValue.indexOf("/");
+    if (slash <= 0) continue;
+    const channel = key.aliasValue.slice(0, slash);
+    channels.push(channel);
+    profiles.add(getProfileForSlackChannel(config, channel));
+  }
+  if (profiles.size === 0) return { ok: true, profile: undefined };
+  if (profiles.size === 1) {
+    const only = [...profiles][0];
+    return { ok: true, profile: only };
+  }
+  const labels = [...profiles].map((p) => p ?? "<none>").sort();
+  return {
+    ok: false,
+    error: `session ${sessionId} is bound to channels in multiple profiles (${labels.join(", ")}): ${channels.join(", ")}`,
+  };
 }
 
 /**

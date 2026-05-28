@@ -19,7 +19,6 @@ const log = createLogger("event-log");
 const SLOW_READ_THRESHOLD_MS = 50;
 
 export const ALIAS_TYPES = [
-  "slack.thread_id",
   "slack.thread",
   "git.branch",
   "github.issue",

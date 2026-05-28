@@ -419,7 +419,7 @@ describe("remote-cli MCP endpoints", () => {
     });
   });
 
-  it("uses global credentials when the current trigger is non-Slack even if the anchor has an older Slack trigger", async () => {
+  it("honors the Slack channel's profile even after a subsequent non-Slack trigger fires", async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
     workspaceConfig = { ...workspaceConfig, profiles: { qa: { channels: ["C123"] } } };
@@ -449,13 +449,17 @@ describe("remote-cli MCP endpoints", () => {
     );
     const body = (await call.json()) as { stdout: string; exitCode: number };
 
+    // The Slack alias on the anchor pins the profile to qa for the lifetime of
+    // the anchor. A newer non-Slack trigger does not flip credentials back to
+    // globals — once a session is in a profile, all its MCP calls go through
+    // that profile.
     expect(body).toMatchObject({ stdout: "THOR-123", exitCode: 0 });
     expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
-      Authorization: "Basic global-token",
+      Authorization: "Basic qa-token",
     });
   });
 
-  it("snapshots the profile credential target on approval actions", async () => {
+  it("does not store profile/routing snapshot on approval actions", async () => {
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
     workspaceConfig = { ...workspaceConfig, profiles: { qa: { channels: ["C123"] } } };
     appendActiveTrigger();
@@ -477,27 +481,14 @@ describe("remote-cli MCP endpoints", () => {
     const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
 
     const status = await postJson("/exec/approval", { args: ["status", actionId] });
-    const stored = JSON.parse(((await status.json()) as { stdout: string }).stdout) as {
-      routing: { targetKey: string; profile: string; envScope: string };
-    };
-    expect(stored.routing).toEqual({ targetKey: "atlassian:QA", profile: "qa", envScope: "profile" });
-
-    workspaceConfig = { ...workspaceConfig, profiles: {} };
-    vi.stubEnv("ATLASSIAN_AUTH_QA", "");
-    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-after-approval");
-    upstreamConfigs = [];
-    const resolved = await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
-    const resolvedBody = (await resolved.json()) as { stdout: string; exitCode: number };
-
-    expect(resolvedBody).toMatchObject({ stdout: "created", exitCode: 0 });
-    expect(upstreamConfigs).toEqual([]);
+    const stored = JSON.parse(((await status.json()) as { stdout: string }).stdout) as Record<
+      string,
+      unknown
+    >;
+    expect(stored).not.toHaveProperty("routing");
   });
 
-  it("preserves approval routing when a profiled action originally used global fallback creds", async () => {
+  it("re-resolves approval routing at click time using fresh env and config", async () => {
     vi.stubEnv("ATLASSIAN_AUTH_QA", "");
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-before-approval");
     workspaceConfig = { ...workspaceConfig, profiles: { qa: { channels: ["C123"] } } };
@@ -519,16 +510,6 @@ describe("remote-cli MCP endpoints", () => {
     const pendingBody = (await pending.json()) as { stdout: string };
     const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
 
-    const status = await postJson("/exec/approval", { args: ["status", actionId] });
-    const stored = JSON.parse(((await status.json()) as { stdout: string }).stdout) as {
-      routing: { targetKey: string; profile: string; envScope: string };
-    };
-    expect(stored.routing).toEqual({
-      targetKey: "atlassian:GLOBAL",
-      profile: "qa",
-      envScope: "global",
-    });
-
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-after-approval");
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-after-approval");
     await stopRemoteCliServer();
@@ -541,10 +522,66 @@ describe("remote-cli MCP endpoints", () => {
     );
     const resolvedBody = (await resolved.json()) as { stdout: string; exitCode: number };
 
+    // Channel C123 maps to qa, and ATLASSIAN_AUTH_QA is now set, so the
+    // approval should fire against the freshly resolved profile credential,
+    // not the global fallback that was active when the approval card was
+    // posted.
     expect(resolvedBody).toMatchObject({ stdout: "created", exitCode: 0 });
     expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
-      Authorization: "Basic global-after-approval",
+      Authorization: "Basic qa-after-approval",
     });
+  });
+
+  it("rejects an approval when the session's channels are bound to multiple profiles", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_AUTH_LABS", "Basic labs-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: { qa: { channels: ["C123"] }, labs: { channels: ["C456"] } },
+    };
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    // Bind a second Slack thread on the same anchor in a different profile.
+    appendAlias({
+      aliasType: "slack.thread",
+      aliasValue: "C456/1710000099.001",
+      anchorId: activeAnchorId,
+    });
+
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as { exitCode: number; stderr: string };
+    expect(resolvedBody.exitCode).toBe(1);
+    expect(resolvedBody.stderr).toMatch(/multiple profiles/);
+
+    const status = await postJson("/exec/approval", { args: ["status", actionId] });
+    const stored = JSON.parse(((await status.json()) as { stdout: string }).stdout) as {
+      status: string;
+      reviewer?: string;
+      reason?: string;
+    };
+    expect(stored.status).toBe("rejected");
+    expect(stored.reviewer).toBe("system");
+    expect(stored.reason).toMatch(/profile re-resolution failed/);
   });
 
   it("counts profile-only upstreams in health configured total", async () => {
@@ -588,12 +625,20 @@ describe("remote-cli MCP endpoints", () => {
 
     await postJson(
       "/exec/mcp",
-      { args: ["atlassian", "getJiraIssue", "{}"], cwd: "/workspace/repos/acme", directory: "/workspace/repos/acme" },
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
       { "x-thor-session-id": "parent-session" },
     );
     await postJson(
       "/exec/mcp",
-      { args: ["atlassian", "getJiraIssue", "{}"], cwd: "/workspace/repos/acme", directory: "/workspace/repos/acme" },
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
       { "x-thor-session-id": "labs-session" },
     );
 
@@ -955,45 +1000,6 @@ describe("remote-cli MCP endpoints", () => {
     expect(pending.status).toBe(200);
     expect(pendingBody.exitCode).toBe(1);
     expect(pendingBody.stderr).toContain("has no Slack trigger correlation key");
-    expect(slackFetch).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when an approval origin only has a legacy Slack thread alias", async () => {
-    const legacyAnchorId = "00000000-0000-7000-8000-0000000004a3";
-    appendAlias({
-      aliasType: "opencode.session",
-      aliasValue: "legacy-thread-session",
-      anchorId: legacyAnchorId,
-    });
-    appendAlias({
-      aliasType: "slack.thread_id",
-      aliasValue: "1710000000.001",
-      anchorId: legacyAnchorId,
-    });
-    appendSessionEvent("legacy-thread-session", {
-      type: "trigger_start",
-      triggerId: activeTriggerId,
-      correlationKey: "slack:thread:1710000000.001",
-    });
-
-    const pending = await postJson(
-      "/exec/mcp",
-      {
-        args: [
-          "atlassian",
-          "createJiraIssue",
-          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
-        ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
-      },
-      { "x-thor-session-id": "legacy-thread-session" },
-    );
-    const pendingBody = (await pending.json()) as { stderr: string; exitCode: number };
-
-    expect(pending.status).toBe(200);
-    expect(pendingBody.exitCode).toBe(1);
-    expect(pendingBody.stderr).toContain("unsupported Slack thread correlation key");
     expect(slackFetch).not.toHaveBeenCalled();
   });
 

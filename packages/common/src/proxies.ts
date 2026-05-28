@@ -167,13 +167,22 @@ export function resolveProxyConfig(
   const suffix = profile ? normalizeProfileEnvSuffix(profile) : "";
   const scopedUrl = suffix ? envValue(env, `GRAFANA_URL_${suffix}`) : undefined;
   const scopedToken = suffix ? envValue(env, `GRAFANA_SERVICE_ACCOUNT_TOKEN_${suffix}`) : undefined;
+  const scopedOrg = suffix ? envValue(env, `GRAFANA_ORG_ID_${suffix}`) : undefined;
+  const anyScoped = Boolean(scopedUrl || scopedToken || scopedOrg);
   const useScoped = Boolean(scopedUrl && scopedToken);
+  if (suffix && anyScoped && !useScoped) {
+    const missing = [
+      !scopedUrl ? `GRAFANA_URL_${suffix}` : undefined,
+      !scopedToken ? `GRAFANA_SERVICE_ACCOUNT_TOKEN_${suffix}` : undefined,
+    ].filter(Boolean);
+    throw new Error(
+      `partial grafana profile bundle for "${profile}": missing ${missing.join(", ")}. Set the whole bundle or none of it.`,
+    );
+  }
   const url = useScoped ? scopedUrl : envValue(env, "GRAFANA_URL");
   const token = useScoped ? scopedToken : envValue(env, "GRAFANA_SERVICE_ACCOUNT_TOKEN");
   if (!url || !token) return undefined;
-  const orgId = useScoped
-    ? envValue(env, `GRAFANA_ORG_ID_${suffix}`)
-    : envValue(env, "GRAFANA_ORG_ID");
+  const orgId = useScoped ? scopedOrg : envValue(env, "GRAFANA_ORG_ID");
   return {
     ...policy,
     upstream: {

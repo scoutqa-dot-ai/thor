@@ -111,9 +111,6 @@ describe("admin app sessions dashboard", () => {
       expect(html).toContain("thor · feature/refactor");
       expect(html).toContain('href="https://github.com/acme/thor/issues/42"');
       expect(html).toContain("acme/thor#42");
-      // Legacy chip should not appear (no slack.thread_id alias here).
-      expect(html).not.toContain("slack.thread=");
-      expect(html).not.toContain("slack.thread_id=");
     } finally {
       delete process.env.SLACK_TEAM_ID;
     }
@@ -137,27 +134,6 @@ describe("admin app sessions dashboard", () => {
     const html = await page.text();
     expect(html).toContain(`#${channel} ·`);
     expect(html).not.toContain("app.slack.com/client");
-  });
-
-  it("hides the legacy slack.thread_id chip when the anchor also has slack.thread", async () => {
-    appendAlias({ aliasType: "opencode.session", aliasValue: "s4", anchorId: anchor });
-    appendAlias({
-      aliasType: "slack.thread_id",
-      aliasValue: "1710000000.001",
-      anchorId: anchor,
-    });
-    appendAlias({
-      aliasType: "slack.thread",
-      aliasValue: "C0/1710000000.001",
-      anchorId: anchor,
-    });
-    writeSession("s4", [
-      { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: trigger },
-    ]);
-
-    const page = await fetch(`${baseUrl}/admin/sessions`);
-    const html = await page.text();
-    expect(html).not.toContain("thread 1710000000.001");
   });
 
   it("preserves valid session rows when another alias has an unsafe session id", async () => {

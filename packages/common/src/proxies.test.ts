@@ -63,6 +63,19 @@ describe("proxy registry", () => {
     expect(getAvailableProxyNames("labs", env)).toEqual(["atlassian", "grafana"]);
   });
 
+  it("fails hard on a partial grafana profile bundle instead of silently using globals", () => {
+    const env = {
+      GRAFANA_URL: "https://grafana.global",
+      GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+      GRAFANA_URL_QA: "https://grafana.qa",
+      // GRAFANA_SERVICE_ACCOUNT_TOKEN_QA intentionally missing.
+    } as NodeJS.ProcessEnv;
+
+    expect(() => resolveProxyConfig("grafana", "qa", env)).toThrow(
+      /partial grafana profile bundle/i,
+    );
+  });
+
   it("keeps allow and approve sets disjoint for each upstream", () => {
     for (const name of PROXY_NAMES) {
       const proxy = getProxyConfig(name);

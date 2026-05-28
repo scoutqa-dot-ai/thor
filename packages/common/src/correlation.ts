@@ -76,21 +76,21 @@ export function computeSlackCorrelationKey(
 }
 
 /**
- * Build Slack thread correlation key(s). Returns the new
- * `slack:thread:<channel>/<ts>` form when channel is known, plus the legacy
- * `slack:thread:<ts>` form for back-compat resolution against pre-existing
- * aliases.
+ * Build Slack thread correlation key(s). Returns the channel-qualified
+ * `slack:thread:<channel>/<ts>` form when channel is known. Returns an empty
+ * array when channel is missing — anchor binding under the strict
+ * channel/profile model requires a channel.
  */
 export function buildSlackCorrelationKeys(channel: string | undefined, threadTs: string): string[] {
-  const legacy = `${SLACK_THREAD_PREFIX}${threadTs}`;
-  if (!channel) return [legacy];
-  return [`${SLACK_THREAD_PREFIX}${channel}/${threadTs}`, legacy];
+  if (!channel) return [];
+  return [`${SLACK_THREAD_PREFIX}${channel}/${threadTs}`];
 }
 
-function buildSlackThreadCorrelationKey(channel: string | undefined, threadTs: string): string {
-  return channel
-    ? `${SLACK_THREAD_PREFIX}${channel}/${threadTs}`
-    : `${SLACK_THREAD_PREFIX}${threadTs}`;
+function buildSlackThreadCorrelationKey(
+  channel: string | undefined,
+  threadTs: string,
+): string | undefined {
+  return channel ? `${SLACK_THREAD_PREFIX}${channel}/${threadTs}` : undefined;
 }
 
 /** Bind a correlation-key alias directly to a known anchor id. */
@@ -165,13 +165,8 @@ export function resolveCorrelationLockKey(key: string): string {
 function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
   if (key.startsWith(SLACK_THREAD_PREFIX)) {
     const suffix = key.slice(SLACK_THREAD_PREFIX.length);
-    // New shape: "<channel>/<thread_ts>". Legacy: "<thread_ts>" only.
-    // Channel ids and Slack ts strings never contain "/", so the separator
-    // is unambiguous.
-    if (suffix.includes("/")) {
-      return { aliasType: "slack.thread", aliasValue: suffix };
-    }
-    return { aliasType: "slack.thread_id", aliasValue: suffix };
+    if (!suffix.includes("/")) return undefined;
+    return { aliasType: "slack.thread", aliasValue: suffix };
   }
   if (key.startsWith(GIT_BRANCH_PREFIX)) {
     return {

@@ -17,7 +17,9 @@ import {
   isSlackChannelInProfile,
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
+  resolveStrictProfileForSession,
 } from "./workspace-config.js";
+import { appendAlias } from "./event-log.js";
 
 let tempDir: string;
 
@@ -126,6 +128,100 @@ describe("loadWorkspaceConfig", () => {
       "labs",
     );
     expect(getProfileForSlackCorrelationKey(config, "github:issue:repo#1")).toBeUndefined();
+  });
+
+  describe("resolveStrictProfileForSession", () => {
+    const anchor = "00000000-0000-7000-8000-000000000aa1";
+    const worklogRoot = "/tmp/thor-strict-profile-test";
+
+    beforeEach(() => {
+      vi.stubEnv("WORKLOG_DIR", `${worklogRoot}/worklog`);
+      rmSync(worklogRoot, { recursive: true, force: true });
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      rmSync(worklogRoot, { recursive: true, force: true });
+    });
+
+    function makeConfig() {
+      return loadWorkspaceConfig(
+        writeConfig("profiles.json", {
+          profiles: {
+            qa: { channels: ["C123"] },
+            labs: { channels: ["C456"] },
+          },
+        }),
+      );
+    }
+
+    it("returns undefined when the session has no anchor binding", () => {
+      const config = makeConfig();
+      expect(resolveStrictProfileForSession(config, "unknown-session")).toEqual({
+        ok: true,
+        profile: undefined,
+      });
+    });
+
+    it("returns undefined when the anchor has no slack.thread aliases", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "s1", anchorId: anchor });
+      const config = makeConfig();
+      expect(resolveStrictProfileForSession(config, "s1")).toEqual({
+        ok: true,
+        profile: undefined,
+      });
+    });
+
+    it("returns the unique profile when every Slack channel maps to the same profile", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "s2", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C123/1710000000.001",
+        anchorId: anchor,
+      });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C123/1710000000.005",
+        anchorId: anchor,
+      });
+      const config = makeConfig();
+      expect(resolveStrictProfileForSession(config, "s2")).toEqual({ ok: true, profile: "qa" });
+    });
+
+    it("fails hard when channels map to different profiles", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "s3", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C123/1710000000.001",
+        anchorId: anchor,
+      });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C456/1710000000.002",
+        anchorId: anchor,
+      });
+      const config = makeConfig();
+      const result = resolveStrictProfileForSession(config, "s3");
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/multiple profiles/);
+    });
+
+    it("fails hard when a profile-bound channel coexists with a no-profile channel", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "s4", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C123/1710000000.001",
+        anchorId: anchor,
+      });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C999/1710000000.002",
+        anchorId: anchor,
+      });
+      const config = makeConfig();
+      const result = resolveStrictProfileForSession(config, "s4");
+      expect(result.ok).toBe(false);
+    });
   });
 
   it("rejects invalid or duplicate profile channel entries", () => {

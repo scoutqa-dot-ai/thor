@@ -1243,7 +1243,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "large search",
-        correlationKey: "slack:thread:1710000000.090",
+        correlationKey: "slack:thread:C0/1710000000.090",
       });
 
       expect(result.events.find((e) => e.type === "context")).toMatchObject({
@@ -1283,7 +1283,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "large search",
-        correlationKey: "slack:thread:1710000000.099",
+        correlationKey: "slack:thread:C0/1710000000.099",
       });
 
       expect(result.events.find((e) => e.type === "context")).toMatchObject({
@@ -1324,7 +1324,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "large search",
-        correlationKey: "slack:thread:1710000000.100",
+        correlationKey: "slack:thread:C0/1710000000.100",
       });
 
       expect(result.events.find((e) => e.type === "context")).toMatchObject({
@@ -1357,7 +1357,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "fresh assistant",
-        correlationKey: "slack:thread:1710000000.101",
+        correlationKey: "slack:thread:C0/1710000000.101",
       });
 
       expect(result.events.find((e) => e.type === "context")).toBeUndefined();
@@ -1393,7 +1393,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "large search",
-        correlationKey: "slack:thread:1710000000.092",
+        correlationKey: "slack:thread:C0/1710000000.092",
       });
 
       expect(result.events.find((e) => e.type === "context")).toMatchObject({
@@ -1435,11 +1435,11 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       await trigger(url, {
         prompt: "large search one",
-        correlationKey: "slack:thread:1710000000.093",
+        correlationKey: "slack:thread:C0/1710000000.093",
       });
       await trigger(url, {
         prompt: "large search two",
-        correlationKey: "slack:thread:1710000000.094",
+        correlationKey: "slack:thread:C0/1710000000.094",
       });
     });
 
@@ -1485,11 +1485,11 @@ describe("runner /trigger orchestration", () => {
         await Promise.all([
           trigger(urlA, {
             prompt: "large search a",
-            correlationKey: "slack:thread:1710000000.095",
+            correlationKey: "slack:thread:C0/1710000000.095",
           }),
           trigger(urlB, {
             prompt: "large search b",
-            correlationKey: "slack:thread:1710000000.096",
+            correlationKey: "slack:thread:C0/1710000000.096",
           }),
         ]);
       });
@@ -1515,7 +1515,7 @@ describe("runner /trigger orchestration", () => {
         body: JSON.stringify({
           prompt: "hello",
           sessionId: "busy-session",
-          correlationKey: "slack:thread:1710000000.097",
+          correlationKey: "slack:thread:C0/1710000000.097",
           directory: "/workspace/repos/runner-trigger-test",
         }),
       });
@@ -1544,7 +1544,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "large search",
-        correlationKey: "slack:thread:1710000000.091",
+        correlationKey: "slack:thread:C0/1710000000.091",
       });
 
       expect(result.events.find((e) => e.type === "context")).toBeUndefined();
@@ -1584,7 +1584,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "tokenless update",
-        correlationKey: "slack:thread:1710000000.098",
+        correlationKey: "slack:thread:C0/1710000000.098",
       });
 
       expect(result.events.find((e) => e.type === "context")).toBeUndefined();

@@ -44,8 +44,6 @@ export function decodeExternalKey(
       }
       return { label, title: `${channel}/${ts}` };
     }
-    case "slack.thread_id":
-      return { label: `thread ${key.aliasValue}` };
     case "git.branch": {
       const decoded = safeBase64UrlDecode(key.aliasValue);
       if (!decoded?.startsWith(GIT_BRANCH_PREFIX)) return { label: key.aliasValue };
@@ -283,9 +281,7 @@ export function renderSessionsFragment(props: SessionsProps): string {
             row.ownerSessionId && row.ownerSessionId !== row.currentSessionId
               ? `<br><small>owner ${esc(row.ownerSessionId)}</small>`
               : "";
-          const hasNewSlack = row.externalKeys.some((k) => k.aliasType === "slack.thread");
           const chipParts = row.externalKeys
-            .filter((k) => !(hasNewSlack && k.aliasType === "slack.thread_id"))
             .map((k) => {
               const decoded = decodeExternalKey(k, { slackTeamId: props.slackTeamId });
               if (!decoded) return "";
