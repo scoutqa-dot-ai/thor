@@ -132,6 +132,19 @@ exec_payload() {
   " "$cwd" "$@"
 }
 
+mcp_payload() {
+  local directory="$1"
+  shift
+  node -e "
+    const directory = process.argv[1];
+    console.log(JSON.stringify({
+      args: process.argv.slice(2),
+      cwd: directory,
+      directory
+    }));
+  " "$directory" "$@"
+}
+
 jira_api_base() {
   local cloud="$JIRA_CLOUD_ID"
   if [[ "$cloud" == http://* || "$cloud" == https://* ]]; then
@@ -479,6 +492,47 @@ if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" && "$clone_origin" == "$REMOTE_CLI
   assert '[[ "$worktree_list" == *"$REMOTE_CLI_WORKTREE_DIR"* ]]' \
     "Internal exec worktree smoke: cloned repo registers the new worktree" \
     "worktree list: ${worktree_list:0:300}"
+fi
+
+# ── 3. MCP Integrations ─────────────────────────────────────────────────────
+
+echo ""
+echo "=== MCP Integrations ==="
+
+if [[ ! -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" ]]; then
+  assert 'false' \
+    "mcp integrations: disposable repo exists" \
+    "expected path: $HOST_REMOTE_CLI_GIT_REPO_DIR"
+else
+  mcp_e2e_upstreams=(atlassian grafana posthog)
+  for mcp_upstream in "${mcp_e2e_upstreams[@]}"; do
+    mcp_tools_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/mcp" \
+      -H 'Content-Type: application/json' \
+      -d "$(mcp_payload "$REMOTE_CLI_GIT_REPO_DIR" "$mcp_upstream")" \
+      2>/dev/null || echo '{}')
+    mcp_tools_exit=$(json_field "$mcp_tools_raw" "exitCode")
+    mcp_first_tool=$(json_field "$mcp_tools_raw" "stdout" | awk 'NF { print; exit }')
+
+    assert '[[ "$mcp_tools_exit" == "0" ]]' \
+      "mcp integrations: $mcp_upstream lists visible tools" \
+      "response: ${mcp_tools_raw:0:500}"
+    assert '[[ -n "$mcp_first_tool" ]]' \
+      "mcp integrations: $mcp_upstream has at least one visible tool" \
+      "response: ${mcp_tools_raw:0:500}"
+
+    if [[ -n "$mcp_first_tool" ]]; then
+      mcp_help_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/mcp" \
+        -H 'Content-Type: application/json' \
+        -d "$(mcp_payload "$REMOTE_CLI_GIT_REPO_DIR" "$mcp_upstream" "$mcp_first_tool" "--help")" \
+        2>/dev/null || echo '{}')
+      mcp_help_exit=$(json_field "$mcp_help_raw" "exitCode")
+      mcp_help_name=$(exec_stdout_field "$mcp_help_raw" "name")
+
+      assert '[[ "$mcp_help_exit" == "0" && "$mcp_help_name" == "$mcp_first_tool" ]]' \
+        "mcp integrations: $mcp_upstream/$mcp_first_tool help returns schema" \
+        "tool='$mcp_first_tool' name='$mcp_help_name' response: ${mcp_help_raw:0:500}"
+    fi
+  done
 fi
 
 # ── 5. Attribution Flow ─────────────────────────────────────────────────────
