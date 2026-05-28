@@ -410,44 +410,14 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (!instance.upstream.tools.some((tool) => tool.name === JIRA_ACCOUNT_LOOKUP_TOOL)) {
       return { ok: false, reason: "tool_unavailable" };
     }
-    const start = Date.now();
-    const args = { cloudId, searchString: email };
-    try {
-      const result = await instance.upstream.client.callTool({
-        name: JIRA_ACCOUNT_LOOKUP_TOOL,
-        arguments: args,
-      });
-      const durationMs = Date.now() - start;
-      logInfo(log, "jira_account_lookup", {
-        upstream: instance.name,
-        tool: JIRA_ACCOUNT_LOOKUP_TOOL,
-        durationMs,
-      });
-      writeToolCallLogFn({
-        tool: JIRA_ACCOUNT_LOOKUP_TOOL,
-        decision: "allowed",
-        args,
-        result,
-        durationMs,
-      });
-      return parseJiraAccountLookupStdout(unwrapResult(result));
-    } catch (err) {
-      const durationMs = Date.now() - start;
-      const message = err instanceof Error ? err.message : String(err);
-      logError(log, "jira_account_lookup", message, {
-        upstream: instance.name,
-        tool: JIRA_ACCOUNT_LOOKUP_TOOL,
-        durationMs,
-      });
-      writeToolCallLogFn({
-        tool: JIRA_ACCOUNT_LOOKUP_TOOL,
-        decision: "allowed",
-        args,
-        durationMs,
-        error: message,
-      });
-      return { ok: false, reason: "upstream_disconnected" };
-    }
+    const outcome = await callUpstreamWithLogging(
+      instance,
+      JIRA_ACCOUNT_LOOKUP_TOOL,
+      { cloudId, searchString: email },
+      { logEvent: "jira_account_lookup" },
+    );
+    if (!outcome.ok) return { ok: false, reason: "upstream_disconnected" };
+    return parseJiraAccountLookupStdout(outcome.text);
   }
 
   function validateRepoDirectory(directory?: string): McpExecResult | undefined {
@@ -547,6 +517,43 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
   }
 
+  type UpstreamCallOutcome =
+    | { ok: true; text: string; durationMs: number }
+    | { ok: false; message: string; durationMs: number };
+
+  async function callUpstreamWithLogging(
+    instance: ProxyInstance,
+    toolName: string,
+    args: Record<string, unknown>,
+    opts: { logEvent: string; extraLogFields?: Record<string, unknown> },
+  ): Promise<UpstreamCallOutcome> {
+    const { logEvent, extraLogFields = {} } = opts;
+    const baseLog = { upstream: instance.name, tool: toolName, ...extraLogFields };
+    const start = Date.now();
+    try {
+      const result = await instance.upstream.client.callTool({
+        name: toolName,
+        arguments: args,
+      });
+      const durationMs = Date.now() - start;
+      const text = unwrapResult(result);
+      if (isMcpToolError(result)) {
+        logError(log, logEvent, text, { ...baseLog, durationMs });
+        writeToolCallLogFn({ tool: toolName, decision: "allowed", args, durationMs, error: text });
+        return { ok: false, message: text, durationMs };
+      }
+      logInfo(log, logEvent, { ...baseLog, durationMs });
+      writeToolCallLogFn({ tool: toolName, decision: "allowed", args, result: text, durationMs });
+      return { ok: true, text, durationMs };
+    } catch (err) {
+      const durationMs = Date.now() - start;
+      const message = err instanceof Error ? err.message : String(err);
+      logError(log, logEvent, message, { ...baseLog, durationMs });
+      writeToolCallLogFn({ tool: toolName, decision: "allowed", args, durationMs, error: message });
+      return { ok: false, message, durationMs };
+    }
+  }
+
   interface UpstreamCallOpts {
     instance: ProxyInstance;
     toolName: string;
@@ -555,108 +562,40 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     inputSchema?: unknown;
   }
 
-  /**
-   * Direct (non-approval) MCP tool invocation. Logs, writes the worklog, and
-   * formats stderr with an input-schema hint so the calling agent can fix
-   * malformed input. Approval execution goes through {@link ApprovalExecutor}
-   * instead; the resolver owns those audit and wire-shape concerns.
-   */
   async function executeDirectMcpCall(opts: UpstreamCallOpts): Promise<McpExecResult> {
-    const { instance, toolName, args, inputSchema } = opts;
-    const start = Date.now();
-    try {
-      const result = await instance.upstream.client.callTool({
-        name: toolName,
-        arguments: args,
-      });
-      const duration = Date.now() - start;
-      const stdout = unwrapResult(result);
-
-      if (isMcpToolError(result)) {
-        // MCP-spec error envelope; surface the same as an SDK throw so the
-        // agent's stderr/exitCode signal is consistent regardless of how
-        // the upstream signalled failure.
-        logError(log, "tool_call", stdout, {
-          upstream: instance.name,
-          tool: toolName,
-          durationMs: duration,
-          ...getThorIds({ sessionId: opts.sessionId }),
-        });
-        writeToolCallLogFn({
-          tool: toolName,
-          decision: "allowed",
-          args,
-          durationMs: duration,
-          error: stdout,
-        });
-        let stderr = `${stdout}\n`;
-        if (inputSchema) {
-          stderr += `\n[hint] Input schema for "${toolName}":\n${JSON.stringify(inputSchema, null, 2)}\n`;
-        }
-        return fail(stderr);
-      }
-
-      logInfo(log, "tool_call", {
-        upstream: instance.name,
-        tool: toolName,
-        durationMs: duration,
-        ...getThorIds({ sessionId: opts.sessionId }),
-      });
-      writeToolCallLogFn({
-        tool: toolName,
-        decision: "allowed",
-        args,
-        result: stdout,
-        durationMs: duration,
-      });
-
-      if (toolName === "post_message" && opts.sessionId) {
-        const correlationKey = computeSlackCorrelationKey(args, stdout);
-        if (correlationKey) {
-          try {
-            appendCorrelationAlias(opts.sessionId, correlationKey);
-            logInfo(log, "alias_registered", {
-              sessionId: opts.sessionId,
-              correlationKey,
-              source: "mcp:post_message",
-            });
-          } catch (err) {
-            logError(
-              log,
-              "alias_registration_error",
-              err instanceof Error ? err.message : String(err),
-              {
-                sessionId: opts.sessionId,
-                correlationKey,
-              },
-            );
-          }
-        }
-      }
-      return ok(stdout);
-    } catch (err) {
-      const duration = Date.now() - start;
-      const message = err instanceof Error ? err.message : String(err);
-      logError(log, "tool_call", message, {
-        upstream: instance.name,
-        tool: toolName,
-        durationMs: duration,
-        ...getThorIds({ sessionId: opts.sessionId }),
-      });
-      writeToolCallLogFn({
-        tool: toolName,
-        decision: "allowed",
-        args,
-        durationMs: duration,
-        error: message,
-      });
-
-      let stderr = `${message}\n`;
+    const { instance, toolName, args, sessionId, inputSchema } = opts;
+    const outcome = await callUpstreamWithLogging(instance, toolName, args, {
+      logEvent: "tool_call",
+      extraLogFields: getThorIds({ sessionId }),
+    });
+    if (!outcome.ok) {
+      let stderr = `${outcome.message}\n`;
       if (inputSchema) {
         stderr += `\n[hint] Input schema for "${toolName}":\n${JSON.stringify(inputSchema, null, 2)}\n`;
       }
       return fail(stderr);
     }
+    if (toolName === "post_message" && sessionId) {
+      const correlationKey = computeSlackCorrelationKey(args, outcome.text);
+      if (correlationKey) {
+        try {
+          appendCorrelationAlias(sessionId, correlationKey);
+          logInfo(log, "alias_registered", {
+            sessionId,
+            correlationKey,
+            source: "mcp:post_message",
+          });
+        } catch (err) {
+          logError(
+            log,
+            "alias_registration_error",
+            err instanceof Error ? err.message : String(err),
+            { sessionId, correlationKey },
+          );
+        }
+      }
+    }
+    return ok(outcome.text);
   }
 
   async function callTool(
@@ -689,67 +628,15 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       if (!context.sessionId) {
         return fail(`Approval required for "${toolInfo.name}": missing Thor session id`);
       }
-      const anchorContext = findAnchorContext(context.sessionId);
-      if (!anchorContext.ok) {
-        return fail(
-          `Approval required for "${toolInfo.name}": no Thor anchor for session ${context.sessionId} (${anchorContext.reason})`,
-        );
-      }
-      const slackTarget = resolveSlackThreadTargetFromTrigger(context.sessionId);
-      if ("error" in slackTarget) {
-        return fail(`Approval required for "${toolInfo.name}": ${slackTarget.error}`);
-      }
-      const action = instance.approvalStore.buildPending(
-        toolInfo.name,
-        approvalArgs,
-        {
-          sessionId: context.sessionId,
-          trigger: {
-            anchorId: anchorContext.anchorId,
-            ...(anchorContext.triggerId ? { triggerId: anchorContext.triggerId } : {}),
-          },
-        },
-        {
-          provider: "slack",
-          channel: slackTarget.channel,
-          threadTs: slackTarget.threadTs,
-        },
-      );
-      const slackPost = await postSlackApprovalMessage({
-        action,
-        upstreamName: instance.name,
-        channel: slackTarget.channel,
-        threadTs: slackTarget.threadTs,
-      });
-      if ("error" in slackPost) {
-        instance.approvalStore.rejectLoaded(action, "system", slackPost.error);
-        return fail(`Approval required for "${toolInfo.name}": ${slackPost.error}`);
-      }
-      action.notification = {
-        provider: "slack",
-        channel: slackTarget.channel,
-        threadTs: slackTarget.threadTs,
-        messageTs: slackPost.ts,
-        postedAt: new Date().toISOString(),
-      };
-      instance.approvalStore.update(action);
-      logInfo(log, "tool_call_pending_approval", {
-        upstream: instance.name,
+      return createPendingApproval({
+        store: instance.approvalStore,
+        proxyName: instance.name,
         tool: toolInfo.name,
-        actionId: action.id,
-        ...getThorIds(context),
+        displayName: toolInfo.name,
+        args: approvalArgs,
+        sessionId: context.sessionId,
+        ...(context.callId ? { callId: context.callId } : {}),
       });
-      writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args: approvalArgs });
-      const approvalEvent: ApprovalRequiredEventPayload = {
-        ...approvalRequired.data,
-        actionId: action.id,
-      };
-      return ok(
-        stringify({
-          ...approvalEvent,
-          command: `approval status ${action.id}`,
-        }),
-      );
     }
 
     return executeDirectMcpCall({
@@ -759,6 +646,73 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       sessionId: context.sessionId,
       inputSchema: toolInfo.inputSchema,
     });
+  }
+
+  async function createPendingApproval(opts: {
+    store: ApprovalStore;
+    proxyName: string;
+    tool: string;
+    displayName: string;
+    args: Record<string, unknown>;
+    sessionId: string;
+    callId?: string;
+  }): Promise<McpExecResult> {
+    const { store, proxyName, tool, displayName, args, sessionId, callId } = opts;
+    const anchorContext = findAnchorContext(sessionId);
+    if (!anchorContext.ok) {
+      return fail(
+        `Approval required for "${displayName}": no Thor anchor for session ${sessionId} (${anchorContext.reason})`,
+      );
+    }
+    const slackTarget = resolveSlackThreadTargetFromTrigger(sessionId);
+    if ("error" in slackTarget) {
+      return fail(`Approval required for "${displayName}": ${slackTarget.error}`);
+    }
+    const action = store.buildPending(
+      tool,
+      args,
+      {
+        sessionId,
+        trigger: {
+          anchorId: anchorContext.anchorId,
+          ...(anchorContext.triggerId ? { triggerId: anchorContext.triggerId } : {}),
+        },
+      },
+      { provider: "slack", channel: slackTarget.channel, threadTs: slackTarget.threadTs },
+    );
+    const slackPost = await postSlackApprovalMessage({
+      action,
+      upstreamName: proxyName,
+      channel: slackTarget.channel,
+      threadTs: slackTarget.threadTs,
+    });
+    if ("error" in slackPost) {
+      store.rejectLoaded(action, "system", slackPost.error);
+      return fail(`Approval required for "${displayName}": ${slackPost.error}`);
+    }
+    action.notification = {
+      provider: "slack",
+      channel: slackTarget.channel,
+      threadTs: slackTarget.threadTs,
+      messageTs: slackPost.ts,
+      postedAt: new Date().toISOString(),
+    };
+    store.update(action);
+    logInfo(log, "tool_call_pending_approval", {
+      upstream: proxyName,
+      tool,
+      actionId: action.id,
+      ...getThorIds({ sessionId, callId }),
+    });
+    writeToolCallLogFn({ tool, decision: "pending", args });
+    const approvalEvent = {
+      type: "approval_required",
+      actionId: action.id,
+      proxyName,
+      tool,
+      args,
+    } satisfies Record<string, unknown>;
+    return ok(stringify({ ...approvalEvent, command: `approval status ${action.id}` }));
   }
 
   function findApproval(actionId: string): ApprovalLookup | undefined {
@@ -772,30 +726,11 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return undefined;
   }
 
-  /**
-   * Outcome shape returned by every approval executor. The resolver consumes
-   * this to decide audit logging, store transitions, and the wire shape sent
-   * back to the gateway — executors do not write the worklog or touch the
-   * approval store themselves.
-   */
-  interface ApprovalExecutionOutcome {
+  interface ApprovalOutcome {
     ok: boolean;
     stdout: string;
     stderr: string;
-    /**
-     * True iff the executor issued a side-effecting write that may have taken
-     * effect (MCP request was sent; gh subprocess ran to non-zero exit).
-     * False for short-circuits before the write (bad stored args, args build
-     * failure).
-     */
     sideEffectAttempted: boolean;
-    /**
-     * The args the executor actually sent to the upstream after disclaimer
-     * injection / attribution. Logged to the worklog so audit trails reflect
-     * what was sent, not the pre-attribution args from the approval store.
-     * Falls back to the action's stored args when the executor didn't reach
-     * the side-effect stage.
-     */
     effectiveArgs?: Record<string, unknown>;
   }
 
@@ -807,105 +742,78 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     );
   }
 
-  interface ApprovalExecutor {
-    run(action: ApprovalAction): Promise<ApprovalExecutionOutcome>;
-  }
-
-  function createMcpApprovalExecutor(instance: ProxyInstance): ApprovalExecutor {
-    return {
-      async run(action: ApprovalAction): Promise<ApprovalExecutionOutcome> {
-        let upstreamArgs: Record<string, unknown>;
-        try {
-          upstreamArgs = buildUpstreamArgs(action);
-          if (action.tool === "createJiraIssue") {
-            upstreamArgs = await withJiraAttribution(
-              upstreamArgs,
-              action.origin?.sessionId,
-              instance,
-            );
-          }
-        } catch (err) {
-          return {
-            ok: false,
-            stdout: "",
-            stderr: err instanceof Error ? err.message : String(err),
-            sideEffectAttempted: false,
-          };
-        }
-
-        try {
-          const result = await instance.upstream.client.callTool({
-            name: action.tool,
-            arguments: upstreamArgs,
-          });
-          const text = unwrapResult(result);
-          if (isMcpToolError(result)) {
-            // MCP-spec error envelope: the SDK call succeeded but the tool
-            // reported a semantic failure. Treat as a side-effect-attempted
-            // failure so the gateway routes it through the same "do not
-            // replay" guidance as SDK throws.
-            return {
-              ok: false,
-              stdout: "",
-              stderr: text,
-              sideEffectAttempted: true,
-              effectiveArgs: upstreamArgs,
-            };
-          }
-          return {
-            ok: true,
-            stdout: text,
-            stderr: "",
-            sideEffectAttempted: true,
-            effectiveArgs: upstreamArgs,
-          };
-        } catch (err) {
-          return {
-            ok: false,
-            stdout: "",
-            stderr: err instanceof Error ? err.message : String(err),
-            sideEffectAttempted: true,
-            effectiveArgs: upstreamArgs,
-          };
-        }
-      },
-    };
-  }
-
-  function createGhIssueCreateApprovalExecutor(): ApprovalExecutor {
-    return {
-      async run(action: ApprovalAction): Promise<ApprovalExecutionOutcome> {
-        const parsed = GhIssueCreateApprovalArgsSchema.safeParse(action.args);
-        if (!parsed.success) {
-          return {
-            ok: false,
-            stdout: "",
-            stderr: `Stored gh issue create approval action ${action.id} is invalid: ${parsed.error.message}`,
-            sideEffectAttempted: false,
-          };
-        }
-        const result = await execCommandFn("gh", parsed.data.args, parsed.data.cwd);
-        if (result.exitCode !== 0) {
-          return {
-            ok: false,
-            stdout: result.stdout,
-            stderr: result.stderr || `gh exited with code ${result.exitCode}`,
-            sideEffectAttempted: true,
-          };
-        }
-        registerCreatedIssueCorrelationAlias(
-          action.origin?.sessionId,
-          parsed.data.cwd,
-          result.stdout,
-        );
+  async function runMcpApproval(
+    instance: ProxyInstance,
+    action: ApprovalAction,
+  ): Promise<ApprovalOutcome> {
+    let upstreamArgs: Record<string, unknown>;
+    try {
+      upstreamArgs = buildUpstreamArgs(action);
+      if (action.tool === "createJiraIssue") {
+        upstreamArgs = await withJiraAttribution(upstreamArgs, action.origin?.sessionId, instance);
+      }
+    } catch (err) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: err instanceof Error ? err.message : String(err),
+        sideEffectAttempted: false,
+      };
+    }
+    try {
+      const result = await instance.upstream.client.callTool({
+        name: action.tool,
+        arguments: upstreamArgs,
+      });
+      const text = unwrapResult(result);
+      if (isMcpToolError(result)) {
         return {
-          ok: true,
-          stdout: result.stdout,
-          stderr: "",
+          ok: false,
+          stdout: "",
+          stderr: text,
           sideEffectAttempted: true,
+          effectiveArgs: upstreamArgs,
         };
-      },
-    };
+      }
+      return {
+        ok: true,
+        stdout: text,
+        stderr: "",
+        sideEffectAttempted: true,
+        effectiveArgs: upstreamArgs,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: err instanceof Error ? err.message : String(err),
+        sideEffectAttempted: true,
+        effectiveArgs: upstreamArgs,
+      };
+    }
+  }
+
+  async function runGhIssueCreateApproval(action: ApprovalAction): Promise<ApprovalOutcome> {
+    const parsed = GhIssueCreateApprovalArgsSchema.safeParse(action.args);
+    if (!parsed.success) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: `Stored gh issue create approval action ${action.id} is invalid: ${parsed.error.message}`,
+        sideEffectAttempted: false,
+      };
+    }
+    const result = await execCommandFn("gh", parsed.data.args, parsed.data.cwd);
+    if (result.exitCode !== 0) {
+      return {
+        ok: false,
+        stdout: result.stdout,
+        stderr: result.stderr || `gh exited with code ${result.exitCode}`,
+        sideEffectAttempted: true,
+      };
+    }
+    registerCreatedIssueCorrelationAlias(action.origin?.sessionId, parsed.data.cwd, result.stdout);
+    return { ok: true, stdout: result.stdout, stderr: "", sideEffectAttempted: true };
   }
 
   function storedApprovedResult(action: ApprovalAction): McpExecResult {
@@ -989,20 +897,18 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return ok(stringify(rejected));
     }
 
-    let executor: ApprovalExecutor;
+    const pendingAction = lookup.action;
+    const start = Date.now();
+    let outcome: ApprovalOutcome;
     if (lookup.upstreamName === GH_APPROVAL_STORE) {
-      executor = createGhIssueCreateApprovalExecutor();
+      outcome = await runGhIssueCreateApproval(pendingAction);
     } else {
       const instance = await getInstance(lookup.upstreamName);
       if (!instance) {
         return fail(`Unknown upstream "${lookup.upstreamName}".`);
       }
-      executor = createMcpApprovalExecutor(instance);
+      outcome = await runMcpApproval(instance, pendingAction);
     }
-
-    const pendingAction = lookup.action;
-    const start = Date.now();
-    const outcome = await executor.run(pendingAction);
     const durationMs = Date.now() - start;
 
     const baseLogFields = {
@@ -1233,68 +1139,20 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       if (!input.sessionId) {
         return fail('Approval required for "gh issue create": missing Thor session id');
       }
-      const anchorContext = findAnchorContext(input.sessionId);
-      if (!anchorContext.ok) {
-        return fail(
-          `Approval required for "gh issue create": no Thor anchor for session ${input.sessionId} (${anchorContext.reason})`,
-        );
-      }
-      const slackTarget = resolveSlackThreadTargetFromTrigger(input.sessionId);
-      if ("error" in slackTarget) {
-        return fail(`Approval required for "gh issue create": ${slackTarget.error}`);
-      }
-      const store = getApprovalStore(GH_APPROVAL_STORE);
       const args = GhIssueCreateApprovalArgsSchema.parse({
         cwd: input.cwd,
         args: input.args,
         ...parseGhIssueDisplay(input.args),
       });
-      const action = store.buildPending(
-        "ghIssueCreate",
+      return createPendingApproval({
+        store: getApprovalStore(GH_APPROVAL_STORE),
+        proxyName: GH_APPROVAL_STORE,
+        tool: "ghIssueCreate",
+        displayName: "gh issue create",
         args,
-        {
-          sessionId: input.sessionId,
-          trigger: {
-            anchorId: anchorContext.anchorId,
-            ...(anchorContext.triggerId ? { triggerId: anchorContext.triggerId } : {}),
-          },
-        },
-        { provider: "slack", channel: slackTarget.channel, threadTs: slackTarget.threadTs },
-      );
-      const slackPost = await postSlackApprovalMessage({
-        action,
-        upstreamName: GH_APPROVAL_STORE,
-        channel: slackTarget.channel,
-        threadTs: slackTarget.threadTs,
-      });
-      if ("error" in slackPost) {
-        store.rejectLoaded(action, "system", slackPost.error);
-        return fail(`Approval required for "gh issue create": ${slackPost.error}`);
-      }
-      action.notification = {
-        provider: "slack",
-        channel: slackTarget.channel,
-        threadTs: slackTarget.threadTs,
-        messageTs: slackPost.ts,
-        postedAt: new Date().toISOString(),
-      };
-      store.update(action);
-      logInfo(log, "tool_call_pending_approval", {
-        upstream: GH_APPROVAL_STORE,
-        tool: action.tool,
-        actionId: action.id,
         sessionId: input.sessionId,
         ...(input.callId ? { callId: input.callId } : {}),
       });
-      writeToolCallLogFn({ tool: action.tool, decision: "pending", args });
-      const approvalEvent: ApprovalRequiredEventPayload = {
-        type: "approval_required",
-        actionId: action.id,
-        proxyName: GH_APPROVAL_STORE,
-        tool: "ghIssueCreate",
-        args,
-      };
-      return ok(stringify({ ...approvalEvent, command: `approval status ${action.id}` }));
     },
   };
 }
