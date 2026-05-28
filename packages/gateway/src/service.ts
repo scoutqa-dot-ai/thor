@@ -12,7 +12,7 @@ import {
 } from "@thor/common";
 import type { ExecResult } from "@thor/common";
 import {
-  getSlackCorrelationKeys,
+  getSlackCorrelationKey,
   isPendingSlackPrivacyKey,
   type SlackThreadEvent,
 } from "./slack.js";
@@ -598,7 +598,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       });
       return { kind: "drop", logPrefix: "slack", reason: decision.reason };
     }
-    const resolvedKey = resolveCorrelationKeys(getSlackCorrelationKeys(event));
+    const resolvedKey = resolveCorrelationKeys([getSlackCorrelationKey(event)]);
     return {
       kind: "reroute",
       logPrefix: "slack",

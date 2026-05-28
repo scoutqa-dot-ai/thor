@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { buildSlackCorrelationKey } from "@thor/common";
 import { z } from "zod/v4";
 
 const SLACK_SIGNATURE_VERSION = "v0";
@@ -169,17 +170,7 @@ export function getSlackThreadTs(event: SlackThreadEvent): string {
 }
 
 export function getSlackCorrelationKey(event: SlackThreadEvent): string {
-  return `slack:thread:${event.channel}/${getSlackThreadTs(event)}`;
-}
-
-/**
- * Returns the channel-qualified `slack:thread:<channel>/<ts>` key. The array
- * shape is preserved so callers can keep using `resolveCorrelationKeys(string[])`
- * without a signature change.
- */
-export function getSlackCorrelationKeys(event: SlackThreadEvent): string[] {
-  const ts = getSlackThreadTs(event);
-  return [`slack:thread:${event.channel}/${ts}`];
+  return buildSlackCorrelationKey(event.channel, getSlackThreadTs(event));
 }
 
 export function isSupportedSlackMessageSubtype(

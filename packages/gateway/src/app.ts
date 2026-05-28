@@ -50,7 +50,7 @@ import { verifyThorAuthoredSha } from "./github-gate.js";
 import { deepHealthCheck } from "./healthcheck.js";
 import {
   buildPendingSlackPrivacyKey,
-  getSlackCorrelationKeys,
+  getSlackCorrelationKey,
   isForwardableSlackMessage,
   isSupportedSlackMessageSubtype,
   isPendingSlackPrivacyKey,
@@ -1431,11 +1431,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           return;
         }
         addEyesReaction();
-        const rawKeys = getSlackCorrelationKeys(event);
-        const correlationKey = resolveCorrelationKeys(rawKeys);
-        if (correlationKey !== rawKeys[0]) {
-          logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
-        }
+        const correlationKey = getSlackCorrelationKey(event);
         await acceptSlackEvent(event, correlationKey, { delayMs: 0, interrupt: true });
         return;
       }
@@ -1458,15 +1454,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // Message continuations. Supported subtypes are user-authored messages;
     // unsupported/system subtypes remain ignored below.
     if (event.type === "message" && isForwardableSlackMessage(event)) {
-      const rawKeys = getSlackCorrelationKeys(event);
-      const correlationKey = resolveCorrelationKeys(rawKeys);
-      if (correlationKey !== rawKeys[0]) {
-        logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
-      }
+      const correlationKey = getSlackCorrelationKey(event);
 
       // Only forward if Thor is engaged in this thread via the JSONL alias index.
       // Users must @mention to start new conversations.
-      const engaged = hasSessionForCorrelationKey(rawKeys);
+      const engaged = hasSessionForCorrelationKey(correlationKey);
       if (!engaged) {
         logInfo(log, "event_ignored_not_engaged", {
           eventId,
