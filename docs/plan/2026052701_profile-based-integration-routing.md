@@ -21,7 +21,7 @@ Let Thor route integrations by Slack channel without duplicating full credential
 - Replacing repo routing in the same change. Repo routing can stay on `SLACK_DEFAULT_REPO` + memory override files for now unless implementation pressure makes consolidation clearly worthwhile.
 - Per-profile tool allow/approve policy. Keep policy global per integration unless a real use case appears.
 - A new admin UX beyond whatever the existing raw-config editor already supports.
-- Non-Slack trigger routing policy beyond a safe fallback to unsuffixed global env vars.
+- Standalone non-Slack trigger profile selection beyond the safe fallback to unsuffixed global env vars. Phase 6 still lets an existing Slack-bound anchor carry its resolved profile across later non-Slack triggers.
 
 ## Proposed config shape
 
@@ -60,7 +60,7 @@ Rules:
 1. Profile names are normalized to env-safe uppercase with non-alphanumerics converted to `_`.
 2. Unsuffixed env vars are the global fallback, not a “default profile”.
 3. Missing global env var disables the integration globally, but profile-specific vars can still enable it for listed profiles.
-4. Multi-var integrations resolve as bundles — never mix profile-scoped and global credentials within the same bundle unless that bundle explicitly allows partial fallback.
+4. Multi-var integrations resolve as bundles — never mix profile-scoped and global credentials within the same bundle. If a profile-scoped bundle is partially configured, fail hard instead of falling back to globals.
 
 ## Current-state constraints to replace
 
@@ -69,7 +69,7 @@ Rules:
 - `packages/common/src/proxies.ts` hard-codes one `ProxyConfig` per MCP integration with one credential source each.
 - `packages/runner/src/tool-instructions.ts` advertises MCP tools globally from `PROXY_REGISTRY`, without thread/profile awareness.
 - `packages/remote-cli/src/mcp-handler.ts` resolves upstreams by integration name only, not by Slack thread/profile.
-- Approval resolution must remain stable even if profile routing changes after an approval card is posted.
+- The earlier approval-routing design assumed creation-time stability after a card is posted; Phase 6 replaces this with click-time re-resolution and rejection on ambiguity or unavailable credentials.
 
 ## Decision log
 
@@ -119,9 +119,9 @@ Rules:
 - Replace single-instance `PROXY_REGISTRY` credential assumptions with profile-aware runtime resolution while preserving global tool policy.
 - Key live upstream connections by integration + resolved credential target so multiple profile variants can coexist.
 - Update MCP listing and execution so unavailable integrations do not appear for the current thread/profile.
-- Snapshot the resolved integration target on approval-required actions.
+- Originally planned to snapshot the resolved integration target on approval-required actions; Phase 6 supersedes this with click-time re-resolution.
 
-**Exit criteria:** MCP tests prove `posthog`/`grafana` can resolve differently per profile and that approvals execute against the originally resolved target.
+**Exit criteria:** MCP tests prove `posthog`/`grafana` can resolve differently per profile. The original approval snapshot criterion is superseded by Phase 6's click-time re-resolution criteria.
 
 ### Phase 5 — Prompt/docs alignment and future-surface hooks
 
@@ -157,9 +157,8 @@ Hardens the model against silent profile flips by enumerating every Slack alias 
 ## Open questions
 
 - Should repo routing eventually move into the same `profiles` block, or stay separate because repo selection is agent-steerable while integration routing is operator policy?
-- For bundle-based integrations, do we allow partial fallback (for example profile-specific token with global URL), or require the whole profile bundle to exist before using it?
 - When a public channel belongs to a profile, should that profile also be able to override repo routing later, or should repo routing remain an independent mechanism?
-- **Cron-triggered `hey-thor` sessions have no profile.** Profile resolution today reads the Slack correlation key's channel via `getProfileForSlackCorrelationKey`. Cron triggers do not carry a Slack channel, so they fall through to unsuffixed globals — consistent with the "non-Slack triggers use unsuffixed globals only" rule, but it means there is no way today for a scheduled prompt to opt into a profile's credentials. Options to revisit: declare a profile per cron job in `thor.json`, attach a synthetic correlation key whose channel maps to a profile, or let the cron payload carry an explicit profile name. Pick one before adding cron jobs that need profile-scoped writes.
+- **Cron-triggered `hey-thor` sessions have no profile.** MCP profile resolution reads Slack thread aliases on the anchor via the strict resolver. Cron triggers do not carry a Slack thread alias, so they fall through to unsuffixed globals — consistent with the "standalone non-Slack triggers use unsuffixed globals only" rule, but it means there is no way today for a scheduled prompt to opt into a profile's credentials. Options to revisit: declare a profile per cron job in `thor.json`, attach a synthetic correlation key whose channel maps to a profile, or let the cron payload carry an explicit profile name. Pick one before adding cron jobs that need profile-scoped writes.
 - **Atlassian (and any other integration reachable via direct HTTP) bypasses profile routing through mitmproxy.** Mitmproxy's `${ATLASSIAN_AUTH}` interpolation in `docker/mitmproxy/rules.py` is global and has no notion of session/profile, so an agent that shells out to `curl` or uses node `fetch` against `*.atlassian.net` will get the unsuffixed global credential even when the originating Slack channel belongs to a profile with `ATLASSIAN_AUTH_<PROFILE>` set. The MCP path respects the profile; the egress path does not. Pure-MCP integrations (PostHog, Grafana) do not have this gap because they have no mitmproxy rule. Needs a follow-up — likely per-session tagging from runner → OpenCode env → mitmproxy addon, so the addon can look up the right `ATLASSIAN_AUTH_<PROFILE>` with the same fallback rules as `resolveProxyConfig`. Until that lands, treat Atlassian profile suffixes as best-effort (correct for MCP, leaky for direct egress) and prefer PostHog as the canonical profile example in docs.
 
 ## Test plan
@@ -172,7 +171,7 @@ Hardens the model against silent profile flips by enumerating every Slack alias 
   - private/DM/shared channel outside profiles → dropped
   - profile-scoped channel with suffixed env vars → profile credentials used
   - profile-scoped channel without suffixed env vars but with global env vars → global fallback used
-  - approval created under one profile, config later changed, approval still resolves against original target
+  - approval created under one profile re-resolves at approval-click time; fresh profile credentials are used when available, and ambiguous or unavailable resolved profiles reject with a system reason
 
 ## Migration notes
 
