@@ -1,0 +1,41 @@
+packages/remote-cli/src/mcp-handler.test.ts
+  b6b0daa931c86626 401,425,452,464,494,525,540,593,607
+packages/common/src/proxies.ts
+  b6b0daa931c86626 115-116,123,164-166,168,171,173-174
+packages/common/src/workspace-config.ts
+  b6b0daa931c86626 77,80
+packages/common/src/proxies.test.ts
+  b6b0daa931c86626 29,32,35-36,41,51,56,60,71
+docs/examples/thor.json
+  b6b0daa931c86626 16
+docs/slack.md
+  b6b0daa931c86626 65
+packages/gateway/src/app.test.ts
+  b6b0daa931c86626 2445,2502
+packages/gateway/src/service.test.ts
+  b6b0daa931c86626 529
+docs/plan/2026052701_profile-based-integration-routing.md
+  b6b0daa931c86626 31,34,50,60
+packages/common/src/workspace-config.test.ts
+  b6b0daa931c86626 116-117,122-123,128,151-152,188,230,232,236,243,246,249-250,253,256-257,260,263-264,267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "39cc6db2cc12319a2c44c250e4346c65ee52bc45",
+  "prompts": {
+    "b6b0daa931c86626": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b9194bde-9383-40fb-a394-6c35f1d5694c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 101,
+      "total_deletions": 127,
+      "accepted_lines": 69,
+      "overriden_lines": 0
+    }
+  }
+}
