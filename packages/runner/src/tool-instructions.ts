@@ -1,39 +1,26 @@
-import {
-  extractRepoFromCwd,
-  getAvailableProxyNames,
-  getProfileForSlackCorrelationKey,
-  getProxyConfig,
-  type ConfigLoader,
-} from "@thor/common";
+import { getAvailableProxyNames, getProxyConfig } from "@thor/common";
 
-export function buildToolInstructions(
-  directory: string,
-  opts: { correlationKey?: string; configLoader?: ConfigLoader } = {},
-): string | undefined {
-  if (!extractRepoFromCwd(directory)) return undefined;
+export interface ToolInstructionOptions {
+  profile?: string;
+  includeMcp?: boolean;
+}
 
-  let profile: string | undefined;
-  if (opts.configLoader) {
-    try {
-      profile = getProfileForSlackCorrelationKey(opts.configLoader(), opts.correlationKey);
-    } catch {
-      profile = undefined;
-    }
-  }
-
+export function buildToolInstructions(opts: ToolInstructionOptions = {}): string {
   const mcpSections: string[] = [];
-  for (const upstreamName of getAvailableProxyNames(profile)) {
-    const proxyDef = getProxyConfig(upstreamName);
-    if (!proxyDef) continue;
+  if (opts.includeMcp !== false) {
+    for (const upstreamName of getAvailableProxyNames(opts.profile)) {
+      const proxyDef = getProxyConfig(upstreamName);
+      if (!proxyDef) continue;
 
-    if (proxyDef.allow.length > 0) {
-      mcpSections.push(`## ${upstreamName} (allow)`);
-      for (const name of proxyDef.allow) mcpSections.push(`- ${name}`);
-    }
+      if (proxyDef.allow.length > 0) {
+        mcpSections.push(`## ${upstreamName} (allow)`);
+        for (const name of proxyDef.allow) mcpSections.push(`- ${name}`);
+      }
 
-    if (proxyDef.approve.length > 0) {
-      mcpSections.push(`## ${upstreamName} (approve — requires human approval)`);
-      for (const name of proxyDef.approve) mcpSections.push(`- ${name}`);
+      if (proxyDef.approve.length > 0) {
+        mcpSections.push(`## ${upstreamName} (approve — requires human approval)`);
+        for (const name of proxyDef.approve) mcpSections.push(`- ${name}`);
+      }
     }
   }
 

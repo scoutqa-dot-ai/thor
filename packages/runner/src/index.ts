@@ -56,6 +56,7 @@ import {
   findUserBySlack,
   WORKSPACE_CONFIG_PATH,
   handleProgressEvent,
+  resolveStrictProfileForAnchor,
 } from "@thor/common";
 import type {
   ConfigLoader,
@@ -145,11 +146,10 @@ function readRepoMemory(directory: string, memoryDir = MEMORY_DIR): string | und
 }
 
 function getToolInstructions(
-  directory: string,
-  opts: { correlationKey?: string; configLoader?: ConfigLoader } = {},
+  opts: { profile?: string; includeMcp?: boolean } = {},
 ): string | undefined {
   try {
-    return buildToolInstructions(directory, opts);
+    return buildToolInstructions(opts);
   } catch {
     return undefined;
   }
@@ -928,10 +928,33 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           }
         }
 
-        // Tool instructions: inject MCP tool list from config
-        const toolInstructions = getToolInstructions(sessionDirectory, {
-          correlationKey,
-          configLoader: workspaceConfigLoader,
+        // Tool instructions: inject MCP tool list from the same anchor-level
+        // profile view that remote-cli uses for execution.
+        let instructionProfile: string | undefined;
+        let includeMcpInstructions = true;
+        try {
+          const profileResolution = resolveStrictProfileForAnchor(
+            workspaceConfigLoader(),
+            anchorId,
+            sessionId,
+          );
+          if (profileResolution.ok) {
+            instructionProfile = profileResolution.profile;
+          } else {
+            includeMcpInstructions = false;
+            logWarn(log, "tool_instructions_mcp_suppressed", {
+              sessionId,
+              anchorId,
+              error: profileResolution.error,
+            });
+          }
+        } catch {
+          instructionProfile = undefined;
+        }
+
+        const toolInstructions = getToolInstructions({
+          profile: instructionProfile,
+          includeMcp: includeMcpInstructions,
         });
         if (toolInstructions) {
           prompt = `${toolInstructions}\n\n${prompt}`;

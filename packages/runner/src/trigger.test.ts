@@ -355,6 +355,7 @@ beforeEach(() => {
 afterEach(() => {
   if (originalEnv.sessionErrorGraceMs === undefined) delete process.env.SESSION_ERROR_GRACE_MS;
   else process.env.SESSION_ERROR_GRACE_MS = originalEnv.sessionErrorGraceMs;
+  vi.unstubAllEnvs();
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
 });
 
@@ -1217,6 +1218,39 @@ describe("runner /trigger orchestration", () => {
       expect(h.prompts[1]).not.toContain("root memory text");
       expect(h.prompts[1]).not.toContain("repo memory text");
     });
+  });
+
+  it("filters bootstrap MCP instructions using the anchor profile", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "");
+    vi.stubEnv("POSTHOG_API_KEY", "");
+    vi.stubEnv("POSTHOG_API_KEY_QA", "phx_qa");
+    vi.stubEnv("GRAFANA_URL", "");
+    vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "");
+    vi.stubEnv("GRAFANA_ORG_ID", "");
+    vi.stubEnv("GRAFANA_URL_QA", "");
+    vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN_QA", "");
+    vi.stubEnv("GRAFANA_ORG_ID_QA", "");
+
+    const h = createHarness({
+      workspaceConfig: {
+        profiles: {
+          QA: { channels: ["CQA"] },
+        },
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      await trigger(url, {
+        prompt: "profiled",
+        correlationKey: "slack:thread:CQA/1710000000.099",
+      });
+    });
+
+    expect(h.prompts[0]).toContain("[Available MCP tools");
+    expect(h.prompts[0]).toContain("## posthog");
+    expect(h.prompts[0]).not.toContain("## atlassian");
+    expect(h.prompts[0]).not.toContain("## grafana");
   });
 
   it("emits context progress from assistant message updates using configured model limits", async () => {

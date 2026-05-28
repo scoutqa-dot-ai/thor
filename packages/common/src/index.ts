@@ -20,6 +20,7 @@ export {
   getProfileForSlackCorrelationKey,
   getSlackChannelFromCorrelationKey,
   isSlackChannelInProfile,
+  resolveStrictProfileForAnchor,
   resolveStrictProfileForSession,
 } from "./workspace-config.js";
 export type { ProfileResolution } from "./workspace-config.js";

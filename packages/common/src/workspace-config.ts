@@ -311,6 +311,14 @@ export function resolveStrictProfileForSession(
     resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId });
   if (!anchorId) return { ok: true, profile: undefined };
 
+  return resolveStrictProfileForAnchor(config, anchorId, sessionId);
+}
+
+export function resolveStrictProfileForAnchor(
+  config: WorkspaceConfig,
+  anchorId: string,
+  label = anchorId,
+): ProfileResolution {
   const slackKeys = reverseLookupAnchor(anchorId).externalKeys.filter(
     (key) => key.aliasType === "slack.thread",
   );
@@ -333,7 +341,7 @@ export function resolveStrictProfileForSession(
   const labels = [...profiles].map((p) => p ?? "<none>").sort();
   return {
     ok: false,
-    error: `session ${sessionId} is bound to channels in multiple profiles (${labels.join(", ")}): ${channels.join(", ")}`,
+    error: `session ${label} is bound to channels in multiple profiles (${labels.join(", ")}): ${channels.join(", ")}`,
   };
 }
 
