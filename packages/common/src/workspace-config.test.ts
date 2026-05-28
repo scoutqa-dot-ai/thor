@@ -113,19 +113,19 @@ describe("loadWorkspaceConfig", () => {
   it("accepts profiles and exposes channel lookup helpers", () => {
     const path = writeConfig("config.json", {
       profiles: {
-        qa: { channels: ["G123", "D456"] },
-        labs: { channels: ["C789"] },
+        QA: { channels: ["G123", "D456"] },
+        LABS: { channels: ["C789"] },
       },
     });
 
     const config = loadWorkspaceConfig(path);
-    expect(getProfileForSlackChannel(config, "G123")).toBe("qa");
-    expect(getProfileForSlackChannel(config, "C789")).toBe("labs");
+    expect(getProfileForSlackChannel(config, "G123")).toBe("QA");
+    expect(getProfileForSlackChannel(config, "C789")).toBe("LABS");
     expect(getProfileForSlackChannel(config, "C000")).toBeUndefined();
     expect(isSlackChannelInProfile(config, "D456")).toBe(true);
     expect(isSlackChannelInProfile(config, "D000")).toBe(false);
     expect(getProfileForSlackCorrelationKey(config, "slack:thread:C789/1710000000.001")).toBe(
-      "labs",
+      "LABS",
     );
     expect(getProfileForSlackCorrelationKey(config, "github:issue:repo#1")).toBeUndefined();
   });
@@ -148,8 +148,8 @@ describe("loadWorkspaceConfig", () => {
       return loadWorkspaceConfig(
         writeConfig("profiles.json", {
           profiles: {
-            qa: { channels: ["C123"] },
-            labs: { channels: ["C456"] },
+            QA: { channels: ["C123"] },
+            LABS: { channels: ["C456"] },
           },
         }),
       );
@@ -185,7 +185,7 @@ describe("loadWorkspaceConfig", () => {
         anchorId: anchor,
       });
       const config = makeConfig();
-      expect(resolveStrictProfileForSession(config, "s2")).toEqual({ ok: true, profile: "qa" });
+      expect(resolveStrictProfileForSession(config, "s2")).toEqual({ ok: true, profile: "QA" });
     });
 
     it("fails hard when channels map to different profiles", () => {
@@ -227,44 +227,44 @@ describe("loadWorkspaceConfig", () => {
   it("rejects invalid or duplicate profile channel entries", () => {
     expect(() =>
       loadWorkspaceConfig(
-        writeConfig("empty-channel.json", { profiles: { qa: { channels: [""] } } }),
+        writeConfig("empty-channel.json", { profiles: { QA: { channels: [""] } } }),
       ),
-    ).toThrow("profiles.qa.channels.0");
+    ).toThrow("profiles.QA.channels.0");
     expect(() =>
       loadWorkspaceConfig(
         writeConfig("duplicate-channel.json", {
-          profiles: { qa: { channels: ["G123", "G123"] } },
+          profiles: { QA: { channels: ["G123", "G123"] } },
         }),
       ),
     ).toThrow("Profile channels must not contain duplicates");
     expect(() =>
       loadWorkspaceConfig(
         writeConfig("duplicate-across-profiles.json", {
-          profiles: { qa: { channels: ["G123"] }, labs: { channels: ["G123"] } },
+          profiles: { QA: { channels: ["G123"] }, LABS: { channels: ["G123"] } },
         }),
       ),
-    ).toThrow("Slack channel G123 is assigned to both profiles qa and labs");
+    ).toThrow("Slack channel G123 is assigned to both profiles QA and LABS");
     expect(() =>
       loadWorkspaceConfig(
-        writeConfig("empty-profile-suffix.json", {
-          profiles: { ___: { channels: ["G123"] } },
+        writeConfig("lowercase-profile.json", {
+          profiles: { qa: { channels: ["G123"] } },
         }),
       ),
-    ).toThrow("must contain at least one ASCII letter or digit");
+    ).toThrow("uppercase ASCII letters and underscores");
     expect(() =>
       loadWorkspaceConfig(
-        writeConfig("duplicate-normalized-profiles.json", {
-          profiles: { "qa-labs": { channels: ["G123"] }, "qa labs": { channels: ["G456"] } },
+        writeConfig("hyphen-profile.json", {
+          profiles: { "QA-LABS": { channels: ["G123"] } },
         }),
       ),
-    ).toThrow("normalize to the same env suffix QA_LABS");
+    ).toThrow("uppercase ASCII letters and underscores");
     expect(() =>
       loadWorkspaceConfig(
-        writeConfig("reserved-global-profile.json", {
-          profiles: { global: { channels: ["G123"] } },
+        writeConfig("digit-profile.json", {
+          profiles: { QA1: { channels: ["G123"] } },
         }),
       ),
-    ).toThrow("reserved suffix GLOBAL");
+    ).toThrow("uppercase ASCII letters and underscores");
   });
 
   it("rejects mitmproxy rule without host selector", () => {

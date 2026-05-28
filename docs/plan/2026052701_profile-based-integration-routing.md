@@ -28,10 +28,10 @@ Let Thor route integrations by Slack channel without duplicating full credential
 ```json
 {
   "profiles": {
-    "qa": {
+    "QA": {
       "channels": ["C222"]
     },
-    "labs": {
+    "LABS": {
       "channels": ["C333", "D444"]
     }
   }
@@ -47,7 +47,7 @@ Interpretation:
 
 ## Environment resolution contract
 
-For a profile `labs`:
+For a profile `LABS`:
 
 - PostHog: `POSTHOG_API_KEY_LABS` → fallback `POSTHOG_API_KEY` → disabled if neither exists.
 - Grafana: resolve the full bundle by suffix first, then global fallback:
@@ -57,7 +57,7 @@ For a profile `labs`:
 
 Rules:
 
-1. Profile names are normalized to env-safe uppercase with non-alphanumerics converted to `_`.
+1. Profile names are constrained at schema validation to match `/^[A-Z_]+$/`, so the name itself is the env-suffix — no normalization step at lookup time.
 2. Unsuffixed env vars are the global fallback, not a “default profile”.
 3. Missing global env var disables the integration globally, but profile-specific vars can still enable it for listed profiles.
 4. Multi-var integrations resolve as bundles — never mix profile-scoped and global credentials within the same bundle. If a profile-scoped bundle is partially configured, fail hard instead of falling back to globals.

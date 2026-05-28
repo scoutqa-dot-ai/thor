@@ -23,7 +23,6 @@ export {
   resolveStrictProfileForSession,
 } from "./workspace-config.js";
 export type { ProfileResolution } from "./workspace-config.js";
-export { normalizeProfileEnvSuffix } from "./profile-normalization.js";
 export {
   PROXY_NAMES,
   PROXY_REGISTRY,

@@ -7,7 +7,6 @@ import {
   PROXY_REGISTRY,
   resolveProxyConfig,
 } from "./proxies.js";
-import { normalizeProfileEnvSuffix } from "./profile-normalization.js";
 
 describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {
@@ -27,21 +26,19 @@ describe("proxy registry", () => {
       POSTHOG_API_KEY: "phc_global",
     } as NodeJS.ProcessEnv;
 
-    expect(resolveProxyConfig("atlassian", "labs", env)?.upstream.headers).toEqual({
+    expect(resolveProxyConfig("atlassian", "LABS", env)?.upstream.headers).toEqual({
       Authorization: "Basic labs",
     });
-    expect(resolveProxyConfig("atlassian", "qa", env)?.upstream.headers).toEqual({
+    expect(resolveProxyConfig("atlassian", "QA", env)?.upstream.headers).toEqual({
       Authorization: "Basic global",
     });
-    expect(resolveProxyConfig("posthog", "labs", env)?.target.envScope).toBe("global");
-    expect(resolveProxyConfig("posthog", "labs", env)?.upstream.headers?.Authorization).toBe(
+    expect(resolveProxyConfig("posthog", "LABS", env)?.target.envScope).toBe("global");
+    expect(resolveProxyConfig("posthog", "LABS", env)?.upstream.headers?.Authorization).toBe(
       "Bearer phc_global",
     );
   });
 
-  it("normalizes suffixes and resolves grafana as a bundle", () => {
-    expect(normalizeProfileEnvSuffix("qa-labs east")).toBe("QA_LABS_EAST");
-    expect(normalizeProfileEnvSuffix("___qa-labs east___")).toBe("QA_LABS_EAST");
+  it("resolves grafana as a bundle scoped to the profile suffix", () => {
     const env = {
       GRAFANA_URL: "https://grafana.global",
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
@@ -51,16 +48,16 @@ describe("proxy registry", () => {
       ATLASSIAN_AUTH_LABS: "Basic labs",
     } as NodeJS.ProcessEnv;
 
-    expect(resolveProxyConfig("grafana", "labs", env)?.upstream.headers).toEqual({
+    expect(resolveProxyConfig("grafana", "LABS", env)?.upstream.headers).toEqual({
       "X-Grafana-URL": "https://grafana.labs",
       "X-Grafana-Service-Account-Token": "labs-token",
       "X-Grafana-Org-Id": "7",
     });
-    expect(resolveProxyConfig("grafana", "qa", env)?.upstream.headers).toEqual({
+    expect(resolveProxyConfig("grafana", "QA", env)?.upstream.headers).toEqual({
       "X-Grafana-URL": "https://grafana.global",
       "X-Grafana-Service-Account-Token": "global-token",
     });
-    expect(getAvailableProxyNames("labs", env)).toEqual(["atlassian", "grafana"]);
+    expect(getAvailableProxyNames("LABS", env)).toEqual(["atlassian", "grafana"]);
   });
 
   it("fails hard on a partial grafana profile bundle instead of silently using globals", () => {
@@ -71,7 +68,7 @@ describe("proxy registry", () => {
       // GRAFANA_SERVICE_ACCOUNT_TOKEN_QA intentionally missing.
     } as NodeJS.ProcessEnv;
 
-    expect(() => resolveProxyConfig("grafana", "qa", env)).toThrow(
+    expect(() => resolveProxyConfig("grafana", "QA", env)).toThrow(
       /partial grafana profile bundle/i,
     );
   });

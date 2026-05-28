@@ -398,7 +398,7 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
     workspaceConfig = {
       ...workspaceConfig,
-      profiles: { qa: { channels: ["C123"] } },
+      profiles: { QA: { channels: ["C123"] } },
     };
     appendActiveTrigger();
 
@@ -422,7 +422,7 @@ describe("remote-cli MCP endpoints", () => {
   it("honors the Slack channel's profile even after a subsequent non-Slack trigger fires", async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
-    workspaceConfig = { ...workspaceConfig, profiles: { qa: { channels: ["C123"] } } };
+    workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
     appendActiveTrigger({ ts: "2026-05-21T00:00:01.000Z" });
     appendSessionEvent("parent-session", {
       type: "trigger_end",
@@ -449,7 +449,7 @@ describe("remote-cli MCP endpoints", () => {
     );
     const body = (await call.json()) as { stdout: string; exitCode: number };
 
-    // The Slack alias on the anchor pins the profile to qa for the lifetime of
+    // The Slack alias on the anchor pins the profile to QA for the lifetime of
     // the anchor. A newer non-Slack trigger does not flip credentials back to
     // globals — once a session is in a profile, all its MCP calls go through
     // that profile.
@@ -461,7 +461,7 @@ describe("remote-cli MCP endpoints", () => {
 
   it("does not store profile/routing snapshot on approval actions", async () => {
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
-    workspaceConfig = { ...workspaceConfig, profiles: { qa: { channels: ["C123"] } } };
+    workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
     appendActiveTrigger();
 
     const pending = await postJson(
@@ -491,7 +491,7 @@ describe("remote-cli MCP endpoints", () => {
   it("re-resolves approval routing at click time using fresh env and config", async () => {
     vi.stubEnv("ATLASSIAN_AUTH_QA", "");
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-before-approval");
-    workspaceConfig = { ...workspaceConfig, profiles: { qa: { channels: ["C123"] } } };
+    workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
     appendActiveTrigger();
 
     const pending = await postJson(
@@ -522,7 +522,7 @@ describe("remote-cli MCP endpoints", () => {
     );
     const resolvedBody = (await resolved.json()) as { stdout: string; exitCode: number };
 
-    // Channel C123 maps to qa, and ATLASSIAN_AUTH_QA is now set, so the
+    // Channel C123 maps to QA, and ATLASSIAN_AUTH_QA is now set, so the
     // approval should fire against the freshly resolved profile credential,
     // not the global fallback that was active when the approval card was
     // posted.
@@ -537,7 +537,7 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("ATLASSIAN_AUTH_LABS", "Basic labs-token");
     workspaceConfig = {
       ...workspaceConfig,
-      profiles: { qa: { channels: ["C123"] }, labs: { channels: ["C456"] } },
+      profiles: { QA: { channels: ["C123"] }, LABS: { channels: ["C456"] } },
     };
     appendActiveTrigger();
 
@@ -590,7 +590,7 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("GRAFANA_URL", "");
     vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "");
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
-    workspaceConfig = { ...workspaceConfig, profiles: { qa: { channels: ["C123"] } } };
+    workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
 
     const health = await fetch(`${baseUrl}/health`);
     const healthBody = (await health.json()) as { mcp: { configured: number } };
@@ -604,7 +604,7 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("ATLASSIAN_AUTH_LABS", "Basic labs-token");
     workspaceConfig = {
       ...workspaceConfig,
-      profiles: { qa: { channels: ["C123"] }, labs: { channels: ["C999"] } },
+      profiles: { QA: { channels: ["C123"] }, LABS: { channels: ["C999"] } },
     };
 
     appendAlias({

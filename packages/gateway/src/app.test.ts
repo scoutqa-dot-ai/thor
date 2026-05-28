@@ -2442,7 +2442,7 @@ describe("gateway", () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
       },
       {
-        workspaceConfigLoader: () => ({ profiles: { qa: { channels: ["GPRIVATE"] } } }),
+        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["GPRIVATE"] } } }),
       },
     );
   });
@@ -2499,7 +2499,7 @@ describe("gateway", () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
       },
       {
-        workspaceConfigLoader: () => ({ profiles: { qa: { channels: ["DALLOWED"] } } }),
+        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["DALLOWED"] } } }),
       },
     );
   });

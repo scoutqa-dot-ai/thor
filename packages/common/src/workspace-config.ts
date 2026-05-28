@@ -3,7 +3,6 @@ import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.js";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
 import { createLogger, logWarn } from "./logger.js";
-import { normalizeProfileEnvSuffix } from "./profile-normalization.js";
 import { resolveAlias, reverseLookupAnchor } from "./event-log.js";
 
 // --- Schema ---
@@ -74,32 +73,13 @@ export const WorkspaceConfigSchema = z
   })
   .superRefine((config, ctx) => {
     const seen = new Map<string, string>();
-    const normalizedProfiles = new Map<string, string>();
     for (const [profileName, profile] of Object.entries(config.profiles ?? {})) {
-      const normalizedProfile = normalizeProfileEnvSuffix(profileName);
-      if (!normalizedProfile) {
+      if (!/^[A-Z_]+$/.test(profileName)) {
         ctx.addIssue({
           code: "custom",
-          message: `Profile name ${JSON.stringify(profileName)} must contain at least one ASCII letter or digit`,
+          message: "Profile name must contain only uppercase ASCII letters and underscores",
           path: ["profiles", profileName],
         });
-      } else if (normalizedProfile === "GLOBAL") {
-        ctx.addIssue({
-          code: "custom",
-          message: `Profile name ${JSON.stringify(profileName)} normalizes to reserved suffix GLOBAL`,
-          path: ["profiles", profileName],
-        });
-      } else {
-        const previousProfile = normalizedProfiles.get(normalizedProfile);
-        if (previousProfile) {
-          ctx.addIssue({
-            code: "custom",
-            message: `Profiles ${previousProfile} and ${profileName} normalize to the same env suffix ${normalizedProfile}`,
-            path: ["profiles", profileName],
-          });
-        } else {
-          normalizedProfiles.set(normalizedProfile, profileName);
-        }
       }
       for (let index = 0; index < profile.channels.length; index += 1) {
         const channel = profile.channels[index]!;

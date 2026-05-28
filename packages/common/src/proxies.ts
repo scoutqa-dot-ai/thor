@@ -1,5 +1,4 @@
 import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
-import { normalizeProfileEnvSuffix } from "./profile-normalization.js";
 import type { ProxyConfig } from "./workspace-config.js";
 
 export const PROXY_NAMES = ["atlassian", "grafana", "posthog"] as const;
@@ -113,17 +112,15 @@ function scopedEnv(
   baseName: string,
   profile: string | undefined,
 ): { value?: string; scope: "profile" | "global" } {
-  const suffix = profile ? normalizeProfileEnvSuffix(profile) : "";
-  if (suffix) {
-    const scoped = envValue(env, `${baseName}_${suffix}`);
+  if (profile) {
+    const scoped = envValue(env, `${baseName}_${profile}`);
     if (scoped) return { value: scoped, scope: "profile" };
   }
   return { value: envValue(env, baseName), scope: "global" };
 }
 
 function targetKey(name: ProxyName, profile: string | undefined, scope: "profile" | "global") {
-  const suffix = profile && scope === "profile" ? normalizeProfileEnvSuffix(profile) : "GLOBAL";
-  return `${name}:${suffix}`;
+  return `${name}:${profile && scope === "profile" ? profile : "GLOBAL"}`;
 }
 
 export function resolveProxyConfig(
@@ -164,16 +161,17 @@ export function resolveProxyConfig(
     };
   }
 
-  const suffix = profile ? normalizeProfileEnvSuffix(profile) : "";
-  const scopedUrl = suffix ? envValue(env, `GRAFANA_URL_${suffix}`) : undefined;
-  const scopedToken = suffix ? envValue(env, `GRAFANA_SERVICE_ACCOUNT_TOKEN_${suffix}`) : undefined;
-  const scopedOrg = suffix ? envValue(env, `GRAFANA_ORG_ID_${suffix}`) : undefined;
+  const scopedUrl = profile ? envValue(env, `GRAFANA_URL_${profile}`) : undefined;
+  const scopedToken = profile
+    ? envValue(env, `GRAFANA_SERVICE_ACCOUNT_TOKEN_${profile}`)
+    : undefined;
+  const scopedOrg = profile ? envValue(env, `GRAFANA_ORG_ID_${profile}`) : undefined;
   const anyScoped = Boolean(scopedUrl || scopedToken || scopedOrg);
   const useScoped = Boolean(scopedUrl && scopedToken);
-  if (suffix && anyScoped && !useScoped) {
+  if (profile && anyScoped && !useScoped) {
     const missing = [
-      !scopedUrl ? `GRAFANA_URL_${suffix}` : undefined,
-      !scopedToken ? `GRAFANA_SERVICE_ACCOUNT_TOKEN_${suffix}` : undefined,
+      !scopedUrl ? `GRAFANA_URL_${profile}` : undefined,
+      !scopedToken ? `GRAFANA_SERVICE_ACCOUNT_TOKEN_${profile}` : undefined,
     ].filter(Boolean);
     throw new Error(
       `partial grafana profile bundle for "${profile}": missing ${missing.join(", ")}. Set the whole bundle or none of it.`,
