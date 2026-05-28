@@ -3,9 +3,11 @@
 # Session Event Log and Public Trigger Viewer
 
 **Date**: 2026-04-30
-**Status**: Draft (revised by /autoplan 2026-04-30)
+**Status**: Draft (revised by /autoplan 2026-04-30); partially superseded by 2026-05-15 admin-external-keys plan and 2026-05-27 profile-routing plan Phase 6
 
 > **Post-implementation note (2026-05-13):** `gh issue comment <number> --body <text>` and `gh issue create --title <title> --body <body>` are now allowed with the same disclaimer injection as PR comments, and pure GitHub issues use durable `github.issue` aliases. Older v1 notes below that say issue comments/creates are denied are superseded.
+
+> **Post-implementation note (2026-05-28):** The `slack.thread_id` alias type defined in this plan has been removed. The channel-qualified `slack.thread` alias (`<channel>/<threadTs>`) introduced in `docs/plan/2026051501_admin-sessions-external-keys.md` is now the sole Slack thread alias, and the no-channel `slack:thread:<ts>` correlation key form no longer binds anchors. See `docs/plan/2026052701_profile-based-integration-routing.md` Phase 6 for the rationale (strict channel→profile resolution requires a channel).
 
 ## Goal
 

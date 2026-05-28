@@ -53,12 +53,12 @@ flowchart LR
 
 All external event routes validate shape and origin before queueing work.
 
-| Source | Route | Authentication | Main correlation key |
-| --- | --- | --- | --- |
-| Slack events | `POST /slack/events` | Slack signing secret | `slack:thread:<channel>/<threadTs>` |
-| GitHub webhooks | `POST /github/webhook` | `X-Hub-Signature-256` | `git:branch:<repo>:<branch>` or `github:issue:<...>` |
-| Cron | `POST /cron` | `Authorization: Bearer <CRON_SECRET>` | caller-supplied or derived `cron:<hash>:<time>` |
-| Slack approval buttons | `POST /slack/interactivity` | Slack signing secret | originating `slack:thread:<channel>/<threadTs>` |
+| Source                 | Route                       | Authentication                        | Main correlation key                                 |
+| ---------------------- | --------------------------- | ------------------------------------- | ---------------------------------------------------- |
+| Slack events           | `POST /slack/events`        | Slack signing secret                  | `slack:thread:<channel>/<threadTs>`                  |
+| GitHub webhooks        | `POST /github/webhook`      | `X-Hub-Signature-256`                 | `git:branch:<repo>:<branch>` or `github:issue:<...>` |
+| Cron                   | `POST /cron`                | `Authorization: Bearer <CRON_SECRET>` | caller-supplied or derived `cron:<hash>:<time>`      |
+| Slack approval buttons | `POST /slack/interactivity` | Slack signing secret                  | originating `slack:thread:<channel>/<threadTs>`      |
 
 Slack first-contact work comes from `app_mention` events. Plain `message` events are accepted only after Thor is already engaged in the thread. Public, non-shared channels are admitted by default; private channels, DMs, group DMs, and Slack Connect/shared channels must be listed in a routing profile (`profiles.<name>.channels[]`). Channel classification failures fail closed.
 
@@ -149,14 +149,13 @@ No usable pending approval is created unless the human-visible Slack card is pos
 
 Aliases bind external keys and OpenCode entities to an opaque anchor id. The anchor is the durable conversation identity; sessions can be replaced without moving external aliases.
 
-| Alias type | Value | Purpose |
-| --- | --- | --- |
-| `slack.thread` | `<channel>/<threadTs>` | Current Slack thread key |
-| `slack.thread_id` | `<threadTs>` | Legacy Slack thread fallback |
-| `git.branch` | `base64url("git:branch:<repo>:<branch>")` | GitHub branch session key |
-| `github.issue` | `base64url("github:issue:<...>")` | GitHub issue session key |
-| `opencode.session` | `<sessionId>` | OpenCode session bound to an anchor |
-| `opencode.subsession` | `<childSessionId>` | Child session bound to the parent's anchor |
+| Alias type            | Value                                     | Purpose                                    |
+| --------------------- | ----------------------------------------- | ------------------------------------------ |
+| `slack.thread`        | `<channel>/<threadTs>`                    | Slack thread key                           |
+| `git.branch`          | `base64url("git:branch:<repo>:<branch>")` | GitHub branch session key                  |
+| `github.issue`        | `base64url("github:issue:<...>")`         | GitHub issue session key                   |
+| `opencode.session`    | `<sessionId>`                             | OpenCode session bound to an anchor        |
+| `opencode.subsession` | `<childSessionId>`                        | Child session bound to the parent's anchor |
 
 Alias records are append-only JSONL. The newest session binding for an anchor is the current session; external aliases do not move. Branch and issue keys are base64url encoded because they contain characters that are awkward in raw JSONL lookup keys. Slack ids and timestamps are stored raw.
 
