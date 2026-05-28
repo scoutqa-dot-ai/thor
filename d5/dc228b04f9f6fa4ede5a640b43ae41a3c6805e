@@ -1,0 +1,31 @@
+packages/common/src/correlation.test.ts
+  a9188da7b3ec4027 7,178-179,181,183-184
+packages/common/src/index.ts
+  a9188da7b3ec4027 173
+packages/gateway/src/app.ts
+  a9188da7b3ec4027 4,672-674,676
+packages/remote-cli/src/slack-post-message.ts
+  a9188da7b3ec4027 3,310-311,320
+packages/common/src/correlation.ts
+  a9188da7b3ec4027 64,66-67,73-75,82-85,87-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d5dc228b04f9f6fa4ede5a640b43ae41a3c6805e",
+  "prompts": {
+    "a9188da7b3ec4027": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a2322551-fd78-44e4-aa2c-b3a00fee56c7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 36,
+      "total_deletions": 43,
+      "accepted_lines": 28,
+      "overriden_lines": 0
+    }
+  }
+}
