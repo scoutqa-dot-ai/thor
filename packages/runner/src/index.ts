@@ -1052,6 +1052,13 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           let latestSessionErrorAt: number | undefined;
           let finished = false;
           let sawParentMessagePart = false;
+          let latestAssistantMessage:
+            | { id: string; finish: string | undefined; tokenTotal: number | undefined }
+            | undefined;
+          let autoResumeArmed = true;
+          let autoResumeDisarmedAfterMessageId: string | undefined;
+          const autoResumedFailedMessageIds = new Set<string>();
+          const messageIdsWithAssistantOutput = new Set<string>();
           // Track child session IDs for progress forwarding.
           const childSessionIds = new Set<string>();
           // Dedupe task delegate emissions across repeated part updates.
@@ -1121,6 +1128,18 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                 const isParent = isSessionEvent(event, sessionId);
 
                 if (isParent && event.type === "message.updated") {
+                  const assistantMessage = assistantMessageUpdateSummary(event);
+                  if (assistantMessage) {
+                    latestAssistantMessage = assistantMessage;
+                    if (
+                      !autoResumeArmed &&
+                      assistantMessage.id !== autoResumeDisarmedAfterMessageId &&
+                      (assistantMessage.tokenTotal ?? 0) > 0
+                    ) {
+                      autoResumeArmed = true;
+                      autoResumeDisarmedAfterMessageId = undefined;
+                    }
+                  }
                   emitContextProgressFromMessage(event, currentModelContextLimits(), emit);
                 }
 
@@ -1168,6 +1187,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   if (part.type === "text") {
                     const textPart = part as TextPart;
                     collectedTextParts.push(textPart.text);
+                    if (textPart.text.trim().length > 0) {
+                      messageIdsWithAssistantOutput.add(textPart.messageID);
+                    }
                     lastMessageId = textPart.messageID;
                   } else if (part.type === "tool") {
                     const toolPart = part as ToolPart;
@@ -1247,6 +1269,38 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   if (!sawParentMessagePart) {
                     logInfo(log, "stale_session_idle_ignored", { sessionId });
                     continue;
+                  }
+                  const latestAssistant = latestAssistantMessage;
+                  const failedMessageId = latestAssistant?.id;
+                  if (
+                    autoResumeArmed &&
+                    failedMessageId &&
+                    latestAssistant?.finish === "error" &&
+                    (latestAssistant.tokenTotal ?? 0) <= 0 &&
+                    !messageIdsWithAssistantOutput.has(failedMessageId) &&
+                    !autoResumedFailedMessageIds.has(failedMessageId)
+                  ) {
+                    autoResumedFailedMessageIds.add(failedMessageId);
+                    autoResumeArmed = false;
+                    autoResumeDisarmedAfterMessageId = failedMessageId;
+                    logInfo(log, "session_idle_auto_resume", {
+                      sessionId,
+                      messageId: failedMessageId,
+                    });
+                    const continueResult = await client.session.promptAsync({
+                      path: { id: sessionId },
+                      body: { parts: [{ type: "text", text: "Continue" }] },
+                    });
+                    if (!continueResult.error) continue;
+                    logError(
+                      log,
+                      "session_idle_auto_resume_failed",
+                      JSON.stringify(continueResult.error),
+                      {
+                        sessionId,
+                        messageId: failedMessageId,
+                      },
+                    );
                   }
                   terminalError = latestSessionError;
                   finished = true;
@@ -1409,6 +1463,26 @@ function messageUpdatedInfo(event: Event): Record<string, unknown> | undefined {
   if (!isRecord(properties)) return undefined;
   const info = properties.info ?? properties.message;
   return isRecord(info) ? info : undefined;
+}
+
+function assistantMessageUpdateSummary(
+  event: Event,
+): { id: string; finish: string | undefined; tokenTotal: number | undefined } | undefined {
+  const info = messageUpdatedInfo(event);
+  if (!info) return undefined;
+  const role = safeStr(info.role) ?? safeStr(info.type);
+  if (role && role !== "assistant") return undefined;
+  const id =
+    safeStr(info.id) ??
+    safeStr(info.messageID) ??
+    safeStr(info.messageId) ??
+    safeStr(info.message_id);
+  if (!id) return undefined;
+  return {
+    id,
+    finish: safeStr(info.finish) ?? safeStr(info.finishReason) ?? safeStr(info.finish_reason),
+    tokenTotal: contextTokenTotal(info.tokens),
+  };
 }
 
 function emitContextProgressFromMessage(
