@@ -12,7 +12,6 @@ import {
   extractRepoFromCwd,
   findAnchorContext,
   getAvailableProxyNames,
-  getProxyConfig,
   injectApprovalDisclaimer,
   isProxyName,
   getRunnerBaseUrl,
@@ -468,7 +467,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return fail(`Upstream "${upstreamName}" is not configured for this thread/profile.`);
     }
 
-    const proxyDef = getProxyConfig(upstreamName);
+    const proxyDef = resolveProxyConfig(upstreamName, profile);
     const allow = proxyDef?.allow ?? [];
     const approve = proxyDef?.approve ?? [];
 

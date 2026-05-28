@@ -102,17 +102,6 @@ export type OwnerConfig = z.infer<typeof OwnerConfigSchema>;
 export type UserRecord = z.infer<typeof UserRecordSchema>;
 export type ProfileConfig = z.infer<typeof ProfileConfigSchema>;
 
-export interface ProxyUpstream {
-  url: string;
-  headers?: Record<string, string>;
-}
-
-export interface ProxyConfig {
-  upstream: ProxyUpstream;
-  allow: string[];
-  approve: string[];
-}
-
 // --- Validator ---
 
 export interface ValidationIssue {

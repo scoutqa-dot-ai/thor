@@ -24,14 +24,7 @@ export {
   resolveStrictProfileForSession,
 } from "./workspace-config.js";
 export type { ProfileResolution } from "./workspace-config.js";
-export {
-  PROXY_NAMES,
-  PROXY_REGISTRY,
-  isProxyName,
-  getProxyConfig,
-  resolveProxyConfig,
-  getAvailableProxyNames,
-} from "./proxies.js";
+export { PROXY_NAMES, isProxyName, resolveProxyConfig, getAvailableProxyNames } from "./proxies.js";
 export {
   APPROVAL_TOOL_NAMES,
   ApprovalArgsSchema,
@@ -72,8 +65,6 @@ export {
 } from "./service-env.js";
 export type {
   WorkspaceConfig,
-  ProxyConfig,
-  ProxyUpstream,
   ProfileConfig,
   ConfigLoader,
   OwnerConfig,

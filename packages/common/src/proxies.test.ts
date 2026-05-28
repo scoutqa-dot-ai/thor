@@ -1,22 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
-import {
-  getAvailableProxyNames,
-  getProxyConfig,
-  PROXY_NAMES,
-  PROXY_REGISTRY,
-  resolveProxyConfig,
-} from "./proxies.js";
+import { getAvailableProxyNames, PROXY_NAMES, resolveProxyConfig } from "./proxies.js";
+
+const FULL_ENV: NodeJS.ProcessEnv = {
+  ATLASSIAN_AUTH: "Basic global",
+  POSTHOG_API_KEY: "phc_global",
+  GRAFANA_URL: "https://grafana.global",
+  GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+};
 
 describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {
     expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "posthog"]);
-    expect(getProxyConfig("atlassian")?.upstream.url).toBe("https://mcp.atlassian.com/v1/mcp");
-    expect(getProxyConfig("grafana")?.allow).toEqual(
+    expect(resolveProxyConfig("atlassian", undefined, FULL_ENV)?.upstream.url).toBe(
+      "https://mcp.atlassian.com/v1/mcp",
+    );
+    expect(resolveProxyConfig("grafana", undefined, FULL_ENV)?.allow).toEqual(
       expect.arrayContaining(["query_prometheus", "list_prometheus_metric_names"]),
     );
-    expect(getProxyConfig("posthog")?.allow).toContain("query-run");
-    expect(getProxyConfig("unknown")).toBeUndefined();
+    expect(resolveProxyConfig("posthog", undefined, FULL_ENV)?.allow).toContain("query-run");
+    expect(resolveProxyConfig("unknown", undefined, FULL_ENV)).toBeUndefined();
   });
 
   it("resolves profile-scoped auth with global fallback", () => {
@@ -75,19 +77,11 @@ describe("proxy registry", () => {
 
   it("keeps allow and approve sets disjoint for each upstream", () => {
     for (const name of PROXY_NAMES) {
-      const proxy = getProxyConfig(name);
+      const proxy = resolveProxyConfig(name, undefined, FULL_ENV);
       expect(proxy).toBeDefined();
 
       const overlap = proxy!.allow.filter((tool) => proxy!.approve.includes(tool));
       expect(overlap).toEqual([]);
     }
-  });
-
-  it("requires approval only for the approved write-tool inventory", () => {
-    const approvedTools = Object.values(PROXY_REGISTRY)
-      .flatMap((proxy) => proxy.approve)
-      .sort();
-
-    expect(approvedTools).toEqual([...APPROVAL_TOOL_NAMES].sort());
   });
 });

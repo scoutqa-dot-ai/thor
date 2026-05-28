@@ -1,4 +1,4 @@
-import { getAvailableProxyNames, getProxyConfig } from "@thor/common";
+import { getAvailableProxyNames, resolveProxyConfig } from "@thor/common";
 
 export interface ToolInstructionOptions {
   profile?: string;
@@ -9,7 +9,7 @@ export function buildToolInstructions(opts: ToolInstructionOptions = {}): string
   const mcpSections: string[] = [];
   if (opts.includeMcp !== false) {
     for (const upstreamName of getAvailableProxyNames(opts.profile)) {
-      const proxyDef = getProxyConfig(upstreamName);
+      const proxyDef = resolveProxyConfig(upstreamName, opts.profile);
       if (!proxyDef) continue;
 
       if (proxyDef.allow.length > 0) {

@@ -1,99 +1,14 @@
-import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
-import type { ProxyConfig } from "./workspace-config.js";
-
 export const PROXY_NAMES = ["atlassian", "grafana", "posthog"] as const;
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
 
-export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
-  atlassian: {
-    upstream: {
-      url: "https://mcp.atlassian.com/v1/mcp",
-      headers: { Authorization: "${ATLASSIAN_AUTH}" },
-    },
-    allow: [
-      "atlassianUserInfo",
-      "getJiraIssue",
-      "createIssueLink",
-      "searchJiraIssuesUsingJql",
-      "getConfluenceSpaces",
-      "getConfluencePage",
-      "searchConfluenceUsingCql",
-      "getConfluencePageDescendants",
-      "getConfluencePageFooterComments",
-      "getConfluencePageInlineComments",
-      "getConfluenceCommentChildren",
-      "search",
-      "fetch",
-    ],
-    approve: ["createJiraIssue", "addCommentToJiraIssue"],
-  },
-  grafana: {
-    upstream: { url: "http://grafana-mcp:8000/mcp" },
-    allow: [
-      "list_datasources",
-      "get_datasource",
-      "query_prometheus",
-      "list_prometheus_metric_metadata",
-      "list_prometheus_metric_names",
-      "list_prometheus_label_names",
-      "list_prometheus_label_values",
-      "query_prometheus_histogram",
-      "query_loki_logs",
-      "list_loki_label_names",
-      "list_loki_label_values",
-      "query_loki_stats",
-      "query_loki_patterns",
-      "tempo_traceql-search",
-      "tempo_traceql-metrics-instant",
-      "tempo_traceql-metrics-range",
-      "tempo_get-trace",
-      "tempo_get-attribute-names",
-      "tempo_get-attribute-values",
-      "tempo_docs-traceql",
-    ],
-    approve: [],
-  },
-  posthog: {
-    upstream: {
-      url: "https://mcp.posthog.com/mcp",
-      headers: { Authorization: "Bearer ${POSTHOG_API_KEY}" },
-    },
-    allow: [
-      "docs-search",
-      "error-details",
-      "list-errors",
-      "feature-flag-get-all",
-      "feature-flag-get-definition",
-      "insight-query",
-      "insight-get",
-      "insights-get-all",
-      "query-run",
-      "query-generate-hogql-from-question",
-      "event-definitions-list",
-      "properties-list",
-      "logs-query",
-      "logs-list-attributes",
-      "logs-list-attribute-values",
-      "error-tracking-issues-list",
-      "error-tracking-issues-retrieve",
-      "entity-search",
-      "cohorts-list",
-      "cohorts-retrieve",
-      "dashboard-get",
-      "dashboard-reorder-tiles",
-      "dashboards-get-all",
-      "experiment-get",
-      "experiment-get-all",
-      "experiment-results-get",
-      "surveys-global-stats",
-      "update-issue-status",
-    ],
-    approve: ["create-feature-flag"],
-  },
-};
-
-export interface ResolvedProxyConfig extends ProxyConfig {
+export interface ResolvedProxyConfig {
+  upstream: {
+    url: string;
+    headers?: Record<string, string>;
+  };
+  allow: string[];
+  approve: string[];
   target: {
     key: string;
     name: ProxyName;
@@ -101,6 +16,79 @@ export interface ResolvedProxyConfig extends ProxyConfig {
     envScope: "profile" | "global";
   };
 }
+
+const ATLASSIAN_ALLOW = [
+  "atlassianUserInfo",
+  "getJiraIssue",
+  "createIssueLink",
+  "searchJiraIssuesUsingJql",
+  "getConfluenceSpaces",
+  "getConfluencePage",
+  "searchConfluenceUsingCql",
+  "getConfluencePageDescendants",
+  "getConfluencePageFooterComments",
+  "getConfluencePageInlineComments",
+  "getConfluenceCommentChildren",
+  "search",
+  "fetch",
+];
+const ATLASSIAN_APPROVE = ["createJiraIssue", "addCommentToJiraIssue"];
+
+const GRAFANA_ALLOW = [
+  "list_datasources",
+  "get_datasource",
+  "query_prometheus",
+  "list_prometheus_metric_metadata",
+  "list_prometheus_metric_names",
+  "list_prometheus_label_names",
+  "list_prometheus_label_values",
+  "query_prometheus_histogram",
+  "query_loki_logs",
+  "list_loki_label_names",
+  "list_loki_label_values",
+  "query_loki_stats",
+  "query_loki_patterns",
+  "tempo_traceql-search",
+  "tempo_traceql-metrics-instant",
+  "tempo_traceql-metrics-range",
+  "tempo_get-trace",
+  "tempo_get-attribute-names",
+  "tempo_get-attribute-values",
+  "tempo_docs-traceql",
+];
+const GRAFANA_APPROVE: string[] = [];
+
+const POSTHOG_ALLOW = [
+  "docs-search",
+  "error-details",
+  "list-errors",
+  "feature-flag-get-all",
+  "feature-flag-get-definition",
+  "insight-query",
+  "insight-get",
+  "insights-get-all",
+  "query-run",
+  "query-generate-hogql-from-question",
+  "event-definitions-list",
+  "properties-list",
+  "logs-query",
+  "logs-list-attributes",
+  "logs-list-attribute-values",
+  "error-tracking-issues-list",
+  "error-tracking-issues-retrieve",
+  "entity-search",
+  "cohorts-list",
+  "cohorts-retrieve",
+  "dashboard-get",
+  "dashboard-reorder-tiles",
+  "dashboards-get-all",
+  "experiment-get",
+  "experiment-get-all",
+  "experiment-results-get",
+  "surveys-global-stats",
+  "update-issue-status",
+];
+const POSTHOG_APPROVE = ["create-feature-flag"];
 
 function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const value = env[name];
@@ -129,14 +117,17 @@ export function resolveProxyConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedProxyConfig | undefined {
   if (!isProxyName(name)) return undefined;
-  const policy = PROXY_REGISTRY[name];
 
   if (name === "atlassian") {
     const auth = scopedEnv(env, "ATLASSIAN_AUTH", profile);
     if (!auth.value) return undefined;
     return {
-      ...policy,
-      upstream: { url: policy.upstream.url, headers: { Authorization: auth.value } },
+      upstream: {
+        url: "https://mcp.atlassian.com/v1/mcp",
+        headers: { Authorization: auth.value },
+      },
+      allow: ATLASSIAN_ALLOW,
+      approve: ATLASSIAN_APPROVE,
       target: {
         key: targetKey(name, profile, auth.scope),
         name,
@@ -150,8 +141,12 @@ export function resolveProxyConfig(
     const apiKey = scopedEnv(env, "POSTHOG_API_KEY", profile);
     if (!apiKey.value) return undefined;
     return {
-      ...policy,
-      upstream: { url: policy.upstream.url, headers: { Authorization: `Bearer ${apiKey.value}` } },
+      upstream: {
+        url: "https://mcp.posthog.com/mcp",
+        headers: { Authorization: `Bearer ${apiKey.value}` },
+      },
+      allow: POSTHOG_ALLOW,
+      approve: POSTHOG_APPROVE,
       target: {
         key: targetKey(name, profile, apiKey.scope),
         name,
@@ -182,15 +177,16 @@ export function resolveProxyConfig(
   if (!url || !token) return undefined;
   const orgId = useScoped ? scopedOrg : envValue(env, "GRAFANA_ORG_ID");
   return {
-    ...policy,
     upstream: {
-      url: policy.upstream.url,
+      url: "http://grafana-mcp:8000/mcp",
       headers: {
         "X-Grafana-URL": url,
         "X-Grafana-Service-Account-Token": token,
         ...(orgId ? { "X-Grafana-Org-Id": orgId } : {}),
       },
     },
+    allow: GRAFANA_ALLOW,
+    approve: GRAFANA_APPROVE,
     target: {
       key: targetKey(name, profile, useScoped ? "profile" : "global"),
       name,
@@ -207,24 +203,6 @@ export function getAvailableProxyNames(
   return PROXY_NAMES.filter((name) => resolveProxyConfig(name, profile, env) !== undefined);
 }
 
-const configuredApprovedTools = Object.values(PROXY_REGISTRY)
-  .flatMap((proxy) => proxy.approve)
-  .sort();
-const typedApprovalTools = [...APPROVAL_TOOL_NAMES].sort();
-
-if (
-  configuredApprovedTools.length !== typedApprovalTools.length ||
-  configuredApprovedTools.some((tool, index) => tool !== typedApprovalTools[index])
-) {
-  throw new Error(
-    `Approval tool inventory mismatch between proxy policy and typed approval events. Configured approve tools: ${configuredApprovedTools.join(", ") || "(none)"}; typed approval tools: ${typedApprovalTools.join(", ") || "(none)"}`,
-  );
-}
-
 export function isProxyName(name: string): name is ProxyName {
   return (PROXY_NAMES as readonly string[]).includes(name);
-}
-
-export function getProxyConfig(name: string): ProxyConfig | undefined {
-  return isProxyName(name) ? PROXY_REGISTRY[name] : undefined;
 }
