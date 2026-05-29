@@ -1,4 +1,4 @@
-import type { InternalExecClient } from "./service.js";
+import type { InternalExecClient } from "./service.ts";
 
 export type CheckSuiteGateFailureReason = "sha_missing" | "author_mismatch" | "exec_failed";
 

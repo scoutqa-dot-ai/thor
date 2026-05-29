@@ -49,7 +49,7 @@ const daytonaState: {
   idCounter: number;
 } = hoisted.daytonaState;
 
-vi.mock("./exec.js", () => ({
+vi.mock("./exec.ts", () => ({
   execCommand: hoisted.execCommandMock,
   execCommandStream: vi.fn(),
 }));
@@ -66,8 +66,8 @@ vi.mock("@daytonaio/sdk", () => {
   };
 });
 
-import { _testing, THOR_CWD_LABEL, THOR_MANAGED_LABEL, THOR_SHA_LABEL } from "./sandbox.js";
-import { createRemoteCliApp } from "./index.js";
+import { _testing, THOR_CWD_LABEL, THOR_MANAGED_LABEL, THOR_SHA_LABEL } from "./sandbox.ts";
+import { createRemoteCliApp } from "./index.ts";
 
 const CWD = "/workspace/worktrees/acme/feat-sandbox";
 const MULTI_SEGMENT_ROOT = "/workspace/worktrees/acme/feat/sandbox";

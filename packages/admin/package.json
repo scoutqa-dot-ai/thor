@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsdown",
-    "dev": "node --watch --import @oxc-node/core/register src/index.ts",
+    "dev": "node --watch src/index.ts",
     "start": "node dist/index.js",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
@@ -15,7 +15,6 @@
     "express": "^5.1.0"
   },
   "devDependencies": {
-    "@oxc-node/core": "^0.1.0",
     "@types/express": "^5.0.2",
     "@types/node": "^24.0.0",
     "typescript": "^6.0.0"

@@ -1,8 +1,8 @@
 import { z } from "zod/v4";
-import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.js";
+import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.ts";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
-import { createLogger, logWarn } from "./logger.js";
+import { createLogger, logWarn } from "./logger.ts";
 
 // --- Schema ---
 

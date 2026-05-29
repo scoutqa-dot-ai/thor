@@ -3,8 +3,8 @@ import {
   CreateFeatureFlagApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
   type ApprovalToolName,
-} from "./approval-events.js";
-import { findSlackTriggerCorrelationKey } from "./event-log.js";
+} from "./approval-events.ts";
+import { findSlackTriggerCorrelationKey } from "./event-log.ts";
 
 const SLACK_SECTION_TEXT_LIMIT = 3000;
 const SLACK_THREAD_CORRELATION_PREFIX = "slack:thread:";

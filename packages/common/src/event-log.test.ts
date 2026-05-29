@@ -30,7 +30,7 @@ import {
   reverseLookupAnchor,
   sessionLogPath,
   SessionEventLogRecordSchema,
-} from "./event-log.js";
+} from "./event-log.ts";
 
 const triggerA = "00000000-0000-7000-8000-000000000001";
 const triggerB = "00000000-0000-7000-8000-000000000002";

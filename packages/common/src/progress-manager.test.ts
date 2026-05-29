@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProgressEvent } from "./progress-events.js";
+import type { ProgressEvent } from "./progress-events.ts";
 import {
   handleProgressEvent,
   getRegistrySize,
   clearRegistry,
   type ProgressTransport,
   type ProgressTarget,
-} from "./progress-manager.js";
+} from "./progress-manager.ts";
 type SlackDeps = { client: any };
 
 function mockSlackDeps() {

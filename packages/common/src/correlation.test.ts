@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync, rmSync } from "node:fs";
-import { appendAlias } from "./event-log.js";
+import { appendAlias } from "./event-log.ts";
 import {
   appendCorrelationAlias,
   appendCorrelationAliasForAnchor,
@@ -13,7 +13,7 @@ import {
   resolveCorrelationLockKey,
   resolveCorrelationKeys,
   resolveSessionForCorrelationKey,
-} from "./correlation.js";
+} from "./correlation.ts";
 
 const worklogRoot = "/tmp/thor-common-correlation-test/worklog";
 const anchor1 = "00000000-0000-7000-8000-000000000c01";

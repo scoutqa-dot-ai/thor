@@ -11,7 +11,7 @@ import {
   scanPolicyArgs,
   valueFlagValues,
   type PolicyArgFlag,
-} from "./policy-args.js";
+} from "./policy-args.ts";
 import {
   WORKSPACE_REPOS_ROOT,
   WORKSPACE_WORKTREES_ROOT,

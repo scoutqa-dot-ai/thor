@@ -15,7 +15,7 @@ import {
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
   getSlackPrivateChannelAllowlist,
-} from "./workspace-config.js";
+} from "./workspace-config.ts";
 
 let tempDir: string;
 

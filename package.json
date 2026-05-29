@@ -11,7 +11,7 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:mcp": "node --import @oxc-node/core/register scripts/test-mcp.ts",
+    "test:mcp": "node scripts/test-mcp.ts",
     "test:e2e": "./scripts/test-e2e.sh",
     "test:opencode-e2e": "./scripts/test-opencode-e2e.sh",
     "test:create-jira-approval-e2e": "./scripts/test-create-jira-approval-e2e.sh",
@@ -22,7 +22,6 @@
     "*.{ts,js,json,md,yaml,yml}": "prettier --write"
   },
   "devDependencies": {
-    "@oxc-node/core": "^0.1.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.0",
     "prettier": "^3.8.1",

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ApprovalStore } from "./approval-store.js";
+import { ApprovalStore } from "./approval-store.ts";
 
 let store: ApprovalStore;
 let tempDir: string;

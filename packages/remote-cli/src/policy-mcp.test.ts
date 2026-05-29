@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PolicyDriftError, PolicyOverlapError, validatePolicy } from "./policy-mcp.js";
+import { PolicyDriftError, PolicyOverlapError, validatePolicy } from "./policy-mcp.ts";
 
 describe("validatePolicy", () => {
   const allow = ["read_issue", "list_issues", "search_code"];

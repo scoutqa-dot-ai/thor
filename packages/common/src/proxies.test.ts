@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
-import { getProxyConfig, PROXY_NAMES, PROXY_REGISTRY } from "./proxies.js";
-import { interpolateHeaders } from "./workspace-config.js";
+import { APPROVAL_TOOL_NAMES } from "./approval-events.ts";
+import { getProxyConfig, PROXY_NAMES, PROXY_REGISTRY } from "./proxies.ts";
+import { interpolateHeaders } from "./workspace-config.ts";
 
 describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {
@@ -39,7 +39,9 @@ describe("proxy registry", () => {
   });
 
   it("requires approval only for the approved write-tool inventory", () => {
-    const approvedTools = Object.values(PROXY_REGISTRY).flatMap((proxy) => proxy.approve).sort();
+    const approvedTools = Object.values(PROXY_REGISTRY)
+      .flatMap((proxy) => proxy.approve)
+      .sort();
 
     expect(approvedTools).toEqual([...APPROVAL_TOOL_NAMES].sort());
   });

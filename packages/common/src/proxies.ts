@@ -1,5 +1,5 @@
-import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
-import type { ProxyConfig } from "./workspace-config.js";
+import { APPROVAL_TOOL_NAMES } from "./approval-events.ts";
+import type { ProxyConfig } from "./workspace-config.ts";
 
 export const PROXY_NAMES = ["atlassian", "grafana", "posthog"] as const;
 
