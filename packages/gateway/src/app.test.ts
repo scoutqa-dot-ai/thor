@@ -14,9 +14,9 @@ import { join } from "node:path";
 import type { WebClient } from "@slack/web-api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveAnchorForCorrelationKey } from "@thor/common";
-import { createGatewayApp, type GatewayAppConfig } from "./app.js";
-import { __resetSlackChannelGateCacheForTests } from "./slack-api.js";
-import type { EventQueue } from "./queue.js";
+import { createGatewayApp, type GatewayAppConfig } from "./app.ts";
+import { __resetSlackChannelGateCacheForTests } from "./slack-api.ts";
+import type { EventQueue } from "./queue.ts";
 
 interface MockSlackClient {
   client: WebClient;

@@ -14,8 +14,8 @@ export {
   validateGitArgs,
   type GitPolicyOptions,
   type ResolvedGitArgs,
-} from "./policy-git.js";
-export { validateGhArgs } from "./policy-gh.js";
+} from "./policy-git.ts";
+export { validateGhArgs } from "./policy-gh.ts";
 
 import {
   WORKSPACE_REPOS_ROOT,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildToolInstructions } from "./tool-instructions.js";
+import { buildToolInstructions } from "./tool-instructions.ts";
 
 describe("buildToolInstructions", () => {
   it("uses absolute HTTPS Jira attachment upload URLs", () => {

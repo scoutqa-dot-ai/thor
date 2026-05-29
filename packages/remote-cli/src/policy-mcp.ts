@@ -22,19 +22,23 @@ export function validatePolicy(allow: string[], approve: string[], tools: string
 }
 
 export class PolicyDriftError extends Error {
-  constructor(public readonly orphans: string[]) {
+  readonly orphans: string[];
+  constructor(orphans: string[]) {
     super(
       `Policy drift: config entries not found in upstream:\n${orphans.map((orphan) => `  - ${orphan}`).join("\n")}`,
     );
+    this.orphans = orphans;
     this.name = "PolicyDriftError";
   }
 }
 
 export class PolicyOverlapError extends Error {
-  constructor(public readonly overlap: string[]) {
+  readonly overlap: string[];
+  constructor(overlap: string[]) {
     super(
       `Policy overlap: tools in both allow and approve:\n${overlap.map((tool) => `  - ${tool}`).join("\n")}`,
     );
+    this.overlap = overlap;
     this.name = "PolicyOverlapError";
   }
 }

@@ -52,10 +52,12 @@ export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type ApprovalAction = z.infer<typeof ApprovalActionSchema>;
 
 export class ApprovalStore {
-  constructor(
-    private readonly baseDir: string,
-    private readonly upstream: string,
-  ) {}
+  private readonly baseDir: string;
+  private readonly upstream: string;
+  constructor(baseDir: string, upstream: string) {
+    this.baseDir = baseDir;
+    this.upstream = upstream;
+  }
 
   buildPending(
     tool: string,

@@ -13,7 +13,7 @@
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { envOptionalString, envString } from "./env.js";
+import { envOptionalString, envString } from "./env.ts";
 
 /** Max bytes for JSON-serialized args/result payloads. */
 const MAX_PAYLOAD_BYTES = 4096;

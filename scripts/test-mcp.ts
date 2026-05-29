@@ -2,8 +2,8 @@
  * Test script for remote-cli MCP endpoints.
  *
  * Usage:
- *   npx tsx scripts/test-mcp.ts
- *   REMOTE_CLI_URL=http://localhost:3004 CWD=/workspace/repos/acme-app npx tsx scripts/test-mcp.ts
+ *   pnpm test:mcp
+ *   REMOTE_CLI_URL=http://localhost:3004 CWD=/workspace/repos/acme-app pnpm test:mcp
  */
 
 const REMOTE_CLI_URL = process.env.REMOTE_CLI_URL || "http://localhost:3004";

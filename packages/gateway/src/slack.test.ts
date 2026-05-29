@@ -5,7 +5,7 @@ import {
   isForwardableSlackMessage,
   SlackEventEnvelopeSchema,
   verifySlackSignature,
-} from "./slack.js";
+} from "./slack.ts";
 
 function sign(body: string, secret: string, timestamp: string): string {
   return `v0=${createHmac("sha256", secret).update(`v0:${timestamp}:${body}`).digest("hex")}`;

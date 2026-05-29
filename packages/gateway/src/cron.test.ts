@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createGatewayApp } from "./app.js";
-import type { EventQueue } from "./queue.js";
+import { createGatewayApp } from "./app.ts";
+import type { EventQueue } from "./queue.ts";
 
 async function withServer<T>(
   fetchImpl: typeof fetch,

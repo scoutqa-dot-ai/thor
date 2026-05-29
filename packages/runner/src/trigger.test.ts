@@ -7,7 +7,7 @@ import {
   createRunnerApp,
   resetModelContextLimitCacheForTests,
   type RunnerAppOptions,
-} from "./index.js";
+} from "./index.ts";
 import {
   appendAlias,
   appendCorrelationAliasForAnchor,

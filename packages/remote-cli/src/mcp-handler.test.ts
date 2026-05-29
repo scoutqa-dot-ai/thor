@@ -7,8 +7,8 @@ import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { appendAlias, appendSessionEvent, formatThorContextFooter } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { createRemoteCliApp } from "./index.js";
-import type { UpstreamConnection } from "./upstream.js";
+import { createRemoteCliApp } from "./index.ts";
+import type { UpstreamConnection } from "./upstream.ts";
 
 const tools: Tool[] = [
   {

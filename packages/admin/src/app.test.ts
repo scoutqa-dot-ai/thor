@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:http";
 import { appendAlias, sessionLogPath } from "@thor/common";
-import { createAdminApp } from "./app.js";
+import { createAdminApp } from "./app.ts";
 
 const anchor = "00000000-0000-7000-8000-0000000000c1";
 const anchorBad = "00000000-0000-7000-8000-0000000000c2";

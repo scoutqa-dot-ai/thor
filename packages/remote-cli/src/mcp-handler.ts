@@ -29,17 +29,17 @@ import {
   writeToolCallLog,
 } from "@thor/common";
 import type { ApprovalRequiredEventPayload } from "@thor/common";
-import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
+import { ApprovalStore, type ApprovalAction } from "./approval-store.ts";
 import {
   classifyTool,
   PolicyDriftError,
   PolicyOverlapError,
   validatePolicy,
-} from "./policy-mcp.js";
-import { unwrapResult } from "./unwrap-result.js";
-import { connectUpstream, type UpstreamConnection } from "./upstream.js";
-import { attributionFields, resolveTriggerUser } from "./attribution.js";
-import { postSlackMessageApi } from "./slack-post-message.js";
+} from "./policy-mcp.ts";
+import { unwrapResult } from "./unwrap-result.ts";
+import { connectUpstream, type UpstreamConnection } from "./upstream.ts";
+import { attributionFields, resolveTriggerUser } from "./attribution.ts";
+import { postSlackMessageApi } from "./slack-post-message.ts";
 
 const log = createLogger("mcp");
 const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";

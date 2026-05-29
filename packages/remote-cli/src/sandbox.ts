@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, dirname, resolve, sep } from "node:path";
 import { rm, unlink, mkdir, stat } from "node:fs/promises";
 import { Daytona, type FileUpload, type Sandbox } from "@daytonaio/sdk";
-import { execCommand } from "./exec.js";
+import { execCommand } from "./exec.ts";
 import { loadDaytonaEnv, withKeyLock, formatBytes } from "@thor/common";
 
 export interface ExecStreamCallbacks {
@@ -27,12 +27,12 @@ export function withCwdLock<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
 }
 
 export class SandboxError extends Error {
-  constructor(
-    public readonly userMessage: string,
-    public readonly adminDetail: string,
-    options?: { cause?: unknown },
-  ) {
+  readonly userMessage: string;
+  readonly adminDetail: string;
+  constructor(userMessage: string, adminDetail: string, options?: { cause?: unknown }) {
     super(adminDetail, options);
+    this.userMessage = userMessage;
+    this.adminDetail = adminDetail;
     this.name = "SandboxError";
   }
 }
