@@ -11,25 +11,14 @@ export {
   SLACK_CHANNEL_REPO_MEMORY_ROOT,
   extractRepoFromCwd,
   getInstallationIdForOwner,
-  interpolateEnv,
-  interpolateHeaders,
   findUserBySlack,
   findUserByGithub,
-  findUserByEmail,
-  getSlackPrivateChannelAllowlist,
   getProfileForSlackChannel,
   isSlackChannelInProfile,
   resolveStrictProfileForSession,
 } from "./workspace-config.ts";
 export type { ProfileResolution } from "./workspace-config.ts";
-export {
-  PROXY_NAMES,
-  PROXY_REGISTRY,
-  isProxyName,
-  getProxyConfig,
-  resolveProxyConfig,
-  getAvailableProxyNames,
-} from "./proxies.ts";
+export { PROXY_NAMES, isProxyName, resolveProxyConfig, getAvailableProxyNames } from "./proxies.ts";
 export {
   APPROVAL_TOOL_NAMES,
   ApprovalArgsSchema,
@@ -71,8 +60,6 @@ export {
 export type {
   WorkspaceConfig,
   ProfileConfig,
-  ProxyConfig,
-  ProxyUpstream,
   ConfigLoader,
   OwnerConfig,
   UserRecord,
@@ -187,10 +174,9 @@ export {
   buildThorDisclaimerForSession,
   buildThorAnchorUrl,
   buildThorTriggerUrl,
-  findActiveTriggerOrThrow,
   formatThorContextFooter,
 } from "./disclaimer.ts";
-export type { ActiveTriggerSnapshot, ThorDisclaimerContext } from "./disclaimer.ts";
+export type { ThorDisclaimerContext } from "./disclaimer.ts";
 export {
   ProgressStartSchema,
   ProgressToolSchema,

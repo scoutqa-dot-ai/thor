@@ -52,15 +52,7 @@ const UserRecordSchema = z.object({
   github: z.string().min(1).optional(),
 });
 
-const SlackConfigSchema = z.object({
-  private_channel_allowlist: z
-    .array(z.string().min(1))
-    .optional()
-    .refine(
-      (channels) => channels === undefined || new Set(channels).size === channels.length,
-      "Slack private channel allowlist must not contain duplicates",
-    ),
-});
+const SlackConfigSchema = z.object({});
 
 const ProfileConfigSchema = z.object({
   channels: z
@@ -109,17 +101,6 @@ export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type OwnerConfig = z.infer<typeof OwnerConfigSchema>;
 export type UserRecord = z.infer<typeof UserRecordSchema>;
 export type ProfileConfig = z.infer<typeof ProfileConfigSchema>;
-
-export interface ProxyUpstream {
-  url: string;
-  headers?: Record<string, string>;
-}
-
-export interface ProxyConfig {
-  upstream: ProxyUpstream;
-  allow: string[];
-  approve: string[];
-}
 
 // --- Validator ---
 
@@ -220,33 +201,6 @@ export function createConfigLoader(path: string): ConfigLoader {
 
 // --- Helpers ---
 
-/**
- * Interpolate ${ENV_VAR} references in a string.
- */
-export function interpolateEnv(value: string): string {
-  return value.replace(/\$\{(\w+)\}/g, (_match, name: string) => {
-    const envVal = process.env[name];
-    if (envVal === undefined) {
-      throw new Error(`Environment variable ${name} is not set`);
-    }
-    return envVal;
-  });
-}
-
-/**
- * Interpolate all string values in a headers record.
- */
-export function interpolateHeaders(
-  headers: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  if (!headers) return undefined;
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    result[key] = interpolateEnv(value);
-  }
-  return result;
-}
-
 export function findUserBySlack(config: WorkspaceConfig, slack: string): UserRecord | undefined {
   const normalized = slack.toUpperCase();
   return config.users?.find((user) => user.slack?.toUpperCase() === normalized);
@@ -255,15 +209,6 @@ export function findUserBySlack(config: WorkspaceConfig, slack: string): UserRec
 export function findUserByGithub(config: WorkspaceConfig, github: string): UserRecord | undefined {
   const normalized = github.toLowerCase();
   return config.users?.find((user) => user.github?.toLowerCase() === normalized);
-}
-
-export function findUserByEmail(config: WorkspaceConfig, email: string): UserRecord | undefined {
-  const normalized = email.toLowerCase();
-  return config.users?.find((user) => user.email.toLowerCase() === normalized);
-}
-
-export function getSlackPrivateChannelAllowlist(config: WorkspaceConfig): string[] {
-  return config.slack?.private_channel_allowlist ?? [];
 }
 
 export function getProfileForSlackChannel(

@@ -1,5 +1,5 @@
 import { APPROVAL_TOOL_NAMES } from "./approval-events.ts";
-import type { ProxyConfig } from "./workspace-config.ts";
+
 export const PROXY_NAMES = ["atlassian", "grafana", "posthog"] as const;
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
@@ -92,41 +92,19 @@ const POSTHOG_ALLOW = [
 ];
 const POSTHOG_APPROVE = ["create-feature-flag"];
 
-export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
-  atlassian: {
-    upstream: {
-      url: "https://mcp.atlassian.com/v1/mcp",
-      headers: { Authorization: "${ATLASSIAN_AUTH}" },
-    },
-    allow: ATLASSIAN_ALLOW,
-    approve: ATLASSIAN_APPROVE,
-  },
-  grafana: {
-    upstream: { url: "http://grafana-mcp:8000/mcp" },
-    allow: GRAFANA_ALLOW,
-    approve: GRAFANA_APPROVE,
-  },
-  posthog: {
-    upstream: {
-      url: "https://mcp.posthog.com/mcp",
-      headers: { Authorization: "Bearer ${POSTHOG_API_KEY}" },
-    },
-    allow: POSTHOG_ALLOW,
-    approve: POSTHOG_APPROVE,
-  },
-};
-
-const configuredApprovedTools = Object.values(PROXY_REGISTRY)
-  .flatMap((proxy) => proxy.approve)
-  .sort();
+// Tool policy stays global per integration (profiles only re-route credentials),
+// so the approve inventory is the union of the per-upstream approve lists. Assert
+// at load time that it matches the typed approval events; a drift means an
+// approved write tool has no disclaimer-compatible schema (or vice versa).
+const APPROVED_PROXY_TOOLS = [...ATLASSIAN_APPROVE, ...GRAFANA_APPROVE, ...POSTHOG_APPROVE].sort();
 const typedApprovalTools = [...APPROVAL_TOOL_NAMES].sort();
 
 if (
-  configuredApprovedTools.length !== typedApprovalTools.length ||
-  configuredApprovedTools.some((tool, index) => tool !== typedApprovalTools[index])
+  APPROVED_PROXY_TOOLS.length !== typedApprovalTools.length ||
+  APPROVED_PROXY_TOOLS.some((tool, index) => tool !== typedApprovalTools[index])
 ) {
   throw new Error(
-    `Approval tool inventory mismatch between proxy policy and typed approval events. Configured approve tools: ${configuredApprovedTools.join(", ") || "(none)"}; typed approval tools: ${typedApprovalTools.join(", ") || "(none)"}`,
+    `Approval tool inventory mismatch between proxy policy and typed approval events. Configured approve tools: ${APPROVED_PROXY_TOOLS.join(", ") || "(none)"}; typed approval tools: ${typedApprovalTools.join(", ") || "(none)"}`,
   );
 }
 
@@ -245,8 +223,4 @@ export function getAvailableProxyNames(
 
 export function isProxyName(name: string): name is ProxyName {
   return (PROXY_NAMES as readonly string[]).includes(name);
-}
-
-export function getProxyConfig(name: string): ProxyConfig | undefined {
-  return isProxyName(name) ? PROXY_REGISTRY[name] : undefined;
 }

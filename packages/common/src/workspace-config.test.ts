@@ -14,7 +14,6 @@ import {
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
   resolveStrictProfileForSession,
-  getSlackPrivateChannelAllowlist,
 } from "./workspace-config.ts";
 import { appendAlias } from "./event-log.ts";
 
