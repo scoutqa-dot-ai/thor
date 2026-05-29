@@ -1,0 +1,37 @@
+packages/remote-cli/tsdown.config.ts
+  d8b2eebe93c74953 1-19
+packages/admin/package.json
+  d8b2eebe93c74953 7
+Dockerfile
+  d8b2eebe93c74953 56
+packages/gateway/package.json
+  d8b2eebe93c74953 7
+packages/runner/package.json
+  d8b2eebe93c74953 7
+packages/remote-cli/package.json
+  d8b2eebe93c74953 7
+packages/opencode-cli/tsdown.config.ts
+  d8b2eebe93c74953 1-20
+packages/opencode-cli/package.json
+  d8b2eebe93c74953 7,17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "36e62bee4c414fadd670d1d41a8994a06339b85c",
+  "prompts": {
+    "d8b2eebe93c74953": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9aa5ecc-8db8-41e0-a58a-35accd01527f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 74,
+      "total_deletions": 15,
+      "accepted_lines": 67,
+      "overriden_lines": 0
+    }
+  }
+}
