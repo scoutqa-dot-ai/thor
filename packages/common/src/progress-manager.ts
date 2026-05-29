@@ -356,7 +356,7 @@ class ProgressSession {
 
   private messageTs?: string;
   private toolCallCount = 0;
-  /** Last 3 groups of consecutive identical tool calls. */
+  /** Last 5 groups of consecutive identical tool calls. */
   private lastToolGroups: ToolGroup[] = [];
   /** Recent memory activity from bootstrap/tool file access. */
   private recentMemory: MemoryActivity[] = [];
