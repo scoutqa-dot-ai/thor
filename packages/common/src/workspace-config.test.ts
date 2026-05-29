@@ -7,13 +7,9 @@ import {
   createConfigLoader,
   extractRepoFromCwd,
   getInstallationIdForOwner,
-  interpolateEnv,
-  interpolateHeaders,
   findUserBySlack,
   findUserByGithub,
-  findUserByEmail,
   getProfileForSlackChannel,
-  getProfileForSlackCorrelationKey,
   isSlackChannelInProfile,
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
@@ -106,7 +102,6 @@ describe("loadWorkspaceConfig", () => {
     const config = loadWorkspaceConfig(path);
     expect(findUserBySlack(config, "UABCDEF1")?.email).toBe("alice@example.com");
     expect(findUserByGithub(config, "alice-dev")?.slack).toBe("UABCDEF1");
-    expect(findUserByEmail(config, "BOB@example.com")?.name).toBe("Bob");
     expect(findUserBySlack(config, "UNOMATCH")).toBeUndefined();
   });
 
@@ -124,10 +119,6 @@ describe("loadWorkspaceConfig", () => {
     expect(getProfileForSlackChannel(config, "C000")).toBeUndefined();
     expect(isSlackChannelInProfile(config, "D456")).toBe(true);
     expect(isSlackChannelInProfile(config, "D000")).toBe(false);
-    expect(getProfileForSlackCorrelationKey(config, "slack:thread:C789/1710000000.001")).toBe(
-      "LABS",
-    );
-    expect(getProfileForSlackCorrelationKey(config, "github:issue:repo#1")).toBeUndefined();
   });
 
   describe("resolveStrictProfileForSession", () => {
@@ -429,36 +420,6 @@ describe("Slack channel repo routing helpers", () => {
     const missing = resolveSlackChannelRepoDirectory("C_NONE", "thor", root, resolveRepo);
     expect(missing).toMatchObject({ directory: "/workspace/repos/thor", source: "default" });
     expect(missing.fallbackReason).toBeUndefined();
-  });
-});
-
-describe("interpolateEnv", () => {
-  it("replaces ${VAR} with env value", () => {
-    vi.stubEnv("TEST_SECRET", "mysecret");
-    expect(interpolateEnv("Bearer ${TEST_SECRET}")).toBe("Bearer mysecret");
-    vi.unstubAllEnvs();
-  });
-
-  it("throws on missing env var", () => {
-    delete process.env.NONEXISTENT_VAR;
-    expect(() => interpolateEnv("${NONEXISTENT_VAR}")).toThrow("is not set");
-  });
-
-  it("returns string unchanged if no placeholders", () => {
-    expect(interpolateEnv("plain string")).toBe("plain string");
-  });
-});
-
-describe("interpolateHeaders", () => {
-  it("interpolates all header values", () => {
-    vi.stubEnv("AUTH_TOKEN", "abc123");
-    const result = interpolateHeaders({ Authorization: "Bearer ${AUTH_TOKEN}" });
-    expect(result).toEqual({ Authorization: "Bearer abc123" });
-    vi.unstubAllEnvs();
-  });
-
-  it("returns undefined for undefined input", () => {
-    expect(interpolateHeaders(undefined)).toBeUndefined();
   });
 });
 

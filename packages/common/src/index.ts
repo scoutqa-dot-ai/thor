@@ -11,16 +11,10 @@ export {
   SLACK_CHANNEL_REPO_MEMORY_ROOT,
   extractRepoFromCwd,
   getInstallationIdForOwner,
-  interpolateEnv,
-  interpolateHeaders,
   findUserBySlack,
   findUserByGithub,
-  findUserByEmail,
   getProfileForSlackChannel,
-  getProfileForSlackCorrelationKey,
-  getSlackChannelFromCorrelationKey,
   isSlackChannelInProfile,
-  resolveStrictProfileForAnchor,
   resolveStrictProfileForSession,
 } from "./workspace-config.js";
 export type { ProfileResolution } from "./workspace-config.js";
@@ -83,7 +77,6 @@ export {
   readTriggerSlice,
   findActiveTrigger,
   findTriggerActor,
-  findTriggerCorrelationKey,
   findSlackTriggerCorrelationKey,
   findAnchorContext,
   resolveAlias,
@@ -181,10 +174,9 @@ export {
   buildThorDisclaimerForSession,
   buildThorAnchorUrl,
   buildThorTriggerUrl,
-  findActiveTriggerOrThrow,
   formatThorContextFooter,
 } from "./disclaimer.js";
-export type { ActiveTriggerSnapshot, ThorDisclaimerContext } from "./disclaimer.js";
+export type { ThorDisclaimerContext } from "./disclaimer.js";
 export {
   ProgressStartSchema,
   ProgressToolSchema,

@@ -19,7 +19,6 @@ import {
   findActiveTrigger,
   findSlackTriggerCorrelationKey,
   findTriggerActor,
-  findTriggerCorrelationKey,
   listAnchors,
   listAnchorSessionStates,
   listSessionAliases,
@@ -112,7 +111,6 @@ describe("session event log", () => {
       ts: "2026-05-21T00:00:03.000Z",
     });
 
-    expect(findTriggerCorrelationKey("parent")).toBe("github:issue:thor:owner/repo#42");
     expect(findSlackTriggerCorrelationKey("parent")).toBe("slack:thread:C123/1710000000.001");
   });
 

@@ -56,7 +56,6 @@ import {
   findUserBySlack,
   WORKSPACE_CONFIG_PATH,
   handleProgressEvent,
-  resolveStrictProfileForAnchor,
 } from "@thor/common";
 import type {
   ConfigLoader,
@@ -69,7 +68,6 @@ import type {
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent, ProgressTarget, ProgressTransport } from "@thor/common";
-import { buildToolInstructions } from "./tool-instructions.js";
 import { getMemoryProgressEvents } from "./memory-progress.js";
 import { pathToFileURL } from "node:url";
 import {
@@ -143,16 +141,6 @@ function readRepoMemory(directory: string, memoryDir = MEMORY_DIR): string | und
   const repo = extractRepoFromCwd(directory);
   if (!repo) return undefined;
   return readMemoryFile(`${memoryDir}/${repo}/README.md`);
-}
-
-function getToolInstructions(
-  opts: { profile?: string; includeMcp?: boolean } = {},
-): string | undefined {
-  try {
-    return buildToolInstructions(opts);
-  } catch {
-    return undefined;
-  }
 }
 
 const defaultWorkspaceConfigLoader = createConfigLoader(WORKSPACE_CONFIG_PATH);
@@ -926,39 +914,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           } else {
             prompt = `[Repo memory: none yet — write to ${repoMemoryPath} to persist per-repo context]\n\n${prompt}`;
           }
-        }
-
-        // Tool instructions: inject MCP tool list from the same anchor-level
-        // profile view that remote-cli uses for execution.
-        let instructionProfile: string | undefined;
-        let includeMcpInstructions = true;
-        try {
-          const profileResolution = resolveStrictProfileForAnchor(
-            workspaceConfigLoader(),
-            anchorId,
-            sessionId,
-          );
-          if (profileResolution.ok) {
-            instructionProfile = profileResolution.profile;
-          } else {
-            includeMcpInstructions = false;
-            logWarn(log, "tool_instructions_mcp_suppressed", {
-              sessionId,
-              anchorId,
-              error: profileResolution.error,
-            });
-          }
-        } catch {
-          instructionProfile = undefined;
-        }
-
-        const toolInstructions = getToolInstructions({
-          profile: instructionProfile,
-          includeMcp: includeMcpInstructions,
-        });
-        if (toolInstructions) {
-          prompt = `${toolInstructions}\n\n${prompt}`;
-          logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });
         }
 
         const triggeringUserBlock = buildTriggeringUserPromptBlock(workspaceConfigLoader, {

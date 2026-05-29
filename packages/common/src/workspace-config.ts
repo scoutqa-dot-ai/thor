@@ -201,33 +201,6 @@ export function createConfigLoader(path: string): ConfigLoader {
 
 // --- Helpers ---
 
-/**
- * Interpolate ${ENV_VAR} references in a string.
- */
-export function interpolateEnv(value: string): string {
-  return value.replace(/\$\{(\w+)\}/g, (_match, name: string) => {
-    const envVal = process.env[name];
-    if (envVal === undefined) {
-      throw new Error(`Environment variable ${name} is not set`);
-    }
-    return envVal;
-  });
-}
-
-/**
- * Interpolate all string values in a headers record.
- */
-export function interpolateHeaders(
-  headers: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  if (!headers) return undefined;
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    result[key] = interpolateEnv(value);
-  }
-  return result;
-}
-
 export function findUserBySlack(config: WorkspaceConfig, slack: string): UserRecord | undefined {
   const normalized = slack.toUpperCase();
   return config.users?.find((user) => user.slack?.toUpperCase() === normalized);
@@ -236,11 +209,6 @@ export function findUserBySlack(config: WorkspaceConfig, slack: string): UserRec
 export function findUserByGithub(config: WorkspaceConfig, github: string): UserRecord | undefined {
   const normalized = github.toLowerCase();
   return config.users?.find((user) => user.github?.toLowerCase() === normalized);
-}
-
-export function findUserByEmail(config: WorkspaceConfig, email: string): UserRecord | undefined {
-  const normalized = email.toLowerCase();
-  return config.users?.find((user) => user.email.toLowerCase() === normalized);
 }
 
 export function getProfileForSlackChannel(
@@ -255,25 +223,6 @@ export function getProfileForSlackChannel(
 
 export function isSlackChannelInProfile(config: WorkspaceConfig, channelId: string): boolean {
   return getProfileForSlackChannel(config, channelId) !== undefined;
-}
-
-export function getProfileForSlackCorrelationKey(
-  config: WorkspaceConfig,
-  correlationKey: string | undefined,
-): string | undefined {
-  const channel = getSlackChannelFromCorrelationKey(correlationKey);
-  return channel ? getProfileForSlackChannel(config, channel) : undefined;
-}
-
-export function getSlackChannelFromCorrelationKey(
-  correlationKey: string | undefined,
-): string | undefined {
-  const prefix = "slack:thread:";
-  if (!correlationKey?.startsWith(prefix)) return undefined;
-  const rest = correlationKey.slice(prefix.length);
-  const slash = rest.indexOf("/");
-  if (slash <= 0) return undefined;
-  return rest.slice(0, slash);
 }
 
 export type ProfileResolution =
@@ -301,7 +250,7 @@ export function resolveStrictProfileForSession(
   return resolveStrictProfileForAnchor(config, anchorId, sessionId);
 }
 
-export function resolveStrictProfileForAnchor(
+function resolveStrictProfileForAnchor(
   config: WorkspaceConfig,
   anchorId: string,
   label = anchorId,

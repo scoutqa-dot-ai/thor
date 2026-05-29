@@ -1041,10 +1041,6 @@ export function findTriggerActor(
   };
 }
 
-export function findTriggerCorrelationKey(requestSessionId: string): string | undefined {
-  return findBestTriggerForSession(requestSessionId)?.correlationKey;
-}
-
 export function findSlackTriggerCorrelationKey(requestSessionId: string): string | undefined {
   return findBestTriggerForSession(requestSessionId, (trigger) =>
     Boolean(trigger.correlationKey?.startsWith("slack:thread:")),
