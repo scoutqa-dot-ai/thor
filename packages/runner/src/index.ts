@@ -1475,7 +1475,7 @@ const KNOWN_BINS: Record<string, number> = {
   perl: 1,
   pip3: 2,
   prettier: 1,
-  python3: 2,
+  python3: 1,
   rg: 1,
   ruff: 2,
   shfmt: 1,
