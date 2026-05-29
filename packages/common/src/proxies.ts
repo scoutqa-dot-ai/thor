@@ -15,7 +15,6 @@ export interface ResolvedProxyConfig {
     key: string;
     name: ProxyName;
     profile?: string;
-    envScope: "profile" | "global";
   };
 }
 
@@ -150,7 +149,6 @@ export function resolveProxyConfig(
         key: targetKey(name, profile, auth.scope),
         name,
         ...(profile && { profile }),
-        envScope: auth.scope,
       },
     };
   }
@@ -169,7 +167,6 @@ export function resolveProxyConfig(
         key: targetKey(name, profile, apiKey.scope),
         name,
         ...(profile && { profile }),
-        envScope: apiKey.scope,
       },
     };
   }
@@ -209,7 +206,6 @@ export function resolveProxyConfig(
       key: targetKey(name, profile, useScoped ? "profile" : "global"),
       name,
       ...(profile && { profile }),
-      envScope: useScoped ? "profile" : "global",
     },
   };
 }

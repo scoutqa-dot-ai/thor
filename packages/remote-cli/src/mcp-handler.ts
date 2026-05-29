@@ -336,7 +336,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       name,
       targetKey: proxyDef.target.key,
       profile: proxyDef.target.profile,
-      envScope: proxyDef.target.envScope,
       url: proxyDef.upstream.url,
     });
     const upstream = await connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1));

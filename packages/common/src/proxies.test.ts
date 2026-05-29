@@ -35,7 +35,6 @@ describe("proxy registry", () => {
     expect(resolveProxyConfig("atlassian", "QA", env)?.upstream.headers).toEqual({
       Authorization: "Basic global",
     });
-    expect(resolveProxyConfig("posthog", "LABS", env)?.target.envScope).toBe("global");
     expect(resolveProxyConfig("posthog", "LABS", env)?.upstream.headers?.Authorization).toBe(
       "Bearer phc_global",
     );
