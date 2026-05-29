@@ -1,0 +1,35 @@
+packages/remote-cli/src/sandbox.ts
+  d8b2eebe93c74953 30-32,34-35
+packages/remote-cli/src/policy-mcp.ts
+  d8b2eebe93c74953 25-26,30,36-37,41
+packages/remote-cli/src/github-app-auth.ts
+  d8b2eebe93c74953 43-44,46
+packages/common/src/progress-manager.ts
+  d8b2eebe93c74953 372-373,375-377
+packages/remote-cli/src/approval-store.ts
+  d8b2eebe93c74953 55-59
+tsconfig.base.json
+  d8b2eebe93c74953 16-19
+packages/gateway/src/service.ts
+  d8b2eebe93c74953 162-163,165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "53d388ed0f3b26c75bb0b99a2c92906115390fea",
+  "prompts": {
+    "d8b2eebe93c74953": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9aa5ecc-8db8-41e0-a58a-35accd01527f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 33,
+      "total_deletions": 26,
+      "accepted_lines": 31,
+      "overriden_lines": 0
+    }
+  }
+}
