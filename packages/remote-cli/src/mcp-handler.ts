@@ -185,6 +185,20 @@ function suggestMatch(input: string, candidates: string[]): string {
   return "";
 }
 
+function requireBoundSessionId(input: {
+  sessionId: string | undefined;
+  missingMessage: string;
+  invalidMessage: (sessionId: string) => string;
+}): string {
+  if (!input.sessionId) {
+    throw new Error(input.missingMessage);
+  }
+  if (!resolveSessionAnchorId(input.sessionId)) {
+    throw new Error(input.invalidMessage(input.sessionId));
+  }
+  return input.sessionId;
+}
+
 export interface McpService {
   getHealth(): Record<string, unknown>;
   warmUpstreams(): Promise<void>;
@@ -259,33 +273,19 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return "error" in result ? result : { ts: result.ts };
   }
 
-  function resolveProfileForContext(
-    context: McpCommandContext,
-  ): { ok: true; profile: string | undefined } | { ok: false; error: string } {
-    if (!context.sessionId) {
-      return {
-        ok: false,
-        error:
-          "missing Thor session id for MCP routing; use the mcp wrapper so x-thor-session-id is sent",
-      };
-    }
-    if (!resolveSessionAnchorId(context.sessionId)) {
-      return {
-        ok: false,
-        error: `invalid Thor session id for MCP routing; no Thor session binding for ${context.sessionId}`,
-      };
-    }
-    let config;
-    try {
-      config = getConfig();
-    } catch (err) {
-      logWarn(log, "profile_resolution_failed_using_global", {
-        sessionId: context.sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return { ok: true, profile: undefined };
-    }
-    return resolveStrictProfileForSession(config, context.sessionId);
+  function resolveProfileForContext(context: McpCommandContext): { profile: string | undefined } {
+    const sessionId = requireBoundSessionId({
+      sessionId: context.sessionId,
+      missingMessage:
+        "missing Thor session id for MCP routing; use the mcp wrapper so x-thor-session-id is sent",
+      invalidMessage: (sessionId) =>
+        `invalid Thor session id for MCP routing; no Thor session binding for ${sessionId}`,
+    });
+
+    const config = getConfig();
+    const resolved = resolveStrictProfileForSession(config, sessionId);
+    if (!resolved.ok) throw new Error(resolved.error);
+    return { profile: resolved.profile };
   }
 
   async function connectInstance(
@@ -409,22 +409,22 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   }
 
   /**
-   * Re-resolve the profile for an approval action at click time. Returns the
-   * fresh profile resolution (strict — multi-profile sessions return error),
-   * or `undefined` profile if the action has no session id to look up against.
+   * Re-resolve the profile for an approval action at click time. Approval
+   * actions are write-capable, so a missing or stale Thor session binding fails
+   * closed instead of falling back to global credentials.
    */
-  function resolveProfileForAction(
-    action: ApprovalAction,
-  ): { ok: true; profile: string | undefined } | { ok: false; error: string } {
-    const sessionId = action.origin?.sessionId;
-    if (!sessionId) return { ok: true, profile: undefined };
-    let config;
-    try {
-      config = getConfig();
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-    return resolveStrictProfileForSession(config, sessionId);
+  function resolveProfileForAction(action: ApprovalAction): { profile: string | undefined } {
+    const sessionId = requireBoundSessionId({
+      sessionId: action.origin?.sessionId,
+      missingMessage: `approval action ${action.id} is missing Thor session id for approval routing`,
+      invalidMessage: (sessionId) =>
+        `invalid Thor session id for approval routing; no Thor session binding for ${sessionId}`,
+    });
+
+    const config = getConfig();
+    const resolved = resolveStrictProfileForSession(config, sessionId);
+    if (!resolved.ok) throw new Error(resolved.error);
+    return { profile: resolved.profile };
   }
 
   async function lookupJiraAccountIdViaUpstream(
@@ -639,11 +639,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     args: Record<string, unknown>,
     context: McpCommandContext,
   ): Promise<McpExecResult> {
-    const resolved = resolveProfileForContext(context);
-    if (!resolved.ok) return fail(resolved.error);
-    const profile = resolved.profile;
     let instance: ProxyInstance | undefined;
     try {
+      const { profile } = resolveProfileForContext(context);
       instance = await getInstance(upstreamName, profile);
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
@@ -838,31 +836,34 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return ok(stringify(rejected));
     }
 
-    const profileResolution = resolveProfileForAction(lookup.action);
-    if (!profileResolution.ok) {
+    let profile: string | undefined;
+    try {
+      profile = resolveProfileForAction(lookup.action).profile;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       const rejected = lookup.store.rejectLoaded(
         lookup.action,
         "system",
-        `profile re-resolution failed at approval time: ${profileResolution.error}`,
+        `profile re-resolution failed at approval time: ${message}`,
       );
       logWarn(log, "tool_call_rejected_profile_ambiguous", {
         upstream: lookup.upstreamName,
         tool: rejected.tool,
         actionId: rejected.id,
-        error: profileResolution.error,
+        error: message,
       });
       writeToolCallLogFn({
         tool: rejected.tool,
         decision: "rejected",
         args: rejected.args,
-        error: profileResolution.error,
+        error: message,
       });
-      return fail(profileResolution.error, stringify(rejected));
+      return fail(message, stringify(rejected));
     }
 
     let instance: ProxyInstance | undefined;
     try {
-      instance = await getInstance(lookup.upstreamName, profileResolution.profile);
+      instance = await getInstance(lookup.upstreamName, profile);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const rejected = lookup.store.rejectLoaded(
@@ -1044,9 +1045,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
 
       if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-        const resolved = resolveProfileForContext(context);
-        if (!resolved.ok) return fail(resolved.error);
-        return listUpstreams(context.directory, resolved.profile);
+        try {
+          const { profile } = resolveProfileForContext(context);
+          return listUpstreams(context.directory, profile);
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : String(err));
+        }
       }
 
       const failure = validateRepoDirectory(context.directory);
@@ -1062,9 +1066,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         );
       }
 
-      const resolvedProfile = resolveProfileForContext(context);
-      if (!resolvedProfile.ok) return fail(resolvedProfile.error);
-      const profile = resolvedProfile.profile;
+      let profile: string | undefined;
+      try {
+        profile = resolveProfileForContext(context).profile;
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
       const tools = await listVisibleTools(upstreamName, profile);
       if (!Array.isArray(tools)) return tools;
 

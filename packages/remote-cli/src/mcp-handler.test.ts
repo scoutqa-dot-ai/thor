@@ -104,6 +104,7 @@ describe("remote-cli MCP endpoints", () => {
   let jiraLookupFailure: Error | undefined;
   let slackFetch: ReturnType<typeof vi.fn<typeof fetch>>;
   let workspaceConfig: WorkspaceConfig;
+  let configLoadFailure: Error | undefined;
 
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
@@ -123,6 +124,7 @@ describe("remote-cli MCP endpoints", () => {
     jiraLookups = [];
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
     jiraLookupFailure = undefined;
+    configLoadFailure = undefined;
     slackFetch = vi
       .fn<typeof fetch>()
       .mockResolvedValue(
@@ -165,7 +167,10 @@ describe("remote-cli MCP endpoints", () => {
         isProduction: true,
         fetchImpl: slackFetch,
         writeToolCallLogFn: () => {},
-        configLoader: () => workspaceConfig,
+        configLoader: () => {
+          if (configLoadFailure) throw configLoadFailure;
+          return workspaceConfig;
+        },
         connectUpstreamFn: async (
           name: string,
           upstreamConfig: { headers?: Record<string, string> },
@@ -383,6 +388,27 @@ describe("remote-cli MCP endpoints", () => {
     expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 5 });
   });
 
+  it("fails live MCP calls when profile config cannot be loaded", async () => {
+    configLoadFailure = new Error("workspace config unavailable");
+
+    const call = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as { stdout: string; stderr: string; exitCode: number };
+
+    expect(call.status).toBe(200);
+    expect(body).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(body.stderr).toContain("workspace config unavailable");
+    expect(connectedUpstreams).toEqual([]);
+    expect(toolCalls).toEqual([]);
+  });
+
   it("warms every registered upstream", async () => {
     await closeRemoteCli();
 
@@ -546,6 +572,68 @@ describe("remote-cli MCP endpoints", () => {
     expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
       Authorization: "Basic qa-after-approval",
     });
+  });
+
+  it("rejects an approval when its stored session id no longer resolves to an anchor", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    const status = await postJson("/exec/approval", { args: ["status", actionId] });
+    const stored = JSON.parse(((await status.json()) as { stdout: string }).stdout) as Record<
+      string,
+      unknown
+    >;
+    const dateSegment = String(stored.dateSegment);
+    writeFileSync(
+      join(approvalsDir, "atlassian", dateSegment, `${actionId}.json`),
+      JSON.stringify(
+        {
+          ...stored,
+          origin: { ...(stored.origin as Record<string, unknown>), sessionId: "stale-session" },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as { exitCode: number; stderr: string };
+
+    expect(resolvedBody.exitCode).toBe(1);
+    expect(resolvedBody.stderr).toContain("invalid Thor session id for approval routing");
+    expect(toolCalls).toEqual([]);
+
+    const rejectedStatus = await postJson("/exec/approval", { args: ["status", actionId] });
+    const rejected = JSON.parse(((await rejectedStatus.json()) as { stdout: string }).stdout) as {
+      status: string;
+      reviewer?: string;
+      reason?: string;
+    };
+    expect(rejected.status).toBe("rejected");
+    expect(rejected.reviewer).toBe("system");
+    expect(rejected.reason).toMatch(/profile re-resolution failed/);
   });
 
   it("rejects an approval when the session's channels are bound to multiple profiles", async () => {
