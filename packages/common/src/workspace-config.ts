@@ -52,8 +52,6 @@ const UserRecordSchema = z.object({
   github: z.string().min(1).optional(),
 });
 
-const SlackConfigSchema = z.object({});
-
 const ProfileConfigSchema = z.object({
   channels: z
     .array(z.string().min(1))
@@ -66,7 +64,6 @@ export const WorkspaceConfigSchema = z
   .object({
     owners: z.record(z.string(), OwnerConfigSchema).optional(),
     users: z.array(UserRecordSchema).optional(),
-    slack: SlackConfigSchema.optional(),
     profiles: z.record(z.string().min(1), ProfileConfigSchema).optional(),
     mitmproxy: z.array(MitmproxyRuleSchema).optional(),
     mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
