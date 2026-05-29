@@ -360,7 +360,7 @@ function withWebhookHistory(
     try {
       await handler(req, res, history);
     } catch (error) {
-      history.reason = "handler_exception";
+      history.reason = history.reason === "enqueue_failed" ? history.reason : "handler_exception";
       history.metadata = { ...history.metadata, ...errorToMetadata(error) };
       throw error;
     } finally {
@@ -1374,10 +1374,23 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       options: { delayMs: number; interrupt?: boolean },
     ): Promise<void> => {
       const correlationKey = buildPendingSlackPrivacyKey(target.channel, eventId);
+      try {
+        await enqueueSlackEvent(target, correlationKey, options);
+      } catch (error) {
+        history.reason = "enqueue_failed";
+        history.metadata = {
+          ...(history.metadata ?? {}),
+          channel: target.channel,
+          attemptedCorrelationKey: correlationKey,
+          enqueueStatus: "failed",
+        };
+        throw error;
+      }
       history.metadata = {
         ...(history.metadata ?? {}),
         channel: target.channel,
         correlationKey,
+        enqueueStatus: "succeeded",
       };
       logInfo(log, "event_deferred_pending_privacy", {
         eventId,
@@ -1388,7 +1401,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         ts: target.ts,
         correlationKey,
       });
-      await enqueueSlackEvent(target, correlationKey, options);
       res.status(200).json({ ok: true });
     };
 
@@ -1397,6 +1409,24 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       correlationKey: string,
       options: { delayMs: number; interrupt?: boolean },
     ): Promise<void> => {
+      try {
+        await enqueueSlackEvent(target, correlationKey, options);
+      } catch (error) {
+        history.reason = "enqueue_failed";
+        history.metadata = {
+          ...(history.metadata ?? {}),
+          channel: target.channel,
+          attemptedCorrelationKey: correlationKey,
+          enqueueStatus: "failed",
+        };
+        throw error;
+      }
+      history.metadata = {
+        ...(history.metadata ?? {}),
+        channel: target.channel,
+        correlationKey,
+        enqueueStatus: "succeeded",
+      };
       logInfo(log, "event_accepted", {
         eventId,
         teamId: envelope.data.team_id,
@@ -1407,7 +1437,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         threadTs: target.thread_ts,
         correlationKey,
       });
-      await enqueueSlackEvent(target, correlationKey, options);
       res.status(200).json({ ok: true });
     };
 

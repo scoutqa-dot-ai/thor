@@ -2620,6 +2620,91 @@ describe("gateway", () => {
     });
   });
 
+  it("records pending privacy history only after enqueue succeeds", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.add("slack:thread:CLOOKUP/1710000000.001");
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(fetchImpl, async (baseUrl, _queue, queueDir) => {
+        const body = slackEventBody("EvDeferredHistory", {
+          type: "message",
+          user: "U123",
+          text: "continue this",
+          ts: "1710000000.108",
+          thread_ts: "1710000000.001",
+          channel: "CLOOKUP",
+          channel_type: "channel",
+        });
+
+        const response = await postSignedSlackEvent(baseUrl, body);
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+        expect(readQueuedEvents(queueDir)).toMatchObject([
+          {
+            id: "EvDeferredHistory",
+            correlationKey: "pending:slack-privacy:CLOOKUP:EvDeferredHistory",
+          },
+        ]);
+
+        const entries = readSlackWebhookEntries(worklogDir);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          requestId: "EvDeferredHistory",
+          reason: "received",
+          metadata: {
+            eventId: "EvDeferredHistory",
+            channel: "CLOOKUP",
+            correlationKey: "pending:slack-privacy:CLOOKUP:EvDeferredHistory",
+            enqueueStatus: "succeeded",
+          },
+        });
+        expect(entries[0]?.metadata).not.toHaveProperty("attemptedCorrelationKey");
+      });
+    });
+  });
+
+  it("records enqueue_failed history when pending privacy enqueue fails", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.add("slack:thread:CFAIL/1710000000.001");
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(fetchImpl, async (baseUrl, queue, queueDir) => {
+        vi.spyOn(queue, "enqueue").mockRejectedValueOnce(new Error("queue disk full"));
+        const body = slackEventBody("EvDeferredEnqueueFail", {
+          type: "message",
+          user: "U123",
+          text: "continue this",
+          ts: "1710000000.109",
+          thread_ts: "1710000000.001",
+          channel: "CFAIL",
+          channel_type: "channel",
+        });
+
+        const response = await postSignedSlackEvent(baseUrl, body);
+
+        expect(response.status).toBe(500);
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+        const entries = readSlackWebhookEntries(worklogDir);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          requestId: "EvDeferredEnqueueFail",
+          reason: "enqueue_failed",
+          metadata: {
+            eventId: "EvDeferredEnqueueFail",
+            channel: "CFAIL",
+            attemptedCorrelationKey: "pending:slack-privacy:CFAIL:EvDeferredEnqueueFail",
+            enqueueStatus: "failed",
+            errorName: "Error",
+            errorMessage: "queue disk full",
+          },
+        });
+        expect(entries[0]?.metadata).not.toHaveProperty("correlationKey");
+      });
+    });
+  });
+
   it("uses a fresh public-channel cache hit to accept app mentions without pending privacy", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -2662,6 +2747,58 @@ describe("gateway", () => {
       await queue.flush();
       expect(fetchImpl).toHaveBeenCalledTimes(2);
       expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("records enqueue_failed history when cached public app mention enqueue fails", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
+        slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: false } });
+
+        const firstResponse = await postSignedSlackEvent(
+          baseUrl,
+          slackEventBody("EvAcceptCachePrime", {
+            type: "app_mention",
+            user: "U123",
+            text: "<@U999> prime cache",
+            ts: "1710000000.208",
+            channel: "CACCEPTFAIL",
+          }),
+        );
+        expect(firstResponse.status).toBe(200);
+        await queue.flush();
+
+        vi.spyOn(queue, "enqueue").mockRejectedValueOnce(new Error("queue unavailable"));
+        const secondResponse = await postSignedSlackEvent(
+          baseUrl,
+          slackEventBody("EvAcceptEnqueueFail", {
+            type: "app_mention",
+            user: "U123",
+            text: "<@U999> cached public channel",
+            ts: "1710000000.209",
+            channel: "CACCEPTFAIL",
+          }),
+        );
+
+        expect(secondResponse.status).toBe(500);
+
+        const entries = readSlackWebhookEntries(worklogDir);
+        expect(entries).toHaveLength(2);
+        expect(entries[1]).toMatchObject({
+          requestId: "EvAcceptEnqueueFail",
+          reason: "enqueue_failed",
+          metadata: {
+            eventId: "EvAcceptEnqueueFail",
+            channel: "CACCEPTFAIL",
+            attemptedCorrelationKey: "slack:thread:CACCEPTFAIL/1710000000.209",
+            enqueueStatus: "failed",
+            errorMessage: "queue unavailable",
+          },
+        });
+        expect(entries[1]?.metadata).not.toHaveProperty("correlationKey");
+      });
     });
   });
 
