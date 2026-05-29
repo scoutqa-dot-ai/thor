@@ -334,7 +334,8 @@ fi
 if [[ -n "$opencode_container" ]]; then
   echo "  ✓ opencode container: $opencode_container"
 else
-  echo "  ⚠ opencode container not found; Slack upload e2e will be skipped"
+  echo "  ✗ opencode container not found (required for Slack upload e2e)"
+  preflight_ok=false
 fi
 
 if [[ "$remote_cli_health" == *"ok"* ]]; then
@@ -355,6 +356,27 @@ if [[ "$gateway_health" == *"ok"* ]]; then
   echo "  ✓ gateway is healthy"
 else
   echo "  ✗ gateway is not healthy at $GATEWAY_URL"
+  preflight_ok=false
+fi
+
+if [[ -n "$THOR_INTERNAL_SECRET" ]]; then
+  echo "  ✓ THOR_INTERNAL_SECRET is available"
+else
+  echo "  ✗ THOR_INTERNAL_SECRET is unavailable"
+  preflight_ok=false
+fi
+
+if [[ -n "$SLACK_BOT_TOKEN" ]]; then
+  echo "  ✓ SLACK_BOT_TOKEN is available"
+else
+  echo "  ✗ SLACK_BOT_TOKEN is unavailable"
+  preflight_ok=false
+fi
+
+if [[ -n "$SLACK_CHANNEL_ID" ]]; then
+  echo "  ✓ Slack e2e channel is configured"
+else
+  echo "  ✗ SLACK_E2E_CHANNEL_ID or SLACK_CHANNEL_ID is not set"
   preflight_ok=false
 fi
 
@@ -410,82 +432,70 @@ assert '[[ "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]' \
   "origin='$clone_origin'"
 
 if [[ -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" && "$clone_origin" == "$REMOTE_CLI_GIT_REPO_URL" ]]; then
-  if [[ -z "$THOR_INTERNAL_SECRET" ]]; then
-    assert 'false' \
-      "Internal exec PR-head smoke: THOR_INTERNAL_SECRET is available" \
-      "Set THOR_INTERNAL_SECRET or ensure docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET returns a value"
-  else
-    echo "  Calling /internal/exec directly (gh pr list + gh pr view)..."
-    internal_pr_list_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/internal/exec" \
+  echo "  Calling /internal/exec directly (gh pr list + gh pr view)..."
+  internal_pr_list_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/internal/exec" \
+    -H 'Content-Type: application/json' \
+    -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+    -d "{\"bin\":\"gh\",\"args\":[\"pr\",\"list\",\"--repo\",\"$REMOTE_CLI_GITHUB_REPO\",\"--state\",\"all\",\"--limit\",\"1\",\"--json\",\"number\"],\"cwd\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+    2>/dev/null || echo '{}')
+  internal_pr_list_exit=$(json_field "$internal_pr_list_raw" "exitCode")
+  internal_pr_number=$(echo "$internal_pr_list_raw" | node -e "
+    const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+    const prs = JSON.parse(d.stdout || '[]');
+    console.log(prs[0]?.number || '');
+  " 2>/dev/null || echo "")
+
+  assert '[[ "$internal_pr_list_exit" == "0" ]]' \
+    "Internal exec PR-head smoke: gh pr list succeeds" \
+    "response: ${internal_pr_list_raw:0:300}"
+  assert '[[ -n "$internal_pr_number" ]]' \
+    "Internal exec PR-head smoke: found a PR to inspect" \
+    "response: ${internal_pr_list_raw:0:300}"
+
+  if [[ -n "$internal_pr_number" ]]; then
+    internal_pr_view_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/internal/exec" \
       -H 'Content-Type: application/json' \
       -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-      -d "{\"bin\":\"gh\",\"args\":[\"pr\",\"list\",\"--repo\",\"$REMOTE_CLI_GITHUB_REPO\",\"--state\",\"all\",\"--limit\",\"1\",\"--json\",\"number\"],\"cwd\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+      -d "{\"bin\":\"gh\",\"args\":[\"pr\",\"view\",\"$internal_pr_number\",\"--repo\",\"$REMOTE_CLI_GITHUB_REPO\",\"--json\",\"headRefName,headRepository,headRepositoryOwner\"],\"cwd\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
       2>/dev/null || echo '{}')
-    internal_pr_list_exit=$(json_field "$internal_pr_list_raw" "exitCode")
-    internal_pr_number=$(echo "$internal_pr_list_raw" | node -e "
+    internal_pr_view_exit=$(json_field "$internal_pr_view_raw" "exitCode")
+    internal_pr_head_ref=$(echo "$internal_pr_view_raw" | node -e "
       const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-      const prs = JSON.parse(d.stdout || '[]');
-      console.log(prs[0]?.number || '');
+      const out = JSON.parse(d.stdout || '{}');
+      console.log(out.headRefName || '');
+    " 2>/dev/null || echo "")
+    internal_pr_head_owner=$(echo "$internal_pr_view_raw" | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+      const out = JSON.parse(d.stdout || '{}');
+      console.log(out.headRepositoryOwner?.login || '');
+    " 2>/dev/null || echo "")
+    internal_pr_head_repo=$(echo "$internal_pr_view_raw" | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+      const out = JSON.parse(d.stdout || '{}');
+      console.log(out.headRepository?.name || '');
     " 2>/dev/null || echo "")
 
-    assert '[[ "$internal_pr_list_exit" == "0" ]]' \
-      "Internal exec PR-head smoke: gh pr list succeeds" \
-      "response: ${internal_pr_list_raw:0:300}"
-    assert '[[ -n "$internal_pr_number" ]]' \
-      "Internal exec PR-head smoke: found a PR to inspect" \
-      "response: ${internal_pr_list_raw:0:300}"
-
-    if [[ -n "$internal_pr_number" ]]; then
-      internal_pr_view_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/internal/exec" \
-        -H 'Content-Type: application/json' \
-        -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-        -d "{\"bin\":\"gh\",\"args\":[\"pr\",\"view\",\"$internal_pr_number\",\"--repo\",\"$REMOTE_CLI_GITHUB_REPO\",\"--json\",\"headRefName,headRepository,headRepositoryOwner\"],\"cwd\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
-        2>/dev/null || echo '{}')
-      internal_pr_view_exit=$(json_field "$internal_pr_view_raw" "exitCode")
-      internal_pr_head_ref=$(echo "$internal_pr_view_raw" | node -e "
-        const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-        const out = JSON.parse(d.stdout || '{}');
-        console.log(out.headRefName || '');
-      " 2>/dev/null || echo "")
-      internal_pr_head_owner=$(echo "$internal_pr_view_raw" | node -e "
-        const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-        const out = JSON.parse(d.stdout || '{}');
-        console.log(out.headRepositoryOwner?.login || '');
-      " 2>/dev/null || echo "")
-      internal_pr_head_repo=$(echo "$internal_pr_view_raw" | node -e "
-        const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-        const out = JSON.parse(d.stdout || '{}');
-        console.log(out.headRepository?.name || '');
-      " 2>/dev/null || echo "")
-
-      assert '[[ "$internal_pr_view_exit" == "0" ]]' \
-        "Internal exec PR-head smoke: gh pr view succeeds" \
-        "response: ${internal_pr_view_raw:0:300}"
-      assert '[[ -n "$internal_pr_head_ref" && -n "$internal_pr_head_owner" && -n "$internal_pr_head_repo" ]]' \
-        "Internal exec PR-head smoke: gh pr view returns head ref and repo owner/name" \
-        "ref='$internal_pr_head_ref', owner='$internal_pr_head_owner', repo='$internal_pr_head_repo'"
-    fi
+    assert '[[ "$internal_pr_view_exit" == "0" ]]' \
+      "Internal exec PR-head smoke: gh pr view succeeds" \
+      "response: ${internal_pr_view_raw:0:300}"
+    assert '[[ -n "$internal_pr_head_ref" && -n "$internal_pr_head_owner" && -n "$internal_pr_head_repo" ]]' \
+      "Internal exec PR-head smoke: gh pr view returns head ref and repo owner/name" \
+      "ref='$internal_pr_head_ref', owner='$internal_pr_head_owner', repo='$internal_pr_head_repo'"
   fi
 
-  if [[ -z "$THOR_INTERNAL_SECRET" ]]; then
-    assert 'false' \
-      "Internal exec worktree smoke: THOR_INTERNAL_SECRET is available" \
-      "Set THOR_INTERNAL_SECRET or ensure docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET returns a value"
-  else
-    echo "  Calling /internal/exec directly (git worktree add)..."
-    worktree_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/internal/exec" \
-      -H 'Content-Type: application/json' \
-      -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
-      -d "{\"bin\":\"git\",\"args\":[\"worktree\",\"add\",\"-b\",\"$REMOTE_CLI_WORKTREE_BRANCH\",\"$REMOTE_CLI_WORKTREE_DIR\",\"HEAD\"],\"cwd\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
-      2>/dev/null || echo '{}')
-    worktree_exit=$(json_field "$worktree_raw" "exitCode")
-    worktree_list=$(docker exec "$remote_cli_container" \
-      git -C "$REMOTE_CLI_GIT_REPO_DIR" worktree list 2>/dev/null || echo "")
+  echo "  Calling /internal/exec directly (git worktree add)..."
+  worktree_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/internal/exec" \
+    -H 'Content-Type: application/json' \
+    -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+    -d "{\"bin\":\"git\",\"args\":[\"worktree\",\"add\",\"-b\",\"$REMOTE_CLI_WORKTREE_BRANCH\",\"$REMOTE_CLI_WORKTREE_DIR\",\"HEAD\"],\"cwd\":\"$REMOTE_CLI_GIT_REPO_DIR\"}" \
+    2>/dev/null || echo '{}')
+  worktree_exit=$(json_field "$worktree_raw" "exitCode")
+  worktree_list=$(docker exec "$remote_cli_container" \
+    git -C "$REMOTE_CLI_GIT_REPO_DIR" worktree list 2>/dev/null || echo "")
 
-    assert '[[ "$worktree_exit" == "0" ]]' \
-      "Internal exec worktree smoke: git worktree add succeeds" \
-      "response: ${worktree_raw:0:300}"
-  fi
+  assert '[[ "$worktree_exit" == "0" ]]' \
+    "Internal exec worktree smoke: git worktree add succeeds" \
+    "response: ${worktree_raw:0:300}"
   assert '[[ -d "$HOST_REMOTE_CLI_WORKTREE_DIR" ]]' \
     "Internal exec worktree smoke: worktree path exists on disk" \
     "expected path: $HOST_REMOTE_CLI_WORKTREE_DIR"
@@ -569,10 +579,6 @@ if [[ ! -d "$HOST_REMOTE_CLI_WORKTREE_DIR" ]]; then
   assert 'false' \
     "attribution e2e: disposable worktree exists" \
     "expected path: $HOST_REMOTE_CLI_WORKTREE_DIR"
-elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
-  assert 'false' \
-    "attribution e2e: THOR_INTERNAL_SECRET is available" \
-    "Set THOR_INTERNAL_SECRET or ensure docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET returns a value"
 elif assert_attribution_config; then
   attribution_trigger_body=$(node -e "
     console.log(JSON.stringify({
@@ -759,37 +765,31 @@ fi
 
 if [[ -z "$APPROVAL_TOOL" ]]; then
   assert 'false' "approval flow: discovered an approval-required tool" "${APPROVAL_DISCOVERY_DEBUG:-approval tool discovery returned no match}"
-elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
-  assert 'false' "approval flow: THOR_INTERNAL_SECRET is available" "Set THOR_INTERNAL_SECRET or ensure docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET returns a value"
 else
   echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
 
   APPROVAL_THREAD_TS=""
   approval_thread_seeded=false
-  if [[ -n "$SLACK_BOT_TOKEN" && -n "$SLACK_CHANNEL_ID" ]]; then
-    approval_seed_json=$(node -e "
-      const marker = process.argv[1] || '';
-      console.log(JSON.stringify({
-        channel: process.env.SLACK_CHANNEL_ID,
-        text: 'Thor approval e2e seed ' + marker
-      }));
-    " "$REMOTE_CLI_AUTH_TS")
-    approval_seed_raw=$(slack_post_json "chat.postMessage" "$approval_seed_json")
-    approval_seed_ok=$(json_field "$approval_seed_raw" "ok")
-    APPROVAL_THREAD_TS=$(json_field "$approval_seed_raw" "ts")
-    assert '[[ "$approval_seed_ok" == "true" && -n "$APPROVAL_THREAD_TS" ]]' \
-      "approval flow: seeded Slack thread" \
-      "response: ${approval_seed_raw:0:500}"
-    if [[ "$approval_seed_ok" == "true" && -n "$APPROVAL_THREAD_TS" ]]; then
-      approval_thread_seeded=true
-    fi
-    export APPROVAL_THREAD_TS
-  else
-    assert 'false' "approval flow: seeded Slack thread" "Set SLACK_BOT_TOKEN and SLACK_E2E_CHANNEL_ID/SLACK_CHANNEL_ID for direct approval-card delivery e2e"
+  approval_seed_json=$(node -e "
+    const marker = process.argv[1] || '';
+    console.log(JSON.stringify({
+      channel: process.env.SLACK_CHANNEL_ID,
+      text: 'Thor approval e2e seed ' + marker
+    }));
+  " "$REMOTE_CLI_AUTH_TS")
+  approval_seed_raw=$(slack_post_json "chat.postMessage" "$approval_seed_json")
+  approval_seed_ok=$(json_field "$approval_seed_raw" "ok")
+  APPROVAL_THREAD_TS=$(json_field "$approval_seed_raw" "ts")
+  assert '[[ "$approval_seed_ok" == "true" && -n "$APPROVAL_THREAD_TS" ]]' \
+    "approval flow: seeded Slack thread" \
+    "response: ${approval_seed_raw:0:500}"
+  if [[ "$approval_seed_ok" == "true" && -n "$APPROVAL_THREAD_TS" ]]; then
+    approval_thread_seeded=true
   fi
+  export APPROVAL_THREAD_TS
 
   if [[ "$approval_thread_seeded" != "true" ]]; then
-    echo "  Skipping remaining approval flow after Slack thread seed failure."
+    echo "  Approval flow setup failed; remaining approval checks cannot run."
   else
   jira_assignee_live=false
   if [[ -n "$JIRA_CLOUD_ID" && "$THOR_E2E_JIRA_EMAIL" != "$DEFAULT_THOR_E2E_JIRA_EMAIL" ]]; then
@@ -803,7 +803,9 @@ else
       jira_assignee_live=true
     fi
   elif [[ -n "$JIRA_CLOUD_ID" ]]; then
-    echo "  Skipping Jira assignee e2e: THOR_E2E_JIRA_EMAIL is the default placeholder"
+    assert 'false' \
+      "jira attribution e2e: THOR_E2E_JIRA_EMAIL is configured" \
+      "JIRA_CLOUD_ID is set, but THOR_E2E_JIRA_EMAIL is still the default placeholder"
   fi
 
   trigger_context_body=$(node -e "
@@ -1059,73 +1061,69 @@ assert '[[ "$status_exit" == "0" ]]' "git status (allowed) succeeds" "exitCode='
 echo ""
 echo "=== Slack upload wrapper ==="
 
-if [[ -z "$SLACK_BOT_TOKEN" || -z "$SLACK_CHANNEL_ID" || -z "$opencode_container" ]]; then
-  echo "  ⚠ skipping Slack upload e2e (requires SLACK_BOT_TOKEN, SLACK_E2E_CHANNEL_ID/SLACK_CHANNEL_ID, and opencode container)"
-else
-  slack_upload_run_id="slack-upload-e2e-${REMOTE_CLI_AUTH_TS}"
-  slack_upload_title="slack-upload e2e ${slack_upload_run_id}.txt"
-  slack_upload_comment="slack-upload e2e comment ${slack_upload_run_id}"
-  slack_upload_body="slack-upload e2e body ${slack_upload_run_id}"
-  export SLACK_CHANNEL_ID slack_upload_run_id
+slack_upload_run_id="slack-upload-e2e-${REMOTE_CLI_AUTH_TS}"
+slack_upload_title="slack-upload e2e ${slack_upload_run_id}.txt"
+slack_upload_comment="slack-upload e2e comment ${slack_upload_run_id}"
+slack_upload_body="slack-upload e2e body ${slack_upload_run_id}"
+export SLACK_CHANNEL_ID slack_upload_run_id
 
-  seed_json=$(node -e "
-    console.log(JSON.stringify({
-      channel: process.env.SLACK_CHANNEL_ID,
-      text: '*slack-upload e2e seed* ' + process.env.slack_upload_run_id
-    }));
-  ")
-  seed_raw=$(slack_post_json "chat.postMessage" "$seed_json")
-  seed_ok=$(json_field "$seed_raw" "ok")
-  seed_ts=$(json_field "$seed_raw" "ts")
-  assert '[[ "$seed_ok" == "true" && -n "$seed_ts" ]]' "seeded Slack thread for slack-upload e2e" "response: ${seed_raw:0:500}"
+seed_json=$(node -e "
+  console.log(JSON.stringify({
+    channel: process.env.SLACK_CHANNEL_ID,
+    text: '*slack-upload e2e seed* ' + process.env.slack_upload_run_id
+  }));
+")
+seed_raw=$(slack_post_json "chat.postMessage" "$seed_json")
+seed_ok=$(json_field "$seed_raw" "ok")
+seed_ts=$(json_field "$seed_raw" "ts")
+assert '[[ "$seed_ok" == "true" && -n "$seed_ts" ]]' "seeded Slack thread for slack-upload e2e" "response: ${seed_raw:0:500}"
 
-  if [[ "$seed_ok" == "true" && -n "$seed_ts" ]]; then
-    slack_upload_raw=$(docker exec \
-      -e FILE_CONTENT="$slack_upload_body" \
-      -e FILE_TITLE="$slack_upload_title" \
-      -e CHANNEL_ID="$SLACK_CHANNEL_ID" \
-      -e THREAD_TS="$seed_ts" \
-      -e INITIAL_COMMENT="$slack_upload_comment" \
-      "$opencode_container" \
-      sh -lc 'printf "%s\n" "$FILE_CONTENT" > /tmp/slack-upload-e2e.txt && slack-upload /tmp/slack-upload-e2e.txt --title "$FILE_TITLE" --channel "$CHANNEL_ID" --thread-ts "$THREAD_TS" --comment "$INITIAL_COMMENT"' 2>&1 || true)
-    assert '[[ "$slack_upload_raw" == "{\"ok\":true}" ]]' "slack-upload returns minimal success payload" "output: ${slack_upload_raw:0:500}"
+if [[ "$seed_ok" == "true" && -n "$seed_ts" ]]; then
+  slack_upload_raw=$(docker exec \
+    -e FILE_CONTENT="$slack_upload_body" \
+    -e FILE_TITLE="$slack_upload_title" \
+    -e CHANNEL_ID="$SLACK_CHANNEL_ID" \
+    -e THREAD_TS="$seed_ts" \
+    -e INITIAL_COMMENT="$slack_upload_comment" \
+    "$opencode_container" \
+    sh -lc 'printf "%s\n" "$FILE_CONTENT" > /tmp/slack-upload-e2e.txt && slack-upload /tmp/slack-upload-e2e.txt --title "$FILE_TITLE" --channel "$CHANNEL_ID" --thread-ts "$THREAD_TS" --comment "$INITIAL_COMMENT"' 2>&1 || true)
+  assert '[[ "$slack_upload_raw" == "{\"ok\":true}" ]]' "slack-upload returns minimal success payload" "output: ${slack_upload_raw:0:500}"
 
-    upload_reply_json=""
-    upload_file_id=""
-    upload_file_title=""
-    replies='{}'
-    for _ in $(seq 1 24); do
-      replies=$(slack_replies "$SLACK_CHANNEL_ID" "$seed_ts" 2>/dev/null || echo '{}')
-      upload_reply_json=$(echo "$replies" | EXPECT_COMMENT="$slack_upload_comment" EXPECT_TITLE="$slack_upload_title" node -e "
-        const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-        const messages = d.messages || [];
-        const match = [...messages].reverse().find((message) => {
-          const files = Array.isArray(message.files) ? message.files : [];
-          return (message.text || '').includes(process.env.EXPECT_COMMENT) &&
-            files.some((file) => file.title === process.env.EXPECT_TITLE);
-        });
-        if (!match) process.exit(1);
-        const file = (match.files || []).find((candidate) => candidate.title === process.env.EXPECT_TITLE);
-        console.log(JSON.stringify({ ts: match.ts || '', fileId: file?.id || '', title: file?.title || '' }));
-      " 2>/dev/null || echo "")
-      upload_file_id=$(json_field "$upload_reply_json" "fileId")
-      upload_file_title=$(json_field "$upload_reply_json" "title")
-      if [[ -n "$upload_file_id" ]]; then
-        break
-      fi
-      sleep 5
-    done
-
-    assert '[[ -n "$upload_file_id" ]]' "Slack thread shows uploaded file reply" "replies: ${replies:0:1000}"
-    assert '[[ "$upload_file_title" == "$slack_upload_title" ]]' "uploaded file keeps requested title" "reply: ${upload_reply_json:0:300}"
-
+  upload_reply_json=""
+  upload_file_id=""
+  upload_file_title=""
+  replies='{}'
+  for _ in $(seq 1 24); do
+    replies=$(slack_replies "$SLACK_CHANNEL_ID" "$seed_ts" 2>/dev/null || echo '{}')
+    upload_reply_json=$(echo "$replies" | EXPECT_COMMENT="$slack_upload_comment" EXPECT_TITLE="$slack_upload_title" node -e "
+      const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+      const messages = d.messages || [];
+      const match = [...messages].reverse().find((message) => {
+        const files = Array.isArray(message.files) ? message.files : [];
+        return (message.text || '').includes(process.env.EXPECT_COMMENT) &&
+          files.some((file) => file.title === process.env.EXPECT_TITLE);
+      });
+      if (!match) process.exit(1);
+      const file = (match.files || []).find((candidate) => candidate.title === process.env.EXPECT_TITLE);
+      console.log(JSON.stringify({ ts: match.ts || '', fileId: file?.id || '', title: file?.title || '' }));
+    " 2>/dev/null || echo "")
+    upload_file_id=$(json_field "$upload_reply_json" "fileId")
+    upload_file_title=$(json_field "$upload_reply_json" "title")
     if [[ -n "$upload_file_id" ]]; then
-      file_info_raw=$(slack_file_info "$upload_file_id" 2>/dev/null || echo '{}')
-      file_info_ok=$(json_field "$file_info_raw" "ok")
-      file_info_title=$(json_field "$file_info_raw" "file.title")
-      assert '[[ "$file_info_ok" == "true" ]]' "files.info returns uploaded Slack file" "response: ${file_info_raw:0:500}"
-      assert '[[ "$file_info_title" == "$slack_upload_title" ]]' "files.info matches uploaded title" "response: ${file_info_raw:0:500}"
+      break
     fi
+    sleep 5
+  done
+
+  assert '[[ -n "$upload_file_id" ]]' "Slack thread shows uploaded file reply" "replies: ${replies:0:1000}"
+  assert '[[ "$upload_file_title" == "$slack_upload_title" ]]' "uploaded file keeps requested title" "reply: ${upload_reply_json:0:300}"
+
+  if [[ -n "$upload_file_id" ]]; then
+    file_info_raw=$(slack_file_info "$upload_file_id" 2>/dev/null || echo '{}')
+    file_info_ok=$(json_field "$file_info_raw" "ok")
+    file_info_title=$(json_field "$file_info_raw" "file.title")
+    assert '[[ "$file_info_ok" == "true" ]]' "files.info returns uploaded Slack file" "response: ${file_info_raw:0:500}"
+    assert '[[ "$file_info_title" == "$slack_upload_title" ]]' "files.info matches uploaded title" "response: ${file_info_raw:0:500}"
   fi
 fi
 
