@@ -27,6 +27,7 @@ import {
   mintTriggerId,
   readTriggerSlice,
   resolveAlias,
+  resolveSessionAnchorId,
   reverseLookupAnchor,
   sessionLogPath,
   SessionEventLogRecordSchema,
@@ -488,6 +489,15 @@ describe("session event log", () => {
       sessionId: "parent",
       triggerId: triggerParent,
     });
+  });
+
+  it("resolves parent and child OpenCode session ids to their anchor", () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "parent", anchorId: anchorParent });
+    appendAlias({ aliasType: "opencode.subsession", aliasValue: "child", anchorId: anchorParent });
+
+    expect(resolveSessionAnchorId("parent")).toBe(anchorParent);
+    expect(resolveSessionAnchorId("child")).toBe(anchorParent);
+    expect(resolveSessionAnchorId("missing")).toBeUndefined();
   });
 
   it("treats superseded orphan trigger_start as crashed and surfaces the latest open trigger", () => {

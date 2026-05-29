@@ -1,5 +1,11 @@
 import { z } from "zod/v4";
-import { appendAlias, currentSessionForAnchor, mintAnchor, resolveAlias } from "./event-log.js";
+import {
+  appendAlias,
+  currentSessionForAnchor,
+  mintAnchor,
+  resolveAlias,
+  resolveSessionAnchorId,
+} from "./event-log.js";
 import type { AliasRecord } from "./event-log.js";
 import { withKeyLock } from "./key-lock.js";
 
@@ -121,12 +127,7 @@ export function ensureAnchorForCorrelationKey(key: string): Promise<EnsureAnchor
  */
 export function appendCorrelationAlias(sessionId: string, correlationKey: string): void {
   if (!aliasForCorrelationKey(correlationKey)) return;
-  // Delegated subagents run under an opencode.subsession; fall back so their
-  // git/Slack producer calls bind to the parent's anchor instead of being
-  // silently dropped.
-  const anchorId =
-    resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) ??
-    resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId });
+  const anchorId = resolveSessionAnchorId(sessionId);
   if (!anchorId) {
     throw new Error(
       `cannot bind correlation alias: session ${sessionId} has no anchor binding yet`,

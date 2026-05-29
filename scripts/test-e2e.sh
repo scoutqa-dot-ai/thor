@@ -504,35 +504,56 @@ if [[ ! -d "$HOST_REMOTE_CLI_GIT_REPO_DIR/.git" ]]; then
     "mcp integrations: disposable repo exists" \
     "expected path: $HOST_REMOTE_CLI_GIT_REPO_DIR"
 else
-  mcp_e2e_upstreams=(atlassian grafana posthog)
-  for mcp_upstream in "${mcp_e2e_upstreams[@]}"; do
-    mcp_tools_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/mcp" \
-      -H 'Content-Type: application/json' \
-      -d "$(mcp_payload "$REMOTE_CLI_GIT_REPO_DIR" "$mcp_upstream")" \
-      2>/dev/null || echo '{}')
-    mcp_tools_exit=$(json_field "$mcp_tools_raw" "exitCode")
-    mcp_first_tool=$(json_field "$mcp_tools_raw" "stdout" | awk 'NF { print; exit }')
+  mcp_context_body=$(node -e "
+    console.log(JSON.stringify({
+      sessionId: process.argv[1]
+    }));
+  " "e2e-mcp-${REMOTE_CLI_AUTH_TS}")
+  mcp_context_raw=$(curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
+    -H 'Content-Type: application/json' \
+    -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+    -d "$mcp_context_body" \
+    2>/dev/null || echo '{}')
+  E2E_MCP_SESSION_ID=$(json_field "$mcp_context_raw" "sessionId")
 
-    assert '[[ "$mcp_tools_exit" == "0" ]]' \
-      "mcp integrations: $mcp_upstream lists visible tools" \
-      "response: ${mcp_tools_raw:0:500}"
-    assert '[[ -n "$mcp_first_tool" ]]' \
-      "mcp integrations: $mcp_upstream has at least one visible tool" \
-      "response: ${mcp_tools_raw:0:500}"
-
-    if [[ -n "$mcp_first_tool" ]]; then
-      mcp_help_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/mcp" \
+  if [[ -z "$E2E_MCP_SESSION_ID" ]]; then
+    assert 'false' \
+      "mcp integrations: runner created Thor session context" \
+      "response: ${mcp_context_raw:0:300}; set THOR_E2E_TEST_HELPERS=1 for the runner service"
+  else
+    assert 'true' "mcp integrations: runner created Thor session context"
+    mcp_e2e_upstreams=(atlassian grafana posthog)
+    for mcp_upstream in "${mcp_e2e_upstreams[@]}"; do
+      mcp_tools_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/mcp" \
         -H 'Content-Type: application/json' \
-        -d "$(mcp_payload "$REMOTE_CLI_GIT_REPO_DIR" "$mcp_upstream" "$mcp_first_tool" "--help")" \
+        -H "x-thor-session-id: $E2E_MCP_SESSION_ID" \
+        -d "$(mcp_payload "$REMOTE_CLI_GIT_REPO_DIR" "$mcp_upstream")" \
         2>/dev/null || echo '{}')
-      mcp_help_exit=$(json_field "$mcp_help_raw" "exitCode")
-      mcp_help_name=$(exec_stdout_field "$mcp_help_raw" "name")
+      mcp_tools_exit=$(json_field "$mcp_tools_raw" "exitCode")
+      mcp_first_tool=$(json_field "$mcp_tools_raw" "stdout" | awk 'NF { print; exit }')
 
-      assert '[[ "$mcp_help_exit" == "0" && "$mcp_help_name" == "$mcp_first_tool" ]]' \
-        "mcp integrations: $mcp_upstream/$mcp_first_tool help returns schema" \
-        "tool='$mcp_first_tool' name='$mcp_help_name' response: ${mcp_help_raw:0:500}"
-    fi
-  done
+      assert '[[ "$mcp_tools_exit" == "0" ]]' \
+        "mcp integrations: $mcp_upstream lists visible tools" \
+        "response: ${mcp_tools_raw:0:500}"
+      assert '[[ -n "$mcp_first_tool" ]]' \
+        "mcp integrations: $mcp_upstream has at least one visible tool" \
+        "response: ${mcp_tools_raw:0:500}"
+
+      if [[ -n "$mcp_first_tool" ]]; then
+        mcp_help_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/mcp" \
+          -H 'Content-Type: application/json' \
+          -H "x-thor-session-id: $E2E_MCP_SESSION_ID" \
+          -d "$(mcp_payload "$REMOTE_CLI_GIT_REPO_DIR" "$mcp_upstream" "$mcp_first_tool" "--help")" \
+          2>/dev/null || echo '{}')
+        mcp_help_exit=$(json_field "$mcp_help_raw" "exitCode")
+        mcp_help_name=$(exec_stdout_field "$mcp_help_raw" "name")
+
+        assert '[[ "$mcp_help_exit" == "0" && "$mcp_help_name" == "$mcp_first_tool" ]]' \
+          "mcp integrations: $mcp_upstream/$mcp_first_tool help returns schema" \
+          "tool='$mcp_first_tool' name='$mcp_help_name' response: ${mcp_help_raw:0:500}"
+      fi
+    done
+  fi
 fi
 
 # ── 5. Attribution Flow ─────────────────────────────────────────────────────

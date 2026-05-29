@@ -3,7 +3,7 @@ import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.js";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
 import { createLogger, logWarn } from "./logger.js";
-import { resolveAlias, reverseLookupAnchor } from "./event-log.js";
+import { resolveSessionAnchorId, reverseLookupAnchor } from "./event-log.js";
 
 // --- Schema ---
 
@@ -295,9 +295,7 @@ export function resolveStrictProfileForSession(
   config: WorkspaceConfig,
   sessionId: string,
 ): ProfileResolution {
-  const anchorId =
-    resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) ??
-    resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId });
+  const anchorId = resolveSessionAnchorId(sessionId);
   if (!anchorId) return { ok: true, profile: undefined };
 
   return resolveStrictProfileForAnchor(config, anchorId, sessionId);

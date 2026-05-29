@@ -282,11 +282,15 @@ describe("remote-cli MCP endpoints", () => {
   }
 
   it("lists allowed upstreams and visible tools, then calls an allowed tool", async () => {
-    const upstreams = await postJson("/exec/mcp", {
-      args: [],
-      cwd: "/workspace/repos/acme",
-      directory: "/workspace/repos/acme",
-    });
+    const upstreams = await postJson(
+      "/exec/mcp",
+      {
+        args: [],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
     const upstreamBody = (await upstreams.json()) as { stdout: string };
 
     expect(upstreams.status).toBe(200);
@@ -298,11 +302,15 @@ describe("remote-cli MCP endpoints", () => {
       ],
     });
 
-    const listedTools = await postJson("/exec/mcp", {
-      args: ["atlassian"],
-      cwd: "/workspace/repos/acme",
-      directory: "/workspace/repos/acme",
-    });
+    const listedTools = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian"],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
     const toolsBody = (await listedTools.json()) as { stdout: string };
 
     expect(listedTools.status).toBe(200);
@@ -312,15 +320,19 @@ describe("remote-cli MCP endpoints", () => {
       "createIssueLink",
     ]);
 
-    const hiddenLookup = await postJson("/exec/mcp", {
-      args: [
-        "atlassian",
-        "lookupJiraAccountId",
-        '{"cloudId":"cloud-1","searchString":"alice@example.com"}',
-      ],
-      cwd: "/workspace/repos/acme",
-      directory: "/workspace/repos/acme",
-    });
+    const hiddenLookup = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "lookupJiraAccountId",
+          '{"cloudId":"cloud-1","searchString":"alice@example.com"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
     const hiddenLookupBody = (await hiddenLookup.json()) as {
       stdout: string;
       stderr: string;
@@ -331,11 +343,15 @@ describe("remote-cli MCP endpoints", () => {
     expect(hiddenLookupBody.exitCode).toBe(1);
     expect(hiddenLookupBody.stderr).toContain('Unknown tool "lookupJiraAccountId"');
 
-    const call = await postJson("/exec/mcp", {
-      args: ["atlassian", "getJiraIssue", "{}"],
-      cwd: "/workspace/worktrees/acme/feature-branch",
-      directory: "/workspace/repos/acme",
-    });
+    const call = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+        cwd: "/workspace/worktrees/acme/feature-branch",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
     const callBody = (await call.json()) as {
       stdout: string;
       stderr: string;
@@ -654,11 +670,15 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   it("rejects worktree session directories for MCP authz", async () => {
-    const response = await postJson("/exec/mcp", {
-      args: [],
-      cwd: "/workspace/worktrees/acme/feature-branch",
-      directory: "/workspace/worktrees/acme/feature-branch",
-    });
+    const response = await postJson(
+      "/exec/mcp",
+      {
+        args: [],
+        cwd: "/workspace/worktrees/acme/feature-branch",
+        directory: "/workspace/worktrees/acme/feature-branch",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
     const body = (await response.json()) as {
       stdout: string;
       stderr: string;
@@ -674,7 +694,43 @@ describe("remote-cli MCP endpoints", () => {
     });
   });
 
-  it("fails closed for Jira approvals when Thor session context is missing", async () => {
+  it("fails closed for MCP calls when Thor session context is missing", async () => {
+    const allowed = await postJson("/exec/mcp", {
+      args: ["atlassian", "getJiraIssue", "{}"],
+      cwd: "/workspace/repos/acme",
+      directory: "/workspace/repos/acme",
+    });
+    const allowedBody = (await allowed.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(allowed.status).toBe(200);
+    expect(allowedBody).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(allowedBody.stderr).toContain("missing Thor session id");
+    expect(toolCalls).toEqual([]);
+
+    const fakeSession = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "fake-session" },
+    );
+    const fakeSessionBody = (await fakeSession.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(fakeSession.status).toBe(200);
+    expect(fakeSessionBody).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(fakeSessionBody.stderr).toContain("invalid Thor session id");
+    expect(toolCalls).toEqual([]);
+
     const pending = await postJson("/exec/mcp", {
       args: [
         "atlassian",

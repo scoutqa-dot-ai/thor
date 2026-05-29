@@ -5,6 +5,7 @@ import {
   isPathWithin,
   realpathOrNull,
   resolveAlias,
+  resolveSessionAnchorId,
   type ExecResult,
 } from "@thor/common";
 import MarkdownIt from "markdown-it";
@@ -102,14 +103,13 @@ function resolveBlocksFilePath(blocksFile: string, cwd?: string): string | { err
 }
 
 function hasUsableThorSession(sessionId: string): boolean {
-  const sessionAnchor = resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId });
-  if (sessionAnchor) return currentSessionForAnchor(sessionAnchor) === sessionId;
+  const anchorId = resolveSessionAnchorId(sessionId);
+  if (!anchorId) return false;
 
-  const subsessionAnchor = resolveAlias({
-    aliasType: "opencode.subsession",
-    aliasValue: sessionId,
-  });
-  return subsessionAnchor ? currentSessionForAnchor(subsessionAnchor) !== undefined : false;
+  const sessionAnchor = resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId });
+  return sessionAnchor
+    ? currentSessionForAnchor(anchorId) === sessionId
+    : currentSessionForAnchor(anchorId) !== undefined;
 }
 
 function stripCodeSegments(text: string): string {

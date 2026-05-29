@@ -703,6 +703,13 @@ export function resolveAlias(input: {
   return aliasCache.forward.get(externalKeyEncoded(input.aliasType, input.aliasValue));
 }
 
+export function resolveSessionAnchorId(sessionId: string): string | undefined {
+  return (
+    resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) ??
+    resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId })
+  );
+}
+
 export function reverseLookupAnchor(anchorId: string): ReverseAnchorEntry {
   loadAliasCacheIfChanged();
   const entry = aliasCache.reverse.get(anchorId);
@@ -989,9 +996,7 @@ function scanTriggers(
 }
 
 export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult {
-  const anchorId =
-    resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
-    resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
+  const anchorId = resolveSessionAnchorId(requestSessionId);
   if (!anchorId) return { ok: false, reason: "none" };
 
   const reverse = reverseLookupAnchor(anchorId);
@@ -1009,9 +1014,7 @@ function findBestTriggerForSession(
   requestSessionId: string,
   accepts?: (trigger: ScannedTrigger) => boolean,
 ): ScannedTrigger | undefined {
-  const anchorId =
-    resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
-    resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
+  const anchorId = resolveSessionAnchorId(requestSessionId);
   if (!anchorId) return undefined;
 
   const reverse = reverseLookupAnchor(anchorId);
@@ -1049,9 +1052,7 @@ export function findSlackTriggerCorrelationKey(requestSessionId: string): string
 }
 
 export function findAnchorContext(requestSessionId: string): AnchorContextResult {
-  const anchorId =
-    resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
-    resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
+  const anchorId = resolveSessionAnchorId(requestSessionId);
   if (!anchorId) return { ok: false, reason: "none" };
 
   const active = findActiveTrigger(requestSessionId);

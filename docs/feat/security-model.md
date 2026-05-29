@@ -94,6 +94,7 @@ remote-cli is the _only_ place tool-level policy is enforced. OpenCode-side wrap
 
 ### MCP tool tiers
 
+- **Session-bound routing.** Normal MCP list/call requests require `x-thor-session-id` to resolve to a bound OpenCode session or sub-session before any upstream credentials are selected. This is enforced in `remote-cli`, not just the OpenCode-side `mcp` wrapper, so wrapper bypass fails closed instead of falling back to unsuffixed globals. Bound non-Slack sessions with no Slack thread aliases still resolve to unsuffixed globals. Internal approval resolution uses `THOR_INTERNAL_SECRET` on the `mcp resolve` path instead.
 - **Allow-listed tools** execute immediately.
 - **Approved tools** create an approval record, post an approval card to the triggering Slack thread, and return an action id. Status is available through `POST /exec/approval`.
 - **Hidden tools** are never listed to the agent.

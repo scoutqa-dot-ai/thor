@@ -21,6 +21,7 @@ import {
   logWarn,
   PROXY_NAMES,
   resolveProxyConfig,
+  resolveSessionAnchorId,
   resolveSlackThreadTargetFromTrigger,
   resolveStrictProfileForSession,
   WORKSPACE_CONFIG_PATH,
@@ -261,7 +262,19 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   function resolveProfileForContext(
     context: McpCommandContext,
   ): { ok: true; profile: string | undefined } | { ok: false; error: string } {
-    if (!context.sessionId) return { ok: true, profile: undefined };
+    if (!context.sessionId) {
+      return {
+        ok: false,
+        error:
+          "missing Thor session id for MCP routing; use the mcp wrapper so x-thor-session-id is sent",
+      };
+    }
+    if (!resolveSessionAnchorId(context.sessionId)) {
+      return {
+        ok: false,
+        error: `invalid Thor session id for MCP routing; no Thor session binding for ${context.sessionId}`,
+      };
+    }
     let config;
     try {
       config = getConfig();

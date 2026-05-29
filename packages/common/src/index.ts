@@ -87,6 +87,7 @@ export {
   findSlackTriggerCorrelationKey,
   findAnchorContext,
   resolveAlias,
+  resolveSessionAnchorId,
   reverseLookupAnchor,
   listAnchors,
   listAnchorSessionStates,
