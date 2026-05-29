@@ -23,7 +23,7 @@ import {
   type ConfigLoader,
 } from "@thor/common";
 import { z } from "zod/v4";
-import { EventQueue, type QueuedEvent } from "./queue.js";
+import { EventQueue, type QueuedEvent } from "./queue.ts";
 import {
   addSlackReaction,
   buildDispatchLogContext,
@@ -38,16 +38,16 @@ import {
   type BatchSource,
   type InternalExecClient,
   type RunnerDeps,
-} from "./service.js";
-import { createSlackClient, type SlackChannelGateInput, type SlackDeps } from "./slack-api.js";
+} from "./service.ts";
+import { createSlackClient, type SlackChannelGateInput, type SlackDeps } from "./slack-api.ts";
 import {
   addSlackGateRejectedReaction,
   evaluateCachedSlackChannelGate,
   evaluateSlackChannelGate,
   type SlackChannelGateDecision,
-} from "./slack-channel-gate.js";
-import { verifyThorAuthoredSha } from "./github-gate.js";
-import { deepHealthCheck } from "./healthcheck.js";
+} from "./slack-channel-gate.ts";
+import { verifyThorAuthoredSha } from "./github-gate.ts";
+import { deepHealthCheck } from "./healthcheck.ts";
 import {
   buildPendingSlackPrivacyKey,
   getSlackCorrelationKey,
@@ -62,8 +62,8 @@ import {
   type SlackInteractivityAction,
   type SlackInteractivityPayload,
   type SlackThreadEvent,
-} from "./slack.js";
-import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.js";
+} from "./slack.ts";
+import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.ts";
 import {
   buildCorrelationKey,
   buildIssueCorrelationKey,
@@ -83,7 +83,7 @@ import {
   type GitHubWebhookEvent,
   type PushEvent,
   verifyGitHubSignature,
-} from "./github.js";
+} from "./github.ts";
 
 interface SlackQueuedEvent extends QueuedEvent<SlackThreadEvent> {
   source: "slack";

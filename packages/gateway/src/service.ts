@@ -15,8 +15,8 @@ import {
   getSlackCorrelationKey,
   isPendingSlackPrivacyKey,
   type SlackThreadEvent,
-} from "./slack.js";
-import type { CronPayload } from "./cron.js";
+} from "./slack.ts";
+import type { CronPayload } from "./cron.ts";
 import {
   buildCorrelationKey,
   getGitHubEventLocalRepo,
@@ -24,13 +24,13 @@ import {
   isPendingBranchResolveKey,
   type GitHubWebhookEvent,
   type IssueCommentEvent,
-} from "./github.js";
-import { addReaction, updateMessage, type SlackDeps } from "./slack-api.js";
+} from "./github.ts";
+import { addReaction, updateMessage, type SlackDeps } from "./slack-api.ts";
 import {
   addSlackGateRejectedReaction,
   evaluateSlackChannelGate,
   SLACK_GATE_DROP_REASON,
-} from "./slack-channel-gate.js";
+} from "./slack-channel-gate.ts";
 
 const log = createLogger("gateway-service");
 const INTERNAL_EXEC_TIMEOUT_MS = 5000;
@@ -159,11 +159,10 @@ export type InternalExecClient = (request: InternalExecRequest) => Promise<{
 type TerminalGitHubRejectReason = "installation_gone" | "branch_not_found" | "branch_lookup_failed";
 
 class TerminalGitHubDispatchError extends Error {
-  constructor(
-    readonly reason: TerminalGitHubRejectReason,
-    message: string,
-  ) {
+  readonly reason: TerminalGitHubRejectReason;
+  constructor(reason: TerminalGitHubRejectReason, message: string) {
     super(message);
+    this.reason = reason;
     this.name = "TerminalGitHubDispatchError";
   }
 }

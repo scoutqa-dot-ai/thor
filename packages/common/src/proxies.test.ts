@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { getAvailableProxyNames, PROXY_NAMES, resolveProxyConfig } from "./proxies.js";
+import { APPROVAL_TOOL_NAMES } from "./approval-events.ts";
+import {
+  getAvailableProxyNames,
+  getProxyConfig,
+  PROXY_NAMES,
+  PROXY_REGISTRY,
+  resolveProxyConfig,
+} from "./proxies.ts";
 
 const FULL_ENV: NodeJS.ProcessEnv = {
   ATLASSIAN_AUTH: "Basic global",
@@ -19,6 +26,8 @@ describe("proxy registry", () => {
     );
     expect(resolveProxyConfig("posthog", undefined, FULL_ENV)?.allow).toContain("query-run");
     expect(resolveProxyConfig("unknown", undefined, FULL_ENV)).toBeUndefined();
+    expect(getProxyConfig("atlassian")?.upstream.url).toBe("https://mcp.atlassian.com/v1/mcp");
+    expect(getProxyConfig("unknown")).toBeUndefined();
   });
 
   it("resolves profile-scoped auth with global fallback", () => {
@@ -83,5 +92,13 @@ describe("proxy registry", () => {
       const overlap = proxy!.allow.filter((tool) => proxy!.approve.includes(tool));
       expect(overlap).toEqual([]);
     }
+  });
+
+  it("requires approval only for the approved write-tool inventory", () => {
+    const approvedTools = Object.values(PROXY_REGISTRY)
+      .flatMap((proxy) => proxy.approve)
+      .sort();
+
+    expect(approvedTools).toEqual([...APPROVAL_TOOL_NAMES].sort());
   });
 });

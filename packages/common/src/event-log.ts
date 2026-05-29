@@ -11,9 +11,9 @@ import { randomBytes } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
-import { getWorklogDir } from "./worklog.js";
-import { createLogger, logWarn, truncate } from "./logger.js";
-import { parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.js";
+import { getWorklogDir } from "./worklog.ts";
+import { createLogger, logWarn, truncate } from "./logger.ts";
+import { parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.ts";
 
 const log = createLogger("event-log");
 const SLOW_READ_THRESHOLD_MS = 50;

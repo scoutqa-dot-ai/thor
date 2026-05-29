@@ -8,7 +8,7 @@ import {
   mintAnchor,
   resolveAnchorForCorrelationKey,
 } from "@thor/common";
-import { EventQueue, type EventHandler, type QueuedEvent } from "./queue.js";
+import { EventQueue, type EventHandler, type QueuedEvent } from "./queue.ts";
 
 let queueDir: string;
 let queue: EventQueue | null;

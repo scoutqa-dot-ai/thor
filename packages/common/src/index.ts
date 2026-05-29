@@ -11,14 +11,25 @@ export {
   SLACK_CHANNEL_REPO_MEMORY_ROOT,
   extractRepoFromCwd,
   getInstallationIdForOwner,
+  interpolateEnv,
+  interpolateHeaders,
   findUserBySlack,
   findUserByGithub,
+  findUserByEmail,
+  getSlackPrivateChannelAllowlist,
   getProfileForSlackChannel,
   isSlackChannelInProfile,
   resolveStrictProfileForSession,
-} from "./workspace-config.js";
-export type { ProfileResolution } from "./workspace-config.js";
-export { PROXY_NAMES, isProxyName, resolveProxyConfig, getAvailableProxyNames } from "./proxies.js";
+} from "./workspace-config.ts";
+export type { ProfileResolution } from "./workspace-config.ts";
+export {
+  PROXY_NAMES,
+  PROXY_REGISTRY,
+  isProxyName,
+  getProxyConfig,
+  resolveProxyConfig,
+  getAvailableProxyNames,
+} from "./proxies.ts";
 export {
   APPROVAL_TOOL_NAMES,
   ApprovalArgsSchema,
@@ -29,12 +40,12 @@ export {
   approvalToolRequiresDisclaimer,
   injectApprovalDisclaimer,
   validateDisclaimerCompatibleArgs,
-} from "./approval-events.js";
+} from "./approval-events.ts";
 export type {
   ApprovalArgs,
   ApprovalRequiredEventPayload,
   ApprovalToolName,
-} from "./approval-events.js";
+} from "./approval-events.ts";
 export {
   envOptionalString,
   envString,
@@ -43,8 +54,8 @@ export {
   envBaseUrl,
   getRunnerBaseUrl,
   matchesInternalSecret,
-} from "./env.js";
-export type { EnvSource } from "./env.js";
+} from "./env.ts";
+export type { EnvSource } from "./env.ts";
 export {
   loadGatewayEnv,
   loadRunnerEnv,
@@ -56,19 +67,21 @@ export {
   loadMetabaseEnv,
   loadGitHubAppAuthEnv,
   loadDaytonaEnv,
-} from "./service-env.js";
+} from "./service-env.ts";
 export type {
   WorkspaceConfig,
   ProfileConfig,
+  ProxyConfig,
+  ProxyUpstream,
   ConfigLoader,
   OwnerConfig,
   UserRecord,
   ValidationIssue,
   ValidationResult,
-} from "./workspace-config.js";
-export type { ProxyName } from "./proxies.js";
-export { writeToolCallLog, appendJsonlWorklog, getWorklogDir } from "./worklog.js";
-export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.js";
+} from "./workspace-config.ts";
+export type { ProxyName } from "./proxies.ts";
+export { writeToolCallLog, appendJsonlWorklog, getWorklogDir } from "./worklog.ts";
+export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.ts";
 export {
   SessionEventLogRecordSchema,
   AliasRecordSchema,
@@ -92,7 +105,7 @@ export {
   iterateJsonlFileLinesSync,
   isUuidV7,
   UUID_V7_RE,
-} from "./event-log.js";
+} from "./event-log.ts";
 export type {
   SessionEventLogRecord,
   AliasRecord,
@@ -103,7 +116,7 @@ export type {
   AnchorSessionState,
   AnchorSessionStatus,
   ListAnchorSessionStatesOptions,
-} from "./event-log.js";
+} from "./event-log.ts";
 export {
   OpencodeEventSchema,
   ViewerPartSchema,
@@ -115,7 +128,7 @@ export {
   isOmittedMarker,
   parseOpencodeEvent,
   projectOpencodeEvent,
-} from "./opencode-event.js";
+} from "./opencode-event.ts";
 export type {
   OmittedMarker,
   OpencodeEvent,
@@ -127,12 +140,12 @@ export type {
   ViewerCompactionPart,
   ViewerPayloadOrOmitted,
   ParsedOpencodeEvent,
-} from "./opencode-event.js";
-export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.js";
-export { formatTokens, formatDuration, formatAge, formatBytes, formatCostUsd } from "./format.js";
-export type { Logger } from "./logger.js";
-export { errorToMetadata } from "./errors.js";
-export type { ErrorMetadataOptions } from "./errors.js";
+} from "./opencode-event.ts";
+export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.ts";
+export { formatTokens, formatDuration, formatAge, formatBytes, formatCostUsd } from "./format.ts";
+export type { Logger } from "./logger.ts";
+export { errorToMetadata } from "./errors.ts";
+export type { ErrorMetadataOptions } from "./errors.ts";
 export {
   WORKSPACE_REPOS_ROOT,
   WORKSPACE_WORKTREES_ROOT,
@@ -141,13 +154,13 @@ export {
   isPathWithin,
   realpathOrNull,
   resolveExistingDirectoryWithinRoot,
-} from "./paths.js";
+} from "./paths.ts";
 export {
   MEMORY_DIR,
   normalizeMemoryPath,
   isMemoryPath,
   isBareMemoryDirectoryPath,
-} from "./memory-paths.js";
+} from "./memory-paths.ts";
 export {
   resolveCorrelationKeys,
   resolveCorrelationLockKey,
@@ -162,21 +175,22 @@ export {
   resolveSessionForCorrelationKey,
   ANCHOR_LOCK_PREFIX,
   SESSION_LOCK_PREFIX,
-} from "./correlation.js";
-export type { EnsureAnchorResult } from "./correlation.js";
-export { withKeyLock } from "./key-lock.js";
-export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.js";
-export type { ExecResult, ExecStreamEvent } from "./exec-result.js";
-export { deriveGitHubAppBotIdentity } from "./github-identity.js";
-export type { GitHubAppBotIdentity, GitHubAppBotIdentityInput } from "./github-identity.js";
+} from "./correlation.ts";
+export type { EnsureAnchorResult } from "./correlation.ts";
+export { withKeyLock } from "./key-lock.ts";
+export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.ts";
+export type { ExecResult, ExecStreamEvent } from "./exec-result.ts";
+export { deriveGitHubAppBotIdentity } from "./github-identity.ts";
+export type { GitHubAppBotIdentity, GitHubAppBotIdentityInput } from "./github-identity.ts";
 export {
   buildThorDisclaimer,
   buildThorDisclaimerForSession,
   buildThorAnchorUrl,
   buildThorTriggerUrl,
+  findActiveTriggerOrThrow,
   formatThorContextFooter,
-} from "./disclaimer.js";
-export type { ThorDisclaimerContext } from "./disclaimer.js";
+} from "./disclaimer.ts";
+export type { ActiveTriggerSnapshot, ThorDisclaimerContext } from "./disclaimer.ts";
 export {
   ProgressStartSchema,
   ProgressToolSchema,
@@ -185,7 +199,7 @@ export {
   ProgressDoneSchema,
   ProgressErrorSchema,
   ProgressEventSchema,
-} from "./progress-events.js";
+} from "./progress-events.ts";
 export type {
   ProgressStart,
   ProgressTool,
@@ -194,9 +208,9 @@ export type {
   ProgressDone,
   ProgressError,
   ProgressEvent,
-} from "./progress-events.js";
-export { handleProgressEvent, getRegistrySize, clearRegistry } from "./progress-manager.js";
-export type { ProgressTransport, ProgressTarget, ProgressBlock } from "./progress-manager.js";
+} from "./progress-events.ts";
+export { handleProgressEvent, getRegistrySize, clearRegistry } from "./progress-manager.ts";
+export type { ProgressTransport, ProgressTarget, ProgressBlock } from "./progress-manager.ts";
 export {
   buildApprovalButtonValue,
   extractApprovalFailureCategory,
@@ -207,11 +221,11 @@ export {
   buildApprovalSlackMessage,
   buildInlineApprovalBlocks,
   buildApprovalPresentationBlocks,
-} from "./approval-presentation.js";
+} from "./approval-presentation.ts";
 export type {
   SlackBlock,
   SlackThreadTarget,
   ApprovalButtonRoute,
   ApprovalPresentation,
   ApprovalSlackMessage,
-} from "./approval-presentation.js";
+} from "./approval-presentation.ts";

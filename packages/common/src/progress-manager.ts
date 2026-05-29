@@ -1,6 +1,6 @@
-import { createLogger, logInfo, logError } from "./logger.js";
-import { formatDuration, formatTokens } from "./format.js";
-import type { ProgressEvent } from "./progress-events.js";
+import { createLogger, logInfo, logError } from "./logger.ts";
+import { formatDuration, formatTokens } from "./format.ts";
+import type { ProgressEvent } from "./progress-events.ts";
 
 const log = createLogger("progress");
 
@@ -369,12 +369,12 @@ class ProgressSession {
   private thresholdMet = false;
   private finished = false;
   private tickTimer?: ReturnType<typeof setTimeout>;
+  private progressTarget: ProgressTarget;
+  private transport: ProgressTransport;
 
-  constructor(
-    private progressTarget: ProgressTarget,
-    private transport: ProgressTransport,
-    sessionId?: string,
-  ) {
+  constructor(progressTarget: ProgressTarget, transport: ProgressTransport, sessionId?: string) {
+    this.progressTarget = progressTarget;
+    this.transport = transport;
     this.channel = progressTarget.key;
     this.threadTs = progressTarget.key;
     this.sourceTs = progressTarget.sourceTs;
@@ -582,7 +582,8 @@ class ProgressSession {
   private async flush(): Promise<void> {
     const elapsed = formatDuration(Date.now() - this.startTime);
     const context = shouldRenderContext(this.latestContext) ? this.latestContext : undefined;
-    const hasExtras = this.recentMemory.length > 0 || this.lastDelegateGroups.length > 0 || !!context;
+    const hasExtras =
+      this.recentMemory.length > 0 || this.lastDelegateGroups.length > 0 || !!context;
     const recentActivityLimit = hasExtras ? 5 : 3;
     const toolGroups = this.lastToolGroups.slice(-recentActivityLimit);
     const delegateGroups = this.lastDelegateGroups.slice(-recentActivityLimit);

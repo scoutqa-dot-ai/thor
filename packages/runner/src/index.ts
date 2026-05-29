@@ -11,7 +11,7 @@ import type {
   ToolStateCompleted,
   ToolStateError,
 } from "@opencode-ai/sdk";
-import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
+import { EventBusRegistry, waitForSessionSettled } from "./event-bus.ts";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
@@ -68,13 +68,13 @@ import type {
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent, ProgressTarget, ProgressTransport } from "@thor/common";
-import { getMemoryProgressEvents } from "./memory-progress.js";
+import { getMemoryProgressEvents } from "./memory-progress.ts";
 import { pathToFileURL } from "node:url";
 import {
   createSlackProgressTransport,
   resolveSlackProgressTarget,
   type SlackProgressTransportTarget,
-} from "./slack-progress.js";
+} from "./slack-progress.ts";
 
 const log = createLogger("runner");
 

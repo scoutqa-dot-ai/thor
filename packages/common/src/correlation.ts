@@ -5,9 +5,9 @@ import {
   mintAnchor,
   resolveAlias,
   resolveSessionAnchorId,
-} from "./event-log.js";
-import type { AliasRecord } from "./event-log.js";
-import { withKeyLock } from "./key-lock.js";
+} from "./event-log.ts";
+import type { AliasRecord } from "./event-log.ts";
+import { withKeyLock } from "./key-lock.ts";
 
 const SLACK_THREAD_PREFIX = "slack:thread:";
 const GIT_BRANCH_PREFIX = "git:branch:";

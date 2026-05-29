@@ -12,7 +12,7 @@ import {
   SLACK_GATE_DROP_REASON,
   type SlackChannelGateInput,
   type SlackDeps,
-} from "./slack-api.js";
+} from "./slack-api.ts";
 
 const log = createLogger("gateway-slack-channel-gate");
 

@@ -1,4 +1,4 @@
-import { findAnchorContext } from "./event-log.js";
+import { findActiveTrigger, findAnchorContext } from "./event-log.ts";
 
 export function formatThorContextFooter(thorUrl: string): string {
   return ["", "---", `AI-generated — verify before acting. [View Thor context](${thorUrl})`].join(
@@ -26,6 +26,25 @@ export function buildThorTriggerUrl(
 ): string {
   const base = runnerBaseUrl.replace(/\/$/, "");
   return `${base}/runner/v/${activeTrigger.anchorId}/${activeTrigger.triggerId}`;
+}
+
+export interface ActiveTriggerSnapshot {
+  anchorId: string;
+  sessionId: string;
+  triggerId: string;
+}
+
+export function findActiveTriggerOrThrow(sessionId: string | undefined): ActiveTriggerSnapshot {
+  if (!sessionId) {
+    throw new Error("Disclaimer required: missing Thor session id");
+  }
+  const active = findActiveTrigger(sessionId);
+  if (!active.ok) {
+    throw new Error(
+      `Disclaimer required: no single active trigger for session ${sessionId} (${active.reason})`,
+    );
+  }
+  return { anchorId: active.anchorId, sessionId: active.sessionId, triggerId: active.triggerId };
 }
 
 export function buildThorDisclaimer(

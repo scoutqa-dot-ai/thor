@@ -14,8 +14,9 @@ import {
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
   resolveStrictProfileForSession,
-} from "./workspace-config.js";
-import { appendAlias } from "./event-log.js";
+  getSlackPrivateChannelAllowlist,
+} from "./workspace-config.ts";
+import { appendAlias } from "./event-log.ts";
 
 let tempDir: string;
 
