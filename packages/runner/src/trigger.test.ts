@@ -1158,6 +1158,35 @@ describe("runner /trigger orchestration", () => {
     expect(h.prompts).toHaveLength(1);
   });
 
+  it("labels python3 bash wrappers with one segment only", async () => {
+    const h = createHarness({
+      promptEvents: (sessionId) => [
+        toolEvent(
+          sessionId,
+          "bash",
+          "completed",
+          { command: "python3 - <<'PY'\nprint('hi')\nPY" },
+          { start: 1000, end: 1200 },
+          "ok",
+        ),
+        idleEvent(sessionId),
+      ],
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "now",
+        correlationKey: "slack:thread:C123/1710000000.013",
+      });
+
+      expect(result.events.find((e) => e.type === "tool")).toMatchObject({
+        type: "tool",
+        tool: "python3",
+        status: "completed",
+      });
+    });
+  });
+
   it("returns busy without prompting when a resumed session is busy and interrupt is false", async () => {
     const h = createHarness({
       existingSessions: new Set(["busy-session"]),
