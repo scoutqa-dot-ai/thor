@@ -1,0 +1,25 @@
+docker/opencode/config/agents/build.md
+  311c008d6b0606c8 73,76,78-79,82,89-96
+docs/plan/2026052701_profile-based-integration-routing.md
+  311c008d6b0606c8 92,131,135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "822633e565b4af753705fffe60cbfab38f8bb164",
+  "prompts": {
+    "311c008d6b0606c8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f400788c-6840-44b4-a5d5-2d1f00fd01e4",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 23,
+      "total_deletions": 214,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
