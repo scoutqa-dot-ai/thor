@@ -6,6 +6,12 @@ export function formatThorContextFooter(thorUrl: string): string {
   );
 }
 
+export interface ActiveTriggerSnapshot {
+  anchorId: string;
+  sessionId: string;
+  triggerId: string;
+}
+
 export interface ThorDisclaimerContext {
   anchorId: string;
   sessionId?: string;
@@ -26,12 +32,6 @@ export function buildThorTriggerUrl(
 ): string {
   const base = runnerBaseUrl.replace(/\/$/, "");
   return `${base}/runner/v/${activeTrigger.anchorId}/${activeTrigger.triggerId}`;
-}
-
-export interface ActiveTriggerSnapshot {
-  anchorId: string;
-  sessionId: string;
-  triggerId: string;
 }
 
 export function findActiveTriggerOrThrow(sessionId: string | undefined): ActiveTriggerSnapshot {
