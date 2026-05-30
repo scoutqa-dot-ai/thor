@@ -1,0 +1,31 @@
+docs/plan/2026052701_profile-based-integration-routing.md
+  3dc542d6735d1ab8 97
+packages/common/src/event-log.test.ts
+  3dc542d6735d1ab8 17,388-407
+packages/runner/src/index.ts
+  3dc542d6735d1ab8 29,254
+packages/common/src/event-log.ts
+  3dc542d6735d1ab8 189-196,627-631,638,725-742
+packages/common/src/index.ts
+  3dc542d6735d1ab8 86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "dd53934ed03e42ece8649b1afa510b88dc1704ee",
+  "prompts": {
+    "3dc542d6735d1ab8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "027bbade-af08-4b52-874a-24ed555cebd3",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 63,
+      "total_deletions": 13,
+      "accepted_lines": 57,
+      "overriden_lines": 0
+    }
+  }
+}
